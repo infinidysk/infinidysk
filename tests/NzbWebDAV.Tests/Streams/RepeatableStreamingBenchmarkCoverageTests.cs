@@ -143,6 +143,136 @@ public sealed class RepeatableStreamingBenchmarkCoverageTests
         Assert.Equal(1 + GapFillLimits.MaxConsecutiveZeroFills, transport.BodyRequestCount);
     }
 
+    [Fact]
+    public async Task ProductionShapedPipelinedFixture_RecordsCurrentNonzeroWarmTransport()
+    {
+        var fixture = CreateFixture();
+        var cacheDir = Path.Join(Path.GetTempPath(), "nzbdav-streaming-pipelined-" + Guid.NewGuid().ToString("N"));
+        var statistics = new SegmentCacheStatistics();
+
+        try
+        {
+            var transport = fixture.CreateClient();
+            using var cached = new SegmentCacheNntpClient(
+                transport,
+                cacheDir,
+                maxBytes: fixture.Source.Length * 2L,
+                usageTracker: null,
+                metricsWriter: null,
+                enumerateCacheFiles: null,
+                statistics);
+            await WaitForCatalogAsync(cached);
+
+            var beforeCold = Capture(transport, fixture, statistics);
+            await AssertProductionReadMatchesAsync(cached, fixture);
+            var cold = Delta(beforeCold, Capture(transport, fixture, statistics), fixture.Source.Length);
+            Assert.Equal(fixture.Source.Length, cold.Bytes);
+            Assert.Equal(SegmentCount, cold.TransportRequests);
+            Assert.Equal(fixture.Source.Length, cold.TransportBytes);
+            Assert.Equal(2, cold.TransportBatchRequests);
+            Assert.Equal(0, cold.CacheHits);
+            Assert.Equal(1, cold.CacheMisses);
+            Assert.Equal(0, cold.CacheBytesServed);
+            Assert.Equal(2, cold.CacheBatchBypassRequests);
+            Assert.Equal(5, cold.CacheBatchBypassArticles);
+            Assert.Equal(1, cold.CacheWriteCommits);
+
+            var beforeWarm = Capture(transport, fixture, statistics);
+            await AssertProductionReadMatchesAsync(cached, fixture);
+            var warm = Delta(beforeWarm, Capture(transport, fixture, statistics), fixture.Source.Length);
+            Assert.Equal(fixture.Source.Length, warm.Bytes);
+            AssertPipelinedWarmTransportContract(warm.TransportRequests, warm.TransportBytes);
+            Assert.Equal(5, warm.TransportRequests);
+            Assert.Equal(5 * SegmentSize, warm.TransportBytes);
+            Assert.Equal(2, warm.TransportBatchRequests);
+            Assert.Equal(1, warm.CacheHits);
+            Assert.Equal(0, warm.CacheMisses);
+            Assert.Equal(SegmentSize, warm.CacheBytesServed);
+            Assert.Equal(2, warm.CacheBatchBypassRequests);
+            Assert.Equal(5, warm.CacheBatchBypassArticles);
+            Assert.Equal(0, warm.CacheWriteCommits);
+
+            var repeatBefore = Capture(transport, fixture, statistics);
+            await AssertProductionReadMatchesAsync(cached, fixture);
+            var repeat = Delta(repeatBefore, Capture(transport, fixture, statistics), fixture.Source.Length);
+            Assert.Equal(warm.TransportRequests, repeat.TransportRequests);
+            Assert.Equal(warm.TransportBytes, repeat.TransportBytes);
+            Assert.Equal(warm.CacheHits, repeat.CacheHits);
+            Assert.Equal(warm.CacheBatchBypassArticles, repeat.CacheBatchBypassArticles);
+        }
+        finally
+        {
+            if (Directory.Exists(cacheDir))
+                Directory.Delete(cacheDir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// After the batch-local cache overlay, this helper must assert zero transport
+    /// requests and bytes. This measurement slice records the current nonzero bypass
+    /// so the fixture stays green until that overlay lands.
+    /// </summary>
+    internal static void AssertPipelinedWarmTransportContract(long transportRequests, long transportBytes)
+    {
+        Assert.True(
+            transportRequests > 0 && transportBytes > 0,
+            "Current pipelined warm re-read still reaches transport; the overlay PR must change this helper to assert zeros.");
+    }
+
+    private static Counters Capture(
+        FakeNntpClient transport,
+        Fixture fixture,
+        SegmentCacheStatistics statistics)
+    {
+        var snapshot = statistics.GetSnapshot();
+        return new Counters(
+            transport.BodyRequestCount,
+            transport.BodyRequestCounts.Sum(pair =>
+                fixture.Segments.TryGetValue(pair.Key, out var bytes) ? bytes.Length * (long)pair.Value : 0),
+            transport.BatchRequestCount,
+            snapshot.Hits,
+            snapshot.Misses,
+            snapshot.BytesServed,
+            snapshot.BatchBypassRequests,
+            snapshot.BatchBypassArticles,
+            snapshot.WriteCommits,
+            Bytes: 0);
+    }
+
+    private static Counters Delta(Counters before, Counters after, long bytes) =>
+        new(
+            after.TransportRequests - before.TransportRequests,
+            after.TransportBytes - before.TransportBytes,
+            after.TransportBatchRequests - before.TransportBatchRequests,
+            after.CacheHits - before.CacheHits,
+            after.CacheMisses - before.CacheMisses,
+            after.CacheBytesServed - before.CacheBytesServed,
+            after.CacheBatchBypassRequests - before.CacheBatchBypassRequests,
+            after.CacheBatchBypassArticles - before.CacheBatchBypassArticles,
+            after.CacheWriteCommits - before.CacheWriteCommits,
+            bytes);
+
+    private readonly record struct Counters(
+        long TransportRequests,
+        long TransportBytes,
+        long TransportBatchRequests,
+        long CacheHits,
+        long CacheMisses,
+        long CacheBytesServed,
+        long CacheBatchBypassRequests,
+        long CacheBatchBypassArticles,
+        long CacheWriteCommits,
+        long Bytes);
+
+    private static async Task AssertProductionReadMatchesAsync(INntpClient client, Fixture fixture)
+    {
+        await using var stream = fixture.CreateProductionShapedStream(client);
+        var buffer = new byte[fixture.Source.Length];
+        var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true);
+        Assert.Equal(fixture.Source.Length, read);
+        Assert.Equal(fixture.Source, buffer);
+    }
+
     private static async Task AssertTransportDeltaAsync(
         FakeNntpClient transport,
         IReadOnlyDictionary<string, byte[]> servedSegments,
@@ -244,5 +374,16 @@ public sealed class RepeatableStreamingBenchmarkCoverageTests
         public NzbFileStream CreateStream(INntpClient client) =>
             new(SegmentIds, Source.Length, client, articleBufferSize: 0, segmentByteRanges: Ranges,
                 usePipelinedBodyRequests: false, fileName: "repeatable-streaming-benchmark.bin");
+
+        public NzbFileStream CreateProductionShapedStream(INntpClient client) =>
+            new(
+                SegmentIds,
+                Source.Length,
+                client,
+                articleBufferSize: 40,
+                segmentByteRanges: Ranges,
+                usePipelinedBodyRequests: true,
+                fileName: "repeatable-streaming-pipelined-benchmark.bin",
+                streamingBodyBatchWidth: 4);
     }
 }

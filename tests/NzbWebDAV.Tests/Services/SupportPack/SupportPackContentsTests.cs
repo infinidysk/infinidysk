@@ -6,8 +6,10 @@ using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Logging;
+using NzbWebDAV.Models;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Metrics;
@@ -482,6 +484,121 @@ public sealed class SupportPackContentsTests : IDisposable
     }
 
     [Fact]
+    public async Task Pack_IncludesEffectiveStreamingConfigAndSegmentCacheMetrics()
+    {
+        var statistics = new SegmentCacheStatistics();
+        statistics.BeginGeneration(enabled: true, maxBytes: 2048);
+        statistics.RecordHit(32);
+        statistics.RecordMiss();
+        statistics.RecordBatchBypass(4);
+        var generation = statistics.BeginGeneration(enabled: true, maxBytes: 4096);
+        generation.SetCatalogReady(15, entries: 2, currentBytes: 64);
+
+        var entries = await ReadPackEntriesAsync(
+            new LogBufferSink(10),
+            new WarningLogBuffer(new LogBufferSink(50)),
+            segmentCacheStatistics: statistics);
+
+        Assert.True(entries.ContainsKey("configuration-effective-streaming.json"));
+        Assert.True(entries.ContainsKey("metrics/segment-cache.json"));
+        Assert.Contains("public benchmark extraction", entries["README.txt"]);
+
+        using var effective = JsonDocument.Parse(entries["configuration-effective-streaming.json"]);
+        Assert.Equal(1, effective.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(40, effective.RootElement.GetProperty("streaming").GetProperty("articleBufferSize").GetInt32());
+        Assert.True(effective.RootElement.GetProperty("streaming").GetProperty("pipelinedBodyRequests").GetBoolean());
+        Assert.Equal(4, effective.RootElement.GetProperty("streaming").GetProperty("bodyBatchWidth").GetInt32());
+        Assert.True(effective.RootElement.GetProperty("segmentCache").GetProperty("enabled").GetBoolean());
+        Assert.Equal(
+            "default",
+            effective.RootElement.GetProperty("source").GetProperty("streaming").GetProperty("articleBufferSize").GetString());
+        Assert.DoesNotContain("/config/segment-cache", entries["configuration-effective-streaming.json"]);
+
+        using var cache = JsonDocument.Parse(entries["metrics/segment-cache.json"]);
+        Assert.Equal(1, cache.RootElement.GetProperty("schemaVersion").GetInt32());
+        var snapshot = cache.RootElement.GetProperty("cache");
+        Assert.True(snapshot.GetProperty("enabled").GetBoolean());
+        Assert.True(snapshot.GetProperty("catalogReady").GetBoolean());
+        Assert.Equal(15, snapshot.GetProperty("catalogLoadDurationMs").GetInt64());
+        Assert.Equal(2, snapshot.GetProperty("entries").GetInt64());
+        Assert.Equal(64, snapshot.GetProperty("currentBytes").GetInt64());
+        Assert.Equal(4096, snapshot.GetProperty("maxBytes").GetInt64());
+        Assert.Equal(1, snapshot.GetProperty("hits").GetInt64());
+        Assert.Equal(32, snapshot.GetProperty("bytesServed").GetInt64());
+        Assert.Equal(1, snapshot.GetProperty("misses").GetInt64());
+        Assert.Equal(1, snapshot.GetProperty("batchBypassRequests").GetInt64());
+        Assert.Equal(4, snapshot.GetProperty("batchBypassArticles").GetInt64());
+        Assert.Equal(JsonValueKind.Null, snapshot.GetProperty("queuedWriteBytes").ValueKind);
+
+        using var manifest = JsonDocument.Parse(entries["manifest.json"]);
+        Assert.Equal(5, manifest.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(
+            "included",
+            manifest.RootElement.GetProperty("sections").GetProperty("configurationEffectiveStreaming").GetString());
+        Assert.Equal(
+            "included",
+            manifest.RootElement.GetProperty("sections").GetProperty("segmentCache").GetString());
+
+        var offenders = new List<string>();
+        CollectNonCamelCaseNames(effective.RootElement, "configuration-effective-streaming.json", offenders);
+        CollectNonCamelCaseNames(cache.RootElement, "metrics/segment-cache.json", offenders);
+        Assert.True(offenders.Count == 0, string.Join(", ", offenders));
+    }
+
+    [Fact]
+    public async Task Pack_EffectiveStreamingConfigOmitsSentinelSecrets()
+    {
+        var configManager = new ConfigManager();
+        configManager.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.UsenetProviders,
+                ConfigValue = JsonSerializer.Serialize(new UsenetProviderConfig
+                {
+                    Providers =
+                    [
+                        new UsenetProviderConfig.ConnectionDetails
+                        {
+                            ProviderId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                            Type = ProviderType.Pooled,
+                            Host = "news.sentinel.example",
+                            Port = 563,
+                            UseSsl = true,
+                            User = "sentinel-user",
+                            Pass = "sentinel-pass",
+                            MaxConnections = 8,
+                            StorageGroup = "sentinel-group",
+                        },
+                    ],
+                }),
+            },
+            new ConfigItem { ConfigName = ConfigKeys.UsenetSegmentCachePath, ConfigValue = "/tmp/sentinel-cache" },
+            new ConfigItem { ConfigName = ConfigKeys.ApiKey, ConfigValue = "sentinel-api-key" },
+            new ConfigItem { ConfigName = ConfigKeys.WebdavPass, ConfigValue = "sentinel-webdav" },
+        ]);
+
+        var entries = await ReadPackEntriesAsync(
+            new LogBufferSink(10),
+            new WarningLogBuffer(new LogBufferSink(50)),
+            configManager: configManager);
+
+        var effective = entries["configuration-effective-streaming.json"];
+        var cache = entries["metrics/segment-cache.json"];
+        foreach (var forbidden in new[]
+                 {
+                     "news.sentinel.example", "sentinel-user", "sentinel-pass",
+                     "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "sentinel-group",
+                     "/tmp/sentinel-cache", "sentinel-api-key", "sentinel-webdav",
+                     "<msg@example>",
+                 })
+        {
+            Assert.DoesNotContain(forbidden, effective);
+            Assert.DoesNotContain(forbidden, cache);
+        }
+    }
+
+    [Fact]
     public async Task Pack_IncludesRetainedStreamTracesUntilDiscarded()
     {
         var buffer = new StreamTraceBuffer(100, enabled: false);
@@ -768,22 +885,28 @@ public sealed class SupportPackContentsTests : IDisposable
         LogBufferSink logBuffer,
         WarningLogBuffer warningBuffer,
         RuntimeUsageTracker? runtimeUsage = null,
-        ConcurrentReadTracker? concurrentReadTracker = null) =>
+        ConcurrentReadTracker? concurrentReadTracker = null,
+        SegmentCacheStatistics? segmentCacheStatistics = null,
+        ConfigManager? configManager = null) =>
         ReadPackEntriesAsync(
             logBuffer,
             warningBuffer,
             new StreamTraceBuffer(100, enabled: false),
             runtimeUsage,
-            concurrentReadTracker);
+            concurrentReadTracker,
+            segmentCacheStatistics,
+            configManager);
 
     private static async Task<Dictionary<string, string>> ReadPackEntriesAsync(
         LogBufferSink logBuffer,
         WarningLogBuffer warningBuffer,
         StreamTraceBuffer streamTraceBuffer,
         RuntimeUsageTracker? runtimeUsage = null,
-        ConcurrentReadTracker? concurrentReadTracker = null)
+        ConcurrentReadTracker? concurrentReadTracker = null,
+        SegmentCacheStatistics? segmentCacheStatistics = null,
+        ConfigManager? configManager = null)
     {
-        var configManager = new ConfigManager();
+        configManager ??= new ConfigManager();
         var websocketManager = new WebsocketManager();
         var usenet = new UsenetStreamingClient(
             configManager,
@@ -816,7 +939,9 @@ public sealed class SupportPackContentsTests : IDisposable
             par2RepairService,
             repairPatchStore,
             healthCheckConnectionGate,
-            concurrentReadTracker);
+            concurrentReadTracker,
+            queueCoordinator: null,
+            segmentCacheStatistics);
 
         using var memory = new MemoryStream();
         await service.WriteAsync(memory, CancellationToken.None);

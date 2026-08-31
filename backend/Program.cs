@@ -328,6 +328,7 @@ public sealed partial class Program
                 .AddSingleton<QueueItemSourceTracker>()
                 .AddSingleton<StreamingFailureTracker>()
                 .AddSingleton<HealthCheckConnectionGate>()
+                .AddSingleton<SegmentCacheStatistics>()
                 .AddSingleton<UsenetStreamingClient>()
                 .AddHostedService<ProviderRecoveryProbeService>()
                 // LazyRarResolver takes INntpClient (for testability) but must

@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "report": "streaming",
+  "meta": {
+    "commit": "test",
+    "generatedAt": "2026-01-01T00:00:00+00:00",
+    "os": "test",
+    "dotnet": "test"
+  },
+  "scenarios": {
+    "cold-sequential": {
+      "deterministic": {
+        "bytes": 100,
+        "transportRequests": 2,
+        "transportBytes": 100
+      },
+      "timing": {
+        "firstByteMs": 10.0,
+        "elapsedMs": 20.0,
+        "throughputMiBs": 90.0,
+        "cpuSeconds": 0.1
+      }
+    },
+    "pipelined-cold-read": {
+      "deterministic": {
+        "bytes": 3145728,
+        "transportRequests": 12,
+        "transportBytes": 3145728,
+        "transportBatchRequests": 3,
+        "cacheHits": 0,
+        "cacheMisses": 1,
+        "cacheBytesServed": 0,
+        "cacheBatchBypassRequests": 3,
+        "cacheBatchBypassArticles": 11,
+        "cacheWriteCommits": 1
+      },
+      "timing": {
+        "firstByteMs": 1.0,
+        "elapsedMs": 2.0,
+        "throughputMiBs": 30.0,
+        "cpuSeconds": 0.01
+      }
+    },
+    "pipelined-warm-reread": {
+      "deterministic": {
+        "bytes": 3145728,
+        "transportRequests": 0,
+        "transportBytes": 0,
+        "transportBatchRequests": 3,
+        "cacheHits": 1,
+        "cacheMisses": 0,
+        "cacheBytesServed": 262144,
+        "cacheBatchBypassRequests": 3,
+        "cacheBatchBypassArticles": 11,
+        "cacheWriteCommits": 0
+      },
+      "timing": {
+        "firstByteMs": 1.0,
+        "elapsedMs": 2.0,
+        "throughputMiBs": 40.0,
+        "cpuSeconds": 0.01
+      }
+    }
+  }
+}

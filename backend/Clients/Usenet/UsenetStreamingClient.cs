@@ -22,6 +22,7 @@ public class UsenetStreamingClient : WrappingNntpClient
 {
     private readonly Lock _configChangeLock = new();
     private readonly RepairPatchStore? _repairPatchStore;
+    private readonly SegmentCacheStatistics? _segmentCacheStatistics;
 
     public UsenetStreamingClient(
         ConfigManager configManager,
@@ -34,15 +35,17 @@ public class UsenetStreamingClient : WrappingNntpClient
         ArticleMissNegativeCache? articleMissCache = null,
         ProviderLatencyTracker? latencyTracker = null,
         ConcurrentReadTracker? concurrentReadTracker = null,
-        RepairPatchStore? repairPatchStore = null)
+        RepairPatchStore? repairPatchStore = null,
+        SegmentCacheStatistics? segmentCacheStatistics = null)
 #pragma warning disable CA2000 // the client chain transfers to the base class and is disposed with this instance
         : base(CreateDownloadingNntpClient(
 #pragma warning restore CA2000
             configManager, websocketManager, usageTracker, metricsWriter, bytesTracker,
             streamTrace, activeReadRegistry, articleMissCache, latencyTracker, concurrentReadTracker,
-            repairPatchStore))
+            repairPatchStore, segmentCacheStatistics))
     {
         _repairPatchStore = repairPatchStore;
+        _segmentCacheStatistics = segmentCacheStatistics;
         // when config changes, create a new MultiProviderClient to use instead.
         configManager.OnConfigChanged += (_, configEventArgs) =>
         {
@@ -65,7 +68,7 @@ public class UsenetStreamingClient : WrappingNntpClient
                         var newUsenetClient = CreateDownloadingNntpClient(
                             configManager, websocketManager, usageTracker, metricsWriter, bytesTracker,
                             streamTrace, activeReadRegistry, articleMissCache, latencyTracker,
-                            concurrentReadTracker, _repairPatchStore);
+                            concurrentReadTracker, _repairPatchStore, _segmentCacheStatistics);
                         ReplaceUnderlyingClient(newUsenetClient);
                         return;
                     }
@@ -106,7 +109,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         ArticleMissNegativeCache? articleMissCache,
         ProviderLatencyTracker? latencyTracker,
         ConcurrentReadTracker? concurrentReadTracker,
-        RepairPatchStore? repairPatchStore
+        RepairPatchStore? repairPatchStore,
+        SegmentCacheStatistics? segmentCacheStatistics
     )
     {
 #pragma warning disable CA2000 // wrapped by DownloadingNntpClient below; the returned client chain is disposed with this instance
@@ -129,14 +133,23 @@ public class UsenetStreamingClient : WrappingNntpClient
                     configManager.GetSegmentCachePath(),
                     configManager.GetSegmentCacheMaxBytes(),
                     usageTracker,
-                    metricsWriter
+                    metricsWriter,
+                    enumerateCacheFiles: null,
+                    segmentCacheStatistics
                 );
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
             {
-                Log.Warning(e, "Segment cache disabled: failed to initialise at {Path}.",
-                    configManager.GetSegmentCachePath());
+                segmentCacheStatistics?.BeginGeneration(enabled: false, maxBytes: 0);
+                Log.Warning(
+                    "Segment cache disabled: failed to initialise at {PathClass}.",
+                    SegmentCacheNntpClient.ClassifyCachePath(configManager.GetSegmentCachePath()));
+                Log.Debug(e, "Segment cache initialisation failure");
             }
+        }
+        else
+        {
+            segmentCacheStatistics?.BeginGeneration(enabled: false, maxBytes: 0);
         }
 
         if (repairPatchStore != null)

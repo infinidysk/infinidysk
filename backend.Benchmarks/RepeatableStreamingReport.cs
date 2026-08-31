@@ -10,6 +10,8 @@ internal static class RepeatableStreamingReport
     private const int SegmentSize = 256 * 1024;
     private const int SegmentCount = 12;
     private const int ProbeSize = 64 * 1024;
+    private const int ProductionArticleBufferSize = 40;
+    private const int ProductionBodyBatchWidth = 4;
     private const string ReportName = "streaming";
 
     public static async Task RunAsync(string? jsonPath = null)
@@ -26,6 +28,9 @@ internal static class RepeatableStreamingReport
     {
         var fixture = CreateFixture();
         var cacheDir = Path.Join(Path.GetTempPath(), "nzbdav-repeatable-streaming-" + Guid.NewGuid().ToString("N"));
+        var pipelinedCacheDir = Path.Join(
+            Path.GetTempPath(),
+            "nzbdav-repeatable-streaming-pipelined-" + Guid.NewGuid().ToString("N"));
         var scenarios = new Dictionary<string, ScenarioSnapshot>(StringComparer.Ordinal);
 
         try
@@ -97,11 +102,45 @@ internal static class RepeatableStreamingReport
                     dead.Snapshot,
                     extra: $"zero_filled_bytes={dead.Snapshot.Deterministic["bytes"]}");
             }
+
+            var pipelinedStatistics = new SegmentCacheStatistics();
+            using var pipelinedTransport = fixture.CreateTransport();
+            using var pipelinedCache = new SegmentCacheNntpClient(
+                pipelinedTransport,
+                pipelinedCacheDir,
+                maxBytes: fixture.Source.Length * 2L,
+                usageTracker: null,
+                metricsWriter: null,
+                enumerateCacheFiles: null,
+                pipelinedStatistics);
+            await WaitForCatalogAsync(pipelinedCache).ConfigureAwait(false);
+
+            await RecordPipelinedAsync(
+                scenarios,
+                print,
+                pipelinedTransport,
+                pipelinedStatistics,
+                "pipelined-cold-read",
+                () => ReadAllVerifiedAsync(
+                    fixture.CreateProductionShapedStream(pipelinedCache),
+                    fixture.Source)).ConfigureAwait(false);
+
+            await RecordPipelinedAsync(
+                scenarios,
+                print,
+                pipelinedTransport,
+                pipelinedStatistics,
+                "pipelined-warm-reread",
+                () => ReadAllVerifiedAsync(
+                    fixture.CreateProductionShapedStream(pipelinedCache),
+                    fixture.Source)).ConfigureAwait(false);
         }
         finally
         {
             if (Directory.Exists(cacheDir))
                 Directory.Delete(cacheDir, recursive: true);
+            if (Directory.Exists(pipelinedCacheDir))
+                Directory.Delete(pipelinedCacheDir, recursive: true);
         }
 
         return scenarios;
@@ -132,6 +171,38 @@ internal static class RepeatableStreamingReport
         scenarios[name] = snapshot;
         if (print)
             Print(name, snapshot, extra: extra?.Invoke(snapshot));
+    }
+
+    private static async Task RecordPipelinedAsync(
+        Dictionary<string, ScenarioSnapshot> scenarios,
+        bool print,
+        BenchmarkNntpClient transport,
+        SegmentCacheStatistics statistics,
+        string name,
+        Func<Task<StreamingMetrics>> action)
+    {
+        var requestsBefore = transport.BodyRequestCount;
+        var bytesBefore = transport.BodyBytesRequested;
+        var batchesBefore = transport.BatchRequestCount;
+        var cacheBefore = statistics.GetSnapshot();
+        var process = Process.GetCurrentProcess();
+        process.Refresh();
+        var cpuBefore = process.TotalProcessorTime;
+        var metrics = await action().ConfigureAwait(false);
+        process.Refresh();
+        var cpuSeconds = (process.TotalProcessorTime - cpuBefore).TotalSeconds;
+        var cacheAfter = statistics.GetSnapshot();
+        var snapshot = ToPipelinedSnapshot(
+            metrics,
+            transport.BodyRequestCount - requestsBefore,
+            transport.BodyBytesRequested - bytesBefore,
+            transport.BatchRequestCount - batchesBefore,
+            cacheBefore,
+            cacheAfter,
+            cpuSeconds);
+        scenarios[name] = snapshot;
+        if (print)
+            Print(name, snapshot);
     }
 
     private static async Task<DeadArticleCapture> MeasureDeadArticleAsync(Fixture fixture)
@@ -188,6 +259,38 @@ internal static class RepeatableStreamingReport
                 cpuSeconds));
     }
 
+    private static ScenarioSnapshot ToPipelinedSnapshot(
+        StreamingMetrics metrics,
+        int transportRequests,
+        long transportBytes,
+        int transportBatchRequests,
+        SegmentCacheSnapshot cacheBefore,
+        SegmentCacheSnapshot cacheAfter,
+        double cpuSeconds)
+    {
+        var seconds = Math.Max(metrics.Elapsed.TotalSeconds, double.Epsilon);
+        var throughput = metrics.BytesRead / 1024d / 1024d / seconds;
+        return new ScenarioSnapshot(
+            new Dictionary<string, long>(StringComparer.Ordinal)
+            {
+                ["bytes"] = metrics.BytesRead,
+                ["transportRequests"] = transportRequests,
+                ["transportBytes"] = transportBytes,
+                ["transportBatchRequests"] = transportBatchRequests,
+                ["cacheHits"] = cacheAfter.Hits - cacheBefore.Hits,
+                ["cacheMisses"] = cacheAfter.Misses - cacheBefore.Misses,
+                ["cacheBytesServed"] = cacheAfter.BytesServed - cacheBefore.BytesServed,
+                ["cacheBatchBypassRequests"] = cacheAfter.BatchBypassRequests - cacheBefore.BatchBypassRequests,
+                ["cacheBatchBypassArticles"] = cacheAfter.BatchBypassArticles - cacheBefore.BatchBypassArticles,
+                ["cacheWriteCommits"] = cacheAfter.WriteCommits - cacheBefore.WriteCommits,
+            },
+            PerformanceReportJson.StreamingTiming(
+                metrics.FirstByte.TotalMilliseconds,
+                metrics.Elapsed.TotalMilliseconds,
+                throughput,
+                cpuSeconds));
+    }
+
     private static async Task<StreamingMetrics> ReadAllAsync(INntpClient client, Fixture fixture)
     {
         await using var stream = fixture.CreateStream(client);
@@ -198,6 +301,33 @@ internal static class RepeatableStreamingReport
         await stream.CopyToAsync(Stream.Null).ConfigureAwait(false);
         stopwatch.Stop();
         return new StreamingMetrics(stopwatch.Elapsed, firstByte, read, OperationCount: 1);
+    }
+
+    private static async Task<StreamingMetrics> ReadAllVerifiedAsync(NzbFileStream stream, byte[] expected)
+    {
+        await using (stream)
+        {
+            var output = new byte[expected.Length];
+            var stopwatch = Stopwatch.StartNew();
+            var firstCount = Math.Min(ProbeSize, output.Length);
+            var firstRead = await stream.ReadAtLeastAsync(output.AsMemory(0, firstCount), firstCount, throwOnEndOfStream: true)
+                .ConfigureAwait(false);
+            var firstByte = stopwatch.Elapsed;
+            var total = firstRead;
+            while (total < output.Length)
+            {
+                var read = await stream.ReadAsync(output.AsMemory(total)).ConfigureAwait(false);
+                if (read == 0) break;
+                total += read;
+            }
+
+            stopwatch.Stop();
+            if (total != expected.Length)
+                throw new InvalidOperationException(
+                    $"Pipelined streaming read length {total} did not match fixture length {expected.Length}.");
+            Verify(expected, output, "pipelined-read");
+            return new StreamingMetrics(stopwatch.Elapsed, firstByte, total, OperationCount: 1);
+        }
     }
 
     private static async Task<StreamingMetrics> PrimeCacheAsync(SegmentCacheNntpClient client, Fixture fixture)
@@ -322,6 +452,17 @@ internal static class RepeatableStreamingReport
         public NzbFileStream CreateStream(INntpClient client) =>
             new(SegmentIds, Source.Length, client, articleBufferSize: 0, segmentByteRanges: Ranges,
                 usePipelinedBodyRequests: false, fileName: "repeatable-streaming-benchmark.bin");
+
+        public NzbFileStream CreateProductionShapedStream(INntpClient client) =>
+            new(
+                SegmentIds,
+                Source.Length,
+                client,
+                articleBufferSize: ProductionArticleBufferSize,
+                segmentByteRanges: Ranges,
+                usePipelinedBodyRequests: true,
+                fileName: "repeatable-streaming-pipelined-benchmark.bin",
+                streamingBodyBatchWidth: ProductionBodyBatchWidth);
     }
 
     private readonly record struct StreamingMetrics(

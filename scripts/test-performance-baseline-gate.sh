@@ -154,4 +154,85 @@ run_gate 0 \
     "${FIXTURES}/performance-gate-clean-b.json" \
     "${FIXTURES}/performance-gate-clean-c.json" >/dev/null
 
+EXPANDED_BASELINE="${FIXTURES}/performance-gate-expanded-baseline.json"
+run_gate 0 \
+  --baseline "${EXPANDED_BASELINE}" \
+  --candidates "${FIXTURES}/performance-gate-expanded-candidate.json" >/dev/null
+
+output="$(run_gate 2 \
+  --baseline "${EXPANDED_BASELINE}" \
+  --candidates "${FIXTURES}/performance-gate-expanded-missing-cold.json")"
+if ! grep -q 'pipelined-cold-read' <<<"${output}"; then
+  echo "missing pipelined-cold-read did not fail schema comparison" >&2
+  echo "${output}" >&2
+  exit 1
+fi
+
+output="$(run_gate 2 \
+  --baseline "${EXPANDED_BASELINE}" \
+  --candidates "${FIXTURES}/performance-gate-expanded-missing-warm.json")"
+if ! grep -q 'pipelined-warm-reread' <<<"${output}"; then
+  echo "missing pipelined-warm-reread did not fail schema comparison" >&2
+  echo "${output}" >&2
+  exit 1
+fi
+
+output="$(run_gate 2 \
+  --baseline "${EXPANDED_BASELINE}" \
+  --candidates "${FIXTURES}/performance-gate-expanded-warm-transport.json" \
+  --deterministic-only)"
+if ! grep -q 'transportRequests' <<<"${output}"; then
+  echo "warm transport regression did not fail deterministic comparison" >&2
+  echo "${output}" >&2
+  exit 1
+fi
+
+run_gate 0 \
+  --baseline "${EXPANDED_BASELINE}" \
+  --candidates "${FIXTURES}/performance-gate-expanded-timing.json" \
+  --deterministic-only >/dev/null
+
+output="$(run_gate 1 \
+  --baseline "${EXPANDED_BASELINE}" \
+  --candidates "${FIXTURES}/performance-gate-expanded-timing.json")"
+if ! grep -q 'elapsedMs' <<<"${output}"; then
+  echo "timing-only change did not fail envelope comparison" >&2
+  echo "${output}" >&2
+  exit 1
+fi
+
+output="$(run_gate 2 \
+  --baseline "${EXPANDED_BASELINE}" \
+  --candidates "${FIXTURES}/performance-gate-schema-v2.json")"
+if ! grep -q 'schemaVersion' <<<"${output}"; then
+  echo "schema version 2 did not fail" >&2
+  echo "${output}" >&2
+  exit 1
+fi
+
+expanded_written="${tmpdir}/expanded-written-baseline.json"
+run_gate 0 \
+  --candidates \
+    "${FIXTURES}/performance-gate-expanded-write-1.json" \
+    "${FIXTURES}/performance-gate-expanded-write-2.json" \
+    "${FIXTURES}/performance-gate-expanded-write-3.json" \
+  --write-baseline "${expanded_written}" >/dev/null
+
+python3 - "${expanded_written}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+baseline = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+cold = baseline["scenarios"]["pipelined-cold-read"]["deterministic"]
+if cold["bytes"] != 3145728 or cold["transportBatchRequests"] != 3 or cold["cacheWriteCommits"] != 1:
+    raise SystemExit(f"write-baseline lost integer deterministic values: {cold}")
+warm = baseline["scenarios"]["pipelined-warm-reread"]["deterministic"]
+if warm["transportRequests"] != 11 or warm["cacheHits"] != 1:
+    raise SystemExit(f"write-baseline lost warm integers: {warm}")
+timing = baseline["scenarios"]["pipelined-cold-read"]["timing"]["elapsedMs"]
+if "baseline" not in timing or "envelope" not in timing or timing["policy"] != "fail":
+    raise SystemExit(f"write-baseline missing new-scenario timing policy: {timing}")
+PY
+
 echo "Performance baseline gate fixtures passed."

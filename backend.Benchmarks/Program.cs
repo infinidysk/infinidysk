@@ -336,9 +336,11 @@ namespace NzbWebDAV.Benchmarks
         IReadOnlyDictionary<string, LongRange>? segmentRanges = null) : NntpClient
     {
         private int _bodyRequestCount;
+        private int _batchRequestCount;
         private long _bodyBytesRequested;
 
         public int BodyRequestCount => Volatile.Read(ref _bodyRequestCount);
+        public int BatchRequestCount => Volatile.Read(ref _batchRequestCount);
         public long BodyBytesRequested => Interlocked.Read(ref _bodyBytesRequested);
         public HashSet<string> RequestedSegmentIds { get; } = new(StringComparer.Ordinal);
 
@@ -387,6 +389,7 @@ namespace NzbWebDAV.Benchmarks
             ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
+            Interlocked.Increment(ref _batchRequestCount);
             var responses = segmentIds
                 .Select(segmentId => DecodedBodyAsync(segmentId, cancellationToken))
                 .ToArray();

@@ -38,7 +38,8 @@ public sealed class SupportPackService(
     Repair.RepairPatchStore repairPatchStore,
     HealthCheckConnectionGate healthCheckConnectionGate,
     ConcurrentReadTracker? concurrentReadTracker = null,
-    IQueueCoordinator? queueCoordinator = null)
+    IQueueCoordinator? queueCoordinator = null,
+    SegmentCacheStatistics? segmentCacheStatistics = null)
 {
     private const long MinuteMs = 60_000;
     private const long HourMs = 60 * MinuteMs;
@@ -148,6 +149,38 @@ public sealed class SupportPackService(
             await BuildEnvironmentAsync(generatedAt, cancellationToken).ConfigureAwait(false),
             redactor,
             cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            await WriteTextAsync(
+                archive,
+                "configuration-effective-streaming.json",
+                redactor.RedactText(JsonSerializer.Serialize(
+                    EffectiveStreamingConfigManifest.Create(configManager),
+                    EffectiveStreamingConfigManifest.SerializerOptions)),
+                cancellationToken).ConfigureAwait(false);
+            sectionStatus["configurationEffectiveStreaming"] = "included";
+        }
+        catch
+        {
+            sectionStatus["configurationEffectiveStreaming"] = "unavailable";
+        }
+
+        try
+        {
+            var cache = (segmentCacheStatistics ?? new SegmentCacheStatistics()).GetSnapshot();
+            await WriteJsonAsync(
+                archive,
+                "metrics/segment-cache.json",
+                BuildSegmentCacheMetrics(generatedAt, cache),
+                redactor,
+                cancellationToken).ConfigureAwait(false);
+            sectionStatus["segmentCache"] = "included";
+        }
+        catch
+        {
+            sectionStatus["segmentCache"] = "unavailable";
+        }
 
         try
         {
@@ -318,6 +351,14 @@ public sealed class SupportPackService(
         File names, filesystem paths, account usernames, DNS hostnames, and
         non-secret URL paths can remain for troubleshooting. Share this archive only
         with trusted NzbDAV support.
+
+        configuration-effective-streaming.json is the only configuration document
+        designed for public benchmark extraction. It contains resolved, allowlisted
+        streaming settings and no credentials, hostnames, paths, or provider
+        identities. metrics/segment-cache.json is likewise a public-safe cache
+        snapshot. The rest of this archive, including configuration.json, logs, and
+        environment.json, remains a private trusted-support artifact and must not be
+        published with benchmark results.
         """;
 
     private static object BuildConfiguration(
@@ -332,6 +373,14 @@ public sealed class SupportPackService(
                 source = item.Source,
                 environmentVariable = item.EnvironmentVariableName,
             }),
+        };
+
+    private static object BuildSegmentCacheMetrics(DateTimeOffset generatedAt, SegmentCacheSnapshot cache) =>
+        new
+        {
+            schemaVersion = 1,
+            capturedAtUtc = generatedAt,
+            cache,
         };
 
     private async Task<object> BuildEnvironmentAsync(

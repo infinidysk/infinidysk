@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "report": "streaming",
+  "meta": { "commit": "test", "generatedAt": "2026-01-01T00:00:00+00:00", "os": "test", "dotnet": "test" },
+  "scenarios": {
+    "cold-sequential": {
+      "deterministic": { "bytes": 100, "transportRequests": 2, "transportBytes": 100 },
+      "timing": {
+        "firstByteMs": { "baseline": 10.0, "envelope": 30.0, "policy": "fail" },
+        "elapsedMs": { "baseline": 20.0, "envelope": 60.0, "policy": "fail" },
+        "throughputMiBs": { "baseline": 90.0, "floor": 30.0, "policy": "fail" },
+        "cpuSeconds": { "baseline": 0.1, "envelope": 0.35, "policy": "warn" }
+      }
+    },
+    "pipelined-cold-read": {
+      "deterministic": {
+        "bytes": 3145728,
+        "transportRequests": 12,
+        "transportBytes": 3145728,
+        "transportBatchRequests": 3,
+        "cacheHits": 0,
+        "cacheMisses": 1,
+        "cacheBytesServed": 0,
+        "cacheBatchBypassRequests": 3,
+        "cacheBatchBypassArticles": 11,
+        "cacheWriteCommits": 1
+      },
+      "timing": {
+        "firstByteMs": { "baseline": 1.0, "envelope": 16.0, "policy": "fail" },
+        "elapsedMs": { "baseline": 2.0, "envelope": 17.0, "policy": "fail" },
+        "throughputMiBs": { "baseline": 30.0, "floor": 10.0, "policy": "fail" },
+        "cpuSeconds": { "baseline": 0.01, "envelope": 0.26, "policy": "warn" }
+      }
+    },
+    "pipelined-warm-reread": {
+      "deterministic": {
+        "bytes": 3145728,
+        "transportRequests": 11,
+        "transportBytes": 2883584,
+        "transportBatchRequests": 3,
+        "cacheHits": 1,
+        "cacheMisses": 0,
+        "cacheBytesServed": 262144,
+        "cacheBatchBypassRequests": 3,
+        "cacheBatchBypassArticles": 11,
+        "cacheWriteCommits": 0
+      },
+      "timing": {
+        "firstByteMs": { "baseline": 1.0, "envelope": 16.0, "policy": "fail" },
+        "elapsedMs": { "baseline": 2.0, "envelope": 17.0, "policy": "fail" },
+        "throughputMiBs": { "baseline": 40.0, "floor": 13.333, "policy": "fail" },
+        "cpuSeconds": { "baseline": 0.01, "envelope": 0.26, "policy": "warn" }
+      }
+    }
+  }
+}

@@ -209,6 +209,78 @@
           "policy": "warn"
         }
       }
+    },
+    "pipelined-cold-read": {
+      "deterministic": {
+        "bytes": 3145728,
+        "transportRequests": 12,
+        "transportBytes": 3145728,
+        "transportBatchRequests": 3,
+        "cacheHits": 0,
+        "cacheMisses": 1,
+        "cacheBytesServed": 0,
+        "cacheBatchBypassRequests": 3,
+        "cacheBatchBypassArticles": 11,
+        "cacheWriteCommits": 1
+      },
+      "timing": {
+        "firstByteMs": {
+          "baseline": 0.222,
+          "envelope": 15.222,
+          "policy": "fail"
+        },
+        "elapsedMs": {
+          "baseline": 1.256,
+          "envelope": 16.256,
+          "policy": "fail"
+        },
+        "throughputMiBs": {
+          "baseline": 2388.535,
+          "floor": 796.178,
+          "policy": "fail"
+        },
+        "cpuSeconds": {
+          "baseline": 0.001,
+          "envelope": 0.251,
+          "policy": "warn"
+        }
+      }
+    },
+    "pipelined-warm-reread": {
+      "deterministic": {
+        "bytes": 3145728,
+        "transportRequests": 11,
+        "transportBytes": 2883584,
+        "transportBatchRequests": 3,
+        "cacheHits": 1,
+        "cacheMisses": 0,
+        "cacheBytesServed": 262144,
+        "cacheBatchBypassRequests": 3,
+        "cacheBatchBypassArticles": 11,
+        "cacheWriteCommits": 0
+      },
+      "timing": {
+        "firstByteMs": {
+          "baseline": 0.129,
+          "envelope": 15.129,
+          "policy": "fail"
+        },
+        "elapsedMs": {
+          "baseline": 0.55,
+          "envelope": 15.55,
+          "policy": "fail"
+        },
+        "throughputMiBs": {
+          "baseline": 5458.515,
+          "floor": 1819.505,
+          "policy": "fail"
+        },
+        "cpuSeconds": {
+          "baseline": 0.001,
+          "envelope": 0.251,
+          "policy": "warn"
+        }
+      }
     }
   }
 }

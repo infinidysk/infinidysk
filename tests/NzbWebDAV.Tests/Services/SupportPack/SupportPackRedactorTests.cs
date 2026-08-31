@@ -76,6 +76,16 @@ public class SupportPackRedactorTests
     }
 
     [Fact]
+    public void RedactText_StillRedactsSentinelSecretsInsideAllowlistedJson()
+    {
+        var redactor = new SupportPackRedactor(["sentinel-api-key"]);
+        var json = """{"schemaVersion":1,"streaming":{"note":"sentinel-api-key"}}""";
+        var result = redactor.RedactText(json);
+        Assert.DoesNotContain("sentinel-api-key", result);
+        Assert.Contains("[REDACTED]", result);
+    }
+
+    [Fact]
     public void RedactConfigurationValue_FailsClosedForMalformedStructuredConfig()
     {
         var redactor = new SupportPackRedactor([]);

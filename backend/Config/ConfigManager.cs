@@ -141,6 +141,34 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
             ? GetAliasedConfigValue(configName)
             : GetConfigValue(configName);
 
+    /// <summary>
+    /// Bounded origin of the raw value backing an allowlisted setting.
+    /// Empty persisted/environment values count as unset so the typed getter's default applies.
+    /// </summary>
+    internal EffectiveConfigSource GetEffectiveSource(string key)
+    {
+        lock (_config)
+        {
+            if (_environmentOverlay.TryGetValue(key, out var envValue)
+                && StringUtil.EmptyToNull(envValue) is not null)
+                return EffectiveConfigSource.Environment;
+            if (_config.TryGetValue(key, out var persisted)
+                && StringUtil.EmptyToNull(persisted) is not null)
+                return EffectiveConfigSource.Sqlite;
+            if (LegacyConfigKeyAliases.TryGetValue(key, out var legacyKey))
+            {
+                if (_environmentOverlay.TryGetValue(legacyKey, out var legacyEnv)
+                    && StringUtil.EmptyToNull(legacyEnv) is not null)
+                    return EffectiveConfigSource.Environment;
+                if (_config.TryGetValue(legacyKey, out var legacyPersisted)
+                    && StringUtil.EmptyToNull(legacyPersisted) is not null)
+                    return EffectiveConfigSource.Sqlite;
+            }
+
+            return EffectiveConfigSource.Default;
+        }
+    }
+
     /// <summary>Persisted SQLite value only (ignores ENV overlay). Used when normalizing provider IDs.</summary>
     public string? GetPersistedConfigValue(string configName)
     {

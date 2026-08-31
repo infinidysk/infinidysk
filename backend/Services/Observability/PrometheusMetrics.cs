@@ -62,6 +62,26 @@ public sealed class PrometheusMetrics
     private readonly Counter _sharedStreamReadersServed;
     private readonly Counter _privateFallbacks;
     private readonly Counter _streamingCorruptSegments;
+    private readonly Gauge _segmentCacheEnabled;
+    private readonly Gauge _segmentCacheCatalogReady;
+    private readonly Gauge _segmentCacheCatalogLoadDurationSeconds;
+    private readonly Gauge _segmentCacheEntries;
+    private readonly Gauge _segmentCacheBytes;
+    private readonly Gauge _segmentCacheMaxBytes;
+    private readonly Counter _segmentCacheHits;
+    private readonly Counter _segmentCacheMisses;
+    private readonly Counter _segmentCacheLookupUnavailable;
+    private readonly Counter _segmentCacheBytesServed;
+    private readonly Counter _segmentCacheBatchBypassRequests;
+    private readonly Counter _segmentCacheBatchBypassArticles;
+    private readonly Counter _segmentCacheWriteAttempts;
+    private readonly Counter _segmentCacheWriteCommits;
+    private readonly Counter _segmentCacheWriteSkipped;
+    private readonly Counter _segmentCacheWriteFailures;
+    private readonly Counter _segmentCacheReadFailures;
+    private readonly Counter _segmentCacheEvictions;
+    private readonly Counter _segmentCacheEvictedBytes;
+    private readonly Counter _segmentCacheTemporaryFilesCleaned;
     private readonly HashSet<string> _providerKeys = new(StringComparer.Ordinal);
 
     public PrometheusMetrics(CollectorRegistry registry)
@@ -179,6 +199,66 @@ public sealed class PrometheusMetrics
         _streamingCorruptSegments = metrics.CreateCounter(
             "nzbdav_streaming_corrupt_segments_total",
             "Streaming-confirmed corrupt Usenet articles.");
+        _segmentCacheEnabled = metrics.CreateGauge(
+            "nzbdav_segment_cache_enabled",
+            "Whether the active NNTP client generation has a segment-cache wrapper.");
+        _segmentCacheCatalogReady = metrics.CreateGauge(
+            "nzbdav_segment_cache_catalog_ready",
+            "Whether the active segment-cache generation finished its catalog scan.");
+        _segmentCacheCatalogLoadDurationSeconds = metrics.CreateGauge(
+            "nzbdav_segment_cache_catalog_load_duration_seconds",
+            "Duration of the active generation's completed catalog scan.");
+        _segmentCacheEntries = metrics.CreateGauge(
+            "nzbdav_segment_cache_entries",
+            "Indexed segment-cache entries in the active generation.");
+        _segmentCacheBytes = metrics.CreateGauge(
+            "nzbdav_segment_cache_bytes",
+            "Indexed segment-cache body bytes in the active generation.");
+        _segmentCacheMaxBytes = metrics.CreateGauge(
+            "nzbdav_segment_cache_max_bytes",
+            "Effective segment-cache byte limit.");
+        _segmentCacheHits = metrics.CreateCounter(
+            "nzbdav_segment_cache_hits_total",
+            "Eligible article lookups served by a validated local cache entry.");
+        _segmentCacheMisses = metrics.CreateCounter(
+            "nzbdav_segment_cache_misses_total",
+            "Eligible lookups attempted after catalog readiness that were not served.");
+        _segmentCacheLookupUnavailable = metrics.CreateCounter(
+            "nzbdav_segment_cache_lookup_unavailable_total",
+            "Lookups skipped because catalog hydration was incomplete.");
+        _segmentCacheBytesServed = metrics.CreateCounter(
+            "nzbdav_segment_cache_bytes_served_total",
+            "Decoded body bytes represented by segment-cache hits.");
+        _segmentCacheBatchBypassRequests = metrics.CreateCounter(
+            "nzbdav_segment_cache_batch_bypass_requests_total",
+            "DecodedBodiesAsync calls forwarded without per-article cache lookup.");
+        _segmentCacheBatchBypassArticles = metrics.CreateCounter(
+            "nzbdav_segment_cache_batch_bypass_articles_total",
+            "Articles in DecodedBodiesAsync calls forwarded without per-article cache lookup.");
+        _segmentCacheWriteAttempts = metrics.CreateCounter(
+            "nzbdav_segment_cache_write_attempts_total",
+            "Valid remote BODY responses wrapped for possible cache population.");
+        _segmentCacheWriteCommits = metrics.CreateCounter(
+            "nzbdav_segment_cache_write_commits_total",
+            "Complete validated bodies atomically committed to the segment cache.");
+        _segmentCacheWriteSkipped = metrics.CreateCounter(
+            "nzbdav_segment_cache_write_skipped_total",
+            "Cache write attempts ended without commit because of partial read, early dispose, or size validation.");
+        _segmentCacheWriteFailures = metrics.CreateCounter(
+            "nzbdav_segment_cache_write_failures_total",
+            "Cache I/O or serialization failures that prevented commit while playback continued.");
+        _segmentCacheReadFailures = metrics.CreateCounter(
+            "nzbdav_segment_cache_read_failures_total",
+            "Indexed cache entries that could not be validated or opened and were dropped.");
+        _segmentCacheEvictions = metrics.CreateCounter(
+            "nzbdav_segment_cache_evictions_total",
+            "Segment-cache entries removed for capacity.");
+        _segmentCacheEvictedBytes = metrics.CreateCounter(
+            "nzbdav_segment_cache_evicted_bytes_total",
+            "Body bytes removed from the segment cache for capacity.");
+        _segmentCacheTemporaryFilesCleaned = metrics.CreateCounter(
+            "nzbdav_segment_cache_temporary_files_cleaned_total",
+            "Stale cache .tmp files removed during catalog scan.");
     }
 
     public static PrometheusMetrics? Current { get; set; }
@@ -215,6 +295,31 @@ public sealed class PrometheusMetrics
     public void RecordPar2PatchEviction() => _par2PatchEvictions.Inc();
 
     public void RecordStreamingCorruptSegment() => _streamingCorruptSegments.Inc();
+
+    public void SetSegmentCache(SegmentCacheSnapshot snapshot)
+    {
+        _segmentCacheEnabled.Set(snapshot.Enabled ? 1 : 0);
+        _segmentCacheCatalogReady.Set(snapshot.CatalogReady ? 1 : 0);
+        _segmentCacheCatalogLoadDurationSeconds.Set(
+            snapshot.CatalogLoadDurationMs is { } ms ? ms / 1000.0 : 0);
+        _segmentCacheEntries.Set(snapshot.Entries);
+        _segmentCacheBytes.Set(snapshot.CurrentBytes);
+        _segmentCacheMaxBytes.Set(snapshot.MaxBytes);
+        _segmentCacheHits.IncTo(snapshot.Hits);
+        _segmentCacheMisses.IncTo(snapshot.Misses);
+        _segmentCacheLookupUnavailable.IncTo(snapshot.LookupUnavailable);
+        _segmentCacheBytesServed.IncTo(snapshot.BytesServed);
+        _segmentCacheBatchBypassRequests.IncTo(snapshot.BatchBypassRequests);
+        _segmentCacheBatchBypassArticles.IncTo(snapshot.BatchBypassArticles);
+        _segmentCacheWriteAttempts.IncTo(snapshot.WriteAttempts);
+        _segmentCacheWriteCommits.IncTo(snapshot.WriteCommits);
+        _segmentCacheWriteSkipped.IncTo(snapshot.WriteSkipped);
+        _segmentCacheWriteFailures.IncTo(snapshot.WriteFailures);
+        _segmentCacheReadFailures.IncTo(snapshot.ReadFailures);
+        _segmentCacheEvictions.IncTo(snapshot.Evictions);
+        _segmentCacheEvictedBytes.IncTo(snapshot.BytesEvicted);
+        _segmentCacheTemporaryFilesCleaned.IncTo(snapshot.TemporaryFilesCleaned);
+    }
 
     public void Refresh(
         ActiveReadRegistry activeReads,

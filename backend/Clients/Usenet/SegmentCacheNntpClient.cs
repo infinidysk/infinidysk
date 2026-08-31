@@ -18,16 +18,20 @@ namespace NzbWebDAV.Clients.Usenet;
 public sealed class SegmentCacheNntpClient : WrappingNntpClient
 {
     public const string CacheProviderName = "segment-cache";
+    internal const string DefaultCachePath = "/config/segment-cache";
 
     private readonly string _dir;
     private readonly long _maxBytes;
     private readonly ProviderUsageTracker? _usageTracker;
     private readonly MetricsWriter? _metricsWriter;
+    private readonly SegmentCacheStatistics _statistics;
+    private readonly SegmentCacheGeneration _generation;
     private readonly ConcurrentDictionary<string, CacheEntry> _index = new();
     private readonly object _evictLock = new();
     private readonly Func<IEnumerable<string>> _enumerateCacheFiles;
     private long _currentBytes;
     private int _catalogReady;
+    private int _catalogDegraded;
 
     private static readonly JsonSerializerOptions HeaderJsonOptions = new() { IncludeFields = true };
 
@@ -37,7 +41,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         long maxBytes,
         ProviderUsageTracker? usageTracker = null,
         MetricsWriter? metricsWriter = null)
-        : this(inner, cacheDir, maxBytes, usageTracker, metricsWriter, enumerateCacheFiles: null)
+        : this(inner, cacheDir, maxBytes, usageTracker, metricsWriter, enumerateCacheFiles: null, statistics: null)
     {
     }
 
@@ -47,12 +51,15 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         long maxBytes,
         ProviderUsageTracker? usageTracker,
         MetricsWriter? metricsWriter,
-        Func<IEnumerable<string>>? enumerateCacheFiles) : base(inner)
+        Func<IEnumerable<string>>? enumerateCacheFiles,
+        SegmentCacheStatistics? statistics = null) : base(inner)
     {
         _dir = cacheDir;
         _maxBytes = maxBytes;
         _usageTracker = usageTracker;
         _metricsWriter = metricsWriter;
+        _statistics = statistics ?? new SegmentCacheStatistics();
+        _generation = _statistics.BeginGeneration(enabled: true, maxBytes);
         Directory.CreateDirectory(_dir);
         _enumerateCacheFiles = enumerateCacheFiles
                                ?? (() => Directory.EnumerateFiles(_dir, "*", SearchOption.AllDirectories));
@@ -62,6 +69,11 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
     public bool IsCatalogReady => Volatile.Read(ref _catalogReady) != 0;
     internal Task CatalogLoadTask { get; }
     internal long CurrentBytes => Interlocked.Read(ref _currentBytes);
+
+    internal static string ClassifyCachePath(string path) =>
+        string.Equals(path, DefaultCachePath, StringComparison.Ordinal)
+            ? "[CONFIG_PATH]/segment-cache"
+            : "[CUSTOM_PATH]";
 
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(SegmentId segmentId, CancellationToken ct)
     {
@@ -75,13 +87,16 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
             return await base.DecodedBodyAsync(segmentId, onConnectionReadyAgain, ct).ConfigureAwait(false);
 
         string id = segmentId;
-        if (TryServeFromCache(id, out var cached))
+        var lookup = TryServeFromCache(id, out var cached, out var servedBytes);
+        if (lookup == CacheLookupResult.Hit)
         {
+            _statistics.RecordHit(servedBytes);
             RecordCacheHit();
             ArticleBodyCompletion.InvokeContained(onConnectionReadyAgain, ArticleBodyResult.Retrieved);
             return cached!;
         }
 
+        RecordLookup(lookup);
         var response = await base.DecodedBodyAsync(segmentId, onConnectionReadyAgain, ct).ConfigureAwait(false);
         return await WrapForCachingAsync(id, response, ct).ConfigureAwait(false);
     }
@@ -89,11 +104,17 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
     public override async Task<UsenetDecodedBodyResponse?> TryGetLocalDecodedBodyAsync(
         SegmentId segmentId, CancellationToken ct)
     {
-        if (MultiProviderNntpClient.AttributionContext.Value == null
-            && TryServeFromCache(segmentId.ToString(), out var cached))
+        if (MultiProviderNntpClient.AttributionContext.Value == null)
         {
-            RecordCacheHit();
-            return cached;
+            var lookup = TryServeFromCache(segmentId.ToString(), out var cached, out var servedBytes);
+            if (lookup == CacheLookupResult.Hit)
+            {
+                _statistics.RecordHit(servedBytes);
+                RecordCacheHit();
+                return cached;
+            }
+
+            RecordLookup(lookup);
         }
 
         return await base.TryGetLocalDecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
@@ -116,16 +137,37 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
             return await base.DecodedBodyAsync(segmentId, exclusiveConnection, ct).ConfigureAwait(false);
 
         string id = segmentId;
-        if (TryServeFromCache(id, out var cached))
+        var lookup = TryServeFromCache(id, out var cached, out var servedBytes);
+        if (lookup == CacheLookupResult.Hit)
         {
+            _statistics.RecordHit(servedBytes);
             RecordCacheHit();
             ArticleBodyCompletion.InvokeContained(
                 exclusiveConnection.OnConnectionReadyAgain, ArticleBodyResult.Retrieved);
             return cached!;
         }
 
+        RecordLookup(lookup);
         var response = await base.DecodedBodyAsync(segmentId, exclusiveConnection, ct).ConfigureAwait(false);
         return await WrapForCachingAsync(id, response, ct).ConfigureAwait(false);
+    }
+
+    public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+        IReadOnlyList<SegmentId> segmentIds,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
+        CancellationToken cancellationToken)
+    {
+        _statistics.RecordBatchBypass(segmentIds.Count);
+        return base.DecodedBodiesAsync(segmentIds, onConnectionReadyAgain, cancellationToken);
+    }
+
+    public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+        IReadOnlyList<SegmentId> segmentIds,
+        UsenetExclusiveConnection exclusiveConnection,
+        CancellationToken cancellationToken)
+    {
+        _statistics.RecordBatchBypass(segmentIds.Count);
+        return base.DecodedBodiesAsync(segmentIds, exclusiveConnection, cancellationToken);
     }
 
     private async Task<UsenetDecodedBodyResponse> WrapForCachingAsync(
@@ -147,16 +189,21 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         }
 
         if (header == null) return response;
-        return response with { Stream = new WriteThroughStream(source, header, BlobPath(Hash(id)), OnFinalized) };
+        var attempt = _statistics.BeginWriteAttempt();
+        return response with
+        {
+            Stream = new WriteThroughStream(source, header, BlobPath(Hash(id)), OnCommitted, attempt),
+        };
     }
 
-    private bool TryServeFromCache(string id, out UsenetDecodedBodyResponse? response)
+    private CacheLookupResult TryServeFromCache(string id, out UsenetDecodedBodyResponse? response, out long servedBytes)
     {
         response = null;
-        if (!IsCatalogReady) return false;
+        servedBytes = 0;
+        if (!IsCatalogReady) return CacheLookupResult.NotReady;
 
         var hash = Hash(id);
-        if (!_index.TryGetValue(hash, out var entry)) return false;
+        if (!_index.TryGetValue(hash, out var entry)) return CacheLookupResult.Miss;
 
         var blobPath = BlobPath(hash);
         try
@@ -165,13 +212,14 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
                 File.ReadAllText(blobPath + ".h"), HeaderJsonOptions);
             if (header == null || header.PartSize != entry.Size)
             {
-                Drop(hash);
-                return false;
+                RecordReadFailureAndDrop(hash);
+                return CacheLookupResult.ReadFailure;
             }
 
             var fileStream = new FileStream(blobPath, FileMode.Open, FileAccess.Read,
                 FileShare.Read | FileShare.Delete, bufferSize: 81920, useAsync: true);
             entry.LastAccessTicks = DateTime.UtcNow.Ticks;
+            servedBytes = header.PartSize;
             response = new UsenetDecodedBodyResponse
             {
                 SegmentId = id,
@@ -179,13 +227,33 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
                 ResponseMessage = "222 - Article retrieved from segment cache",
                 Stream = new CachedYencStream(header, fileStream),
             };
-            return true;
+            return CacheLookupResult.Hit;
         }
         catch
         {
-            Drop(hash);
-            return false;
+            RecordReadFailureAndDrop(hash);
+            return CacheLookupResult.ReadFailure;
         }
+    }
+
+    private void RecordLookup(CacheLookupResult lookup)
+    {
+        switch (lookup)
+        {
+            case CacheLookupResult.NotReady:
+                _statistics.RecordLookupUnavailable();
+                break;
+            case CacheLookupResult.Miss:
+                _statistics.RecordMiss();
+                break;
+        }
+    }
+
+    private void RecordReadFailureAndDrop(string hash)
+    {
+        _statistics.RecordReadFailure();
+        Drop(hash);
+        PublishIndexGauges();
     }
 
     private void RecordCacheHit()
@@ -204,16 +272,21 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         });
     }
 
-    private void OnFinalized(string hash, long size)
+    private void OnCommitted(string hash, long size)
     {
+        long evictedEntries = 0;
+        long evictedBytes = 0;
         lock (_evictLock)
         {
             if (_index.TryGetValue(hash, out var existing)) _currentBytes -= existing.Size;
             _index[hash] = new CacheEntry { Size = size, LastAccessTicks = DateTime.UtcNow.Ticks };
             _currentBytes += size;
+            EvictWhileLocked(ref evictedEntries, ref evictedBytes);
         }
 
-        EvictIfNeeded();
+        if (evictedEntries > 0)
+            _statistics.RecordEviction(evictedEntries, evictedBytes);
+        PublishIndexGauges();
     }
 
     private void Drop(string hash)
@@ -223,37 +296,60 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
             if (_index.TryRemove(hash, out var entry)) _currentBytes -= entry.Size;
         }
 
-        SafeDelete(BlobPath(hash));
-        SafeDelete(BlobPath(hash) + ".h");
+        TryDelete(BlobPath(hash));
+        TryDelete(BlobPath(hash) + ".h");
     }
 
     private void EvictIfNeeded()
     {
         if (Interlocked.Read(ref _currentBytes) <= _maxBytes) return;
+        long evictedEntries = 0;
+        long evictedBytes = 0;
         lock (_evictLock)
         {
             if (_currentBytes <= _maxBytes) return;
-            foreach (var kv in _index.OrderBy(x => x.Value.LastAccessTicks).ToList())
-            {
-                if (_currentBytes <= _maxBytes) break;
-                if (!_index.TryRemove(kv.Key, out var entry)) continue;
-                _currentBytes -= entry.Size;
-                SafeDelete(BlobPath(kv.Key));
-                SafeDelete(BlobPath(kv.Key) + ".h");
-            }
+            EvictWhileLocked(ref evictedEntries, ref evictedBytes);
+        }
+
+        if (evictedEntries > 0)
+            _statistics.RecordEviction(evictedEntries, evictedBytes);
+        PublishIndexGauges();
+    }
+
+    private void EvictWhileLocked(ref long evictedEntries, ref long evictedBytes)
+    {
+        if (_currentBytes <= _maxBytes) return;
+        foreach (var kv in _index.OrderBy(x => x.Value.LastAccessTicks).ToList())
+        {
+            if (_currentBytes <= _maxBytes) break;
+            if (!_index.TryRemove(kv.Key, out var entry)) continue;
+            _currentBytes -= entry.Size;
+            evictedEntries++;
+            evictedBytes += entry.Size;
+            TryDelete(BlobPath(kv.Key));
+            TryDelete(BlobPath(kv.Key) + ".h");
         }
     }
+
+    private void PublishIndexGauges() =>
+        _generation.SetIndex(_index.Count, Interlocked.Read(ref _currentBytes));
 
     private void LoadIndex()
     {
         var stopwatch = Stopwatch.StartNew();
+        var cleaned = 0;
         try
         {
             foreach (var file in _enumerateCacheFiles())
             {
                 if (file.EndsWith(".tmp", StringComparison.Ordinal))
                 {
-                    SafeDelete(file);
+                    if (TryDelete(file))
+                    {
+                        cleaned++;
+                        _statistics.RecordTemporaryFileCleaned();
+                    }
+
                     continue;
                 }
 
@@ -275,7 +371,9 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            Log.Warning(e, "Segment cache: failed to scan {Dir}; starting empty.", _dir);
+            Volatile.Write(ref _catalogDegraded, 1);
+            Log.Warning("Segment cache catalog scan failed; starting empty.");
+            Log.Debug(e, "Segment cache catalog scan failure stack");
         }
         finally
         {
@@ -287,9 +385,21 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
             {
                 Volatile.Write(ref _catalogReady, 1);
                 stopwatch.Stop();
+                var entries = _index.Count;
+                var bytes = Interlocked.Read(ref _currentBytes);
+                _generation.SetCatalogReady(stopwatch.ElapsedMilliseconds, entries, bytes);
                 Log.Information(
-                    "Segment cache catalog loaded: {Count} entries, {Size} bytes in {Elapsed}ms.",
-                    _index.Count, Interlocked.Read(ref _currentBytes), stopwatch.ElapsedMilliseconds);
+                    "Segment cache catalog ready. Enabled: {Enabled}. Path: {PathClass}. MaxBytes: {MaxBytes}. " +
+                    "Entries: {Count}. Bytes: {Size}. DurationMs: {Elapsed}. TemporaryFilesCleaned: {Cleaned}. " +
+                    "Degraded: {Degraded}.",
+                    true,
+                    ClassifyCachePath(_dir),
+                    _maxBytes,
+                    entries,
+                    bytes,
+                    stopwatch.ElapsedMilliseconds,
+                    cleaned,
+                    Volatile.Read(ref _catalogDegraded) != 0);
             }
         }
     }
@@ -299,16 +409,26 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
     private static string Hash(string id)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id)));
 
-    private static void SafeDelete(string path)
+    private static bool TryDelete(string path)
     {
         try
         {
-            if (File.Exists(path)) File.Delete(path);
+            if (!File.Exists(path)) return false;
+            File.Delete(path);
+            return true;
         }
         catch
         {
-            // ignore
+            return false;
         }
+    }
+
+    private enum CacheLookupResult
+    {
+        NotReady,
+        Miss,
+        ReadFailure,
+        Hit,
     }
 
     private sealed class CacheEntry
@@ -323,20 +443,26 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         private readonly UsenetYencHeader _header;
         private readonly string _blobPath;
         private readonly string _tempPath;
-        private readonly Action<string, long> _onFinalized;
+        private readonly Action<string, long> _onCommitted;
+        private readonly SegmentCacheWriteAttempt _attempt;
         private FileStream? _temp;
         private long _written;
         private bool _eof;
         private bool _writeFailed;
 
-        public WriteThroughStream(YencStream source, UsenetYencHeader header, string blobPath,
-            Action<string, long> onFinalized) : base(Null)
+        public WriteThroughStream(
+            YencStream source,
+            UsenetYencHeader header,
+            string blobPath,
+            Action<string, long> onCommitted,
+            SegmentCacheWriteAttempt attempt) : base(Null)
         {
             _source = source;
             _header = header;
             _blobPath = blobPath;
             _tempPath = blobPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            _onFinalized = onFinalized;
+            _onCommitted = onCommitted;
+            _attempt = attempt;
         }
 
         public override ValueTask<UsenetYencHeader?> GetYencHeadersAsync(CancellationToken cancellationToken = default)
@@ -396,17 +522,22 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
                     {
                         File.WriteAllText(_blobPath + ".h", JsonSerializer.Serialize(_header, HeaderJsonOptions));
                         File.Move(_tempPath, _blobPath, overwrite: true);
-                        _onFinalized(Path.GetFileName(_blobPath), _written);
+                        _onCommitted(Path.GetFileName(_blobPath), _written);
+                        _attempt.Complete(SegmentCacheWriteOutcome.Committed, _written);
                     }
                     else
                     {
-                        SafeDelete(_tempPath);
+                        TryDelete(_tempPath);
+                        _attempt.Complete(
+                            _writeFailed ? SegmentCacheWriteOutcome.Failed : SegmentCacheWriteOutcome.Skipped,
+                            _written);
                     }
                 }
                 catch
                 {
-                    SafeDelete(_tempPath);
-                    SafeDelete(_blobPath + ".h");
+                    TryDelete(_tempPath);
+                    TryDelete(_blobPath + ".h");
+                    _attempt.Complete(SegmentCacheWriteOutcome.Failed, _written);
                 }
             }
 
