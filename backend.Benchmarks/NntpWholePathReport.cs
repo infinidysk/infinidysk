@@ -475,7 +475,7 @@ internal sealed class LoopbackServerProcess : IAsyncDisposable
             }
             return new LoopbackServerProcess(process, countersPath) { Port = port };
         }
-        catch
+        catch (Exception exception) when (exception is TimeoutException or InvalidOperationException or IOException)
         {
             if (!process.HasExited)
             {
