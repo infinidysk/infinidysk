@@ -27,7 +27,7 @@ public sealed class QueueCoordinatorHealthEndpointTests(NzbDavWebApplicationFact
     public async Task HealthEndpoint_ReturnsOkOnceCoordinatorIsRunning()
     {
         var hosted = factory.Services.GetRequiredService<QueueCoordinatorHostedService>();
-        await WaitUntilStateAsync(hosted, QueueCoordinatorState.Running);
+        Assert.Equal(QueueCoordinatorState.Running, hosted.GetState());
 
         using var client = factory.CreateClient();
         using var response = await client.GetAsync("/health");
@@ -57,23 +57,6 @@ public sealed class QueueCoordinatorHealthEndpointTests(NzbDavWebApplicationFact
         Assert.Equal("Unhealthy", await health.Content.ReadAsStringAsync());
         Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
         Assert.Equal("Healthy", await ready.Content.ReadAsStringAsync());
-    }
-
-    private static async Task WaitUntilStateAsync(
-        QueueCoordinatorHostedService service,
-        QueueCoordinatorState expected)
-    {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (service.GetState() != expected)
-        {
-            if (DateTime.UtcNow >= deadline)
-            {
-                throw new TimeoutException(
-                    $"Queue coordinator state was {service.GetState()}, expected {expected}.");
-            }
-
-            await Task.Delay(10);
-        }
     }
 
     private sealed class FaultedLiveness : IQueueCoordinatorLiveness

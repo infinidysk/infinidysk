@@ -226,8 +226,8 @@ public sealed class QueueCoordinatorHostedServiceTests
         Assert.False(invoked.Task.IsCompleted);
 
         lifetime.SignalStarted();
-        await invoked.Task.WaitAsync(GateTimeout);
         Assert.Equal(QueueCoordinatorState.Running, service.GetState());
+        await invoked.Task.WaitAsync(GateTimeout);
 
         await service.StopAsync(CancellationToken.None);
         Assert.Equal(QueueCoordinatorState.Stopped, service.GetState());
@@ -303,12 +303,11 @@ public sealed class QueueCoordinatorHostedServiceTests
         {
             await runTask.WaitAsync(GateTimeout);
         }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (InvalidOperationException)
+        catch (Exception exception) when (
+            exception is OperationCanceledException or InvalidOperationException)
         {
             // Teardown only: the test body already observed success or failure.
+            _ = exception;
         }
     }
 

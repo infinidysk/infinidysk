@@ -102,13 +102,20 @@ public sealed class QueueCoordinatorHostedService : BackgroundService, IQueueCoo
         CancellationToken stoppingToken)
     {
         if (_lifetime.ApplicationStarted.IsCancellationRequested)
+        {
+            TryTransition(QueueCoordinatorState.NotStarted, QueueCoordinatorState.Running);
             return true;
+        }
 
         var started = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        using var registration = _lifetime.ApplicationStarted.Register(
-            static state => ((TaskCompletionSource)state!).TrySetResult(),
-            started);
+        using var registration = _lifetime.ApplicationStarted.Register(() =>
+        {
+            // Set Running on the ApplicationStarted thread so /health cannot
+            // observe NotStarted after the host has already started serving.
+            TryTransition(QueueCoordinatorState.NotStarted, QueueCoordinatorState.Running);
+            started.TrySetResult();
+        });
 
         try
         {
@@ -120,4 +127,7 @@ public sealed class QueueCoordinatorHostedService : BackgroundService, IQueueCoo
             return false;
         }
     }
+
+    private bool TryTransition(QueueCoordinatorState from, QueueCoordinatorState to) =>
+        Interlocked.CompareExchange(ref _state, (int)to, (int)from) == (int)from;
 }
