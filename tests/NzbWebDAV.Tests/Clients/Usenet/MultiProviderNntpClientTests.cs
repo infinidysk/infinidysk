@@ -608,7 +608,14 @@ public class MultiProviderNntpClientTests
         var results = new List<PipelinedBodyResult>();
         await foreach (var result in client.DecodedBodiesPipelinedAsync(
                            segmentIds, depth, CancellationToken.None))
+        {
             results.Add(result);
+            // Later responses stay pending until the earlier stream is drained, matching
+            // UsenetDecodedBodyBatch's ordered-readiness contract.
+            if (result.Stream is not null)
+                await result.Stream.DisposeAsync();
+        }
+
         return results;
     }
 
@@ -1995,13 +2002,14 @@ public class MultiProviderNntpClientTests
 
             var firstTask = batch.Responses[0];
             var secondTask = batch.Responses[1];
-            Assert.True(firstTask.IsCompleted);
-            Assert.True(secondTask.IsCompleted);
-            first = await firstTask;
-            second = await secondTask;
+            first = await firstTask.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.False(secondTask.IsCompleted);
             Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, first.ResponseType);
-            Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, second.ResponseType);
             Assert.Equal("seg-0", first.SegmentId);
+            await first.Stream!.DisposeAsync();
+            first = first with { Stream = null };
+            second = await secondTask.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, second.ResponseType);
             Assert.Equal("seg-1", second.SegmentId);
         }
         finally
@@ -2107,9 +2115,13 @@ public class MultiProviderNntpClientTests
 
             Assert.False(batch.Completion.IsCompleted);
             backup.CompletePendingSingularRequests();
-            first = await batch.Responses[0];
-            second = await batch.Responses[1];
-            if (first.Stream is not null) await first.Stream.DisposeAsync();
+            first = await batch.Responses[0].WaitAsync(TimeSpan.FromSeconds(5));
+            if (first.Stream is not null)
+            {
+                await first.Stream.DisposeAsync();
+                first = first with { Stream = null };
+            }
+            second = await batch.Responses[1].WaitAsync(TimeSpan.FromSeconds(5));
             if (second.Stream is not null) await second.Stream.DisposeAsync();
             await batch.Completion.WaitAsync(TimeSpan.FromSeconds(5));
         }

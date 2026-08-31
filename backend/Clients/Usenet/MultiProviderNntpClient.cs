@@ -410,19 +410,19 @@ public class MultiProviderNntpClient(
                     var fallbackProviders = orderedProviders
                         .Skip(providerIndex + 1)
                         .ToArray();
-                    var responses =
+                    var rawResponses =
                         new Task<UsenetDecodedBodyResponse>[primaryBatch.Responses.Count];
                     // Admission (start-order) is separate from transfer completion so segment
                     // N+1 can begin its fallback walk after N has admitted/started, without
                     // waiting for N's body stream to finish. Concurrent starts are bounded by
                     // _batchFallbackStartGate until each transfer's body callback fires.
                     Task previousFallbackAdmission = Task.CompletedTask;
-                    for (var index = 0; index < responses.Length; index++)
+                    for (var index = 0; index < rawResponses.Length; index++)
                     {
                         var fallbackAdmission = new TaskCompletionSource(
                             TaskCreationOptions.RunContinuationsAsynchronously);
 #pragma warning disable CA2025 // batch response tasks intentionally outlive this scope: releasePending only returns the pending-admission reservation, while in-flight transfers hold (and release via completion callbacks) their own per-provider connection locks
-                        responses[index] = ResolveBatchResponseAsync(
+                        rawResponses[index] = ResolveBatchResponseAsync(
                             primaryBatch.Responses[index],
                             segmentIds[index],
                             provider,
@@ -435,15 +435,21 @@ public class MultiProviderNntpClient(
                         previousFallbackAdmission = fallbackAdmission.Task;
                     }
 
+                    var output = CreateBatchOutputSources(rawResponses.Length);
+                    var publicResponses = new Task<UsenetDecodedBodyResponse>[output.Length];
+                    for (var index = 0; index < output.Length; index++)
+                        publicResponses[index] = output[index].Task;
+                    var publisher = OrderedBatchResponsePublisher.PublishAsync(rawResponses, output);
                     var ownedCts = attemptCts;
                     attemptCts = null;
-#pragma warning disable CA2025 // Completion owns the attempt token until transport and coordinator finish
+#pragma warning disable CA2025 // Completion owns the attempt token until transport, coordinator, and publication finish
                     return new UsenetDecodedBodyBatch
                     {
-                        Responses = responses,
+                        Responses = publicResponses,
                         Completion = CompleteOwnedBatchAsync(
                             primaryBatch.Completion,
                             coordinator.Completion,
+                            publisher,
                             ownedCts),
                     };
 #pragma warning restore CA2025
@@ -756,14 +762,28 @@ public class MultiProviderNntpClient(
         }
     }
 
+    private static TaskCompletionSource<UsenetDecodedBodyResponse>[] CreateBatchOutputSources(int count)
+    {
+        var output = new TaskCompletionSource<UsenetDecodedBodyResponse>[count];
+        for (var index = 0; index < count; index++)
+        {
+            output[index] = new TaskCompletionSource<UsenetDecodedBodyResponse>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        return output;
+    }
+
     private static async Task CompleteOwnedBatchAsync(
         Task transportCompletion,
         Task coordinatorCompletion,
+        Task publisher,
         ContextualCancellationTokenSource owner)
     {
         try
         {
-            await BatchLifecycle.ObserveAllAsync(transportCompletion, coordinatorCompletion)
+            await BatchLifecycle.ObserveAllAsync(
+                    transportCompletion, coordinatorCompletion, publisher)
                 .ConfigureAwait(false);
         }
         finally
