@@ -16,11 +16,13 @@ public sealed class InFlightArticleBudget
 {
     private long _leased;
     private long _decodedPipeBytes;
+    private long _pipeAccountingVersion;
     private long _capBytes;
     private long _throttleEvents;
     private long _lastWarningTicks;
     private long _lastPipeOverReleaseWarningTicks;
     private int _waiterCount;
+    private int _pipeAccountingUpdates;
     private readonly ProviderLatencyTracker? _latencyTracker;
     private readonly object _gate = new();
     private readonly LinkedList<Waiter> _waiters = new();
@@ -59,15 +61,22 @@ public sealed class InFlightArticleBudget
     /// </summary>
     public InFlightArticleMemorySnapshot SnapshotMemory()
     {
-        // Pipe observer callbacks and lease releases are concurrent. Retry a few
-        // times so regular snapshots retain their accounting identity without
-        // blocking either hot path.
+        // Pipe observer callbacks update two counters. Retry only snapshots that
+        // overlap an update or saw a completed update between their reads; neither
+        // hot path blocks for this diagnostic capture.
         for (var attempt = 0; attempt < 3; attempt++)
         {
+            var versionBefore = Interlocked.Read(ref _pipeAccountingVersion);
+            var updatesBefore = Volatile.Read(ref _pipeAccountingUpdates);
             var total = LeasedBytes;
             var pipe = DecodedPipeBytes;
             var destination = total - pipe;
-            if (destination >= 0)
+            var updatesAfter = Volatile.Read(ref _pipeAccountingUpdates);
+            var versionAfter = Interlocked.Read(ref _pipeAccountingVersion);
+            if (destination >= 0 &&
+                updatesBefore == 0 &&
+                updatesAfter == 0 &&
+                versionBefore == versionAfter)
             {
                 return new InFlightArticleMemorySnapshot(
                     total,
@@ -254,37 +263,46 @@ public sealed class InFlightArticleBudget
     /// </summary>
     public void AccountBufferedPipeBytes(long delta)
     {
-        if (delta > 0)
-        {
-            Interlocked.Add(ref _decodedPipeBytes, delta);
-            AccountExtra(delta);
-            return;
-        }
-
         if (delta == 0) return;
 
-        var requested = -delta;
-        long released;
-        while (true)
+        Interlocked.Increment(ref _pipeAccountingUpdates);
+        try
         {
-            var current = Interlocked.Read(ref _decodedPipeBytes);
-            if (current <= 0)
+            if (delta > 0)
             {
-                released = 0;
-                break;
+                Interlocked.Add(ref _decodedPipeBytes, delta);
+                AccountExtra(delta);
+                return;
             }
 
-            released = Math.Min(current, requested);
-            if (Interlocked.CompareExchange(
-                    ref _decodedPipeBytes, current - released, current) == current)
-                break;
+            var requested = -delta;
+            long released;
+            while (true)
+            {
+                var current = Interlocked.Read(ref _decodedPipeBytes);
+                if (current <= 0)
+                {
+                    released = 0;
+                    break;
+                }
+
+                released = Math.Min(current, requested);
+                if (Interlocked.CompareExchange(
+                        ref _decodedPipeBytes, current - released, current) == current)
+                    break;
+            }
+
+            if (released > 0)
+                Release(released);
+
+            if (released < requested)
+                MaybeWarnPipeOverRelease(requested, released);
         }
-
-        if (released > 0)
-            Release(released);
-
-        if (released < requested)
-            MaybeWarnPipeOverRelease(requested, released);
+        finally
+        {
+            Interlocked.Increment(ref _pipeAccountingVersion);
+            Interlocked.Decrement(ref _pipeAccountingUpdates);
+        }
     }
 
     /// <summary>

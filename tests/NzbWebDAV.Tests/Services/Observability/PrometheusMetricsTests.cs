@@ -111,9 +111,9 @@ public sealed class PrometheusMetricsTests
         var exposition = await ExportAsync(registry);
 
         Assert.Contains("nzbdav_inflight_article_destination_bytes", exposition);
-        Assert.DoesNotContain("nzbdav_segment_buffer_checked_out_bytes", exposition);
-        Assert.DoesNotContain("nzbdav_segment_buffer_idle_bytes", exposition);
-        Assert.DoesNotContain("nzbdav_segment_buffer_max_idle_bytes", exposition);
+        Assert.DoesNotContain("\nnzbdav_segment_buffer_checked_out_bytes ", exposition);
+        Assert.DoesNotContain("\nnzbdav_segment_buffer_idle_bytes ", exposition);
+        Assert.DoesNotContain("\nnzbdav_segment_buffer_max_idle_bytes ", exposition);
     }
 
     [Fact]

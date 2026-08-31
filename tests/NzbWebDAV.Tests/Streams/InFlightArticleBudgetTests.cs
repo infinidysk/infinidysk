@@ -196,7 +196,7 @@ public class InFlightArticleBudgetTests
         var waiter = budget.LeaseAsync(50, CancellationToken.None).AsTask();
         await WaitUntil(() => budget.WaiterCount == 1);
 
-        held.Adjust(-150);
+        held.Adjust(-100);
         await Task.Delay(25);
         Assert.False(waiter.IsCompleted);
 
