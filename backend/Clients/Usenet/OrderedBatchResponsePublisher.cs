@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
@@ -23,9 +24,19 @@ internal static class OrderedBatchResponsePublisher
         }
 
         Task previousTerminal = Task.CompletedTask;
+        ExceptionDispatchInfo? fatal = null;
+        void ObserveTerminal(Exception? exception)
+        {
+            observeTerminal?.Invoke(exception);
+            if (exception is OutOfMemoryException)
+                fatal = BatchLifecycle.PreferFailure(fatal, exception);
+        }
+
         for (var index = 0; index < rawResponses.Count; index++)
         {
-            await ObservePredecessorAsync(previousTerminal).ConfigureAwait(false);
+            CaptureFatal(
+                ref fatal,
+                await ObservePredecessorAsync(previousTerminal).ConfigureAwait(false));
             try
             {
                 var response = await rawResponses[index].ConfigureAwait(false);
@@ -42,33 +53,33 @@ internal static class OrderedBatchResponsePublisher
                     Stream = new OrderedBatchYencStream(
                         response.Stream,
                         terminal,
-                        observeTerminal ?? Noop),
+                        ObserveTerminal),
                 });
                 previousTerminal = terminal.Task;
             }
             catch (Exception exception)
             {
                 output[index].TrySetException(exception);
+                if (exception is OutOfMemoryException)
+                    fatal = BatchLifecycle.PreferFailure(fatal, exception);
                 previousTerminal = Task.CompletedTask;
             }
         }
 
-        await ObservePredecessorAsync(previousTerminal).ConfigureAwait(false);
+        CaptureFatal(
+            ref fatal,
+            await ObservePredecessorAsync(previousTerminal).ConfigureAwait(false));
+        fatal?.Throw();
     }
 
-    private static void Noop(Exception? _)
+    private static void CaptureFatal(
+        ref ExceptionDispatchInfo? current,
+        ExceptionDispatchInfo? candidate)
     {
+        if (candidate?.SourceException is OutOfMemoryException exception)
+            current = BatchLifecycle.PreferFailure(current, exception);
     }
 
-    private static async Task ObservePredecessorAsync(Task previous)
-    {
-        try
-        {
-            await previous.ConfigureAwait(false);
-        }
-        catch (Exception)
-        {
-            // Predecessor already surfaced on its own response or stream.
-        }
-    }
+    private static Task<ExceptionDispatchInfo?> ObservePredecessorAsync(Task previous) =>
+        BatchLifecycle.ObserveAsync(previous);
 }

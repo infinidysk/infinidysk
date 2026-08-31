@@ -145,14 +145,23 @@ internal static class LocalDataBatchOverlay
             if (!mismatchHandled)
             {
                 deferred.Discard();
-                DisposeHits(partition.Hits);
-                if (inner is not null)
-                    await ObserveCompletionAsync(inner.Completion).ConfigureAwait(false);
-                ArticleBodyCompletion.InvokeContained(
-                    outerCallback, ArticleBodyResult.NotRetrieved, "local-batch-setup");
+                try
+                {
+                    DisposeHits(partition.Hits);
+                    if (inner is not null)
+                        await ObserveCompletionAsync(inner.Completion).ConfigureAwait(false);
+                }
+                finally
+                {
+                    ArticleBodyCompletion.InvokeContained(
+                        outerCallback, ArticleBodyResult.NotRetrieved, "local-batch-setup");
+                    abandonCts.Dispose();
+                }
             }
-
-            abandonCts.Dispose();
+            else
+            {
+                abandonCts.Dispose();
+            }
             throw;
         }
 
@@ -571,6 +580,9 @@ internal sealed class OrderedBatchYencStream : YencStream
         if (Interlocked.Exchange(ref _signaled, 1) != 0)
             return;
         _observeTerminal(failure);
-        _terminal.TrySetResult();
+        if (failure is null)
+            _terminal.TrySetResult();
+        else
+            _terminal.TrySetException(failure);
     }
 }

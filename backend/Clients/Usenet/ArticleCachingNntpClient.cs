@@ -366,15 +366,21 @@ public class ArticleCachingNntpClient(
             if (!mismatchHandled)
             {
                 deferred.Discard();
-                if (batch is not null)
-                    await DecodedBodyBatchCleanup.AbandonAsync(batch, attemptCts).ConfigureAwait(false);
-                else
-                    attemptCts.Dispose();
                 var cancelled = exception.IsCancellationException(cancellationToken);
-                ArticleBodyCompletion.InvokeContained(
-                    outerCallback,
-                    cancelled ? ArticleBodyResult.Cancelled : ArticleBodyResult.NotRetrieved,
-                    cancelled ? null : "cache-batch-setup");
+                try
+                {
+                    if (batch is not null)
+                        await DecodedBodyBatchCleanup.AbandonAsync(batch, attemptCts).ConfigureAwait(false);
+                }
+                finally
+                {
+                    ArticleBodyCompletion.InvokeContained(
+                        outerCallback,
+                        cancelled ? ArticleBodyResult.Cancelled : ArticleBodyResult.NotRetrieved,
+                        cancelled ? null : "cache-batch-setup");
+                    if (batch is null)
+                        attemptCts.Dispose();
+                }
             }
 
             throw;

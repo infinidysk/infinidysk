@@ -143,6 +143,40 @@ public class ArticleCachingNntpClientTests
     }
 
     [Fact]
+    public async Task DecodedBodiesAsync_MalformedInnerBatchCompletionOom_StillReportsNotRetrieved()
+    {
+        var inner = new ControlledDecodedBodyBatchClient(
+            responseCountOverride: 0,
+            completionException: new OutOfMemoryException("batch-cleanup"));
+        using var client = new ArticleCachingNntpClient(inner);
+        var recorder = new ArticleBodyCompletionRecorder();
+
+        await Assert.ThrowsAsync<OutOfMemoryException>(() =>
+            client.DecodedBodiesAsync(["a", "b"], recorder.Invoke, CancellationToken.None));
+
+        Assert.Equal(1, recorder.Count);
+        Assert.Equal(ArticleBodyResult.NotRetrieved, recorder.Result);
+        Assert.Equal("batch-response-count-mismatch", recorder.FailureReason);
+    }
+
+    [Fact]
+    public async Task DecodedBodiesAsync_SetupCleanupOom_StillReportsNotRetrieved()
+    {
+        var inner = new ControlledDecodedBodyBatchClient(
+            completionException: new OutOfMemoryException("cleanup"),
+            responses: new ThrowingCountResponses());
+        var recorder = new ArticleBodyCompletionRecorder();
+        using var client = new ArticleCachingNntpClient(inner);
+
+        await Assert.ThrowsAsync<OutOfMemoryException>(() =>
+            client.DecodedBodiesAsync(["a"], recorder.Invoke, CancellationToken.None));
+
+        Assert.Equal(1, recorder.Count);
+        Assert.Equal(ArticleBodyResult.NotRetrieved, recorder.Result);
+        Assert.Equal("cache-batch-setup", recorder.FailureReason);
+    }
+
+    [Fact]
     public async Task DecodedArticleAsync_FullCacheHit_ThrowingCallbackReturnsCachedArticle()
     {
         const string segmentId = "article-segment";
@@ -230,6 +264,19 @@ public class ArticleCachingNntpClientTests
             await stream.CopyToAsync(destination);
             return destination.ToArray();
         }
+    }
+
+    private sealed class ThrowingCountResponses : IReadOnlyList<Task<UsenetDecodedBodyResponse>>
+    {
+        public int Count => throw new InvalidOperationException("response-count");
+
+        public Task<UsenetDecodedBodyResponse> this[int index] =>
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        public IEnumerator<Task<UsenetDecodedBodyResponse>> GetEnumerator() =>
+            Enumerable.Empty<Task<UsenetDecodedBodyResponse>>().GetEnumerator();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     private sealed class CacheProbeNntpClient : NntpClient

@@ -701,9 +701,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
     {
         try
         {
-            if (!File.Exists(path))
-                return SegmentCacheDeleteResult.Absent;
-
+            _ = File.GetAttributes(path);
             File.Delete(path);
             return SegmentCacheDeleteResult.Deleted;
         }

@@ -59,6 +59,7 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
     private readonly Exception? _setupException;
     private readonly Exception? _completionException;
     private readonly bool _blockCompletionUntilStreamsDisposed;
+    private readonly IReadOnlyList<Task<UsenetDecodedBodyResponse>>? _responses;
     private readonly ConcurrentQueue<TaskCompletionSource> _completions = new();
     private int _disposedStreams;
 
@@ -68,13 +69,15 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
         Exception? setupException = null,
         CallbackTiming callbackTiming = CallbackTiming.BeforeReturn,
         Exception? completionException = null,
-        bool blockCompletionUntilStreamsDisposed = false)
+        bool blockCompletionUntilStreamsDisposed = false,
+        IReadOnlyList<Task<UsenetDecodedBodyResponse>>? responses = null)
     {
         _createResponse = createResponse ?? (id => CreateSuccess(id, "body"u8.ToArray()));
         _responseCountOverride = responseCountOverride;
         _setupException = setupException;
         _completionException = completionException;
         _blockCompletionUntilStreamsDisposed = blockCompletionUntilStreamsDisposed;
+        _responses = responses;
         Timing = callbackTiming;
     }
 
@@ -149,22 +152,32 @@ internal sealed class ControlledDecodedBodyBatchClient : NntpClient
                 completion.TrySetResult();
         }
 
-        var count = _responseCountOverride ?? segmentIds.Count;
-        var responses = new Task<UsenetDecodedBodyResponse>[Math.Max(0, count)];
-        for (var index = 0; index < responses.Length; index++)
+        IReadOnlyList<Task<UsenetDecodedBodyResponse>> responses;
+        if (_responses is not null)
         {
-            var id = index < segmentIds.Count ? segmentIds[index] : new SegmentId($"extra-{index}");
-            var response = _createResponse(id);
-            if (_blockCompletionUntilStreamsDisposed && response.Stream is not null)
+            responses = _responses;
+        }
+        else
+        {
+            var count = _responseCountOverride ?? segmentIds.Count;
+            var created = new Task<UsenetDecodedBodyResponse>[Math.Max(0, count)];
+            for (var index = 0; index < created.Length; index++)
             {
-                remainingHolder.Value++;
-                response = response with
+                var id = index < segmentIds.Count ? segmentIds[index] : new SegmentId($"extra-{index}");
+                var response = _createResponse(id);
+                if (_blockCompletionUntilStreamsDisposed && response.Stream is not null)
                 {
-                    Stream = new DisposeTrackingYencStream(response.Stream, OnStreamDisposed),
-                };
+                    remainingHolder.Value++;
+                    response = response with
+                    {
+                        Stream = new DisposeTrackingYencStream(response.Stream, OnStreamDisposed),
+                    };
+                }
+
+                created[index] = Task.FromResult(response);
             }
 
-            responses[index] = Task.FromResult(response);
+            responses = created;
         }
 
         if (Timing is CallbackTiming.BeforeReturn or CallbackTiming.Twice)

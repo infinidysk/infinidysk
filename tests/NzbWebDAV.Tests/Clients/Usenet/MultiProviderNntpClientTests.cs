@@ -2081,6 +2081,62 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public async Task BatchResponse_OomFaultsResponseAndBatchCompletion()
+    {
+        var connection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            FaultBatchResponsesWith = () => new OutOfMemoryException("batch-response"),
+        };
+        using var client = new MultiProviderNntpClient([CreateProvider(connection)]);
+
+        var batch = await client.DecodedBodiesAsync(
+            ["segment"], onConnectionReadyAgain: null, CancellationToken.None);
+
+        await Assert.ThrowsAsync<OutOfMemoryException>(() => batch.Responses[0]);
+        await Assert.ThrowsAsync<OutOfMemoryException>(() => batch.Completion);
+    }
+
+    [Fact]
+    public async Task OrderedBatchResponsePublisher_StreamOomFaultsPublisher()
+    {
+        var oom = new OutOfMemoryException("stream-read");
+        var raw = new Task<UsenetDecodedBodyResponse>[]
+        {
+            Task.FromResult(new UsenetDecodedBodyResponse
+            {
+                SegmentId = "first",
+                ResponseCode = 222,
+                ResponseMessage = "222",
+                Stream = new ThrowingOomYencStream(oom),
+            }),
+            Task.FromResult(new UsenetDecodedBodyResponse
+            {
+                SegmentId = "second",
+                ResponseCode = 222,
+                ResponseMessage = "222",
+                Stream = new YencStream(new MemoryStream([], writable: false)),
+            }),
+        };
+        var output = new[]
+        {
+            new TaskCompletionSource<UsenetDecodedBodyResponse>(
+                TaskCreationOptions.RunContinuationsAsynchronously),
+            new TaskCompletionSource<UsenetDecodedBodyResponse>(
+                TaskCreationOptions.RunContinuationsAsynchronously),
+        };
+
+        var publisher = OrderedBatchResponsePublisher.PublishAsync(raw, output);
+        var first = await output[0].Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.ThrowsAsync<OutOfMemoryException>(
+            async () => await first.Stream!.ReadAsync(new byte[1]));
+        var second = await output[1].Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await second.Stream!.DisposeAsync();
+
+        await Assert.ThrowsAsync<OutOfMemoryException>(() => publisher);
+    }
+
+    [Fact]
     public async Task DecodedBodiesAsync_CompletionWaitsForPrimaryAndFallbackTransfers()
     {
         var primary = new ScriptedNntpClient
@@ -2432,6 +2488,14 @@ public class MultiProviderNntpClientTests
         breaker.RecordFailure();
         breaker.RecordFailure();
         return breaker;
+    }
+
+    private sealed class ThrowingOomYencStream(OutOfMemoryException exception) : YencStream(Null)
+    {
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default) =>
+            throw exception;
     }
 
     internal sealed class ScriptedNntpClient : NntpClient
