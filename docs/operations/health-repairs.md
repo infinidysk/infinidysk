@@ -5,8 +5,9 @@
 **Settings → Repairs** monitors mounted media, reconstructs missing segments from PAR2 parity, and
 can trigger *Arr replacements for unhealthy linked library items.
 
-**Enable Background Repairs** is on by default. Turn it off to stop idle health-check STAT traffic
-and PAR2 work. To automatically replace linked library items, also configure:
+**Enable Background Repairs** is on by default [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }. Turn it off to stop
+background health checks, PAR2 work, and limited damage-tolerance handling. To automatically
+replace linked library items, also configure:
 
 - **Library Directory** visible inside the container — the organized library root (parent of Arr root folders), never the rclone mount or `/completed-symlinks`
 - At least one configured [Radarr/Sonarr instance](../configuration/arrs.md)

@@ -116,6 +116,26 @@ describe("health route loader", () => {
     await expect(loader(loaderArgs())).resolves.toMatchObject({ isEnabled: false });
   });
 
+  it.each([
+    [" true ", true],
+    ["TRUE", true],
+    [" false ", false],
+    ["bogus", true],
+  ])("parses repair.enable %j as enabled=%s", async (configValue, expected) => {
+    getHealthCheckQueueMock.mockResolvedValue({
+      uncheckedCount: 0,
+      items: [],
+    });
+    getHealthCheckHistoryMock.mockResolvedValue({
+      stats: [],
+      items: [],
+      totalCount: 0,
+    });
+    getConfigMock.mockResolvedValueOnce([{ configName: "repair.enable", configValue }]);
+
+    await expect(loader(loaderArgs())).resolves.toMatchObject({ isEnabled: expected });
+  });
+
   it("uses URL-backed paging and repair-status filters", async () => {
     getHealthCheckQueueMock.mockResolvedValue({ uncheckedCount: 0, items: [] });
     getHealthCheckHistoryMock.mockResolvedValue({ stats: [], items: [], totalCount: 0 });

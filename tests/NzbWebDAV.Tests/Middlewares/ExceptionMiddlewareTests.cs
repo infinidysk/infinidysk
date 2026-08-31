@@ -912,6 +912,28 @@ public class ExceptionMiddlewareTests
         Assert.False(configManager.IsPar2RepairEnabled());
     }
 
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("TRUE", true)]
+    [InlineData(" true ", true)]
+    [InlineData("false", false)]
+    [InlineData("FALSE", false)]
+    [InlineData(" false ", false)]
+    [InlineData("bogus", true)]
+    public void GetRepairDisabledReason_ParsesRepairEnableWithoutThrowing(string value, bool enabled)
+    {
+        var configManager = new ConfigManager();
+        configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = value },
+        ]);
+
+        Assert.Equal(enabled, configManager.IsRepairJobEnabled());
+        Assert.Equal(
+            enabled ? null : "Enable Background Repairs is off",
+            configManager.GetRepairDisabledReason());
+    }
+
     [Fact]
     public void GetRepairDisabledReason_NamesDisabledToggle()
     {

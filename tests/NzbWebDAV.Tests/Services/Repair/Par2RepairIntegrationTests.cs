@@ -352,6 +352,10 @@ public sealed class Par2RepairIntegrationTests
         try
         {
             var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "false" },
+            ]);
             var store = new RepairPatchStore(dir, 1024 * 1024);
             await store.EnsureCatalogLoadedAsync(CancellationToken.None);
             var service = new Par2RepairService(config, null!, store);

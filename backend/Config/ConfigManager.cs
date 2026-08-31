@@ -2159,12 +2159,13 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 
     /// <summary>
     /// Unset <see cref="ConfigKeys.RepairEnable"/> is on. Only an explicit false disables
-    /// background health checks, PAR2, and damage tolerance.
+    /// background health checks, PAR2, and damage tolerance. Invalid text uses the same
+    /// default-on fallback so a typo cannot throw or disable the stack.
     /// </summary>
     private bool IsBackgroundRepairsMasterEnabled()
     {
         var repairValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairEnable));
-        return repairValue is null || bool.Parse(repairValue);
+        return repairValue is null || !bool.TryParse(repairValue, out var enabled) || enabled;
     }
 
     /// <summary>

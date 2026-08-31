@@ -27,6 +27,7 @@ import {
   updateHealthCheckProgress,
 } from "./health-queue-state";
 import { withUrlBase } from "~/utils/url-base";
+import { parseConfigBoolean } from "~/utils/config-bool";
 
 const topicNames = {
   healthItemStatus: "hs",
@@ -66,8 +67,7 @@ function isBackgroundRepairsEnabled(
   enabledKey: string,
 ): boolean {
   const item = config.find((entry) => entry.configName === enabledKey);
-  if (!item || item.configValue.trim() === "") return true;
-  return item.configValue.toLowerCase() === "true";
+  return parseConfigBoolean(item?.configValue);
 }
 
 export async function loader({ request }: Route.LoaderArgs) {

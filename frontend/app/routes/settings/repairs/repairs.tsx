@@ -11,6 +11,7 @@ import {
   WeeklyWindowEditor,
   isWeeklyWindowScheduleJsonValid,
 } from "~/components/weekly-window-editor/weekly-window-editor";
+import { parseConfigBoolean } from "~/utils/config-bool";
 import { isPositiveInteger, isPositiveNumber } from "../validation";
 
 type RepairsSettingsProps = {
@@ -51,7 +52,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
   ].some((instance) => instance.Enabled !== false);
   const helpText =
     "Continuously monitor mounted media for health, reconstruct missing segments from PAR2 parity, and retain playable files with limited damage. Library Directory and enabled Radarr/Sonarr instances are only needed to replace linked library items.";
-  const isRepairEnabled = config["repair.enable"] === "true";
+  const isRepairEnabled = parseConfigBoolean(config["repair.enable"]);
   const autoRemoveAfter = config["repair.auto-remove-after-failures"] ?? "0";
   const autoRemoveEnabled = isNonNegativeInteger(autoRemoveAfter) && Number(autoRemoveAfter) > 0;
 

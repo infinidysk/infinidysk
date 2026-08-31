@@ -60,6 +60,7 @@ import { Icon } from "~/components/ui";
 import type { AppOutletContext } from "~/auth/authorization";
 import { isSettingsTabDisabled } from "~/utils/service-provider";
 import { withUrlBase } from "~/utils/url-base";
+import { parseConfigBoolean } from "~/utils/config-bool";
 
 const defaultConfig = {
   "general.base-url": "",
@@ -591,13 +592,13 @@ function Body(props: BodyProps) {
                 {healthQueueResetCount !== null &&
                   ` ${healthQueueResetCount.toLocaleString()} files queued for re-check.`}
                 {healthQueueResetError && ` ${healthQueueResetError}`}
-                {newConfig["repair.enable"] !== "true" &&
+                {!parseConfigBoolean(newConfig["repair.enable"]) &&
                   " Enable Background Repairs to re-check library health."}
               </span>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {!isReadOnly &&
-                newConfig["repair.enable"] === "true" &&
+                parseConfigBoolean(newConfig["repair.enable"]) &&
                 healthQueueResetCount === null && (
                   <Button
                     variant="ghost"
