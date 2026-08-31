@@ -599,6 +599,51 @@ public sealed class SupportPackContentsTests : IDisposable
     }
 
     [Fact]
+    public async Task Pack_JsonArtifacts_RemainValidWithPathologicalSecrets()
+    {
+        var configManager = new ConfigManager();
+        configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.ApiKey, ConfigValue = "true" },
+            new ConfigItem { ConfigName = ConfigKeys.ApiStrmKey, ConfigValue = "null" },
+            new ConfigItem { ConfigName = ConfigKeys.WebdavPass, ConfigValue = "schema" },
+            new ConfigItem { ConfigName = ConfigKeys.RclonePass, ConfigValue = "enabled" },
+            new ConfigItem { ConfigName = ConfigKeys.WatchtowerProfileToken, ConfigValue = "203.0.113.50" },
+        ]);
+
+        var entries = await ReadPackEntriesAsync(
+            new LogBufferSink(10),
+            new WarningLogBuffer(new LogBufferSink(50)),
+            configManager: configManager);
+
+        foreach (var (name, content) in entries)
+        {
+            if (!name.EndsWith(".json", StringComparison.Ordinal))
+                continue;
+
+            using var document = JsonDocument.Parse(content);
+            Assert.Equal(JsonValueKind.Object, document.RootElement.ValueKind);
+        }
+
+        using var effective = JsonDocument.Parse(entries["configuration-effective-streaming.json"]);
+        Assert.Equal(1, effective.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(
+            JsonValueKind.True,
+            effective.RootElement.GetProperty("streaming").GetProperty("pipelinedBodyRequests").ValueKind);
+        Assert.Equal(
+            JsonValueKind.True,
+            effective.RootElement.GetProperty("segmentCache").GetProperty("enabled").ValueKind);
+
+        using var manifest = JsonDocument.Parse(entries["manifest.json"]);
+        Assert.Equal(
+            "included",
+            manifest.RootElement.GetProperty("sections").GetProperty("configurationEffectiveStreaming").GetString());
+        Assert.Equal(
+            "included",
+            manifest.RootElement.GetProperty("sections").GetProperty("segmentCache").GetString());
+    }
+
+    [Fact]
     public async Task Pack_IncludesRetainedStreamTracesUntilDiscarded()
     {
         var buffer = new StreamTraceBuffer(100, enabled: false);

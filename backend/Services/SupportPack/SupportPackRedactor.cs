@@ -60,11 +60,7 @@ internal sealed partial class SupportPackRedactor
         {
             try
             {
-                using var document = JsonDocument.Parse(value);
-                var buffer = new ArrayBufferWriter<byte>();
-                using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = true }))
-                    WriteRedactedJson(writer, document.RootElement);
-                return Encoding.UTF8.GetString(buffer.WrittenSpan);
+                return RedactJson(value);
             }
             catch (JsonException)
             {
@@ -74,6 +70,15 @@ internal sealed partial class SupportPackRedactor
         }
 
         return RedactText(value);
+    }
+
+    public string RedactJson(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = true }))
+            WriteRedactedJson(writer, document.RootElement);
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 
     public string RedactText(string? value)

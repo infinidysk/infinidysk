@@ -94,4 +94,36 @@ public class SupportPackRedactorTests
 
         Assert.Equal("[REDACTED_MALFORMED_STRUCTURED_VALUE]", result);
     }
+
+    [Theory]
+    [InlineData("true")]
+    [InlineData("null")]
+    [InlineData("schema")]
+    [InlineData("enabled")]
+    [InlineData("203.0.113.50")]
+    public void RedactJson_PreservesPropertyNamesAndPrimitiveSyntax(string secret)
+    {
+        var redactor = new SupportPackRedactor([secret]);
+        var json = """
+            {
+              "schemaVersion": 1,
+              "enabled": true,
+              "flag": null,
+              "note": "value-before",
+              "nested": { "schema": "inner", "enabled": false }
+            }
+            """.Replace("value-before", secret, StringComparison.Ordinal);
+
+        var result = redactor.RedactJson(json);
+        using var document = JsonDocument.Parse(result);
+        var root = document.RootElement;
+
+        Assert.Equal(JsonValueKind.Number, root.GetProperty("schemaVersion").ValueKind);
+        Assert.Equal(1, root.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(JsonValueKind.True, root.GetProperty("enabled").ValueKind);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("flag").ValueKind);
+        Assert.Equal("[REDACTED]", root.GetProperty("note").GetString());
+        Assert.Equal("inner", root.GetProperty("nested").GetProperty("schema").GetString());
+        Assert.Equal(JsonValueKind.False, root.GetProperty("nested").GetProperty("enabled").ValueKind);
+    }
 }

@@ -150,20 +150,26 @@ public sealed class SupportPackService(
             redactor,
             cancellationToken).ConfigureAwait(false);
 
+        EffectiveStreamingConfigDocument? effective = null;
         try
         {
-            await WriteTextAsync(
-                archive,
-                "configuration-effective-streaming.json",
-                redactor.RedactText(JsonSerializer.Serialize(
-                    EffectiveStreamingConfigManifest.Create(configManager),
-                    EffectiveStreamingConfigManifest.SerializerOptions)),
-                cancellationToken).ConfigureAwait(false);
-            sectionStatus["configurationEffectiveStreaming"] = "included";
+            effective = EffectiveStreamingConfigManifest.Create(configManager);
         }
         catch (Exception e) when (e is not OutOfMemoryException and not OperationCanceledException)
         {
             sectionStatus["configurationEffectiveStreaming"] = "unavailable";
+        }
+
+        if (effective is not null)
+        {
+            await WriteJsonAsync(
+                archive,
+                "configuration-effective-streaming.json",
+                effective,
+                redactor,
+                cancellationToken,
+                EffectiveStreamingConfigManifest.SerializerOptions).ConfigureAwait(false);
+            sectionStatus["configurationEffectiveStreaming"] = "included";
         }
 
         try
@@ -1390,11 +1396,12 @@ public sealed class SupportPackService(
         string name,
         object value,
         SupportPackRedactor redactor,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken,
+        JsonSerializerOptions? options = null) =>
         await WriteTextAsync(
             archive,
             name,
-            redactor.RedactText(JsonSerializer.Serialize(value, JsonOptions)),
+            redactor.RedactJson(JsonSerializer.Serialize(value, options ?? JsonOptions)),
             cancellationToken).ConfigureAwait(false);
 
     private static async Task WriteTextAsync(
