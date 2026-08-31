@@ -539,6 +539,49 @@ public class DownloadingNntpClientStatGateTests
         await DrainAsync(CompletionApi.Body, bTask);
     }
 
+    [Fact]
+    public async Task BatchCompletion_IsObservableAfterPermitRelease()
+    {
+        var inner = new ManualCompletionNntpClient { DeferBatchLifecycle = true };
+        var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 10);
+        using var client = new DownloadingNntpClient(inner, config);
+        var outer = new ArticleBodyCompletionRecorder();
+
+        var aTask = StartApi(client, CompletionApi.Batch, "a", outer.Invoke, CancellationToken.None);
+        var aOp = await WaitForOpAsync(inner, 1);
+        aOp.Callback!(ArticleBodyResult.Retrieved, null);
+        var batch = await (Task<UsenetDecodedBodyBatch>)aTask;
+        Assert.Equal(1, outer.Count);
+        Assert.False(batch.Completion.IsCompleted);
+        inner.BatchLifecycle.TrySetResult();
+        await DrainAsync(CompletionApi.Batch, aTask);
+
+        var bTask = StartApi(client, CompletionApi.Batch, "b", null, CancellationToken.None);
+        var bOp = await WaitForOpAsync(inner, 2);
+        bOp.Callback!(ArticleBodyResult.Retrieved, null);
+        inner.BatchLifecycle.TrySetResult();
+        await DrainAsync(CompletionApi.Batch, bTask);
+    }
+
+    [Fact]
+    public async Task BatchSetupThrow_ReleasesPermitAndCompletesCallbackOnce()
+    {
+        var inner = new ThrowOnceBatchNntpClient();
+        var config = CreateConfig(maxQueueConnections: 1, maxDownloadConnections: 1);
+        using var client = new DownloadingNntpClient(inner, config);
+        var outer = new ArticleBodyCompletionRecorder();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.DecodedBodiesAsync(["a"], outer.Invoke, CancellationToken.None));
+        Assert.Equal(1, outer.Count);
+        Assert.Equal(ArticleBodyResult.NotRetrieved, outer.Result);
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var recovered = await client.DecodedBodiesAsync(["b"], onConnectionReadyAgain: null, timeout.Token);
+        await recovered.DrainAsync();
+        Assert.Equal(2, inner.Calls);
+    }
+
     private static Task StartApi(
         DownloadingNntpClient client,
         CompletionApi api,
@@ -580,6 +623,7 @@ public class DownloadingNntpClientStatGateTests
                     }
                 }
 
+                await batch.Completion;
                 break;
             }
             case CompletionApi.Article:
@@ -695,6 +739,8 @@ public class DownloadingNntpClientStatGateTests
         public ArticleBodyResult AutoResult { get; set; } = ArticleBodyResult.Retrieved;
         public string? AutoReason { get; set; }
         public bool Success { get; set; } = true;
+        public bool DeferBatchLifecycle { get; set; }
+        public TaskCompletionSource BatchLifecycle { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public IReadOnlyList<PendingOp> Ops
         {
@@ -735,7 +781,11 @@ public class DownloadingNntpClientStatGateTests
                 var responses = segmentIds
                     .Select(id => Task.FromResult(CreateBody(id)))
                     .ToArray();
-                return Task.FromResult(new UsenetDecodedBodyBatch { Responses = responses });
+                return Task.FromResult(new UsenetDecodedBodyBatch
+                {
+                    Responses = responses,
+                    Completion = DeferBatchLifecycle ? BatchLifecycle.Task : Task.CompletedTask,
+                });
             }
             finally
             {
@@ -845,6 +895,44 @@ public class DownloadingNntpClientStatGateTests
                     PartSize = bytes.Length,
                 },
                 new MemoryStream(bytes, writable: false));
+    }
+
+    private sealed class ThrowOnceBatchNntpClient : MinimalNntpClient
+    {
+        public int Calls { get; private set; }
+
+        public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+            IReadOnlyList<SegmentId> segmentIds,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            Calls++;
+            if (Calls == 1)
+                throw new InvalidOperationException("batch-setup");
+
+            onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+            var responses = segmentIds
+                .Select(id => Task.FromResult(new UsenetDecodedBodyResponse
+                {
+                    SegmentId = id.ToString(),
+                    ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
+                    ResponseMessage = "222",
+                    Stream = new CachedYencStream(
+                        new UsenetYencHeader
+                        {
+                            FileName = "fake.bin",
+                            FileSize = 4,
+                            LineLength = 128,
+                            PartNumber = 1,
+                            TotalParts = 1,
+                            PartOffset = 0,
+                            PartSize = 4,
+                        },
+                        new MemoryStream("body"u8.ToArray(), writable: false)),
+                }))
+                .ToArray();
+            return Task.FromResult(new UsenetDecodedBodyBatch { Responses = responses });
+        }
     }
 
     private abstract class MinimalNntpClient : NntpClient

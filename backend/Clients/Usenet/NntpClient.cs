@@ -310,6 +310,7 @@ public abstract class NntpClient : INntpClient
             var batch = await DecodedBodiesAsync(
                 batchIds, onConnectionReadyAgain: null, batchCts.Token).ConfigureAwait(false);
             var position = 0;
+            var fullyEnumerated = false;
             try
             {
                 for (; position < batch.Responses.Count; position++)
@@ -318,12 +319,14 @@ public abstract class NntpClient : INntpClient
                     yield return await MapPipelinedBodyResultAsync(
                         batch.Responses[position], segmentId, cancellationToken).ConfigureAwait(false);
                 }
+
+                fullyEnumerated = true;
             }
             finally
             {
                 // A fully drained batch belongs to the consumer, and cancelling would tear
                 // down streams it still holds.
-                if (position < batch.Responses.Count)
+                if (!fullyEnumerated && position < batch.Responses.Count)
                 {
                     try
                     {
@@ -337,6 +340,8 @@ public abstract class NntpClient : INntpClient
 
                     await ReleaseRemainingBodiesAsync(batch.Responses, position).ConfigureAwait(false);
                 }
+
+                await ObserveBatchCompletionAsync(batch.Completion).ConfigureAwait(false);
             }
         }
     }
@@ -373,6 +378,18 @@ public abstract class NntpClient : INntpClient
             {
                 Log.Debug(e, "Failed to release abandoned pipelined BODY response");
             }
+        }
+    }
+
+    private static async Task ObserveBatchCompletionAsync(Task completion)
+    {
+        try
+        {
+            await completion.ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            Log.Debug(exception, "Pipelined BODY batch completion failed");
         }
     }
 

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
@@ -348,15 +349,16 @@ public sealed class SegmentCacheNntpClientTests
             var inner = new FakeNntpClient(new Dictionary<string, byte[]> { [segmentId] = content }, useCachedYencStreams: true);
             using var client = CreateClient(inner, cacheDir, statistics);
             await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Equal(content.Length, client.CurrentBytes);
+            Assert.Equal(0, client.CurrentBytes);
+            Assert.Equal(1, statistics.GetSnapshot().ReadFailures);
 
             var response = await client.DecodedBodyAsync(segmentId, CancellationToken.None);
-            response.Stream!.Dispose();
+            await using (response.Stream)
+                await response.Stream!.CopyToAsync(Stream.Null);
 
             var snapshot = statistics.GetSnapshot();
             Assert.Equal(1, snapshot.ReadFailures);
             Assert.Equal(0, snapshot.Hits);
-            Assert.Equal(0, client.CurrentBytes);
             Assert.Equal(0, snapshot.Entries);
         }
         finally
@@ -482,7 +484,9 @@ public sealed class SegmentCacheNntpClientTests
         try
         {
             Directory.CreateDirectory(cacheDir);
-            File.WriteAllText(Path.Join(cacheDir, "stale.tmp"), "tmp");
+            var tmpPath = Path.Join(cacheDir, "stale.tmp");
+            File.WriteAllText(tmpPath, "tmp");
+            File.SetLastWriteTimeUtc(tmpPath, DateTime.UtcNow - SegmentCacheNntpClient.TemporaryFileGracePeriod - TimeSpan.FromMinutes(1));
             var inner = new FakeNntpClient(new Dictionary<string, byte[]>(), useCachedYencStreams: true);
             using var client = CreateClient(inner, cacheDir, statistics);
             await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
@@ -509,6 +513,7 @@ public sealed class SegmentCacheNntpClientTests
             Directory.CreateDirectory(lockedDir);
             var tmpPath = Path.Join(lockedDir, "stale.tmp");
             File.WriteAllText(tmpPath, "tmp");
+            File.SetLastWriteTimeUtc(tmpPath, DateTime.UtcNow - SegmentCacheNntpClient.TemporaryFileGracePeriod - TimeSpan.FromMinutes(1));
             SetUnixMode(lockedDir, UnixFileMode.UserRead | UnixFileMode.UserExecute);
             Skip.IfNot(
                 FileDeleteEnforced(tmpPath),
@@ -548,15 +553,35 @@ public sealed class SegmentCacheNntpClientTests
     }
 
     [Fact]
-    public async Task OrdinaryBatch_IncrementsBypassOnceAndForwards()
+    public async Task LiveTempDuringCatalogScan_IsNotDeleted()
     {
-        await AssertBatchBypassAsync(exclusive: false);
+        var cacheDir = NewCacheDir();
+        var statistics = new SegmentCacheStatistics();
+
+        try
+        {
+            Directory.CreateDirectory(cacheDir);
+            var tmpPath = Path.Join(cacheDir, "live.tmp");
+            File.WriteAllText(tmpPath, "tmp");
+            var inner = new FakeNntpClient(new Dictionary<string, byte[]>(), useCachedYencStreams: true);
+            using var client = CreateClient(inner, cacheDir, statistics);
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(0, statistics.GetSnapshot().TemporaryFilesCleaned);
+            Assert.True(File.Exists(tmpPath));
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
     }
 
-    [Fact]
-    public async Task ExclusiveBatch_IncrementsBypassOnceAndForwards()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OrdinaryAndExclusiveBatch_AllMiss_RequestsOneInnerBatchWithoutBypass(bool exclusive)
     {
-        await AssertBatchBypassAsync(exclusive: true);
+        await AssertAllMissOverlayAsync(exclusive);
     }
 
     [Fact]
@@ -575,8 +600,8 @@ public sealed class SegmentCacheNntpClientTests
             var error = await Assert.ThrowsAsync<InvalidOperationException>(
                 () => client.DecodedBodiesAsync(["a", "b"], onConnectionReadyAgain: null, CancellationToken.None));
             Assert.Equal("batch-setup", error.Message);
-            Assert.Equal(1, statistics.GetSnapshot().BatchBypassRequests);
-            Assert.Equal(2, statistics.GetSnapshot().BatchBypassArticles);
+            Assert.Equal(0, statistics.GetSnapshot().BatchBypassRequests);
+            Assert.Equal(0, statistics.GetSnapshot().BatchBypassArticles);
         }
         finally
         {
@@ -584,7 +609,7 @@ public sealed class SegmentCacheNntpClientTests
         }
     }
 
-    private static async Task AssertBatchBypassAsync(bool exclusive)
+    private static async Task AssertAllMissOverlayAsync(bool exclusive)
     {
         var cacheDir = NewCacheDir();
         var statistics = new SegmentCacheStatistics();
@@ -603,17 +628,256 @@ public sealed class SegmentCacheNntpClientTests
             await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
 
             var ids = new SegmentId[] { "a", "b", "c" };
+            var recorder = new ArticleBodyCompletionRecorder();
             var batch = exclusive
-                ? await client.DecodedBodiesAsync(ids, new UsenetExclusiveConnection(null), CancellationToken.None)
-                : await client.DecodedBodiesAsync(ids, onConnectionReadyAgain: null, CancellationToken.None);
+                ? await client.DecodedBodiesAsync(ids, new UsenetExclusiveConnection(recorder.Invoke), CancellationToken.None)
+                : await client.DecodedBodiesAsync(ids, recorder.Invoke, CancellationToken.None);
 
             Assert.Equal(3, batch.Responses.Count);
             Assert.Equal(1, inner.BatchRequestCount);
             Assert.Equal(3, inner.BodyRequestCount);
+            await batch.DrainAsync();
             var snapshot = statistics.GetSnapshot();
-            Assert.Equal(1, snapshot.BatchBypassRequests);
-            Assert.Equal(3, snapshot.BatchBypassArticles);
+            Assert.Equal(0, snapshot.BatchBypassRequests);
+            Assert.Equal(0, snapshot.BatchBypassArticles);
             Assert.Equal(0, snapshot.Hits);
+            Assert.Equal(3, snapshot.Misses);
+            Assert.Equal(3, snapshot.WriteCommits);
+            Assert.Equal(1, recorder.Count);
+            Assert.Equal(ArticleBodyResult.Retrieved, recorder.Result);
+
+            var warm = exclusive
+                ? await client.DecodedBodiesAsync(ids, new UsenetExclusiveConnection(null), CancellationToken.None)
+                : await client.DecodedBodiesAsync(ids, onConnectionReadyAgain: null, CancellationToken.None);
+            await warm.DrainAsync();
+            Assert.Equal(1, inner.BatchRequestCount);
+            Assert.Equal(3, statistics.GetSnapshot().Hits);
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DecodedBodiesAsync_AllHit_RequestsNoInnerBatch_AndCompletesOnce(bool exclusive)
+    {
+        var cacheDir = NewCacheDir();
+        var statistics = new SegmentCacheStatistics();
+        const string a = "hit-a";
+        const string b = "hit-b";
+        byte[] bytesA = "aaaa"u8.ToArray();
+        byte[] bytesB = "bbbb"u8.ToArray();
+
+        try
+        {
+            WriteCacheEntry(cacheDir, a, bytesA);
+            WriteCacheEntry(cacheDir, b, bytesB);
+            var inner = new FakeNntpClient(new Dictionary<string, byte[]>(), useCachedYencStreams: true);
+            using var client = CreateClient(inner, cacheDir, statistics);
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+            var recorder = new ArticleBodyCompletionRecorder();
+            var ids = new SegmentId[] { a, b };
+            var batch = exclusive
+                ? await client.DecodedBodiesAsync(ids, new UsenetExclusiveConnection(recorder.Invoke), CancellationToken.None)
+                : await client.DecodedBodiesAsync(ids, recorder.Invoke, CancellationToken.None);
+
+            Assert.Equal(0, inner.BatchRequestCount);
+            Assert.Equal(0, inner.BodyRequestCount);
+            await batch.DrainAsync();
+            var snapshot = statistics.GetSnapshot();
+            Assert.Equal(2, snapshot.Hits);
+            Assert.Equal(0, snapshot.Misses);
+            Assert.Equal(0, snapshot.BatchBypassRequests);
+            Assert.Equal(1, recorder.Count);
+            Assert.Equal(ArticleBodyResult.Retrieved, recorder.Result);
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DecodedBodiesAsync_MixedHitMissHit_RequestsOnlyMisses(bool exclusive)
+    {
+        var cacheDir = NewCacheDir();
+        var statistics = new SegmentCacheStatistics();
+        var segments = new Dictionary<string, byte[]>
+        {
+            ["a"] = "aaa"u8.ToArray(),
+            ["b"] = "bbb"u8.ToArray(),
+            ["c"] = "ccc"u8.ToArray(),
+        };
+
+        try
+        {
+            WriteCacheEntry(cacheDir, "a", segments["a"]);
+            WriteCacheEntry(cacheDir, "c", segments["c"]);
+            var inner = new FakeNntpClient(segments, useCachedYencStreams: true);
+            using var client = CreateClient(inner, cacheDir, statistics);
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+            var ids = new SegmentId[] { "a", "b", "c" };
+            var batch = exclusive
+                ? await client.DecodedBodiesAsync(ids, new UsenetExclusiveConnection(null), CancellationToken.None)
+                : await client.DecodedBodiesAsync(ids, onConnectionReadyAgain: null, CancellationToken.None);
+
+            Assert.Equal(1, inner.BatchRequestCount);
+            Assert.Equal(["b"], inner.RequestedSegmentIds.OrderBy(x => x).ToArray());
+            await batch.DrainAsync();
+            var snapshot = statistics.GetSnapshot();
+            Assert.Equal(2, snapshot.Hits);
+            Assert.Equal(1, snapshot.Misses);
+            Assert.Equal(1, snapshot.WriteCommits);
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task DecodedBodiesAsync_AttributionContext_BypassesLookupAndPopulation()
+    {
+        var cacheDir = NewCacheDir();
+        var statistics = new SegmentCacheStatistics();
+        WriteCacheEntry(cacheDir, "a", "cached"u8.ToArray());
+        var inner = new FakeNntpClient(new Dictionary<string, byte[]> { ["a"] = "remote"u8.ToArray() }, useCachedYencStreams: true);
+        try
+        {
+            using var client = CreateClient(inner, cacheDir, statistics);
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+            MultiProviderNntpClient.AttributionContext.Value = new MultiProviderNntpClient.ResponderAttribution();
+            try
+            {
+                var batch = await client.DecodedBodiesAsync(["a"], onConnectionReadyAgain: null, CancellationToken.None);
+                await batch.DrainAsync();
+            }
+            finally
+            {
+                MultiProviderNntpClient.AttributionContext.Value = null;
+            }
+
+            Assert.Equal(1, inner.BatchRequestCount);
+            Assert.Equal(1, statistics.GetSnapshot().BatchBypassRequests);
+            Assert.Equal(0, statistics.GetSnapshot().Hits);
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task DecodedBodiesAsync_FetchAttributionContext_DoesNotBypassCache()
+    {
+        var cacheDir = NewCacheDir();
+        var statistics = new SegmentCacheStatistics();
+        WriteCacheEntry(cacheDir, "a", "cached"u8.ToArray());
+        var inner = new FakeNntpClient(new Dictionary<string, byte[]>(), useCachedYencStreams: true);
+        try
+        {
+            using var client = CreateClient(inner, cacheDir, statistics);
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+            using (FetchAttributionContext.Begin("movie.bin"))
+            {
+                var batch = await client.DecodedBodiesAsync(["a"], onConnectionReadyAgain: null, CancellationToken.None);
+                await batch.DrainAsync();
+            }
+
+            Assert.Equal(0, inner.BatchRequestCount);
+            Assert.Equal(1, statistics.GetSnapshot().Hits);
+            Assert.Equal(0, statistics.GetSnapshot().BatchBypassRequests);
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task DecodedBodiesAsync_ResponseIdMismatch_DoesNotCreateCacheEntry()
+    {
+        var cacheDir = NewCacheDir();
+        var statistics = new SegmentCacheStatistics();
+        var inner = new FakeNntpClient(new Dictionary<string, byte[]> { ["a"] = "aaa"u8.ToArray() }, useCachedYencStreams: true)
+        {
+            ForcedResponseSegmentId = "other",
+        };
+        try
+        {
+            using var client = CreateClient(inner, cacheDir, statistics);
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+            var batch = await client.DecodedBodiesAsync(["a"], onConnectionReadyAgain: null, CancellationToken.None);
+            await batch.DrainAsync();
+            Assert.Equal(0, statistics.GetSnapshot().WriteCommits);
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task DecodedBodiesAsync_CompleteBodies_SurviveRestartHydration()
+    {
+        var cacheDir = NewCacheDir();
+        var segments = new Dictionary<string, byte[]>
+        {
+            ["a"] = "aaa"u8.ToArray(),
+            ["b"] = "bbb"u8.ToArray(),
+        };
+
+        try
+        {
+            Directory.CreateDirectory(cacheDir);
+            var inner = new FakeNntpClient(segments, useCachedYencStreams: true);
+            using (var client = CreateClient(inner, cacheDir, new SegmentCacheStatistics()))
+            {
+                await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+                var batch = await client.DecodedBodiesAsync(["a", "b"], onConnectionReadyAgain: null, CancellationToken.None);
+                await batch.DrainAsync();
+            }
+
+            var restartInner = new FakeNntpClient(new Dictionary<string, byte[]>(), useCachedYencStreams: true);
+            var statistics = new SegmentCacheStatistics();
+            using var restarted = CreateClient(restartInner, cacheDir, statistics);
+            await restarted.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+            var warm = await restarted.DecodedBodiesAsync(["a", "b"], onConnectionReadyAgain: null, CancellationToken.None);
+            await warm.DrainAsync();
+            Assert.Equal(0, restartInner.BatchRequestCount);
+            Assert.Equal(2, statistics.GetSnapshot().Hits);
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task DecodedBodiesAsync_ConcurrentSameId_CommitsOneValidEntryWithoutDeadlock()
+    {
+        var cacheDir = NewCacheDir();
+        var statistics = new SegmentCacheStatistics();
+        var segments = new Dictionary<string, byte[]> { ["a"] = "aaaa"u8.ToArray() };
+
+        try
+        {
+            Directory.CreateDirectory(cacheDir);
+            var inner = new FakeNntpClient(segments, useCachedYencStreams: true);
+            using var client = CreateClient(inner, cacheDir, statistics);
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+            var firstTask = client.DecodedBodiesAsync(["a"], onConnectionReadyAgain: null, CancellationToken.None);
+            var secondTask = client.DecodedBodiesAsync(["a"], onConnectionReadyAgain: null, CancellationToken.None);
+            var first = await firstTask;
+            var second = await secondTask;
+            await Task.WhenAll(first.DrainAsync(), second.DrainAsync());
+            Assert.Equal(1, statistics.GetSnapshot().WriteCommits);
+            Assert.True(inner.BatchRequestCount >= 1);
         }
         finally
         {

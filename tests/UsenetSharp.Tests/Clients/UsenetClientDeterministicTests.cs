@@ -844,8 +844,52 @@ public class UsenetClientDeterministicTests
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.Retrieved));
         Assert.That(callbackCount, Is.EqualTo(1));
+        Assert.That(batch.Completion.IsCompletedSuccessfully, Is.True);
         var date = await client.DateAsync(CancellationToken.None);
         Assert.That(date.ResponseCode, Is.EqualTo((int)UsenetResponseType.DateAndTime));
+    }
+
+    [Test]
+    public async Task DecodedBodiesAsync_CompletionWaitsForLastStreamEof()
+    {
+        await using var server = ScriptedNntpServer.StartConnectionScript(
+            async (reader, writer, cancellationToken) =>
+            {
+                Assert.That(await reader.ReadLineAsync(cancellationToken), Is.EqualTo("BODY <one@example.com>"));
+                await WriteSimpleYencArticleAsync(writer, "one"u8.ToArray(), "size=3", "one.bin");
+            });
+        await using var client = new UsenetClient();
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+
+        var batch = await client.DecodedBodiesAsync(
+            new SegmentId[] { "one@example.com" }, CancellationToken.None);
+        var response = await batch.Responses[0];
+        Assert.That(batch.Completion.IsCompleted, Is.False);
+        await using (response.Stream)
+            await response.Stream!.CopyToAsync(Stream.Null);
+        await batch.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.That(batch.Completion.IsCompletedSuccessfully, Is.True);
+    }
+
+    [Test]
+    public async Task DecodedBodiesAsync_CompletionWaitsForLastStreamDisposal()
+    {
+        await using var server = ScriptedNntpServer.StartConnectionScript(
+            async (reader, writer, cancellationToken) =>
+            {
+                Assert.That(await reader.ReadLineAsync(cancellationToken), Is.EqualTo("BODY <one@example.com>"));
+                await WriteSimpleYencArticleAsync(writer, "one"u8.ToArray(), "size=3", "one.bin");
+            });
+        await using var client = new UsenetClient();
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+
+        var batch = await client.DecodedBodiesAsync(
+            new SegmentId[] { "one@example.com" }, CancellationToken.None);
+        var response = await batch.Responses[0];
+        Assert.That(batch.Completion.IsCompleted, Is.False);
+        response.Stream!.Dispose();
+        await batch.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.That(batch.Completion.IsCompletedSuccessfully, Is.True);
     }
 
     [Test]
@@ -1521,6 +1565,32 @@ public class UsenetClientDeterministicTests
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
         Assert.That(client.IsHealthy, Is.False);
+        Assert.That(async () => await batch.Completion.WaitAsync(TimeSpan.FromSeconds(2)),
+            Throws.InstanceOf<UsenetProtocolException>());
+    }
+
+    [Test]
+    public async Task DecodedBodiesAsync_CompletionFaultsWhenPumpFails()
+    {
+        await using var server = ScriptedNntpServer.StartConnectionScript(
+            async (reader, writer, cancellationToken) =>
+            {
+                _ = await reader.ReadLineAsync(cancellationToken);
+                await writer.WriteAsync(
+                    "222 body follows\r\n" +
+                    "=ybegin line=128 size=10 name=truncated.bin\r\n" +
+                    "encoded-without-terminator\r\n");
+            });
+        await using var client = new UsenetClient();
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+
+        var batch = await client.DecodedBodiesAsync(
+            new SegmentId[] { "truncated@example.com" }, CancellationToken.None);
+        var truncated = await batch.Responses[0];
+        Assert.ThrowsAsync<UsenetProtocolException>(async () =>
+            await truncated.Stream!.CopyToAsync(Stream.Null));
+        Assert.That(async () => await batch.Completion.WaitAsync(TimeSpan.FromSeconds(2)),
+            Throws.InstanceOf<UsenetProtocolException>());
     }
 
     [Test]

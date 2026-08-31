@@ -28,11 +28,11 @@
         "transportBytes": 3145728,
         "transportBatchRequests": 3,
         "cacheHits": 0,
-        "cacheMisses": 1,
+        "cacheMisses": 12,
         "cacheBytesServed": 0,
-        "cacheBatchBypassRequests": 3,
-        "cacheBatchBypassArticles": 11,
-        "cacheWriteCommits": 1
+        "cacheBatchBypassRequests": 0,
+        "cacheBatchBypassArticles": 0,
+        "cacheWriteCommits": 12
       },
       "timing": {
         "firstByteMs": 1.0,
@@ -44,14 +44,14 @@
     "pipelined-warm-reread": {
       "deterministic": {
         "bytes": 3145728,
-        "transportRequests": 0,
-        "transportBytes": 0,
-        "transportBatchRequests": 3,
-        "cacheHits": 1,
+        "transportRequests": 11,
+        "transportBytes": 2883584,
+        "transportBatchRequests": 0,
+        "cacheHits": 12,
         "cacheMisses": 0,
-        "cacheBytesServed": 262144,
-        "cacheBatchBypassRequests": 3,
-        "cacheBatchBypassArticles": 11,
+        "cacheBytesServed": 3145728,
+        "cacheBatchBypassRequests": 0,
+        "cacheBatchBypassArticles": 0,
         "cacheWriteCommits": 0
       },
       "timing": {

@@ -1,4 +1,5 @@
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Streams;
@@ -148,6 +149,125 @@ public sealed class RepairedSegmentNntpClientTests
             Assert.Equal(ArticleBodyResult.Retrieved, recorder.Result);
             Assert.Equal(0, inner.BodyRequestCount);
             Assert.Equal(content, output.ToArray());
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+                Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DecodedBodiesAsync_AllPatched_RequestsNoInnerBatch_AndCompletesOnce(bool exclusive)
+    {
+        var dir = Path.Join(Path.GetTempPath(), "nzbdav-repair-patch-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024 * 1024);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            store.CommitPatch("a@test", "aaa"u8.ToArray(), HeaderFor("aaa"u8.ToArray()));
+            store.CommitPatch("b@test", "bbb"u8.ToArray(), HeaderFor("bbb"u8.ToArray()));
+            var inner = new FakeNntpClient(new Dictionary<string, byte[]>(), useCachedYencStreams: true);
+            using var client = new RepairedSegmentNntpClient(inner, store);
+            var recorder = new ArticleBodyCompletionRecorder();
+            var ids = new SegmentId[] { "a@test", "b@test" };
+            var batch = exclusive
+                ? await client.DecodedBodiesAsync(ids, new UsenetExclusiveConnection(recorder.Invoke), CancellationToken.None)
+                : await client.DecodedBodiesAsync(ids, recorder.Invoke, CancellationToken.None);
+
+            Assert.Equal(0, inner.BatchRequestCount);
+            await batch.DrainAsync();
+            Assert.Equal(1, recorder.Count);
+            Assert.Equal(ArticleBodyResult.Retrieved, recorder.Result);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+                Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DecodedBodiesAsync_MixedPatchMissPatch_RequestsOnlyMiss(bool exclusive)
+    {
+        var dir = Path.Join(Path.GetTempPath(), "nzbdav-repair-patch-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024 * 1024);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            store.CommitPatch("a@test", "aaa"u8.ToArray(), HeaderFor("aaa"u8.ToArray()));
+            store.CommitPatch("c@test", "ccc"u8.ToArray(), HeaderFor("ccc"u8.ToArray()));
+            var inner = new FakeNntpClient(new Dictionary<string, byte[]> { ["b@test"] = "bbb"u8.ToArray() }, useCachedYencStreams: true);
+            using var client = new RepairedSegmentNntpClient(inner, store);
+            var ids = new SegmentId[] { "a@test", "b@test", "c@test" };
+            var batch = exclusive
+                ? await client.DecodedBodiesAsync(ids, new UsenetExclusiveConnection(null), CancellationToken.None)
+                : await client.DecodedBodiesAsync(ids, onConnectionReadyAgain: null, CancellationToken.None);
+
+            Assert.Equal(1, inner.BatchRequestCount);
+            Assert.Equal(["b@test"], inner.RequestedSegmentIds.OrderBy(x => x).ToArray());
+            await batch.DrainAsync();
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+                Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task DecodedBodiesAsync_AttributionContext_BypassesPatchLookup()
+    {
+        var dir = Path.Join(Path.GetTempPath(), "nzbdav-repair-patch-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024 * 1024);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            store.CommitPatch("a@test", "aaa"u8.ToArray(), HeaderFor("aaa"u8.ToArray()));
+            var inner = new FakeNntpClient(new Dictionary<string, byte[]> { ["a@test"] = "remote"u8.ToArray() }, useCachedYencStreams: true);
+            using var client = new RepairedSegmentNntpClient(inner, store);
+            MultiProviderNntpClient.AttributionContext.Value = new MultiProviderNntpClient.ResponderAttribution();
+            try
+            {
+                var batch = await client.DecodedBodiesAsync(["a@test"], onConnectionReadyAgain: null, CancellationToken.None);
+                await batch.DrainAsync();
+            }
+            finally
+            {
+                MultiProviderNntpClient.AttributionContext.Value = null;
+            }
+
+            Assert.Equal(1, inner.BatchRequestCount);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+                Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task DecodedBodiesAsync_FetchAttributionContext_DoesNotBypassPatch()
+    {
+        var dir = Path.Join(Path.GetTempPath(), "nzbdav-repair-patch-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024 * 1024);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            store.CommitPatch("a@test", "aaa"u8.ToArray(), HeaderFor("aaa"u8.ToArray()));
+            var inner = new FakeNntpClient(new Dictionary<string, byte[]>(), useCachedYencStreams: true);
+            using var client = new RepairedSegmentNntpClient(inner, store);
+            using (FetchAttributionContext.Begin("movie.bin"))
+            {
+                var batch = await client.DecodedBodiesAsync(["a@test"], onConnectionReadyAgain: null, CancellationToken.None);
+                await batch.DrainAsync();
+            }
+
+            Assert.Equal(0, inner.BatchRequestCount);
         }
         finally
         {

@@ -225,10 +225,10 @@ from pathlib import Path
 
 baseline = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 cold = baseline["scenarios"]["pipelined-cold-read"]["deterministic"]
-if cold["bytes"] != 3145728 or cold["transportBatchRequests"] != 3 or cold["cacheWriteCommits"] != 1:
+if cold["bytes"] != 3145728 or cold["transportBatchRequests"] != 3 or cold["cacheWriteCommits"] != 12:
     raise SystemExit(f"write-baseline lost integer deterministic values: {cold}")
 warm = baseline["scenarios"]["pipelined-warm-reread"]["deterministic"]
-if warm["transportRequests"] != 11 or warm["cacheHits"] != 1:
+if warm["transportRequests"] != 0 or warm["cacheHits"] != 12:
     raise SystemExit(f"write-baseline lost warm integers: {warm}")
 timing = baseline["scenarios"]["pipelined-cold-read"]["timing"]["elapsedMs"]
 if "baseline" not in timing or "envelope" not in timing or timing["policy"] != "fail":

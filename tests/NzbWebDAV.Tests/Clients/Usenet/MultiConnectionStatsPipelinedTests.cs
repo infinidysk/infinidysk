@@ -3,6 +3,7 @@ using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Models;
 using UsenetSharp.Models;
+using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
 
@@ -125,6 +126,57 @@ public class MultiConnectionStatsPipelinedTests
         Assert.True(breaker.IsTripped);
     }
 
+    [Fact]
+    public async Task DecodedBodiesAsync_CompletionWaitsForConnectionLockRelease()
+    {
+        var inner = new GatedBodyBatchClient();
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1, _ => ValueTask.FromResult<INntpClient>(inner));
+        using var client = new MultiConnectionNntpClient(
+            pool,
+            ProviderType.Pooled,
+            new ProviderCircuitBreaker("body-pipeline-completion"),
+            "body-pipeline-completion",
+            maxTransferConnections: 1);
+
+        var batch = await client.DecodedBodiesAsync(
+            ["a@example"], onConnectionReadyAgain: null, CancellationToken.None);
+        Assert.False(batch.Completion.IsCompleted);
+        inner.TransportCompletion.TrySetResult();
+        Assert.False(batch.Completion.IsCompleted);
+        inner.CapturedCallback!(ArticleBodyResult.Retrieved, null);
+        await batch.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        var response = await batch.Responses[0];
+        if (response.Stream is not null)
+            await response.Stream.DisposeAsync();
+        Assert.Equal(1, client.AvailableConnections);
+    }
+
+    [Fact]
+    public async Task DecodedBodiesAsync_DuplicateCallback_ReleasesOneConnectionLock()
+    {
+        var inner = new GatedBodyBatchClient();
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1, _ => ValueTask.FromResult<INntpClient>(inner));
+        using var client = new MultiConnectionNntpClient(
+            pool,
+            ProviderType.Pooled,
+            new ProviderCircuitBreaker("body-pipeline-duplicate"),
+            "body-pipeline-duplicate",
+            maxTransferConnections: 1);
+
+        var batch = await client.DecodedBodiesAsync(
+            ["a@example"], onConnectionReadyAgain: null, CancellationToken.None);
+        inner.TransportCompletion.TrySetResult();
+        inner.CapturedCallback!(ArticleBodyResult.Retrieved, null);
+        inner.CapturedCallback!(ArticleBodyResult.NotRetrieved, "duplicate");
+        await batch.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        var response = await batch.Responses[0];
+        if (response.Stream is not null)
+            await response.Stream.DisposeAsync();
+        Assert.Equal(1, client.AvailableConnections);
+    }
+
     private sealed class ExistsStatClient(
         bool failAfterFirst = false,
         bool waitForCancellationAfterFirst = false) : NntpClient
@@ -183,6 +235,77 @@ public class MultiConnectionStatsPipelinedTests
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDateResponse> DateAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override void Dispose()
+        {
+        }
+    }
+
+    private sealed class GatedBodyBatchClient : NntpClient
+    {
+        public TaskCompletionSource TransportCompletion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public ArticleBodyCompletionHandler? CapturedCallback { get; private set; }
+
+        public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+            IReadOnlyList<SegmentId> segmentIds,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            CapturedCallback = onConnectionReadyAgain;
+            var responses = segmentIds
+                .Select(id => Task.FromResult(new UsenetDecodedBodyResponse
+                {
+                    SegmentId = id.ToString(),
+                    ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
+                    ResponseMessage = "222 gated",
+                    Stream = new YencStream(new MemoryStream([], writable: false)),
+                }))
+                .ToArray();
+            return Task.FromResult(new UsenetDecodedBodyBatch
+            {
+                Responses = responses,
+                Completion = TransportCompletion.Task,
+            });
+        }
+
+        public override Task ConnectAsync(
+            string host, int port, bool useSsl, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public override Task<UsenetResponse> AuthenticateAsync(
+            string user, string pass, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetStatResponse> StatAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetHeadResponse> HeadAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId,
             ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();

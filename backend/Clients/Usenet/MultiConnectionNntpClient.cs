@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Contexts;
@@ -360,42 +361,55 @@ public class MultiConnectionNntpClient(
                     wrapped[i] = RecordSuccessfulResponseAsync(batch.Responses[i], issuedAt, workload, operation);
 
                 var callbackInvoked = 0;
+                var callbackCompletion = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
                 deferredCallback.Activate(OnConnectionReadyAgain);
-                return new UsenetDecodedBodyBatch { Responses = wrapped };
+                return new UsenetDecodedBodyBatch
+                {
+                    Responses = wrapped,
+                    Completion = CompleteBatchLifecycleAsync(batch.Completion, callbackCompletion.Task),
+                };
 
                 void OnConnectionReadyAgain(ArticleBodyResult result, string? failureReason)
                 {
                     if (Interlocked.Exchange(ref callbackInvoked, 1) != 0) return;
-                    switch (result)
+                    try
                     {
-                        case ArticleBodyResult.Retrieved:
-                            circuitBreaker.RecordSuccess(probe: probeLease);
-                            break;
-                        case ArticleBodyResult.NotFound:
-                            circuitBreaker.RecordArticleNotFound(probeLease);
-                            break;
-                        case ArticleBodyResult.Cancelled:
-                            break;
-                        case ArticleBodyResult.NotRetrieved:
-                            // Seek/abort cancels mid-pipeline; UsenetSharp reports NotRetrieved
-                            // (socket unsafe to reuse). Replace the connection but do not treat
-                            // client cancellation as provider health failure.
-                            LogException(() => connectionLock.Replace("pipelined-body-not-retrieved"));
-                            if (!ct.IsCancellationRequested)
+                        switch (result)
+                        {
+                            case ArticleBodyResult.Retrieved:
+                                circuitBreaker.RecordSuccess(probe: probeLease);
+                                break;
+                            case ArticleBodyResult.NotFound:
+                                circuitBreaker.RecordArticleNotFound(probeLease);
+                                break;
+                            case ArticleBodyResult.Cancelled:
+                                break;
+                            case ArticleBodyResult.NotRetrieved:
+                                // Seek/abort cancels mid-pipeline; UsenetSharp reports NotRetrieved
+                                // (socket unsafe to reuse). Replace the connection but do not treat
+                                // client cancellation as provider health failure.
+                                LogException(() => connectionLock.Replace("pipelined-body-not-retrieved"));
+                                if (!ct.IsCancellationRequested)
+                                    RecordProviderFailure(failureReason is null
+                                        ? $"pipeline-callback-{result}"
+                                        : $"pipeline-callback-{result} ({failureReason})", probeLease);
+                                break;
+                            default:
                                 RecordProviderFailure(failureReason is null
                                     ? $"pipeline-callback-{result}"
                                     : $"pipeline-callback-{result} ({failureReason})", probeLease);
-                            break;
-                        default:
-                            RecordProviderFailure(failureReason is null
-                                ? $"pipeline-callback-{result}"
-                                : $"pipeline-callback-{result} ({failureReason})", probeLease);
-                            LogException(() => connectionLock.Replace($"pipelined-body-{result}"));
-                            break;
-                    }
+                                LogException(() => connectionLock.Replace($"pipelined-body-{result}"));
+                                break;
+                        }
 
-                    LogException(connectionLock.Dispose);
-                    LogException(() => onConnectionReadyAgain?.Invoke(result, failureReason));
+                        LogException(connectionLock.Dispose);
+                        LogException(() => onConnectionReadyAgain?.Invoke(result, failureReason));
+                    }
+                    finally
+                    {
+                        callbackCompletion.TrySetResult();
+                    }
                 }
             }
             catch (Exception e) when (
@@ -1182,6 +1196,31 @@ public class MultiConnectionNntpClient(
         return new NntpClientRetiredException(
             $"Connection pool for provider '{Host}' retired while the request was waiting.",
             inner);
+    }
+
+    private static async Task CompleteBatchLifecycleAsync(Task transportCompletion, Task callbackCompletion)
+    {
+        Exception? first = null;
+        try
+        {
+            await transportCompletion.ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            first = exception;
+        }
+
+        try
+        {
+            await callbackCompletion.ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            first ??= exception;
+        }
+
+        if (first is not null)
+            ExceptionDispatchInfo.Capture(first).Throw();
     }
 
     private async Task<UsenetDecodedBodyResponse> RecordSuccessfulResponseAsync(

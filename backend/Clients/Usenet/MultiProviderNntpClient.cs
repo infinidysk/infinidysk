@@ -390,10 +390,11 @@ public class MultiProviderNntpClient(
             {
                 var provider = orderedProviders[providerIndex];
                 var deferredCallback = new DeferredArticleBodyCallback();
+                UsenetDecodedBodyBatch? primaryBatch = null;
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var primaryBatch = await provider.DecodedBodiesAsync(
+                    primaryBatch = await provider.DecodedBodiesAsync(
                         segmentIds, deferredCallback.Invoke, cancellationToken).ConfigureAwait(false);
                     var coordinator = new BatchCallbackCoordinator(
                     primaryBatch.Responses.Count, CompleteBatchFetches);
@@ -425,10 +426,16 @@ public class MultiProviderNntpClient(
 #pragma warning restore CA2025
                         previousFallbackAdmission = fallbackAdmission.Task;
                     }
-                    return new UsenetDecodedBodyBatch { Responses = responses };
+                    return new UsenetDecodedBodyBatch
+                    {
+                        Responses = responses,
+                        Completion = ComposeBatchCompletionAsync(
+                            primaryBatch.Completion, coordinator.Completion),
+                    };
                 }
                 catch (NntpClientRetiredException)
                 {
+                    ObserveAbandonedBatch(primaryBatch);
                     // Every provider in this client belongs to the same retired generation.
                     // Do not walk the remaining disposed pools or record network failures.
                     deferredCallback.Discard();
@@ -438,6 +445,7 @@ public class MultiProviderNntpClient(
                 }
                 catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _) && e is not OutOfMemoryException)
                 {
+                    ObserveAbandonedBatch(primaryBatch);
                     // Invalid / permanently missing segment ids are invalid on every provider.
                     deferredCallback.Discard();
                     ArticleBodyCompletion.InvokeContained(
@@ -446,11 +454,13 @@ public class MultiProviderNntpClient(
                 }
                 catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
                 {
+                    ObserveAbandonedBatch(primaryBatch);
                     deferredCallback.Discard();
                     lastException = ExceptionDispatchInfo.Capture(e);
                 }
                 catch
                 {
+                    ObserveAbandonedBatch(primaryBatch);
                     deferredCallback.Discard();
                     ArticleBodyCompletion.InvokeContained(
                         CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
@@ -731,6 +741,49 @@ public class MultiProviderNntpClient(
         }
     }
 
+    private static async Task ComposeBatchCompletionAsync(Task transportCompletion, Task coordinatorCompletion)
+    {
+        Exception? first = null;
+        try
+        {
+            await transportCompletion.ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            first = exception;
+        }
+
+        try
+        {
+            await coordinatorCompletion.ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            first ??= exception;
+        }
+
+        if (first is not null)
+            ExceptionDispatchInfo.Capture(first).Throw();
+    }
+
+    private static void ObserveAbandonedBatch(UsenetDecodedBodyBatch? batch)
+    {
+        if (batch is null) return;
+        _ = ObserveAbandonedBatchCompletionAsync(batch.Completion);
+    }
+
+    private static async Task ObserveAbandonedBatchCompletionAsync(Task completion)
+    {
+        try
+        {
+            await completion.ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            Log.Debug(exception, "Abandoned pipelined BODY batch completion failed");
+        }
+    }
+
     private sealed class BatchCallbackCoordinator(
         int responseCount,
         ArticleBodyCompletionHandler? callback)
@@ -778,19 +831,34 @@ public class MultiProviderNntpClient(
 
         private void CompleteOne()
         {
-            if (Interlocked.Decrement(ref _remaining) != 0 ||
-                Interlocked.Exchange(ref _callbackInvoked, 1) != 0)
+            if (Interlocked.Decrement(ref _remaining) != 0)
+                return;
+
+            if (Interlocked.Exchange(ref _callbackInvoked, 1) != 0)
             {
+                _completion.TrySetResult();
                 return;
             }
 
-            var failed = Volatile.Read(ref _transportFailed) != 0 ||
-                         Volatile.Read(ref _resolutionFailed) != 0;
-            ArticleBodyCompletion.InvokeContained(
-                callback,
-                failed ? ArticleBodyResult.NotRetrieved : ArticleBodyResult.Retrieved,
-                failed ? Volatile.Read(ref _firstFailureReason) : null);
+            try
+            {
+                var failed = Volatile.Read(ref _transportFailed) != 0 ||
+                             Volatile.Read(ref _resolutionFailed) != 0;
+                ArticleBodyCompletion.InvokeContained(
+                    callback,
+                    failed ? ArticleBodyResult.NotRetrieved : ArticleBodyResult.Retrieved,
+                    failed ? Volatile.Read(ref _firstFailureReason) : null);
+            }
+            finally
+            {
+                _completion.TrySetResult();
+            }
         }
+
+        public Task Completion => _completion.Task;
+
+        private readonly TaskCompletionSource _completion =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     public override async Task<UsenetDecodedArticleResponse> DecodedArticleAsync

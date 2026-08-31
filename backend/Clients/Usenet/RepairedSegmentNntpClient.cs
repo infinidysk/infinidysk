@@ -76,6 +76,50 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
         return await base.DecodedBodyAsync(segmentId, exclusiveConnection, ct).ConfigureAwait(false);
     }
 
+    public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+        IReadOnlyList<SegmentId> segmentIds,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
+        CancellationToken cancellationToken)
+    {
+        if (MultiProviderNntpClient.AttributionContext.Value is not null)
+            return base.DecodedBodiesAsync(segmentIds, onConnectionReadyAgain, cancellationToken);
+
+        return LocalDataBatchOverlay.ExecuteAsync(
+            segmentIds,
+            onConnectionReadyAgain,
+            TryOpenPatchedResponse,
+            (misses, callback, token) => base.DecodedBodiesAsync(misses, callback, token),
+            LocalDataBatchOverlay.PassThroughRemote,
+            cancellationToken);
+    }
+
+    public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+        IReadOnlyList<SegmentId> segmentIds,
+        UsenetExclusiveConnection exclusiveConnection,
+        CancellationToken cancellationToken)
+    {
+        if (MultiProviderNntpClient.AttributionContext.Value is not null)
+            return base.DecodedBodiesAsync(segmentIds, exclusiveConnection, cancellationToken);
+
+        return LocalDataBatchOverlay.ExecuteAsync(
+            segmentIds,
+            exclusiveConnection.OnConnectionReadyAgain,
+            TryOpenPatchedResponse,
+            (misses, callback, token) =>
+                base.DecodedBodiesAsync(misses, new UsenetExclusiveConnection(callback), token),
+            LocalDataBatchOverlay.PassThroughRemote,
+            cancellationToken);
+    }
+
+    private LocalLookupResult TryOpenPatchedResponse(SegmentId segmentId)
+    {
+        if (!TryGetPatchedResponse(segmentId, out var patched) || patched is null)
+            return LocalLookupResult.Miss;
+
+        PrometheusMetrics.Current?.RecordPar2PatchHit();
+        return LocalLookupResult.Hit(patched);
+    }
+
     private bool TryGetPatchedResponse(SegmentId segmentId, out UsenetDecodedBodyResponse? response)
     {
         string id = segmentId;

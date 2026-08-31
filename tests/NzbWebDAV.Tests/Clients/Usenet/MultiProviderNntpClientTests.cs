@@ -2013,6 +2013,53 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public async Task DecodedBodiesAsync_CompletionWaitsForPrimaryAndFallbackTransfers()
+    {
+        var primary = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularResponseCode = 430,
+        };
+        var backup = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+            DeferSingularCompletion = true,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(primary, host: "primary.example", maxConnections: 4),
+            CreateProvider(backup, host: "backup.example", maxConnections: 4),
+        ]);
+
+        UsenetDecodedBodyResponse? first = null;
+        UsenetDecodedBodyResponse? second = null;
+        try
+        {
+            var batch = await client.DecodedBodiesAsync(
+                ["seg-0", "seg-1"], onConnectionReadyAgain: null, CancellationToken.None);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            while (backup.SingularRequests < 2)
+            {
+                timeout.Token.ThrowIfCancellationRequested();
+                await Task.Delay(10, timeout.Token);
+            }
+
+            Assert.False(batch.Completion.IsCompleted);
+            backup.CompletePendingSingularRequests();
+            first = await batch.Responses[0];
+            second = await batch.Responses[1];
+            if (first.Stream is not null) await first.Stream.DisposeAsync();
+            if (second.Stream is not null) await second.Stream.DisposeAsync();
+            await batch.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            backup.CompletePendingSingularRequests();
+        }
+    }
+
+    [Fact]
     public async Task BatchResponse_WithCleanNotFound_SkipsPrimaryReprobeWhenDisabled()
     {
         var primary = new ScriptedNntpClient

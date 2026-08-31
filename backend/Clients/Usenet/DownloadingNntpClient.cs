@@ -103,8 +103,16 @@ public class DownloadingNntpClient : WrappingNntpClient
         ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken)
     {
         var semaphore = await AcquireExclusiveConnectionAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
-        return await base.DecodedBodyAsync(
-            segmentId, CreatePermitCompletion(semaphore, onConnectionReadyAgain), cancellationToken).ConfigureAwait(false);
+        var permit = CreatePermitCompletion(semaphore, onConnectionReadyAgain);
+        try
+        {
+            return await base.DecodedBodyAsync(segmentId, permit, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            permit(ArticleBodyResult.NotRetrieved, "body-setup");
+            throw;
+        }
     }
 
     public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
@@ -113,17 +121,32 @@ public class DownloadingNntpClient : WrappingNntpClient
         CancellationToken cancellationToken)
     {
         var semaphore = await AcquireExclusiveConnectionAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
-        return await base.DecodedBodiesAsync(
-            segmentIds, CreatePermitCompletion(semaphore, onConnectionReadyAgain), cancellationToken).ConfigureAwait(false);
+        var permit = CreatePermitCompletion(semaphore, onConnectionReadyAgain);
+        try
+        {
+            return await base.DecodedBodiesAsync(segmentIds, permit, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            permit(ArticleBodyResult.NotRetrieved, "batch-setup");
+            throw;
+        }
     }
 
     public override async Task<UsenetDecodedArticleResponse> DecodedArticleAsync(SegmentId segmentId,
         ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken)
     {
         var semaphore = await AcquireExclusiveConnectionAsync(onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
-        return await base.DecodedArticleAsync(
-            segmentId, CreatePermitCompletion(semaphore, onConnectionReadyAgain), cancellationToken)
-            .ConfigureAwait(false);
+        var permit = CreatePermitCompletion(semaphore, onConnectionReadyAgain);
+        try
+        {
+            return await base.DecodedArticleAsync(segmentId, permit, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            permit(ArticleBodyResult.NotRetrieved, "article-setup");
+            throw;
+        }
     }
 
     private async Task<PrioritizedSemaphore> AcquireExclusiveConnectionAsync(ArticleBodyCompletionHandler? onConnectionReadyAgain,

@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
@@ -15,7 +16,8 @@ public partial class UsenetClient
     /// <remarks>
     /// Consume or dispose each response stream before awaiting the next response. Later responses
     /// remain blocked until earlier streams are drained, and each decoded pipe applies bounded
-    /// backpressure according to <see cref="UsenetClientOptions"/>.
+    /// backpressure according to <see cref="UsenetClientOptions"/>. Observe
+    /// <see cref="UsenetDecodedBodyBatch.Completion"/> after draining or abandoning the batch.
     /// </remarks>
     public Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds,
@@ -34,6 +36,8 @@ public partial class UsenetClient
     /// <see cref="ArticleBodyResult.NotFound"/> for clean 430 responses,
     /// <see cref="ArticleBodyResult.Cancelled"/> after a successfully drained cancellation, and
     /// <see cref="ArticleBodyResult.NotRetrieved"/> only when the connection is unsafe to reuse.
+    /// <see cref="UsenetDecodedBodyBatch.Completion"/> finishes after that callback and after the
+    /// command lock is released.
     /// </remarks>
     public async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds,
@@ -180,7 +184,7 @@ public partial class UsenetClient
                 await enumerationCts.CancelAsync().ConfigureAwait(false);
                 await DisposeUnyieldedResponsesAsync(batch, yieldedResponseCount)
                     .ConfigureAwait(false);
-                await batch.Completion.ConfigureAwait(false);
+                await ObserveBatchCompletionAsync(batch.Completion).ConfigureAwait(false);
             }
         }
     }
@@ -212,6 +216,18 @@ public partial class UsenetClient
         catch
         {
             // Cleanup must continue so the batch pump can release the command lease.
+        }
+    }
+
+    private static async Task ObserveBatchCompletionAsync(Task completion)
+    {
+        try
+        {
+            await completion.ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // Early abandonment must still observe the producer task.
         }
     }
 
@@ -419,6 +435,9 @@ public partial class UsenetClient
                 completionResult,
                 completionReason);
         }
+
+        if (failure != null)
+            ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     private async Task<Exception?> TryDrainPipelinedBodiesAsync(int responseCount)

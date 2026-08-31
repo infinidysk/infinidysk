@@ -28,11 +28,11 @@
         "transportBytes": 3145728,
         "transportBatchRequests": 3,
         "cacheHits": 0,
-        "cacheMisses": 1,
+        "cacheMisses": 12,
         "cacheBytesServed": 0,
-        "cacheBatchBypassRequests": 3,
-        "cacheBatchBypassArticles": 11,
-        "cacheWriteCommits": 1
+        "cacheBatchBypassRequests": 0,
+        "cacheBatchBypassArticles": 0,
+        "cacheWriteCommits": 12
       },
       "timing": {
         "firstByteMs": 1.0,

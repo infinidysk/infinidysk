@@ -356,7 +356,11 @@ public class ArticleCachingNntpClient(
             previousCompletion = responses[index];
         }
 
-        return new UsenetDecodedBodyBatch { Responses = responses };
+        return new UsenetDecodedBodyBatch
+        {
+            Responses = responses,
+            Completion = uncachedBatch?.Completion ?? Task.CompletedTask,
+        };
     }
 
     private static async Task<UsenetDecodedBodyResponse> CompleteInOrderAsync(

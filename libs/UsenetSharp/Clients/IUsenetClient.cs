@@ -61,7 +61,9 @@ public interface IUsenetClient
     /// <remarks>
     /// Consume or dispose each response stream before awaiting the next response. Later responses
     /// remain blocked until earlier streams are drained, and each decoded pipe applies bounded
-    /// backpressure according to <see cref="UsenetClientOptions"/>.
+    /// backpressure according to <see cref="UsenetClientOptions"/>. Observe
+    /// <see cref="UsenetDecodedBodyBatch.Completion"/> after draining or abandoning the batch;
+    /// it finishes only after the producer has released the connection lifecycle.
     /// </remarks>
     Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds, CancellationToken cancellationToken)
@@ -77,7 +79,8 @@ public interface IUsenetClient
     /// remain blocked until earlier streams are drained, and each decoded pipe applies bounded
     /// backpressure according to <see cref="UsenetClientOptions"/>. The completion callback
     /// distinguishes clean not-found and drained-cancellation outcomes from failures that make the
-    /// connection unsafe to reuse.
+    /// connection unsafe to reuse. Observe <see cref="UsenetDecodedBodyBatch.Completion"/> after
+    /// draining or abandoning the batch; it finishes only after that lifecycle is released.
     /// </remarks>
     Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds, ArticleBodyCompletionHandler? onConnectionReadyAgain,

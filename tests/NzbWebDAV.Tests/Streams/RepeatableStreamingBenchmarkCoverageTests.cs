@@ -144,7 +144,7 @@ public sealed class RepeatableStreamingBenchmarkCoverageTests
     }
 
     [Fact]
-    public async Task ProductionShapedPipelinedFixture_RecordsCurrentNonzeroWarmTransport()
+    public async Task ProductionShapedPipelinedFixture_WarmRereadUsesZeroTransport()
     {
         var fixture = CreateFixture();
         var cacheDir = Path.Join(Path.GetTempPath(), "nzbdav-streaming-pipelined-" + Guid.NewGuid().ToString("N"));
@@ -171,25 +171,25 @@ public sealed class RepeatableStreamingBenchmarkCoverageTests
             Assert.Equal(fixture.Source.Length, cold.TransportBytes);
             Assert.Equal(2, cold.TransportBatchRequests);
             Assert.Equal(0, cold.CacheHits);
-            Assert.Equal(1, cold.CacheMisses);
+            Assert.Equal(SegmentCount, cold.CacheMisses);
             Assert.Equal(0, cold.CacheBytesServed);
-            Assert.Equal(2, cold.CacheBatchBypassRequests);
-            Assert.Equal(5, cold.CacheBatchBypassArticles);
-            Assert.Equal(1, cold.CacheWriteCommits);
+            Assert.Equal(0, cold.CacheBatchBypassRequests);
+            Assert.Equal(0, cold.CacheBatchBypassArticles);
+            Assert.Equal(SegmentCount, cold.CacheWriteCommits);
 
             var beforeWarm = Capture(transport, fixture, statistics);
             await AssertProductionReadMatchesAsync(cached, fixture);
             var warm = Delta(beforeWarm, Capture(transport, fixture, statistics), fixture.Source.Length);
             Assert.Equal(fixture.Source.Length, warm.Bytes);
             AssertPipelinedWarmTransportContract(warm.TransportRequests, warm.TransportBytes);
-            Assert.Equal(5, warm.TransportRequests);
-            Assert.Equal(5 * SegmentSize, warm.TransportBytes);
-            Assert.Equal(2, warm.TransportBatchRequests);
-            Assert.Equal(1, warm.CacheHits);
+            Assert.Equal(0, warm.TransportRequests);
+            Assert.Equal(0, warm.TransportBytes);
+            Assert.Equal(0, warm.TransportBatchRequests);
+            Assert.Equal(6, warm.CacheHits);
             Assert.Equal(0, warm.CacheMisses);
-            Assert.Equal(SegmentSize, warm.CacheBytesServed);
-            Assert.Equal(2, warm.CacheBatchBypassRequests);
-            Assert.Equal(5, warm.CacheBatchBypassArticles);
+            Assert.Equal(fixture.Source.Length, warm.CacheBytesServed);
+            Assert.Equal(0, warm.CacheBatchBypassRequests);
+            Assert.Equal(0, warm.CacheBatchBypassArticles);
             Assert.Equal(0, warm.CacheWriteCommits);
 
             var repeatBefore = Capture(transport, fixture, statistics);
@@ -208,15 +208,97 @@ public sealed class RepeatableStreamingBenchmarkCoverageTests
     }
 
     /// <summary>
-    /// After the batch-local cache overlay, this helper must assert zero transport
-    /// requests and bytes. This measurement slice records the current nonzero bypass
-    /// so the fixture stays green until that overlay lands.
+    /// After the batch-local cache overlay, a fully consumed production-shaped
+    /// warm re-read must not touch the transport.
     /// </summary>
     internal static void AssertPipelinedWarmTransportContract(long transportRequests, long transportBytes)
     {
         Assert.True(
-            transportRequests > 0 && transportBytes > 0,
-            "Current pipelined warm re-read still reaches transport; the overlay PR must change this helper to assert zeros.");
+            transportRequests == 0 && transportBytes == 0,
+            $"Pipelined warm re-read must use zero transport; was requests={transportRequests} bytes={transportBytes}.");
+    }
+
+    [Fact]
+    public async Task PipelinedWarmReread_UsesZeroTransportRequestsAndBytes()
+    {
+        var fixture = CreateFixture();
+        var cacheDir = Path.Join(Path.GetTempPath(), "nzbdav-streaming-pipelined-zero-" + Guid.NewGuid().ToString("N"));
+        var statistics = new SegmentCacheStatistics();
+        try
+        {
+            var transport = fixture.CreateClient();
+            using var cached = new SegmentCacheNntpClient(
+                transport, cacheDir, fixture.Source.Length * 2L, null, null, null, statistics);
+            await WaitForCatalogAsync(cached);
+            await AssertProductionReadMatchesAsync(cached, fixture);
+            var before = Capture(transport, fixture, statistics);
+            await AssertProductionReadMatchesAsync(cached, fixture);
+            var warm = Delta(before, Capture(transport, fixture, statistics), fixture.Source.Length);
+            Assert.Equal(0, warm.TransportRequests);
+            Assert.Equal(0, warm.TransportBytes);
+            Assert.Equal(0, warm.TransportBatchRequests);
+            Assert.Equal(SegmentCount, warm.CacheHits);
+            Assert.Equal(0, warm.CacheMisses);
+            Assert.Equal(fixture.Source.Length, warm.CacheBytesServed);
+            Assert.Equal(fixture.Source.Length, warm.Bytes);
+        }
+        finally
+        {
+            if (Directory.Exists(cacheDir))
+                Directory.Delete(cacheDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task PipelinedColdRead_CommitsEveryCompleteTouchedSegment()
+    {
+        var fixture = CreateFixture();
+        var cacheDir = Path.Join(Path.GetTempPath(), "nzbdav-streaming-pipelined-cold-" + Guid.NewGuid().ToString("N"));
+        var statistics = new SegmentCacheStatistics();
+        try
+        {
+            var transport = fixture.CreateClient();
+            using var cached = new SegmentCacheNntpClient(
+                transport, cacheDir, fixture.Source.Length * 2L, null, null, null, statistics);
+            await WaitForCatalogAsync(cached);
+            var before = Capture(transport, fixture, statistics);
+            await AssertProductionReadMatchesAsync(cached, fixture);
+            var cold = Delta(before, Capture(transport, fixture, statistics), fixture.Source.Length);
+            Assert.Equal(SegmentCount, cold.CacheWriteCommits);
+            Assert.Equal(SegmentCount, cold.CacheMisses);
+            Assert.Equal(0, cold.CacheBatchBypassRequests);
+            Assert.Equal(fixture.Source.Length, cold.Bytes);
+        }
+        finally
+        {
+            if (Directory.Exists(cacheDir))
+                Directory.Delete(cacheDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task PipelinedWarmReread_UsesZeroTransportBatchRequests()
+    {
+        var fixture = CreateFixture();
+        var cacheDir = Path.Join(Path.GetTempPath(), "nzbdav-streaming-pipelined-batch-" + Guid.NewGuid().ToString("N"));
+        var statistics = new SegmentCacheStatistics();
+        try
+        {
+            var transport = fixture.CreateClient();
+            using var cached = new SegmentCacheNntpClient(
+                transport, cacheDir, fixture.Source.Length * 2L, null, null, null, statistics);
+            await WaitForCatalogAsync(cached);
+            await AssertProductionReadMatchesAsync(cached, fixture);
+            var before = Capture(transport, fixture, statistics);
+            await AssertProductionReadMatchesAsync(cached, fixture);
+            var warm = Delta(before, Capture(transport, fixture, statistics), fixture.Source.Length);
+            Assert.Equal(0, warm.TransportBatchRequests);
+        }
+        finally
+        {
+            if (Directory.Exists(cacheDir))
+                Directory.Delete(cacheDir, recursive: true);
+        }
     }
 
     private static Counters Capture(
