@@ -219,6 +219,7 @@ public sealed class RepairPatchStore
             return Task.CompletedTask;
 
         Task load;
+        bool isOwner;
         lock (_catalogLoadSync)
         {
             if (IsCatalogReady)
@@ -227,18 +228,20 @@ public sealed class RepairPatchStore
             if (_catalogLoadInFlight is { IsCompleted: false } inflight)
             {
                 load = inflight;
+                isOwner = false;
             }
             else
             {
                 load = LoadCatalogOnceAsync(ct);
                 _catalogLoadInFlight = load;
+                isOwner = true;
             }
         }
 
-        return AwaitCatalogLoadAsync(load, ct);
+        return AwaitCatalogLoadAsync(load, isOwner, ct);
     }
 
-    private async Task AwaitCatalogLoadAsync(Task load, CancellationToken ct)
+    private async Task AwaitCatalogLoadAsync(Task load, bool isOwner, CancellationToken ct)
     {
         try
         {
@@ -248,11 +251,11 @@ public sealed class RepairPatchStore
         {
             lock (_catalogLoadSync)
             {
-                // Drop the shared slot when this waiter cancelled, even if the
-                // scan is still unwinding. Otherwise a retry joins a load bound
-                // to the cancelled token and fails immediately.
+                // Drop the slot when the load finished, or when its owner
+                // cancelled so a retry can start a new scan. A cancelled
+                // secondary waiter must not clear an in-flight owner scan.
                 if (ReferenceEquals(_catalogLoadInFlight, load)
-                    && (load.IsCompleted || ct.IsCancellationRequested))
+                    && (load.IsCompleted || (isOwner && ct.IsCancellationRequested)))
                     _catalogLoadInFlight = null;
             }
 

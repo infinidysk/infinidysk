@@ -259,6 +259,54 @@ public sealed class RepairPatchStoreTests
     }
 
     [Fact]
+    public async Task CancelledSecondaryWaiter_DoesNotStartDuplicateScan()
+    {
+        var dir = NewTempDir("catalog-secondary-cancel");
+        var scanEntered = NewTcs();
+        var allowScan = NewTcs();
+        var starts = 0;
+        var content = "secondary-cancel-blob"u8.ToArray();
+        var blob = WriteBlob(dir, "secondary-cancel@test", content);
+
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024 * 1024, ct =>
+            {
+                Interlocked.Increment(ref starts);
+                scanEntered.TrySetResult();
+                allowScan.Task.Wait(ct);
+                return new[] { blob };
+            });
+
+            var owner = store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            await scanEntered.Task.WaitAsync(Timeout);
+
+            using var secondaryCts = new CancellationTokenSource();
+            var secondary = store.EnsureCatalogLoadedAsync(secondaryCts.Token);
+            secondaryCts.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => secondary);
+
+            var later = store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            Assert.Equal(1, Volatile.Read(ref starts));
+            Assert.False(owner.IsCompleted);
+            Assert.False(later.IsCompleted);
+
+            allowScan.TrySetResult();
+            await Task.WhenAll(owner, later).WaitAsync(Timeout);
+
+            Assert.Equal(1, Volatile.Read(ref starts));
+            Assert.True(store.IsCatalogReady);
+            Assert.Equal(1, store.EntryCount);
+            Assert.Equal(content.Length, store.CurrentBytes);
+        }
+        finally
+        {
+            allowScan.TrySetResult();
+            DeleteDir(dir);
+        }
+    }
+
+    [Fact]
     public async Task ConcurrentCommit_NewHashSurvivesPublication()
     {
         var dir = NewTempDir("catalog-live-unique");
