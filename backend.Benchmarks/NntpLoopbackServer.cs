@@ -71,6 +71,7 @@ internal sealed class NntpLoopbackServer : IAsyncDisposable
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            return;
         }
     }
 
@@ -100,9 +101,11 @@ internal sealed class NntpLoopbackServer : IAsyncDisposable
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested)
         {
+            return;
         }
         catch (ObjectDisposedException) when (_stop.IsCancellationRequested)
         {
+            return;
         }
     }
 
@@ -157,6 +160,7 @@ internal sealed class NntpLoopbackServer : IAsyncDisposable
         }
         catch (IOException) when (_stop.IsCancellationRequested)
         {
+            // A peer may close while the server is stopping.
         }
         finally
         {
@@ -209,8 +213,9 @@ internal sealed class NntpLoopbackServer : IAsyncDisposable
         {
             await _acceptTask.ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested)
         {
+            // Cancellation is the expected listener shutdown path.
         }
         await Task.WhenAll(_connectionTasks.ToArray()).ConfigureAwait(false);
         _stop.Dispose();

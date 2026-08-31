@@ -18,7 +18,7 @@ namespace NzbWebDAV.Benchmarks;
 internal static class NntpWholePathReport
 {
     internal const string ReportName = "nntp-whole-path";
-    private const int CorpusSeed = 1025;
+    internal const int CorpusSeed = 1025;
     private const int TimedRepetitions = 3;
 
     public static async Task RunAsync(
@@ -65,8 +65,6 @@ internal static class NntpWholePathReport
                     ["notFoundCallbacks"] = deterministic.NotFoundCallbacks,
                     ["notRetrievedCallbacks"] = deterministic.NotRetrievedCallbacks,
                     ["finalArticleBudgetBytes"] = deterministic.FinalArticleBudgetBytes,
-                    ["finalPipeBufferedBytes"] = deterministic.FinalPipeBufferedBytes,
-                    ["outstandingPermits"] = deterministic.OutstandingPermits,
                 },
                 PerformanceReportJson.WholePathTiming(
                     timing.WallSeconds,
@@ -118,7 +116,7 @@ internal static class NntpWholePathReport
             scenario.ArticleCount,
             scenario.DecodedArticleBytes,
             CorpusSeed);
-        var countersPath = Path.Combine(Path.GetTempPath(), $"nntp-loopback-{Guid.NewGuid():N}.json");
+        var countersPath = Path.Join(Path.GetTempPath(), $"nntp-loopback-{Guid.NewGuid():N}.json");
         await using var server = await LoopbackServerProcess.StartAsync(scenario, countersPath).ConfigureAwait(false);
         var callbackCounts = new CallbackCounts();
         var budget = new InFlightArticleBudget(corpus.ExpectedBytes + scenario.DecodedArticleBytes);
@@ -171,8 +169,6 @@ internal static class NntpWholePathReport
                     callbackCounts.NotFound,
                     callbackCounts.NotRetrieved,
                     budget.LeasedBytes,
-                    0,
-                    0,
                     serverSnapshot.PeakActiveConnections),
                 new NntpWholePathTiming(
                     started.Elapsed.TotalSeconds,
@@ -306,7 +302,8 @@ internal static class NntpWholePathReport
         long total = 0;
         for (var start = 0; start < ids.Length; start += width)
         {
-            var batchIds = ids.Skip(start).Take(Math.Min(width, ids.Length - start)).ToArray();
+            var batchIds = new SegmentId[Math.Min(width, ids.Length - start)];
+            Array.Copy(ids, start, batchIds, 0, batchIds.Length);
             var batch = await readBatch(batchIds, counts.Record).ConfigureAwait(false);
             foreach (var responseTask in batch.Responses)
             {
@@ -454,7 +451,7 @@ internal sealed class LoopbackServerProcess : IAsyncDisposable
         startInfo.ArgumentList.Add("--article-bytes");
         startInfo.ArgumentList.Add(scenario.DecodedArticleBytes.ToString());
         startInfo.ArgumentList.Add("--seed");
-        startInfo.ArgumentList.Add("1025");
+        startInfo.ArgumentList.Add(NntpWholePathReport.CorpusSeed.ToString());
         startInfo.ArgumentList.Add("--rtt-ms");
         startInfo.ArgumentList.Add(scenario.RoundTripDelayMs.ToString());
         if (scenario.BandwidthBytesPerSecond is { } bandwidth)
@@ -467,15 +464,29 @@ internal sealed class LoopbackServerProcess : IAsyncDisposable
 
         var process = Process.Start(startInfo) ??
                       throw new InvalidOperationException("Could not start loopback NNTP server process.");
-        var line = await process.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(15)).ConfigureAwait(false);
-        if (line is null || !line.StartsWith("READY ", StringComparison.Ordinal) ||
-            !int.TryParse(line[6..], out var port))
+        try
         {
-            var error = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
-            process.Kill(entireProcessTree: true);
-            throw new InvalidOperationException($"Loopback NNTP server did not become ready: {error}");
+            var line = await process.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(15))
+                .ConfigureAwait(false);
+            if (line is null || !line.StartsWith("READY ", StringComparison.Ordinal) ||
+                !int.TryParse(line[6..], out var port))
+            {
+                throw new InvalidOperationException("Loopback NNTP server did not report a valid READY port.");
+            }
+            return new LoopbackServerProcess(process, countersPath) { Port = port };
         }
-        return new LoopbackServerProcess(process, countersPath) { Port = port };
+        catch
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().ConfigureAwait(false);
+            }
+            var error = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
+            process.Dispose();
+            throw new InvalidOperationException(
+                $"Loopback NNTP server did not become ready: {error}");
+        }
     }
 
     public async Task<NntpLoopbackServerSnapshot> StopAndGetSnapshotAsync()

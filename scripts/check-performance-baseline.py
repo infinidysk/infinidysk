@@ -21,6 +21,7 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 LATENCY_FLOOR_MS = 15.0
+SECONDS_FLOOR_S = 0.015
 CPU_FLOOR_S = 0.25
 ENVELOPE_MULTIPLIER = 3.0
 REBASELINE_HINT = (
@@ -69,6 +70,10 @@ def classify_timing_field(name: str) -> str:
         return "throughput"
     if "cpu" in lowered:
         return "cpu"
+    if lowered.endswith("seconds") or lowered.endswith("secondspergb"):
+        return "duration"
+    if "allocated" in lowered or "collection" in lowered:
+        return "cpu"
     return "latency"
 
 
@@ -79,7 +84,13 @@ def timing_envelope(median: float, kind: str) -> dict[str, Any]:
             "floor": round3(median / ENVELOPE_MULTIPLIER),
             "policy": "fail",
         }
-    floor = CPU_FLOOR_S if kind == "cpu" else LATENCY_FLOOR_MS
+    floor = (
+        CPU_FLOOR_S
+        if kind == "cpu"
+        else SECONDS_FLOOR_S
+        if kind == "duration"
+        else LATENCY_FLOOR_MS
+    )
     return {
         "baseline": round3(median),
         "envelope": round3(max(ENVELOPE_MULTIPLIER * median, median + floor)),

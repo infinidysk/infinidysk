@@ -81,6 +81,10 @@ internal static class PerformanceReportJson
             ["serverCpuSeconds"] = Round(serverCpuSeconds),
             ["clientCpuSecondsPerGb"] = Round(clientCpuSecondsPerGb),
             ["throughputMbps"] = Round(throughputMbps),
+            ["clientAllocatedBytes"] = Round(clientAllocatedBytes),
+            ["gen0Collections"] = Round(gen0Collections),
+            ["gen1Collections"] = Round(gen1Collections),
+            ["gen2Collections"] = Round(gen2Collections),
         };
 
     public static double Round(double value) =>

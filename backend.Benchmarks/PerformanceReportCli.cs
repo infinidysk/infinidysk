@@ -64,7 +64,7 @@ internal static class PerformanceReportCli
                 continue;
             }
 
-            if (report is not null || jsonPath is not null)
+            if (report is not null || jsonPath is not null || scenarioName is not null || scenarioSet != "quick")
                 throw new ArgumentException($"Unexpected argument '{arg}'.");
             return false;
         }
@@ -78,7 +78,8 @@ internal static class PerformanceReportCli
         if (report is null)
         {
             if (jsonPath is not null)
-                throw new ArgumentException("--json requires --streaming-report or --sab-api-report.");
+                throw new ArgumentException(
+                    "--json requires --streaming-report, --sab-api-report, or --nntp-whole-path-report.");
             if (scenarioName is not null || scenarioSet != "quick")
                 throw new ArgumentException("--set and --scenario require --nntp-whole-path-report.");
             return false;
@@ -108,7 +109,7 @@ internal static class PerformanceReportCli
     {
         var articleCount = 0;
         var articleBytes = 0;
-        var seed = 1025;
+        var seed = NntpWholePathReport.CorpusSeed;
         var roundTripDelayMs = 0;
         long? bandwidthBytesPerSecond = null;
         string? countersPath = null;

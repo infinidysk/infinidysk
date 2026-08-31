@@ -197,7 +197,7 @@ build_target() {
     local exports
     mkdir -p "$symbol_output"
     objcopy --only-keep-debug "$lib_path" "$debug_path"
-    objcopy --add-gnu-debuglink="$(basename "$debug_path")" "$output_path/$dest_name"
+    objcopy --add-gnu-debuglink="$debug_path" "$output_path/$dest_name"
     exports="$(nm -D --defined-only "$output_path/$dest_name")"
     [[ "$exports" == *rapidyenc_decode_ex* && "$exports" == *rapidyenc_crc* ]] || {
         echo "Error: expected rapidyenc decoder/CRC exports were not found." >&2

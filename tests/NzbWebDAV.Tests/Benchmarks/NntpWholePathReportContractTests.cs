@@ -29,7 +29,7 @@ public sealed class NntpWholePathReportContractTests
     public async Task Server_WritesGreetingAndSnapshotThenDisposesConnections()
     {
         var corpus = NntpLoopbackCorpus.Create(articleCount: 1, decodedArticleBytes: 1024, seed: 123);
-        var path = Path.Combine(Path.GetTempPath(), $"nntp-loopback-{Guid.NewGuid():N}.json");
+        var path = Path.Join(Path.GetTempPath(), $"nntp-loopback-{Guid.NewGuid():N}.json");
         try
         {
             await using var server = await NntpLoopbackServer.StartAsync(corpus);
@@ -52,7 +52,7 @@ public sealed class NntpWholePathReportContractTests
     [Fact]
     public void PerformanceReportJson_UsesStableWholePathFields()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"nntp-whole-path-{Guid.NewGuid():N}.json");
+        var path = Path.Join(Path.GetTempPath(), $"nntp-whole-path-{Guid.NewGuid():N}.json");
         try
         {
             PerformanceReportJson.Write(
@@ -72,6 +72,8 @@ public sealed class NntpWholePathReportContractTests
             var scenario = root.GetProperty("scenarios").GetProperty("plain-buffered-w1");
             Assert.Equal(1, scenario.GetProperty("deterministic").GetProperty("sha256Match").GetInt64());
             Assert.True(scenario.GetProperty("timing").TryGetProperty("throughputMbps", out _));
+            Assert.Equal(6d, scenario.GetProperty("timing").GetProperty("clientAllocatedBytes").GetDouble());
+            Assert.Equal(7d, scenario.GetProperty("timing").GetProperty("gen0Collections").GetDouble());
         }
         finally
         {
@@ -100,5 +102,12 @@ public sealed class NntpWholePathReportContractTests
         await Assert.ThrowsAsync<ArgumentException>(() =>
             PerformanceReportCli.TryHandleAsync(
                 ["--nntp-loopback-server", "--articles", "1"]));
+    }
+
+    [Fact]
+    public async Task Cli_DoesNotIgnoreScenarioOptionsBeforeAnUnknownArgument()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            PerformanceReportCli.TryHandleAsync(["--set", "sustained", "--unexpected"]));
     }
 }

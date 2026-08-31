@@ -18,16 +18,18 @@
         "cancelledCallbacks": 0,
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
-        "finalArticleBudgetBytes": 0,
-        "finalPipeBufferedBytes": 0,
-        "outstandingPermits": 0
+        "finalArticleBudgetBytes": 0
       },
       "timing": {
         "wallSeconds": { "baseline": 10.0, "envelope": 30.0, "policy": "fail" },
         "clientCpuSeconds": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
         "serverCpuSeconds": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
         "clientCpuSecondsPerGb": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
-        "throughputMbps": { "baseline": 30.0, "floor": 10.0, "policy": "fail" }
+        "throughputMbps": { "baseline": 30.0, "floor": 10.0, "policy": "fail" },
+        "clientAllocatedBytes": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "gen0Collections": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "gen1Collections": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "gen2Collections": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" }
       }
     },
     "plain-buffered-w2": {
@@ -41,16 +43,18 @@
         "cancelledCallbacks": 0,
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
-        "finalArticleBudgetBytes": 0,
-        "finalPipeBufferedBytes": 0,
-        "outstandingPermits": 0
+        "finalArticleBudgetBytes": 0
       },
       "timing": {
         "wallSeconds": { "baseline": 10.0, "envelope": 30.0, "policy": "fail" },
         "clientCpuSeconds": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
         "serverCpuSeconds": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
         "clientCpuSecondsPerGb": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
-        "throughputMbps": { "baseline": 30.0, "floor": 10.0, "policy": "fail" }
+        "throughputMbps": { "baseline": 30.0, "floor": 10.0, "policy": "fail" },
+        "clientAllocatedBytes": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "gen0Collections": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "gen1Collections": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "gen2Collections": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" }
       }
     },
     "plain-buffered-w4": {
@@ -64,16 +68,18 @@
         "cancelledCallbacks": 0,
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
-        "finalArticleBudgetBytes": 0,
-        "finalPipeBufferedBytes": 0,
-        "outstandingPermits": 0
+        "finalArticleBudgetBytes": 0
       },
       "timing": {
         "wallSeconds": { "baseline": 10.0, "envelope": 30.0, "policy": "fail" },
         "clientCpuSeconds": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
         "serverCpuSeconds": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
         "clientCpuSecondsPerGb": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
-        "throughputMbps": { "baseline": 30.0, "floor": 10.0, "policy": "fail" }
+        "throughputMbps": { "baseline": 30.0, "floor": 10.0, "policy": "fail" },
+        "clientAllocatedBytes": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "gen0Collections": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "gen1Collections": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "gen2Collections": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" }
       }
     },
     "plain-buffered-w8": {
@@ -87,16 +93,18 @@
         "cancelledCallbacks": 0,
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
-        "finalArticleBudgetBytes": 0,
-        "finalPipeBufferedBytes": 0,
-        "outstandingPermits": 0
+        "finalArticleBudgetBytes": 0
       },
       "timing": {
         "wallSeconds": { "baseline": 10.0, "envelope": 30.0, "policy": "fail" },
         "clientCpuSeconds": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
         "serverCpuSeconds": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
         "clientCpuSecondsPerGb": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
-        "throughputMbps": { "baseline": 30.0, "floor": 10.0, "policy": "fail" }
+        "throughputMbps": { "baseline": 30.0, "floor": 10.0, "policy": "fail" },
+        "clientAllocatedBytes": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "gen0Collections": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "gen1Collections": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" },
+        "gen2Collections": { "baseline": 0.0, "envelope": 0.25, "policy": "warn" }
       }
     }
   }

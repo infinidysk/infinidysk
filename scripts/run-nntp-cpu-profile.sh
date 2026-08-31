@@ -16,7 +16,8 @@ RUN_ID="${2:-$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD)}"
 : "${RANGE_END:?Set RANGE_END to the inclusive byte offset.}"
 : "${CURL_CONFIG:?Set CURL_CONFIG to a private curl configuration file.}"
 [[ -f "$CURL_CONFIG" ]] || { echo "CURL_CONFIG does not exist: $CURL_CONFIG" >&2; exit 64; }
-[[ "$(stat -c '%a' "$CURL_CONFIG" 2>/dev/null || stat -f '%Lp' "$CURL_CONFIG")" -le 600 ]] ||
+CONFIG_MODE="$(stat -c '%a' "$CURL_CONFIG" 2>/dev/null || stat -f '%Lp' "$CURL_CONFIG")"
+(( (8#$CONFIG_MODE & 077) == 0 )) ||
   { echo "CURL_CONFIG must not be group/world-readable." >&2; exit 64; }
 
 RUN_DIR="/var/tmp/infinidysk-cpu/$RUN_ID"
@@ -27,12 +28,12 @@ NODE_PID="${NODE_PID:-$(pgrep -xo node || true)}"
 [[ -n "$BACKEND_PID" ]] || { echo "Unable to find NzbWebDAV; set BACKEND_PID." >&2; exit 1; }
 [[ -d "/proc/$BACKEND_PID" ]] || { echo "BACKEND_PID is not visible in this PID namespace." >&2; exit 1; }
 
-cgroup_file() {
-  local name="$1"
-  if [[ -r "/sys/fs/cgroup/$name" ]]; then
-    printf '%s' "/sys/fs/cgroup/$name"
-  fi
-}
+BACKEND_CGROUP_PATH="$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$BACKEND_PID/cgroup")"
+[[ -n "$BACKEND_CGROUP_PATH" && "$BACKEND_CGROUP_PATH" != *".."* ]] ||
+  { echo "Unable to resolve the backend cgroup v2 path." >&2; exit 1; }
+BACKEND_CGROUP_DIR="/sys/fs/cgroup${BACKEND_CGROUP_PATH}"
+[[ -d "$BACKEND_CGROUP_DIR" ]] ||
+  { echo "Backend cgroup directory is not mounted: $BACKEND_CGROUP_DIR" >&2; exit 1; }
 
 copy_if_readable() {
   local source="$1" destination="$2"
@@ -50,8 +51,8 @@ snapshot_process() {
 snapshot_cgroup() {
   local label="$1" source
   for name in cpu.max cpu.stat memory.current memory.peak memory.events memory.pressure; do
-    source="$(cgroup_file "$name")"
-    [[ -n "$source" ]] && cp "$source" "$RUN_DIR/${label}-cgroup-${name//./-}.txt"
+    source="$BACKEND_CGROUP_DIR/$name"
+    [[ -r "$source" ]] && cp "$source" "$RUN_DIR/${label}-cgroup-${name//./-}.txt"
   done
 }
 
@@ -61,6 +62,7 @@ write_manifest() {
     printf 'git_sha=%s\n' "$(git rev-parse HEAD)"
     printf 'utc=%s\n' "$(date -u +%FT%TZ)"
     printf 'backend_pid=%s\n' "$BACKEND_PID"
+    printf 'backend_cgroup=%s\n' "$BACKEND_CGROUP_PATH"
     printf 'node_pid=%s\n' "$NODE_PID"
     printf 'kernel=%s\n' "$(uname -srvmo)"
     printf 'cpu=%s\n' "$(uname -m)"

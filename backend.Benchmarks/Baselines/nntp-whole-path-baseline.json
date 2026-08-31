@@ -3,7 +3,7 @@
   "report": "nntp-whole-path",
   "meta": {
     "commit": "unknown",
-    "generatedAt": "2026-08-31T19:42:21.649771+00:00",
+    "generatedAt": "2026-08-31T19:57:39.411218+00:00",
     "runner": "local"
   },
   "scenarios": {
@@ -18,14 +18,12 @@
         "cancelledCallbacks": 0,
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
-        "finalArticleBudgetBytes": 0,
-        "finalPipeBufferedBytes": 0,
-        "outstandingPermits": 0
+        "finalArticleBudgetBytes": 0
       },
       "timing": {
         "wallSeconds": {
-          "baseline": 0.007,
-          "envelope": 15.007,
+          "baseline": 0.006,
+          "envelope": 0.021,
           "policy": "fail"
         },
         "clientCpuSeconds": {
@@ -39,14 +37,34 @@
           "policy": "warn"
         },
         "clientCpuSecondsPerGb": {
-          "baseline": 3.426,
-          "envelope": 10.278,
+          "baseline": 3.397,
+          "envelope": 10.191,
           "policy": "warn"
         },
         "throughputMbps": {
-          "baseline": 293.125,
-          "floor": 97.708,
+          "baseline": 325.088,
+          "floor": 108.363,
           "policy": "fail"
+        },
+        "clientAllocatedBytes": {
+          "baseline": 617882.0,
+          "envelope": 1853646.0,
+          "policy": "warn"
+        },
+        "gen0Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        },
+        "gen1Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        },
+        "gen2Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
         }
       }
     },
@@ -61,35 +79,53 @@
         "cancelledCallbacks": 0,
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
-        "finalArticleBudgetBytes": 0,
-        "finalPipeBufferedBytes": 0,
-        "outstandingPermits": 0
+        "finalArticleBudgetBytes": 0
       },
       "timing": {
         "wallSeconds": {
           "baseline": 0.007,
-          "envelope": 15.007,
+          "envelope": 0.022,
           "policy": "fail"
         },
         "clientCpuSeconds": {
-          "baseline": 0.019,
-          "envelope": 0.269,
+          "baseline": 0.02,
+          "envelope": 0.27,
           "policy": "warn"
         },
         "serverCpuSeconds": {
-          "baseline": 0.009,
-          "envelope": 0.259,
+          "baseline": 0.01,
+          "envelope": 0.26,
           "policy": "warn"
         },
         "clientCpuSecondsPerGb": {
-          "baseline": 8.98,
-          "envelope": 26.94,
+          "baseline": 9.751,
+          "envelope": 29.253,
           "policy": "warn"
         },
         "throughputMbps": {
-          "baseline": 301.268,
-          "floor": 100.423,
+          "baseline": 284.728,
+          "floor": 94.909,
           "policy": "fail"
+        },
+        "clientAllocatedBytes": {
+          "baseline": 772464.0,
+          "envelope": 2317392.0,
+          "policy": "warn"
+        },
+        "gen0Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        },
+        "gen1Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        },
+        "gen2Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
         }
       }
     },
@@ -104,35 +140,53 @@
         "cancelledCallbacks": 0,
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
-        "finalArticleBudgetBytes": 0,
-        "finalPipeBufferedBytes": 0,
-        "outstandingPermits": 0
+        "finalArticleBudgetBytes": 0
       },
       "timing": {
         "wallSeconds": {
           "baseline": 0.007,
-          "envelope": 15.007,
+          "envelope": 0.022,
           "policy": "fail"
         },
         "clientCpuSeconds": {
-          "baseline": 0.023,
-          "envelope": 0.273,
+          "baseline": 0.016,
+          "envelope": 0.266,
           "policy": "warn"
         },
         "serverCpuSeconds": {
-          "baseline": 0.012,
-          "envelope": 0.262,
+          "baseline": 0.011,
+          "envelope": 0.261,
           "policy": "warn"
         },
         "clientCpuSecondsPerGb": {
-          "baseline": 10.757,
-          "envelope": 32.271,
+          "baseline": 7.428,
+          "envelope": 22.284,
           "policy": "warn"
         },
         "throughputMbps": {
-          "baseline": 317.028,
-          "floor": 105.676,
+          "baseline": 317.113,
+          "floor": 105.704,
           "policy": "fail"
+        },
+        "clientAllocatedBytes": {
+          "baseline": 586042.0,
+          "envelope": 1758126.0,
+          "policy": "warn"
+        },
+        "gen0Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        },
+        "gen1Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        },
+        "gen2Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
         }
       }
     },
@@ -147,35 +201,53 @@
         "cancelledCallbacks": 0,
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
-        "finalArticleBudgetBytes": 0,
-        "finalPipeBufferedBytes": 0,
-        "outstandingPermits": 0
+        "finalArticleBudgetBytes": 0
       },
       "timing": {
         "wallSeconds": {
-          "baseline": 0.006,
-          "envelope": 15.006,
+          "baseline": 0.009,
+          "envelope": 0.027,
           "policy": "fail"
         },
         "clientCpuSeconds": {
-          "baseline": 0.012,
-          "envelope": 0.262,
+          "baseline": 0.025,
+          "envelope": 0.275,
           "policy": "warn"
         },
         "serverCpuSeconds": {
-          "baseline": 0.011,
-          "envelope": 0.261,
+          "baseline": 0.01,
+          "envelope": 0.26,
           "policy": "warn"
         },
         "clientCpuSecondsPerGb": {
-          "baseline": 5.699,
-          "envelope": 17.097,
+          "baseline": 12.135,
+          "envelope": 36.405,
           "policy": "warn"
         },
         "throughputMbps": {
-          "baseline": 346.305,
-          "floor": 115.435,
+          "baseline": 294.037,
+          "floor": 98.012,
           "policy": "fail"
+        },
+        "clientAllocatedBytes": {
+          "baseline": 228048.0,
+          "envelope": 684144.0,
+          "policy": "warn"
+        },
+        "gen0Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        },
+        "gen1Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        },
+        "gen2Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
         }
       }
     },
@@ -190,19 +262,17 @@
         "cancelledCallbacks": 0,
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
-        "finalArticleBudgetBytes": 0,
-        "finalPipeBufferedBytes": 0,
-        "outstandingPermits": 0
+        "finalArticleBudgetBytes": 0
       },
       "timing": {
         "wallSeconds": {
           "baseline": 0.006,
-          "envelope": 15.006,
+          "envelope": 0.021,
           "policy": "fail"
         },
         "clientCpuSeconds": {
-          "baseline": 0.017,
-          "envelope": 0.267,
+          "baseline": 0.018,
+          "envelope": 0.268,
           "policy": "warn"
         },
         "serverCpuSeconds": {
@@ -211,14 +281,34 @@
           "policy": "warn"
         },
         "clientCpuSecondsPerGb": {
-          "baseline": 8.121,
-          "envelope": 24.363,
+          "baseline": 8.516,
+          "envelope": 25.548,
           "policy": "warn"
         },
         "throughputMbps": {
-          "baseline": 353.693,
-          "floor": 117.898,
+          "baseline": 359.673,
+          "floor": 119.891,
           "policy": "fail"
+        },
+        "clientAllocatedBytes": {
+          "baseline": 259448.0,
+          "envelope": 778344.0,
+          "policy": "warn"
+        },
+        "gen0Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        },
+        "gen1Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        },
+        "gen2Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
         }
       }
     }
