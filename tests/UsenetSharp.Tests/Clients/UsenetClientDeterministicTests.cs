@@ -3710,6 +3710,105 @@ public class UsenetClientDeterministicTests
         Assert.That(client.IsHealthy, Is.False);
     }
 
+    [Test]
+    public async Task DecodedBodiesAsync_OomDuringPumpSetup_FaultsResponsesReleasesLockAndReportsNotRetrieved()
+    {
+        var oom = new OutOfMemoryException("pump-setup");
+        var time = new CountingThrowingTimeProvider(oom);
+        await using var server = new ScriptedNntpServer(async (command, writer, _) =>
+        {
+            if (command.StartsWith("BODY", StringComparison.Ordinal))
+                await writer.WriteLineAsync("222 body follows");
+        });
+        await using var client = new UsenetClient(
+            new UsenetClientOptions { ReadTimeout = TimeSpan.FromSeconds(30) },
+            time);
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+        time.ThrowOnCreateCount = time.CreatedTimerCount + 2;
+
+        var callbackCount = 0;
+        ArticleBodyResult? callbackResult = null;
+        string? callbackReason = null;
+        var batch = await client.DecodedBodiesAsync(
+            new SegmentId[] { "first@example.com", "second@example.com" },
+            (result, reason) =>
+            {
+                Interlocked.Increment(ref callbackCount);
+                callbackResult = result;
+                callbackReason = reason;
+            },
+            CancellationToken.None);
+
+        foreach (var responseTask in batch.Responses)
+        {
+            var thrown = Assert.ThrowsAsync<OutOfMemoryException>(
+                () => responseTask.WaitAsync(TimeSpan.FromSeconds(2)));
+            Assert.That(thrown, Is.SameAs(oom));
+        }
+
+        var completionThrown = Assert.ThrowsAsync<OutOfMemoryException>(
+            () => batch.Completion.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.That(completionThrown, Is.SameAs(oom));
+        Assert.That(callbackCount, Is.EqualTo(1));
+        Assert.That(callbackResult, Is.EqualTo(ArticleBodyResult.NotRetrieved));
+        Assert.That(callbackReason, Is.EqualTo("out-of-memory"));
+        Assert.That(async () => await client.WaitForReadyAsync().WaitAsync(TimeSpan.FromSeconds(2)),
+            Throws.Nothing);
+        Assert.That(client.IsHealthy, Is.False);
+    }
+
+    [Test]
+    public async Task DecodedBodiesAsync_OomAfterFirstResponse_FaultsRemainingAndDoesNotReportRetrieved()
+    {
+        var oom = new OutOfMemoryException("pump-execution");
+        var time = new CountingThrowingTimeProvider(oom);
+        await using var server = ScriptedNntpServer.StartConnectionScript(
+            async (reader, writer, cancellationToken) =>
+            {
+                _ = await reader.ReadLineAsync(cancellationToken);
+                _ = await reader.ReadLineAsync(cancellationToken);
+                await WriteSimpleYencArticleAsync(writer, [1, 2], "size=2", "first.bin");
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            });
+        await using var client = new UsenetClient(
+            new UsenetClientOptions { ReadTimeout = TimeSpan.FromSeconds(30) },
+            time);
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+        time.PumpTimerCount = time.CreatedTimerCount + 2;
+        time.AllowGetTimestampAfterPump = 1;
+
+        var callbackCount = 0;
+        ArticleBodyResult? callbackResult = null;
+        var batch = await client.DecodedBodiesAsync(
+            new SegmentId[] { "first@example.com", "second@example.com" },
+            (result, _) =>
+            {
+                Interlocked.Increment(ref callbackCount);
+                callbackResult = result;
+            },
+            CancellationToken.None);
+
+        var first = await batch.Responses[0].WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.That(first.Stream, Is.Not.Null);
+        var remainingThrown = Assert.ThrowsAsync<OutOfMemoryException>(
+            () => batch.Responses[1].WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.That(remainingThrown, Is.SameAs(oom));
+        var completionThrown = Assert.ThrowsAsync<OutOfMemoryException>(
+            () => batch.Completion.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.That(completionThrown, Is.SameAs(oom));
+        Assert.That(callbackCount, Is.EqualTo(1));
+        Assert.That(callbackResult, Is.EqualTo(ArticleBodyResult.NotRetrieved));
+        Assert.That(client.IsHealthy, Is.False);
+        try
+        {
+            first.Stream!.Dispose();
+        }
+        catch (OutOfMemoryException)
+        {
+            // Decoder may still be on the fatal path while the published stream is disposed.
+        }
+    }
+
     private static async Task WriteYencArticleAsync(
         StreamWriter writer,
         byte[] decoded,
@@ -3799,6 +3898,45 @@ public class UsenetClientDeterministicTests
                 if (buffered != _sum && Mismatch is null)
                     Mismatch = $"observer sum {_sum} != BufferedDecodedBodyBytes {buffered}";
             }
+        }
+    }
+
+    private sealed class CountingThrowingTimeProvider(OutOfMemoryException exception) : TimeProvider
+    {
+        private int _created;
+        private int _timestampsAfterPump;
+
+        public int ThrowOnCreateCount { get; set; } = int.MaxValue;
+        public int PumpTimerCount { get; set; } = int.MaxValue;
+        public int AllowGetTimestampAfterPump { get; set; } = int.MaxValue;
+        public int CreatedTimerCount => Volatile.Read(ref _created);
+
+        public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
+
+        public override DateTimeOffset GetUtcNow() => TimeProvider.System.GetUtcNow();
+
+        public override long GetTimestamp()
+        {
+            if (Volatile.Read(ref _created) >= PumpTimerCount)
+            {
+                var afterPump = Interlocked.Increment(ref _timestampsAfterPump);
+                if (afterPump > AllowGetTimestampAfterPump)
+                    throw exception;
+            }
+
+            return TimeProvider.System.GetTimestamp();
+        }
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period)
+        {
+            var created = Interlocked.Increment(ref _created);
+            if (created == ThrowOnCreateCount)
+                throw exception;
+            return TimeProvider.System.CreateTimer(callback, state, dueTime, period);
         }
     }
 }

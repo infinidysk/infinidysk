@@ -115,7 +115,7 @@ public partial class UsenetClient
                 Completion = completion
             };
         }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
+        catch (Exception exception)
         {
             if (writeStarted)
             {
@@ -280,10 +280,15 @@ public partial class UsenetClient
         var completionResult = ArticleBodyResult.Retrieved;
         string? completionReason = null;
         var nextResponseIndex = 0;
-        using var operationCts = CreateOperationTokenSource(callerCancellationToken);
-        using var sharedReadTimeout = new CoalescedReadTimeout(_options.ReadTimeout, _timeProvider, operationCts.Token);
+        CancellationTokenSource? operationCts = null;
+        CoalescedReadTimeout? sharedReadTimeout = null;
         try
         {
+            operationCts = CreateOperationTokenSource(callerCancellationToken);
+            sharedReadTimeout = new CoalescedReadTimeout(
+                _options.ReadTimeout,
+                _timeProvider,
+                operationCts.Token);
             while (nextResponseIndex < segmentIds.Length)
             {
                 var segmentId = segmentIds[nextResponseIndex];
@@ -412,11 +417,13 @@ public partial class UsenetClient
                 }
             }
         }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
+        catch (Exception exception)
         {
             failure = exception;
             completionResult = ArticleBodyResult.NotRetrieved;
-            completionReason = DescribeFailure(exception);
+            completionReason = exception is OutOfMemoryException
+                ? "out-of-memory"
+                : DescribeFailure(exception);
             RecordConnectionFailure(exception);
         }
         finally
@@ -429,6 +436,8 @@ public partial class UsenetClient
                 }
             }
 
+            sharedReadTimeout?.Dispose();
+            operationCts?.Dispose();
             _commandLock.Release();
             InvokeBatchCallback(
                 onConnectionReadyAgain,
@@ -487,7 +496,7 @@ public partial class UsenetClient
         {
             callback?.Invoke(result, failureReason);
         }
-        catch
+        catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             // User callbacks must not fault command setup or the background pump.
         }
