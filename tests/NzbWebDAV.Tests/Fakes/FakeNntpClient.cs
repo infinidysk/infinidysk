@@ -27,6 +27,8 @@ internal sealed class FakeNntpClient(
     public int HeaderProbeCount { get; private set; }
     public int CompletionCallbackCount { get; private set; }
     public CancellationToken LastBatchToken { get; private set; }
+    public TaskCompletionSource FirstBatchRequested { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Dictionary<string, int> BodyRequestCounts { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, int> CompletionCallbackCounts { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, int> StatRequestCounts { get; } = new(StringComparer.Ordinal);
@@ -127,6 +129,7 @@ internal sealed class FakeNntpClient(
     {
         BatchRequestCount++;
         LastBatchToken = cancellationToken;
+        FirstBatchRequested.TrySetResult();
         var responses = segmentIds
             .Select(segmentId => DecodedBodyAsync(segmentId, cancellationToken))
             .ToArray();

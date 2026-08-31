@@ -64,11 +64,13 @@ public class FileAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, 
         foreach (var planned in PlanDirectFiles(processorResults, MountDirectory.Name))
         {
             var parentDirectory = EnsureParentDirectory(planned.RelativePath);
+            var rangeIndex = planned.NzbFile.GetSegmentByteRangeIndex();
             var davNzbFile = new DavNzbFile()
             {
                 Id = Guid.NewGuid(),
                 SegmentIds = planned.NzbFile.GetSegmentIds(),
-                SegmentByteRanges = planned.NzbFile.GetSegmentByteRanges(),
+                SegmentByteRanges = rangeIndex.Ranges,
+                SegmentByteRangesTrusted = rangeIndex.IsTrusted,
                 SegmentFallbackIds = planned.NzbFile.GetSegmentFallbackIds(),
             };
 

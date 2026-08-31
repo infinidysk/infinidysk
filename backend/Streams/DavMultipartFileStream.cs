@@ -298,7 +298,8 @@ public class DavMultipartFileStream : FastReadOnlyStream
             _fileName,
             part.SegmentFallbackIds,
             _inFlightArticleBudget,
-            streamingBodyBatchWidth: _streamingBodyBatchWidth);
+            streamingBodyBatchWidth: _streamingBodyBatchWidth,
+            segmentByteRangesTrusted: part.SegmentByteRangesTrusted == true);
         stream.Seek(part.FilePartByteRange.StartInclusive + extraOffset, SeekOrigin.Begin);
         var expectedLength = part.FilePartByteRange.Count - extraOffset;
         var partId = part.SegmentIds.FirstOrDefault()

@@ -75,6 +75,7 @@ public class DavDatabaseContext : DbContext
                 leftPart.PartSize != rightPart.PartSize ||
                 leftPart.Offset != rightPart.Offset ||
                 leftPart.ByteCount != rightPart.ByteCount ||
+                leftPart.SegmentByteRangesTrusted != rightPart.SegmentByteRangesTrusted ||
                 !NullableArraysEqual(leftPart.SegmentByteRanges, rightPart.SegmentByteRanges) ||
                 !NestedStringArraysEqual(leftPart.SegmentFallbackIds, rightPart.SegmentFallbackIds))
             {
@@ -114,6 +115,7 @@ public class DavDatabaseContext : DbContext
             hash.Add(part.PartSize);
             hash.Add(part.Offset);
             hash.Add(part.ByteCount);
+            hash.Add(part.SegmentByteRangesTrusted);
 
             if (part.SegmentByteRanges is not null)
             {
@@ -139,6 +141,7 @@ public class DavDatabaseContext : DbContext
             Offset = part.Offset,
             ByteCount = part.ByteCount,
             SegmentByteRanges = part.SegmentByteRanges?.Select(range => range with { }).ToArray(),
+            SegmentByteRangesTrusted = part.SegmentByteRangesTrusted,
             SegmentFallbackIds = part.SegmentFallbackIds?
                 .Select(CloneStringArray)
                 .ToArray()

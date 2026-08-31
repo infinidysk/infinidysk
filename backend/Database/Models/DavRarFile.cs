@@ -36,6 +36,10 @@ public partial class DavRarFile
 
         [MemoryPackOrder(5)]
         public string[][]? SegmentFallbackIds { get; set; }
+
+        // Null on legacy blobs. Only true permits arithmetic segment seeking.
+        [MemoryPackOrder(6)]
+        public bool? SegmentByteRangesTrusted { get; set; }
     }
 
     public DavMultipartFile.Meta ToDavMultipartFileMeta()
@@ -51,6 +55,7 @@ public partial class DavRarFile
                 FilePartByteRange = LongRange.FromStartAndSize(x.Offset, x.ByteCount),
                 SegmentByteRanges = x.SegmentByteRanges,
                 SegmentFallbackIds = x.SegmentFallbackIds,
+                SegmentByteRangesTrusted = x.SegmentByteRangesTrusted,
             }).ToArray()
         };
     }

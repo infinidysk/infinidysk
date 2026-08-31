@@ -92,5 +92,6 @@ internal static class DavNzbFileBlobUpdater
         ContainerClass = source.ContainerClass,
         CriticalHeadEndExclusive = source.CriticalHeadEndExclusive,
         CorruptSegmentIndices = source.CorruptSegmentIndices,
+        SegmentByteRangesTrusted = source.SegmentByteRangesTrusted,
     };
 }

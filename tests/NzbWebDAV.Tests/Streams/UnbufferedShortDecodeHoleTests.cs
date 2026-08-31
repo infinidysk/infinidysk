@@ -133,7 +133,98 @@ public sealed class UnbufferedShortDecodeHoleTests : IDisposable
 
         var buffer = new byte[16];
         var read = await stream.ReadAsync(buffer);
-        Assert.True(read > 0);
-        Assert.True(client.BodyRequestCounts[id] > 1);
+        Assert.Equal(5, read);
+        Assert.Equal(new byte[5], buffer.AsSpan(0, read).ToArray());
+        Assert.Equal(4, client.BodyRequestCounts[id]);
+    }
+
+    [Fact]
+    public async Task LaterSegmentCorruptionBeforeItsFirstByteRetainsPreEmissionRecovery()
+    {
+        var secondOpens = 0;
+        var client = new FakeNntpClient(
+            new Dictionary<string, byte[]>
+            {
+                ["first"] = "abc"u8.ToArray(),
+                ["second"] = "def"u8.ToArray(),
+            },
+            useCachedYencStreams: true,
+            decodedStreamFactory: (id, bytes) =>
+                id == "second" && Interlocked.Increment(ref secondOpens) == 1
+                    ? new ThrowingPhaseStream(new UsenetCorruptArticleException(
+                        id, "provider-a", new InvalidDataException("CRC mismatch")))
+                    : new MemoryStream(bytes, writable: false));
+        await using var stream = new UnbufferedMultiSegmentStream(
+            new[] { "first", "second" }.AsMemory(),
+            client,
+            estimatedSegmentSize: 3,
+            exactSegmentSizes: new long[] { 3, 3 });
+        using var output = new MemoryStream();
+
+        await stream.CopyToAsync(output);
+
+        Assert.Equal("abcdef", Encoding.ASCII.GetString(output.ToArray()));
+        Assert.Equal(2, client.BodyRequestCounts["second"]);
+    }
+
+    [Fact]
+    public async Task LateProbeCorruptionAtPlaybackStartStillFailsFast()
+    {
+        const string id = "fail-fast@test";
+        var bodies = 0;
+        var crc = new UsenetCorruptArticleException(
+            id, "provider-a", new InvalidDataException("CRC mismatch"));
+        var client = new FakeNntpClient(
+            new Dictionary<string, byte[]> { [id] = "abcde"u8.ToArray() },
+            useCachedYencStreams: true,
+            decodedStreamFactory: (_, _) =>
+            {
+                if (Interlocked.Increment(ref bodies) == 1)
+                    return new ThrowingPhaseStream(crc);
+
+                return new StagedBodyStream(
+                    [],
+                    "a"u8.ToArray(),
+                    "bcde"u8.ToArray(),
+                    readFailure: phase => phase == "tail" ? crc : null);
+            });
+        await using var stream = new UnbufferedMultiSegmentStream(
+            new[] { id }.AsMemory(),
+            client,
+            estimatedSegmentSize: 5,
+            exactSegmentSizes: new long[] { 5 },
+            failFastOnFirstSegment: true);
+
+        await Assert.ThrowsAsync<UsenetCorruptArticleException>(
+            async () => await stream.ReadAsync(new byte[16]));
+        Assert.Equal(4, client.BodyRequestCounts[id]);
+    }
+
+    private sealed class ThrowingPhaseStream(Exception exception) : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw exception;
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<int>(exception);
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }

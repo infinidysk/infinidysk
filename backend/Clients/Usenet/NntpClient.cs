@@ -152,12 +152,13 @@ public abstract class NntpClient : INntpClient
     {
         var segmentIds = nzbFile.GetSegmentIds();
         var fileSize = await GetFileSizeAsync(nzbFile, ct).ConfigureAwait(false);
+        var rangeIndex = nzbFile.GetSegmentByteRangeIndex();
         return new NzbFileStream(
             segmentIds,
             fileSize,
             this,
             articleBufferSize,
-            nzbFile.GetSegmentByteRanges(),
+            rangeIndex.Ranges,
             usePipelinedBodyRequests,
             ResolveFileName(fileName, nzbFile),
             nzbFile.GetSegmentFallbackIds(),
@@ -165,7 +166,8 @@ public abstract class NntpClient : INntpClient
             useContainerAwareFill,
             streamingBodyBatchWidth,
             knownCorruptSegmentIds,
-            knownMissingSegmentIndices);
+            knownMissingSegmentIndices,
+            rangeIndex.IsTrusted);
     }
 
     public virtual NzbFileStream GetFileStream(
@@ -180,12 +182,13 @@ public abstract class NntpClient : INntpClient
         HashSet<string>? knownCorruptSegmentIds = null,
         IReadOnlySet<int>? knownMissingSegmentIndices = null)
     {
+        var rangeIndex = nzbFile.GetSegmentByteRangeIndex();
         return new NzbFileStream(
             nzbFile.GetSegmentIds(),
             fileSize,
             this,
             articleBufferSize,
-            nzbFile.GetSegmentByteRanges(),
+            rangeIndex.Ranges,
             usePipelinedBodyRequests,
             ResolveFileName(fileName, nzbFile),
             nzbFile.GetSegmentFallbackIds(),
@@ -193,7 +196,8 @@ public abstract class NntpClient : INntpClient
             useContainerAwareFill,
             streamingBodyBatchWidth,
             knownCorruptSegmentIds,
-            knownMissingSegmentIndices
+            knownMissingSegmentIndices,
+            rangeIndex.IsTrusted
         );
     }
 
@@ -209,7 +213,8 @@ public abstract class NntpClient : INntpClient
         bool useContainerAwareFill = false,
         int streamingBodyBatchWidth = 4,
         HashSet<string>? knownCorruptSegmentIds = null,
-        IReadOnlySet<int>? knownMissingSegmentIndices = null)
+        IReadOnlySet<int>? knownMissingSegmentIndices = null,
+        bool segmentByteRangesTrusted = true)
     {
         return new NzbFileStream(
             segmentIds,
@@ -224,7 +229,8 @@ public abstract class NntpClient : INntpClient
             useContainerAwareFill,
             streamingBodyBatchWidth,
             knownCorruptSegmentIds,
-            knownMissingSegmentIndices);
+            knownMissingSegmentIndices,
+            segmentByteRangesTrusted);
     }
 
     private static string? ResolveFileName(string? fileName, NzbFile nzbFile)

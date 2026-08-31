@@ -62,6 +62,15 @@ public partial class DavNzbFile
     [MemoryPackOrder(7)]
     public int[]? CorruptSegmentIndices { get; set; }
 
+    /// <summary>
+    /// True only when <see cref="SegmentByteRanges"/> came from complete or
+    /// middle-segment-validated yEnc geometry. Null on legacy blobs, which must
+    /// use header-probed seeking rather than trusting structurally valid inference.
+    /// </summary>
+    [NotMapped]
+    [MemoryPackOrder(8)]
+    public bool? SegmentByteRangesTrusted { get; set; }
+
     // navigation helpers
     [MemoryPackIgnore]
     public DavItem? DavItem { get; set; }

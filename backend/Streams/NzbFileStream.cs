@@ -28,7 +28,8 @@ public class NzbFileStream(
     bool useContainerAwareFill = false,
     int streamingBodyBatchWidth = 4,
     HashSet<string>? knownCorruptSegmentIds = null,
-    IReadOnlySet<int>? knownMissingSegmentIndices = null
+    IReadOnlySet<int>? knownMissingSegmentIndices = null,
+    bool segmentByteRangesTrusted = true
 ) : FastReadOnlyStream
 {
     private const long MaximumForwardDrainBytes = 1024 * 1024;
@@ -46,10 +47,12 @@ public class NzbFileStream(
     private Task? _pendingInnerDispose;
     private Stopwatch? _pendingSeekStopwatch;
     private string? _pendingSeekKind;
-    private readonly LongRange[]? _segmentByteRanges =
-        AreSegmentByteRangesValid(segmentByteRanges, fileSegmentIds.Length, fileSize)
-            ? segmentByteRanges
-            : LogInvalidAndDiscard(segmentByteRanges, fileSegmentIds.Length, fileSize, fileName);
+    private readonly LongRange[]? _segmentByteRanges = ValidateAndCloneSegmentByteRanges(
+        segmentByteRanges,
+        fileSegmentIds.Length,
+        fileSize,
+        fileName,
+        segmentByteRangesTrusted);
     private readonly HashSet<int>? _knownMissingSegmentIndices =
         knownMissingSegmentIndices is { Count: > 0 }
             ? new HashSet<int>(knownMissingSegmentIndices.Where(index => (uint)index < (uint)fileSegmentIds.Length))
@@ -280,33 +283,56 @@ public class NzbFileStream(
         }
     }
 
-    private static bool AreSegmentByteRangesValid(LongRange[]? ranges, int segmentCount, long expectedFileSize)
+    private static LongRange[]? ValidateAndCloneSegmentByteRanges(
+        LongRange[]? ranges,
+        int segmentCount,
+        long expectedFileSize,
+        string? fileName,
+        bool trusted)
     {
-        if (ranges is null || ranges.Length != segmentCount || ranges.Length == 0) return false;
-        if (ranges[0].StartInclusive != 0 || ranges[^1].EndExclusive != expectedFileSize) return false;
+        if (ranges is null)
+            return null;
 
-        for (var i = 0; i < ranges.Length; i++)
+        if (!trusted)
         {
-            if (ranges[i].Count <= 0) return false;
-            if (i > 0 && ranges[i - 1].EndExclusive != ranges[i].StartInclusive) return false;
+            Log.Debug(
+                "Persisted segment byte ranges for {FileName} have no trusted geometry provenance; " +
+                "falling back to NNTP header probes for seeking",
+                fileName ?? "unknown");
+            return null;
         }
 
-        return true;
-    }
+        var valid = expectedFileSize >= 0 &&
+                    ranges.Length == segmentCount &&
+                    ranges.Length > 0 &&
+                    ranges[0] is not null &&
+                    ranges[^1] is not null &&
+                    ranges[0].StartInclusive == 0 &&
+                    ranges[^1].EndExclusive == expectedFileSize;
 
-    private static LongRange[]? LogInvalidAndDiscard(
-        LongRange[]? ranges, int segmentCount, long expectedFileSize, string? fileName)
-    {
-        if (ranges is not null)
+        for (var i = 0; valid && i < ranges.Length; i++)
+        {
+            var range = ranges[i];
+            valid = range is not null &&
+                    range.StartInclusive >= 0 &&
+                    range.EndExclusive > range.StartInclusive &&
+                    range.EndExclusive <= expectedFileSize &&
+                    (i == 0 || ranges[i - 1].EndExclusive == range.StartInclusive);
+        }
+
+        if (!valid)
         {
             Log.Warning(
                 "Discarding invalid segment byte ranges for {FileName} " +
                 "(rangeCount={RangeCount}, segmentCount={SegmentCount}, fileSize={FileSize}); " +
                 "falling back to NNTP header probes for seeking",
                 fileName ?? "unknown", ranges.Length, segmentCount, expectedFileSize);
+            return null;
         }
 
-        return null;
+        return ranges
+            .Select(range => new LongRange(range.StartInclusive, range.EndExclusive))
+            .ToArray();
     }
 
     private void ThrowIfPlaybackFailFast()
@@ -333,7 +359,7 @@ public class NzbFileStream(
 
         if (CanUseExactIndexedDirectHead())
         {
-            FirstByteTrace.TryRecord(FirstByteTrace.ExactIndexDirect);
+            StreamStartupTrace.TryRecord(StreamStartupPhase.ExactIndexDirect);
             var exact = await SeekSegment(rangeStart, cancellationToken).ConfigureAwait(false);
             return await GetExactIndexedStreamAsync(
                     exact, rangeStart, readBudget, cancellationToken)
@@ -346,12 +372,12 @@ public class NzbFileStream(
                 .ConfigureAwait(false);
             if (buffered is not null)
             {
-                FirstByteTrace.TryRecord(FirstByteTrace.LegacyBuffered);
+                StreamStartupTrace.TryRecord(StreamStartupPhase.LegacyBuffered);
                 return buffered;
             }
         }
 
-        FirstByteTrace.TryRecord(FirstByteTrace.LegacyProbedUnbuffered);
+        StreamStartupTrace.TryRecord(StreamStartupPhase.LegacyProbedUnbuffered);
         var probed = await SeekSegment(rangeStart, cancellationToken).ConfigureAwait(false);
         return await GetLegacyProbedStreamAsync(probed, rangeStart, readBudget, cancellationToken)
             .ConfigureAwait(false);
@@ -413,23 +439,24 @@ public class NzbFileStream(
         try
         {
             return await MultiSegmentStream.CreatePositionedFirstSegmentHybridAsync(
-                    sliced.SegmentIds,
-                    usenetClient,
-                    articleBufferSize,
-                    EstimatedSegmentSize,
-                    failFastOnFirstSegment,
-                    usePipelinedBodyRequests,
-                    cancellationToken,
-                    fileName,
-                    readBudget,
-                    sliced.Fallbacks,
-                    sliced.ExactSizes,
-                    inFlightArticleBudget,
-                    useContainerAwareFill,
-                    sliced.FirstSegmentFileOffset,
-                    streamingBodyBatchWidth,
-                    knownCorruptSegmentIds,
-                    sliced.KnownMissing,
+                    new MultiSegmentStream.FirstSegmentHybridOptions(
+                        sliced.SegmentIds,
+                        usenetClient,
+                        articleBufferSize,
+                        EstimatedSegmentSize,
+                        failFastOnFirstSegment,
+                        usePipelinedBodyRequests,
+                        fileName,
+                        readBudget,
+                        sliced.Fallbacks,
+                        sliced.ExactSizes,
+                        inFlightArticleBudget,
+                        useContainerAwareFill,
+                        sliced.FirstSegmentFileOffset,
+                        streamingBodyBatchWidth,
+                        knownCorruptSegmentIds,
+                        sliced.KnownMissing,
+                        cancellationToken),
                     prefixBytes)
                 .ConfigureAwait(false);
         }

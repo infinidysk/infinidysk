@@ -352,6 +352,10 @@ export function MediaDiagnostics(props: MediaDiagnosticsProps) {
               <Field label="Failovers" value={String(summary.failovers)} mono />
               <Field label="Zero fills" value={String(summary.zeroFills)} mono />
               <Field label="Prefetch changes" value={String(summary.prefetchChanges)} mono />
+              <Field label="Startups" value={String(summary.startups)} mono />
+              {summary.lastStartupPhase && (
+                <Field label="Last startup" value={summary.lastStartupPhase} />
+              )}
               <Field label="Bytes served" value={formatFileSize(summary.bytesServed)} mono />
               {summary.lastEndReason && (
                 <Field

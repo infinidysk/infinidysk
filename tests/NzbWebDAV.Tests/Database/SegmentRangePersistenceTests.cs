@@ -25,6 +25,7 @@ public class SegmentRangePersistenceTests
                 new LongRange(1_400_000, 2_100_000),
                 new LongRange(2_100_000, 2_300_000),
             ],
+            SegmentByteRangesTrusted = true,
         };
 
         var bytes = MemoryPackSerializer.Serialize(original);
@@ -33,6 +34,7 @@ public class SegmentRangePersistenceTests
         Assert.Equal(original.Id, deserialized.Id);
         Assert.Equal(original.SegmentIds, deserialized.SegmentIds);
         Assert.Equal(original.SegmentByteRanges, deserialized.SegmentByteRanges);
+        Assert.True(deserialized.SegmentByteRangesTrusted);
     }
 
     [Fact]
@@ -47,7 +49,9 @@ public class SegmentRangePersistenceTests
         await nzbFile.ProbeSecondSegmentRangeAsync(client, 2_300_000, CancellationToken.None);
 
         Assert.Equal(1, client.HeaderRequestCount);
-        var ranges = Assert.IsType<LongRange[]>(nzbFile.GetSegmentByteRanges());
+        var index = nzbFile.GetSegmentByteRangeIndex();
+        var ranges = Assert.IsType<LongRange[]>(index.Ranges);
+        Assert.True(index.IsTrusted);
         Assert.Equal(
             [
                 new LongRange(0, 700_000),
@@ -84,7 +88,7 @@ public class SegmentRangePersistenceTests
         await nzbFile.ProbeSecondSegmentRangeAsync(client, 2_300_000, CancellationToken.None);
 
         Assert.Equal(0, client.HeaderRequestCount);
-        Assert.NotNull(nzbFile.GetSegmentByteRanges());
+        Assert.True(nzbFile.GetSegmentByteRangeIndex().IsTrusted);
     }
 
     [Fact]
@@ -108,7 +112,7 @@ public class SegmentRangePersistenceTests
         await nzbFile.ProbeSecondSegmentRangeAsync(client, 80_000, CancellationToken.None);
 
         Assert.Equal(0, client.HeaderRequestCount);
-        Assert.NotNull(nzbFile.GetSegmentByteRanges());
+        Assert.True(nzbFile.GetSegmentByteRangeIndex().IsTrusted);
     }
 
     [Fact]
@@ -122,6 +126,40 @@ public class SegmentRangePersistenceTests
 
         Assert.Equal(1, client.HeaderRequestCount);
         Assert.Null(nzbFile.GetSegmentByteRanges());
+    }
+
+    [Fact]
+    public void DavNzbFile_LegacyPayloadWithoutTrustMetadata_DeserializesUntrusted()
+    {
+        var original = new DavNzbFile
+        {
+            Id = Guid.NewGuid(),
+            SegmentIds = ["seg0", "seg1"],
+            SegmentByteRanges =
+            [
+                new LongRange(0, 700_000),
+                new LongRange(700_000, 1_400_000),
+            ],
+        };
+
+        var bytes = MemoryPackSerializer.Serialize(original);
+        var deserialized = MemoryPackSerializer.Deserialize<DavNzbFile>(bytes)!;
+
+        Assert.NotNull(deserialized.SegmentByteRanges);
+        Assert.Null(deserialized.SegmentByteRangesTrusted);
+        Assert.False(deserialized.SegmentByteRangesTrusted == true);
+    }
+
+    [Fact]
+    public void InferredRanges_WithoutMiddleProbeRemainUntrusted()
+    {
+        var nzbFile = CreateFourSegmentFile();
+        nzbFile.Segments[^1].ByteRange = new LongRange(2_100_000, 2_300_000);
+
+        var index = nzbFile.GetSegmentByteRangeIndex();
+
+        Assert.NotNull(index.Ranges);
+        Assert.False(index.IsTrusted);
     }
 
     [Fact]
@@ -158,7 +196,9 @@ public class SegmentRangePersistenceTests
 
         Assert.Equal(2, client.HeaderRequestCount);
         Assert.NotNull(result.Parts[0].SegmentByteRanges);
+        Assert.True(result.Parts[0].SegmentByteRangesTrusted);
         Assert.Null(result.Parts[1].SegmentByteRanges);
+        Assert.False(result.Parts[1].SegmentByteRangesTrusted);
     }
 
     private static NzbFile CreateFourSegmentFile(string prefix = "")

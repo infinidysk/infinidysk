@@ -291,23 +291,24 @@ public class MultiSegmentStreamPrefetchBudgetTests
         var budget = new InFlightArticleBudget(segmentSize * 16);
 
         await using var stream = await MultiSegmentStream.CreatePositionedFirstSegmentHybridAsync(
-            segments.Keys.ToArray().AsMemory(),
-            client,
-            articleBufferSize: 8,
-            estimatedSegmentSize: segmentSize,
-            failFastOnFirstSegment: false,
-            usePipelinedBodyRequests: true,
-            CancellationToken.None,
-            fileName: "handoff-budget.bin",
-            readBudget: readBudget,
-            segmentFallbacks: null,
-            exactSegmentSizes: exactSizes,
-            inFlightArticleBudget: budget,
-            useContainerAwareFill: false,
-            firstSegmentFileOffset: 0,
-            bodyPipelineBatchWidth: 4,
-            knownCorruptSegmentIds: null,
-            knownMissingSegmentIndices: null,
+            new MultiSegmentStream.FirstSegmentHybridOptions(
+                SegmentIds: segments.Keys.ToArray().AsMemory(),
+                UsenetClient: client,
+                ArticleBufferSize: 8,
+                EstimatedSegmentSize: segmentSize,
+                FailFastOnFirstSegment: false,
+                UsePipelinedBodyRequests: true,
+                CancellationToken: CancellationToken.None,
+                FileName: "handoff-budget.bin",
+                ReadBudget: readBudget,
+                SegmentFallbacks: null,
+                ExactSegmentSizes: exactSizes,
+                InFlightArticleBudget: budget,
+                UseContainerAwareFill: false,
+                FirstSegmentFileOffset: 0,
+                BodyPipelineBatchWidth: 4,
+                KnownCorruptSegmentIds: null,
+                KnownMissingSegmentIndices: null),
             firstSegmentPrefixBytes: prefix);
 
         var buffer = new byte[readBudget];

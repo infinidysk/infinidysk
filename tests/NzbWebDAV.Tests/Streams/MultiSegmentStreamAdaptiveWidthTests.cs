@@ -4,6 +4,7 @@ using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Streams;
+using NzbWebDAV.Tests.Fakes;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
@@ -127,6 +128,43 @@ public class MultiSegmentStreamAdaptiveWidthTests
         }
 
         Assert.Contains(configuredWidth, client.ObservedBatchSizes);
+    }
+
+    [Fact]
+    public async Task FirstSegmentHybrid_EmptyInputReturnsCleanEof()
+    {
+        var client = new FakeNntpClient(new Dictionary<string, byte[]>());
+        await using var unpositioned = MultiSegmentStream.CreateFirstSegmentHybrid(
+            Memory<string>.Empty,
+            client,
+            articleBufferSize: 4,
+            estimatedSegmentSize: 0,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            CancellationToken.None);
+        await using var positioned = await MultiSegmentStream.CreatePositionedFirstSegmentHybridAsync(
+            new MultiSegmentStream.FirstSegmentHybridOptions(
+                SegmentIds: Memory<string>.Empty,
+                UsenetClient: client,
+                ArticleBufferSize: 4,
+                EstimatedSegmentSize: 0,
+                FailFastOnFirstSegment: false,
+                UsePipelinedBodyRequests: true,
+                FileName: "empty.bin",
+                ReadBudget: null,
+                SegmentFallbacks: null,
+                ExactSegmentSizes: default,
+                InFlightArticleBudget: null,
+                UseContainerAwareFill: false,
+                FirstSegmentFileOffset: null,
+                BodyPipelineBatchWidth: 4,
+                KnownCorruptSegmentIds: null,
+                KnownMissingSegmentIndices: null,
+                CancellationToken: CancellationToken.None),
+            firstSegmentPrefixBytes: 0);
+
+        Assert.Equal(0, await unpositioned.ReadAsync(new byte[1]));
+        Assert.Equal(0, await positioned.ReadAsync(new byte[1]));
     }
 
     [Fact]
@@ -265,17 +303,46 @@ public class MultiSegmentStreamAdaptiveWidthTests
     [Fact]
     public async Task CreateFirstSegmentHybrid_RemainderBudgetExcludesOnlyVisibleHeadBytes()
     {
-        var (headAvailable, remainderBudget, needsRemainder, eager) =
-            MultiSegmentStream.PlanHybridRemainder(
-                segmentCount: 4,
-                firstExactSizes: new long[] { 100 }.AsMemory(),
-                firstSegmentPrefixBytes: 90,
-                readBudget: 25);
+        var plan = MultiSegmentStream.PlanHybridRemainder(
+            segmentCount: 4,
+            firstExactSizes: new long[] { 100 }.AsMemory(),
+            firstSegmentPrefixBytes: 90,
+            readBudget: 25);
 
-        Assert.Equal(10, headAvailable);
-        Assert.Equal(15, remainderBudget);
-        Assert.True(needsRemainder);
-        Assert.True(eager);
+        Assert.Equal(10, plan.HeadAvailableBytes);
+        Assert.Equal(15, plan.RemainderBudget);
+        Assert.True(plan.NeedsRemainder);
+        Assert.Equal(RemainderStartPolicy.AfterFirstPositiveRead, plan.StartPolicy);
+    }
+
+    [Fact]
+    public void PlanHybridRemainder_UnknownHeadSizeKeepsFullBudgetAndStaysLazy()
+    {
+        var plan = MultiSegmentStream.PlanHybridRemainder(
+            segmentCount: 4,
+            firstExactSizes: default,
+            firstSegmentPrefixBytes: 0,
+            readBudget: 50);
+
+        Assert.Null(plan.HeadAvailableBytes);
+        Assert.Equal(50, plan.RemainderBudget);
+        Assert.True(plan.NeedsRemainder);
+        Assert.Equal(RemainderStartPolicy.AtHeadEof, plan.StartPolicy);
+    }
+
+    [Fact]
+    public void PlanHybridRemainder_UnknownHeadFullGetStartsRemainderAfterFirstRead()
+    {
+        var plan = MultiSegmentStream.PlanHybridRemainder(
+            segmentCount: 4,
+            firstExactSizes: default,
+            firstSegmentPrefixBytes: 0,
+            readBudget: null);
+
+        Assert.Null(plan.HeadAvailableBytes);
+        Assert.Null(plan.RemainderBudget);
+        Assert.True(plan.NeedsRemainder);
+        Assert.Equal(RemainderStartPolicy.AfterFirstPositiveRead, plan.StartPolicy);
     }
 
     public static TheoryData<int, long, long, long?, long, long?, bool, bool> HybridRemainderCases() =>
@@ -308,7 +375,9 @@ public class MultiSegmentStreamAdaptiveWidthTests
         Assert.Equal(expectedHead, plan.HeadAvailableBytes);
         Assert.Equal(expectedRemainder, plan.RemainderBudget);
         Assert.Equal(needsRemainder, plan.NeedsRemainder);
-        Assert.Equal(eager, plan.Eager);
+        Assert.Equal(
+            eager ? RemainderStartPolicy.AfterFirstPositiveRead : RemainderStartPolicy.None,
+            plan.StartPolicy);
     }
 
     [Fact]

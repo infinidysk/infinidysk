@@ -110,13 +110,18 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
                 Metadata = new DavMultipartFile.Meta()
                 {
                     AesParams = aesParams,
-                    FileParts = fileParts.Select(x => new DavMultipartFile.FilePart()
+                    FileParts = fileParts.Select(x =>
                     {
-                        SegmentIds = x.NzbFile.GetSegmentIds(),
-                        SegmentIdByteRange = LongRange.FromStartAndSize(0, x.PartSize),
-                        FilePartByteRange = x.ByteRangeWithinPart,
-                        SegmentByteRanges = x.NzbFile.GetSegmentByteRanges(),
-                        SegmentFallbackIds = x.NzbFile.GetSegmentFallbackIds(),
+                        var rangeIndex = x.NzbFile.GetSegmentByteRangeIndex();
+                        return new DavMultipartFile.FilePart
+                        {
+                            SegmentIds = x.NzbFile.GetSegmentIds(),
+                            SegmentIdByteRange = LongRange.FromStartAndSize(0, x.PartSize),
+                            FilePartByteRange = x.ByteRangeWithinPart,
+                            SegmentByteRanges = rangeIndex.Ranges,
+                            SegmentByteRangesTrusted = rangeIndex.IsTrusted,
+                            SegmentFallbackIds = x.NzbFile.GetSegmentFallbackIds(),
+                        };
                     }).ToArray(),
                 }
             };

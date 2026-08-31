@@ -44,6 +44,8 @@ describe("summarizeTrace", () => {
     expect(summary.failovers).toBe(1);
     expect(summary.zeroFills).toBe(1);
     expect(summary.prefetchChanges).toBe(1);
+    expect(summary.startups).toBe(0);
+    expect(summary.lastStartupPhase).toBeNull();
     expect(summary.bytesServed).toBe(1000);
     expect(summary.lastEndReason).toBe("Completed");
     expect(summary.stallTotalsMs).toEqual({
@@ -89,15 +91,54 @@ describe("describeTraceEvent", () => {
     expect(
       describeTraceEvent(
         event({
-          kind: "FirstByte",
+          kind: "StreamStartup",
           status: "exact-index-direct",
           bytes: 512,
           durationMs: 7,
+          rangeGeneration: 3,
         }),
       ),
-    ).toBe("exact-index-direct · 512 B · 7 ms");
+    ).toBe("exact-index direct · 512 B · 7 ms");
     expect(
       describeTraceEvent(event({ kind: "RangeEnd", endReason: "Aborted", bytesServed: 512 })),
     ).toBe("Aborted · 512 B");
+  });
+
+  it("maps unknown startup phases to the raw machine code", () => {
+    expect(describeTraceEvent(event({ kind: "StreamStartup", status: "future-phase" }))).toBe(
+      "future-phase",
+    );
+  });
+});
+
+describe("startup evidence", () => {
+  it("summarizes production-realistic phases across overlapping range generations", () => {
+    const events = [
+      event({ kind: "RangeOpen", rangeStart: 0, rangeEnd: 99, rangeGeneration: 1 }),
+      event({
+        kind: "StreamStartup",
+        status: "exact-index-direct",
+        rangeGeneration: 1,
+      }),
+      event({
+        kind: "StreamStartup",
+        status: "handoff-eager",
+        bytes: 512,
+        rangeGeneration: 1,
+      }),
+      event({ kind: "RangeOpen", rangeStart: 100, rangeEnd: 199, rangeGeneration: 2 }),
+      event({
+        kind: "StreamStartup",
+        status: "legacy-buffered",
+        bytes: 64,
+        durationMs: 3,
+        rangeGeneration: 2,
+      }),
+    ];
+
+    const summary = summarizeTrace(events);
+    expect(summary.startups).toBe(3);
+    expect(summary.lastStartupPhase).toBe("legacy buffered seek");
+    expect(summary.rangeOpens).toBe(2);
   });
 });

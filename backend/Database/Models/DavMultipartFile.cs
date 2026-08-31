@@ -73,6 +73,10 @@ public partial class DavMultipartFile
         // Null for non-RAR parts and blobs written before split-aware resolution.
         [MemoryPackOrder(5)]
         public bool? IsSplitAfter { get; set; }
+
+        // Null on legacy blobs. Only true permits arithmetic segment seeking.
+        [MemoryPackOrder(6)]
+        public bool? SegmentByteRangesTrusted { get; set; }
     }
 
     // A RAR part whose internal byte range hasn't been parsed yet.

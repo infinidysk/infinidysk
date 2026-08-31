@@ -192,13 +192,16 @@ public class SevenZipProcessor : BaseProcessor
                     : multipartFile.FileParts[index].PartSize;
                 var partByteCount = partEndExclusive - partStartInclusive;
 
+                var nzbFile = multipartFile.FileParts[index].NzbFile;
+                var rangeIndex = nzbFile.GetSegmentByteRangeIndex();
                 return new DavMultipartFile.FilePart()
                 {
-                    SegmentIds = multipartFile.FileParts[index].NzbFile.GetSegmentIds(),
+                    SegmentIds = nzbFile.GetSegmentIds(),
                     SegmentIdByteRange = LongRange.FromStartAndSize(0, multipartFile.FileParts[index].PartSize),
                     FilePartByteRange = LongRange.FromStartAndSize(partStartInclusive, partByteCount),
-                    SegmentByteRanges = multipartFile.FileParts[index].NzbFile.GetSegmentByteRanges(),
-                    SegmentFallbackIds = multipartFile.FileParts[index].NzbFile.GetSegmentFallbackIds(),
+                    SegmentByteRanges = rangeIndex.Ranges,
+                    SegmentByteRangesTrusted = rangeIndex.IsTrusted,
+                    SegmentFallbackIds = nzbFile.GetSegmentFallbackIds(),
                 };
             })
             .ToArray();

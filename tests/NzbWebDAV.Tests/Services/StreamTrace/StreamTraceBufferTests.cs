@@ -34,24 +34,53 @@ public class StreamTraceBufferTests
     }
 
     [Fact]
-    public void FirstByte_RecordsBoundedStatusBytesAndDuration()
+    public void StreamStartup_RecordsBoundedPhaseBytesDurationAndRangeGeneration()
     {
         var buffer = new StreamTraceBuffer(capacity: 100, maxSessions: 50);
         var session = Guid.NewGuid();
-        buffer.RangeOpen(session, "/view/a.mkv", "GET", 1024, 2047, 10_000, null, null);
-        buffer.FirstByte(session, "exact-index-direct", bytes: 512, elapsed: TimeSpan.FromMilliseconds(7));
-        buffer.FirstByte(session, "handoff-started", bytes: null, elapsed: null);
+        var range = buffer.RangeOpen(session, "/view/a.mkv", "GET", 1024, 2047, 10_000, null, null);
+        Assert.NotNull(range);
+        buffer.StreamStartup(session, range.Value.Generation, "exact-index-direct", bytes: 512, elapsed: TimeSpan.FromMilliseconds(7));
+        buffer.StreamStartup(session, range.Value.Generation, "handoff-scheduled", bytes: null, elapsed: null);
 
         var events = buffer.GetSessionEvents(session)
-            .Where(e => e.Kind == StreamTraceKind.FirstByte.ToString())
+            .Where(e => e.Kind == StreamTraceKind.StreamStartup.ToString())
             .ToList();
         Assert.Equal(2, events.Count);
         Assert.Equal("exact-index-direct", events[0].Status);
         Assert.Equal(512, events[0].Bytes);
         Assert.Equal(7, events[0].DurationMs);
-        Assert.Equal("handoff-started", events[1].Status);
+        Assert.Equal(range.Value.Generation, events[0].RangeGeneration);
+        Assert.Equal("handoff-scheduled", events[1].Status);
         Assert.Null(events[1].Bytes);
         Assert.Null(events[1].DurationMs);
+        Assert.Equal(range.Value.Generation, events[1].RangeGeneration);
+    }
+
+    [Fact]
+    public void StreamStartup_KeepsOverlappingRangeGenerationsDistinct()
+    {
+        var buffer = new StreamTraceBuffer(capacity: 100, maxSessions: 50);
+        var session = Guid.NewGuid();
+        var first = buffer.RangeOpen(session, "/view/a.mkv", "GET", 0, 99, 10_000, null, null);
+        var second = buffer.RangeOpen(session, "/view/a.mkv", "GET", 100, 199, 10_000, null, null);
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.NotEqual(first.Value.Generation, second.Value.Generation);
+
+        buffer.StreamStartup(session, first.Value.Generation, "exact-index-direct", bytes: null, elapsed: null);
+        buffer.StreamStartup(session, second.Value.Generation, "legacy-buffered", bytes: 64, elapsed: TimeSpan.FromMilliseconds(3));
+
+        var events = buffer.GetSessionEvents(session)
+            .Where(e => e.Kind == StreamTraceKind.StreamStartup.ToString())
+            .ToList();
+        Assert.Equal(2, events.Count);
+        Assert.Equal(first.Value.Generation, events[0].RangeGeneration);
+        Assert.Equal("exact-index-direct", events[0].Status);
+        Assert.Null(events[0].Bytes);
+        Assert.Equal(second.Value.Generation, events[1].RangeGeneration);
+        Assert.Equal("legacy-buffered", events[1].Status);
+        Assert.Equal(64, events[1].Bytes);
     }
 
     [Fact]

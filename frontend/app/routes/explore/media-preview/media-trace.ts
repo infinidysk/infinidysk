@@ -20,6 +20,7 @@ export type StreamTraceEvent = {
   message?: string | null;
   batchSize?: number | null;
   previousBatchSize?: number | null;
+  rangeGeneration?: number | null;
   connWaitMs?: number | null;
   providerWaitMs?: number | null;
   bodyDrainMs?: number | null;
@@ -40,6 +41,8 @@ export type TraceSummary = {
   failovers: number;
   retries: number;
   prefetchChanges: number;
+  startups: number;
+  lastStartupPhase: string | null;
   bytesServed: number;
   lastEndReason: string | null;
   lastEndMessage: string | null;
@@ -57,6 +60,8 @@ export function summarizeTrace(events: StreamTraceEvent[]): TraceSummary {
     failovers: 0,
     retries: 0,
     prefetchChanges: 0,
+    startups: 0,
+    lastStartupPhase: null,
     bytesServed: 0,
     lastEndReason: null,
     lastEndMessage: null,
@@ -101,6 +106,10 @@ export function summarizeTrace(events: StreamTraceEvent[]): TraceSummary {
       case "PrefetchWidth":
         summary.prefetchChanges++;
         break;
+      case "StreamStartup":
+        summary.startups++;
+        if (e.status) summary.lastStartupPhase = describeStartupPhase(e.status);
+        break;
     }
   }
   return summary;
@@ -129,9 +138,28 @@ export function describeTraceEvent(e: StreamTraceEvent): string {
       return `attempt ${e.attempt ?? "?"}${e.message ? ` · ${e.message}` : ""}`;
     case "PrefetchWidth":
       return `${e.previousBatchSize ?? "?"} → ${e.batchSize ?? "?"}`;
-    case "FirstByte":
-      return `${e.status ?? "first-byte"}${e.bytes != null ? ` · ${e.bytes} B` : ""}${e.durationMs != null ? ` · ${e.durationMs} ms` : ""}`;
+    case "StreamStartup":
+      return `${describeStartupPhase(e.status)}${e.bytes != null ? ` · ${e.bytes} B` : ""}${e.durationMs != null ? ` · ${e.durationMs} ms` : ""}`;
     default:
       return e.message ?? e.kind;
   }
+}
+
+const STARTUP_PHASE_LABELS: Record<string, string> = {
+  "exact-index-direct": "exact-index direct",
+  "legacy-buffered": "legacy buffered seek",
+  "legacy-probed-unbuffered": "legacy header-probed seek",
+  "handoff-not-needed": "handoff not needed",
+  "handoff-eager": "eager remainder handoff",
+  "handoff-legacy-lazy": "lazy remainder handoff",
+  "handoff-scheduled": "remainder scheduled",
+  "handoff-activated": "remainder activated",
+  "remainder-factory-failed": "remainder factory failed",
+  "prefix-discard": "prefix discard",
+  "remainder-wait": "remainder wait",
+};
+
+export function describeStartupPhase(status: string | null | undefined): string {
+  if (!status) return "startup";
+  return STARTUP_PHASE_LABELS[status] ?? status;
 }

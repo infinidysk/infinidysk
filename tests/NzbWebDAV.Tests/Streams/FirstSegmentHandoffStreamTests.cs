@@ -1,3 +1,5 @@
+using NzbWebDAV.Clients.Usenet.Concurrency;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.TestUtils;
 
@@ -12,7 +14,7 @@ public class FirstSegmentHandoffStreamTests
     {
         var head = new StagedBodyStream([], [0x41], [0x42, 0x43]);
         await using var stream = new FirstSegmentHandoffStream(
-            head, remainderFactory: null, startRemainderAfterFirstRead: false, CancellationToken.None);
+            head, remainderFactory: null, RemainderStartPolicy.None, CancellationToken.None);
 
         var buffer = new byte[1];
         Assert.Equal(1, await stream.ReadAsync(buffer));
@@ -29,19 +31,19 @@ public class FirstSegmentHandoffStreamTests
         Stream? remainder = null;
         await using var stream = new FirstSegmentHandoffStream(
             head,
-            () =>
+            _ =>
             {
                 factoryStarted.TrySetResult();
                 remainder = new MemoryStream([0x5A], writable: false);
                 return remainder;
             },
-            startRemainderAfterFirstRead: true,
+            RemainderStartPolicy.AfterFirstPositiveRead,
             CancellationToken.None);
 
         Assert.Equal(1, await stream.ReadAsync(new byte[1]));
         await factoryStarted.Task.WaitAsync(Timeout);
         Assert.True(head.TailGateClosed);
-        Assert.True(stream.RemainderStartedForTests);
+        Assert.True(stream.RemainderScheduledForTests);
     }
 
     [Fact]
@@ -53,23 +55,23 @@ public class FirstSegmentHandoffStreamTests
         var factoryCalls = 0;
         await using var stream = new FirstSegmentHandoffStream(
             head,
-            () =>
+            _ =>
             {
                 Interlocked.Increment(ref factoryCalls);
                 return new MemoryStream([0x5A], writable: false);
             },
-            startRemainderAfterFirstRead: true,
+            RemainderStartPolicy.AfterFirstPositiveRead,
             CancellationToken.None);
 
         var readTask = stream.ReadAsync(new byte[1]).AsTask();
         await entered.Task.WaitAsync(Timeout);
         Assert.Equal(0, factoryCalls);
-        Assert.False(stream.RemainderStartedForTests);
+        Assert.False(stream.RemainderScheduledForTests);
 
         release.TrySetResult();
         Assert.Equal(1, await readTask.WaitAsync(Timeout));
         await WaitUntil(() => Volatile.Read(ref factoryCalls) == 1);
-        Assert.True(stream.RemainderStartedForTests);
+        Assert.True(stream.RemainderScheduledForTests);
     }
 
     [Fact]
@@ -80,13 +82,13 @@ public class FirstSegmentHandoffStreamTests
         var factoryRelease = NewGate();
         await using var stream = new FirstSegmentHandoffStream(
             head,
-            () =>
+            _ =>
             {
                 factoryStarted.TrySetResult();
                 factoryRelease.Task.GetAwaiter().GetResult();
                 return new MemoryStream([0x5A], writable: false);
             },
-            startRemainderAfterFirstRead: true,
+            RemainderStartPolicy.AfterFirstPositiveRead,
             CancellationToken.None);
 
         var readTask = stream.ReadAsync(new byte[1]).AsTask();
@@ -101,18 +103,94 @@ public class FirstSegmentHandoffStreamTests
     }
 
     [Fact]
+    public async Task ReadAsync_PreservesCancellationTokenContextsForHeadAndRemainder()
+    {
+        using var parent = new CancellationTokenSource();
+        var priority = new DownloadPriorityContext { Priority = SemaphorePriority.High };
+        var timeout = new StreamingTimeoutContext
+        {
+            PerSegmentTimeout = TimeSpan.FromSeconds(3),
+            MaxRetries = 2,
+        };
+        using var priorityScope = CancellationTokenContext.SetContext(parent.Token, priority);
+        using var timeoutScope = CancellationTokenContext.SetContext(parent.Token, timeout);
+        DownloadPriorityContext? headPriority = null;
+        StreamingTimeoutContext? headTimeout = null;
+        DownloadPriorityContext? remainderPriority = null;
+        StreamingTimeoutContext? remainderTimeout = null;
+        var factoryStarted = NewGate();
+        var head = new TokenCapturingStream([0x41], token =>
+        {
+            headPriority = CancellationTokenContext.GetContext<DownloadPriorityContext>(token);
+            headTimeout = CancellationTokenContext.GetContext<StreamingTimeoutContext>(token);
+        });
+        await using var stream = new FirstSegmentHandoffStream(
+            head,
+            token =>
+            {
+                remainderPriority = CancellationTokenContext.GetContext<DownloadPriorityContext>(token);
+                remainderTimeout = CancellationTokenContext.GetContext<StreamingTimeoutContext>(token);
+                factoryStarted.TrySetResult();
+                return new MemoryStream([0x42], writable: false);
+            },
+            RemainderStartPolicy.AfterFirstPositiveRead,
+            parent.Token);
+
+        Assert.Equal(1, await stream.ReadAsync(new byte[1], parent.Token));
+        await factoryStarted.Task.WaitAsync(Timeout);
+
+        Assert.Same(priority, headPriority);
+        Assert.Same(timeout, headTimeout);
+        Assert.Same(priority, remainderPriority);
+        Assert.Same(timeout, remainderTimeout);
+    }
+
+    [Fact]
+    public async Task Read_SynchronousBoundaryDoesNotCaptureCallerSynchronizationContext()
+    {
+        var factoryCalls = 0;
+        var stream = new FirstSegmentHandoffStream(
+            new MemoryStream([0x41], writable: false),
+            _ =>
+            {
+                Interlocked.Increment(ref factoryCalls);
+                return new MemoryStream([0x42], writable: false);
+            },
+            RemainderStartPolicy.AfterFirstPositiveRead,
+            CancellationToken.None);
+
+        var reads = await Task.Run(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new NonPumpingSynchronizationContext());
+            try
+            {
+                var buffer = new byte[1];
+                return new[] { stream.Read(buffer), stream.Read(buffer) };
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(null);
+            }
+        }).WaitAsync(Timeout);
+
+        await stream.DisposeAsync();
+        Assert.Equal([1, 1], reads);
+        Assert.Equal(1, factoryCalls);
+    }
+
+    [Fact]
     public async Task ReadAsync_TransitionsToAlreadyStartedRemainderAtHeadEof()
     {
         var head = new StagedBodyStream([], [0x41], []);
         var factoryCalls = 0;
         await using var stream = new FirstSegmentHandoffStream(
             head,
-            () =>
+            _ =>
             {
                 Interlocked.Increment(ref factoryCalls);
                 return new MemoryStream([0x42, 0x43], writable: false);
             },
-            startRemainderAfterFirstRead: true,
+            RemainderStartPolicy.AfterFirstPositiveRead,
             CancellationToken.None);
 
         Assert.Equal(new byte[] { 0x41, 0x42, 0x43 }, await ReadAllAsync(stream));
@@ -127,17 +205,41 @@ public class FirstSegmentHandoffStreamTests
         var head = new CallbackDisposeStream(Stream.Null, () => headDisposed.TrySetResult());
         await using var stream = new FirstSegmentHandoffStream(
             head,
-            () =>
+            _ =>
             {
                 Assert.True(headDisposed.Task.IsCompleted);
                 factoryStarted.TrySetResult();
                 return new MemoryStream([0x5A], writable: false);
             },
-            startRemainderAfterFirstRead: true,
+            RemainderStartPolicy.AfterFirstPositiveRead,
             CancellationToken.None);
 
         Assert.Equal(1, await stream.ReadAsync(new byte[1]));
         await factoryStarted.Task.WaitAsync(Timeout);
+    }
+
+    [Fact]
+    public async Task ReadAsync_AtHeadEofPolicyStartsRemainderOnlyAfterHeadEof()
+    {
+        var head = new StagedBodyStream([], [0x41], []);
+        var factoryCalls = 0;
+        await using var stream = new FirstSegmentHandoffStream(
+            head,
+            _ =>
+            {
+                Interlocked.Increment(ref factoryCalls);
+                return new MemoryStream([0x42], writable: false);
+            },
+            RemainderStartPolicy.AtHeadEof,
+            CancellationToken.None);
+
+        Assert.Equal(1, await stream.ReadAsync(new byte[1]));
+        Assert.Equal(0, factoryCalls);
+        Assert.False(stream.RemainderScheduledForTests);
+
+        Assert.Equal(1, await stream.ReadAsync(new byte[1]));
+        Assert.Equal(1, factoryCalls);
+        Assert.True(stream.RemainderScheduledForTests);
     }
 
     [Fact]
@@ -146,7 +248,7 @@ public class FirstSegmentHandoffStreamTests
         await using var stream = new FirstSegmentHandoffStream(
             new MemoryStream([0x41, 0x42], writable: false),
             remainderFactory: null,
-            startRemainderAfterFirstRead: false,
+            RemainderStartPolicy.None,
             CancellationToken.None);
 
         Assert.Equal(new byte[] { 0x41, 0x42 }, await ReadAllAsync(stream));
@@ -159,8 +261,8 @@ public class FirstSegmentHandoffStreamTests
         var head = new StagedBodyStream([], [0x41], []);
         await using var stream = new FirstSegmentHandoffStream(
             head,
-            () => throw new InvalidDataException("factory failed"),
-            startRemainderAfterFirstRead: true,
+            _ => throw new InvalidDataException("factory failed"),
+            RemainderStartPolicy.AfterFirstPositiveRead,
             CancellationToken.None);
 
         Assert.Equal(1, await stream.ReadAsync(new byte[1]));
@@ -176,8 +278,8 @@ public class FirstSegmentHandoffStreamTests
         var head = new CountingReadStream(new MemoryStream([0x41], writable: false), () => headReads++);
         await using var stream = new FirstSegmentHandoffStream(
             head,
-            () => new ThrowingReadStream(() => new IOException("remainder failed")),
-            startRemainderAfterFirstRead: true,
+            _ => new ThrowingReadStream(() => new IOException("remainder failed")),
+            RemainderStartPolicy.AfterFirstPositiveRead,
             CancellationToken.None);
 
         Assert.Equal(1, await stream.ReadAsync(new byte[1]));
@@ -194,7 +296,7 @@ public class FirstSegmentHandoffStreamTests
         var release = NewGate();
         var head = new GatedReadStream([0x41, 0x42], entered, release);
         await using var stream = new FirstSegmentHandoffStream(
-            head, remainderFactory: null, startRemainderAfterFirstRead: false, CancellationToken.None);
+            head, remainderFactory: null, RemainderStartPolicy.None, CancellationToken.None);
 
         var first = stream.ReadAsync(new byte[1]).AsTask();
         await entered.Task.WaitAsync(Timeout);
@@ -214,12 +316,12 @@ public class FirstSegmentHandoffStreamTests
         var factoryCalls = 0;
         var stream = new FirstSegmentHandoffStream(
             head,
-            () =>
+            _ =>
             {
                 Interlocked.Increment(ref factoryCalls);
                 return new MemoryStream([0x5A], writable: false);
             },
-            startRemainderAfterFirstRead: true,
+            RemainderStartPolicy.AfterFirstPositiveRead,
             CancellationToken.None);
 
         await stream.DisposeAsync();
@@ -236,7 +338,7 @@ public class FirstSegmentHandoffStreamTests
         var remainderDisposed = NewGate();
         var stream = new FirstSegmentHandoffStream(
             head,
-            () =>
+            _ =>
             {
                 factoryStarted.TrySetResult();
                 factoryRelease.Task.GetAwaiter().GetResult();
@@ -244,7 +346,7 @@ public class FirstSegmentHandoffStreamTests
                     new MemoryStream([0x5A], writable: false),
                     () => remainderDisposed.TrySetResult());
             },
-            startRemainderAfterFirstRead: true,
+            RemainderStartPolicy.AfterFirstPositiveRead,
             CancellationToken.None);
 
         Assert.Equal(1, await stream.ReadAsync(new byte[1]));
@@ -258,26 +360,25 @@ public class FirstSegmentHandoffStreamTests
     }
 
     [Fact]
-    public async Task DisposeAsync_ObservesFaultedRemainderTask()
+    public async Task DisposeAsync_ObservesAndSuppressesFaultedRemainderTask()
     {
         var head = new StagedBodyStream([], [0x41], [0x42]);
         var factoryStarted = NewGate();
         var stream = new FirstSegmentHandoffStream(
             head,
-            () =>
+            _ =>
             {
                 factoryStarted.TrySetResult();
                 throw new InvalidDataException("factory failed");
             },
-            startRemainderAfterFirstRead: true,
+            RemainderStartPolicy.AfterFirstPositiveRead,
             CancellationToken.None);
 
         Assert.Equal(1, await stream.ReadAsync(new byte[1]));
         await factoryStarted.Task.WaitAsync(Timeout);
-        await WaitUntil(() => stream.RemainderStartedForTests);
+        await WaitUntil(() => stream.RemainderScheduledForTests);
 
-        var ex = await Record.ExceptionAsync(async () => await stream.DisposeAsync());
-        Assert.True(ex is null || ex is InvalidDataException);
+        await stream.DisposeAsync();
         Assert.Equal(1, head.AsyncDisposeCount);
     }
 
@@ -291,7 +392,7 @@ public class FirstSegmentHandoffStreamTests
             () => throw new IOException("head dispose failed"));
         var stream = new FirstSegmentHandoffStream(
             head,
-            () =>
+            _ =>
             {
                 var remainder = new CallbackDisposeStream(
                     new MemoryStream([0x5A], writable: false),
@@ -299,7 +400,7 @@ public class FirstSegmentHandoffStreamTests
                 remainderCreated.TrySetResult();
                 return remainder;
             },
-            startRemainderAfterFirstRead: true,
+            RemainderStartPolicy.AfterFirstPositiveRead,
             CancellationToken.None);
 
         Assert.Equal(1, await stream.ReadAsync(new byte[1]));
@@ -319,7 +420,7 @@ public class FirstSegmentHandoffStreamTests
         var remainderDisposed = NewGate();
         var stream = new FirstSegmentHandoffStream(
             head,
-            () =>
+            _ =>
             {
                 factoryStarted.TrySetResult();
                 factoryRelease.Task.GetAwaiter().GetResult();
@@ -327,7 +428,7 @@ public class FirstSegmentHandoffStreamTests
                     new MemoryStream([0x5A], writable: false),
                     () => remainderDisposed.TrySetResult());
             },
-            startRemainderAfterFirstRead: true,
+            RemainderStartPolicy.AfterFirstPositiveRead,
             CancellationToken.None);
 
         Assert.Equal(1, await stream.ReadAsync(new byte[1]));
@@ -352,12 +453,12 @@ public class FirstSegmentHandoffStreamTests
         var factoryCalls = 0;
         await using var stream = new FirstSegmentHandoffStream(
             head,
-            () =>
+            _ =>
             {
                 Interlocked.Increment(ref factoryCalls);
                 return new MemoryStream([0x5A], writable: false);
             },
-            startRemainderAfterFirstRead: true,
+            RemainderStartPolicy.AfterFirstPositiveRead,
             CancellationToken.None);
 
         var readTask = stream.ReadAsync(new byte[1], cts.Token).AsTask();
@@ -378,7 +479,7 @@ public class FirstSegmentHandoffStreamTests
         var remainderDisposed = NewGate();
         await using var stream = new FirstSegmentHandoffStream(
             head,
-            () =>
+            _ =>
             {
                 factoryStarted.TrySetResult();
                 factoryRelease.Task.GetAwaiter().GetResult();
@@ -386,7 +487,7 @@ public class FirstSegmentHandoffStreamTests
                     new MemoryStream([0x5A], writable: false),
                     () => remainderDisposed.TrySetResult());
             },
-            startRemainderAfterFirstRead: true,
+            RemainderStartPolicy.AfterFirstPositiveRead,
             cts.Token);
 
         Assert.Equal(1, await stream.ReadAsync(new byte[1]));
@@ -418,6 +519,27 @@ public class FirstSegmentHandoffStreamTests
         using var output = new MemoryStream();
         await stream.CopyToAsync(output);
         return output.ToArray();
+    }
+
+    private sealed class NonPumpingSynchronizationContext : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+            // Intentionally never pumped: context-capturing continuations deadlock.
+        }
+    }
+
+    private sealed class TokenCapturingStream(
+        byte[] payload,
+        Action<CancellationToken> capture) : MemoryStream(payload, writable: false)
+    {
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            capture(cancellationToken);
+            return base.ReadAsync(buffer, cancellationToken);
+        }
     }
 
     private sealed class GatedReadStream(

@@ -256,13 +256,18 @@ public static class NestedRarExpansionStep
         CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        var fileParts = sorted.Select(segment => new DavMultipartFile.FilePart
+        var fileParts = sorted.Select(segment =>
         {
-            SegmentIds = segment.NzbFile.GetSegmentIds(),
-            SegmentIdByteRange = LongRange.FromStartAndSize(0, segment.PartSize),
-            FilePartByteRange = segment.ByteRangeWithinPart,
-            SegmentByteRanges = segment.NzbFile.GetSegmentByteRanges(),
-            SegmentFallbackIds = segment.NzbFile.GetSegmentFallbackIds(),
+            var rangeIndex = segment.NzbFile.GetSegmentByteRangeIndex();
+            return new DavMultipartFile.FilePart
+            {
+                SegmentIds = segment.NzbFile.GetSegmentIds(),
+                SegmentIdByteRange = LongRange.FromStartAndSize(0, segment.PartSize),
+                FilePartByteRange = segment.ByteRangeWithinPart,
+                SegmentByteRanges = rangeIndex.Ranges,
+                SegmentByteRangesTrusted = rangeIndex.IsTrusted,
+                SegmentFallbackIds = segment.NzbFile.GetSegmentFallbackIds(),
+            };
         }).ToArray();
 
         var multipart = new DavMultipartFile

@@ -5,11 +5,16 @@ using Serilog;
 
 namespace NzbWebDAV.Models.Nzb;
 
+public readonly record struct SegmentByteRangeIndex(
+    LongRange[]? Ranges,
+    bool IsTrusted);
+
 public class NzbFile
 {
     public required string Subject { get; init; }
     public List<NzbSegment> Segments { get; } = [];
     private bool _rejectInferredSegmentByteRanges;
+    private bool _inferredSegmentByteRangesValidated;
 
     /// <summary>
     /// Records the second segment's exact yEnc range so <see cref="GetSegmentByteRanges"/>
@@ -46,6 +51,7 @@ public class NzbFile
                 return;
 
             _rejectInferredSegmentByteRanges = false;
+            _inferredSegmentByteRangesValidated = true;
 
             // A PAR2 descriptor can provide fileSize without fetching the final article.
             // Materialize its range when first + second establish the usual uniform split,
@@ -168,24 +174,29 @@ public class NzbFile
     public string[][] GetSegmentFallbackIds() =>
         Segments.Select(s => s.FallbackMessageIds).ToArray();
 
-    public LongRange[]? GetSegmentByteRanges()
+    public LongRange[]? GetSegmentByteRanges() => GetSegmentByteRangeIndex().Ranges;
+
+    public SegmentByteRangeIndex GetSegmentByteRangeIndex()
     {
         var ranges = Segments
             .Select(x => x.ByteRange)
             .ToArray();
 
-        if (ranges.Length == 0) return null;
+        if (ranges.Length == 0) return default;
 
         if (ranges.All(x => x is not null))
-            return ValidateSegmentByteRanges(ranges.Select(x => x!).ToArray());
+        {
+            var explicitRanges = ValidateSegmentByteRanges(ranges.Select(x => x!).ToArray());
+            return new SegmentByteRangeIndex(explicitRanges, explicitRanges is not null);
+        }
 
-        if (_rejectInferredSegmentByteRanges) return null;
+        if (_rejectInferredSegmentByteRanges) return default;
 
         var firstRange = ranges[0];
         var lastRange = ranges[^1];
         if (firstRange is null || lastRange is null ||
             firstRange.StartInclusive != 0 || firstRange.Count <= 0 || lastRange.Count <= 0)
-            return null;
+            return default;
 
         try
         {
@@ -200,21 +211,24 @@ public class NzbFile
                 })
                 .ToArray();
 
-            if (inferredRanges[^1].StartInclusive != lastRange.StartInclusive) return null;
+            if (inferredRanges[^1].StartInclusive != lastRange.StartInclusive) return default;
 
             for (var i = 0; i < ranges.Length; i++)
             {
                 if (ranges[i] is { } knownRange &&
                     (knownRange.StartInclusive != inferredRanges[i].StartInclusive ||
                      knownRange.EndExclusive != inferredRanges[i].EndExclusive))
-                    return null;
+                    return default;
             }
 
-            return ValidateSegmentByteRanges(inferredRanges);
+            var validated = ValidateSegmentByteRanges(inferredRanges);
+            var trusted = validated is not null &&
+                          (ranges.Length < 3 || _inferredSegmentByteRangesValidated);
+            return new SegmentByteRangeIndex(validated, trusted);
         }
         catch (OverflowException)
         {
-            return null;
+            return default;
         }
     }
 

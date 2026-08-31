@@ -434,19 +434,26 @@ public sealed class StreamTraceBuffer
     }
 
     /// <summary>
-    /// Bounded first-byte path/handoff evidence. <paramref name="status"/> must be one of
-    /// the fixed labels in <see cref="NzbWebDAV.Streams.FirstByteTrace"/>.
+    /// Bounded, range-attributed startup/handoff evidence. <paramref name="phase"/>
+    /// is produced only by the typed mapping in
+    /// <see cref="NzbWebDAV.Streams.StreamStartupTrace"/>.
     /// </summary>
-    public void FirstByte(Guid sessionId, string status, long? bytes, TimeSpan? elapsed)
+    internal void StreamStartup(
+        Guid sessionId,
+        long? rangeGeneration,
+        string phase,
+        long? bytes,
+        TimeSpan? elapsed)
     {
         Record(new StreamTraceEvent
         {
             Sequence = 0,
             AtUnixMs = Now(),
             SessionId = sessionId,
-            Kind = StreamTraceKind.FirstByte.ToString(),
-            Status = status,
+            Kind = StreamTraceKind.StreamStartup.ToString(),
+            Status = phase,
             Bytes = bytes,
+            RangeGeneration = rangeGeneration,
             DurationMs = elapsed is { } value
                 ? (int)Math.Clamp(value.TotalMilliseconds, 0, int.MaxValue)
                 : null,

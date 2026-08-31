@@ -179,6 +179,7 @@ public class LazyRarProcessor(
         // pending until first read); validate its uniform-size inference first.
         await firstInfo.NzbFile.ProbeSecondSegmentRangeAsync(usenetClient, firstFileSize, ct)
             .ConfigureAwait(false);
+        var firstRangeIndex = firstInfo.NzbFile.GetSegmentByteRangeIndex();
 
         var firstPart = new DavMultipartFile.FilePart
         {
@@ -187,7 +188,8 @@ public class LazyRarProcessor(
                 0,
                 Math.Max(firstFileSize, firstPartByteRange.EndExclusive)),
             FilePartByteRange = firstPartByteRange,
-            SegmentByteRanges = firstInfo.NzbFile.GetSegmentByteRanges(),
+            SegmentByteRanges = firstRangeIndex.Ranges,
+            SegmentByteRangesTrusted = firstRangeIndex.IsTrusted,
             SegmentFallbackIds = firstInfo.NzbFile.GetSegmentFallbackIds(),
             IsSplitAfter = fileHeader.IsSplitAfter,
         };

@@ -1,8 +1,16 @@
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
+
+internal enum RemainderStartPolicy
+{
+    None,
+    AfterFirstPositiveRead,
+    AtHeadEof,
+}
 
 /// <summary>
 /// Owns an unbuffered first-segment head and a one-shot buffered remainder factory.
@@ -13,9 +21,9 @@ namespace NzbWebDAV.Streams;
 internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream
 {
     private Stream? _head;
-    private readonly Func<Stream>? _remainderFactory;
-    private readonly bool _startRemainderAfterFirstRead;
-    private readonly CancellationTokenSource _lifetimeCts;
+    private readonly Func<CancellationToken, Stream>? _remainderFactory;
+    private readonly RemainderStartPolicy _startPolicy;
+    private readonly ContextualCancellationTokenSource _lifetimeCts;
     private readonly SemaphoreSlim _readGate = new(1, 1);
     private readonly object _disposeGate = new();
 
@@ -28,15 +36,21 @@ internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream
 
     internal FirstSegmentHandoffStream(
         Stream head,
-        Func<Stream>? remainderFactory,
-        bool startRemainderAfterFirstRead,
+        Func<CancellationToken, Stream>? remainderFactory,
+        RemainderStartPolicy startPolicy,
         CancellationToken lifetimeToken)
     {
         ArgumentNullException.ThrowIfNull(head);
+        if ((remainderFactory is null) != (startPolicy == RemainderStartPolicy.None))
+        {
+            throw new ArgumentException(
+                "A remainder factory and a non-none start policy must be supplied together.",
+                nameof(startPolicy));
+        }
+
         _remainderFactory = remainderFactory;
-        _startRemainderAfterFirstRead =
-            remainderFactory is not null && startRemainderAfterFirstRead;
-        _lifetimeCts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeToken);
+        _startPolicy = startPolicy;
+        _lifetimeCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(lifetimeToken);
         _head = head;
     }
 
@@ -61,7 +75,7 @@ internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream
         return Task.CompletedTask;
     }
 
-    internal bool RemainderStartedForTests => Volatile.Read(ref _remainderStarted) != 0;
+    internal bool RemainderScheduledForTests => Volatile.Read(ref _remainderStarted) != 0;
 
     private void StartRemainderOnce()
     {
@@ -71,17 +85,18 @@ internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream
         if (Interlocked.CompareExchange(ref _remainderStarted, 1, 0) != 0)
             return;
 
-        // Yield so the current positive head read can return without waiting for
-        // remainder construction. ExecutionContext still flows to the continuation.
-        _remainderTask = CreateRemainderAfterYieldAsync(factory);
-        FirstByteTrace.TryRecord(FirstByteTrace.HandoffStarted);
-    }
-
-    private async Task<Stream> CreateRemainderAfterYieldAsync(Func<Stream> factory)
-    {
-        await Task.Yield();
-        _lifetimeCts.Token.ThrowIfCancellationRequested();
-        return factory();
+        var lifetimeToken = _lifetimeCts.Token;
+        // Task.Run always uses TaskScheduler.Default, avoiding a sync-over-async
+        // deadlock on a single-concurrency caller scheduler. ExecutionContext
+        // (range/session AsyncLocals) still flows to the worker.
+        _remainderTask = Task.Run(
+            () =>
+            {
+                lifetimeToken.ThrowIfCancellationRequested();
+                return factory(lifetimeToken);
+            },
+            CancellationToken.None);
+        StreamStartupTrace.TryRecord(StreamStartupPhase.HandoffScheduled);
     }
 
     public override async ValueTask<int> ReadAsync(
@@ -101,7 +116,7 @@ internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream
         try
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            using var readCts = CancellationTokenSource.CreateLinkedTokenSource(
+            using var readCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken, _lifetimeCts.Token);
             var readToken = readCts.Token;
 
@@ -113,7 +128,7 @@ internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream
                     if (read > 0)
                     {
                         Interlocked.Add(ref _position, read);
-                        if (_startRemainderAfterFirstRead)
+                        if (_startPolicy == RemainderStartPolicy.AfterFirstPositiveRead)
                             StartRemainderOnce();
                         return read;
                     }
@@ -151,17 +166,17 @@ internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream
                         exception is not OperationCanceledException
                         && exception is not OutOfMemoryException)
                     {
-                        FirstByteTrace.TryRecord(FirstByteTrace.RemainderFactoryFailed);
+                        StreamStartupTrace.TryRecord(StreamStartupPhase.RemainderFactoryFailed);
                         throw;
                     }
                     finally
                     {
-                        FirstByteTrace.TryRecord(
-                            FirstByteTrace.RemainderWait,
+                        StreamStartupTrace.TryRecord(
+                            StreamStartupPhase.RemainderWait,
                             elapsed: Stopwatch.GetElapsedTime(waitStarted));
                     }
 
-                    FirstByteTrace.TryRecord(FirstByteTrace.HandoffActivated);
+                    StreamStartupTrace.TryRecord(StreamStartupPhase.HandoffActivated);
                 }
 
                 var remainderRead = await _remainder
@@ -256,6 +271,7 @@ internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream
                     // Factory faults are observed here so they cannot become
                     // unobserved, but teardown should not replace a head-dispose
                     // failure or fail solely because ReadAsync already surfaced them.
+                    StreamStartupTrace.TryRecord(StreamStartupPhase.RemainderFactoryFailed);
                     _ = exception;
                 }
             }

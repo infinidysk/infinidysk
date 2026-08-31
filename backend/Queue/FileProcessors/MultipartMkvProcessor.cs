@@ -57,13 +57,15 @@ public class MultipartMkvProcessor : BaseProcessor
             // segment byte ranges.
             await fileInfo.NzbFile.ProbeSecondSegmentRangeAsync(_usenetClient, partSize, _ct)
                 .ConfigureAwait(false);
+            var rangeIndex = fileInfo.NzbFile.GetSegmentByteRangeIndex();
 
             fileParts.Add(new DavMultipartFile.FilePart
             {
                 SegmentIds = fileInfo.NzbFile.GetSegmentIds(),
                 SegmentIdByteRange = LongRange.FromStartAndSize(0, partSize),
                 FilePartByteRange = LongRange.FromStartAndSize(0, partSize),
-                SegmentByteRanges = fileInfo.NzbFile.GetSegmentByteRanges(),
+                SegmentByteRanges = rangeIndex.Ranges,
+                SegmentByteRangesTrusted = rangeIndex.IsTrusted,
                 SegmentFallbackIds = fileInfo.NzbFile.GetSegmentFallbackIds(),
             });
         }

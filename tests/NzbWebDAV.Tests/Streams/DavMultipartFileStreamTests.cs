@@ -123,6 +123,7 @@ public class DavMultipartFileStreamTests
                         SegmentIdByteRange = new LongRange(0, 16),
                         FilePartByteRange = new LongRange(0, 16),
                         SegmentByteRanges = [new LongRange(0, 8), new LongRange(8, 16)],
+                        SegmentByteRangesTrusted = true,
                     }
                 ],
             },
