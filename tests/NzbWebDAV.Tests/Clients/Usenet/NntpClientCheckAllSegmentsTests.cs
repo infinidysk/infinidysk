@@ -292,6 +292,25 @@ public class NntpClientCheckAllSegmentsTests
     }
 
     [Fact]
+    public async Task CollectMissingSegmentsPipelinedAsync_CancellationReleasesBlockedWindows()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var client = new GatedPipelinedStatClient();
+        var segmentIds = Enumerable.Range(0, NntpClient.StatPipelinedDispatchBatchSize + 1)
+            .Select(index => $"{index}@example")
+            .ToArray();
+
+        var sweep = client.CollectMissingSegmentsPipelinedAsync(
+            segmentIds, depth: 8, fallbackConcurrency: 2, progress: null,
+            cancellation.Token);
+        await client.BothBatchesStarted.WaitAsync(TimeSpan.FromSeconds(2));
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sweep);
+        Assert.Equal(0, client.ActiveCalls);
+    }
+
+    [Fact]
     public async Task CollectMissingSegmentsPipelinedAsync_WithEmptyInput_ReturnsEmpty()
     {
         var client = new TrackingPipelinedStatClient(
@@ -339,6 +358,7 @@ public class NntpClientCheckAllSegmentsTests
         private int _pipelinedStatsCallCount;
 
         public Task BothBatchesStarted => _bothBatchesStarted.Task;
+        public int ActiveCalls => Volatile.Read(ref _activeCalls);
         public ConcurrentQueue<HealthCheckAdmissionContext?> AdmissionContexts { get; } = new();
         public int MaxConcurrentCalls => Volatile.Read(ref _maxConcurrentCalls);
         public int PipelinedStatsCallCount => Volatile.Read(ref _pipelinedStatsCallCount);
