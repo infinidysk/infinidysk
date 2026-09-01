@@ -39,9 +39,15 @@ export function HealthStats({ stats }: HealthStatsProps) {
   return (
     <section className="card w-full border border-base-content/10 bg-base-100 shadow-sm">
       <div className="card-body gap-4 p-4 md:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="card-title text-xl">Overview</h2>
-          <Badge className="badge-ghost badge-sm">Last 30 days</Badge>
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="card-title text-xl">Overview</h2>
+            <Badge className="badge-ghost badge-sm">Last 30 days</Badge>
+          </div>
+          <p className="text-xs leading-relaxed text-base-content/55">
+            These are health-check results recorded during this period. A file can appear more than
+            once, and these totals do not verify the Library Directory setting.
+          </p>
         </div>
 
         <div className="stats stats-vertical w-full bg-base-200/40 sm:stats-horizontal">

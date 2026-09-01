@@ -166,7 +166,10 @@ public class RemoveUnlinkedFilesTask : BaseTask
         {
             _allRemovedPaths.Clear();
             Complete(
-                "Aborted: There are less than five linked files found in your library. " +
+                $"Aborted: Library Directory scan found {linkedIdCount} WebDAV files referenced by imported " +
+                "symlinks or .strm files; at least five are required before cleanup. Verify Library Directory " +
+                "points to the parent of your Radarr/Sonarr root folders containing imported symlinks or .strm " +
+                "files, not the rclone mount or a folder of regular media files. " +
                 "Cancelling operation to prevent accidental bulk deletion.");
             return;
         }

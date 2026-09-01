@@ -102,8 +102,8 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
       )}
       <div className="space-y-4">
         <p className="text-sm leading-relaxed text-base-content/70">
-          Scan the organized media library for symlink and STRM references, then remove WebDAV files
-          that are no longer linked from the library.
+          Scan the configured Library Directory for imported symlink and STRM references, then
+          remove WebDAV files that are no longer linked from those references.
         </p>
 
         <div className="rounded-lg border border-base-content/10 bg-base-200/40 p-3">
@@ -151,7 +151,9 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
             </div>
           </div>
           <p className="mt-3 border-t border-base-content/10 pt-2.5 text-xs text-base-content/50">
-            Dry Run previews the files that would be removed without changing anything.
+            Dry Run previews the files that would be removed without changing anything. Library
+            Directory must be the parent of your Radarr/Sonarr root folders containing imported
+            links, not the rclone mount or a folder containing regular media files instead of links.
           </p>
         </div>
 

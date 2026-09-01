@@ -230,7 +230,9 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         var row = Assert.Single(GetHealthRows(item.Id));
         Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
         Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
-        Assert.Contains("symlink or strm-file", row.Message);
+        Assert.Contains("Verify Library Directory", row.Message, StringComparison.Ordinal);
+        Assert.Contains("parent of your Radarr/Sonarr root folders", row.Message, StringComparison.Ordinal);
+        Assert.Contains("before running Remove Orphaned Files", row.Message, StringComparison.Ordinal);
         Assert.Equal(oldBlobId, ReloadItem(item.Id).FileBlobId);
         foreach (var index in new[] { 2, 3, 4 })
             Assert.Throws<UsenetArticleNotFoundException>(

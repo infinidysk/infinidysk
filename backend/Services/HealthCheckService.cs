@@ -2838,9 +2838,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     ])
                     : string.Join(" ", [
                         "File failed health validation.",
-                        "Could not find a corresponding symlink or strm-file within Library Dir.",
+                        "No corresponding imported symlink or .strm file was found in Library Directory.",
                         "The library scan may be incomplete, so the webdav-file was left in place.",
-                        "Use Remove Orphaned Files for deliberate unlinked-item cleanup."
+                        "Verify Library Directory points to the parent of your Radarr/Sonarr root folders",
+                        "that contains imported symlinks or .strm files, not the rclone mount or a folder",
+                        "of regular media files, before running Remove Orphaned Files."
                     ]);
                 await RecordHealthResult(
                     dbClient, davItem,

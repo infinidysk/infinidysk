@@ -23,4 +23,15 @@ describe("HealthStats", () => {
 
     expect(markup).toContain("Degraded (0%)");
   });
+
+  it("distinguishes recent check results from library configuration validation", () => {
+    const markup = render([
+      { result: 0, repairStatus: 0, count: 87 },
+      { result: 1, repairStatus: 3, count: 13 },
+    ]);
+
+    expect(markup).toContain("Healthy (87%)");
+    expect(markup).toContain("A file can appear more than once");
+    expect(markup).toContain("do not verify the Library Directory setting");
+  });
 });

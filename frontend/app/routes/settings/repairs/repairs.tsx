@@ -114,8 +114,9 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                   className="text-[11px] leading-relaxed text-base-content/45"
                   id="library-dir-help"
                 >
-                  The path to your organized media library that contains all your imported symlinks
-                  or *.strm files. Make sure this path is visible to your InfiniDysk container.
+                  Path inside the InfiniDysk container to the parent of your Radarr/Sonarr root
+                  folders. Imported library entries there must be symlinks or *.strm files. Do not
+                  use the rclone mount or a folder containing regular media files instead of links.
                 </p>
               </div>
             </ManagedSetting>

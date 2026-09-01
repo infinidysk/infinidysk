@@ -1017,7 +1017,12 @@ public class RemoveUnlinkedFilesTaskTests
             var progress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
             Assert.NotNull(progress);
             Assert.Contains("Aborted:", progress, StringComparison.Ordinal);
-            Assert.Contains("less than five linked files", progress, StringComparison.Ordinal);
+            Assert.Contains(
+                "found 0 WebDAV files referenced by imported symlinks or .strm files",
+                progress,
+                StringComparison.Ordinal);
+            Assert.Contains("parent of your Radarr/Sonarr root folders", progress, StringComparison.Ordinal);
+            Assert.Contains("not the rclone mount or a folder of regular media files", progress, StringComparison.Ordinal);
         }
         finally
         {
