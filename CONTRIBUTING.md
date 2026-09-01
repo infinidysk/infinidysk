@@ -158,8 +158,6 @@ mkdir -p $CONFIG_PATH
 
 Requires **Node.js 24+** (see `engines` in `frontend/package.json`).
 
-`package.json` includes an `overrides` entry that pins `http-proxy-middleware` to the `http-proxy-node16` fork for Node compatibility. Remove it only after verifying proxy behavior against upstream `http-proxy`.
-
 ```bash
 cd frontend
 

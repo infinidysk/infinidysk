@@ -154,7 +154,7 @@ Special thanks to the forks and contributors whose ideas we consolidated:
 
 ## Development
 
-The project consists of a .NET 10 backend (WebDAV, Usenet streaming, SAB API) and a React Router 7 frontend (admin UI). See [CONTRIBUTING.md](CONTRIBUTING.md) for local development setup and [CHANGELOG.md](CHANGELOG.md) for release history. Source for the published documentation lives in [`docs/`](docs/). Local `run-backend.sh` enables the Scalar admin API reference at `/scalar/`; Docker requires `ENABLE_API_DOCS=true`.
+The project consists of a .NET 10 backend (WebDAV, Usenet streaming, SAB API) and a React Router 8 frontend (admin UI). See [CONTRIBUTING.md](CONTRIBUTING.md) for local development setup and [CHANGELOG.md](CHANGELOG.md) for release history. Source for the published documentation lives in [`docs/`](docs/). Local `run-backend.sh` enables the Scalar admin API reference at `/scalar/`; Docker requires `ENABLE_API_DOCS=true`.
 
 ## License
 
