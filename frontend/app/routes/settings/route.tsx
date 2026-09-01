@@ -172,6 +172,19 @@ const defaultConfig = {
   "repair.healthcheck-aging": "false",
   "repair.auto-remove-after-failures": "0",
   "repair.auto-remove-unlinked-only": "true",
+  "repair.par2-enabled": "true",
+  "repair.par2-preferred-over-arr": "true",
+  "repair.par2-max-missing-slices": "8",
+  "repair.par2-max-release-gb": "16",
+  "repair.par2-max-memory-mb": "256",
+  "repair.par2-max-patch-gb": "4",
+  "repair.par2-fetch-concurrency": "2",
+  "repair.par2-failure-cooldown-hours": "6",
+  "repair.degraded-tolerance-enabled": "true",
+  "repair.corruption-tracking-enabled": "true",
+  "repair.degraded-max-consecutive-missing": "2",
+  "repair.degraded-max-total-missing": "5",
+  "repair.degraded-max-missing-byte-percent": "1.0",
   "repair.healthcheck-schedule": "",
   "repair.action-schedule": "",
   "db.is-startup-vacuum-enabled": "false",
@@ -676,7 +689,7 @@ function Body(props: BodyProps) {
   );
 }
 
-function getChangedConfig(
+export function getChangedConfig(
   config: Record<string, string>,
   newConfig: Record<string, string>,
 ): Record<string, string> {
