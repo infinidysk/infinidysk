@@ -61,7 +61,7 @@ public class SupportPackRedactorTests
     }
 
     [Fact]
-    public void RedactConfigurationValue_RedactsKnownStructuredSecrets()
+    public void RedactConfigurationValue_RedactsKnownStructuredProviderCredentials()
     {
         var redactor = new SupportPackRedactor([]);
         var result = redactor.RedactConfigurationValue(
@@ -71,7 +71,7 @@ public class SupportPackRedactorTests
         using var document = JsonDocument.Parse(result);
         var provider = document.RootElement.GetProperty("Providers")[0];
         Assert.Equal("news.example", provider.GetProperty("Host").GetString());
-        Assert.Equal("alice", provider.GetProperty("User").GetString());
+        Assert.Equal("[REDACTED]", provider.GetProperty("User").GetString());
         Assert.Equal("[REDACTED]", provider.GetProperty("Pass").GetString());
     }
 

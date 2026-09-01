@@ -1373,7 +1373,7 @@ public sealed class SupportPackService(
         var normalized = propertyName?.Replace("-", "", StringComparison.Ordinal)
             .Replace("_", "", StringComparison.Ordinal)
             .ToLowerInvariant();
-        if (normalized is "apikey" or "pass" or "password" or "token")
+        if (normalized is "apikey" or "pass" or "password" or "token" or "user" or "username")
         {
             if (element.ValueKind == JsonValueKind.String)
                 yield return element.GetString()!;

@@ -26,7 +26,7 @@ internal sealed partial class SupportPackRedactor
     private static readonly HashSet<string> SecretPropertyNames =
     [
         "apikey", "api_key", "authorization", "cookie", "pass", "password",
-        "secret", "strmkey", "token", "downloadkey",
+        "secret", "strmkey", "token", "downloadkey", "user", "username",
     ];
 
     private readonly List<string> _literalSecrets;

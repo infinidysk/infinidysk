@@ -600,8 +600,11 @@ public sealed class SupportPackContentsTests : IDisposable
             new ConfigItem { ConfigName = ConfigKeys.WebdavPass, ConfigValue = "sentinel-webdav" },
         ]);
 
+        var logBuffer = new LogBufferSink(10);
+        using var logger = new LoggerConfiguration().WriteTo.Sink(logBuffer).CreateLogger();
+        logger.Information("Provider authentication failed for sentinel-user with sentinel-pass");
         var entries = await ReadPackEntriesAsync(
-            new LogBufferSink(10),
+            logBuffer,
             new WarningLogBuffer(new LogBufferSink(50)),
             configManager: configManager);
 
@@ -617,6 +620,12 @@ public sealed class SupportPackContentsTests : IDisposable
         {
             Assert.DoesNotContain(forbidden, effective);
             Assert.DoesNotContain(forbidden, cache);
+        }
+
+        foreach (var content in entries.Values)
+        {
+            Assert.DoesNotContain("sentinel-user", content);
+            Assert.DoesNotContain("sentinel-pass", content);
         }
     }
 
