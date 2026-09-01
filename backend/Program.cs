@@ -1076,7 +1076,7 @@ public sealed partial class Program
                 "Unknown {Variable} value {Value}; using {Default}.",
                 SegmentBufferPoolSelector.EnvironmentVariableName,
                 poolOverride,
-                SegmentBufferPoolSelector.BoundedLegacyValue);
+                SegmentBufferPoolSelector.DefaultValue);
         }
 
         if (poolMode == SegmentBufferPoolSelector.Mode.Shared)

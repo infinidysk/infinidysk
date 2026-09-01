@@ -104,9 +104,9 @@ public sealed class SegmentBufferPoolAllocationFailureTests
 public sealed class SegmentBufferPoolSelectorTests
 {
     [Theory]
-    [InlineData(null, "bounded-legacy", false)]
-    [InlineData("", "bounded-legacy", false)]
-    [InlineData(" ", "bounded-legacy", false)]
+    [InlineData(null, "bounded-capacity", false)]
+    [InlineData("", "bounded-capacity", false)]
+    [InlineData(" ", "bounded-capacity", false)]
     [InlineData(" bounded-capacity ", "bounded-capacity", false)]
     [InlineData("bounded-legacy", "bounded-legacy", false)]
     [InlineData("BOUNDED-LEGACY", "bounded-legacy", false)]
@@ -114,8 +114,8 @@ public sealed class SegmentBufferPoolSelectorTests
     [InlineData("Bounded-Capacity", "bounded-capacity", false)]
     [InlineData("shared", "shared", false)]
     [InlineData("SHARED", "shared", false)]
-    [InlineData("experimental", "bounded-legacy", true)]
-    [InlineData("legacy", "bounded-legacy", true)]
+    [InlineData("experimental", "bounded-capacity", true)]
+    [InlineData("legacy", "bounded-capacity", true)]
     public void Resolve_CoversDocumentedValuesAndUnknownFallback(
         string? value,
         string expected,

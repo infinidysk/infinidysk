@@ -5,6 +5,7 @@ internal static class SegmentBufferPoolSelector
     internal const string EnvironmentVariableName = "NZBDAV_SEGMENT_BUFFER_POOL";
     internal const string BoundedLegacyValue = "bounded-legacy";
     internal const string BoundedCapacityValue = "bounded-capacity";
+    internal const string DefaultValue = BoundedCapacityValue;
     internal const string SharedValue = "shared";
 
     internal enum Mode
@@ -18,7 +19,7 @@ internal static class SegmentBufferPoolSelector
     {
         unknownValue = false;
         if (string.IsNullOrWhiteSpace(value))
-            return Mode.BoundedLegacy;
+            return Mode.BoundedCapacity;
 
         value = value.Trim();
         if (value.Equals(SharedValue, StringComparison.OrdinalIgnoreCase))
@@ -29,7 +30,7 @@ internal static class SegmentBufferPoolSelector
             return Mode.BoundedCapacity;
 
         unknownValue = true;
-        return Mode.BoundedLegacy;
+        return Mode.BoundedCapacity;
     }
 
     internal static string ToLogValue(Mode mode) => mode switch
@@ -37,6 +38,6 @@ internal static class SegmentBufferPoolSelector
         Mode.BoundedLegacy => BoundedLegacyValue,
         Mode.BoundedCapacity => BoundedCapacityValue,
         Mode.Shared => SharedValue,
-        _ => BoundedLegacyValue,
+        _ => DefaultValue,
     };
 }
