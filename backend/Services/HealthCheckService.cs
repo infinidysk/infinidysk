@@ -1151,9 +1151,9 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 else
                 {
                     // Sweep-and-collect every confirmed miss so the damage classifier can weigh
-                    // the full hole set instead of aborting on the first one. STAT sweep chunk
-                    // sizing is fixed in BaseNntpClient; the depth argument is BODY-oriented
-                    // interface baggage and unused here.
+                    // the full hole set instead of aborting on the first one. The concurrency
+                    // budget fans full STAT pipeline windows across admitted metadata connections;
+                    // the depth argument is BODY-oriented interface baggage and unused here.
                     var missingIds = await _usenetClient.CollectMissingSegmentsPipelinedAsync(
                             statSegments, depth: 0, concurrency, progress, statCts.Token)
                         .ConfigureAwait(false);

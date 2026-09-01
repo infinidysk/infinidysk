@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Threading.Channels;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
@@ -16,6 +17,10 @@ namespace NzbWebDAV.Clients.Usenet;
 /// </summary>
 public abstract class NntpClient : INntpClient
 {
+    // Match UsenetSharp's default MaxPipelineDepth: each concurrent call fills one
+    // wire window without monopolizing a connection across multiple response waves.
+    internal const int StatPipelinedDispatchBatchSize = 64;
+
     public virtual int PipeliningDepth => 0;
 
     /// <summary>
@@ -599,7 +604,8 @@ public abstract class NntpClient : INntpClient
         try
         {
             sweep = await SweepPipelinedStatsAsync(
-                    segmentIds, depth, progress, count => processed = count, cancellationToken)
+                    segmentIds, depth, fallbackConcurrency, progress,
+                    count => processed = count, cancellationToken)
                 .ConfigureAwait(false);
         }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
@@ -652,7 +658,8 @@ public abstract class NntpClient : INntpClient
         try
         {
             sweep = await SweepPipelinedStatsAsync(
-                    segmentIds, depth, progress, count => processed = count, cancellationToken)
+                    segmentIds, depth, fallbackConcurrency, progress,
+                    count => processed = count, cancellationToken)
                 .ConfigureAwait(false);
         }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
@@ -684,21 +691,88 @@ public abstract class NntpClient : INntpClient
     private async Task<PipelinedStatSweep> SweepPipelinedStatsAsync(
         IReadOnlyList<string> segmentIds,
         int depth,
+        int concurrency,
         IProgress<int>? progress,
         Action<int>? onProgress,
         CancellationToken cancellationToken)
     {
         var processed = 0;
         var missing = new List<string>();
-        await foreach (var result in StatsPipelinedAsync(segmentIds, depth, cancellationToken)
-                           .WithCancellation(cancellationToken).ConfigureAwait(false))
+        var batchCount = (segmentIds.Count + StatPipelinedDispatchBatchSize - 1)
+                         / StatPipelinedDispatchBatchSize;
+        var waveSize = Math.Min(Math.Max(1, concurrency), batchCount);
+
+        for (var waveStart = 0; waveStart < batchCount; waveStart += waveSize)
         {
-            progress?.Report(++processed);
-            onProgress?.Invoke(processed);
-            if (!result.Exists) missing.Add(result.SegmentId);
+            var waveCount = Math.Min(waveSize, batchCount - waveStart);
+            using var waveCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var readers = new ChannelReader<PipelinedStatResult>[waveCount];
+            var producers = new Task[waveCount];
+            for (var waveIndex = 0; waveIndex < waveCount; waveIndex++)
+            {
+                var batchStart = (waveStart + waveIndex) * StatPipelinedDispatchBatchSize;
+                var batchSize = Math.Min(
+                    StatPipelinedDispatchBatchSize,
+                    segmentIds.Count - batchStart);
+                var batchIds = new string[batchSize];
+                for (var index = 0; index < batchSize; index++)
+                    batchIds[index] = segmentIds[batchStart + index];
+
+                var channel = Channel.CreateUnbounded<PipelinedStatResult>(
+                    new UnboundedChannelOptions
+                    {
+                        SingleReader = true,
+                        SingleWriter = true,
+                    });
+                readers[waveIndex] = channel.Reader;
+                producers[waveIndex] = ProducePipelinedStatBatchAsync(
+                    batchIds, depth, channel.Writer, waveCts.Token);
+            }
+
+            try
+            {
+                foreach (var reader in readers)
+                {
+                    await foreach (var result in reader.ReadAllAsync(waveCts.Token)
+                                       .ConfigureAwait(false))
+                    {
+                        progress?.Report(++processed);
+                        onProgress?.Invoke(processed);
+                        if (!result.Exists) missing.Add(result.SegmentId);
+                    }
+                }
+            }
+            finally
+            {
+                await waveCts.CancelAsync().ConfigureAwait(false);
+                await Task.WhenAll(producers).ConfigureAwait(false);
+            }
         }
 
         return new PipelinedStatSweep(processed, missing);
+    }
+
+    private async Task ProducePipelinedStatBatchAsync(
+        string[] segmentIds,
+        int depth,
+        ChannelWriter<PipelinedStatResult> writer,
+        CancellationToken cancellationToken)
+    {
+        Exception? failure = null;
+        try
+        {
+            await foreach (var result in StatsPipelinedAsync(segmentIds, depth, cancellationToken)
+                               .WithCancellation(cancellationToken).ConfigureAwait(false))
+                await writer.WriteAsync(result, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            failure = e;
+        }
+        finally
+        {
+            writer.TryComplete(failure);
+        }
     }
 
     private async Task<IReadOnlyList<string>> CollectMissingSegmentsAsync(

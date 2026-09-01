@@ -254,6 +254,31 @@ public class NntpClientCheckAllSegmentsTests
     }
 
     [Fact]
+    public async Task CollectMissingSegmentsPipelinedAsync_FansWindowsAcrossConcurrencyBudget()
+    {
+        var client = new GatedPipelinedStatClient();
+        var segmentIds = Enumerable.Range(0, NntpClient.StatPipelinedDispatchBatchSize + 1)
+            .Select(index => $"{index}@example")
+            .ToArray();
+
+        var sweep = client.CollectMissingSegmentsPipelinedAsync(
+            segmentIds, depth: 8, fallbackConcurrency: 2, progress: null,
+            CancellationToken.None);
+        try
+        {
+            await client.BothBatchesStarted.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            client.ReleaseBatches();
+        }
+
+        Assert.Empty(await sweep);
+        Assert.Equal(2, client.PipelinedStatsCallCount);
+        Assert.Equal(2, client.MaxConcurrentCalls);
+    }
+
+    [Fact]
     public async Task CollectMissingSegmentsPipelinedAsync_WithEmptyInput_ReturnsEmpty()
     {
         var client = new TrackingPipelinedStatClient(
@@ -288,6 +313,113 @@ public class NntpClientCheckAllSegmentsTests
     private sealed class CollectingProgress(List<int> reports) : IProgress<int>
     {
         public void Report(int value) => reports.Add(value);
+    }
+
+    private sealed class GatedPipelinedStatClient : NntpClient
+    {
+        private readonly TaskCompletionSource _bothBatchesStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _activeCalls;
+        private int _maxConcurrentCalls;
+        private int _pipelinedStatsCallCount;
+
+        public Task BothBatchesStarted => _bothBatchesStarted.Task;
+        public int MaxConcurrentCalls => Volatile.Read(ref _maxConcurrentCalls);
+        public int PipelinedStatsCallCount => Volatile.Read(ref _pipelinedStatsCallCount);
+        public void ReleaseBatches() => _release.TrySetResult();
+
+        public override async IAsyncEnumerable<PipelinedStatResult> StatsPipelinedAsync(
+            IReadOnlyList<string> segmentIds,
+            int depth,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _pipelinedStatsCallCount);
+            var active = Interlocked.Increment(ref _activeCalls);
+            RecordMaxConcurrentCalls(active);
+            if (PipelinedStatsCallCount == 2)
+                _bothBatchesStarted.TrySetResult();
+
+            try
+            {
+                await _release.Task.WaitAsync(cancellationToken);
+                foreach (var segmentId in segmentIds)
+                {
+                    yield return new PipelinedStatResult
+                    {
+                        SegmentId = segmentId,
+                        Exists = true,
+                    };
+                }
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _activeCalls);
+            }
+        }
+
+        private void RecordMaxConcurrentCalls(int active)
+        {
+            var current = Volatile.Read(ref _maxConcurrentCalls);
+            while (active > current)
+            {
+                var observed = Interlocked.CompareExchange(
+                    ref _maxConcurrentCalls, active, current);
+                if (observed == current) return;
+                current = observed;
+            }
+        }
+
+        public override Task ConnectAsync(
+            string host, int port, bool useSsl, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public override Task<UsenetResponse> AuthenticateAsync(
+            string user, string pass, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetStatResponse> StatAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetHeadResponse> HeadAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+            IReadOnlyList<SegmentId> segmentIds,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override Task<UsenetDateResponse> DateAsync(
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override void Dispose()
+        {
+        }
     }
 
     [Fact]
