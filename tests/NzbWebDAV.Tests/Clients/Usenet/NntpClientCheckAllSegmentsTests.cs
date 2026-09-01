@@ -1,7 +1,11 @@
 using System.Collections.Concurrent;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Config;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Extensions;
+using NzbWebDAV.Services;
 using UsenetSharp.Exceptions;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
@@ -256,6 +260,13 @@ public class NntpClientCheckAllSegmentsTests
     [Fact]
     public async Task CollectMissingSegmentsPipelinedAsync_FansWindowsAcrossConcurrencyBudget()
     {
+        using var cancellation = new CancellationTokenSource();
+        var config = new ConfigManager();
+        using var gate = new HealthCheckConnectionGate(config);
+        var admission = new HealthCheckAdmissionContext(
+            gate,
+            HealthCheckAdmissionPriority.Background);
+        using var context = cancellation.Token.SetContext(admission);
         var client = new GatedPipelinedStatClient();
         var segmentIds = Enumerable.Range(0, NntpClient.StatPipelinedDispatchBatchSize + 1)
             .Select(index => $"{index}@example")
@@ -263,7 +274,7 @@ public class NntpClientCheckAllSegmentsTests
 
         var sweep = client.CollectMissingSegmentsPipelinedAsync(
             segmentIds, depth: 8, fallbackConcurrency: 2, progress: null,
-            CancellationToken.None);
+            cancellation.Token);
         try
         {
             await client.BothBatchesStarted.WaitAsync(TimeSpan.FromSeconds(2));
@@ -276,6 +287,8 @@ public class NntpClientCheckAllSegmentsTests
         Assert.Empty(await sweep);
         Assert.Equal(2, client.PipelinedStatsCallCount);
         Assert.Equal(2, client.MaxConcurrentCalls);
+        Assert.Equal(2, client.AdmissionContexts.Count);
+        Assert.All(client.AdmissionContexts, observed => Assert.Same(admission, observed));
     }
 
     [Fact]
@@ -326,6 +339,7 @@ public class NntpClientCheckAllSegmentsTests
         private int _pipelinedStatsCallCount;
 
         public Task BothBatchesStarted => _bothBatchesStarted.Task;
+        public ConcurrentQueue<HealthCheckAdmissionContext?> AdmissionContexts { get; } = new();
         public int MaxConcurrentCalls => Volatile.Read(ref _maxConcurrentCalls);
         public int PipelinedStatsCallCount => Volatile.Read(ref _pipelinedStatsCallCount);
         public void ReleaseBatches() => _release.TrySetResult();
@@ -335,6 +349,8 @@ public class NntpClientCheckAllSegmentsTests
             int depth,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
         {
+            AdmissionContexts.Enqueue(
+                cancellationToken.GetContext<HealthCheckAdmissionContext>());
             Interlocked.Increment(ref _pipelinedStatsCallCount);
             var active = Interlocked.Increment(ref _activeCalls);
             RecordMaxConcurrentCalls(active);

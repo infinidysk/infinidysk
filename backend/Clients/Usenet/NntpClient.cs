@@ -705,7 +705,7 @@ public abstract class NntpClient : INntpClient
         for (var waveStart = 0; waveStart < batchCount; waveStart += waveSize)
         {
             var waveCount = Math.Min(waveSize, batchCount - waveStart);
-            using var waveCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            using var waveCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var readers = new ChannelReader<PipelinedStatResult>[waveCount];
             var producers = new Task[waveCount];
             for (var waveIndex = 0; waveIndex < waveCount; waveIndex++)
