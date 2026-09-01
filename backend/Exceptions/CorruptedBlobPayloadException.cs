@@ -11,8 +11,8 @@ public class CorruptedBlobPayloadException : Exception
 {
     public CorruptedBlobPayloadException(Guid blobId, string blobPath, Type payloadType, Exception inner)
         : base($"The local streaming metadata blob '{blobId}' ({payloadType.Name}) at '{blobPath}' " +
-               $"could not be read ({inner.GetType().Name}: {inner.Message}). Restore a backup of " +
-               "the blobs/ folder that matches the database, or remove and re-download the release.",
+               "is unreadable. Restore a backup of the blobs/ folder that matches the database, " +
+               "or remove and re-download the release.",
             inner)
     {
         BlobId = blobId;
