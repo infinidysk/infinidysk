@@ -59,6 +59,10 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             MissingPayloadMessagePrefix,
             StringComparison.Ordinal) == true;
 
+    /// <summary>
+    /// True when the message starts with the unreadable payload prefix, indicating a
+    /// prior check detected a corrupted blob.
+    /// </summary>
     internal static bool IsUnreadablePayloadMessage(string? message) =>
         message?.StartsWith(
             UnreadablePayloadMessagePrefix,
@@ -70,6 +74,14 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         CancellationToken ct) =>
         GetPayloadConfirmationAsync(context, davItemId, IsMissingPayloadMessage, ct);
 
+    /// <summary>
+    /// Counts recent health check results for this DAV item that reported an unreadable
+    /// streaming metadata blob. Used to detect persistent corruption and escalate actions.
+    /// </summary>
+    /// <param name="context">Database context.</param>
+    /// <param name="davItemId">The DAV item identifier.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The count of consecutive unreadable confirmations.</returns>
     internal static Task<int> GetUnreadablePayloadConfirmationAsync(
         DavDatabaseContext context,
         Guid davItemId,

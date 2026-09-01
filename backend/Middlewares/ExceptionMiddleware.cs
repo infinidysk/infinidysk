@@ -329,6 +329,44 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
 
             AbortStartedResponse(context);
         }
+        catch (Exception e) when (e.TryGetCausingException<CorruptedBlobPayloadException>(out var corrupted))
+        {
+            // Handle wrapped CorruptedBlobPayloadException (e.g., inside AggregateException).
+            // The local streaming metadata blob exists but failed to decode (truncated
+            // write, unclean shutdown): a client-visible data problem, not a server
+            // fault, and never a reason to blocklist the release. Reuses the
+            // missing-payload wire classification so existing clients still treat this
+            // as terminal rather than retryable.
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = 404;
+                context.Response.Headers["X-InfiniDysk-Stream-Error"] = "missing-file-payload";
+                context.Response.ContentType = "text/plain; charset=utf-8";
+                await context.Response.WriteAsync(
+                    "This file's streaming metadata is present but unreadable. " +
+                    "Restore a backup of the blobs/ folder that matches the database, " +
+                    "or remove and re-download the release.",
+                    context.RequestAborted).ConfigureAwait(false);
+            }
+
+            var filePath = GetRequestFilePath(context);
+            var dedupeKey = $"{filePath}|{corrupted!.BlobId}";
+            LogWithDedup(RecentReadErrors, dedupeKey, suppressed =>
+            {
+                if (suppressed > 0)
+                    Log.Warning(
+                        "File {FilePath} cannot be served: its streaming metadata blob {BlobId} ({PayloadType}) is unreadable (suppressed {SuppressedCount} duplicates in last 60s)",
+                        filePath, corrupted.BlobId, corrupted.PayloadType.Name, suppressed);
+                else
+                    Log.Warning(
+                        "File {FilePath} cannot be served: its streaming metadata blob {BlobId} ({PayloadType}) is unreadable",
+                        filePath, corrupted.BlobId, corrupted.PayloadType.Name);
+            });
+            Log.Debug(e, "Unreadable streaming metadata blob stack for {FilePath}", filePath);
+
+            AbortStartedResponse(context);
+        }
         catch (CorruptedBlobPayloadException e)
         {
             // The local streaming metadata blob exists but failed to decode (truncated

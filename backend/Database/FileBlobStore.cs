@@ -126,6 +126,15 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
         }
     }
 
+    /// <summary>
+    /// Reads and deserializes a blob by identifier, checking the process-local metadata cache first.
+    /// Wraps deserialization failures (truncated/corrupt blobs) in <see cref="CorruptedBlobPayloadException"/>
+    /// with blob identity and path metadata. Does not cache failed reads.
+    /// </summary>
+    /// <typeparam name="T">The deserialized payload type.</typeparam>
+    /// <param name="id">The blob identifier.</param>
+    /// <returns>The deserialized payload, null if the blob file is missing, or throws if truncated/corrupt.</returns>
+    /// <exception cref="CorruptedBlobPayloadException">When the blob file exists but fails deserialization.</exception>
     public async Task<T?> ReadBlob<T>(Guid id)
     {
         if (_metadataCache.TryGetValue(id, out T? cached)) return cached;

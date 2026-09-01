@@ -220,6 +220,16 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx, IBlobStore? blobSt
     /// the exception is rethrown so callers see the real corruption instead of a false
     /// "missing payload" result.
     /// </summary>
+    /// <summary>
+    /// Reads a typed blob from the blob store, recovering from a legacy database row
+    /// if the blob is corrupted and a fallback is available.
+    /// </summary>
+    /// <typeparam name="T">The deserialized payload type.</typeparam>
+    /// <param name="davItem">The DAV item owning this blob.</param>
+    /// <param name="blobId">The blob identifier to read.</param>
+    /// <param name="readLegacyRow">A callback to query the legacy database row when the blob is corrupted.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The deserialized payload, fallback row, or throws if the blob is corrupted and no fallback exists.</returns>
     private async Task<T?> ReadTypedBlobOrFallbackAsync<T>(
         DavItem davItem,
         Guid blobId,
