@@ -102,6 +102,29 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MutateAsync_WithCorruptedCurrentBlobAndFallback_WritesReplacementFromFallback()
+    {
+        var segments = NewSegmentIds(3);
+        var (item, blobId) = await AddFileAsync(segments, containerClass: 1);
+
+        // Simulate an unreadable current blob (truncated write / unclean shutdown):
+        // raw non-generic WriteBlob skips compression, so this file decompresses to nothing.
+        await BlobStore.WriteBlob(blobId, new MemoryStream());
+        var fallback = new DavNzbFile { Id = item.Id, SegmentIds = segments, ContainerClass = 1 };
+
+        await DavNzbFileBlobUpdater.MutateAsync(item, current =>
+        {
+            current.CorruptSegmentIndices = [1];
+            return current;
+        }, fallback: fallback);
+
+        Assert.NotEqual(blobId, item.FileBlobId);
+        var blob = await BlobStore.ReadBlob<DavNzbFile>(item.FileBlobId!.Value);
+        Assert.Equal([1], blob!.CorruptSegmentIndices!);
+        Assert.Equal(segments, blob.SegmentIds);
+    }
+
+    [Fact]
     public async Task Consumer_EnqueuesPar2OnlyWhenPar2Enabled()
     {
         var segments = NewSegmentIds(3);

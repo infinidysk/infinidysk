@@ -458,6 +458,76 @@ public class ExceptionMiddlewareTests
         Assert.Equal(0, failureTracker.GetFailureCount(davItem.Id));
     }
 
+    [Fact]
+    public async Task CorruptedBlobPayloadBeforeResponseStarted_ReturnsTyped404WithoutAborting()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateContext(hasStarted: false, lifetimeFeature);
+        var middleware = CreateMiddleware(_ => throw CreateCorruptedBlobPayloadException());
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.Equal("missing-file-payload", context.Response.Headers["X-InfiniDysk-Stream-Error"].ToString());
+        Assert.False(lifetimeFeature.Aborted);
+    }
+
+    [Fact]
+    public async Task CorruptedBlobPayloadAfterResponseStarted_Aborts()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateContext(hasStarted: true, lifetimeFeature);
+        var middleware = CreateMiddleware(_ => throw CreateCorruptedBlobPayloadException());
+
+        await middleware.InvokeAsync(context);
+
+        Assert.True(lifetimeFeature.Aborted);
+    }
+
+    [Fact]
+    public async Task CorruptedBlobPayload_LogsOneWarningLineWithoutAStackDump()
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateContext(hasStarted: false, lifetimeFeature);
+        var blobId = Guid.NewGuid();
+        var middleware = CreateMiddleware(_ => throw CreateCorruptedBlobPayloadException(blobId));
+
+        var events = await CaptureLogsAsync(() => middleware.InvokeAsync(context));
+
+        var logged = Assert.Single(events,
+            e => e.Level == LogEventLevel.Warning
+                 && e.RenderMessage().Contains("is unreadable", StringComparison.Ordinal));
+        Assert.Contains(blobId.ToString(), logged.RenderMessage(), StringComparison.Ordinal);
+        Assert.Null(logged.Exception);
+        Assert.DoesNotContain(events, e => e.Level >= LogEventLevel.Error);
+    }
+
+    [Fact]
+    public async Task CorruptedBlobPayloadWithDavItem_DoesNotRecordStreamingFailure()
+    {
+        // Local blob corruption is not evidence of a bad release; feeding it to
+        // the failure tracker would eventually trigger Arr remove-and-blocklist.
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
+        var failureTracker = new StreamingFailureTracker();
+        var middleware = CreateMiddleware(
+            _ => throw CreateCorruptedBlobPayloadException(),
+            CreateRepairEnabledConfig(),
+            failureTracker);
+
+        await middleware.InvokeAsync(context);
+
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        Assert.Equal(0, failureTracker.GetFailureCount(davItem.Id));
+    }
+
+    private static CorruptedBlobPayloadException CreateCorruptedBlobPayloadException(Guid? blobId = null) =>
+        new(
+            blobId ?? Guid.NewGuid(),
+            "/config/blobs/fake",
+            typeof(DavMultipartFile),
+            new IOException("simulated truncated blob"));
+
     private static MissingFilePayloadException CreateMissingPayloadException(Guid? payloadId = null)
     {
         var id = Guid.NewGuid();

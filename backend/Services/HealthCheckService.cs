@@ -39,6 +39,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 {
     private const int MaximumMissingSegmentIds = 100_000;
     internal const string MissingPayloadMessagePrefix = "Streaming payload missing.";
+    internal const string UnreadablePayloadMessagePrefix = "Streaming payload unreadable.";
     private const int MissingPayloadConfirmationsRequired = 3;
     private static readonly TimeSpan MissingPayloadInitialRecheck = TimeSpan.FromDays(1);
     private static readonly TimeSpan MissingPayloadConfirmedRecheck = TimeSpan.FromDays(7);
@@ -58,9 +59,27 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             MissingPayloadMessagePrefix,
             StringComparison.Ordinal) == true;
 
-    internal static async Task<int> GetMissingPayloadConfirmationAsync(
+    internal static bool IsUnreadablePayloadMessage(string? message) =>
+        message?.StartsWith(
+            UnreadablePayloadMessagePrefix,
+            StringComparison.Ordinal) == true;
+
+    internal static Task<int> GetMissingPayloadConfirmationAsync(
         DavDatabaseContext context,
         Guid davItemId,
+        CancellationToken ct) =>
+        GetPayloadConfirmationAsync(context, davItemId, IsMissingPayloadMessage, ct);
+
+    internal static Task<int> GetUnreadablePayloadConfirmationAsync(
+        DavDatabaseContext context,
+        Guid davItemId,
+        CancellationToken ct) =>
+        GetPayloadConfirmationAsync(context, davItemId, IsUnreadablePayloadMessage, ct);
+
+    private static async Task<int> GetPayloadConfirmationAsync(
+        DavDatabaseContext context,
+        Guid davItemId,
+        Func<string?, bool> isMatchingPriorMessage,
         CancellationToken ct)
     {
         var recentMessages = await context.HealthCheckResults
@@ -74,7 +93,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             .ConfigureAwait(false);
 
         return recentMessages
-            .TakeWhile(IsMissingPayloadMessage)
+            .TakeWhile(isMatchingPriorMessage)
             .Count() + 1;
     }
 
@@ -1237,6 +1256,46 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     "The file's streaming data is missing from the server",
                     "(often a database restore without the blobs/ folder).",
                     "Remove and re-download the release, or restore from a backup that includes blobs.",
+                    state,
+                ]), ct).ConfigureAwait(false);
+        }
+        catch (CorruptedBlobPayloadException e)
+        {
+            // The local streaming metadata blob exists but failed to decode (truncated
+            // write, unclean shutdown). This is not evidence of a bad release, so surface
+            // it for operator action instead of deleting or blocklisting through Arr.
+            CompleteHealthProgress(davItem.Id);
+            var confirmations = await GetUnreadablePayloadConfirmationAsync(
+                dbClient.Ctx,
+                davItem.Id,
+                ct).ConfigureAwait(false);
+            var utcNow = _timeProvider.GetUtcNow();
+            var delay = GetMissingPayloadRecheckDelay(confirmations);
+            davItem.LastHealthCheck = utcNow;
+            davItem.NextHealthCheck = utcNow + delay;
+            Log.Warning(
+                "Health check cannot run for {Path}: {Reason} " +
+                "(confirmation {Count}/{Threshold}; next check in {Delay})",
+                davItem.Path,
+                e.Message,
+                confirmations,
+                MissingPayloadConfirmationsRequired,
+                delay);
+            Log.Debug(e, "Unreadable streaming metadata blob stack for {Path}", davItem.Path);
+            var state = confirmations >= MissingPayloadConfirmationsRequired
+                ? "The payload has been unreadable for at least 3 consecutive checks; " +
+                  "this DavItem is orphaned and will be rechecked weekly."
+                : "The file will be rechecked daily.";
+            await RecordHealthResult(
+                dbClient, davItem,
+                HealthCheckResult.HealthResult.Unhealthy,
+                HealthCheckResult.RepairAction.ActionNeeded,
+                string.Join(" ", [
+                    UnreadablePayloadMessagePrefix,
+                    "The file's local streaming metadata is present but unreadable",
+                    "(often a truncated write or unclean shutdown).",
+                    "Restore a backup of the blobs/ folder that matches the database,",
+                    "or remove and re-download the release.",
                     state,
                 ]), ct).ConfigureAwait(false);
         }

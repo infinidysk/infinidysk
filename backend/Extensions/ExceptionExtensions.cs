@@ -168,6 +168,24 @@ public static class ExceptionExtensions
     }
 
     /// <summary>
+    /// True when the exception chain contains a <see cref="CorruptedBlobPayloadException"/> —
+    /// a local streaming-metadata blob that exists but failed to decode. Checked ahead of
+    /// the general transport/download walk because its inner exception is often itself a
+    /// known type (e.g. <see cref="EndOfStreamException"/>), which would otherwise overwrite
+    /// this exception's more actionable message.
+    /// </summary>
+    public static bool IsCorruptedBlobPayloadException(this Exception exception)
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current is CorruptedBlobPayloadException)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Returns a human-readable message for known/expected failures (transport,
     /// download, and database corruption) so callers can log a single line without
     /// a stack dump. Walks the exception chain and prefers the innermost matching
@@ -181,6 +199,15 @@ public static class ExceptionExtensions
         {
             reason = DatabaseCorruptionReason;
             return true;
+        }
+
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current is CorruptedBlobPayloadException)
+            {
+                reason = current.Message;
+                return true;
+            }
         }
 
         if (exception.IsTransientDatabaseException() || exception.IsKnownSqliteDiskException())

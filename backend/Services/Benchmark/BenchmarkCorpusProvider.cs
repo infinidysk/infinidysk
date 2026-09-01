@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Models.Nzb;
 using Serilog;
 
@@ -40,7 +41,7 @@ public sealed class BenchmarkCorpusProvider(DavDatabaseClient db)
         {
             // A corpus hiccup shouldn't sink the whole benchmark — degrade to
             // whatever we managed to gather (possibly latency-only).
-            Log.Warning(e, "Benchmark corpus gathering failed; using {Count} segments.", pool.Count);
+            e.LogWarningKnownOrStack("Benchmark corpus gathering failed; using {Count} segments.", pool.Count);
         }
 
         Shuffle(pool);

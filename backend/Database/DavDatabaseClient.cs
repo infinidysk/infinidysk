@@ -2,6 +2,7 @@ using System.Text;
 using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Services;
 using Serilog;
@@ -142,11 +143,14 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx, IBlobStore? blobSt
 
     public async Task<DavNzbFile?> GetDavNzbFileAsync(DavItem davItem, CancellationToken ct = default)
     {
-        // attempt to read from blob-store
         var blobId = davItem.FileBlobId;
         if (blobId.HasValue)
         {
-            var blob = await BlobStore.ReadBlob<DavNzbFile>(blobId.Value).ConfigureAwait(false);
+            var blob = await ReadTypedBlobOrFallbackAsync(
+                davItem,
+                blobId.Value,
+                fallbackCt => ctx.NzbFiles.AsNoTracking().FirstOrDefaultAsync(x => x.Id == davItem.Id, fallbackCt),
+                ct).ConfigureAwait(false);
             if (blob is not null) return blob;
         }
 
@@ -159,11 +163,14 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx, IBlobStore? blobSt
 
     public async Task<DavRarFile?> GetDavRarFileAsync(DavItem davItem, CancellationToken ct = default)
     {
-        // attempt to read from blob-store
         var blobId = davItem.FileBlobId;
         if (blobId.HasValue)
         {
-            var blob = await BlobStore.ReadBlob<DavRarFile>(blobId.Value).ConfigureAwait(false);
+            var blob = await ReadTypedBlobOrFallbackAsync(
+                davItem,
+                blobId.Value,
+                fallbackCt => ctx.RarFiles.AsNoTracking().FirstOrDefaultAsync(x => x.Id == davItem.Id, fallbackCt),
+                ct).ConfigureAwait(false);
             if (blob is not null) return blob;
         }
 
@@ -178,11 +185,14 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx, IBlobStore? blobSt
     {
         DavMultipartFile? multipartFile = null;
 
-        // attempt to read from blob-store
         var blobId = davItem.FileBlobId;
         if (blobId.HasValue)
         {
-            multipartFile = await BlobStore.ReadBlob<DavMultipartFile>(blobId.Value).ConfigureAwait(false);
+            multipartFile = await ReadTypedBlobOrFallbackAsync(
+                davItem,
+                blobId.Value,
+                fallbackCt => ctx.MultipartFiles.AsNoTracking().FirstOrDefaultAsync(x => x.Id == davItem.Id, fallbackCt),
+                ct).ConfigureAwait(false);
         }
 
         // read from database
@@ -201,6 +211,37 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx, IBlobStore? blobSt
         }
 
         return multipartFile;
+    }
+
+    /// <summary>
+    /// Reads a typed blob-store record, falling back to its legacy SQL row only when the
+    /// blob is unreadable (<see cref="CorruptedBlobPayloadException"/>) rather than absent.
+    /// A recovered legacy row is logged once as a handled Warning; if no legacy row exists,
+    /// the exception is rethrown so callers see the real corruption instead of a false
+    /// "missing payload" result.
+    /// </summary>
+    private async Task<T?> ReadTypedBlobOrFallbackAsync<T>(
+        DavItem davItem,
+        Guid blobId,
+        Func<CancellationToken, Task<T?>> readLegacyRow,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await (blobStore ?? BlobStore.Current).ReadBlob<T>(blobId).ConfigureAwait(false);
+        }
+        catch (CorruptedBlobPayloadException e)
+        {
+            var legacy = await readLegacyRow(ct).ConfigureAwait(false);
+            if (legacy is null) throw;
+
+            Log.Warning(
+                "Streaming metadata blob {BlobId} for {Path} is unreadable; recovered from the legacy " +
+                "database row instead. Reason: {Reason}",
+                blobId, davItem.Path, e.Message);
+            Log.Debug(e, "Unreadable streaming metadata blob stack for {Path}", davItem.Path);
+            return legacy;
+        }
     }
 
     // queue

@@ -502,6 +502,15 @@ public class Par2RepairService : BackgroundService
             {
                 throw;
             }
+            catch (CorruptedBlobPayloadException e)
+            {
+                // Local streaming metadata is unreadable, not the release's Usenet
+                // articles — surface it instead of silently dropping the trigger.
+                Log.Warning(
+                    "PAR2 zero-fill trigger skipped for {Path}: its streaming metadata blob {BlobId} is unreadable.",
+                    evt.Path, e.BlobId);
+                Log.Debug(e, "Unreadable streaming metadata blob stack for {Path}", evt.Path);
+            }
             catch (Exception e) when (e is not OutOfMemoryException)
             {
                 Log.Debug(e, "PAR2 zero-fill trigger failed for {Path}", evt.Path);

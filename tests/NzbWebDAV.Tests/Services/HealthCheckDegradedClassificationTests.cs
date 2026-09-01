@@ -22,6 +22,9 @@ using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Websocket;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Services;
@@ -789,6 +792,41 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.True(persisted.NextHealthCheck > DateTimeOffset.UtcNow.AddHours(23));
     }
 
+    [Fact]
+    public async Task CorruptedBlobPayload_IsDeferredAsUnreadableWithoutRepairOrStack()
+    {
+        var segments = NewSegmentIds(4);
+        var (item, _) = await AddVideoFileAsync("movie.mkv", segments, [10_000, 10_000, 10_000, 10_000]);
+        var (service, par2) = await NewServiceAsync(NewFakeClient(segments, missing: []), par2Outcome: false);
+        var previousStore = BlobStore.Current;
+        BlobStore.Use(new ThrowingCorruptedBlobStore());
+        IReadOnlyList<LogEvent> events;
+        try
+        {
+            events = await CaptureLogsAsync(
+                () => service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None));
+        }
+        finally
+        {
+            BlobStore.Use(previousStore);
+        }
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+        Assert.Contains("unreadable", row.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(par2.Requests);
+
+        var warning = Assert.Single(events, e => e.Level == LogEventLevel.Warning);
+        Assert.Null(warning.Exception);
+        Assert.Contains("unreadable", warning.RenderMessage(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(events, e => e.Level >= LogEventLevel.Error);
+
+        var persisted = ReloadItem(item.Id);
+        Assert.Equal(item.Id, persisted.Id);
+        Assert.True(persisted.NextHealthCheck > DateTimeOffset.UtcNow.AddHours(23));
+    }
+
     private static string[] NewSegmentIds(int count) =>
         Enumerable.Range(0, count).Select(i => $"seg{i}-{Guid.NewGuid():N}@test").ToArray();
 
@@ -970,6 +1008,58 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     {
         using var context = new DavDatabaseContext(_options);
         return context.Items.AsNoTracking().Single(x => x.Id == itemId);
+    }
+
+    /// <summary>
+    /// A fake <see cref="IBlobStore"/> whose typed reads always throw
+    /// <see cref="CorruptedBlobPayloadException"/>, simulating a truncated/corrupt
+    /// on-disk blob without touching the filesystem.
+    /// </summary>
+    private sealed class ThrowingCorruptedBlobStore : IBlobStore
+    {
+        public Task WriteBlob(Guid id, Stream stream, CancellationToken cancellationToken = default) =>
+            Task.FromException(new NotSupportedException());
+
+        public Task WriteBlob<T>(Guid id, T blob, CancellationToken cancellationToken = default) =>
+            Task.FromException(new NotSupportedException());
+
+        public Stream? ReadBlob(Guid id) => null;
+
+        public Task<T?> ReadBlob<T>(Guid id) =>
+            Task.FromException<T?>(new CorruptedBlobPayloadException(
+                id, "/config/blobs/fake", typeof(T), new IOException("simulated truncated blob")));
+
+        public bool Exists(Guid id) => false;
+
+        public bool Delete(Guid id) => throw new NotSupportedException();
+    }
+
+    private static async Task<IReadOnlyList<LogEvent>> CaptureLogsAsync(Func<Task> act)
+    {
+        var sink = new CollectingSink();
+        var previous = Log.Logger;
+        var logger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        Log.Logger = logger;
+        try
+        {
+            await act().ConfigureAwait(false);
+        }
+        finally
+        {
+            Log.Logger = previous;
+            logger.Dispose();
+        }
+
+        return sink.Events;
+    }
+
+    private sealed class CollectingSink : ILogEventSink
+    {
+        public List<LogEvent> Events { get; } = [];
+        public void Emit(LogEvent logEvent) => Events.Add(logEvent);
     }
 
     private static byte[] Box(string type, int payloadSize)

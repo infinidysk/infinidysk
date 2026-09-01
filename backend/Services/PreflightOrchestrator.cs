@@ -219,6 +219,15 @@ public class PreflightOrchestrator(
         {
             throw;
         }
+        catch (CorruptedBlobPayloadException e)
+        {
+            // Local streaming metadata is unreadable, not the release's Usenet
+            // articles — surface it instead of silently dropping the pre-warm.
+            Log.Warning(
+                "Preflight lazy pre-warm skipped for {Title}: streaming metadata blob {BlobId} is unreadable.",
+                candidate.Title, e.BlobId);
+            Log.Debug(e, "Unreadable streaming metadata blob stack for {Title}", candidate.Title);
+        }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
             Log.Debug(e, "Preflight lazy pre-warm failed for {Title}", candidate.Title);

@@ -29,6 +29,19 @@ public class ExceptionExtensionsTests
     }
 
     [Fact]
+    public void TryGetKnownErrorMessage_CorruptedBlobPayload_PrefersWrapperOverInnerEndOfStream()
+    {
+        // The inner EndOfStreamException is itself a known IOException; the wrapper's
+        // more actionable restore/re-download guidance must win, not the raw EOF text.
+        var inner = new EndOfStreamException("Premature end of stream");
+        var ex = new CorruptedBlobPayloadException(Guid.NewGuid(), "/config/blobs/aa/bb/id", typeof(object), inner);
+
+        Assert.True(ex.TryGetKnownErrorMessage(out var reason));
+        Assert.Equal(ex.Message, reason);
+        Assert.DoesNotContain("Premature end of stream", reason);
+    }
+
+    [Fact]
     public void TryGetKnownErrorMessage_RecognizesUsenetUnexpectedResponse()
     {
         var ex = new UsenetUnexpectedResponseException("<seg@example>", "400 too much time between commands");

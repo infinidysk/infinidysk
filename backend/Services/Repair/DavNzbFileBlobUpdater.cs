@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Exceptions;
+using Serilog;
 
 namespace NzbWebDAV.Services.Repair;
 
@@ -64,7 +66,23 @@ internal static class DavNzbFileBlobUpdater
                 : davItem.FileBlobId;
             DavNzbFile? current = null;
             if (blobId is { } id)
-                current = await BlobStore.ReadBlob<DavNzbFile>(id).ConfigureAwait(false);
+            {
+                try
+                {
+                    current = await BlobStore.ReadBlob<DavNzbFile>(id).ConfigureAwait(false);
+                }
+                catch (CorruptedBlobPayloadException e)
+                {
+                    // The current blob is unreadable; the caller's fallback (the
+                    // last known-good in-memory copy) lets this mutation still
+                    // succeed and overwrite the damaged blob.
+                    Log.Warning(
+                        "Streaming metadata blob {BlobId} for {Path} is unreadable during a repair " +
+                        "mutation; using the caller's fallback copy instead.",
+                        id, davItem.Path);
+                    Log.Debug(e, "Unreadable streaming metadata blob stack for {Path}", davItem.Path);
+                }
+            }
             current ??= fallback;
             if (current is null)
                 return;

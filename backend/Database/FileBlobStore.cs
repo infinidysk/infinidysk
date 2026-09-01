@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using MemoryPack;
 using Microsoft.Extensions.Caching.Memory;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Exceptions;
 using ZstdSharp;
 
 namespace NzbWebDAV.Database;
@@ -131,9 +132,22 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
 
         var stream = ReadBlob(id);
         if (stream == null) return default;
-        await using var fileStream = stream;
-        await using var decompressionStream = new DecompressionStream(fileStream);
-        var blob = await MemoryPackSerializer.DeserializeAsync<T>(decompressionStream).ConfigureAwait(false);
+        var blobPath = GetBlobPath(id);
+        T? blob;
+        try
+        {
+            await using var fileStream = stream;
+            await using var decompressionStream = new DecompressionStream(fileStream);
+            blob = await MemoryPackSerializer.DeserializeAsync<T>(decompressionStream).ConfigureAwait(false);
+        }
+        catch (Exception e) when (
+            e is MemoryPackSerializationException or ZstdException or EndOfStreamException)
+        {
+            // Truncated/corrupt on-disk blob (unclean shutdown, partial restore):
+            // the payload exists but cannot be decoded, distinct from a missing file.
+            throw new CorruptedBlobPayloadException(id, blobPath, typeof(T), e);
+        }
+
         if (blob is not null)
         {
             _metadataCache.Set(id, blob, new MemoryCacheEntryOptions()

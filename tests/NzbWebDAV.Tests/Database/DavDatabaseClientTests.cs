@@ -5,6 +5,7 @@ using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Config;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Tests.Fakes;
@@ -128,6 +129,102 @@ public sealed class DavDatabaseClientTests : IAsyncLifetime
 
         Assert.NotNull(loaded);
         Assert.Equal(1_234, loaded!.Metadata.ExpectedFileSize);
+    }
+
+    [Fact]
+    public async Task GetDavNzbFileAsync_CorruptBlobWithLegacyRow_FallsBackWithoutThrowing()
+    {
+        var blobId = Guid.NewGuid();
+        var item = NewFile(DavItem.ItemSubType.NzbFile, blobId);
+        _context.Items.Add(item);
+        _context.NzbFiles.Add(new DavNzbFile { Id = item.Id, SegmentIds = ["<legacy@example>"] });
+        await _context.SaveChangesAsync();
+        var client = new DavDatabaseClient(_context, new ThrowingBlobStore(blobId));
+
+        var loaded = await client.GetDavNzbFileAsync(item);
+
+        Assert.NotNull(loaded);
+        Assert.Equal(["<legacy@example>"], loaded!.SegmentIds);
+    }
+
+    [Fact]
+    public async Task GetDavRarFileAsync_CorruptBlobWithLegacyRow_FallsBackWithoutThrowing()
+    {
+        var blobId = Guid.NewGuid();
+        var item = NewFile(DavItem.ItemSubType.RarFile, blobId);
+        _context.Items.Add(item);
+        _context.RarFiles.Add(new DavRarFile { Id = item.Id });
+        await _context.SaveChangesAsync();
+        var client = new DavDatabaseClient(_context, new ThrowingBlobStore(blobId));
+
+        var loaded = await client.GetDavRarFileAsync(item);
+
+        Assert.NotNull(loaded);
+    }
+
+    [Fact]
+    public async Task GetDavMultipartFileAsync_CorruptBlobWithLegacyRow_FallsBackWithoutThrowing()
+    {
+        var blobId = Guid.NewGuid();
+        var item = NewFile(DavItem.ItemSubType.MultipartFile, blobId);
+        _context.Items.Add(item);
+        _context.MultipartFiles.Add(new DavMultipartFile { Id = item.Id, Metadata = new DavMultipartFile.Meta() });
+        await _context.SaveChangesAsync();
+        var client = new DavDatabaseClient(_context, new ThrowingBlobStore(blobId));
+
+        var loaded = await client.GetDavMultipartFileAsync(item);
+
+        Assert.NotNull(loaded);
+    }
+
+    [Fact]
+    public async Task GetDavMultipartFileAsync_CorruptBlobWithoutLegacyRow_RethrowsCorruptedBlobPayloadException()
+    {
+        var blobId = Guid.NewGuid();
+        var item = NewFile(DavItem.ItemSubType.MultipartFile, blobId);
+        _context.Items.Add(item);
+        await _context.SaveChangesAsync();
+        var client = new DavDatabaseClient(_context, new ThrowingBlobStore(blobId));
+
+        var ex = await Assert.ThrowsAsync<CorruptedBlobPayloadException>(
+            () => client.GetDavMultipartFileAsync(item));
+
+        Assert.Equal(blobId, ex.BlobId);
+    }
+
+    private static DavItem NewFile(DavItem.ItemSubType subType, Guid blobId)
+    {
+        var id = Guid.NewGuid();
+        return DavItem.New(
+            id, DavItem.Root, $"{id:N}.mkv", 100,
+            DavItem.ItemType.UsenetFile, subType,
+            null, null, null, blobId);
+    }
+
+    /// <summary>
+    /// A fake <see cref="IBlobStore"/> whose typed reads throw
+    /// <see cref="CorruptedBlobPayloadException"/> for one configured blob id,
+    /// simulating a truncated/corrupt on-disk blob without touching the filesystem.
+    /// </summary>
+    private sealed class ThrowingBlobStore(Guid corruptedBlobId) : IBlobStore
+    {
+        public Task WriteBlob(Guid id, Stream stream, CancellationToken cancellationToken = default) =>
+            Task.FromException(new NotSupportedException());
+
+        public Task WriteBlob<T>(Guid id, T blob, CancellationToken cancellationToken = default) =>
+            Task.FromException(new NotSupportedException());
+
+        public Stream? ReadBlob(Guid id) => null;
+
+        public Task<T?> ReadBlob<T>(Guid id) =>
+            id == corruptedBlobId
+                ? Task.FromException<T?>(new CorruptedBlobPayloadException(
+                    id, "/config/blobs/fake", typeof(T), new IOException("simulated corrupt read")))
+                : Task.FromResult<T?>(default);
+
+        public bool Exists(Guid id) => false;
+
+        public bool Delete(Guid id) => false;
     }
 
     [Fact]
