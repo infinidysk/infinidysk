@@ -8,7 +8,7 @@ using NzbWebDAV.Services;
 namespace NzbWebDAV.Benchmarks;
 
 [MemoryDiagnoser]
-public sealed class HealthCheckConnectionGateBenchmarks : IDisposable
+public class HealthCheckConnectionGateBenchmarks : IDisposable
 {
     private const int OperationsPerRun = 256;
     private HealthCheckConnectionGate _gate = null!;
@@ -75,8 +75,19 @@ public sealed class HealthCheckConnectionGateBenchmarks : IDisposable
     }
 
     [GlobalCleanup]
+    public void Cleanup() => Dispose();
+
     public void Dispose()
     {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (!disposing)
+            return;
+
         _gate?.Dispose();
         _gate = null!;
     }

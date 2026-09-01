@@ -84,6 +84,7 @@ public sealed class NntpWholePathReportContractTests
     [Theory]
     [InlineData("quick", 5)]
     [InlineData("sustained", 4)]
+    [InlineData("profile", 1)]
     public void ScenarioSets_AreNamedAndExplicitlyPlaintext(string set, int expectedCount)
     {
         var scenarios = NntpWholePathScenario.ForSet(set);

@@ -39,10 +39,19 @@ internal sealed record NntpWholePathScenario(
         new("plain-buffered-w8", NntpWholePathLayer.BufferedStream, false, 256, 4 * 1024 * 1024, 20, 8, 0, null, YencCrcValidationMode.Require),
     ];
 
+    public static IReadOnlyList<NntpWholePathScenario> Profile =>
+    [
+        new("plain-http-like-w4", NntpWholePathLayer.HttpLike, false, 64, 4 * 1024 * 1024, 20, 4, 0, null, YencCrcValidationMode.Require),
+    ];
+
     public static IReadOnlyList<NntpWholePathScenario> ForSet(string set) =>
         set.Equals("quick", StringComparison.OrdinalIgnoreCase)
             ? Quick
             : set.Equals("sustained", StringComparison.OrdinalIgnoreCase)
                 ? Sustained
-                : throw new ArgumentException("--set must be either 'quick' or 'sustained'.", nameof(set));
+                : set.Equals("profile", StringComparison.OrdinalIgnoreCase)
+                    ? Profile
+                    : throw new ArgumentException(
+                        "--set must be 'quick', 'sustained', or 'profile'.",
+                        nameof(set));
 }

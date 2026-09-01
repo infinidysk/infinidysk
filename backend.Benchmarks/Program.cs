@@ -234,7 +234,7 @@ namespace NzbWebDAV.Benchmarks
     }
 
     [MemoryDiagnoser]
-    public sealed class SegmentStreamBenchmarks : IDisposable
+    public class SegmentStreamBenchmarks : IDisposable
     {
         private const int SegmentSize = 256 * 1024;
         private BenchmarkNntpClient _client = null!;
@@ -322,11 +322,24 @@ namespace NzbWebDAV.Benchmarks
             await stream.CopyToAsync(Stream.Null);
         }
 
+        [GlobalCleanup]
+        public void Cleanup() => Dispose();
+
         public void Dispose()
         {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!disposing || _client is null)
+                return;
+
             _client.Dispose();
             _missingClient.Dispose();
-            GC.SuppressFinalize(this);
+            _client = null!;
+            _missingClient = null!;
         }
     }
 

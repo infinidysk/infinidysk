@@ -61,6 +61,10 @@ one named scenario. Timing and allocation observations are diagnostic, while
 bytes, hashes, BODY counts, callbacks, budget cleanup, and connection cleanup
 are deterministic gates.
 
+`--set profile` uses 64 × 4 MiB articles, 20 connections, width 4, CRC, and the
+HTTP-like sink copy. It is small enough to profile under a 2-core, roughly 8 GB
+container without the client/server loopback corpora exhausting the cgroup.
+
 The committed sustained baseline begins with conservative bootstrap timing
 envelopes because its 20 GiB local run is intentionally deferred to the
 dedicated benchmark phase. Before treating its timing envelope as a regression

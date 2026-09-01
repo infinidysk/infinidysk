@@ -94,7 +94,7 @@ case "$MODE" in
     ;;
   trace)
     command -v dotnet-trace >/dev/null || { echo "dotnet-trace is required." >&2; exit 127; }
-    dotnet-trace collect --process-id "$BACKEND_PID" --profile cpu-sampling \
+    dotnet-trace collect --process-id "$BACKEND_PID" --profile dotnet-sampled-thread-time \
       --duration 00:01:30 --output "$RUN_DIR/diagnostic-trace.nettrace" &
     TRACE_PID=$!
     sleep 2

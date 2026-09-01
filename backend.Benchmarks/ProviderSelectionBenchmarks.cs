@@ -8,7 +8,7 @@ using NzbWebDAV.Services.Metrics;
 namespace NzbWebDAV.Benchmarks;
 
 [MemoryDiagnoser]
-public sealed class ProviderSelectionBenchmarks : IDisposable
+public class ProviderSelectionBenchmarks : IDisposable
 {
     private CancellationTokenSource _activityCancellation = null!;
     private MultiProviderNntpClient _router = null!;
@@ -59,9 +59,17 @@ public sealed class ProviderSelectionBenchmarks : IDisposable
         _router.SelectProviderForBenchmark(NntpOperation.Body)?.MetricsKey;
 
     [GlobalCleanup]
+    public void Cleanup() => Dispose();
+
     public void Dispose()
     {
-        if (_activityCancellation is null)
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (!disposing || _activityCancellation is null)
             return;
 
         _activityCancellation.Cancel();
