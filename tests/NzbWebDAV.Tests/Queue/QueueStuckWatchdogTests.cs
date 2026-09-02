@@ -685,6 +685,85 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RemoveQueueItemsAsync_WorkerCancelledMidFailureFinalize_RemovesRowWithoutThrowing()
+    {
+        // Race: the worker is already failing the item (finalize path) when a SAB
+        // delete cancels it. The cancellation must read as an ordinary stop — the
+        // delete succeeds, the row is gone, and no failed-history row is written —
+        // rather than escaping as a worker fault that turns the delete into a 500.
+        _queueManager.StuckItemThreshold = TimeSpan.FromHours(1);
+        var item = CreateQueueItem("empty.nzb", "movies", "EmptyNzbJob");
+
+        await using (var ctx = new DavDatabaseContext(_options))
+        {
+            ctx.QueueItems.Add(item);
+            await ctx.SaveChangesAsync();
+        }
+
+        // An EOF stream is an invalid NZB, which fails the item into history.
+        _queueManager.GetTopQueueItemOverride = async (exclude, ct) =>
+        {
+            await using var ctx = new DavDatabaseContext(_options);
+            var client = new DavDatabaseClient(ctx);
+            var (claimed, _) = await client.GetTopQueueItem(exclude, ct);
+            if (claimed is null) return (null, null);
+            ctx.ChangeTracker.Clear();
+            return (claimed, Stream.Null);
+        };
+
+        // Hold the finalize lock so the failing worker parks in the finalize
+        // wait, then cancel it there via remove.
+        var finalizeLock = GetFinalizeLock();
+        await finalizeLock.WaitAsync();
+        var finalizeHeld = true;
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var loop = _queueManager.ProcessQueueAsync(cts.Token);
+        try
+        {
+            object? inProgress = await WaitForInProgress(item.Id, TimeSpan.FromSeconds(5));
+            Assert.NotNull(inProgress);
+
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (DateTime.UtcNow < deadline && GetCurrentStage(inProgress!) != "finalize-lock-wait")
+                await Task.Delay(20);
+            Assert.Equal("finalize-lock-wait", GetCurrentStage(inProgress!));
+
+            IReadOnlyList<Guid> stillRunning;
+            await using (var ctx = new DavDatabaseContext(_options))
+            {
+                stillRunning = await _queueManager.RemoveQueueItemsAsync(
+                    [item.Id], new DavDatabaseClient(ctx), CancellationToken.None);
+            }
+
+            Assert.Empty(stillRunning);
+            Assert.True(GetProcessingTask(inProgress!).IsCompleted);
+
+            finalizeLock.Release();
+            finalizeHeld = false;
+
+            await using (var ctx = new DavDatabaseContext(_options))
+            {
+                Assert.Equal(0, await ctx.QueueItems.CountAsync());
+                Assert.Equal(0, await ctx.HistoryItems.CountAsync());
+            }
+        }
+        finally
+        {
+            if (finalizeHeld) finalizeLock.Release();
+            await cts.CancelAsync();
+            try
+            {
+                await loop.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                // Expected when shutdown cancels an in-flight claim.
+            }
+        }
+    }
+
+    [Fact]
     public async Task RemoveQueueItemsAsync_HungWorker_QuarantinesAndReturnsWithinGrace()
     {
         // A worker ignoring cancellation must not hang a SAB delete: the call
@@ -1194,6 +1273,22 @@ public sealed class QueueStuckWatchdogTests : IAsyncLifetime
             "CancellationTokenSource",
             BindingFlags.Instance | BindingFlags.Public);
         return (CancellationTokenSource)prop!.GetValue(inProgressItem)!;
+    }
+
+    private static string GetCurrentStage(object inProgressItem)
+    {
+        var prop = inProgressItem.GetType().GetProperty(
+            "CurrentStage",
+            BindingFlags.Instance | BindingFlags.Public);
+        return (string)prop!.GetValue(inProgressItem)!;
+    }
+
+    private SemaphoreSlim GetFinalizeLock()
+    {
+        var field = typeof(QueueManager).GetField(
+            "_finalizeLock",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        return (SemaphoreSlim)field!.GetValue(_queueManager)!;
     }
 
     private static void SetProgressPercentage(object inProgressItem, int value)
