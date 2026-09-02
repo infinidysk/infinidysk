@@ -32,20 +32,25 @@ requires an InfiniDysk restart.
 ## Symlink playback and rclone
 
 The guide shows the recommended bounded sidecar flags, including
-`--vfs-cache-mode=full`, `--buffer-size=0M`, and `--vfs-read-ahead=512M`.
+`--vfs-cache-mode=full`, `--buffer-size=0`, chunk growth up to `512M`, a
+`50G` cache cap, and `--vfs-read-ahead=512M`.
 It also walks through rclone RC notifications:
 
 ```text
 --rc
 --rc-addr=:5572
---rc-user=rclone       # optional
---rc-pass=...          # optional
+--rc-no-auth           # trusted isolated network only
 ```
 
 Enter the matching RC host and credentials in InfiniDysk, then use **Test**. If
 rclone exposes VFS statistics, the result includes its cache mode and read-ahead.
 A failed or unavailable connection warns but does not block setup; manually
 confirm the sidecar flags before continuing.
+
+For a separate rclone sidecar, bind `:5572` so the InfiniDysk container can
+reach it. `127.0.0.1:5572` is valid only when both processes share a network
+namespace. On a network that is not isolated and trusted, replace `--rc-no-auth`
+with `--rc-user` and `--rc-pass` and enter those credentials in the guide.
 
 See [Mounting WebDAV](../guides/mounting-webdav.md) for the complete Compose example.
 
