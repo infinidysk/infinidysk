@@ -48,7 +48,7 @@ is saturated.
 | Replacement reconnect spacing [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.reconnect-delay-milliseconds` | `500` | Minimum spacing between replacement handshakes after a poisoned connection is closed, 0–5000 milliseconds. Zero disables ordinary replacement spacing; TCP/TLS/AUTHINFO factory failures still back off from a 500ms floor, doubling up to 60 seconds. Takes effect on the next provider-pool rebuild or restart. |
 | Batched article downloads | `usenet.pipelined-body-requests` | on | Fetch WebDAV BODY requests in small batches |
 | Streaming batch width [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `usenet.streaming-body-batch-width` | `4` | Maximum articles per BODY batch (1–8) |
-| Container-aware gap fill [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since } | `usenet.container-aware-fill` | on | Experimental MPEG-TS null-packet fill for confirmed gaps |
+| Container-aware gap fill [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since } | `usenet.container-aware-fill` | on | MPEG-TS null-packet fill for confirmed gaps |
 
 The NNTP stalled-read timeout, streaming segment timeout, streaming read budget, and idle
 connection timeout are separate deadlines. Connect and AUTHINFO use the earliest of caller
@@ -84,7 +84,7 @@ narrowing does not shrink those ceilings — only future batch sizes. Leave the
 width at the default unless you have measured a benefit; wide settings can
 starve other concurrent streams via the shared in-flight article budget.
 
-## Experimental container-aware gap fill
+## Container-aware gap fill
 
 After every provider and fallback Message-ID confirms an article is missing or
 corrupt, InfiniDysk normally emits the same number of zero bytes to preserve

@@ -738,7 +738,7 @@ export function StreamingSettings({
 
         <ManagedSetting configKey="usenet.container-aware-fill">
           <div className="space-y-2">
-            <Tooltip content="Experimental. Applies only after all missing or corrupt article fallbacks are exhausted; transient transport failures still abort so the player can retry the range.">
+            <Tooltip content="Applies only after all missing or corrupt article fallbacks are exhausted; transient transport failures still abort so the player can retry the range.">
               <Toggle
                 id="container-aware-fill"
                 className="cursor-pointer gap-2 p-0"
@@ -749,12 +749,7 @@ export function StreamingSettings({
                     "usenet.container-aware-fill": String(e.target.checked),
                   })
                 }
-                label={
-                  <span className="inline-flex items-center gap-2 text-sm text-base-content">
-                    Container-aware gap fill
-                    <Badge className="badge-warning badge-outline badge-xs">Experimental</Badge>
-                  </span>
-                }
+                label={<span className="text-sm text-base-content">Container-aware gap fill</span>}
               />
             </Tooltip>
             <p className="text-[11px] leading-relaxed text-base-content/45">
