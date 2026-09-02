@@ -32,8 +32,8 @@ requires an InfiniDysk restart.
 ## Symlink playback and rclone
 
 The guide shows the recommended bounded sidecar flags, including
-`--vfs-cache-mode=full`, `--buffer-size=0`, chunk growth up to `512M`, a
-`50G` cache cap, and `--vfs-read-ahead=512M`.
+`--vfs-cache-mode=full`, `--buffer-size=0`, a `50G` cache cap, and
+`--vfs-read-ahead=512M`. Rclone's defaults control read chunking.
 It also walks through rclone RC notifications:
 
 ```text

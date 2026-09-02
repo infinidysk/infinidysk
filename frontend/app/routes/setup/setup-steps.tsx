@@ -179,9 +179,6 @@ function SymlinkPlaybackStep({
 --allow-non-empty
 --vfs-cache-mode=full
 --buffer-size=0
---vfs-read-chunk-streams=1
---vfs-read-chunk-size=1M
---vfs-read-chunk-size-limit=512M
 --vfs-read-ahead=512M
 --vfs-cache-max-size=50G
 --vfs-cache-max-age=1w
