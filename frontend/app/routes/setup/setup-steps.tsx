@@ -256,7 +256,10 @@ function SymlinkPlaybackStep({
         </Field>
       </ManagedSetting>
 
-      <details className="collapse collapse-arrow border border-base-content/10 bg-base-200/40">
+      <details
+        open
+        className="collapse collapse-arrow border border-base-content/10 bg-base-200/40"
+      >
         <summary className="collapse-title text-sm font-semibold">
           Rclone sidecar configuration
         </summary>

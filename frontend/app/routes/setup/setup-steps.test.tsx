@@ -4,7 +4,13 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ManagedEnvProvider } from "~/components/ui";
 import { SETUP_DEFAULT_CONFIG, createInitialDraft } from "./setup-model";
-import { BackupStep, IngestionStep, LibraryTypeStep, SetupProgress } from "./setup-steps";
+import {
+  BackupStep,
+  IngestionStep,
+  LibraryTypeStep,
+  PlaybackStep,
+  SetupProgress,
+} from "./setup-steps";
 
 afterEach(cleanup);
 
@@ -62,5 +68,19 @@ describe("setup wizard controls", () => {
       3,
     );
     expect(screen.getByText("Step 3 of 6")).toBeTruthy();
+  });
+
+  it("shows rclone sidecar configuration expanded by default", () => {
+    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"], true);
+    render(
+      <ManagedEnvProvider value={{}}>
+        <PlaybackStep draft={draft} updateDraft={vi.fn()} />
+      </ManagedEnvProvider>,
+    );
+
+    expect(screen.getByText("Rclone sidecar configuration").closest("details")).toHaveProperty(
+      "open",
+      true,
+    );
   });
 });
