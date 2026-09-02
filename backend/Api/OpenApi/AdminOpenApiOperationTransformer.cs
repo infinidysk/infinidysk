@@ -217,6 +217,7 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
                 ["url", "apiKey", "userAgent", "proxyUrl", "timeoutSeconds", "skipTlsVerification"],
             "api/test-prowlarr-connection" => ["url", "apiKey"],
             "api/test-rclone-connection" => ["host", "user", "pass"],
+            "api/setup-wizard/complete" => ["strategy", "ingestionMethods", "config"],
             "api/set-stream-tracing" => ["enabled", "minutes", "capacity"],
             "api/watchtower-discover-catalogs" => ["url"],
             _ => null,
@@ -240,13 +241,15 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
             fields.ToDictionary(
                 field => field,
                 _ => (IOpenApiSchema)new OpenApiSchema { Type = JsonSchemaType.String }),
-            additionalProperties: false);
+            additionalProperties: false,
+            requiredProperties: route == "api/setup-wizard/complete" ? fields : null);
     }
 
     private static OpenApiRequestBody FormBody(
         string description,
         Dictionary<string, IOpenApiSchema>? properties,
-        bool additionalProperties)
+        bool additionalProperties,
+        IEnumerable<string>? requiredProperties = null)
     {
         return new OpenApiRequestBody
         {
@@ -260,6 +263,7 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
                     {
                         Type = JsonSchemaType.Object,
                         Properties = properties ?? new Dictionary<string, IOpenApiSchema>(),
+                        Required = requiredProperties?.ToHashSet(StringComparer.Ordinal),
                         AdditionalProperties = additionalProperties
                             ? new OpenApiSchema { Type = JsonSchemaType.String }
                             : null,

@@ -68,6 +68,47 @@ public sealed class AdminOpenApiIntegrationTests(NzbDavWebApplicationFactory fac
                 "application/problem+json",
                 tooMany.GetProperty("content").EnumerateObject().First().Name);
 
+            var setupStateGet = paths.GetProperty("/api/setup-wizard-state").GetProperty("get");
+            Assert.Equal(
+                "#/components/schemas/GetSetupWizardStateResponse",
+                setupStateGet.GetProperty("responses")
+                    .GetProperty("200")
+                    .GetProperty("content")
+                    .GetProperty("application/json")
+                    .GetProperty("schema")
+                    .GetProperty("$ref")
+                    .GetString());
+
+            var setupComplete = paths.GetProperty("/api/setup-wizard/complete").GetProperty("post");
+            var setupRequestProperties = setupComplete.GetProperty("requestBody")
+                .GetProperty("content")
+                .GetProperty("multipart/form-data")
+                .GetProperty("schema")
+                .GetProperty("properties");
+            Assert.True(setupRequestProperties.TryGetProperty("strategy", out _));
+            Assert.True(setupRequestProperties.TryGetProperty("ingestionMethods", out _));
+            Assert.True(setupRequestProperties.TryGetProperty("config", out _));
+            var setupRequiredFields = setupComplete.GetProperty("requestBody")
+                .GetProperty("content")
+                .GetProperty("multipart/form-data")
+                .GetProperty("schema")
+                .GetProperty("required")
+                .EnumerateArray()
+                .Select(item => item.GetString())
+                .ToHashSet();
+            Assert.Equal(
+                new HashSet<string?> { "strategy", "ingestionMethods", "config" },
+                setupRequiredFields);
+            Assert.Equal(
+                "#/components/schemas/CompleteSetupWizardResponse",
+                setupComplete.GetProperty("responses")
+                    .GetProperty("200")
+                    .GetProperty("content")
+                    .GetProperty("application/json")
+                    .GetProperty("schema")
+                    .GetProperty("$ref")
+                    .GetString());
+
             var apiKey = root.GetProperty("components")
                 .GetProperty("securitySchemes")
                 .GetProperty("ApiKey");

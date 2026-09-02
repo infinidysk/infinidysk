@@ -35,6 +35,7 @@ export function RadioJoinFilter<T extends string>({
     >
       {options.map((option) => {
         const selected = value === option.id;
+        const descriptionId = `${name}-${option.id}-description`;
         return (
           <label
             key={option.id}
@@ -54,6 +55,7 @@ export function RadioJoinFilter<T extends string>({
               type="radio"
               name={name}
               aria-label={option.label}
+              aria-describedby={prominent && option.description ? descriptionId : undefined}
               className={prominent ? "radio radio-sm shrink-0" : "sr-only"}
               checked={selected}
               onChange={() => onChange(option.id)}
@@ -64,7 +66,10 @@ export function RadioJoinFilter<T extends string>({
                 <span className="min-w-0">
                   <span className="block text-base font-semibold">{option.label}</span>
                   {option.description && (
-                    <span className="mt-1 block text-xs font-normal leading-relaxed opacity-75">
+                    <span
+                      id={descriptionId}
+                      className="mt-1 block text-xs font-normal leading-relaxed opacity-75"
+                    >
                       {option.description}
                     </span>
                   )}

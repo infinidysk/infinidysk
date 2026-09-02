@@ -39,13 +39,22 @@ public sealed class CompleteSetupWizardRequest
         string field,
         ValidationErrors errors)
     {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            errors.Add(field, "Ingestion methods must be a JSON array of strings.");
+            return [];
+        }
+
         try
         {
-            var parsed = JsonSerializer.Deserialize<string[]>(value ?? "");
-            if (parsed is not null) return parsed;
+            var parsed = JsonSerializer.Deserialize<string?[]>(value);
+            if (parsed is not null && parsed.All(item => item is not null))
+                return parsed.Select(item => item!).ToArray();
         }
         catch (JsonException)
         {
+            errors.Add(field, "Ingestion methods must be a JSON array of strings.");
+            return [];
         }
 
         errors.Add(field, "Ingestion methods must be a JSON array of strings.");
@@ -54,20 +63,28 @@ public sealed class CompleteSetupWizardRequest
 
     private static List<ConfigItem> ParseConfigItems(string? value, ValidationErrors errors)
     {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            errors.Add("config", "Setup configuration must be a JSON object of string values.");
+            return [];
+        }
+
         try
         {
-            var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(value ?? "");
-            if (parsed is not null)
+            var parsed = JsonSerializer.Deserialize<Dictionary<string, string?>>(value);
+            if (parsed is not null && parsed.Values.All(item => item is not null))
             {
                 return parsed.Select(pair => new ConfigItem
                 {
                     ConfigName = pair.Key,
-                    ConfigValue = pair.Value,
+                    ConfigValue = pair.Value!,
                 }).ToList();
             }
         }
         catch (JsonException)
         {
+            errors.Add("config", "Setup configuration must be a JSON object of string values.");
+            return [];
         }
 
         errors.Add("config", "Setup configuration must be a JSON object of string values.");

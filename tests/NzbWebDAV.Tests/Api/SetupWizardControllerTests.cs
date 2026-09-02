@@ -8,6 +8,32 @@ namespace NzbWebDAV.Tests.Api;
 [Collection(nameof(HttpIntegrationCollection))]
 public sealed class SetupWizardControllerTests
 {
+    [Theory]
+    [InlineData("[\"manual\",null]", "{}")]
+    [InlineData("[\"manual\"]", "{\"backup.schedule-enabled\":null}")]
+    [InlineData("[\"manual\"]", "{\"rclone.rc-enabled\":\"1\"}")]
+    public async Task Complete_MalformedValuesReturnBadRequest(
+        string ingestionMethods,
+        string config)
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var client = factory.CreateAuthenticatedClient();
+        using var form = new MultipartFormDataContent
+        {
+            { new StringContent("symlinks"), "strategy" },
+            { new StringContent(ingestionMethods), "ingestionMethods" },
+            { new StringContent(config), "config" },
+        };
+
+        using var response = await client.PostAsync("/api/setup-wizard/complete", form);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        using var stateResponse = await client.GetAsync("/api/setup-wizard-state");
+        using var stateJson = await JsonDocument.ParseAsync(
+            await stateResponse.Content.ReadAsStreamAsync());
+        Assert.True(stateJson.RootElement.GetProperty("setupRequired").GetBoolean());
+    }
+
     [Fact]
     public async Task Complete_SymlinksDisablesSegmentCacheAndResolvesSetup()
     {

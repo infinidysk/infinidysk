@@ -61,10 +61,28 @@ describe("setup model", () => {
     ]);
   });
 
+  it("allows an organized STRM library when no rclone mount is configured", () => {
+    const draft = createInitialDraft(
+      {
+        ...SETUP_DEFAULT_CONFIG,
+        "api.import-strategy": "strm",
+        "rclone.mount-dir": "",
+        "media.library-dir": "/mnt/media",
+      },
+      {},
+      ["manual"],
+      false,
+    );
+
+    expect(validateSetupStep(4, draft, {}, false, "strm")).toEqual([]);
+  });
+
   it.each([
     [null, "/overview"],
     ["https://example.com", "/overview"],
     ["//example.com", "/overview"],
+    ["/\\evil.example", "/overview"],
+    ["/queue\\evil", "/overview"],
     ["/setup?again=1", "/overview"],
     ["/queue?page=2", "/queue?page=2"],
   ])("normalizes return target %s", (value, expected) => {

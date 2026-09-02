@@ -217,8 +217,7 @@ export function validateSetupStep(
     const mountDir = normalizePath(draft.config["rclone.mount-dir"] ?? "");
     if (
       libraryDir &&
-      (libraryDir === mountDir ||
-        libraryDir.startsWith(`${mountDir}/`) ||
+      ((mountDir !== "" && (libraryDir === mountDir || libraryDir.startsWith(`${mountDir}/`))) ||
         libraryDir === "/completed-symlinks" ||
         libraryDir.startsWith("/completed-symlinks/"))
     ) {
@@ -244,7 +243,13 @@ export function minutesFromTime(value: string): string {
 }
 
 export function safeReturnTo(value: string | null): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/setup")) {
+  if (
+    !value ||
+    !value.startsWith("/") ||
+    value.startsWith("//") ||
+    value.includes("\\") ||
+    value.startsWith("/setup")
+  ) {
     return "/overview";
   }
   return value;

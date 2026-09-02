@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Http;
 using NzbWebDAV.Database;
 using NzbWebDAV.Services;
 
@@ -6,6 +7,7 @@ namespace NzbWebDAV.Api.Controllers.GetSetupWizardState;
 
 [ApiController]
 [Route("api/setup-wizard-state")]
+[ProducesResponseType(typeof(GetSetupWizardStateResponse), StatusCodes.Status200OK)]
 public sealed class GetSetupWizardStateController(SetupWizardService setupWizardService)
     : GetOnlyApiController
 {

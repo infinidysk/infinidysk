@@ -28,6 +28,11 @@ describe("setup wizard controls", () => {
     expect(symlinks.name).toBe("setup-library-strategy");
     expect(strm.name).toBe("setup-library-strategy");
     expect(symlinks.checked).toBe(true);
+    const descriptionId = symlinks.getAttribute("aria-describedby");
+    expect(descriptionId).toBe("setup-library-strategy-symlinks-description");
+    expect(document.getElementById(descriptionId!)?.textContent).toBe(
+      "Use an rclone mount and filesystem entries.",
+    );
   });
 
   it("uses checkboxes for independent ingestion choices", () => {

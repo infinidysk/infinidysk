@@ -177,10 +177,12 @@ public sealed class SetupWizardService(
             if (string.IsNullOrWhiteSpace(mountDir))
                 throw new BadHttpRequestException("Rclone mount directory is required for Symlinks.");
 
-            var rcEnabled = bool.Parse(ProposedValue(
+            var rcEnabledValue = ProposedValue(
                 requested,
                 ConfigKeys.RcloneRcEnabled,
-                configManager.IsRcloneRemoteControlEnabled().ToString()));
+                configManager.IsRcloneRemoteControlEnabled().ToString());
+            if (!bool.TryParse(rcEnabledValue, out var rcEnabled))
+                throw new BadHttpRequestException("Rclone RC enabled must be 'true' or 'false'.");
             var rcHost = ProposedValue(
                 requested,
                 ConfigKeys.RcloneHost,

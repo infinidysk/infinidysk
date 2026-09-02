@@ -109,13 +109,8 @@ public class RcloneClientTests : IDisposable
     public async Task GetVfsStats_WithSubmittedCredentials_ReturnsReadAheadAndCacheMode()
     {
         RcloneClient.TestHandler = CreateHandler(
-            ("POST /vfs/stats", new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(
-                    "{\"opt\":{\"ReadAhead\":536870912,\"CacheMode\":\"full\"}}",
-                    Encoding.UTF8,
-                    "application/json"),
-            }));
+            ("POST /vfs/stats", SuccessResponse(
+                "{\"opt\":{\"ReadAhead\":536870912,\"CacheMode\":\"full\"}}")));
 
         var result = await RcloneClient.GetVfsStats(
             "http://rclone.test",
@@ -140,10 +135,10 @@ public class RcloneClientTests : IDisposable
         RcloneClient.Current?.Dispose();
     }
 
-    private static HttpResponseMessage SuccessResponse() =>
+    private static HttpResponseMessage SuccessResponse(string content = "{}") =>
         new(HttpStatusCode.OK)
         {
-            Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+            Content = new StringContent(content, Encoding.UTF8, "application/json"),
         };
 
     private static HttpResponseMessage FailResponse(string error) =>

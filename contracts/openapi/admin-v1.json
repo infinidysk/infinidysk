@@ -1,6 +1,20 @@
 {
   "components": {
     "schemas": {
+      "BaseApiResponse": {
+        "properties": {
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "CategoryMapEntry": {
         "properties": {
           "action": {
@@ -40,6 +54,33 @@
         },
         "required": [
           "mappings"
+        ],
+        "type": "object"
+      },
+      "CompleteSetupWizardResponse": {
+        "properties": {
+          "changedConfigKeys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "restartRequired": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "changedConfigKeys",
+          "restartRequired"
         ],
         "type": "object"
       },
@@ -291,6 +332,72 @@
           "totalAllocatedBytes",
           "totalAvailableMemoryBytes",
           "totalCommittedBytes"
+        ],
+        "type": "object"
+      },
+      "GetSetupWizardStateResponse": {
+        "properties": {
+          "currentVersion": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "disposition": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "ingestionMethods": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "mainDatabaseBackupSupported": {
+            "type": "boolean"
+          },
+          "mainDatabaseProvider": {
+            "type": "string"
+          },
+          "recordedVersion": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "null",
+              "string"
+            ]
+          },
+          "setupRequired": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "boolean"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "currentVersion",
+          "ingestionMethods",
+          "mainDatabaseBackupSupported",
+          "mainDatabaseProvider",
+          "setupRequired"
         ],
         "type": "object"
       },
@@ -8642,6 +8749,23 @@
         "operationId": "get-api-setup-wizard-state",
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetSetupWizardStateResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetSetupWizardStateResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetSetupWizardStateResponse"
+                }
+              }
+            },
             "description": "OK"
           },
           "400": {
@@ -8714,8 +8838,52 @@
     "/api/setup-wizard/complete": {
       "post": {
         "operationId": "post-api-setup-wizard-complete",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "config": {
+                    "type": "string"
+                  },
+                  "ingestionMethods": {
+                    "type": "string"
+                  },
+                  "strategy": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "config",
+                  "ingestionMethods",
+                  "strategy"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "Submit the fields as multipart form data.",
+          "required": true
+        },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompleteSetupWizardResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompleteSetupWizardResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompleteSetupWizardResponse"
+                }
+              }
+            },
             "description": "OK"
           },
           "400": {
@@ -8790,6 +8958,23 @@
         "operationId": "post-api-setup-wizard-skip",
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseApiResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseApiResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseApiResponse"
+                }
+              }
+            },
             "description": "OK"
           },
           "400": {
