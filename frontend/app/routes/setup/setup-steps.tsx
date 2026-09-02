@@ -99,10 +99,21 @@ export function LibraryTypeStep({
             name="setup-library-strategy"
             aria-label="Library type"
             value={strategy}
+            prominent
             options={
               [
-                { id: "symlinks", label: "Symlinks · Plex" },
-                { id: "strm", label: "STRM · Emby/Jellyfin" },
+                {
+                  id: "symlinks",
+                  label: "Symlinks · Plex",
+                  description: "Use an rclone mount and filesystem entries.",
+                  icon: "link",
+                },
+                {
+                  id: "strm",
+                  label: "STRM · Emby/Jellyfin",
+                  description: "Use small files that open direct playback URLs.",
+                  icon: "play_circle",
+                },
               ] as const
             }
             onChange={(value) =>
@@ -964,6 +975,21 @@ export function ReviewStep({
           <Badge className="badge-soft">Environment-managed settings preserved</Badge>
         )}
       </div>
+
+      <section className="space-y-2">
+        <h3 className="text-sm font-semibold text-base-content">Content ingestion</h3>
+        <div className="flex flex-wrap gap-2">
+          {draft.ingestionMethods.map((method) => (
+            <Badge key={method} className="badge-outline">
+              {method === "arrs"
+                ? "Arr apps"
+                : method === "search"
+                  ? "Built-in Search"
+                  : "Manual NZB"}
+            </Badge>
+          ))}
+        </div>
+      </section>
 
       {rows.length === 0 ? (
         <Alert variant="info" className="alert-soft text-sm">

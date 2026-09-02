@@ -19,6 +19,7 @@ import {
   SETUP_CONFIG_KEYS,
   SETUP_DEFAULT_CONFIG,
   changedSetupConfig,
+  completionSetupConfig,
   createInitialDraft,
   normalizeStrategy,
   safeReturnTo,
@@ -205,7 +206,10 @@ export default function SetupRoute({ loaderData }: Route.ComponentProps) {
     data.set("intent", "complete");
     data.set("strategy", strategy);
     data.set("ingestionMethods", JSON.stringify(draft.ingestionMethods));
-    data.set("config", JSON.stringify(changes));
+    data.set(
+      "config",
+      JSON.stringify(completionSetupConfig(loaderData.config, draft, loaderData.managedEnv)),
+    );
     void fetcher.submit(data, { method: "POST" });
   };
 

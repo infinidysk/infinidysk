@@ -136,6 +136,31 @@ export function changedSetupConfig(
   return changed;
 }
 
+export function completionSetupConfig(
+  baseline: Record<string, string>,
+  draft: SetupDraft,
+  managedEnv: ManagedEnvMap,
+): Record<string, string> {
+  const config = changedSetupConfig(baseline, draft.config, managedEnv);
+  const strategy = normalizeStrategy(draft.config["api.import-strategy"]);
+  const requiredKeys = [
+    ...(strategy === "symlinks"
+      ? ["rclone.mount-dir", "rclone.rc-enabled", "rclone.host", "rclone.user", "rclone.pass"]
+      : ["api.completed-downloads-dir", "general.base-url"]),
+    "backup.schedule-enabled",
+    "backup.schedule-time",
+    "backup.retention-count",
+    "media.library-dir",
+    ...(draft.ingestionMethods.includes("arrs") ? ["arr.instances"] : []),
+  ];
+
+  for (const key of requiredKeys) {
+    if (key in managedEnv) continue;
+    config[key] = draft.config[key] ?? "";
+  }
+  return config;
+}
+
 export function validateSetupStep(
   step: number,
   draft: SetupDraft,

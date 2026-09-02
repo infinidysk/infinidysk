@@ -3,6 +3,7 @@ import {
   SETUP_DEFAULT_CONFIG,
   applyStrategy,
   changedSetupConfig,
+  completionSetupConfig,
   createInitialDraft,
   safeReturnTo,
   validateSetupStep,
@@ -38,6 +39,17 @@ describe("setup model", () => {
 
     expect(draft.config["rclone.rc-enabled"]).toBe("true");
     expect(draft.config["usenet.segment-cache.enabled"]).toBe("false");
+  });
+
+  it("includes selected branch defaults in the completion payload", () => {
+    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"], false);
+
+    expect(completionSetupConfig(SETUP_DEFAULT_CONFIG, draft, {})).toMatchObject({
+      "rclone.mount-dir": "/mnt/nzbdav",
+      "rclone.rc-enabled": "false",
+      "backup.schedule-enabled": "false",
+      "media.library-dir": "",
+    });
   });
 
   it("requires read-ahead confirmation and a valid RC host for symlinks", () => {
