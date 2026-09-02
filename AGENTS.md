@@ -158,8 +158,36 @@ InfiniDysk develops these libraries **in this repository** under `libs/` and con
 | Background jobs / cleanup | `backend/Services/`, `backend/Tasks/` |
 | DB schema | `backend/Database/Migrations/` (see below) |
 | UI pages / settings screens | `frontend/app/routes/` |
+| New user-facing configuration option | `backend/Config/ConfigKeys.cs`, owning Settings page, and `frontend/app/routes/setup/` (see below) |
 | Frontend ↔ backend wiring | `frontend/app/clients/backend-client.server.ts`, `frontend/server/app.ts` |
 | Docker / release | `Dockerfile`, `entrypoint.sh`, `.github/workflows/` |
+
+## Adding a user-facing configuration option
+
+Every new `ConfigKeys` option or persisted Settings control must include an explicit
+**setup-wizard impact review**. Update the guided setup when the option belongs on a
+new install's critical path; otherwise state in the PR why it remains advanced-only.
+
+Review all of the following before landing the change:
+
+- Add the key, typed/default behavior, backend validation, Settings control, help text,
+    and focused backend/frontend tests using existing subsystem patterns.
+- Decide whether `frontend/app/routes/setup/` must load, display, validate, review, or
+    submit the value. Keep the completion endpoint's config allowlist and any
+    server-enforced strategy bundles in sync; never rely on client state for invariants.
+- Preserve authoritative `NZBDAV_CONFIG__...` behavior through `ManagedSetting`, pin
+    environment-owned values, and provide an actionable conflict message when a required
+    wizard value cannot be written.
+- Keep secret values masked in loaders, connection tests, Review, errors, and logs.
+    Reuse `ConfigSecretMasker` and the relevant secret resolver rather than inventing a
+    second token format.
+- Surface restart requirements and existing-data or migration consequences before
+    Apply. The wizard must not silently rewrite existing imported files.
+- Decide whether `SetupWizardService.CurrentWizardVersion` should increase so existing
+    installations are prompted to review a newly critical option. Do not bump it for an
+    advanced-only setting.
+- Update user documentation with the introducing-release `since` pill and cover the
+    wizard branch, environment-managed case, Review output, and completion behavior.
 
 ## Database migrations
 
@@ -469,6 +497,7 @@ else
 
 - **Env mismatch:** frontend and backend must share `CONFIG_PATH`, `FRONTEND_BACKEND_API_KEY`, and `BACKEND_URL`.
 - **Proxy paths:** new WebDAV mount points must be added to the proxy allowlists in `frontend/server/app.ts` and compression skip list in `frontend/server.ts`.
+- **New configuration options:** follow [Adding a user-facing configuration option](#adding-a-user-facing-configuration-option) and explicitly review setup-wizard inclusion and versioning.
 - **Editing CHANGELOG.md:** it is generated — commit messages are the source of truth.
 - **Submodule / natives:** after clone run `git submodule update --init libs/rapidyenc`. Prefer `scripts/run-backend.sh` so the host rapidyenc native is built and `RAPIDYENC_LIBRARY_PATH` is set (required for yEnc on macOS and for local Linux without Docker).
 - **Breaking upgrades:** irreversible schema changes ship as ordinary EF migrations that auto-apply on startup and surface through the migration-progress splash; there is no `UPGRADE` env-var interlock. Advise a `/config` backup before upgrading across such a migration. Only **irreversible/destructive** migrations use a breaking conventional-commit marker (`!` or `BREAKING CHANGE`); routine additive migrations ship as plain `feat(db)` / `fix(db)` with a backup note in the PR description and release announcement.
