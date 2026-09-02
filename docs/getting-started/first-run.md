@@ -2,6 +2,13 @@
 
 Open `http://your-server:3000` after the container is healthy.
 
+After creating the administrator account, InfiniDysk opens the guided
+**[Setup Guide](setup-guide.md)** [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }.
+It configures import strategy, the recommended cache layer, rclone or STRM paths,
+content ingestion, scheduled backups, and Library Directory. You may skip it and
+use the manual Settings sequence below; **Setup Guide** remains available in the
+main navigation.
+
 !!! tip "Headless ConfigItems vs first-run account"
 
     You can pre-seed Usenet, WebDAV, *Arr, and other **Settings** values with

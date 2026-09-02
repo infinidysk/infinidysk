@@ -2,6 +2,10 @@
 
 Symlink imports need the InfiniDysk WebDAV tree on the host filesystem. Use rclone (sidecar or host mount).
 
+The guided [Setup Guide](../getting-started/setup-guide.md) shows these sidecar
+flags, configures RC notifications, tests the connection, and disables InfiniDysk
+Segment Cache for Symlink/Plex libraries.
+
 ## Prepare the mount point
 
 ```bash

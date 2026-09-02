@@ -24,6 +24,7 @@ nav = [
     { "Prebuilt Linux archives" = "getting-started/prebuilt-archives.md" },
     { "Migration" = "getting-started/migration.md" },
     { "First run" = "getting-started/first-run.md" },
+    { "Setup Guide" = "getting-started/setup-guide.md" },
     { "Connect Radarr/Sonarr" = "getting-started/connect-arr.md" },
   ]},
   { "Guides" = [

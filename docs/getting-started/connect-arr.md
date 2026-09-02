@@ -2,6 +2,10 @@
 
 InfiniDysk speaks the SABnzbd API surface \*Arr apps expect. Hostnames below assume a shared Docker network.
 
+The [Setup Guide](setup-guide.md) can collect and test Radarr/Sonarr connections
+and displays the download-client values below. Use this page for the complete
+manual procedure or troubleshooting.
+
 ## Add the download client
 
 In Radarr or Sonarr → **Settings** → **Download Clients** → **Add** → **SABnzbd**:

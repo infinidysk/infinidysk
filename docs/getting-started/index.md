@@ -32,9 +32,9 @@ Choose a path based on where you are:
 
     ---
 
-    Admin account, Usenet provider, WebDAV credentials, import strategy.
+    Create the administrator account, then use the guided playback and integration setup.
 
-    [:octicons-arrow-right-24: First run](first-run.md)
+    [:octicons-arrow-right-24: First run](first-run.md) · [Setup Guide](setup-guide.md)
 
 -   :material-sync:{ .lg .middle } __Connect *Arr__
 
