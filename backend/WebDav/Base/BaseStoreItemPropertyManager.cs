@@ -11,7 +11,7 @@ public class BaseStoreItemPropertyManager() : PropertyManager<BaseStoreItem>(Dav
     [
         new DavDisplayName<BaseStoreItem>
         {
-            Getter = item => item.Name
+            Getter = item => XmlTextUtil.ReplaceInvalidXmlChars(item.Name)
         },
         new DavGetContentLength<BaseStoreItem>
         {

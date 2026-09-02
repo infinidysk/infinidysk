@@ -2,6 +2,7 @@ using System.Xml.Linq;
 using NWebDav.Server;
 using NWebDav.Server.Props;
 using NWebDav.Server.Stores;
+using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.WebDav.Base;
 
@@ -30,7 +31,7 @@ public class BaseStoreCollectionPropertyManager() : PropertyManager<BaseStoreCol
     [
         new DavDisplayName<BaseStoreCollection>
         {
-            Getter = collection => collection.Name
+            Getter = collection => XmlTextUtil.ReplaceInvalidXmlChars(collection.Name)
         },
         new DavGetResourceType<BaseStoreCollection>
         {
