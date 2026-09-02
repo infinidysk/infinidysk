@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace NzbWebDAV.Clients.Rclone.Models;
@@ -50,6 +51,7 @@ public class VfsMetadataCache
 public class VfsOptions
 {
     [JsonPropertyName("CacheMode")]
+    [JsonConverter(typeof(RcloneCacheModeConverter))]
     public string? CacheMode { get; set; }
 
     [JsonPropertyName("CacheMaxAge")]
@@ -72,4 +74,28 @@ public class VfsOptions
 
     [JsonPropertyName("ReadOnly")]
     public bool ReadOnly { get; set; }
+}
+
+public sealed class RcloneCacheModeConverter : JsonConverter<string>
+{
+    private static readonly string[] Modes = ["off", "minimal", "writes", "full"];
+
+    public override string Read(
+        ref Utf8JsonReader reader,
+        Type typeToConvert,
+        JsonSerializerOptions options) =>
+        reader.TokenType switch
+        {
+            JsonTokenType.String => reader.GetString()!,
+            JsonTokenType.Number when reader.TryGetInt32(out var ordinal) &&
+                ordinal >= 0 && ordinal < Modes.Length => Modes[ordinal],
+            JsonTokenType.Number => "unknown",
+            _ => throw new JsonException($"Unexpected token {reader.TokenType} for rclone CacheMode"),
+        };
+
+    public override void Write(
+        Utf8JsonWriter writer,
+        string value,
+        JsonSerializerOptions options) =>
+        writer.WriteStringValue(value);
 }
