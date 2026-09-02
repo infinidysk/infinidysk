@@ -35,7 +35,7 @@ public static class PathSanitizer
             return SanitizeMinimal(name);
 
         var sb = new StringBuilder(name.Length);
-        foreach (var ch in name)
+        foreach (var ch in XmlTextUtil.ReplaceInvalidXmlChars(name, '_'))
         {
             if (ch < 0x20 || WindowsInvalidChars.Contains(ch))
                 sb.Append('_');
@@ -67,13 +67,14 @@ public static class PathSanitizer
     }
 
     /// <summary>
-    /// Minimal sanitization when Windows-safe paths are disabled: only '/' and NUL.
+    /// Minimal sanitization when Windows-safe paths are disabled: only '/', NUL, and
+    /// characters XML 1.0 forbids (they would break every WebDAV listing of the parent).
     /// Still length-capped so a sanitized name can never overflow DavItem.Name (255).
     /// </summary>
     private static string SanitizeMinimal(string name)
     {
         var sb = new StringBuilder(name.Length);
-        foreach (var ch in name)
+        foreach (var ch in XmlTextUtil.ReplaceInvalidXmlChars(name, '_'))
         {
             if (ch is '/' or '\0')
                 sb.Append('_');

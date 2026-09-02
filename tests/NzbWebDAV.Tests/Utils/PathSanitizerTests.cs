@@ -26,6 +26,19 @@ public class PathSanitizerTests
     }
 
     [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void SanitizeComponent_ReplacesXmlInvalidChars(bool windowsSafe)
+    {
+        Assert.Equal(
+            "Pi_\uE0C3\uE0B1ata.mkv",
+            PathSanitizer.SanitizeComponent("Pi\uFFFE\uE0C3\uE0B1ata.mkv", windowsSafe));
+        Assert.Equal("a_b", PathSanitizer.SanitizeComponent("a\uFFFFb", windowsSafe));
+        Assert.Equal("a_b", PathSanitizer.SanitizeComponent("a\uD800b", windowsSafe));
+        Assert.Equal("Piñata é.mkv", PathSanitizer.SanitizeComponent("Piñata é.mkv", windowsSafe));
+    }
+
+    [Theory]
     [InlineData("Season 01.", "Season 01")]
     [InlineData("name.  ", "name")]
     [InlineData("name.. ", "name")]
