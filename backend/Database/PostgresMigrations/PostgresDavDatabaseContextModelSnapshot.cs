@@ -17,7 +17,7 @@ namespace NzbWebDAV.Database.PostgresMigrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.10")
+                .HasAnnotation("ProductVersion", "10.0.11")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -182,6 +182,8 @@ namespace NzbWebDAV.Database.PostgresMigrations
                     b.HasIndex("Path")
                         .IsUnique();
 
+                    b.HasIndex("HealthRepairPending", "NextHealthCheck");
+
                     b.HasIndex("IdPrefix", "Type");
 
                     b.HasIndex("ParentId", "Name")
@@ -192,8 +194,6 @@ namespace NzbWebDAV.Database.PostgresMigrations
                     b.HasIndex("HistoryItemId", "Type", "CreatedAt");
 
                     b.HasIndex("Type", "HistoryItemId", "NextHealthCheck", "ReleaseDate", "Id");
-
-                    b.HasIndex("HealthRepairPending", "NextHealthCheck");
 
                     b.ToTable("DavItems", (string)null);
                 });
@@ -643,6 +643,29 @@ namespace NzbWebDAV.Database.PostgresMigrations
                     b.HasKey("Id");
 
                     b.ToTable("QueueNzbContents", (string)null);
+                });
+
+            modelBuilder.Entity("NzbWebDAV.Database.Models.SetupWizardState", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Disposition")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("IngestionMethods")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("WizardVersion")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("SetupWizardStates", (string)null);
                 });
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.WantedItem", b =>

@@ -219,6 +219,7 @@ public class DavDatabaseContext : DbContext
     public DbSet<NzbResolutionGroup> NzbResolutionGroups => Set<NzbResolutionGroup>();
     public DbSet<ArticleMissCacheEntry> ArticleMissCacheEntries => Set<ArticleMissCacheEntry>();
     public DbSet<Par2RepairJob> Par2RepairJobs => Set<Par2RepairJob>();
+    public DbSet<SetupWizardState> SetupWizardStates => Set<SetupWizardState>();
 
     // Pending blob writes for the current unit of work (flushed in SaveChangesAsync).
     private readonly List<DavNzbFile> _blobNzbFiles = [];
@@ -722,6 +723,35 @@ public class DavDatabaseContext : DbContext
             e.HasKey(i => i.ConfigName);
             e.Property(i => i.ConfigValue)
                 .IsRequired();
+        });
+
+        // SetupWizardState
+        b.Entity<SetupWizardState>(e =>
+        {
+            e.ToTable("SetupWizardStates");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .ValueGeneratedNever()
+                .IsRequired();
+
+            e.Property(i => i.WizardVersion)
+                .IsRequired();
+
+            e.Property(i => i.Disposition)
+                .HasConversion<int>()
+                .IsRequired();
+
+            e.Property(i => i.IngestionMethods)
+                .IsRequired();
+
+            e.Property(i => i.UpdatedAt)
+                .ValueGeneratedNever()
+                .IsRequired()
+                .HasConversion(
+                    x => x.ToUnixTimeSeconds(),
+                    x => DateTimeOffset.FromUnixTimeSeconds(x)
+                );
         });
 
         // BlobCleanupItem

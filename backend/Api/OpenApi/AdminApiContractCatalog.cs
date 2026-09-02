@@ -15,6 +15,9 @@ public static class AdminApiContractCatalog
     public static IReadOnlyList<Operation> FrontendOperations { get; } =
     [
         new("GET", "/api/is-onboarding", "get-api-is-onboarding"),
+        new("GET", "/api/setup-wizard-state", "get-api-setup-wizard-state"),
+        new("POST", "/api/setup-wizard/complete", "post-api-setup-wizard-complete"),
+        new("POST", "/api/setup-wizard/skip", "post-api-setup-wizard-skip"),
         new("POST", "/api/create-account", "post-api-create-account"),
         new("POST", "/api/authenticate", "post-api-authenticate"),
         new("POST", "/api/search-indexers", "post-api-search-indexers"),
