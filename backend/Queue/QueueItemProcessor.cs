@@ -287,7 +287,7 @@ public class QueueItemProcessor(
                         attempt - 1,
                         reason);
                     Log.Debug(e, "Queue item give-up stack for {JobName}", queueItem.JobName);
-                    await MarkQueueItemCompleted(startTime, error: e.Message).ConfigureAwait(false);
+                    await MarkQueueItemFailedAsync(startTime, e.Message).ConfigureAwait(false);
                     return;
                 }
 
@@ -354,7 +354,7 @@ public class QueueItemProcessor(
 
             try
             {
-                await MarkQueueItemCompleted(startTime, error: e.Message).ConfigureAwait(false);
+                await MarkQueueItemFailedAsync(startTime, e.Message).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
             {
@@ -371,6 +371,28 @@ public class QueueItemProcessor(
                         .ConfigureAwait(false);
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Writes the failed-history row for an item that is already on its failure
+    /// path. Runs inside a <c>catch</c> block, so the outer cancellation handler
+    /// cannot see a cancel that lands here: a concurrent SAB/UI remove (or
+    /// shutdown) cancels the worker token mid-finalize, and that must read as an
+    /// ordinary cancel — the remover owns the row — not as a worker fault.
+    /// </summary>
+    private async Task MarkQueueItemFailedAsync(DateTime startTime, string error)
+    {
+        try
+        {
+            await MarkQueueItemCompleted(startTime, error).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex.IsCancellationException() && ex is not OutOfMemoryException)
+        {
+            Log.Information(
+                "Processing of queue item {JobName} was cancelled while recording its failure",
+                queueItem.JobName);
+            dbClient.Ctx.ClearChangeTracker();
         }
     }
 

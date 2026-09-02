@@ -382,7 +382,13 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
             await item.ProcessingTask.ConfigureAwait(false);
         }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
+        catch (Exception e) when (e.IsCancellationException())
+        {
+            // The worker was cancelled by this remove/pause; a cancellation that
+            // escaped the processor (e.g. mid-finalize) must not fail the caller.
+            Log.Debug("Queue item {QueueItemId} stopped on cancel", item.QueueItem.Id);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
 #pragma warning restore CA2016
         {
             Log.Debug(e, "Queue item {QueueItemId} exited with error after cancel", item.QueueItem.Id);
@@ -947,7 +953,13 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
                 await item.ProcessingTask.ConfigureAwait(false);
             }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
-            catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
+            catch (Exception e) when (e.IsCancellationException())
+            {
+                // Cancelled workers (remove/pause/shutdown) are an expected stop;
+                // letting this escape would abort the reap and leak the worker.
+                Log.Debug("Queue worker for {QueueItemId} stopped on cancel", item.QueueItem.Id);
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
 #pragma warning restore CA2016
             {
                 Log.Error(e, "Queue worker for {QueueItemId} faulted", item.QueueItem.Id);
