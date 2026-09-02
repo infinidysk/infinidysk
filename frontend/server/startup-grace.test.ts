@@ -41,6 +41,8 @@ describe("startup-grace helpers", () => {
   });
 
   it("reports within the startup grace window for a fresh process", () => {
+    vi.spyOn(process, "uptime").mockReturnValue(0);
+
     expect(isWithinBackendStartupGrace()).toBe(true);
     expect(isWithinBackendStartupGrace(0)).toBe(true);
     expect(isWithinBackendStartupGrace(BACKEND_STARTUP_GRACE_MS)).toBe(false);
