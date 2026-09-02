@@ -82,5 +82,9 @@ describe("setup wizard controls", () => {
       "open",
       true,
     );
+    expect(screen.getByText("--poll-interval=0")).toBeTruthy();
+    expect(screen.getByText("--vfs-read-chunk-size-limit=512M")).toBeTruthy();
+    expect(screen.getByText("--vfs-read-ahead=512M")).toBeTruthy();
+    expect(screen.getByText("--rc-addr=:5572")).toBeTruthy();
   });
 });

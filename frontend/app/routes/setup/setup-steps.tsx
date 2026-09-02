@@ -173,7 +173,23 @@ function SymlinkPlaybackStep({
   const rcloneHost = config["rclone.host"];
   const rcloneUser = config["rclone.user"];
   const rclonePass = config["rclone.pass"];
-  const sidecarFlags = `--vfs-cache-mode=full\n--buffer-size=0M\n--vfs-read-ahead=512M\n--vfs-cache-max-size=20G\n--vfs-cache-max-age=24h\n--rc\n--rc-addr=:5572`;
+  const sidecarFlags = `--allow-other
+--poll-interval=0
+--dir-cache-time=1w
+--allow-non-empty
+--vfs-cache-mode=full
+--buffer-size=0
+--vfs-read-chunk-streams=1
+--vfs-read-chunk-size=1M
+--vfs-read-chunk-size-limit=512M
+--vfs-read-ahead=512M
+--vfs-cache-max-size=50G
+--vfs-cache-max-age=1w
+--links
+--use-cookies
+--rc
+--rc-addr=:5572
+--rc-no-auth`;
 
   useEffect(() => {
     setTestState("idle");
@@ -265,8 +281,8 @@ function SymlinkPlaybackStep({
         </summary>
         <div className="collapse-content space-y-3">
           <p className="text-xs leading-relaxed text-base-content/65">
-            Add these flags to the mount command. Keep the VFS cache bounded for your available
-            disk.
+            Add these flags to the mount command. Adjust the 50 GiB limit to fit the storage
+            available to the sidecar.
           </p>
           <div className="mockup-code text-xs">
             {sidecarFlags.split("\n").map((line) => (
@@ -287,6 +303,16 @@ function SymlinkPlaybackStep({
               Copy flags
             </Button>
           </Tooltip>
+          <Alert variant="warning" className="alert-soft items-start text-xs">
+            <Icon name="security" className="!text-[18px]" />
+            <span>
+              <code>--rc-no-auth</code> is suitable only on an isolated trusted container network.
+              For authentication, replace it with <code>--rc-user</code> and <code>--rc-pass</code>,
+              then enter the same values below. A separate sidecar must bind <code>:5572</code>; use{" "}
+              <code>127.0.0.1:5572</code> only when rclone and InfiniDysk share one network
+              namespace.
+            </span>
+          </Alert>
         </div>
       </details>
 
