@@ -248,6 +248,10 @@ export function safeReturnTo(value: string | null): string {
     !value.startsWith("/") ||
     value.startsWith("//") ||
     value.includes("\\") ||
+    [...value].some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 0x1f || code === 0x7f;
+    }) ||
     value.startsWith("/setup")
   ) {
     return "/overview";

@@ -264,6 +264,7 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
                         Type = JsonSchemaType.Object,
                         Properties = properties ?? new Dictionary<string, IOpenApiSchema>(),
                         Required = requiredProperties?.ToHashSet(StringComparer.Ordinal),
+                        AdditionalPropertiesAllowed = additionalProperties,
                         AdditionalProperties = additionalProperties
                             ? new OpenApiSchema { Type = JsonSchemaType.String }
                             : null,

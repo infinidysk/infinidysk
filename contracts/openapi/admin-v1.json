@@ -974,6 +974,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
+                "additionalProperties": false,
                 "properties": {
                   "password": {
                     "type": "string"
@@ -1584,6 +1585,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
+                "additionalProperties": false,
                 "properties": {
                   "password": {
                     "type": "string"
@@ -3161,6 +3163,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
+                "additionalProperties": false,
                 "properties": {
                   "config-keys": {
                     "type": "string"
@@ -4281,6 +4284,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
+                "additionalProperties": false,
                 "properties": {
                   "directory": {
                     "type": "string"
@@ -8562,6 +8566,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
+                "additionalProperties": false,
                 "properties": {
                   "limit": {
                     "type": "string"
@@ -8655,6 +8660,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
+                "additionalProperties": false,
                 "properties": {
                   "capacity": {
                     "type": "string"
@@ -8842,6 +8848,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
+                "additionalProperties": false,
                 "properties": {
                   "config": {
                     "type": "string"
@@ -9123,6 +9130,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
+                "additionalProperties": false,
                 "properties": {
                   "apiKey": {
                     "type": "string"
@@ -9288,6 +9296,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
+                "additionalProperties": false,
                 "properties": {
                   "apiKey": {
                     "type": "string"
@@ -9465,6 +9474,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
+                "additionalProperties": false,
                 "properties": {
                   "apiKey": {
                     "type": "string"
@@ -9630,6 +9640,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
+                "additionalProperties": false,
                 "properties": {
                   "host": {
                     "type": "string"
@@ -9798,6 +9809,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
+                "additionalProperties": false,
                 "properties": {
                   "host": {
                     "type": "string"
@@ -11240,6 +11252,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
+                "additionalProperties": false,
                 "properties": {
                   "url": {
                     "type": "string"

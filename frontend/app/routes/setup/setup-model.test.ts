@@ -83,6 +83,14 @@ describe("setup model", () => {
     ["//example.com", "/overview"],
     ["/\\evil.example", "/overview"],
     ["/queue\\evil", "/overview"],
+    [
+      new URL("https://app.example/setup?returnTo=/%0A%2Fevil.example").searchParams.get(
+        "returnTo",
+      ),
+      "/overview",
+    ],
+    ["/\t/evil.example", "/overview"],
+    ["/\r/evil.example", "/overview"],
     ["/setup?again=1", "/overview"],
     ["/queue?page=2", "/queue?page=2"],
   ])("normalizes return target %s", (value, expected) => {

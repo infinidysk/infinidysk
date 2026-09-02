@@ -99,6 +99,12 @@ public sealed class AdminOpenApiIntegrationTests(NzbDavWebApplicationFactory fac
             Assert.Equal(
                 new HashSet<string?> { "strategy", "ingestionMethods", "config" },
                 setupRequiredFields);
+            Assert.False(setupComplete.GetProperty("requestBody")
+                .GetProperty("content")
+                .GetProperty("multipart/form-data")
+                .GetProperty("schema")
+                .GetProperty("additionalProperties")
+                .GetBoolean());
             Assert.Equal(
                 "#/components/schemas/CompleteSetupWizardResponse",
                 setupComplete.GetProperty("responses")
