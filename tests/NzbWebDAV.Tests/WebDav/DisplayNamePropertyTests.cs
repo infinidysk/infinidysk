@@ -61,13 +61,15 @@ public class DisplayNamePropertyTests
 
     private sealed class StubStoreItem(string name) : BaseStoreReadonlyItem
     {
+        private static readonly Stream EmptyReadableStream = Stream.Null;
+
         public override string Name => name;
         public override string UniqueKey => "stub-item";
         public override long FileSize => 0;
         public override DateTime CreatedAt => DateTime.UnixEpoch;
 
         public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
-            => Task.FromResult<Stream>(new MemoryStream([]));
+            => Task.FromResult(EmptyReadableStream);
     }
 
     private sealed class StubStoreCollection(string name) : BaseStoreReadonlyCollection
