@@ -131,6 +131,7 @@ public sealed class ConfigUpdateService(
     }
 }
 
+
 public sealed class ConfigUpdateBatch(IReadOnlyList<ConfigItem> resolvedItems)
 {
     public IReadOnlyList<ConfigItem> ResolvedItems { get; } = resolvedItems;

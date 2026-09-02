@@ -16,6 +16,21 @@ export type AdminFrontendOperation = {
  */
 export const adminFrontendOperations = [
   { method: "get", path: "/api/is-onboarding", operationId: "get-api-is-onboarding" },
+  {
+    method: "get",
+    path: "/api/setup-wizard-state",
+    operationId: "get-api-setup-wizard-state",
+  },
+  {
+    method: "post",
+    path: "/api/setup-wizard/complete",
+    operationId: "post-api-setup-wizard-complete",
+  },
+  {
+    method: "post",
+    path: "/api/setup-wizard/skip",
+    operationId: "post-api-setup-wizard-skip",
+  },
   { method: "post", path: "/api/create-account", operationId: "post-api-create-account" },
   { method: "post", path: "/api/authenticate", operationId: "post-api-authenticate" },
   { method: "post", path: "/api/search-indexers", operationId: "post-api-search-indexers" },
@@ -79,6 +94,9 @@ export const adminFrontendOperations = [
 
 export const adminApi = {
   isOnboarding: "/api/is-onboarding",
+  getSetupWizardState: "/api/setup-wizard-state",
+  completeSetupWizard: "/api/setup-wizard/complete",
+  skipSetupWizard: "/api/setup-wizard/skip",
   createAccount: "/api/create-account",
   authenticate: "/api/authenticate",
   searchIndexers: "/api/search-indexers",

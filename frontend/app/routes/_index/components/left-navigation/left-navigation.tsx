@@ -60,6 +60,7 @@ export function LeftNavigation({ isWatchdogEnabled, serviceProvider }: LeftNavig
 
   const items: NavItem[] = [
     { target: "/overview", icon: "dashboard", label: "Overview", featureId: "overview" },
+    { target: "/setup", icon: "checklist", label: "Setup Guide", featureId: "setup" },
     { target: "/queue", icon: "list_alt", label: "Queue", featureId: "queue" },
     ...(isWatchdogEnabled
       ? [

@@ -13,6 +13,8 @@ const BACKEND_PATH_PREFIXES = [
 const READ_ONLY_DENIED_POST_PATHS = new Set([
   "/api/delete-webdav-item",
   "/api/remove-missing-payloads",
+  "/api/setup-wizard/complete",
+  "/api/setup-wizard/skip",
   "/api/trigger-health-check",
 ]);
 

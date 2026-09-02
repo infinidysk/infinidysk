@@ -8,4 +8,6 @@ public sealed class GetSetupWizardStateResponse : BaseApiResponse
     public required bool SetupRequired { get; init; }
     public required string[] IngestionMethods { get; init; }
     public DateTimeOffset? UpdatedAt { get; init; }
+    public required string MainDatabaseProvider { get; init; }
+    public required bool MainDatabaseBackupSupported { get; init; }
 }

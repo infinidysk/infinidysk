@@ -8,6 +8,7 @@ import {
   useLocation,
   useNavigation,
   useRouteError,
+  redirect,
 } from "react-router";
 
 import "./app.css";
@@ -29,6 +30,7 @@ import { isOidcEnabled } from "../server/oidc.server";
 import { getServiceProvider } from "./utils/service-provider.server";
 import { isResetAdminPasswordSet } from "./utils/reset-admin-password.server";
 import { withUrlBase } from "~/utils/url-base";
+import { buildSetupRedirect } from "~/utils/setup-redirect";
 
 export { shouldRevalidate } from "./root-revalidation";
 
@@ -45,10 +47,23 @@ export async function loader({ request }: Route.LoaderArgs) {
     };
   }
 
+  const sessionUser = await getSessionUser(request);
+  const canConfigureSetup = IS_FRONTEND_AUTH_DISABLED || sessionUser?.role === "admin";
+  if (path !== "/setup" && canConfigureSetup) {
+    const setupState = await backendClient.getSetupWizardState().catch(() => null);
+    const requestedUrl = new URL(request.url);
+    const setupRedirect = buildSetupRedirect(
+      path,
+      requestedUrl.search,
+      canConfigureSetup,
+      setupState?.setupRequired ?? false,
+    );
+    if (setupRedirect) return redirect(setupRedirect);
+  }
+
   const config = await backendClient.getConfig(["usenet.providers", "play.watchdog-enabled"]);
 
   const version = await getAppVersion();
-  const sessionUser = await getSessionUser(request);
   const serviceProvider = getServiceProvider();
 
   return {

@@ -266,6 +266,7 @@ public sealed class SetupWizardService(
     }
 }
 
+
 public sealed class SetupWizardSnapshot
 {
     public required int CurrentVersion { get; init; }

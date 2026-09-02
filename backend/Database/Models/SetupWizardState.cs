@@ -11,6 +11,7 @@ public sealed class SetupWizardState
     public DateTimeOffset UpdatedAt { get; set; }
 }
 
+
 public enum SetupWizardDisposition
 {
     Completed = 1,

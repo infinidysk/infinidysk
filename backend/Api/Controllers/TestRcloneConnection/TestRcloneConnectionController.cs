@@ -18,11 +18,27 @@ public class TestRcloneConnectionController(
                 .TestConnection(request.Host, request.User, request.Pass, HttpContext.RequestAborted)
                 .ConfigureAwait(false);
 
+            if (!result.Success)
+            {
+                return new TestRcloneConnectionResponse
+                {
+                    Status = true,
+                    Connected = false,
+                    Error = result.Error,
+                };
+            }
+
+            var vfsStats = await RcloneClient
+                .GetVfsStats(request.Host, request.User, request.Pass, HttpContext.RequestAborted)
+                .ConfigureAwait(false);
+
             return new TestRcloneConnectionResponse
             {
                 Status = true,
-                Connected = result.Success,
-                Error = result.Error,
+                Connected = true,
+                ReadAheadBytes = vfsStats.Success ? vfsStats.Options?.ReadAhead : null,
+                CacheMode = vfsStats.Success ? vfsStats.Options?.CacheMode : null,
+                VfsInspectionError = vfsStats.Success ? null : vfsStats.Error,
                 LastInvalidationError = rcloneClient.LastForgetError?.Message,
                 LastInvalidationErrorAt = rcloneClient.LastForgetError?.At
             };

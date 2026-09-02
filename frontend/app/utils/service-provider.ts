@@ -2,6 +2,7 @@ import type { SettingsTab } from "~/navigation/settings-tabs";
 
 export const NAV_FEATURE_IDS = [
   "overview",
+  "setup",
   "queue",
   "watchdog",
   "watchtower",

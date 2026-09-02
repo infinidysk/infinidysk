@@ -74,6 +74,35 @@ export class BackendContractError extends Error {
 
 const backendObject: z.ZodType<Record<string, unknown>> = z.looseObject({});
 
+const setupWizardStateSchema = z.object({
+  status: z.boolean(),
+  currentVersion: z.number().int(),
+  recordedVersion: z.number().int().nullable(),
+  disposition: z.enum(["completed", "skipped"]).nullable(),
+  setupRequired: z.boolean(),
+  ingestionMethods: z.array(z.string()),
+  updatedAt: z.string().nullable(),
+  mainDatabaseProvider: z.enum(["sqlite", "postgres"]),
+  mainDatabaseBackupSupported: z.boolean(),
+});
+
+const completeSetupWizardResponseSchema = z.object({
+  status: z.boolean(),
+  changedConfigKeys: z.array(z.string()),
+  restartRequired: z.boolean(),
+});
+
+export type SetupWizardState = z.infer<typeof setupWizardStateSchema>;
+export type CompleteSetupWizardResponse = z.infer<typeof completeSetupWizardResponseSchema>;
+export type SetupWizardStrategy = "symlinks" | "strm";
+export type SetupWizardIngestionMethod = "arrs" | "search" | "manual";
+
+export type CompleteSetupWizardInput = {
+  strategy: SetupWizardStrategy;
+  ingestionMethods: SetupWizardIngestionMethod[];
+  config: Record<string, string>;
+};
+
 export function parseBackendSuccess<T>(
   errorPrefix: string,
   json: unknown,
@@ -283,6 +312,43 @@ class BackendClient {
       },
     );
     return data.isOnboarding;
+  }
+
+  public async getSetupWizardState(): Promise<SetupWizardState> {
+    return await call(
+      adminApi.getSetupWizardState,
+      "Failed to fetch setup guide status",
+      { method: "GET" },
+      setupWizardStateSchema,
+    );
+  }
+
+  public async completeSetupWizard(
+    input: CompleteSetupWizardInput,
+  ): Promise<CompleteSetupWizardResponse> {
+    return await call(
+      adminApi.completeSetupWizard,
+      "Failed to complete setup guide",
+      {
+        method: "POST",
+        body: form(
+          ["strategy", input.strategy],
+          ["ingestionMethods", JSON.stringify(input.ingestionMethods)],
+          ["config", JSON.stringify(input.config)],
+        ),
+      },
+      completeSetupWizardResponseSchema,
+    );
+  }
+
+  public async skipSetupWizard(): Promise<boolean> {
+    const data = await call<{ status: boolean }>(
+      adminApi.skipSetupWizard,
+      "Failed to skip setup guide",
+      { method: "POST" },
+      z.object({ status: z.boolean() }),
+    );
+    return data.status;
   }
 
   public async createAccount(username: string, password: string): Promise<boolean> {

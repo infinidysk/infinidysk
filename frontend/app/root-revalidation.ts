@@ -26,11 +26,15 @@ export function shouldRevalidate({
     return true;
   }
   if (formMethod && formMethod !== "GET") {
-    const fromSettingsOrOnboarding =
-      currentUrl.pathname.startsWith("/settings") || currentUrl.pathname.startsWith("/onboarding");
-    const toSettingsOrOnboarding =
-      nextUrl.pathname.startsWith("/settings") || nextUrl.pathname.startsWith("/onboarding");
-    return fromSettingsOrOnboarding || toSettingsOrOnboarding;
+    const fromConfigFlow =
+      currentUrl.pathname.startsWith("/settings") ||
+      currentUrl.pathname.startsWith("/onboarding") ||
+      currentUrl.pathname.startsWith("/setup");
+    const toConfigFlow =
+      nextUrl.pathname.startsWith("/settings") ||
+      nextUrl.pathname.startsWith("/onboarding") ||
+      nextUrl.pathname.startsWith("/setup");
+    return fromConfigFlow || toConfigFlow;
   }
   if (currentUrl.pathname === nextUrl.pathname && currentUrl.search === nextUrl.search) {
     return false;

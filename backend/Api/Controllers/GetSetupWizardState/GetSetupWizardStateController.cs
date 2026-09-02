@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using NzbWebDAV.Database;
 using NzbWebDAV.Services;
 
 namespace NzbWebDAV.Api.Controllers.GetSetupWizardState;
@@ -22,6 +23,8 @@ public sealed class GetSetupWizardStateController(SetupWizardService setupWizard
             SetupRequired = state.SetupRequired,
             IngestionMethods = state.IngestionMethods,
             UpdatedAt = state.UpdatedAt,
+            MainDatabaseProvider = DatabaseProviderConfig.IsPostgres ? "postgres" : "sqlite",
+            MainDatabaseBackupSupported = !DatabaseProviderConfig.IsPostgres,
         });
     }
 }

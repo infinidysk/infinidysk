@@ -168,7 +168,7 @@ export async function action({ request }: Route.ActionArgs) {
     const isSuccess = await backendClient.createAccount(username, password);
     if (!isSuccess) throw new Error("Unknown error creating account");
     const responseInit = await setSessionUser(request, username);
-    return redirect("/", responseInit);
+    return redirect("/setup", responseInit);
   } catch (error) {
     if (error instanceof Error) {
       return { error: error.message };

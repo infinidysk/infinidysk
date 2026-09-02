@@ -248,6 +248,13 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
         return result;
     }
 
+    public static Task<VfsStatsResponse> GetVfsStats(
+        string host,
+        string? user,
+        string? pass,
+        CancellationToken cancellationToken = default) =>
+        Post<VfsStatsResponse>(host, user, pass, "vfs/stats", null, cancellationToken);
+
     private static async Task<T> Post<T>
     (
         string host,

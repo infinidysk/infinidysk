@@ -106,6 +106,28 @@ public class RcloneClientTests : IDisposable
     }
 
     [Fact]
+    public async Task GetVfsStats_WithSubmittedCredentials_ReturnsReadAheadAndCacheMode()
+    {
+        RcloneClient.TestHandler = CreateHandler(
+            ("POST /vfs/stats", new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"opt\":{\"ReadAhead\":536870912,\"CacheMode\":\"full\"}}",
+                    Encoding.UTF8,
+                    "application/json"),
+            }));
+
+        var result = await RcloneClient.GetVfsStats(
+            "http://rclone.test",
+            "rclone",
+            "secret");
+
+        Assert.True(result.Success);
+        Assert.Equal(536_870_912, result.Options?.ReadAhead);
+        Assert.Equal("full", result.Options?.CacheMode);
+    }
+
+    [Fact]
     public void SharedHttpClient_HasExplicitTimeout()
     {
         Assert.Equal(TimeSpan.FromSeconds(30), RcloneClient.RequestTimeout);
