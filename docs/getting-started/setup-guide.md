@@ -2,7 +2,7 @@
 description: "Use InfiniDysk's guided setup for Plex symlinks or Emby/Jellyfin STRM playback, Arr ingestion, backups, and library health."
 ---
 
-# Setup Guide [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
+# Setup Guide <span class="nzbdav-since">since 1.3.0</span>
 
 InfiniDysk opens **Setup Guide** after the first administrator signs in on a new
 or upgraded installation. Complete it, or choose **Skip setup** to stop the

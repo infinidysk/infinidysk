@@ -32,7 +32,7 @@ Choose a path based on where you are:
 
     ---
 
-    Create the administrator account, then use the guided playback and integration setup.
+    New installs continue from account creation; existing installs open the guide after the first administrator login following upgrade.
 
     [:octicons-arrow-right-24: First run](first-run.md) · [Setup Guide](setup-guide.md)
 
