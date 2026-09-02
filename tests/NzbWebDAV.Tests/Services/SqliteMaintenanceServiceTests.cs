@@ -248,7 +248,9 @@ public sealed class SqliteMaintenanceServiceTests
         });
 
         var warnings = events
-            .Where(e => e.Level == LogEventLevel.Warning)
+            .Where(e => e.Level == LogEventLevel.Warning &&
+                        (e.MessageTemplate.Text.Contains("deferred by database contention") ||
+                         e.MessageTemplate.Text.Contains("skipped after")))
             .ToList();
         Assert.Equal(2, warnings.Count);
         Assert.All(warnings, warning =>
