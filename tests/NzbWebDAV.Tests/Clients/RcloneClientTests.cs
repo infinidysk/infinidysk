@@ -158,6 +158,21 @@ public class RcloneClientTests : IDisposable
     }
 
     [Fact]
+    public async Task GetVfsStats_WithNullResponse_ReturnsInspectionError()
+    {
+        RcloneClient.TestHandler = CreateHandler(
+            ("POST /vfs/stats", SuccessResponse("null")));
+
+        var result = await RcloneClient.GetVfsStats(
+            "http://rclone.test",
+            "rclone",
+            "secret");
+
+        Assert.False(result.Success);
+        Assert.Equal("Rclone returned an incompatible response", result.Error);
+    }
+
+    [Fact]
     public void SharedHttpClient_HasExplicitTimeout()
     {
         Assert.Equal(TimeSpan.FromSeconds(30), RcloneClient.RequestTimeout);

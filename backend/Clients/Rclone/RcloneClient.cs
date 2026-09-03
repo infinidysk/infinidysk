@@ -311,7 +311,15 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
                 return new T { Success = true };
             }
 
-            var result = JsonSerializer.Deserialize<T>(content, JsonOptions) ?? new T();
+            var result = JsonSerializer.Deserialize<T>(content, JsonOptions);
+            if (result is null)
+            {
+                Log.Warning(
+                    "Rclone RC request to {Endpoint} returned an incompatible response. Reason: response body was null",
+                    endpoint);
+                return new T { Success = false, Error = "Rclone returned an incompatible response" };
+            }
+
             result.Success = true;
             return result;
         }

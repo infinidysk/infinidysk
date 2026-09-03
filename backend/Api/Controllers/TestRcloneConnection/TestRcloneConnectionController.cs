@@ -49,7 +49,7 @@ public class TestRcloneConnectionController(
             {
                 Status = true,
                 Connected = false,
-                Error = e.Message
+                Error = DescribeConnectionError(request.Host, e.Message)
             };
         }
     }
