@@ -902,6 +902,7 @@ public class NzbFileStream(
     {
         try
         {
+            await Task.Yield();
             await prewarm().ConfigureAwait(false);
         }
         catch (OperationCanceledException)
