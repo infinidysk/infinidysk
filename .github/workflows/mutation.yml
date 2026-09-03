@@ -8,13 +8,13 @@ on:
       - frontend/app/clients/**
       - frontend/app/auth/**
       - frontend/stryker.config.json
+      - frontend/package-lock.json
   workflow_dispatch:
     inputs:
       scope:
         description: Mutation scope
         type: choice
         options:
-          - changed
           - queue
           - streams
           - usenet
@@ -41,7 +41,7 @@ env:
 jobs:
   backend:
     name: Backend mutation
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && contains(fromJSON('["changed","queue","streams","usenet","range-strm","all"]'), github.event.inputs.scope))
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && contains(fromJSON('["queue","streams","usenet","range-strm","all"]'), github.event.inputs.scope))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -124,7 +124,7 @@ jobs:
 
   frontend:
     name: Frontend mutation
-    if: github.event_name != 'workflow_dispatch' || contains(fromJSON('["changed","frontend","all"]'), github.event.inputs.scope)
+    if: github.event_name != 'workflow_dispatch' || contains(fromJSON('["frontend","all"]'), github.event.inputs.scope)
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -176,10 +176,10 @@ jobs:
         with:
           path: frontend/reports/stryker-incremental.json
           # PR caches are not readable from other PRs; the push-to-main run seeds the shared fallback.
-          key: stryker-js-${{ hashFiles('frontend/stryker.config.json') }}-${{ github.ref_name }}-${{ github.sha }}
+          key: stryker-js-${{ hashFiles('frontend/stryker.config.json', 'frontend/package-lock.json') }}-${{ github.ref_name }}-${{ github.sha }}
           restore-keys: |
-            stryker-js-${{ hashFiles('frontend/stryker.config.json') }}-${{ github.ref_name }}-
-            stryker-js-${{ hashFiles('frontend/stryker.config.json') }}-main-
+            stryker-js-${{ hashFiles('frontend/stryker.config.json', 'frontend/package-lock.json') }}-${{ github.ref_name }}-
+            stryker-js-${{ hashFiles('frontend/stryker.config.json', 'frontend/package-lock.json') }}-main-
 
       - name: Run StrykerJS
         if: github.event_name != 'pull_request' || steps.mutate.outputs.skip != 'true'
