@@ -33,6 +33,7 @@ public sealed class EffectiveStreamingConfigManifestTests
         Assert.True(document.Memory.SharedStreamsEnabled);
         Assert.False(document.SegmentCache.Enabled);
         Assert.Equal(10L * 1024 * 1024 * 1024, document.SegmentCache.MaxBytes);
+        Assert.Equal(0, document.SegmentCache.WriteBehindBytes);
         Assert.True(document.Repair.BackgroundEnabled);
         Assert.True(document.Repair.Par2Enabled);
         Assert.True(document.Repair.DegradedToleranceEnabled);
@@ -227,6 +228,7 @@ public sealed class EffectiveStreamingConfigManifestTests
         "segmentCache",
         "segmentCache.enabled",
         "segmentCache.maxBytes",
+        "segmentCache.writeBehindBytes",
         "repair",
         "repair.backgroundEnabled",
         "repair.par2Enabled",
@@ -268,6 +270,7 @@ public sealed class EffectiveStreamingConfigManifestTests
         "source.segmentCache",
         "source.segmentCache.enabled",
         "source.segmentCache.maxBytes",
+        "source.segmentCache.writeBehindBytes",
         "source.repair",
         "source.repair.backgroundEnabled",
         "source.repair.par2Enabled",

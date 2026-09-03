@@ -36,6 +36,7 @@ is saturated.
 | Enable Segment Cache | `usenet.segment-cache.enabled` | off (new installs) | Cache decoded segments on disk; restart required |
 | Cache path | `usenet.segment-cache.path` | `/config/segment-cache` | Segment-cache directory |
 | Maximum size (GB) | `usenet.segment-cache.max-gb` | `10` | Segment-cache size limit |
+| Cache write-behind (MiB) [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.segment-cache.write-behind-mb` | `0` | Advanced, restart-required RAM budget for asynchronous cache writes. `0` keeps inline writes; nonzero values are 16–1024 MiB |
 | Streaming Segment Timeout | `usenet.streaming-segment-timeout-seconds` | `8` | Per-segment deadline, 2–40 seconds |
 | Streaming Read Timeout [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since } | `usenet.streaming-read-timeout-seconds` | `30` | Initial 5–120 second wait to open a GET/range |
 | Streaming Write Timeout | `usenet.streaming-write-timeout-seconds` | `60` | Per-write deadline, 0–600 seconds (0 disables); also cancels a stream that transfers less than 64 KB per timeout window while other streams wait on Article RAM |
@@ -77,6 +78,29 @@ files from the cache path in the background so a previously enabled cache does n
 keep occupying disk. Only files matching the cache layout are removed; unrelated
 files placed in that directory are left alone.
 [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
+
+### Segment-cache write-behind
+
+With the default value `0`, each decoded segment is written to storage before
+the same bytes continue through the playback drain. On slower bind mounts,
+overlay filesystems, or network storage, that can apply disk backpressure to
+the Usenet socket.
+
+Set `usenet.segment-cache.write-behind-mb` to 16–1024 to copy completed segment
+bodies into bounded pooled memory and publish them from one FIFO background
+writer. This budget is additional to the in-flight article budget. The writer
+also caps queued plus active jobs at 256. When either limit is full, the new
+cache write is skipped rather than delaying playback.
+
+Write-behind makes cache publication asynchronous. An immediate second read can
+miss and fetch the segment again until the writer publishes both body and header.
+Disk failures remain best-effort and do not fail playback. The Support memory
+snapshot reports the configured budget, reserved and peak physical buffer bytes,
+queued/active jobs, and capacity skips.
+
+The setting is advanced-only and has no Settings control. Configure
+`NZBDAV_CONFIG__USENET__SEGMENT_CACHE__WRITE_BEHIND_MB`, then restart the
+container. Set it back to `0` and restart to restore inline writes.
 
 ### Segment Cache and rclone read-ahead
 

@@ -83,6 +83,9 @@ glibc-specific; the shipped Alpine image uses musl and does not use
   idle timeout if many pooled sockets are unnecessary.
 - Lower **Streaming body batch width** and set an explicit **In-flight article
   budget** to reduce active decoded-pipe retention.
+- Keep `usenet.segment-cache.write-behind-mb` at `0`, or include its full
+  additional pooled-buffer budget when sizing the container. Under pressure,
+  write-behind skips new cache writes instead of exceeding its byte/job limits.
 - `DOTNET_GCRetainVM=0` is already the .NET default; setting it does not shrink
   the initial regions-GC reservation.
 

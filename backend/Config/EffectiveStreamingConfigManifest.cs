@@ -76,7 +76,8 @@ internal static class EffectiveStreamingConfigManifest
                 configManager.GetSharedStreamsSmallRangeMaxBytes()),
             new EffectiveSegmentCacheSettings(
                 configManager.IsSegmentCacheEnabled(),
-                configManager.GetSegmentCacheMaxBytes()),
+                configManager.GetSegmentCacheMaxBytes(),
+                configManager.GetSegmentCacheWriteBehindBytes()),
             new EffectiveRepairSettings(
                 configManager.IsRepairJobEnabled(),
                 configManager.IsPar2RepairEnabled(),
@@ -111,7 +112,8 @@ internal static class EffectiveStreamingConfigManifest
                     Source(configManager, ConfigKeys.UsenetSharedStreamsSmallRangeMaxMb)),
                 new EffectiveSegmentCacheSettingSources(
                     Source(configManager, ConfigKeys.UsenetSegmentCacheEnabled),
-                    Source(configManager, ConfigKeys.UsenetSegmentCacheMaxGb)),
+                    Source(configManager, ConfigKeys.UsenetSegmentCacheMaxGb),
+                    Source(configManager, ConfigKeys.UsenetSegmentCacheWriteBehindMb)),
                 new EffectiveRepairSettingSources(
                     Source(configManager, ConfigKeys.RepairEnable),
                     Source(configManager, ConfigKeys.RepairPar2Enabled),
@@ -175,7 +177,8 @@ internal sealed record EffectiveMemorySettings(
 
 internal sealed record EffectiveSegmentCacheSettings(
     bool Enabled,
-    long MaxBytes);
+    long MaxBytes,
+    long WriteBehindBytes);
 
 internal sealed record EffectiveRepairSettings(
     bool BackgroundEnabled,
@@ -229,7 +232,8 @@ internal sealed record EffectiveMemorySettingSources(
 
 internal sealed record EffectiveSegmentCacheSettingSources(
     EffectiveConfigSource Enabled,
-    EffectiveConfigSource MaxBytes);
+    EffectiveConfigSource MaxBytes,
+    EffectiveConfigSource WriteBehindBytes);
 
 internal sealed record EffectiveRepairSettingSources(
     EffectiveConfigSource BackgroundEnabled,

@@ -82,6 +82,27 @@ public sealed class SegmentCacheStatisticsTests
     }
 
     [Fact]
+    public void LaterGeneration_IgnoresStaleWriterSnapshots()
+    {
+        var statistics = new SegmentCacheStatistics();
+        var generationA = statistics.BeginGeneration(enabled: true, maxBytes: 100);
+        generationA.SetWriterSnapshot(new SegmentCacheWriteBehindSnapshot(64, 32, 32, 1, 1, 0));
+
+        var generationB = statistics.BeginGeneration(enabled: true, maxBytes: 200);
+        generationB.SetWriterSnapshot(new SegmentCacheWriteBehindSnapshot(128, 16, 24, 2, 1, 3));
+        generationA.SetWriterSnapshot(new SegmentCacheWriteBehindSnapshot(64, 64, 64, 9, 9, 9));
+
+        var snapshot = Assert.IsType<SegmentCacheWriteBehindSnapshot>(
+            statistics.GetWriterSnapshot());
+        Assert.Equal(128, snapshot.BudgetBytes);
+        Assert.Equal(16, snapshot.ReservedBytes);
+        Assert.Equal(24, snapshot.PeakReservedBytes);
+        Assert.Equal(2, snapshot.QueuedJobs);
+        Assert.Equal(1, snapshot.ActiveJobs);
+        Assert.Equal(3, snapshot.CapacitySkips);
+    }
+
+    [Fact]
     public void LateRetiredGeneration_StillContributesOutcomeCounters()
     {
         var statistics = new SegmentCacheStatistics();

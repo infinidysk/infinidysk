@@ -33,6 +33,8 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
     private readonly object[] _commitStripes = CreateCommitStripes();
     private readonly Func<IEnumerable<string>> _enumerateCacheFiles;
     private readonly Func<string, SegmentCacheDeleteResult?>? _tryDelete;
+    private readonly SegmentCacheWriteBehind? _writeBehind;
+    private readonly Func<CancellationToken, Task>? _beforeWriteBehindPersist;
     private long _currentBytes;
     private int _catalogReady;
     private int _catalogDegraded;
@@ -58,7 +60,9 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         MetricsWriter? metricsWriter,
         Func<IEnumerable<string>>? enumerateCacheFiles,
         SegmentCacheStatistics? statistics = null,
-        Func<string, SegmentCacheDeleteResult?>? tryDelete = null) : base(inner)
+        Func<string, SegmentCacheDeleteResult?>? tryDelete = null,
+        long writeBehindBytes = 0,
+        Func<CancellationToken, Task>? beforeWriteBehindPersist = null) : base(inner)
     {
         _dir = cacheDir;
         _maxBytes = maxBytes;
@@ -70,12 +74,23 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         _enumerateCacheFiles = enumerateCacheFiles
                                ?? (() => Directory.EnumerateFiles(_dir, "*", SearchOption.AllDirectories));
         _tryDelete = tryDelete;
+        _beforeWriteBehindPersist = beforeWriteBehindPersist;
+        if (writeBehindBytes > 0)
+        {
+            _writeBehind = new SegmentCacheWriteBehind(
+                writeBehindBytes,
+                PersistWriteBehindAsync,
+                WarnCacheWriteFailure,
+                _generation.SetWriterSnapshot);
+        }
         CatalogLoadTask = Task.Run(LoadIndex);
     }
 
     public bool IsCatalogReady => Volatile.Read(ref _catalogReady) != 0;
     internal Task CatalogLoadTask { get; }
     internal long CurrentBytes => Interlocked.Read(ref _currentBytes);
+    internal Task DrainWriteBehindForTestsAsync() =>
+        _writeBehind?.DrainForTestsAsync() ?? Task.CompletedTask;
 
     internal static string ClassifyCachePath(string path) =>
         string.Equals(path, DefaultCachePath, StringComparison.Ordinal)
@@ -230,6 +245,50 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
 
         var hash = Hash(requestedId.ToString());
         var attempt = _statistics.BeginWriteAttempt();
+        if (_writeBehind is not null)
+        {
+            PooledBufferStream? body = null;
+            long reservedCapacity = 0;
+            if (header.PartSize > int.MaxValue)
+            {
+                attempt.Complete(SegmentCacheWriteOutcome.Skipped, 0);
+                return response;
+            }
+
+            try
+            {
+#pragma warning disable CA2000 // The finally releases ownership unless it is transferred to ValidatedCacheBufferingStream.
+                if (!_writeBehind.TryRentBuffer(
+                        (int)header.PartSize,
+                        out body,
+                        out reservedCapacity))
+#pragma warning restore CA2000
+                {
+                    attempt.Complete(SegmentCacheWriteOutcome.Skipped, 0);
+                    return response;
+                }
+
+                var stream = new ValidatedCacheBufferingStream(
+                    response.Stream,
+                    header,
+                    hash,
+                    body,
+                    reservedCapacity,
+                    _writeBehind,
+                    attempt);
+                body = null;
+                return response with { Stream = stream };
+            }
+            finally
+            {
+                if (body is not null)
+                {
+                    await body.DisposeAsync().ConfigureAwait(false);
+                    _writeBehind.ReleaseReservation(reservedCapacity);
+                }
+            }
+        }
+
         return response with
         {
             Stream = new ValidatedCacheWriteStream(
@@ -241,6 +300,66 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
                 attempt,
                 WarnCacheWriteFailure),
         };
+    }
+
+    private async Task<SegmentCacheCommitResult> PersistWriteBehindAsync(
+        PendingSegmentCacheWrite write,
+        CancellationToken cancellationToken)
+    {
+        if (_beforeWriteBehindPersist is not null)
+            await _beforeWriteBehindPersist(cancellationToken).ConfigureAwait(false);
+
+        var blobPath = BlobPath(write.Hash);
+        var unique = Guid.NewGuid().ToString("N");
+        var blobTempPath = blobPath + "." + unique + ".tmp";
+        var headerTempPath = blobPath + ".h." + unique + ".tmp";
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(blobPath)!);
+            await using (var stream = new FileStream(
+                             blobTempPath,
+                             new FileStreamOptions
+                             {
+                                 Mode = FileMode.CreateNew,
+                                 Access = FileAccess.Write,
+                                 Share = FileShare.None,
+                                 Options = FileOptions.Asynchronous | FileOptions.SequentialScan,
+                                 BufferSize = 81920,
+                                 PreallocationSize = write.Header.PartSize,
+                             }))
+            {
+                await stream.WriteAsync(write.Body.WrittenMemory, cancellationToken).ConfigureAwait(false);
+            }
+
+            await File.WriteAllTextAsync(
+                    headerTempPath,
+                    JsonSerializer.Serialize(write.Header, HeaderJsonOptions),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return CommitPublishedPair(
+                write.Hash,
+                blobTempPath,
+                headerTempPath,
+                write.Header,
+                write.Body.Length);
+        }
+        finally
+        {
+            TryDelete(blobTempPath);
+            TryDelete(headerTempPath);
+        }
+    }
+
+    internal override void Retire()
+    {
+        _writeBehind?.Retire();
+        base.Retire();
+    }
+
+    public override void Dispose()
+    {
+        _writeBehind?.Dispose();
+        base.Dispose();
     }
 
     internal static bool IsCoherentHeader(UsenetYencHeader header)
@@ -820,6 +939,136 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
     {
         public long Size;
         public long LastAccessTicks;
+    }
+
+    private sealed class ValidatedCacheBufferingStream : YencStream
+    {
+        private readonly YencStream _source;
+        private readonly UsenetYencHeader _header;
+        private readonly string _hash;
+        private readonly PooledBufferStream _body;
+        private readonly long _reservedCapacity;
+        private readonly SegmentCacheWriteBehind _writer;
+        private readonly SegmentCacheWriteAttempt _attempt;
+        private long _readBytes;
+        private bool _eof;
+        private int _completed;
+        private int _disposed;
+
+        internal ValidatedCacheBufferingStream(
+            YencStream source,
+            UsenetYencHeader header,
+            string hash,
+            PooledBufferStream body,
+            long reservedCapacity,
+            SegmentCacheWriteBehind writer,
+            SegmentCacheWriteAttempt attempt) : base(Null)
+        {
+            _source = source;
+            _header = header;
+            _hash = hash;
+            _body = body;
+            _reservedCapacity = reservedCapacity;
+            _writer = writer;
+            _attempt = attempt;
+        }
+
+        public override ValueTask<UsenetYencHeader?> GetYencHeadersAsync(
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult<UsenetYencHeader?>(_header);
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            var read = await _source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                _eof = true;
+                return 0;
+            }
+
+            var previous = _readBytes;
+            _readBytes = checked(_readBytes + read);
+            var remaining = Math.Max(0, _header.PartSize - previous);
+            var retained = (int)Math.Min(read, remaining);
+            if (retained > 0)
+                _body.Write(buffer.Span[..retained]);
+            return read;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (!disposing)
+                return;
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                base.Dispose(disposing);
+                return;
+            }
+
+            Exception? sourceFailure = null;
+            try
+            {
+                _source.Dispose();
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
+                sourceFailure = exception;
+                throw;
+            }
+            finally
+            {
+                Complete(sourceFailure is null);
+                base.Dispose(disposing);
+            }
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                await base.DisposeAsync().ConfigureAwait(false);
+                return;
+            }
+
+            Exception? sourceFailure = null;
+            try
+            {
+                await _source.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
+                sourceFailure = exception;
+                throw;
+            }
+            finally
+            {
+                Complete(sourceFailure is null);
+                await base.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+
+        private void Complete(bool sourceSucceeded)
+        {
+            if (Interlocked.Exchange(ref _completed, 1) != 0)
+                return;
+
+            if (sourceSucceeded && _eof && _readBytes == _header.PartSize &&
+                _writer.TryEnqueue(new PendingSegmentCacheWrite(
+                    _hash,
+                    _header,
+                    _body,
+                    _reservedCapacity,
+                    _attempt)))
+            {
+                return;
+            }
+
+            _body.Dispose();
+            _writer.ReleaseReservation(_reservedCapacity);
+            _attempt.Complete(SegmentCacheWriteOutcome.Skipped, _readBytes);
+        }
     }
 
     private sealed class ValidatedCacheWriteStream : YencStream

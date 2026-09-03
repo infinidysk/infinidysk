@@ -39,7 +39,8 @@ public sealed class SegmentCacheStatistics
                 CatalogLoadDurationMs: null,
                 Entries: 0,
                 CurrentBytes: 0,
-                MaxBytes: effectiveMax);
+                MaxBytes: effectiveMax,
+                Writer: null);
         }
 
         return generation;
@@ -119,8 +120,14 @@ public sealed class SegmentCacheStatistics
             evictions,
             bytesEvicted,
             temporaryFilesCleaned,
-            QueuedWriteBytes: null,
-            PeakQueuedWriteBytes: null);
+            QueuedWriteBytes: gauges.Writer?.ReservedBytes,
+                PeakQueuedWriteBytes: gauges.Writer?.PeakReservedBytes);
+    }
+
+    internal SegmentCacheWriteBehindSnapshot? GetWriterSnapshot()
+    {
+        lock (_gaugeLock)
+            return _gauges.Writer;
     }
 
     internal void SetCatalog(long generationId, bool ready, long? durationMs, long entries, long currentBytes)
@@ -147,6 +154,15 @@ public sealed class SegmentCacheStatistics
         }
     }
 
+    internal void SetWriter(long generationId, SegmentCacheWriteBehindSnapshot snapshot)
+    {
+        lock (_gaugeLock)
+        {
+            if (_gauges.GenerationId != generationId) return;
+            _gauges = _gauges with { Writer = snapshot };
+        }
+    }
+
     private void CompleteWrite(SegmentCacheWriteOutcome outcome, long _)
     {
         switch (outcome)
@@ -170,7 +186,8 @@ public sealed class SegmentCacheStatistics
         long? CatalogLoadDurationMs,
         long Entries,
         long CurrentBytes,
-        long MaxBytes);
+        long MaxBytes,
+        SegmentCacheWriteBehindSnapshot? Writer);
 }
 
 public sealed record SegmentCacheSnapshot(
@@ -218,6 +235,9 @@ internal sealed class SegmentCacheGeneration
 
     internal void SetIndex(long entries, long currentBytes) =>
         _owner.SetIndex(Id, entries, currentBytes);
+
+    internal void SetWriterSnapshot(SegmentCacheWriteBehindSnapshot snapshot) =>
+        _owner.SetWriter(Id, snapshot);
 }
 
 internal enum SegmentCacheWriteOutcome

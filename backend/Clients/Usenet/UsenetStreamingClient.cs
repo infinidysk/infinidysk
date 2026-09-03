@@ -135,7 +135,8 @@ public class UsenetStreamingClient : WrappingNntpClient
                     usageTracker,
                     metricsWriter,
                     enumerateCacheFiles: null,
-                    segmentCacheStatistics
+                    segmentCacheStatistics,
+                    writeBehindBytes: configManager.GetSegmentCacheWriteBehindBytes()
                 );
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)

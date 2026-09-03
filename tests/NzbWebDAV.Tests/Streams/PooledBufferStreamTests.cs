@@ -10,6 +10,27 @@ namespace NzbWebDAV.Tests.Streams;
 public class PooledBufferStreamTests
 {
     [Fact]
+    public void WrittenMemoryAndRentedCapacity_ExposeLogicalAndPhysicalSizes()
+    {
+        var pool = new OversizedPool(extraBytes: 32);
+        using var stream = new PooledBufferStream(8, pool);
+        stream.Write("payload"u8);
+
+        Assert.Equal("payload"u8.ToArray(), stream.WrittenMemory.ToArray());
+        Assert.Equal(40, stream.RentedCapacity);
+    }
+
+    [Fact]
+    public void WrittenMemoryAndRentedCapacity_AfterDisposeThrow()
+    {
+        var stream = new PooledBufferStream(8);
+        stream.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => _ = stream.WrittenMemory);
+        Assert.Throws<ObjectDisposedException>(() => _ = stream.RentedCapacity);
+    }
+
+    [Fact]
     public async Task CopyToAsync_RoundTripsBytes()
     {
         var sourceBytes = Enumerable.Range(0, 1000).Select(i => (byte)(i % 256)).ToArray();
@@ -271,6 +292,15 @@ public class PooledBufferStreamTests
         }
 
         public void Return(byte[] buffer) => SharedArrayPoolAdapter.Instance.Return(buffer);
+    }
+
+    private sealed class OversizedPool(int extraBytes) : ISegmentBufferPool
+    {
+        public byte[] Rent(int minimumLength) => new byte[minimumLength + extraBytes];
+
+        public void Return(byte[] buffer)
+        {
+        }
     }
 }
 

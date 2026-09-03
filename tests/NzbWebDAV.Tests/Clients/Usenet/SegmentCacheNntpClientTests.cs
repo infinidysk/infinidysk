@@ -4,6 +4,7 @@ using System.Text.Json;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Tests.TestUtils;
@@ -405,6 +406,310 @@ public sealed class SegmentCacheNntpClientTests
             Assert.Equal(1, snapshot.WriteSkipped);
             Assert.Equal(0, snapshot.WriteCommits);
             Assert.Equal(0, snapshot.WriteFailures);
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task WriteBehind_BlockedPersistenceDoesNotDelayPlaybackAndPublishesAfterDrain()
+    {
+        var cacheDir = NewCacheDir();
+        const string segmentId = "write-behind-blocked";
+        byte[] content = Enumerable.Repeat((byte)0x5A, 128 * 1024).ToArray();
+        var statistics = new SegmentCacheStatistics();
+        var persistStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePersist = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        try
+        {
+            Directory.CreateDirectory(cacheDir);
+            var inner = new FakeNntpClient(
+                new Dictionary<string, byte[]> { [segmentId] = content },
+                useCachedYencStreams: true);
+            using var client = new SegmentCacheNntpClient(
+                inner,
+                cacheDir,
+                maxBytes: 1024 * 1024,
+                usageTracker: null,
+                metricsWriter: null,
+                enumerateCacheFiles: null,
+                statistics,
+                writeBehindBytes: 1024 * 1024,
+                beforeWriteBehindPersist: async cancellationToken =>
+                {
+                    persistStarted.TrySetResult();
+                    await releasePersist.Task.WaitAsync(cancellationToken);
+                });
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var response = await client.DecodedBodyAsync(segmentId, CancellationToken.None);
+            await using var output = new MemoryStream();
+            await response.Stream!.CopyToAsync(output);
+            await response.Stream.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.Equal(content, output.ToArray());
+            await persistStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+            Assert.Null(await client.TryGetLocalDecodedBodyAsync(segmentId, CancellationToken.None));
+            var blocked = statistics.GetSnapshot();
+            var blockedWriter = Assert.IsType<SegmentCacheWriteBehindSnapshot>(
+                statistics.GetWriterSnapshot());
+            Assert.Equal(0, blocked.WriteCommits);
+            Assert.Equal(1024 * 1024, blockedWriter.BudgetBytes);
+            Assert.Equal(1, blockedWriter.ActiveJobs);
+            Assert.True(blocked.QueuedWriteBytes >= content.Length);
+
+            releasePersist.TrySetResult();
+            client.Retire();
+            await client.DrainWriteBehindForTestsAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+            var cached = await client.TryGetLocalDecodedBodyAsync(segmentId, CancellationToken.None);
+            Assert.NotNull(cached?.Stream);
+            await using var cachedOutput = new MemoryStream();
+            await cached.Stream.CopyToAsync(cachedOutput);
+            Assert.Equal(content, cachedOutput.ToArray());
+            var drained = statistics.GetSnapshot();
+            var drainedWriter = Assert.IsType<SegmentCacheWriteBehindSnapshot>(
+                statistics.GetWriterSnapshot());
+            Assert.Equal(1, drained.WriteCommits);
+            Assert.Equal(0, drained.QueuedWriteBytes);
+            Assert.Equal(0, drainedWriter.QueuedJobs);
+            Assert.Equal(0, drainedWriter.ActiveJobs);
+        }
+        finally
+        {
+            releasePersist.TrySetResult();
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task WriteBehind_ByteBudgetPressureSkipsCacheWithoutDelayingPlayback()
+    {
+        var cacheDir = NewCacheDir();
+        const string segmentId = "write-behind-pressure";
+        byte[] content = Enumerable.Repeat((byte)0x3C, 64 * 1024).ToArray();
+        var statistics = new SegmentCacheStatistics();
+
+        try
+        {
+            Directory.CreateDirectory(cacheDir);
+            var inner = new FakeNntpClient(
+                new Dictionary<string, byte[]> { [segmentId] = content },
+                useCachedYencStreams: true);
+            using var client = new SegmentCacheNntpClient(
+                inner,
+                cacheDir,
+                maxBytes: 1024 * 1024,
+                usageTracker: null,
+                metricsWriter: null,
+                enumerateCacheFiles: null,
+                statistics,
+                writeBehindBytes: 1);
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var response = await client.DecodedBodyAsync(segmentId, CancellationToken.None);
+            await using var output = new MemoryStream();
+            await response.Stream!.CopyToAsync(output);
+            await response.Stream.DisposeAsync();
+
+            Assert.Equal(content, output.ToArray());
+            var snapshot = statistics.GetSnapshot();
+            Assert.Equal(1, snapshot.WriteAttempts);
+            Assert.Equal(1, snapshot.WriteSkipped);
+            Assert.Equal(
+                1,
+                Assert.IsType<SegmentCacheWriteBehindSnapshot>(
+                    statistics.GetWriterSnapshot()).CapacitySkips);
+            Assert.Equal(0, snapshot.QueuedWriteBytes);
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task WriteBehind_PartialReadReleasesReservation()
+    {
+        var cacheDir = NewCacheDir();
+        const string segmentId = "write-behind-partial";
+        byte[] content = Enumerable.Repeat((byte)0x7E, 64 * 1024).ToArray();
+        var statistics = new SegmentCacheStatistics();
+
+        try
+        {
+            Directory.CreateDirectory(cacheDir);
+            var inner = new FakeNntpClient(
+                new Dictionary<string, byte[]> { [segmentId] = content },
+                useCachedYencStreams: true);
+            using var client = new SegmentCacheNntpClient(
+                inner,
+                cacheDir,
+                maxBytes: 1024 * 1024,
+                usageTracker: null,
+                metricsWriter: null,
+                enumerateCacheFiles: null,
+                statistics,
+                writeBehindBytes: 1024 * 1024);
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var response = await client.DecodedBodyAsync(segmentId, CancellationToken.None);
+            Assert.Equal(16, await response.Stream!.ReadAsync(new byte[16]));
+            await response.Stream.DisposeAsync();
+
+            var snapshot = statistics.GetSnapshot();
+            Assert.Equal(1, snapshot.WriteAttempts);
+            Assert.Equal(1, snapshot.WriteSkipped);
+            Assert.Equal(0, snapshot.QueuedWriteBytes);
+            var writer = Assert.IsType<SegmentCacheWriteBehindSnapshot>(
+                statistics.GetWriterSnapshot());
+            Assert.Equal(0, writer.QueuedJobs);
+            Assert.Equal(0, writer.ActiveJobs);
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task WriteBehind_PersistenceFailureDoesNotFailPlaybackAndReleasesReservation()
+    {
+        var cacheDir = NewCacheDir();
+        const string segmentId = "write-behind-failure";
+        byte[] content = Enumerable.Repeat((byte)0x42, 64 * 1024).ToArray();
+        var statistics = new SegmentCacheStatistics();
+
+        try
+        {
+            Directory.CreateDirectory(cacheDir);
+            var inner = new FakeNntpClient(
+                new Dictionary<string, byte[]> { [segmentId] = content },
+                useCachedYencStreams: true);
+            using var client = new SegmentCacheNntpClient(
+                inner,
+                cacheDir,
+                maxBytes: 1024 * 1024,
+                usageTracker: null,
+                metricsWriter: null,
+                enumerateCacheFiles: null,
+                statistics,
+                writeBehindBytes: 1024 * 1024,
+                beforeWriteBehindPersist: _ => throw new IOException("simulated storage failure"));
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var response = await client.DecodedBodyAsync(segmentId, CancellationToken.None);
+            await using var output = new MemoryStream();
+            await response.Stream!.CopyToAsync(output);
+            await response.Stream.DisposeAsync();
+            client.Retire();
+            await client.DrainWriteBehindForTestsAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(content, output.ToArray());
+            Assert.Null(await client.TryGetLocalDecodedBodyAsync(segmentId, CancellationToken.None));
+            var snapshot = statistics.GetSnapshot();
+            Assert.Equal(1, snapshot.WriteFailures);
+            Assert.Equal(0, snapshot.QueuedWriteBytes);
+            var writer = Assert.IsType<SegmentCacheWriteBehindSnapshot>(
+                statistics.GetWriterSnapshot());
+            Assert.Equal(0, writer.QueuedJobs);
+            Assert.Equal(0, writer.ActiveJobs);
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task WriteBehind_OverlongBodyIsDrainedButNotPublished()
+    {
+        var cacheDir = NewCacheDir();
+        const string segmentId = "write-behind-overlong";
+        byte[] content = Enumerable.Repeat((byte)0x24, 64 * 1024).ToArray();
+        var declaredRange = new LongRange(0, content.Length / 2);
+        var statistics = new SegmentCacheStatistics();
+
+        try
+        {
+            Directory.CreateDirectory(cacheDir);
+            var inner = new FakeNntpClient(
+                new Dictionary<string, byte[]> { [segmentId] = content },
+                useCachedYencStreams: true,
+                segmentRanges: new Dictionary<string, LongRange> { [segmentId] = declaredRange });
+            using var client = new SegmentCacheNntpClient(
+                inner,
+                cacheDir,
+                maxBytes: 1024 * 1024,
+                usageTracker: null,
+                metricsWriter: null,
+                enumerateCacheFiles: null,
+                statistics,
+                writeBehindBytes: 1024 * 1024);
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var response = await client.DecodedBodyAsync(segmentId, CancellationToken.None);
+            await using var output = new MemoryStream();
+            await response.Stream!.CopyToAsync(output);
+            await response.Stream.DisposeAsync();
+
+            Assert.Equal(content, output.ToArray());
+            Assert.Null(await client.TryGetLocalDecodedBodyAsync(segmentId, CancellationToken.None));
+            var snapshot = statistics.GetSnapshot();
+            Assert.Equal(1, snapshot.WriteSkipped);
+            Assert.Equal(0, snapshot.WriteCommits);
+            Assert.Equal(0, snapshot.QueuedWriteBytes);
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task WriteBehind_SourceValidationFailureIsNotPublishedAndReleasesReservation()
+    {
+        var cacheDir = NewCacheDir();
+        const string segmentId = "write-behind-source-failure";
+        byte[] content = Enumerable.Repeat((byte)0x66, 64 * 1024).ToArray();
+        var statistics = new SegmentCacheStatistics();
+
+        try
+        {
+            Directory.CreateDirectory(cacheDir);
+            var inner = new FakeNntpClient(
+                new Dictionary<string, byte[]> { [segmentId] = content },
+                useCachedYencStreams: true,
+                decodedStreamFactory: (_, bytes) => new ThrowOnDisposeMemoryStream(bytes));
+            using var client = new SegmentCacheNntpClient(
+                inner,
+                cacheDir,
+                maxBytes: 1024 * 1024,
+                usageTracker: null,
+                metricsWriter: null,
+                enumerateCacheFiles: null,
+                statistics,
+                writeBehindBytes: 1024 * 1024);
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var response = await client.DecodedBodyAsync(segmentId, CancellationToken.None);
+            await response.Stream!.CopyToAsync(Stream.Null);
+            await Assert.ThrowsAsync<IOException>(() => response.Stream.DisposeAsync().AsTask());
+
+            Assert.Null(await client.TryGetLocalDecodedBodyAsync(segmentId, CancellationToken.None));
+            var snapshot = statistics.GetSnapshot();
+            Assert.Equal(1, snapshot.WriteSkipped);
+            Assert.Equal(0, snapshot.WriteCommits);
+            Assert.Equal(0, snapshot.QueuedWriteBytes);
+            var writer = Assert.IsType<SegmentCacheWriteBehindSnapshot>(
+                statistics.GetWriterSnapshot());
+            Assert.Equal(0, writer.QueuedJobs);
+            Assert.Equal(0, writer.ActiveJobs);
         }
         finally
         {
@@ -1245,6 +1550,16 @@ public sealed class SegmentCacheNntpClientTests
     {
         await using (stream)
             await stream.CopyToAsync(Stream.Null);
+    }
+
+    private sealed class ThrowOnDisposeMemoryStream(byte[] bytes) : MemoryStream(bytes, writable: false)
+    {
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing)
+                throw new IOException("simulated source validation failure");
+        }
     }
 
     private static string SegmentHash(string segmentId) =>

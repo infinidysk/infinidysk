@@ -498,6 +498,10 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                     RequireLongInRange(item.ConfigName, value, 1, 8);
                     break;
 
+                case ConfigKeys.UsenetSegmentCacheWriteBehindMb:
+                    RequireZeroOrLongInRange(item.ConfigName, value, 16, 1024);
+                    break;
+
                 case ConfigKeys.UsenetSharedStreamsMaxEntries:
                     RequireLongInRange(item.ConfigName, value, 1, 32);
                     break;
@@ -648,6 +652,16 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
             if (!long.TryParse(value, out var parsed) || parsed < minimum || parsed > maximum)
                 throw new ArgumentException(
                     $"Config value for '{key}' must be a whole number from {minimum} through {maximum}.");
+        }
+
+        void RequireZeroOrLongInRange(string key, string value, long minimum, long maximum)
+        {
+            if (!long.TryParse(value, out var parsed) ||
+                parsed != 0 && (parsed < minimum || parsed > maximum))
+            {
+                throw new ArgumentException(
+                    $"Config value for '{key}' must be 0 or a whole number from {minimum} through {maximum}.");
+            }
         }
 
         void RequireIndexerMaxResponseBytes(string json, JsonSerializerOptions? options)
@@ -1434,6 +1448,17 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         var gb = long.TryParse(v, out var n) ? n : 10;
         return Math.Max(1, gb) * 1024L * 1024L * 1024L;
     }
+
+    public int GetSegmentCacheWriteBehindMb()
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetSegmentCacheWriteBehindMb));
+        if (!int.TryParse(configured, out var value) || value <= 0)
+            return 0;
+        return Math.Clamp(value, 16, 1024);
+    }
+
+    public long GetSegmentCacheWriteBehindBytes() =>
+        (long)GetSegmentCacheWriteBehindMb() * 1024L * 1024L;
 
     public bool IsPar2RepairEnabled()
     {

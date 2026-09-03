@@ -46,7 +46,33 @@ public sealed class MemoryComponentSnapshotTests
         Assert.Equal(0, snapshot.Activity.CurrentInFlightSegmentFetches);
     }
 
-    private static MemoryComponentSnapshotBuilder CreateBuilder(InFlightArticleBudget budget)
+    [Fact]
+    public void Capture_ProjectsActiveCacheWriterOwnership()
+    {
+        var statistics = new SegmentCacheStatistics();
+        var generation = statistics.BeginGeneration(enabled: true, maxBytes: 1024);
+        generation.SetWriterSnapshot(new SegmentCacheWriteBehindSnapshot(
+            BudgetBytes: 64,
+            ReservedBytes: 32,
+            PeakReservedBytes: 48,
+            QueuedJobs: 2,
+            ActiveJobs: 1,
+            CapacitySkips: 3));
+
+        var snapshot = CreateBuilder(new InFlightArticleBudget(10_000), statistics).Capture();
+
+        Assert.True(snapshot.CacheWriter.Supported);
+        Assert.Equal(64, snapshot.CacheWriter.WriteBudgetBytes);
+        Assert.Equal(32, snapshot.CacheWriter.QueuedWriteBytes);
+        Assert.Equal(48, snapshot.CacheWriter.PeakQueuedWriteBytes);
+        Assert.Equal(2, snapshot.CacheWriter.QueuedJobs);
+        Assert.Equal(1, snapshot.CacheWriter.ActiveJobs);
+        Assert.Equal(3, snapshot.CacheWriter.CapacitySkipsTotal);
+    }
+
+    private static MemoryComponentSnapshotBuilder CreateBuilder(
+        InFlightArticleBudget budget,
+        SegmentCacheStatistics? statistics = null)
     {
         var config = new ConfigManager();
         return new MemoryComponentSnapshotBuilder(
@@ -54,6 +80,6 @@ public sealed class MemoryComponentSnapshotTests
             config,
             new ConcurrentReadTracker(configManager: config),
             new ActiveReadRegistry(),
-            new SegmentCacheStatistics());
+            statistics ?? new SegmentCacheStatistics());
     }
 }

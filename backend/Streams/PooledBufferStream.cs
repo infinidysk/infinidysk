@@ -19,6 +19,22 @@ public sealed class PooledBufferStream : Stream
     /// </summary>
     internal static ISegmentBufferPool DefaultPool { get; set; } = SharedArrayPoolAdapter.Instance;
 
+    internal static int EstimateDefaultRentedCapacity(int minimumLength)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(minimumLength);
+        if (DefaultPool is SegmentBufferPool)
+            return SegmentBufferPool.RoundToSizeClass(minimumLength);
+
+        // ArrayPool.Shared uses power-of-two buckets. This is intentionally
+        // conservative for the supported shared-pool rollback path.
+        var estimate = 16L;
+        while (estimate < minimumLength && estimate <= Array.MaxLength / 2L)
+            estimate *= 2;
+        return estimate >= minimumLength && estimate <= Array.MaxLength
+            ? (int)estimate
+            : minimumLength;
+    }
+
     private readonly ISegmentBufferPool _pool;
     private readonly BufferPoolDiagnostics _diagnostics;
     private byte[]? _buffer;
@@ -51,6 +67,22 @@ public sealed class PooledBufferStream : Stream
     public override bool CanRead => !_disposed;
     public override bool CanSeek => !_disposed;
     public override bool CanWrite => !_disposed;
+    internal ReadOnlyMemory<byte> WrittenMemory
+    {
+        get
+        {
+            ThrowIfDisposed();
+            return _buffer.AsMemory(0, _length);
+        }
+    }
+    internal int RentedCapacity
+    {
+        get
+        {
+            ThrowIfDisposed();
+            return _buffer!.Length;
+        }
+    }
     public override long Length
     {
         get

@@ -1094,7 +1094,7 @@ public sealed partial class Program
                 "(NZBDAV_SEGMENT_BUFFER_POOL=shared); sharedRingConfiguredMaxBytes={SharedRingConfiguredMaxBytes} " +
                 "cacheWriter={CacheWriter}.",
                 (long)configManager.GetSharedStreamsMaxEntries() * configManager.GetSharedStreamsRingBytes(),
-                "unsupported");
+                CacheWriterMode(configManager));
             return;
         }
 
@@ -1112,7 +1112,12 @@ public sealed partial class Program
             SegmentBufferPoolSelector.ToLogValue(poolMode),
             maxIdleBytes,
             (long)configManager.GetSharedStreamsMaxEntries() * configManager.GetSharedStreamsRingBytes(),
-            "unsupported");
+            CacheWriterMode(configManager));
+
+        static string CacheWriterMode(ConfigManager config) =>
+            !config.IsSegmentCacheEnabled()
+                ? "disabled"
+                : config.GetSegmentCacheWriteBehindBytes() > 0 ? "bounded" : "inline";
     }
 
     private static async Task<bool> IsDatabaseStartupVacuumEnabledAsync()
