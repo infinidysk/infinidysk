@@ -22,7 +22,12 @@ public partial class PinSegmentCacheForExistingInstalls : Migration
             UPDATE "ConfigItems"
             SET "ConfigValue" = 'true'
             WHERE "ConfigName" = 'usenet.segment-cache.enabled'
-            AND ("ConfigValue" IS NULL OR TRIM("ConfigValue") = '')
+            AND ("ConfigValue" IS NULL OR TRIM(
+                "ConfigValue",
+                CHAR(9, 10, 11, 12, 13, 32, 133, 160, 5760,
+                     8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202,
+                     8232, 8233, 8239, 8287, 12288)
+            ) = '')
             AND EXISTS (
                 SELECT 1 FROM "ConfigItems"
                 WHERE "ConfigName" = 'usenet.providers'

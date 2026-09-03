@@ -65,6 +65,7 @@ public sealed class PinSegmentCacheForExistingInstallsMigrationTests
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
+    [MemberData(nameof(AllDotNetWhitespace))]
     public async Task ExistingInstallWithBlankSetting_IsPinnedOn(string blank)
     {
         await using var harness = await MigrationHarness.CreateAsync();
@@ -91,6 +92,14 @@ public sealed class PinSegmentCacheForExistingInstallsMigrationTests
             .SingleAsync(x => x.ConfigName == ConfigKeys.UsenetSegmentCacheEnabled);
         Assert.Equal("true", pinned.ConfigValue);
     }
+
+    public static TheoryData<string> AllDotNetWhitespace =>
+    [
+        new string(Enumerable.Range(char.MinValue, char.MaxValue + 1)
+            .Select(value => (char)value)
+            .Where(char.IsWhiteSpace)
+            .ToArray()),
+    ];
 
     [Fact]
     public async Task FreshInstall_IsNotPinned_AndDefaultsOff()
