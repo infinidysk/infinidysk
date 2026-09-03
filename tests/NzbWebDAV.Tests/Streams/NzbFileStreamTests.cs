@@ -115,6 +115,8 @@ public class NzbFileStreamTests
         Assert.Equal(
             3,
             await client.FirstPrewarmRequested.Task.WaitAsync(TimeSpan.FromSeconds(1)));
+        await Assert.IsAssignableFrom<Task>(stream.PrewarmObservationForTests)
+            .WaitAsync(TimeSpan.FromSeconds(1));
     }
 
     [SkippableTheory]

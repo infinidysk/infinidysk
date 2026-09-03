@@ -52,6 +52,7 @@ public class NzbFileStream(
     private Task? _pendingInnerDispose;
     private Stopwatch? _pendingSeekStopwatch;
     private string? _pendingSeekKind;
+    internal Task? PrewarmObservationForTests { get; private set; }
     private readonly LongRange[]? _segmentByteRanges = ValidateAndCloneSegmentByteRanges(
         segmentByteRanges,
         fileSegmentIds.Length,
@@ -894,8 +895,10 @@ public class NzbFileStream(
         if (targetConnections < MinimumPrewarmConnections)
             return;
 
-        _ = ObservePrewarmAsync(() =>
+        var observation = ObservePrewarmAsync(() =>
             usenetClient.PrewarmConnectionsAsync(targetConnections, cancellationToken));
+        PrewarmObservationForTests = observation;
+        _ = observation;
     }
 
     private static async Task ObservePrewarmAsync(Func<Task> prewarm)
