@@ -201,12 +201,13 @@ jobs:
           if [ "${HAS_COMMITS}" = "true" ]; then
             SUMMARY=$(printf '%s' "$CHANGELOG" | bash .github/scripts/summarize-release-notes.sh --type dev --version "${DEV_LABEL}" || true)
           fi
+          IMAGE="ghcr.io/${REPO}:dev"
           if [ -n "${SUMMARY}" ]; then
-            ANNOUNCEMENT_BODY=$(printf '🛠️ **Dev Branch Update** (version `%s`)\nRelease and downloads: https://github.com/%s/releases/tag/dev\n\n%s' \
-              "${DEV_LABEL}" "${REPO}" "${SUMMARY}")
+            ANNOUNCEMENT_BODY=$(printf '🛠️ **Dev Branch Update** (version `%s`)\nImage: `%s`\nRelease and downloads: https://github.com/%s/releases/tag/dev\n\n%s' \
+              "${DEV_LABEL}" "${IMAGE}" "${REPO}" "${SUMMARY}")
           else
-            ANNOUNCEMENT_BODY=$(printf '🛠️ **Dev Branch Update** (version `%s`)\nRelease and downloads: https://github.com/%s/releases/tag/dev\n\n%s\n%s' \
-              "${DEV_LABEL}" "${REPO}" "${BASE_LABEL}" "${CHANGELOG}")
+            ANNOUNCEMENT_BODY=$(printf '🛠️ **Dev Branch Update** (version `%s`)\nImage: `%s`\nRelease and downloads: https://github.com/%s/releases/tag/dev\n\n%s\n%s' \
+              "${DEV_LABEL}" "${IMAGE}" "${REPO}" "${BASE_LABEL}" "${CHANGELOG}")
           fi
 
           MAX_LEN=1900

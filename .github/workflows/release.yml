@@ -383,11 +383,12 @@ jobs:
             -e 's/, closes \[#[0-9]+\]\(https:\/\/github\.com\/[^)]+\/issues\/[0-9]+\)//g')
 
           SUMMARY=$(printf '%s' "$RELEASE_NOTES" | bash .github/scripts/summarize-release-notes.sh --type stable --version "v${VERSION}" || true)
+          IMAGE="ghcr.io/${REPO}:latest"
           if [ -n "${SUMMARY}" ]; then
-            ANNOUNCEMENT_BODY=$(printf '🚀 **New Release: Version [%s]**\n\n%s\n\nFull changelog: https://github.com/%s/releases/tag/v%s' \
-              "${VERSION}" "${SUMMARY}" "${REPO}" "${VERSION}")
+            ANNOUNCEMENT_BODY=$(printf '🚀 **New Release: Version [%s]**\nImage: `%s`\n\n%s\n\nFull changelog: https://github.com/%s/releases/tag/v%s' \
+              "${VERSION}" "${IMAGE}" "${SUMMARY}" "${REPO}" "${VERSION}")
           else
-            ANNOUNCEMENT_BODY=$(printf '🚀 **New Release: Version [%s]**%s' "${VERSION}" "${RELEASE_NOTES}")
+            ANNOUNCEMENT_BODY=$(printf '🚀 **New Release: Version [%s]**\nImage: `%s`%s' "${VERSION}" "${IMAGE}" "${RELEASE_NOTES}")
           fi
 
           # Discord content is limited to 2000 characters.

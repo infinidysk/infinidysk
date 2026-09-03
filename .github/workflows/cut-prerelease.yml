@@ -246,12 +246,13 @@ jobs:
           if [ "${HAS_COMMITS}" = "true" ]; then
             SUMMARY=$(printf '%s' "$CHANGELOG" | bash .github/scripts/summarize-release-notes.sh --type rc --version "$RELEASE_TAG" || true)
           fi
+          IMAGE="ghcr.io/${REPO}:rc"
           if [ -n "${SUMMARY}" ]; then
-            ANNOUNCEMENT_BODY=$(printf '🧪 **Release Candidate Available** (`%s`)\nRelease and downloads: https://github.com/%s/releases/tag/%s\n\n%s' \
-              "${RELEASE_TAG}" "${REPO}" "${RELEASE_TAG}" "${SUMMARY}")
+            ANNOUNCEMENT_BODY=$(printf '🧪 **Release Candidate Available** (`%s`)\nImage: `%s`\nRelease and downloads: https://github.com/%s/releases/tag/%s\n\n%s' \
+              "${RELEASE_TAG}" "${IMAGE}" "${REPO}" "${RELEASE_TAG}" "${SUMMARY}")
           else
-            ANNOUNCEMENT_BODY=$(printf '🧪 **Release Candidate Available** (`%s`)\nRelease and downloads: https://github.com/%s/releases/tag/%s\n\n%s\n%s' \
-              "${RELEASE_TAG}" "${REPO}" "${RELEASE_TAG}" "${BASE_LABEL}" "${CHANGELOG}")
+            ANNOUNCEMENT_BODY=$(printf '🧪 **Release Candidate Available** (`%s`)\nImage: `%s`\nRelease and downloads: https://github.com/%s/releases/tag/%s\n\n%s\n%s' \
+              "${RELEASE_TAG}" "${IMAGE}" "${REPO}" "${RELEASE_TAG}" "${BASE_LABEL}" "${CHANGELOG}")
           fi
 
           MAX_LEN=1900
