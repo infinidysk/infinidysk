@@ -120,11 +120,7 @@ export default function SetupRoute({ loaderData }: Route.ComponentProps) {
   const fetcher = useFetcher<typeof action>();
   const [step, setStep] = useState(0);
   const [draft, setDraft] = useState<SetupDraft>(() =>
-    createInitialDraft(
-      loaderData.config,
-      loaderData.managedEnv,
-      loaderData.state.ingestionMethods,
-    ),
+    createInitialDraft(loaderData.config, loaderData.managedEnv, loaderData.state.ingestionMethods),
   );
   const [attempted, setAttempted] = useState(false);
   const [strategyChangeConfirmed, setStrategyChangeConfirmed] = useState(false);
