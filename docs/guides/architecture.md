@@ -68,6 +68,10 @@ There are two Stremio paths:
 | Frontend | `:3000` | Admin UI, auth, proxy for WebDAV + `/api` + `/ws` |
 | Backend | `:8080` (internal) | WebDAV, queue, SAB API, SQLite under `CONFIG_PATH` |
 
+Backend services such as rclone should connect directly to WebDAV on port `8080`
+whenever the backend is reachable. The frontend WebDAV proxy is a fallback for
+clients without network access to the backend and adds avoidable streaming overhead.
+
 Persistent state lives under `/config` (DB, settings, blobs, backups).
 
 ## Related
