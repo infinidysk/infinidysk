@@ -65,6 +65,21 @@ path) is local SSD/NVMe or other storage that can safely absorb the extra writes
 Disable the cache for slow disks, network mounts, or flash storage with limited
 write endurance; alternatively, point **Cache path** at suitable local storage.
 
+### Segment Cache and rclone read-ahead
+
+Symlink libraries stream through an rclone mount. When that mount runs with
+`--vfs-read-ahead`, rclone already buffers ahead of playback, and Segment Cache only
+adds disk writes without improving seeks. Keep one or the other: the
+[Setup Guide](../getting-started/setup-guide.md) disables Segment Cache for Symlinks
+and recommends the bounded rclone VFS cache instead.
+
+InfiniDysk cannot always inspect the mount, so the Streaming tab shows a dismissable
+warning whenever Segment Cache is on for a Symlinks library. Dismissal is remembered
+per browser. When the [rclone RC connection test](rclone.md) can read VFS statistics
+and confirms read-ahead is enabled, the Rclone tab shows a definitive warning instead.
+Re-run the Setup Guide from the main navigation to review this and other recommended
+settings, even on an existing installation.
+
 ## Article buffer and adaptive prefetch
 
 `usenet.article-buffer-size` bounds how many decoded articles a stream may keep

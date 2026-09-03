@@ -8,6 +8,10 @@ InfiniDysk opens **Setup Guide** after the first administrator signs in on a new
 or upgraded installation. Complete it, or choose **Skip setup** to stop the
 automatic prompt. You can run it again at any time from the main navigation.
 
+The guide is worth completing even on a long-running installation: it reviews
+best-practice configuration such as pairing Symlinks with rclone VFS read-ahead
+rather than Segment Cache, and stages only the settings you approve.
+
 The guide stages changes until **Review and apply**. Skip applies nothing, and a
 validation failure does not save a partial configuration. Settings controlled by
 `NZBDAV_CONFIG__...` remain read-only and name the environment variable to change.
