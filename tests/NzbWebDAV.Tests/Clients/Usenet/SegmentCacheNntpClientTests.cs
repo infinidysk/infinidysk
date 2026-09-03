@@ -1145,6 +1145,58 @@ public sealed class SegmentCacheNntpClientTests
         await ReadAndDisposeAsync(response.Stream!);
     }
 
+    [Fact]
+    public void PurgeDirectory_RemovesCacheArtifacts_AndLeavesUnrelatedFiles()
+    {
+        var cacheDir = Path.Join(
+            Path.GetTempPath(), "nzbdav-segment-cache-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            WriteCacheEntry(cacheDir, "segment-1", "one"u8.ToArray());
+            WriteCacheEntry(cacheDir, "segment-2", "two"u8.ToArray());
+            var blob = CacheBlobPath(cacheDir, "segment-1");
+            File.WriteAllText(blob + ".abc.tmp", "partial");
+            File.WriteAllText(blob + ".h.abc.tmp", "partial");
+
+            var shard = Path.GetDirectoryName(blob)!;
+            var unrelated = Path.Join(shard, "notes.txt");
+            File.WriteAllText(unrelated, "keep");
+            var otherDir = Path.Join(cacheDir, "backups");
+            Directory.CreateDirectory(otherDir);
+            File.WriteAllText(Path.Join(otherDir, "db.bak"), "keep");
+
+            var result = SegmentCacheNntpClient.PurgeDirectory(cacheDir);
+
+            Assert.Equal(6, result.Deleted);
+            Assert.Equal(1, result.Skipped);
+            Assert.Equal(0, result.Failed);
+            Assert.True(File.Exists(unrelated));
+            Assert.True(File.Exists(Path.Join(otherDir, "db.bak")));
+            Assert.False(File.Exists(blob));
+            Assert.False(File.Exists(CacheBlobPath(cacheDir, "segment-2")));
+            Assert.False(Directory.Exists(Path.GetDirectoryName(CacheBlobPath(cacheDir, "segment-2"))));
+            Assert.True(Directory.Exists(cacheDir));
+        }
+        finally
+        {
+            if (Directory.Exists(cacheDir))
+                Directory.Delete(cacheDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void PurgeDirectory_MissingDirectory_IsNoOp()
+    {
+        var cacheDir = Path.Join(
+            Path.GetTempPath(), "nzbdav-segment-cache-" + Guid.NewGuid().ToString("N"));
+
+        var result = SegmentCacheNntpClient.PurgeDirectory(cacheDir);
+
+        Assert.Equal(0, result.Deleted);
+        Assert.Equal(0, result.Failed);
+        Assert.False(Directory.Exists(cacheDir));
+    }
+
     private static async Task ReadAndDisposeAsync(Stream stream)
     {
         await using (stream)

@@ -331,6 +331,7 @@ public sealed partial class Program
                 .AddSingleton<StreamingFailureTracker>()
                 .AddSingleton<HealthCheckConnectionGate>()
                 .AddSingleton<SegmentCacheStatistics>()
+                .AddHostedService<SegmentCacheCleanupService>()
                 .AddSingleton<MemoryComponentSnapshotBuilder>()
                 .AddSingleton<UsenetStreamingClient>()
                 .AddSingleton<StreamingCapacitySnapshotProvider>()

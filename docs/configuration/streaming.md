@@ -65,6 +65,12 @@ path) is local SSD/NVMe or other storage that can safely absorb the extra writes
 Disable the cache for slow disks, network mounts, or flash storage with limited
 write endurance; alternatively, point **Cache path** at suitable local storage.
 
+When Segment Cache is **disabled** at startup, InfiniDysk purges any leftover cache
+files from the cache path in the background so a previously enabled cache does not
+keep occupying disk. Only files matching the cache layout are removed; unrelated
+files placed in that directory are left alone.
+[since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
+
 ### Segment Cache and rclone read-ahead
 
 Symlink libraries stream through an rclone mount. When that mount runs with

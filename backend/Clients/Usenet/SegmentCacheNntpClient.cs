@@ -663,6 +663,68 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
 
     private string BlobPath(string hash) => Path.Join(_dir, hash[..2], hash);
 
+    /// <summary>
+    /// Deletes every cache artifact under <paramref name="cacheDir"/>. Only files that
+    /// match the cache layout (two-hex-char shard directory, hex blob name with optional
+    /// <c>.h</c> / <c>.tmp</c> suffix) are removed so a misconfigured path never loses
+    /// unrelated data. Empty shard directories are removed afterwards.
+    /// </summary>
+    internal static SegmentCachePurgeResult PurgeDirectory(string cacheDir)
+    {
+        var result = new SegmentCachePurgeResult();
+        if (!Directory.Exists(cacheDir)) return result;
+
+        foreach (var shard in Directory.EnumerateDirectories(cacheDir))
+        {
+            if (!IsShardDirectoryName(Path.GetFileName(shard))) continue;
+
+            foreach (var file in Directory.EnumerateFiles(shard))
+            {
+                if (!IsCacheFileName(Path.GetFileName(file)))
+                {
+                    result.Skipped++;
+                    continue;
+                }
+
+                switch (DeleteCacheFile(file))
+                {
+                    case SegmentCacheDeleteResult.Deleted:
+                        result.Deleted++;
+                        break;
+                    case SegmentCacheDeleteResult.Failed:
+                        result.Failed++;
+                        break;
+                }
+            }
+
+            try
+            {
+                if (!Directory.EnumerateFileSystemEntries(shard).Any())
+                    Directory.Delete(shard);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                result.Failed++;
+            }
+        }
+
+        return result;
+    }
+
+    private static bool IsShardDirectoryName(string name) =>
+        name.Length == 2 && name.All(Uri.IsHexDigit);
+
+    private static bool IsCacheFileName(string name)
+    {
+        // <hash>[.h][.<unique>.tmp]
+        var hashEnd = name.IndexOf('.', StringComparison.Ordinal);
+        var hash = hashEnd < 0 ? name : name[..hashEnd];
+        if (hash.Length != 64 || !hash.All(Uri.IsHexDigit)) return false;
+        if (hashEnd < 0) return true;
+        var suffix = name[hashEnd..];
+        return suffix == ".h" || suffix.EndsWith(".tmp", StringComparison.Ordinal);
+    }
+
     private static string Hash(string id)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id)));
 
@@ -955,6 +1017,13 @@ internal enum SegmentCacheDeleteResult
     Absent,
     Deleted,
     Failed,
+}
+
+internal sealed class SegmentCachePurgeResult
+{
+    public int Deleted { get; set; }
+    public int Skipped { get; set; }
+    public int Failed { get; set; }
 }
 
 internal enum SegmentCacheCommitResult
