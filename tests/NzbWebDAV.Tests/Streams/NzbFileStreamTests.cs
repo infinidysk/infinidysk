@@ -60,7 +60,9 @@ public class NzbFileStreamTests
 
         Assert.Equal(1, await stream.ReadAsync(new byte[1]));
 
-        Assert.Equal(3, client.LastPrewarmTarget);
+        Assert.Equal(
+            3,
+            await client.FirstPrewarmRequested.Task.WaitAsync(TimeSpan.FromSeconds(1)));
     }
 
     [Fact]
@@ -110,7 +112,9 @@ public class NzbFileStreamTests
 
         var firstByte = new byte[1];
         Assert.Equal(1, await stream.ReadAsync(firstByte));
-        Assert.Equal(3, client.LastPrewarmTarget);
+        Assert.Equal(
+            3,
+            await client.FirstPrewarmRequested.Task.WaitAsync(TimeSpan.FromSeconds(1)));
     }
 
     [SkippableTheory]

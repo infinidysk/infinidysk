@@ -29,6 +29,8 @@ internal sealed class FakeNntpClient(
     public int? LastPrewarmTarget { get; private set; }
     public Exception? PrewarmException { get; set; }
     public CancellationToken LastBatchToken { get; private set; }
+    public TaskCompletionSource<int> FirstPrewarmRequested { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource FirstBatchRequested { get; } =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Dictionary<string, int> BodyRequestCounts { get; } = new(StringComparer.Ordinal);
@@ -52,6 +54,7 @@ internal sealed class FakeNntpClient(
     {
         cancellationToken.ThrowIfCancellationRequested();
         LastPrewarmTarget = targetConnections;
+        FirstPrewarmRequested.TrySetResult(targetConnections);
         if (PrewarmException is not null)
             throw PrewarmException;
         return Task.CompletedTask;
