@@ -22,6 +22,11 @@ public abstract class NntpClient : INntpClient
     internal const int StatPipelinedDispatchBatchSize = 64;
 
     public virtual int PipeliningDepth => 0;
+    public virtual bool ReadStartWarmupEnabled => false;
+
+    public virtual Task PrewarmConnectionsAsync(
+        int targetConnections,
+        CancellationToken cancellationToken) => Task.CompletedTask;
 
     /// <summary>
     /// Stops generation-scoped side effects when a wrapper replaces this client while
@@ -172,7 +177,8 @@ public abstract class NntpClient : INntpClient
             streamingBodyBatchWidth,
             knownCorruptSegmentIds,
             knownMissingSegmentIndices,
-            rangeIndex.IsTrusted);
+            rangeIndex.IsTrusted,
+            readStartWarmupEnabled: ReadStartWarmupEnabled);
     }
 
     public virtual NzbFileStream GetFileStream(
@@ -202,7 +208,8 @@ public abstract class NntpClient : INntpClient
             streamingBodyBatchWidth,
             knownCorruptSegmentIds,
             knownMissingSegmentIndices,
-            rangeIndex.IsTrusted
+            rangeIndex.IsTrusted,
+            readStartWarmupEnabled: ReadStartWarmupEnabled
         );
     }
 
@@ -237,7 +244,8 @@ public abstract class NntpClient : INntpClient
             knownCorruptSegmentIds,
             knownMissingSegmentIndices,
             segmentByteRangesTrusted,
-            readBudgetOverride);
+            readBudgetOverride,
+            ReadStartWarmupEnabled);
     }
 
     private static string? ResolveFileName(string? fileName, NzbFile nzbFile)

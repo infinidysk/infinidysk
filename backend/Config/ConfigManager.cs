@@ -539,6 +539,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                 case ConfigKeys.UsenetCascadeEnabled:
                 case ConfigKeys.UsenetCascadeRetryPrimaryOnMiss:
                 case ConfigKeys.UsenetWarmConnectionsEnabled:
+                case ConfigKeys.UsenetReadStartWarmupEnabled:
                 case ConfigKeys.UsenetContainerAwareFill:
                 case ConfigKeys.UsenetPipelinedBodyRequests:
                 case ConfigKeys.UsenetFiniteRangeSchedulerEnabled:
@@ -1187,6 +1188,12 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     public bool IsFiniteRangeSchedulerEnabled()
     {
         var value = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetFiniteRangeSchedulerEnabled));
+        return value is not null && bool.TryParse(value, out var enabled) && enabled;
+    }
+
+    public bool IsReadStartWarmupEnabled()
+    {
+        var value = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetReadStartWarmupEnabled));
         return value is not null && bool.TryParse(value, out var enabled) && enabled;
     }
 

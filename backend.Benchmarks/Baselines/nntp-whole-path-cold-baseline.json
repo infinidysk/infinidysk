@@ -3,7 +3,7 @@
   "report": "nntp-whole-path",
   "meta": {
     "commit": "unknown",
-    "generatedAt": "2026-09-03T17:26:44.879963+00:00",
+    "generatedAt": "2026-09-03T18:47:20.794109+00:00",
     "runner": "local"
   },
   "scenarios": {
@@ -22,38 +22,104 @@
       },
       "timing": {
         "wallSeconds": {
-          "baseline": 7.446,
-          "envelope": 22.338,
+          "baseline": 7.417,
+          "envelope": 22.251,
           "policy": "fail"
         },
         "clientCpuSeconds": {
-          "baseline": 1.308,
-          "envelope": 3.924,
+          "baseline": 1.224,
+          "envelope": 3.672,
           "policy": "warn"
         },
         "serverCpuSeconds": {
-          "baseline": 1.331,
-          "envelope": 3.993,
+          "baseline": 1.283,
+          "envelope": 3.849,
           "policy": "warn"
         },
         "clientCpuSecondsPerGb": {
-          "baseline": 4.865,
-          "envelope": 14.595,
+          "baseline": 4.552,
+          "envelope": 13.656,
           "policy": "warn"
         },
         "throughputMbps": {
-          "baseline": 36.122,
-          "floor": 12.041,
+          "baseline": 36.263,
+          "floor": 12.088,
           "policy": "fail"
         },
         "timeToPeakActiveMs": {
-          "baseline": 5769.835,
-          "envelope": 17309.505,
+          "baseline": 5756.893,
+          "envelope": 17270.679,
           "policy": "fail"
         },
         "clientAllocatedBytes": {
-          "baseline": 11655418.0,
-          "envelope": 34966254.0,
+          "baseline": 11870789.0,
+          "envelope": 35612367.0,
+          "policy": "warn"
+        },
+        "gen0Collections": {
+          "baseline": 1.0,
+          "envelope": 3.0,
+          "policy": "warn"
+        },
+        "gen1Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        },
+        "gen2Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        }
+      }
+    },
+    "cold-ramp-256mib-w4-prewarm": {
+      "deterministic": {
+        "expectedBytes": 268959744,
+        "actualBytes": 268959744,
+        "sha256Match": 1,
+        "bodyCommands": 342,
+        "responses": 342,
+        "retrievedCallbacks": 0,
+        "cancelledCallbacks": 0,
+        "notFoundCallbacks": 0,
+        "notRetrievedCallbacks": 0,
+        "finalArticleBudgetBytes": 0
+      },
+      "timing": {
+        "wallSeconds": {
+          "baseline": 4.465,
+          "envelope": 13.395,
+          "policy": "fail"
+        },
+        "clientCpuSeconds": {
+          "baseline": 1.418,
+          "envelope": 4.254,
+          "policy": "warn"
+        },
+        "serverCpuSeconds": {
+          "baseline": 1.388,
+          "envelope": 4.164,
+          "policy": "warn"
+        },
+        "clientCpuSecondsPerGb": {
+          "baseline": 5.271,
+          "envelope": 15.813,
+          "policy": "warn"
+        },
+        "throughputMbps": {
+          "baseline": 60.231,
+          "floor": 20.077,
+          "policy": "fail"
+        },
+        "timeToPeakActiveMs": {
+          "baseline": 1824.9,
+          "envelope": 5474.7,
+          "policy": "fail"
+        },
+        "clientAllocatedBytes": {
+          "baseline": 11952720.0,
+          "envelope": 35858160.0,
           "policy": "warn"
         },
         "gen0Collections": {

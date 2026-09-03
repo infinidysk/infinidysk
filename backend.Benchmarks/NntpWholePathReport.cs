@@ -239,6 +239,15 @@ internal static class NntpWholePathReport
         using var provider = CreateProvider(scenario, port);
         var ids = corpus.Articles.Select(article => article.SegmentId).ToArray();
         var sizes = Enumerable.Repeat((long)scenario.DecodedArticleBytes, scenario.ArticleCount).ToArray();
+        if (scenario.PrewarmConnections)
+        {
+            var articleWindow = scenario.ArticleBufferSize ?? Math.Max(scenario.BatchWidth * 2, 4);
+            var remainingSegments = Math.Max(0, scenario.ArticleCount - 1);
+            var plannedBatches = (remainingSegments + scenario.BatchWidth - 1) / scenario.BatchWidth;
+            _ = provider.PrewarmConnectionsAsync(
+                Math.Min(plannedBatches, articleWindow),
+                CancellationToken.None);
+        }
         await using var stream = MultiSegmentStream.Create(
             ids.AsMemory(),
             provider,

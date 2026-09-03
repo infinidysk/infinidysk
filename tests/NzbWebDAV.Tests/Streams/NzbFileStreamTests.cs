@@ -36,6 +36,53 @@ public class NzbFileStreamTests
         new(10, 15)
     ];
 
+    [Fact]
+    public async Task PlaybackStart_EnabledWarmupUsesBufferedBatchTarget()
+    {
+        const int segmentSize = 1024 * 1024;
+        var segmentIds = Enumerable.Range(0, 12).Select(index => $"segment-{index}").ToArray();
+        var segments = segmentIds.ToDictionary(id => id, _ => new byte[segmentSize]);
+        var ranges = Enumerable.Range(0, segmentIds.Length)
+            .Select(index => new LongRange((long)index * segmentSize, (long)(index + 1) * segmentSize))
+            .ToArray();
+        var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            segmentRanges: segmentIds.Zip(ranges).ToDictionary(pair => pair.First, pair => pair.Second));
+        await using var stream = new NzbFileStream(
+            segmentIds,
+            (long)segmentSize * segmentIds.Length,
+            client,
+            articleBufferSize: 40,
+            segmentByteRanges: ranges,
+            streamingBodyBatchWidth: 4,
+            readStartWarmupEnabled: true);
+
+        Assert.Equal(1, await stream.ReadAsync(new byte[1]));
+
+        Assert.Equal(3, client.LastPrewarmTarget);
+    }
+
+    [Fact]
+    public async Task PlaybackStart_EnabledWarmupSkipsSmallFileWithoutExplicitBudget()
+    {
+        var client = new FakeNntpClient(
+            SegmentIds.Zip(SegmentBytes).ToDictionary(pair => pair.First, pair => pair.Second),
+            useCachedYencStreams: true,
+            segmentRanges: SegmentIds.Zip(SegmentRanges).ToDictionary(pair => pair.First, pair => pair.Second));
+        await using var stream = new NzbFileStream(
+            SegmentIds,
+            15,
+            client,
+            articleBufferSize: 40,
+            segmentByteRanges: SegmentRanges,
+            readStartWarmupEnabled: true);
+
+        Assert.Equal(1, await stream.ReadAsync(new byte[1]));
+
+        Assert.Null(client.LastPrewarmTarget);
+    }
+
     [SkippableTheory]
     [InlineData(0, "abcdefghijklmno")]
     [InlineData(1, "abcdefghijklmno")]

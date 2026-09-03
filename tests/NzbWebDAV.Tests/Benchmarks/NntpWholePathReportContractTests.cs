@@ -112,7 +112,7 @@ public sealed class NntpWholePathReportContractTests
     [InlineData("quick", 5)]
     [InlineData("sustained", 4)]
     [InlineData("profile", 1)]
-    [InlineData("cold", 1)]
+    [InlineData("cold", 2)]
     public void ScenarioSets_AreNamedAndExplicitlyPlaintext(string set, int expectedCount)
     {
         var scenarios = NntpWholePathScenario.ForSet(set);
@@ -128,7 +128,7 @@ public sealed class NntpWholePathReportContractTests
     [Fact]
     public void ColdScenario_ModelsProductionSizedReadAndConnectionRamp()
     {
-        var scenario = Assert.Single(NntpWholePathScenario.Cold);
+        var scenario = NntpWholePathScenario.Cold[0];
 
         Assert.Equal("cold-ramp-256mib-w4", scenario.Name);
         Assert.Equal(NntpWholePathLayer.HttpLike, scenario.Layer);
@@ -137,6 +137,11 @@ public sealed class NntpWholePathReportContractTests
         Assert.Equal(4, scenario.BatchWidth);
         Assert.Equal(150, scenario.HandshakeDelayMs);
         Assert.Equal(40, scenario.ArticleBufferSize);
+        Assert.False(scenario.PrewarmConnections);
+
+        var prewarm = NntpWholePathScenario.Cold[1];
+        Assert.Equal("cold-ramp-256mib-w4-prewarm", prewarm.Name);
+        Assert.True(prewarm.PrewarmConnections);
     }
 
     [Fact]

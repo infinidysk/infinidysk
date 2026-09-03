@@ -39,12 +39,24 @@ Other states: a spinner with **Connecting** until the first update arrives, **Re
 |---------|------------|---------|--------|
 | Warm connections | `usenet.warm-connections.enabled` | on | Keep a small pool of pre-connected sockets per provider |
 | Warm floor | `usenet.warm-connections.floor` | auto | Idle sockets kept ready per provider; auto derives one sixth of Max Connections, clamped to 1–8 |
+| Read-start warm-up [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.read-start-warmup.enabled` | off | For a long buffered read, open missing pooled-provider connections in parallel as the first segment starts |
 
 There is no settings-UI toggle; set the keys as [headless environment variables](../configuration/headless.md) (`NZBDAV_CONFIG__USENET__WARM_CONNECTIONS__ENABLED` / `NZBDAV_CONFIG__USENET__WARM_CONNECTIONS__FLOOR`). Changes take effect on the next provider save or restart — connection pools are not rebuilt when these keys change alone.
+
+Read-start warm-up is an advanced opt-in experiment. Set
+`NZBDAV_CONFIG__USENET__READ_START_WARMUP__ENABLED=true` and restart the
+container. Each newly opened WebDAV stream snapshots the value. Reads below
+8 MiB, reads needing fewer than two connection batches, backup-only providers,
+and providers with an open circuit are skipped. The target is bounded by the
+stream's article window, download limit, provider connection limits, and any
+per-provider transfer cap. Opened sockets return to the normal idle pool; the
+warm floor still decides how many remain connected later. Set the value to
+`false` and restart to restore demand-only expansion.
 
 ## Cost and trade-offs
 
 - Warm sockets are real connections and count against the provider plan's connection limit, even while idle.
+- Read-start warm-up can create up to three TCP/TLS/AUTHINFO sessions at once. Leave it off if a provider rejects legal connection bursts.
 - Keepalive traffic is negligible: one tiny `DATE` exchange per warm socket per sweep.
 - On very small plans or [memory-constrained hosts](../operations/memory-constrained-hosts.md), lower the floor or disable warming entirely.
 

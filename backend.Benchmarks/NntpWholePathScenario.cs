@@ -24,6 +24,7 @@ internal sealed record NntpWholePathScenario(
 {
     public int HandshakeDelayMs { get; init; }
     public int? ArticleBufferSize { get; init; }
+    public bool PrewarmConnections { get; init; }
 
     public static IReadOnlyList<NntpWholePathScenario> Quick =>
     [
@@ -53,6 +54,12 @@ internal sealed record NntpWholePathScenario(
         {
             HandshakeDelayMs = 150,
             ArticleBufferSize = 40,
+        },
+        new("cold-ramp-256mib-w4-prewarm", NntpWholePathLayer.HttpLike, false, 342, 768 * 1024, 20, 4, 40, 6_000_000, YencCrcValidationMode.Require)
+        {
+            HandshakeDelayMs = 150,
+            ArticleBufferSize = 40,
+            PrewarmConnections = true,
         },
     ];
 

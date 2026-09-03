@@ -51,6 +51,62 @@ public class MultiProviderNntpClient(
 
     internal IReadOnlyList<MultiConnectionNntpClient> Providers => providers;
 
+    public override Task PrewarmConnectionsAsync(
+        int targetConnections,
+        CancellationToken cancellationToken)
+    {
+        if (targetConnections <= 0)
+            return Task.CompletedTask;
+
+        var eligible = providers
+            .Select((provider, index) => (Provider: provider, Index: index))
+            .Where(item => item.Provider.ProviderType == ProviderType.Pooled)
+            .Where(item => item.Provider.GetCircuitBreakerSnapshot().State == ProviderCircuitState.Closed)
+            .Where(item => !IsOverLimit(item.Provider))
+            .OrderBy(item => item.Provider.Priority)
+            .ThenBy(item => item.Index)
+            .ToArray();
+        if (eligible.Length == 0)
+            return Task.CompletedTask;
+
+        var targets = AllocateConnectionTargets(
+            eligible.Select(item => item.Provider.PrewarmConnectionCapacity).ToArray(),
+            targetConnections);
+        return Task.WhenAll(eligible.Select((item, index) =>
+            item.Provider.PrewarmConnectionsAsync(targets[index], cancellationToken)));
+    }
+
+    internal static int[] AllocateConnectionTargets(
+        IReadOnlyList<int> capacities,
+        int targetConnections)
+    {
+        var result = new int[capacities.Count];
+        var totalCapacity = capacities.Sum(capacity => Math.Max(0, capacity));
+        var target = Math.Min(Math.Max(0, targetConnections), totalCapacity);
+        if (target == 0)
+            return result;
+
+        var assigned = 0;
+        var remainders = new (int Index, long Remainder)[capacities.Count];
+        for (var index = 0; index < capacities.Count; index++)
+        {
+            var capacity = Math.Max(0, capacities[index]);
+            var weighted = (long)target * capacity;
+            result[index] = (int)(weighted / totalCapacity);
+            assigned += result[index];
+            remainders[index] = (index, weighted % totalCapacity);
+        }
+
+        foreach (var remainder in remainders
+                     .OrderByDescending(item => item.Remainder)
+                     .ThenBy(item => item.Index)
+                     .Take(target - assigned))
+        {
+            result[remainder.Index]++;
+        }
+        return result;
+    }
+
     /// <summary>
     /// Applies Streaming Priority odds to every provider's connection gate so a settings
     /// save re-arbitrates playback against maintenance without reconnecting providers.

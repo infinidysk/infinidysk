@@ -63,6 +63,7 @@ internal static class EffectiveStreamingConfigManifest
                 configManager.IsMaxDownloadConnectionsPerStream(),
                 configManager.GetMaxDownloadConnectionsPerStreamCount(),
                 configManager.IsWarmConnectionsEnabled(),
+                configManager.IsReadStartWarmupEnabled(),
                 providers.Count(provider => provider.Type == ProviderType.Pooled),
                 configManager.GetUsenetProviderConfig().TotalPooledConnections),
             new EffectiveMemorySettings(
@@ -98,7 +99,8 @@ internal static class EffectiveStreamingConfigManifest
                 new EffectiveConnectionSettingSources(
                     Source(configManager, ConfigKeys.UsenetMaxDownloadConnections),
                     Source(configManager, ConfigKeys.UsenetMaxDownloadConnectionsPerStream),
-                    Source(configManager, ConfigKeys.UsenetWarmConnectionsEnabled)),
+                    Source(configManager, ConfigKeys.UsenetWarmConnectionsEnabled),
+                    Source(configManager, ConfigKeys.UsenetReadStartWarmupEnabled)),
                 new EffectiveMemorySettingSources(
                     Source(configManager, ConfigKeys.UsenetInFlightArticleBudgetMb),
                     Source(configManager, ConfigKeys.UsenetSharedStreamsEnabled),
@@ -158,6 +160,7 @@ internal sealed record EffectiveConnectionSettings(
     bool PerStreamModeEnabled,
     int EffectivePerStreamCount,
     bool WarmConnectionsEnabled,
+    bool ReadStartWarmupEnabled,
     int PooledProviderCount,
     int TotalPooledConnectionCount);
 
@@ -212,7 +215,8 @@ internal sealed record EffectiveStreamingSettingSources(
 internal sealed record EffectiveConnectionSettingSources(
     EffectiveConfigSource EffectiveTotalDownloadLimit,
     EffectiveConfigSource PerStreamModeEnabled,
-    EffectiveConfigSource WarmConnectionsEnabled);
+    EffectiveConfigSource WarmConnectionsEnabled,
+    EffectiveConfigSource ReadStartWarmupEnabled);
 
 internal sealed record EffectiveMemorySettingSources(
     EffectiveConfigSource InFlightArticleBudgetBytes,

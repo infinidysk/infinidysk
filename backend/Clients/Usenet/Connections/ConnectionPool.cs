@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Logging;
 using Serilog;
 
@@ -55,6 +56,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     public int EffectiveMaxConnections => Volatile.Read(ref _effectiveMaxConnections);
     public int? LearnedConnectionLimit => _learnedConnectionLimit;
     public int LiveConnections => _live;
+    internal int PendingConnectionCreations => _pendingConnectionCreations;
     public int IdleConnections => _idleConnections.Count;
     public int ActiveConnections => _live - _idleConnections.Count;
     public int AvailableConnections => Math.Max(0, EffectiveMaxConnections - ActiveConnections);
@@ -87,8 +89,10 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private readonly CancellationTokenSource _sweepCts = new();
     private readonly Task _sweeperTask; // keeps timer alive
     private readonly Lock _lifecycleLock = new();
+    private TaskCompletionSource _connectionAvailability = CreateAvailabilitySignal();
 
     private int _live; // number of connections currently alive
+    private int _pendingConnectionCreations;
     private int _disposed; // 0 == false, 1 == true
     private int _effectiveMaxConnections;
     private int? _learnedConnectionLimit;
@@ -181,6 +185,87 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         CancellationToken cancellationToken = default
     ) => GetConnectionLockCoreAsync(priority, preferIdle: true, cancellationToken);
 
+    /// <summary>
+    /// Best-effort hint that opens missing connections in parallel and returns them idle.
+    /// Provider failures stop the hint without affecting callers that use the pool normally.
+    /// </summary>
+    public Task WarmToAsync(int targetConnections, CancellationToken cancellationToken = default)
+    {
+        var target = Math.Min(Math.Max(0, targetConnections), EffectiveMaxConnections);
+        if (target == 0 || IsDisposed)
+            return Task.CompletedTask;
+
+        return WarmToCoreAsync(target, cancellationToken);
+    }
+
+    private async Task WarmToCoreAsync(int targetConnections, CancellationToken cancellationToken)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _sweepCts.Token);
+        var state = new WarmUpState();
+        var workers = new Task[Math.Min(MaxConcurrentHandshakes, targetConnections)];
+        for (var i = 0; i < workers.Length; i++)
+            workers[i] = WarmWorkerAsync(targetConnections, state, linked.Token);
+
+        try
+        {
+            await Task.WhenAll(workers).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (linked.IsCancellationRequested)
+        {
+            // Read cancellation or pool retirement ends this best-effort hint.
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            // Each failed worker exits without retrying; other admitted workers may
+            // still finish connections that are already being authenticated.
+            e.LogWarningKnownOrStack(
+                "NNTP connection pre-warm stopped for {Provider}.",
+                _diagnosticName);
+            Log.Debug(e, "NNTP connection pre-warm failure stack for {Provider}", _diagnosticName);
+        }
+    }
+
+    private async Task WarmWorkerAsync(
+        int targetConnections,
+        WarmUpState state,
+        CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested && !state.StopRequested)
+        {
+            lock (_lifecycleLock)
+            {
+                if (_disposed == 1 || state.StopRequested ||
+                    _live + _pendingConnectionCreations >= targetConnections)
+                    return;
+            }
+
+            ConnectionLock<T>? connection;
+            try
+            {
+                connection = await TryCreateFreshConnectionLockAsync(
+                        targetConnections,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                state.RequestStop();
+                throw;
+            }
+            if (connection is null)
+                return;
+            connection.Dispose();
+        }
+    }
+
+    private sealed class WarmUpState
+    {
+        private int _stopRequested;
+        public bool StopRequested => Volatile.Read(ref _stopRequested) == 1;
+        public void RequestStop() => Interlocked.Exchange(ref _stopRequested, 1);
+    }
+
     private async Task<ConnectionLock<T>> GetConnectionLockCoreAsync
     (
         SemaphorePriority priority,
@@ -257,8 +342,51 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
             T conn;
             ReplacementPacingReservation? pacingReservation = null;
+            var creationReserved = false;
             try
             {
+                while (!creationReserved)
+                {
+                    Task connectionAvailability;
+                    lock (_lifecycleLock)
+                    {
+                        if (_disposed == 1)
+                            ThrowDisposed();
+                        if (preferIdle)
+                        {
+                            reusedConnection = TryTakeIdleConnection(out reused!, out staleEvicted);
+                            if (reusedConnection)
+                                Interlocked.Increment(ref _connectionsReused);
+                        }
+                        if (!reusedConnection)
+                            creationReserved = TryReserveConnectionCreationUnderLock(EffectiveMaxConnections);
+                        connectionAvailability = _connectionAvailability.Task;
+                    }
+                    if (reusedConnection || staleEvicted)
+                        TriggerConnectionPoolChangedEvent();
+                    if (reusedConnection)
+                        return BuildLock(reused!, wasReused: true);
+                    if (!creationReserved)
+                    {
+                        await connectionAvailability.WaitAsync(linked.Token).ConfigureAwait(false);
+                        lock (_lifecycleLock)
+                        {
+                            if (_disposed == 1)
+                                ThrowDisposed();
+                            if (preferIdle)
+                            {
+                                reusedConnection = TryTakeIdleConnection(out reused!, out staleEvicted);
+                                if (reusedConnection)
+                                    Interlocked.Increment(ref _connectionsReused);
+                            }
+                        }
+                        if (reusedConnection || staleEvicted)
+                            TriggerConnectionPoolChangedEvent();
+                        if (reusedConnection)
+                            return BuildLock(reused!, wasReused: true);
+                    }
+                }
+
                 pacingReservation = await PaceReplacementHandshakeAsync(linked.Token)
                     .ConfigureAwait(false);
 
@@ -273,16 +401,27 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             {
                 // PaceReplacementHandshakeAsync rolls back internally if its delay is
                 // canceled. A started factory keeps its spacing reservation.
+                if (creationReserved)
+                    CompleteConnectionCreation(created: false);
                 ReleaseGateIfActive();
                 throw;
             }
             catch (Exception factoryError) when (factoryError is not OutOfMemoryException)
             {
+                if (creationReserved)
+                    CompleteConnectionCreation(created: false);
                 Interlocked.Increment(ref _handshakeFailures);
                 var consecutiveFailures = Interlocked.Increment(ref _consecutiveHandshakeFailures);
                 ArmReplacementPacing(GetHandshakeFailureBackoffMs(consecutiveFailures));
                 TryShrinkOnConnectionLimit(factoryError);
                 ReleaseGateIfActive(); // free the permit on failure
+                throw;
+            }
+            catch (OutOfMemoryException)
+            {
+                if (creationReserved)
+                    CompleteConnectionCreation(created: false);
+                ReleaseGateIfActive();
                 throw;
             }
 
@@ -297,12 +436,14 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             {
                 if (_disposed == 1)
                 {
+                    CompleteConnectionCreationUnderLock(created: false);
+                    creationReserved = false;
                     disposeConnection = true;
                 }
                 else
                 {
-                    Interlocked.Increment(ref _connectionsOpened);
-                    Interlocked.Increment(ref _live);
+                    CompleteConnectionCreationUnderLock(created: true);
+                    creationReserved = false;
                     connectionCreated = true;
                     createdLive = _live;
                     createdIdle = _idleConnections.Count;
@@ -341,6 +482,141 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
         static void ThrowDisposed()
             => throw new ObjectDisposedException(nameof(ConnectionPool<T>));
+    }
+
+    private async Task<ConnectionLock<T>?> TryCreateFreshConnectionLockAsync(
+        int targetConnections,
+        CancellationToken cancellationToken)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _sweepCts.Token);
+
+        await _gate.WaitAsync(SemaphorePriority.Low, linked.Token).ConfigureAwait(false);
+        var gateHeld = true;
+        try
+        {
+            await _handshakeGate.WaitAsync(linked.Token).ConfigureAwait(false);
+            try
+            {
+                lock (_lifecycleLock)
+                {
+                    if (_disposed == 1)
+                        return null;
+                    if (!TryReserveConnectionCreationUnderLock(targetConnections))
+                        return null;
+                }
+
+                T connection;
+                try
+                {
+                    var pacingReservation = await PaceReplacementHandshakeAsync(linked.Token)
+                        .ConfigureAwait(false);
+                    CommitReplacementPacing(pacingReservation);
+                    connection = await _factory(linked.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (linked.IsCancellationRequested)
+                {
+                    CompleteConnectionCreation(created: false);
+                    throw;
+                }
+                catch (Exception factoryError) when (factoryError is not OutOfMemoryException)
+                {
+                    CompleteConnectionCreation(created: false);
+                    Interlocked.Increment(ref _handshakeFailures);
+                    var consecutiveFailures = Interlocked.Increment(ref _consecutiveHandshakeFailures);
+                    ArmReplacementPacing(GetHandshakeFailureBackoffMs(consecutiveFailures));
+                    TryShrinkOnConnectionLimit(factoryError);
+                    throw;
+                }
+                catch (OutOfMemoryException)
+                {
+                    CompleteConnectionCreation(created: false);
+                    throw;
+                }
+
+                Interlocked.Exchange(ref _consecutiveHandshakeFailures, 0);
+                var disposeConnection = false;
+                lock (_lifecycleLock)
+                {
+                    if (_disposed == 1)
+                    {
+                        CompleteConnectionCreationUnderLock(created: false);
+                        disposeConnection = true;
+                    }
+                    else
+                    {
+                        CompleteConnectionCreationUnderLock(created: true);
+                    }
+                }
+
+                if (disposeConnection)
+                {
+                    DisposeConnection(connection);
+                    return null;
+                }
+
+                gateHeld = false;
+                TriggerConnectionPoolChangedEvent();
+                return new ConnectionLock<T>(connection, Return, Destroy, wasReused: false);
+            }
+            finally
+            {
+                lock (_lifecycleLock)
+                {
+                    if (_disposed == 0)
+                        _handshakeGate.Release();
+                }
+            }
+        }
+        finally
+        {
+            if (gateHeld)
+                ReleaseGateIfActive();
+        }
+    }
+
+    private bool TryReserveConnectionCreationUnderLock(int targetConnections)
+    {
+        var limit = Math.Min(Math.Max(0, targetConnections), EffectiveMaxConnections);
+        if (_disposed == 1 || _live + _pendingConnectionCreations >= limit)
+            return false;
+        _pendingConnectionCreations++;
+        return true;
+    }
+
+    private void CompleteConnectionCreation(bool created)
+    {
+        lock (_lifecycleLock)
+            CompleteConnectionCreationUnderLock(created);
+    }
+
+    private void CompleteConnectionCreationUnderLock(bool created)
+    {
+        if (_pendingConnectionCreations <= 0)
+            throw new InvalidOperationException("Connection creation reservation underflow.");
+        _pendingConnectionCreations--;
+        if (created)
+        {
+            _live++;
+            Interlocked.Increment(ref _connectionsOpened);
+        }
+        SignalConnectionAvailabilityUnderLock();
+    }
+
+    private static TaskCompletionSource CreateAvailabilitySignal() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private void SignalConnectionAvailabilityUnderLock()
+    {
+        var signal = _connectionAvailability;
+        _connectionAvailability = CreateAvailabilitySignal();
+        signal.TrySetResult();
+    }
+
+    private void SignalConnectionAvailability()
+    {
+        lock (_lifecycleLock)
+            SignalConnectionAvailabilityUnderLock();
     }
 
     private async Task<ConnectionLock<T>?> TryGetIdleConnectionLockAsync(
@@ -419,6 +695,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                     DisposeConnection(item.Connection);
                     Interlocked.Decrement(ref _live);
                     Interlocked.Increment(ref _staleEvictions);
+                    SignalConnectionAvailabilityUnderLock();
                     staleEvicted = true;
                     continue;
                 }
@@ -476,6 +753,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             {
                 _idleConnections.Push(new Pooled(connection, Environment.TickCount64));
                 _gate.Release();
+                SignalConnectionAvailabilityUnderLock();
                 notify = true;
                 returnedLive = _live;
                 returnedIdle = _idleConnections.Count;
@@ -511,6 +789,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             if (_disposed == 0)
             {
                 _gate.Release();
+                SignalConnectionAvailabilityUnderLock();
                 notify = true;
             }
         }
@@ -706,6 +985,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             {
                 _effectiveMaxConnections = newEffective;
                 _learnedConnectionLimit = learned;
+                SignalConnectionAvailabilityUnderLock();
             }
         }
 
@@ -851,7 +1131,10 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         }
 
         if (isAnyConnectionFreed)
+        {
+            SignalConnectionAvailability();
             TriggerConnectionPoolChangedEvent();
+        }
 
         await EnsureWarmFloorAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -902,6 +1185,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         {
             if (_disposed == 1) return;
             _disposed = 1;
+            SignalConnectionAvailabilityUnderLock();
 
             // Drop handlers before draining so late Return/Destroy from in-flight locks
             // cannot overwrite the live generation's connection-count websocket updates.

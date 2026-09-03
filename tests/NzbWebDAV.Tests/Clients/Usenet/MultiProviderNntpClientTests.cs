@@ -22,6 +22,85 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 [Collection(nameof(GlobalLoggerCollection))]
 public class MultiProviderNntpClientTests
 {
+    [Theory]
+    [InlineData(new[] { 10, 10 }, 3, new[] { 2, 1 })]
+    [InlineData(new[] { 20, 5 }, 10, new[] { 8, 2 })]
+    [InlineData(new[] { 2, 1 }, 10, new[] { 2, 1 })]
+    [InlineData(new[] { 0, 4 }, 2, new[] { 0, 2 })]
+    public void AllocateConnectionTargets_DistributesExactBoundedTarget(
+        int[] capacities,
+        int target,
+        int[] expected)
+    {
+        var actual = MultiProviderNntpClient.AllocateConnectionTargets(capacities, target);
+
+        Assert.Equal(expected, actual);
+        Assert.Equal(Math.Min(target, capacities.Sum()), actual.Sum());
+        Assert.All(actual.Select((value, index) => (value, index)), item =>
+            Assert.InRange(item.value, 0, capacities[item.index]));
+    }
+
+    [Fact]
+    public async Task PrewarmConnectionsAsync_WarmsOnlyClosedPooledProviders()
+    {
+        var pooled = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            host: "pooled",
+            maxConnections: 4);
+        var backup = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            host: "backup",
+            providerType: ProviderType.BackupOnly,
+            maxConnections: 4);
+        var open = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            host: "open",
+            circuitBreaker: OpenBreaker("open"),
+            maxConnections: 4);
+        using var client = new MultiProviderNntpClient([pooled, backup, open]);
+
+        await client.PrewarmConnectionsAsync(3, CancellationToken.None);
+
+        Assert.Equal(3, pooled.LiveConnections);
+        Assert.Equal(0, backup.LiveConnections);
+        Assert.Equal(0, open.LiveConnections);
+    }
+
+    [Fact]
+    public async Task PrewarmConnectionsAsync_RespectsTransferAdmissionCap()
+    {
+        var provider = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            maxConnections: 8,
+            maxTransferConnections: 2);
+        using var client = new MultiProviderNntpClient([provider]);
+
+        await client.PrewarmConnectionsAsync(6, CancellationToken.None);
+
+        Assert.Equal(2, provider.LiveConnections);
+        Assert.Equal(2, provider.IdleConnections);
+    }
+
+    [Fact]
+    public async Task PrewarmConnectionsAsync_AllocatesExactTargetAcrossTransferCappedProviders()
+    {
+        var capped = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            host: "capped",
+            maxConnections: 8,
+            maxTransferConnections: 2);
+        var uncapped = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            host: "uncapped",
+            maxConnections: 8);
+        using var client = new MultiProviderNntpClient([capped, uncapped]);
+
+        await client.PrewarmConnectionsAsync(6, CancellationToken.None);
+
+        Assert.Equal(6, capped.LiveConnections + uncapped.LiveConnections);
+        Assert.InRange(capped.LiveConnections, 0, 2);
+    }
+
     [Fact]
     public void BeginStreamTraceRangeScope_RestoresNestedContext()
     {

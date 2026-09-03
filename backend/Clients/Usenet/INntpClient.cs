@@ -8,6 +8,16 @@ namespace NzbWebDAV.Clients.Usenet;
 
 public interface INntpClient : IDisposable
 {
+    bool ReadStartWarmupEnabled => false;
+
+    /// <summary>
+    /// Hints that a long sequential read is starting and provider connections should be
+    /// opened in the background. Implementations skip ineligible providers and treat
+    /// connection failures as best-effort without changing BODY completion ownership.
+    /// </summary>
+    Task PrewarmConnectionsAsync(int targetConnections, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
     // core methods
     Task ConnectAsync(
         string host, int port, bool useSsl, CancellationToken cancellationToken);

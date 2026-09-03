@@ -47,6 +47,7 @@ public static class ConfigKeys
     public const string UsenetReconnectDelayMilliseconds = "usenet.reconnect-delay-milliseconds";
     public const string UsenetWarmConnectionsEnabled = "usenet.warm-connections.enabled";
     public const string UsenetWarmConnectionsFloor = "usenet.warm-connections.floor";
+    public const string UsenetReadStartWarmupEnabled = "usenet.read-start-warmup.enabled";
     public const string UsenetCircuitBreakerInitialCooldownSeconds = "usenet.circuit-breaker.initial-cooldown-seconds";
     public const string UsenetCircuitBreakerMaxCooldownSeconds = "usenet.circuit-breaker.max-cooldown-seconds";
     public const string UsenetMaxDownloadConnections = "usenet.max-download-connections";

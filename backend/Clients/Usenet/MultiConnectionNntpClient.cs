@@ -117,6 +117,9 @@ public class MultiConnectionNntpClient(
     public ProviderCircuitBreakerSnapshot GetCircuitBreakerSnapshot() => circuitBreaker.GetSnapshot();
     public int MaxConnections => connectionPool.MaxConnections;
     public int EffectiveMaxConnections => connectionPool.EffectiveMaxConnections;
+    internal int PrewarmConnectionCapacity => Math.Min(
+        EffectiveMaxConnections,
+        _connectionAdmission?.GetSnapshot().EffectiveTransferLimit ?? EffectiveMaxConnections);
     public int? LearnedConnectionLimit => connectionPool.LearnedConnectionLimit;
     public int LiveConnections => connectionPool.LiveConnections;
     public int IdleConnections => connectionPool.IdleConnections;
@@ -126,6 +129,21 @@ public class MultiConnectionNntpClient(
         _connectionAdmission?.GetSnapshot();
     public int InFlightConnections => ActiveConnections + PendingSelections;
     public ConnectionPoolChurn GetConnectionChurn() => connectionPool.GetChurn();
+
+    public override Task PrewarmConnectionsAsync(
+        int targetConnections,
+        CancellationToken cancellationToken)
+    {
+        if (targetConnections <= 0 ||
+            circuitBreaker.GetSnapshot().State != ProviderCircuitState.Closed)
+        {
+            return Task.CompletedTask;
+        }
+
+        return connectionPool.WarmToAsync(
+            Math.Min(targetConnections, PrewarmConnectionCapacity),
+            cancellationToken);
+    }
 
     /// <summary>
     /// Applies new Streaming Priority odds to this provider's connection gate without

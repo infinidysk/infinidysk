@@ -31,10 +31,13 @@ public class NzbFileStream(
     HashSet<string>? knownCorruptSegmentIds = null,
     IReadOnlySet<int>? knownMissingSegmentIndices = null,
     bool segmentByteRangesTrusted = true,
-    long? readBudgetOverride = null
+    long? readBudgetOverride = null,
+    bool readStartWarmupEnabled = false
 ) : FastReadOnlyStream
 {
     private const long MaximumForwardDrainBytes = 1024 * 1024;
+    private const long MinimumPrewarmRangeBytes = 8L * 1024 * 1024;
+    private const int MinimumPrewarmConnections = 2;
     // A range in this size class is commonly an initial probe or a scrub preview.
     // Avoid draining its target segment into a pooled buffer before returning bytes.
     private const long MaximumDirectRangeBytes = 1024 * 1024;
@@ -443,6 +446,11 @@ public class NzbFileStream(
         var sliced = finitePlan is { } plan
             ? SliceFrom(firstSegmentIndex, plan.SegmentCount)
             : SliceFrom(firstSegmentIndex);
+        StartConnectionPrewarm(
+            sliced.SegmentIds.Length - 1,
+            rangeStart,
+            readBudget,
+            cancellationToken);
         try
         {
             return await MultiSegmentStream.CreatePositionedFirstSegmentHybridAsync(
@@ -839,6 +847,11 @@ public class NzbFileStream(
         var sliced = finitePlan is { } plan
             ? SliceFrom(firstSegmentIndex, plan.SegmentCount)
             : SliceFrom(firstSegmentIndex);
+        StartConnectionPrewarm(
+            sliced.SegmentIds.Length - 1,
+            rangeStart,
+            readBudget,
+            cancellationToken);
         return MultiSegmentStream.CreateFirstSegmentHybridWithInitialBatchPlan(
             sliced.SegmentIds,
             usenetClient,
@@ -858,6 +871,47 @@ public class NzbFileStream(
             knownCorruptSegmentIds,
             sliced.KnownMissing,
             initialBatchPlan);
+    }
+
+    private void StartConnectionPrewarm(
+        int remainingSegments,
+        long rangeStart,
+        long? readBudget,
+        CancellationToken cancellationToken)
+    {
+        if (!readStartWarmupEnabled || articleBufferSize <= 0 || remainingSegments <= 0)
+            return;
+        var remainingFileBytes = Math.Max(0, fileSize - rangeStart);
+        var plannedReadBytes = readBudget is { } budget
+            ? Math.Min(Math.Max(0, budget), remainingFileBytes)
+            : remainingFileBytes;
+        if (plannedReadBytes < MinimumPrewarmRangeBytes)
+            return;
+
+        var width = usePipelinedBodyRequests ? Math.Max(1, streamingBodyBatchWidth) : 1;
+        var plannedBatches = (remainingSegments + width - 1) / width;
+        var targetConnections = Math.Min(plannedBatches, articleBufferSize);
+        if (targetConnections < MinimumPrewarmConnections)
+            return;
+
+        _ = ObservePrewarmAsync(
+            usenetClient.PrewarmConnectionsAsync(targetConnections, cancellationToken));
+    }
+
+    private static async Task ObservePrewarmAsync(Task prewarm)
+    {
+        try
+        {
+            await prewarm.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Read cancellation also cancels this best-effort hint.
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            Log.Debug(e, "Connection pre-warm hint failed; the read continues without it.");
+        }
     }
 
     protected override void Dispose(bool disposing)
