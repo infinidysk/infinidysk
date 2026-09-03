@@ -27,6 +27,7 @@ internal sealed class FakeNntpClient(
     public int HeaderProbeCount { get; private set; }
     public int CompletionCallbackCount { get; private set; }
     public int? LastPrewarmTarget { get; private set; }
+    public Exception? PrewarmException { get; set; }
     public CancellationToken LastBatchToken { get; private set; }
     public TaskCompletionSource FirstBatchRequested { get; } =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -51,6 +52,8 @@ internal sealed class FakeNntpClient(
     {
         cancellationToken.ThrowIfCancellationRequested();
         LastPrewarmTarget = targetConnections;
+        if (PrewarmException is not null)
+            throw PrewarmException;
         return Task.CompletedTask;
     }
 

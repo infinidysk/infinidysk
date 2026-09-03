@@ -83,6 +83,36 @@ public class NzbFileStreamTests
         Assert.Null(client.LastPrewarmTarget);
     }
 
+    [Fact]
+    public async Task PlaybackStart_SynchronousWarmupFailureDoesNotFailRead()
+    {
+        const int segmentSize = 1024 * 1024;
+        var segmentIds = Enumerable.Range(0, 12).Select(index => $"segment-{index}").ToArray();
+        var segments = segmentIds.ToDictionary(id => id, _ => new byte[segmentSize]);
+        var ranges = Enumerable.Range(0, segmentIds.Length)
+            .Select(index => new LongRange((long)index * segmentSize, (long)(index + 1) * segmentSize))
+            .ToArray();
+        var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            segmentRanges: segmentIds.Zip(ranges).ToDictionary(pair => pair.First, pair => pair.Second))
+        {
+            PrewarmException = new InvalidOperationException("synchronous warm-up failure"),
+        };
+        await using var stream = new NzbFileStream(
+            segmentIds,
+            (long)segmentSize * segmentIds.Length,
+            client,
+            articleBufferSize: 40,
+            segmentByteRanges: ranges,
+            streamingBodyBatchWidth: 4,
+            readStartWarmupEnabled: true);
+
+        var firstByte = new byte[1];
+        Assert.Equal(1, await stream.ReadAsync(firstByte));
+        Assert.Equal(3, client.LastPrewarmTarget);
+    }
+
     [SkippableTheory]
     [InlineData(0, "abcdefghijklmno")]
     [InlineData(1, "abcdefghijklmno")]

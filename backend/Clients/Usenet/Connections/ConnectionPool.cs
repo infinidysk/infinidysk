@@ -491,11 +491,15 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken, _sweepCts.Token);
 
+        var gateWaitStarted = Stopwatch.GetTimestamp();
         await _gate.WaitAsync(SemaphorePriority.Low, linked.Token).ConfigureAwait(false);
+        Interlocked.Add(ref _gateWaitTicks, Stopwatch.GetElapsedTime(gateWaitStarted).Ticks);
         var gateHeld = true;
         try
         {
+            var handshakeWaitStarted = Stopwatch.GetTimestamp();
             await _handshakeGate.WaitAsync(linked.Token).ConfigureAwait(false);
+            Interlocked.Add(ref _handshakeWaitTicks, Stopwatch.GetElapsedTime(handshakeWaitStarted).Ticks);
             try
             {
                 lock (_lifecycleLock)

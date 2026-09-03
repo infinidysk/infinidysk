@@ -894,15 +894,15 @@ public class NzbFileStream(
         if (targetConnections < MinimumPrewarmConnections)
             return;
 
-        _ = ObservePrewarmAsync(
+        _ = ObservePrewarmAsync(() =>
             usenetClient.PrewarmConnectionsAsync(targetConnections, cancellationToken));
     }
 
-    private static async Task ObservePrewarmAsync(Task prewarm)
+    private static async Task ObservePrewarmAsync(Func<Task> prewarm)
     {
         try
         {
-            await prewarm.ConfigureAwait(false);
+            await prewarm().ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
