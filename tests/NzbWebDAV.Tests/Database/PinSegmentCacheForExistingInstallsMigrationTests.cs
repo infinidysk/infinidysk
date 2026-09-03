@@ -62,6 +62,36 @@ public sealed class PinSegmentCacheForExistingInstallsMigrationTests
         Assert.Equal("false", existing.ConfigValue);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task ExistingInstallWithBlankSetting_IsPinnedOn(string blank)
+    {
+        await using var harness = await MigrationHarness.CreateAsync();
+        var ctx = harness.Context;
+
+        ctx.ConfigItems.AddRange(
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.UsenetProviders,
+                ConfigValue = "{\"Providers\":[]}",
+            },
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.UsenetSegmentCacheEnabled,
+                ConfigValue = blank,
+            });
+        await ctx.SaveChangesAsync();
+        ctx.ChangeTracker.Clear();
+
+        await ctx.Database.MigrateAsync();
+        ctx.ChangeTracker.Clear();
+
+        var pinned = await ctx.ConfigItems.AsNoTracking()
+            .SingleAsync(x => x.ConfigName == ConfigKeys.UsenetSegmentCacheEnabled);
+        Assert.Equal("true", pinned.ConfigValue);
+    }
+
     [Fact]
     public async Task FreshInstall_IsNotPinned_AndDefaultsOff()
     {

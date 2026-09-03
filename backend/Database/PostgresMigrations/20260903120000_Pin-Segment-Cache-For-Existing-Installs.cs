@@ -17,6 +17,18 @@ public partial class PinSegmentCacheForExistingInstalls : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
     {
+        // ConfigManager treats a blank persisted value as unset, so pin those too.
+        migrationBuilder.Sql("""
+            UPDATE "ConfigItems"
+            SET "ConfigValue" = 'true'
+            WHERE "ConfigName" = 'usenet.segment-cache.enabled'
+            AND ("ConfigValue" IS NULL OR TRIM("ConfigValue") = '')
+            AND EXISTS (
+                SELECT 1 FROM "ConfigItems"
+                WHERE "ConfigName" = 'usenet.providers'
+            );
+            """);
+
         migrationBuilder.Sql("""
             INSERT INTO "ConfigItems" ("ConfigName", "ConfigValue")
             SELECT 'usenet.segment-cache.enabled', 'true'
