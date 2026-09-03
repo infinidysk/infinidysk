@@ -388,7 +388,7 @@ jobs:
             ANNOUNCEMENT_BODY=$(printf '🚀 **New Release: Version [%s]**\nImage: `%s`\n\n%s\n\nFull changelog: https://github.com/%s/releases/tag/v%s' \
               "${VERSION}" "${IMAGE}" "${SUMMARY}" "${REPO}" "${VERSION}")
           else
-            ANNOUNCEMENT_BODY=$(printf '🚀 **New Release: Version [%s]**\nImage: `%s`%s' "${VERSION}" "${IMAGE}" "${RELEASE_NOTES}")
+            ANNOUNCEMENT_BODY=$(printf '🚀 **New Release: Version [%s]**\nImage: `%s`\n%s' "${VERSION}" "${IMAGE}" "${RELEASE_NOTES}")
           fi
 
           # Discord content is limited to 2000 characters.
