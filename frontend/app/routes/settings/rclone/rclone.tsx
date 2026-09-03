@@ -28,6 +28,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
   const [testError, setTestError] = useState<string | null>(null);
   const [invalidationError, setInvalidationError] = useState<string | null>(null);
   const [invalidationErrorAt, setInvalidationErrorAt] = useState<string | null>(null);
+  const [readAheadBytes, setReadAheadBytes] = useState<number | null>(null);
 
   const rcloneHost = config["rclone.host"];
   const rcloneUser = config["rclone.user"];
@@ -37,6 +38,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
     setTestError(null);
     setInvalidationError(null);
     setInvalidationErrorAt(null);
+    setReadAheadBytes(null);
   }, [rcloneHost, rcloneUser, rclonePass]);
 
   const testConnection = useCallback(async () => {
@@ -49,6 +51,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
     setTestError(null);
     setInvalidationError(null);
     setInvalidationErrorAt(null);
+    setReadAheadBytes(null);
 
     try {
       const formData = new FormData();
@@ -66,6 +69,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
         status?: boolean;
         connected?: boolean;
         error?: string;
+        readAheadBytes?: number | null;
         lastInvalidationError?: string | null;
         lastInvalidationErrorAt?: string | null;
       };
@@ -73,6 +77,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
       if (result.status && result.connected) {
         setConnectionState("success");
         setTestError(null);
+        setReadAheadBytes(result.readAheadBytes ?? null);
         setInvalidationError(result.lastInvalidationError ?? null);
         setInvalidationErrorAt(result.lastInvalidationErrorAt ?? null);
       } else {
@@ -84,6 +89,12 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
       setTestError(error instanceof Error ? error.message : "Connection test failed");
     }
   }, [config]);
+
+  const readAheadConflictsWithSegmentCache =
+    connectionState === "success" &&
+    readAheadBytes !== null &&
+    readAheadBytes > 0 &&
+    config["usenet.segment-cache.enabled"] === "true";
 
   return (
     <SettingsPage>
@@ -177,6 +188,26 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
               {connectionState === "success" && (
                 <Alert variant="success" className="text-xs py-2">
                   Connection test successful
+                </Alert>
+              )}
+              {readAheadConflictsWithSegmentCache && (
+                <Alert variant="warning" className="text-xs py-2">
+                  This rclone mount has VFS read-ahead enabled while Segment Cache is also on. Both
+                  buffer ahead for playback, so the Segment Cache only adds disk writes. Disable it
+                  under{" "}
+                  <a className="link font-medium" href={withUrlBase("/settings?tab=streaming")}>
+                    Streaming
+                  </a>{" "}
+                  or re-run the{" "}
+                  <a
+                    className="link font-medium"
+                    href={withUrlBase(
+                      `/setup?returnTo=${encodeURIComponent("/settings?tab=rclone")}`,
+                    )}
+                  >
+                    Setup Guide
+                  </a>{" "}
+                  to apply the recommended configuration.
                 </Alert>
               )}
               {connectionState === "success" && invalidationError && (

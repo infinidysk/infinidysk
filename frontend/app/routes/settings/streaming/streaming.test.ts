@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-/* global HTMLInputElement, HTMLSelectElement */
+/* global HTMLInputElement, HTMLSelectElement, localStorage */
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, useState } from "react";
@@ -11,6 +11,8 @@ vi.mock("~/utils/shared-websocket", () => ({
 import {
   isStreamingSettingsUpdated,
   isStreamingSettingsValid,
+  SEGMENT_CACHE_READ_AHEAD_WARNING_KEY,
+  shouldWarnSegmentCacheReadAhead,
   StreamingSettings,
 } from "./streaming";
 
@@ -43,10 +45,17 @@ const validConfig = {
   "usenet.shared-streams.small-range-max-mb": "",
 };
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
-function StreamingHarness() {
-  const [config, setConfig] = useState<Record<string, string>>(validConfig);
+function StreamingHarness({
+  initialConfig = validConfig,
+}: {
+  initialConfig?: Record<string, string>;
+}) {
+  const [config, setConfig] = useState<Record<string, string>>(initialConfig);
   return createElement(StreamingSettings, {
     config,
     setNewConfig: setConfig,
@@ -55,6 +64,49 @@ function StreamingHarness() {
 }
 
 describe("Streaming settings", () => {
+  it("warns about rclone read-ahead only for symlink libraries with Segment Cache on", () => {
+    expect(
+      shouldWarnSegmentCacheReadAhead({ ...validConfig, "api.import-strategy": "symlinks" }),
+    ).toBe(true);
+    expect(shouldWarnSegmentCacheReadAhead({ ...validConfig, "api.import-strategy": "strm" })).toBe(
+      false,
+    );
+    expect(
+      shouldWarnSegmentCacheReadAhead({
+        ...validConfig,
+        "api.import-strategy": "symlinks",
+        "usenet.segment-cache.enabled": "false",
+      }),
+    ).toBe(false);
+  });
+
+  it("shows a dismissable read-ahead warning that stays dismissed", async () => {
+    const user = userEvent.setup();
+    const symlinksConfig = { ...validConfig, "api.import-strategy": "symlinks" };
+    const { unmount } = render(createElement(StreamingHarness, { initialConfig: symlinksConfig }));
+
+    expect(screen.getByTestId("segment-cache-read-ahead-warning")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Setup Guide" }).getAttribute("href")).toBe(
+      "/setup?returnTo=%2Fsettings%3Ftab%3Dstreaming",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Dismiss read-ahead notice" }));
+    expect(screen.queryByTestId("segment-cache-read-ahead-warning")).toBeNull();
+    expect(localStorage.getItem(SEGMENT_CACHE_READ_AHEAD_WARNING_KEY)).toBe("true");
+
+    unmount();
+    render(createElement(StreamingHarness, { initialConfig: symlinksConfig }));
+    expect(screen.queryByTestId("segment-cache-read-ahead-warning")).toBeNull();
+  });
+
+  it("does not show the read-ahead warning for STRM libraries", () => {
+    render(
+      createElement(StreamingHarness, {
+        initialConfig: { ...validConfig, "api.import-strategy": "strm" },
+      }),
+    );
+    expect(screen.queryByTestId("segment-cache-read-ahead-warning")).toBeNull();
+  });
   it("updates connection allocation and conditional controls", async () => {
     const user = userEvent.setup();
     render(createElement(StreamingHarness));

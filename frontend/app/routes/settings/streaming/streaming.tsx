@@ -1,7 +1,9 @@
-import { type Dispatch, type SetStateAction, useState } from "react";
+import { type Dispatch, type SetStateAction, useEffect, useState } from "react";
 import {
   Alert,
   Badge,
+  Button,
+  Icon,
   Input,
   InputGroup,
   Label,
@@ -15,7 +17,17 @@ import {
 } from "~/components/ui";
 import { className } from "~/utils/styling";
 import { useWebsocketTopic } from "~/utils/shared-websocket";
+import { withUrlBase } from "~/utils/url-base";
 import { isPositiveInteger } from "../validation";
+
+export const SEGMENT_CACHE_READ_AHEAD_WARNING_KEY = "segment-cache-read-ahead-warning-dismissed";
+
+export function shouldWarnSegmentCacheReadAhead(config: Record<string, string>): boolean {
+  return (
+    config["usenet.segment-cache.enabled"] === "true" &&
+    config["api.import-strategy"] === "symlinks"
+  );
+}
 
 type StreamingSettingsProps = {
   config: Record<string, string>;
@@ -43,6 +55,28 @@ export function StreamingSettings({
       // Ignore malformed frames; the next tick replaces them.
     }
   });
+
+  // Starts hidden so a previously dismissed notice does not flash during hydration.
+  const [readAheadWarningDismissed, setReadAheadWarningDismissed] = useState(true);
+  useEffect(() => {
+    try {
+      setReadAheadWarningDismissed(
+        globalThis.localStorage?.getItem(SEGMENT_CACHE_READ_AHEAD_WARNING_KEY) === "true",
+      );
+    } catch {
+      setReadAheadWarningDismissed(false);
+    }
+  }, []);
+  const dismissReadAheadWarning = () => {
+    setReadAheadWarningDismissed(true);
+    try {
+      globalThis.localStorage?.setItem(SEGMENT_CACHE_READ_AHEAD_WARNING_KEY, "true");
+    } catch {
+      /* ignore quota / private mode */
+    }
+  };
+  const showReadAheadWarning =
+    !readAheadWarningDismissed && shouldWarnSegmentCacheReadAhead(config);
 
   const bandwidthLimit = config["usenet.bandwidth-limit-mbps"] ?? "";
   const parsedBandwidthLimit = Number(bandwidthLimit);
@@ -251,6 +285,38 @@ export function StreamingSettings({
               or set Cache path to local SSD/NVMe or other storage where the additional writes are
               acceptable.
             </Alert>
+            {showReadAheadWarning && (
+              <Alert
+                className="alert-soft items-start justify-between gap-3 text-xs"
+                variant="warning"
+                data-testid="segment-cache-read-ahead-warning"
+              >
+                <span>
+                  Your library uses Symlinks, which stream through an rclone mount. If that mount
+                  runs with <code>--vfs-read-ahead</code>, rclone already buffers ahead and Segment
+                  Cache duplicates that work with extra disk writes. InfiniDysk cannot always detect
+                  whether read-ahead is enabled, so disable Segment Cache if it is. The{" "}
+                  <a
+                    className="link font-medium"
+                    href={withUrlBase(
+                      `/setup?returnTo=${encodeURIComponent("/settings?tab=streaming")}`,
+                    )}
+                  >
+                    Setup Guide
+                  </a>{" "}
+                  reviews this and other recommended settings, even for existing installations.
+                </span>
+                <Button
+                  variant="ghost"
+                  size="rounded"
+                  className="shrink-0"
+                  aria-label="Dismiss read-ahead notice"
+                  onClick={dismissReadAheadWarning}
+                >
+                  <Icon name="close" className="!text-[18px]" />
+                </Button>
+              </Alert>
+            )}
             {config["usenet.segment-cache.enabled"] === "true" && (
               <div className="grid gap-4 border-l border-base-content/10 pl-4 sm:grid-cols-2">
                 <label className="flex flex-col gap-2 text-sm text-base-content/80">
