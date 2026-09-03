@@ -1155,12 +1155,15 @@ public sealed class SegmentCacheNntpClientTests
             WriteCacheEntry(cacheDir, "segment-1", "one"u8.ToArray());
             WriteCacheEntry(cacheDir, "segment-2", "two"u8.ToArray());
             var blob = CacheBlobPath(cacheDir, "segment-1");
-            File.WriteAllText(blob + ".abc.tmp", "partial");
-            File.WriteAllText(blob + ".h.abc.tmp", "partial");
+            var unique = Guid.NewGuid().ToString("N");
+            File.WriteAllText(blob + "." + unique + ".tmp", "partial");
+            File.WriteAllText(blob + ".h." + unique + ".tmp", "partial");
 
             var shard = Path.GetDirectoryName(blob)!;
             var unrelated = Path.Join(shard, "notes.txt");
             File.WriteAllText(unrelated, "keep");
+            var foreignTemp = blob + ".notes.tmp";
+            File.WriteAllText(foreignTemp, "keep");
             var otherDir = Path.Join(cacheDir, "backups");
             Directory.CreateDirectory(otherDir);
             File.WriteAllText(Path.Join(otherDir, "db.bak"), "keep");
@@ -1168,9 +1171,11 @@ public sealed class SegmentCacheNntpClientTests
             var result = SegmentCacheNntpClient.PurgeDirectory(cacheDir);
 
             Assert.Equal(6, result.Deleted);
-            Assert.Equal(1, result.Skipped);
+            Assert.Equal(2, result.Skipped);
             Assert.Equal(0, result.Failed);
+            Assert.Null(result.FailureReason);
             Assert.True(File.Exists(unrelated));
+            Assert.True(File.Exists(foreignTemp));
             Assert.True(File.Exists(Path.Join(otherDir, "db.bak")));
             Assert.False(File.Exists(blob));
             Assert.False(File.Exists(CacheBlobPath(cacheDir, "segment-2")));
@@ -1195,6 +1200,45 @@ public sealed class SegmentCacheNntpClientTests
         Assert.Equal(0, result.Deleted);
         Assert.Equal(0, result.Failed);
         Assert.False(Directory.Exists(cacheDir));
+    }
+
+    [Fact]
+    public void PurgeDirectory_IgnoresSymlinkedShardDirectory()
+    {
+        var root = Path.Join(
+            Path.GetTempPath(), "nzbdav-segment-cache-" + Guid.NewGuid().ToString("N"));
+        var cacheDir = Path.Join(root, "cache");
+        var outside = Path.Join(root, "outside");
+        try
+        {
+            Directory.CreateDirectory(cacheDir);
+            // Layout a real cache entry outside the cache tree, then link a shard name to it.
+            WriteCacheEntry(outside, "segment-1", "one"u8.ToArray());
+            var outsideBlob = CacheBlobPath(outside, "segment-1");
+            var outsideShard = Path.GetDirectoryName(outsideBlob)!;
+            var linkedShard = Path.Join(cacheDir, Path.GetFileName(outsideShard));
+            try
+            {
+                Directory.CreateSymbolicLink(linkedShard, outsideShard);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+            {
+                return; // symlinks unavailable on this host
+            }
+
+            var result = SegmentCacheNntpClient.PurgeDirectory(cacheDir);
+
+            Assert.Equal(0, result.Deleted);
+            Assert.Equal(0, result.Failed);
+            Assert.True(File.Exists(outsideBlob));
+            Assert.True(File.Exists(outsideBlob + ".h"));
+            Assert.True(Directory.Exists(linkedShard));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
     }
 
     private static async Task ReadAndDisposeAsync(Stream stream)

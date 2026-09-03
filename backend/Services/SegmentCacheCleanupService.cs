@@ -28,10 +28,19 @@ public sealed class SegmentCacheCleanupService(ConfigManager configManager) : Ba
             var result = SegmentCacheNntpClient.PurgeDirectory(cacheDir);
             if (result.Deleted == 0 && result.Failed == 0) return;
 
+            if (result.Failed > 0)
+            {
+                Log.Warning(
+                    "Segment cache is disabled; some leftover cache files at {PathClass} could not be purged. " +
+                    "Deleted: {Deleted}. Skipped: {Skipped}. Failed: {Failed}. Reason: {Reason}",
+                    pathClass, result.Deleted, result.Skipped, result.Failed, result.FailureReason);
+                return;
+            }
+
             Log.Information(
                 "Segment cache is disabled; purged leftover cache files at {PathClass}. " +
-                "Deleted: {Deleted}. Skipped: {Skipped}. Failed: {Failed}.",
-                pathClass, result.Deleted, result.Skipped, result.Failed);
+                "Deleted: {Deleted}. Skipped: {Skipped}.",
+                pathClass, result.Deleted, result.Skipped);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

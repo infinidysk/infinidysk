@@ -666,8 +666,9 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
     /// <summary>
     /// Deletes every cache artifact under <paramref name="cacheDir"/>. Only files that
     /// match the cache layout (two-hex-char shard directory, hex blob name with optional
-    /// <c>.h</c> / <c>.tmp</c> suffix) are removed so a misconfigured path never loses
-    /// unrelated data. Empty shard directories are removed afterwards.
+    /// <c>.h</c> / writer-generated <c>.tmp</c> suffix) are removed so a misconfigured path
+    /// never loses unrelated data. Symlinked shard directories are ignored. Empty shard
+    /// directories are removed afterwards.
     /// </summary>
     internal static SegmentCachePurgeResult PurgeDirectory(string cacheDir)
     {
@@ -677,6 +678,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         foreach (var shard in Directory.EnumerateDirectories(cacheDir))
         {
             if (!IsShardDirectoryName(Path.GetFileName(shard))) continue;
+            if (IsReparsePoint(shard, result)) continue;
 
             foreach (var file in Directory.EnumerateFiles(shard))
             {
@@ -686,13 +688,13 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
                     continue;
                 }
 
-                switch (DeleteCacheFile(file))
+                switch (DeleteCacheFile(file, out var failure))
                 {
                     case SegmentCacheDeleteResult.Deleted:
                         result.Deleted++;
                         break;
                     case SegmentCacheDeleteResult.Failed:
-                        result.Failed++;
+                        result.RecordFailure(failure);
                         break;
                 }
             }
@@ -704,11 +706,24 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                result.Failed++;
+                result.RecordFailure(exception);
             }
         }
 
         return result;
+    }
+
+    private static bool IsReparsePoint(string path, SegmentCachePurgeResult result)
+    {
+        try
+        {
+            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            result.RecordFailure(exception);
+            return true;
+        }
     }
 
     private static bool IsShardDirectoryName(string name) =>
@@ -716,13 +731,25 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
 
     private static bool IsCacheFileName(string name)
     {
-        // <hash>[.h][.<unique>.tmp]
+        // <hash> | <hash>.h | <hash>.<guid:N>.tmp | <hash>.h.<guid:N>.tmp
         var hashEnd = name.IndexOf('.', StringComparison.Ordinal);
         var hash = hashEnd < 0 ? name : name[..hashEnd];
-        if (hash.Length != 64 || !hash.All(Uri.IsHexDigit)) return false;
+        if (!IsHex(hash, 64)) return false;
         if (hashEnd < 0) return true;
-        var suffix = name[hashEnd..];
-        return suffix == ".h" || suffix.EndsWith(".tmp", StringComparison.Ordinal);
+
+        var suffix = name.AsSpan(hashEnd);
+        if (suffix.SequenceEqual(".h")) return true;
+        if (suffix.StartsWith(".h.")) suffix = suffix[2..];
+        if (!suffix.EndsWith(".tmp") || suffix.Length != 1 + 32 + 4) return false;
+        return IsHex(suffix[1..^4], 32);
+    }
+
+    private static bool IsHex(ReadOnlySpan<char> value, int length)
+    {
+        if (value.Length != length) return false;
+        foreach (var c in value)
+            if (!Uri.IsHexDigit(c)) return false;
+        return true;
     }
 
     private static string Hash(string id)
@@ -759,8 +786,11 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         return DeleteCacheFile(path);
     }
 
-    private static SegmentCacheDeleteResult DeleteCacheFile(string path)
+    private static SegmentCacheDeleteResult DeleteCacheFile(string path) => DeleteCacheFile(path, out _);
+
+    private static SegmentCacheDeleteResult DeleteCacheFile(string path, out Exception? failure)
     {
+        failure = null;
         try
         {
             _ = File.GetAttributes(path);
@@ -773,6 +803,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            failure = exception;
             return SegmentCacheDeleteResult.Failed;
         }
     }
@@ -1023,7 +1054,16 @@ internal sealed class SegmentCachePurgeResult
 {
     public int Deleted { get; set; }
     public int Skipped { get; set; }
-    public int Failed { get; set; }
+    public int Failed { get; private set; }
+
+    /// <summary>First failure's exception type, without paths or messages.</summary>
+    public string? FailureReason { get; private set; }
+
+    public void RecordFailure(Exception? exception)
+    {
+        Failed++;
+        FailureReason ??= exception?.GetType().Name ?? "unknown";
+    }
 }
 
 internal enum SegmentCacheCommitResult
