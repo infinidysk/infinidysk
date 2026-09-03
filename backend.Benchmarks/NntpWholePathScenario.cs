@@ -22,6 +22,9 @@ internal sealed record NntpWholePathScenario(
     long? BandwidthBytesPerSecond,
     YencCrcValidationMode CrcValidation)
 {
+    public int HandshakeDelayMs { get; init; }
+    public int? ArticleBufferSize { get; init; }
+
     public static IReadOnlyList<NntpWholePathScenario> Quick =>
     [
         new("plain-transport-w4", NntpWholePathLayer.Transport, false, 8, 256 * 1024, 1, 4, 0, null, YencCrcValidationMode.Require),
@@ -44,6 +47,15 @@ internal sealed record NntpWholePathScenario(
         new("plain-http-like-w4", NntpWholePathLayer.HttpLike, false, 64, 4 * 1024 * 1024, 20, 4, 0, null, YencCrcValidationMode.Require),
     ];
 
+    public static IReadOnlyList<NntpWholePathScenario> Cold =>
+    [
+        new("cold-ramp-256mib-w4", NntpWholePathLayer.HttpLike, false, 342, 768 * 1024, 20, 4, 40, 6_000_000, YencCrcValidationMode.Require)
+        {
+            HandshakeDelayMs = 150,
+            ArticleBufferSize = 40,
+        },
+    ];
+
     public static IReadOnlyList<NntpWholePathScenario> ForSet(string set) =>
         set.Equals("quick", StringComparison.OrdinalIgnoreCase)
             ? Quick
@@ -51,7 +63,9 @@ internal sealed record NntpWholePathScenario(
                 ? Sustained
                 : set.Equals("profile", StringComparison.OrdinalIgnoreCase)
                     ? Profile
-                    : throw new ArgumentException(
-                        "--set must be 'quick', 'sustained', or 'profile'.",
-                        nameof(set));
+                    : set.Equals("cold", StringComparison.OrdinalIgnoreCase)
+                        ? Cold
+                        : throw new ArgumentException(
+                            "--set must be 'quick', 'sustained', 'profile', or 'cold'.",
+                            nameof(set));
 }

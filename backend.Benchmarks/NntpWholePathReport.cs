@@ -72,6 +72,7 @@ internal static class NntpWholePathReport
                     timing.ServerCpuSeconds,
                     timing.ClientCpuSecondsPerGb,
                     timing.ThroughputMbps,
+                    timing.TimeToPeakActiveMs,
                     timing.ClientAllocatedBytes,
                     timing.Gen0Collections,
                     timing.Gen1Collections,
@@ -80,6 +81,7 @@ internal static class NntpWholePathReport
             Console.WriteLine(
                 $"{scenario.Name} bytes={deterministic.ActualBytes} sha256_match={deterministic.Sha256Match} " +
                 $"body_commands={deterministic.BodyCommands} peak_connections={deterministic.PeakActiveConnections} " +
+                $"time_to_peak_active_ms={timing.TimeToPeakActiveMs:F3} " +
                 $"wall_s={timing.WallSeconds:F3} " +
                 $"throughput_mb_s={timing.ThroughputMbps:F3} client_cpu_s={timing.ClientCpuSeconds:F3}");
         }
@@ -95,11 +97,13 @@ internal static class NntpWholePathReport
                 corpus,
                 arguments.RoundTripDelayMs,
                 arguments.BandwidthBytesPerSecond,
+                arguments.HandshakeDelayMs,
                 arguments.MissingIds)
             .ConfigureAwait(false);
         Console.WriteLine($"READY {server.Port}");
         await Console.Out.FlushAsync().ConfigureAwait(false);
         await Console.In.ReadLineAsync().ConfigureAwait(false);
+        await server.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None).ConfigureAwait(false);
         await server.WriteSnapshotAsync(arguments.CountersPath, CancellationToken.None).ConfigureAwait(false);
     }
 
@@ -176,6 +180,7 @@ internal static class NntpWholePathReport
                     serverCpu,
                     clientCpu / (bytes.Count / 1_000_000_000d),
                     bytes.Count / elapsed / 1_000_000d,
+                    serverSnapshot.TimeToPeakActiveMs,
                     GC.GetTotalAllocatedBytes(precise: false) - allocatedBefore,
                     GC.CollectionCount(0) - collectionCounts[0],
                     GC.CollectionCount(1) - collectionCounts[1],
@@ -237,7 +242,7 @@ internal static class NntpWholePathReport
         await using var stream = MultiSegmentStream.Create(
             ids.AsMemory(),
             provider,
-            articleBufferSize: Math.Max(scenario.BatchWidth * 2, 4),
+            articleBufferSize: scenario.ArticleBufferSize ?? Math.Max(scenario.BatchWidth * 2, 4),
             estimatedSegmentSize: scenario.DecodedArticleBytes,
             failFastOnFirstSegment: true,
             usePipelinedBodyRequests: true,
@@ -354,6 +359,7 @@ internal static class NntpWholePathReport
         left.ServerCpuSeconds + right.ServerCpuSeconds,
         left.ClientCpuSecondsPerGb + right.ClientCpuSecondsPerGb,
         left.ThroughputMbps + right.ThroughputMbps,
+        left.TimeToPeakActiveMs + right.TimeToPeakActiveMs,
         left.ClientAllocatedBytes + right.ClientAllocatedBytes,
         left.Gen0Collections + right.Gen0Collections,
         left.Gen1Collections + right.Gen1Collections,
@@ -365,6 +371,7 @@ internal static class NntpWholePathReport
         value.ServerCpuSeconds / divisor,
         value.ClientCpuSecondsPerGb / divisor,
         value.ThroughputMbps / divisor,
+        value.TimeToPeakActiveMs / divisor,
         value.ClientAllocatedBytes / divisor,
         value.Gen0Collections / divisor,
         value.Gen1Collections / divisor,
@@ -411,6 +418,7 @@ internal sealed record LoopbackServerArguments(
     int DecodedArticleBytes,
     int Seed,
     int RoundTripDelayMs,
+    int HandshakeDelayMs,
     long? BandwidthBytesPerSecond,
     string CountersPath,
     IReadOnlyList<string> MissingIds);
@@ -454,6 +462,8 @@ internal sealed class LoopbackServerProcess : IAsyncDisposable
         startInfo.ArgumentList.Add(NntpWholePathReport.CorpusSeed.ToString());
         startInfo.ArgumentList.Add("--rtt-ms");
         startInfo.ArgumentList.Add(scenario.RoundTripDelayMs.ToString());
+        startInfo.ArgumentList.Add("--handshake-ms");
+        startInfo.ArgumentList.Add(scenario.HandshakeDelayMs.ToString());
         if (scenario.BandwidthBytesPerSecond is { } bandwidth)
         {
             startInfo.ArgumentList.Add("--bandwidth-bps");

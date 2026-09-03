@@ -65,12 +65,27 @@ are deterministic gates.
 HTTP-like sink copy. It is small enough to profile under a 2-core, roughly 8 GB
 container without the client/server loopback corpora exhausting the cgroup.
 
+`--set cold` uses 342 × 768 KiB articles (256.5 MiB), 20 connections, width 4,
+a 40-batch article window, 40 ms BODY-response delay, and a 6 MB/s per-connection
+bandwidth limit. It delays both the greeting and accepted AUTHINFO reply by
+150 ms and reports the time from the first accepted connection to the last
+increase in peak active connections. This models connection-ramp latency but
+does not exercise TLS handshakes, cipher CPU, provider authentication limits,
+or a real network RTT. Use it as a scheduled regression observation, not as a
+product throughput prediction.
+
 The committed sustained baseline begins with conservative bootstrap timing
 envelopes because its 20 GiB local run is intentionally deferred to the
 dedicated benchmark phase. Before treating its timing envelope as a regression
 signal, dispatch **Performance** with `rebaseline: true` on the intended
 runner; that action replaces only the observed timing envelopes while retaining
 the deterministic contract.
+
+The cold bootstrap baseline must likewise be re-established on the intended scheduled runner.
+Its wall time, throughput, CPU, allocations, and connection-ramp time are noisy;
+decoded bytes, SHA-256, BODY and response counts, callbacks, article-budget
+cleanup remain deterministic gates. Peak connection count remains a console
+diagnostic because thread scheduling can change it in short scenarios.
 
 The initial loopback scenarios are plaintext. Validated-TLS loopback is
 deliberately deferred: UsenetSharp accepts only platform-default trust or a

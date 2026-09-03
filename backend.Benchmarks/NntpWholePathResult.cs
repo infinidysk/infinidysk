@@ -24,6 +24,7 @@ internal sealed record NntpWholePathTiming(
     double ServerCpuSeconds,
     double ClientCpuSecondsPerGb,
     double ThroughputMbps,
+    double TimeToPeakActiveMs,
     long ClientAllocatedBytes,
     int Gen0Collections,
     int Gen1Collections,

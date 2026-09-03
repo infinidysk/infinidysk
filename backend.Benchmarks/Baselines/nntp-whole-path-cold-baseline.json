@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "report": "nntp-whole-path",
+  "meta": {
+    "commit": "unknown",
+    "generatedAt": "2026-09-03T17:26:44.879963+00:00",
+    "runner": "local"
+  },
+  "scenarios": {
+    "cold-ramp-256mib-w4": {
+      "deterministic": {
+        "expectedBytes": 268959744,
+        "actualBytes": 268959744,
+        "sha256Match": 1,
+        "bodyCommands": 342,
+        "responses": 342,
+        "retrievedCallbacks": 0,
+        "cancelledCallbacks": 0,
+        "notFoundCallbacks": 0,
+        "notRetrievedCallbacks": 0,
+        "finalArticleBudgetBytes": 0
+      },
+      "timing": {
+        "wallSeconds": {
+          "baseline": 7.446,
+          "envelope": 22.338,
+          "policy": "fail"
+        },
+        "clientCpuSeconds": {
+          "baseline": 1.308,
+          "envelope": 3.924,
+          "policy": "warn"
+        },
+        "serverCpuSeconds": {
+          "baseline": 1.331,
+          "envelope": 3.993,
+          "policy": "warn"
+        },
+        "clientCpuSecondsPerGb": {
+          "baseline": 4.865,
+          "envelope": 14.595,
+          "policy": "warn"
+        },
+        "throughputMbps": {
+          "baseline": 36.122,
+          "floor": 12.041,
+          "policy": "fail"
+        },
+        "timeToPeakActiveMs": {
+          "baseline": 5769.835,
+          "envelope": 17309.505,
+          "policy": "fail"
+        },
+        "clientAllocatedBytes": {
+          "baseline": 11655418.0,
+          "envelope": 34966254.0,
+          "policy": "warn"
+        },
+        "gen0Collections": {
+          "baseline": 1.0,
+          "envelope": 3.0,
+          "policy": "warn"
+        },
+        "gen1Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        },
+        "gen2Collections": {
+          "baseline": 0.0,
+          "envelope": 0.25,
+          "policy": "warn"
+        }
+      }
+    }
+  }
+}

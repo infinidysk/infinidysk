@@ -49,7 +49,7 @@ internal static class PerformanceReportCli
             if (arg == "--set")
             {
                 if (i + 1 >= args.Length)
-                    throw new ArgumentException("--set requires 'quick', 'sustained', or 'profile'.");
+                    throw new ArgumentException("--set requires 'quick', 'sustained', 'profile', or 'cold'.");
                 scenarioSet = args[i + 1];
                 i += 2;
                 continue;
@@ -111,6 +111,7 @@ internal static class PerformanceReportCli
         var articleBytes = 0;
         var seed = NntpWholePathReport.CorpusSeed;
         var roundTripDelayMs = 0;
+        var handshakeDelayMs = 0;
         long? bandwidthBytesPerSecond = null;
         string? countersPath = null;
         var missingIds = new List<string>();
@@ -134,6 +135,9 @@ internal static class PerformanceReportCli
                 case "--rtt-ms":
                     roundTripDelayMs = ParseNonNegativeInt(args[i], value);
                     break;
+                case "--handshake-ms":
+                    handshakeDelayMs = ParseNonNegativeInt(args[i], value);
+                    break;
                 case "--bandwidth-bps":
                     bandwidthBytesPerSecond = ParsePositiveLong(args[i], value);
                     break;
@@ -156,6 +160,7 @@ internal static class PerformanceReportCli
             articleBytes,
             seed,
             roundTripDelayMs,
+            handshakeDelayMs,
             bandwidthBytesPerSecond,
             countersPath,
             missingIds);

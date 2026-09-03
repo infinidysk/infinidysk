@@ -102,6 +102,7 @@ jobs:
           sab_status=0
           nntp_quick_status=0
           nntp_sustained_status=0
+          nntp_cold_status=0
           set +e
           run_with_retry streaming --streaming-report
           streaming_status=$?
@@ -130,8 +131,16 @@ jobs:
           if [ "${nntp_sustained_status}" -eq 2 ]; then
             exit 2
           fi
+          set +e
+          run_with_retry nntp-whole-path-cold --nntp-whole-path-report --set cold
+          nntp_cold_status=$?
+          set -e
+          if [ "${nntp_cold_status}" -eq 2 ]; then
+            exit 2
+          fi
           if [ "${streaming_status}" -ne 0 ] || [ "${sab_status}" -ne 0 ] || \
-             [ "${nntp_quick_status}" -ne 0 ] || [ "${nntp_sustained_status}" -ne 0 ]; then
+             [ "${nntp_quick_status}" -ne 0 ] || [ "${nntp_sustained_status}" -ne 0 ] || \
+             [ "${nntp_cold_status}" -ne 0 ]; then
             exit 1
           fi
 
@@ -221,6 +230,12 @@ jobs:
               performance-out/nntp-whole-path-sustained-2.json \
               performance-out/nntp-whole-path-sustained-3.json \
             --write-baseline backend.Benchmarks/Baselines/nntp-whole-path-sustained-baseline.json
+          python3 scripts/check-performance-baseline.py \
+            --candidates \
+              performance-out/nntp-whole-path-cold-1.json \
+              performance-out/nntp-whole-path-cold-2.json \
+              performance-out/nntp-whole-path-cold-3.json \
+            --write-baseline backend.Benchmarks/Baselines/nntp-whole-path-cold-baseline.json
 
           BODY_FILE="$(mktemp)"
           python3 - "${BODY_FILE}" "${RUN_URL}" <<'PY'
@@ -236,6 +251,7 @@ jobs:
               ("sab-api", "backend.Benchmarks/Baselines/sab-api-baseline.json"),
               ("nntp-whole-path", "backend.Benchmarks/Baselines/nntp-whole-path-baseline.json"),
               ("nntp-whole-path-sustained", "backend.Benchmarks/Baselines/nntp-whole-path-sustained-baseline.json"),
+              ("nntp-whole-path-cold", "backend.Benchmarks/Baselines/nntp-whole-path-cold-baseline.json"),
           ]
           lines = [
               "## Summary",
@@ -282,7 +298,8 @@ jobs:
           git add backend.Benchmarks/Baselines/streaming-baseline.json \
             backend.Benchmarks/Baselines/sab-api-baseline.json \
             backend.Benchmarks/Baselines/nntp-whole-path-baseline.json \
-            backend.Benchmarks/Baselines/nntp-whole-path-sustained-baseline.json
+            backend.Benchmarks/Baselines/nntp-whole-path-sustained-baseline.json \
+            backend.Benchmarks/Baselines/nntp-whole-path-cold-baseline.json
           if git diff --cached --quiet; then
             echo "Baselines are unchanged; no PR opened."
             exit 0

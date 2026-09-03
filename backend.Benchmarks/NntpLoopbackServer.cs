@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -19,9 +20,12 @@ internal sealed class NntpLoopbackServer : IAsyncDisposable
     private readonly HashSet<string> _missingIds;
     private readonly CancellationTokenSource _stop = new();
     private readonly ConcurrentBag<Task> _connectionTasks = [];
+    private readonly Lock _connectionTimingLock = new();
     private readonly Task _acceptTask;
     private int _activeConnections;
     private int _peakActiveConnections;
+    private long _firstAcceptedTimestamp;
+    private long _lastPeakTimestamp;
     private long _bodyCommands;
     private long _responses;
     private long _wireBytes;
@@ -47,21 +51,39 @@ internal sealed class NntpLoopbackServer : IAsyncDisposable
         NntpLoopbackCorpus corpus,
         int roundTripDelayMs = 0,
         long? bandwidthBytesPerSecond = null,
+        int handshakeDelayMs = 0,
         IEnumerable<string>? missingIds = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(roundTripDelayMs);
+        ArgumentOutOfRangeException.ThrowIfNegative(handshakeDelayMs);
         return Task.FromResult(new NntpLoopbackServer(
             corpus,
-            new LoopbackNetworkImpairment(roundTripDelayMs, bandwidthBytesPerSecond),
+            new LoopbackNetworkImpairment(roundTripDelayMs, bandwidthBytesPerSecond, handshakeDelayMs),
             missingIds));
     }
 
-    public NntpLoopbackServerSnapshot GetSnapshot() => new(
-        Volatile.Read(ref _bodyCommands),
-        Volatile.Read(ref _responses),
-        Volatile.Read(ref _activeConnections),
-        Volatile.Read(ref _peakActiveConnections),
-        Interlocked.Read(ref _wireBytes));
+    public NntpLoopbackServerSnapshot GetSnapshot()
+    {
+        long firstAccepted;
+        long lastPeak;
+        int peakActiveConnections;
+        lock (_connectionTimingLock)
+        {
+            firstAccepted = _firstAcceptedTimestamp;
+            lastPeak = _lastPeakTimestamp;
+            peakActiveConnections = _peakActiveConnections;
+        }
+        var timeToPeakActiveMs = firstAccepted == 0 || lastPeak < firstAccepted
+            ? 0
+            : Stopwatch.GetElapsedTime(firstAccepted, lastPeak).TotalMilliseconds;
+        return new NntpLoopbackServerSnapshot(
+            Volatile.Read(ref _bodyCommands),
+            Volatile.Read(ref _responses),
+            Volatile.Read(ref _activeConnections),
+            peakActiveConnections,
+            Interlocked.Read(ref _wireBytes),
+            timeToPeakActiveMs);
+    }
 
     public async Task RunUntilCancelledAsync(CancellationToken cancellationToken)
     {
@@ -88,6 +110,17 @@ internal sealed class NntpLoopbackServer : IAsyncDisposable
             .ConfigureAwait(false);
     }
 
+    public async Task WaitForIdleAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var started = Stopwatch.StartNew();
+        while (Volatile.Read(ref _activeConnections) != 0)
+        {
+            if (started.Elapsed >= timeout)
+                throw new TimeoutException("Loopback NNTP connections did not close before the snapshot timeout.");
+            await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private async Task AcceptLoopAsync()
     {
         try
@@ -111,14 +144,25 @@ internal sealed class NntpLoopbackServer : IAsyncDisposable
 
     private async Task ServeConnectionAsync(TcpClient client)
     {
+        var acceptedTimestamp = Stopwatch.GetTimestamp();
         var active = Interlocked.Increment(ref _activeConnections);
-        UpdateMaximum(ref _peakActiveConnections, active);
+        lock (_connectionTimingLock)
+        {
+            if (_firstAcceptedTimestamp == 0)
+                _firstAcceptedTimestamp = acceptedTimestamp;
+            if (active > _peakActiveConnections)
+            {
+                _peakActiveConnections = active;
+                _lastPeakTimestamp = acceptedTimestamp;
+            }
+        }
         try
         {
             using (client)
             await using (var stream = client.GetStream())
             using (var reader = new StreamReader(stream, Encoding.Latin1, leaveOpen: true))
             {
+                await _impairment.BeforeHandshakeStepAsync(_stop.Token).ConfigureAwait(false);
                 await WriteAsciiAsync(stream, "200 loopback benchmark ready\r\n", _stop.Token).ConfigureAwait(false);
                 while (!_stop.IsCancellationRequested)
                 {
@@ -132,6 +176,7 @@ internal sealed class NntpLoopbackServer : IAsyncDisposable
                     }
                     if (command.StartsWith("AUTHINFO ", StringComparison.OrdinalIgnoreCase))
                     {
+                        await _impairment.BeforeHandshakeStepAsync(_stop.Token).ConfigureAwait(false);
                         await WriteAsciiAsync(stream, "281 authentication accepted\r\n", _stop.Token).ConfigureAwait(false);
                         continue;
                     }
@@ -193,18 +238,6 @@ internal sealed class NntpLoopbackServer : IAsyncDisposable
     private static Task WriteAsciiAsync(Stream stream, string value, CancellationToken cancellationToken) =>
         stream.WriteAsync(Encoding.ASCII.GetBytes(value), cancellationToken).AsTask();
 
-    private static void UpdateMaximum(ref int maximum, int candidate)
-    {
-        var current = Volatile.Read(ref maximum);
-        while (candidate > current)
-        {
-            var observed = Interlocked.CompareExchange(ref maximum, candidate, current);
-            if (observed == current)
-                return;
-            current = observed;
-        }
-    }
-
     public async ValueTask DisposeAsync()
     {
         await _stop.CancelAsync().ConfigureAwait(false);
@@ -236,9 +269,17 @@ internal sealed class NntpLoopbackServer : IAsyncDisposable
     }
 }
 
-internal sealed class LoopbackNetworkImpairment(int roundTripDelayMs, long? bandwidthBytesPerSecond)
+internal sealed class LoopbackNetworkImpairment(
+    int roundTripDelayMs,
+    long? bandwidthBytesPerSecond,
+    int handshakeDelayMs)
 {
     private const int WriteChunkBytes = 64 * 1024;
+
+    public Task BeforeHandshakeStepAsync(CancellationToken cancellationToken) =>
+        handshakeDelayMs == 0
+            ? Task.CompletedTask
+            : Task.Delay(TimeSpan.FromMilliseconds(handshakeDelayMs), cancellationToken);
 
     public Task BeforeResponseAsync(CancellationToken cancellationToken) =>
         roundTripDelayMs == 0
@@ -266,4 +307,5 @@ internal sealed record NntpLoopbackServerSnapshot(
     long Responses,
     int ActiveConnections,
     int PeakActiveConnections,
-    long WireBytes);
+    long WireBytes,
+    double TimeToPeakActiveMs);
