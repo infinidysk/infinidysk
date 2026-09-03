@@ -71,13 +71,9 @@ export function createInitialDraft(
   config: Record<string, string>,
   managedEnv: ManagedEnvMap,
   ingestionMethods: string[],
-  setupRequired: boolean,
 ): SetupDraft {
   const strategy = normalizeStrategy(config["api.import-strategy"]);
   const next = applyStrategy(config, strategy, managedEnv);
-  if (setupRequired && strategy === "symlinks" && !("rclone.rc-enabled" in managedEnv)) {
-    next["rclone.rc-enabled"] = "true";
-  }
 
   return {
     config: next,
@@ -97,6 +93,10 @@ export function applyStrategy(
   }
   if (!("usenet.segment-cache.enabled" in managedEnv)) {
     next["usenet.segment-cache.enabled"] = strategy === "strm" ? "true" : "false";
+  }
+  // The wizard always proposes RC notifications for symlinks; the user must opt out explicitly.
+  if (strategy === "symlinks" && !("rclone.rc-enabled" in managedEnv)) {
+    next["rclone.rc-enabled"] = "true";
   }
   return next;
 }

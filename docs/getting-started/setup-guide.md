@@ -34,7 +34,10 @@ requires an InfiniDysk restart.
 The guide shows the recommended bounded sidecar flags, including
 `--vfs-cache-mode=full`, `--buffer-size=0`, a `50G` cache cap, and
 `--vfs-read-ahead=512M`. Rclone's defaults control read chunking.
-It also walks through rclone RC notifications:
+It also walks through rclone RC notifications. The wizard proposes RC
+notifications **on** whenever symlinks are selected, even if they are currently
+disabled; turn the toggle off explicitly if you do not want them. A value pinned
+by `NZBDAV_CONFIG__RCLONE__RC_ENABLED` is left unchanged.
 
 ```text
 --rc

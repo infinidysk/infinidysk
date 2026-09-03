@@ -124,7 +124,6 @@ export default function SetupRoute({ loaderData }: Route.ComponentProps) {
       loaderData.config,
       loaderData.managedEnv,
       loaderData.state.ingestionMethods,
-      loaderData.state.setupRequired,
     ),
   );
   const [attempted, setAttempted] = useState(false);

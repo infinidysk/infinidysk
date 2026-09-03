@@ -16,7 +16,7 @@ afterEach(cleanup);
 
 describe("setup wizard controls", () => {
   it("uses named radios for the exclusive library strategy", () => {
-    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"], false);
+    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"]);
     render(
       <ManagedEnvProvider value={{}}>
         <LibraryTypeStep draft={draft} managedEnv={{}} updateDraft={vi.fn()} />
@@ -36,7 +36,7 @@ describe("setup wizard controls", () => {
   });
 
   it("uses checkboxes for independent ingestion choices", () => {
-    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["search", "manual"], false);
+    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["search", "manual"]);
     render(
       <ManagedEnvProvider value={{}}>
         <IngestionStep draft={draft} updateDraft={vi.fn()} />
@@ -53,7 +53,7 @@ describe("setup wizard controls", () => {
   });
 
   it("uses a toggle and disabled fieldset for an off backup schedule", () => {
-    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"], false);
+    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"]);
     render(
       <ManagedEnvProvider value={{}}>
         <BackupStep draft={draft} updateDraft={vi.fn()} mainDatabaseProvider="sqlite" />
@@ -76,7 +76,7 @@ describe("setup wizard controls", () => {
   });
 
   it("shows rclone sidecar configuration expanded by default", () => {
-    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"], true);
+    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"]);
     render(
       <ManagedEnvProvider value={{}}>
         <PlaybackStep draft={draft} updateDraft={vi.fn()} />

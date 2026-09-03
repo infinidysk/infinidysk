@@ -27,6 +27,7 @@ describe("setup model", () => {
     const baseline = { ...SETUP_DEFAULT_CONFIG, "usenet.segment-cache.enabled": "true" };
     const managed = {
       "usenet.segment-cache.enabled": "NZBDAV_CONFIG__USENET__SEGMENT_CACHE__ENABLED",
+      "rclone.rc-enabled": "NZBDAV_CONFIG__RCLONE__RC_ENABLED",
     };
     const draft = applyStrategy(baseline, "symlinks", managed);
 
@@ -34,26 +35,48 @@ describe("setup model", () => {
     expect(changedSetupConfig(baseline, draft, managed)).toEqual({});
   });
 
-  it("defaults pending symlink setup to RC notifications on", () => {
-    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, [], true);
+  it("defaults symlink setup to RC notifications on regardless of stored config", () => {
+    const draft = createInitialDraft(
+      { ...SETUP_DEFAULT_CONFIG, "rclone.rc-enabled": "false" },
+      {},
+      [],
+    );
 
     expect(draft.config["rclone.rc-enabled"]).toBe("true");
     expect(draft.config["usenet.segment-cache.enabled"]).toBe("false");
   });
 
+  it("re-enables RC notifications when switching to symlinks but leaves STRM untouched", () => {
+    const strm = applyStrategy(
+      { ...SETUP_DEFAULT_CONFIG, "api.import-strategy": "strm", "rclone.rc-enabled": "false" },
+      "strm",
+      {},
+    );
+    expect(strm["rclone.rc-enabled"]).toBe("false");
+
+    expect(applyStrategy(strm, "symlinks", {})["rclone.rc-enabled"]).toBe("true");
+  });
+
+  it("keeps environment-managed RC notifications untouched", () => {
+    const managed = { "rclone.rc-enabled": "NZBDAV_CONFIG__RCLONE__RC_ENABLED" };
+    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, managed, []);
+
+    expect(draft.config["rclone.rc-enabled"]).toBe("false");
+  });
+
   it("includes selected branch defaults in the completion payload", () => {
-    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"], false);
+    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"]);
 
     expect(completionSetupConfig(SETUP_DEFAULT_CONFIG, draft, {})).toMatchObject({
       "rclone.mount-dir": "/mnt/nzbdav",
-      "rclone.rc-enabled": "false",
+      "rclone.rc-enabled": "true",
       "backup.schedule-enabled": "false",
       "media.library-dir": "",
     });
   });
 
   it("requires read-ahead confirmation and a valid RC host for symlinks", () => {
-    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"], true);
+    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"]);
 
     expect(validateSetupStep(1, draft, {}, false, "symlinks")).toEqual([
       "Enter a valid http(s) rclone RC host.",
@@ -71,7 +94,6 @@ describe("setup model", () => {
       },
       {},
       ["manual"],
-      false,
     );
 
     expect(validateSetupStep(4, draft, {}, false, "strm")).toEqual([]);
