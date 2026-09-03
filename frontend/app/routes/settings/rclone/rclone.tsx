@@ -3,7 +3,14 @@ import { Alert, Spinner, Tooltip } from "~/components/ui/feedback";
 import { ManagedSetting, SettingsCard, SettingsIntro, SettingsPage } from "~/components/ui";
 import { Input, Toggle } from "~/components/ui/form";
 import { Icon } from "~/components/ui/icon";
-import { type Dispatch, type SetStateAction, useState, useCallback, useEffect } from "react";
+import {
+  type Dispatch,
+  type SetStateAction,
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+} from "react";
 import { withUrlBase } from "~/utils/url-base";
 
 function formatTimeAgo(isoDate: string): string {
@@ -29,11 +36,14 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
   const [invalidationError, setInvalidationError] = useState<string | null>(null);
   const [invalidationErrorAt, setInvalidationErrorAt] = useState<string | null>(null);
   const [readAheadBytes, setReadAheadBytes] = useState<number | null>(null);
+  // Bumped whenever connection inputs change so in-flight test responses are discarded.
+  const testGeneration = useRef(0);
 
   const rcloneHost = config["rclone.host"];
   const rcloneUser = config["rclone.user"];
   const rclonePass = config["rclone.pass"];
   useEffect(() => {
+    testGeneration.current += 1;
     setConnectionState("idle");
     setTestError(null);
     setInvalidationError(null);
@@ -47,6 +57,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
       return;
     }
 
+    const generation = ++testGeneration.current;
     setConnectionState("testing");
     setTestError(null);
     setInvalidationError(null);
@@ -74,6 +85,10 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
         lastInvalidationErrorAt?: string | null;
       };
 
+      if (generation !== testGeneration.current) {
+        return;
+      }
+
       if (result.status && result.connected) {
         setConnectionState("success");
         setTestError(null);
@@ -85,6 +100,9 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
         setTestError(result.error || "Connection test failed");
       }
     } catch (error) {
+      if (generation !== testGeneration.current) {
+        return;
+      }
       setConnectionState("error");
       setTestError(error instanceof Error ? error.message : "Connection test failed");
     }
