@@ -2,6 +2,12 @@ name: Mutation
 
 on:
   pull_request:
+  push:
+    branches: [main]
+    paths:
+      - frontend/app/clients/**
+      - frontend/app/auth/**
+      - frontend/stryker.config.json
   workflow_dispatch:
     inputs:
       scope:
@@ -35,7 +41,7 @@ env:
 jobs:
   backend:
     name: Backend mutation
-    if: github.event_name != 'workflow_dispatch' || contains(fromJSON('["changed","queue","streams","usenet","range-strm","all"]'), github.event.inputs.scope)
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && contains(fromJSON('["changed","queue","streams","usenet","range-strm","all"]'), github.event.inputs.scope))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -136,11 +142,11 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          # Dependency bumps are covered by regular CI; only pilot sources and the Stryker config warrant a mutation run.
           if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- \
             frontend/app/clients \
             frontend/app/auth \
-            frontend/stryker.config.json \
-            frontend/package-lock.json; then
+            frontend/stryker.config.json; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "No frontend mutation-pilot files changed."
           else
@@ -169,14 +175,16 @@ jobs:
         uses: actions/cache@v6
         with:
           path: frontend/reports/stryker-incremental.json
-          key: stryker-js-${{ hashFiles('frontend/stryker.config.json', 'frontend/package-lock.json') }}-${{ github.ref_name }}
+          # PR caches are not readable from other PRs; the push-to-main run seeds the shared fallback.
+          key: stryker-js-${{ hashFiles('frontend/stryker.config.json') }}-${{ github.ref_name }}-${{ github.sha }}
           restore-keys: |
-            stryker-js-${{ hashFiles('frontend/stryker.config.json', 'frontend/package-lock.json') }}-
+            stryker-js-${{ hashFiles('frontend/stryker.config.json') }}-${{ github.ref_name }}-
+            stryker-js-${{ hashFiles('frontend/stryker.config.json') }}-main-
 
       - name: Run StrykerJS
         if: github.event_name != 'pull_request' || steps.mutate.outputs.skip != 'true'
         working-directory: frontend
-        run: npm exec stryker -- run
+        run: npm exec stryker -- run --concurrency 3
 
       - name: Compare mutation baseline
         if: github.event_name != 'pull_request' || steps.mutate.outputs.skip != 'true'
