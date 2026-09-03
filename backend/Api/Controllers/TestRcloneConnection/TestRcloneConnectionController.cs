@@ -24,7 +24,7 @@ public class TestRcloneConnectionController(
                 {
                     Status = true,
                     Connected = false,
-                    Error = result.Error,
+                    Error = DescribeConnectionError(request.Host, result.Error),
                 };
             }
 
@@ -59,5 +59,13 @@ public class TestRcloneConnectionController(
         var request = new TestRcloneConnectionRequest(HttpContext, configManager);
         var response = await TestRcloneConnection(request).ConfigureAwait(false);
         return Ok(response);
+    }
+
+    internal static string DescribeConnectionError(string host, string? error)
+    {
+        var reason = string.IsNullOrWhiteSpace(error) ? "Connection test failed" : error.TrimEnd('.');
+        return Uri.TryCreate(host, UriKind.Absolute, out var uri) && uri.IsLoopback
+            ? $"{reason}. Loopback addresses refer to the InfiniDysk container; use the rclone service name unless both processes share a network namespace."
+            : reason;
     }
 }

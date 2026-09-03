@@ -352,7 +352,10 @@ function SymlinkPlaybackStep({
                 Test
               </Button>
             </div>
-            <p className="validator-hint">Enter an absolute URL for the sidecar RC endpoint.</p>
+            <p className="validator-hint">
+              Enter an absolute URL using the rclone service name. Loopback only works in a shared
+              network namespace.
+            </p>
           </Field>
         </ManagedSetting>
         <ManagedSetting configKey="rclone.user">

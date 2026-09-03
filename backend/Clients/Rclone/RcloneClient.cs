@@ -332,6 +332,14 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
                 (int)HttpClient.Timeout.TotalSeconds);
             return new T { Success = false, Error = "Request timed out" };
         }
+        catch (JsonException ex)
+        {
+            Log.Warning(
+                "Rclone RC request to {Endpoint} returned an incompatible response. Reason: {Reason}",
+                endpoint,
+                ex.Message);
+            return new T { Success = false, Error = "Rclone returned an incompatible response" };
+        }
     }
 
     private Task<T> Post<T>(string endpoint, object? body, CancellationToken cancellationToken)

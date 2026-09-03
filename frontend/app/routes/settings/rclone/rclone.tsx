@@ -140,7 +140,7 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
                   id="rclone-host-input"
                   className="join-item min-w-0 flex-1"
                   aria-describedby="rclone-host-help"
-                  placeholder="http://localhost:5572"
+                  placeholder="http://nzbdav_rclone:5572"
                   value={config["rclone.host"]}
                   onChange={(e) => setNewConfig({ ...config, "rclone.host": e.target.value })}
                 />
@@ -188,7 +188,8 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
                 </Alert>
               )}
               <p className="text-[11px] leading-relaxed text-base-content/45" id="rclone-host-help">
-                The host address of the rclone RC API.
+                Use the rclone container&apos;s service name and RC port. Loopback addresses only
+                work when rclone shares InfiniDysk&apos;s network namespace.
               </p>
             </div>
           </ManagedSetting>
