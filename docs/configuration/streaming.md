@@ -33,7 +33,7 @@ is saturated.
 
 | Control | Config key | Default | Effect |
 |---------|------------|---------|--------|
-| Enable Segment Cache | `usenet.segment-cache.enabled` | on | Cache decoded segments on disk; restart required |
+| Enable Segment Cache | `usenet.segment-cache.enabled` | off (new installs) | Cache decoded segments on disk; restart required |
 | Cache path | `usenet.segment-cache.path` | `/config/segment-cache` | Segment-cache directory |
 | Maximum size (GB) | `usenet.segment-cache.max-gb` | `10` | Segment-cache size limit |
 | Streaming Segment Timeout | `usenet.streaming-segment-timeout-seconds` | `8` | Per-segment deadline, 2–40 seconds |
@@ -58,8 +58,14 @@ values apply on the next provider-config save or process restart.
 
 ### Segment-cache storage
 
-Segment Cache is **enabled by default**. It can improve repeated reads and seeks, but
-also writes decoded segments to the cache path. InfiniDysk does not automatically
+Segment Cache is **off by default on new installs**
+[since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }.
+Installs upgraded from an earlier release that never changed the setting keep the cache
+**on**: the upgrade pins the previous effective value so behaviour does not change
+silently. Review it under **Settings → Streaming** and turn it off if you do not need it.
+
+When enabled, the cache can improve repeated reads and seeks, but it also writes decoded
+segments to the cache path. InfiniDysk does not automatically
 classify that storage, so verify that `/config/segment-cache` (or your configured
 path) is local SSD/NVMe or other storage that can safely absorb the extra writes.
 Disable the cache for slow disks, network mounts, or flash storage with limited

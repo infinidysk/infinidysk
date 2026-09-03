@@ -1410,8 +1410,9 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 
     public bool IsSegmentCacheEnabled()
     {
+        // Off by default for new installs; a data migration pins "true" for pre-existing installs.
         var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetSegmentCacheEnabled));
-        return v == null || bool.Parse(v);
+        return v != null && bool.Parse(v);
     }
 
     public string GetSegmentCachePath()

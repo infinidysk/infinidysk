@@ -91,7 +91,8 @@ public sealed class SetupWizardServiceTests : IDisposable
         Assert.Equal("symlinks", persisted[ConfigKeys.ApiImportStrategy]);
         Assert.Equal("false", persisted[ConfigKeys.UsenetSegmentCacheEnabled]);
         Assert.False(configManager.IsSegmentCacheEnabled());
-        Assert.True(result.RestartRequired);
+        // Fresh installs already default the cache off, so symlinks needs no restart.
+        Assert.False(result.RestartRequired);
 
         var state = await context.SetupWizardStates.SingleAsync();
         Assert.Equal(SetupWizardDisposition.Completed, state.Disposition);

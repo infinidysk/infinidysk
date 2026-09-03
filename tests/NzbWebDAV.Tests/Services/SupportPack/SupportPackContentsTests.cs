@@ -530,7 +530,7 @@ public sealed class SupportPackContentsTests : IDisposable
         Assert.Equal(40, effective.RootElement.GetProperty("streaming").GetProperty("articleBufferSize").GetInt32());
         Assert.True(effective.RootElement.GetProperty("streaming").GetProperty("pipelinedBodyRequests").GetBoolean());
         Assert.Equal(4, effective.RootElement.GetProperty("streaming").GetProperty("bodyBatchWidth").GetInt32());
-        Assert.True(effective.RootElement.GetProperty("segmentCache").GetProperty("enabled").GetBoolean());
+        Assert.False(effective.RootElement.GetProperty("segmentCache").GetProperty("enabled").GetBoolean());
         Assert.Equal(
             "default",
             effective.RootElement.GetProperty("source").GetProperty("streaming").GetProperty("articleBufferSize").GetString());
@@ -640,6 +640,9 @@ public sealed class SupportPackContentsTests : IDisposable
             new ConfigItem { ConfigName = ConfigKeys.WebdavPass, ConfigValue = "schema" },
             new ConfigItem { ConfigName = ConfigKeys.RclonePass, ConfigValue = "enabled" },
             new ConfigItem { ConfigName = ConfigKeys.WatchtowerProfileToken, ConfigValue = "203.0.113.50" },
+            // Explicitly on so the boolean "enabled" property stays true and proves the
+            // redactor does not rewrite it when a secret value happens to equal "enabled".
+            new ConfigItem { ConfigName = ConfigKeys.UsenetSegmentCacheEnabled, ConfigValue = "true" },
         ]);
 
         var entries = await ReadPackEntriesAsync(

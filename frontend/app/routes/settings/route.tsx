@@ -103,7 +103,7 @@ const defaultConfig = {
   "usenet.reconnect-delay-milliseconds": "500",
   "usenet.pipelined-body-requests": "true",
   "usenet.streaming-body-batch-width": "",
-  "usenet.segment-cache.enabled": "true",
+  "usenet.segment-cache.enabled": "false",
   "usenet.segment-cache.path": "/config/segment-cache",
   "usenet.segment-cache.max-gb": "10",
   "usenet.shared-streams.enabled": "true",

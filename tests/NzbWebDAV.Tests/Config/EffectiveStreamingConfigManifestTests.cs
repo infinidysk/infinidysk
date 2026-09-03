@@ -30,7 +30,7 @@ public sealed class EffectiveStreamingConfigManifestTests
         Assert.True(document.Connections.WarmConnectionsEnabled);
         Assert.Equal(config.GetInFlightArticleBudgetBytes(), document.Memory.InFlightArticleBudgetBytes);
         Assert.True(document.Memory.SharedStreamsEnabled);
-        Assert.True(document.SegmentCache.Enabled);
+        Assert.False(document.SegmentCache.Enabled);
         Assert.Equal(10L * 1024 * 1024 * 1024, document.SegmentCache.MaxBytes);
         Assert.True(document.Repair.BackgroundEnabled);
         Assert.True(document.Repair.Par2Enabled);

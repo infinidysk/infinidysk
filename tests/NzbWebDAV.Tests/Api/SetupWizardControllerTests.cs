@@ -62,7 +62,8 @@ public sealed class SetupWizardControllerTests
             await completion.Content.ReadAsStreamAsync());
         Assert.Equal(HttpStatusCode.OK, completion.StatusCode);
         Assert.True(completionJson.RootElement.GetProperty("status").GetBoolean());
-        Assert.True(completionJson.RootElement.GetProperty("restartRequired").GetBoolean());
+        // Fresh installs already default the cache off, so symlinks needs no restart.
+        Assert.False(completionJson.RootElement.GetProperty("restartRequired").GetBoolean());
 
         using var configForm = new MultipartFormDataContent
         {

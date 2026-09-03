@@ -28,7 +28,7 @@ export const SETUP_DEFAULT_CONFIG: Record<string, string> = {
   "api.completed-downloads-dir": "/data/completed-downloads",
   "api.categories": "movies,tv",
   "api.key": "",
-  "usenet.segment-cache.enabled": "true",
+  "usenet.segment-cache.enabled": "false",
   "rclone.mount-dir": "/mnt/nzbdav",
   "rclone.rc-enabled": "false",
   "rclone.host": "",

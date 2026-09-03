@@ -128,22 +128,22 @@ public class StreamingPriorityConfigTests
     }
 
     [Fact]
-    public void IsSegmentCacheEnabled_DefaultsOnUntilExplicitlyDisabled()
+    public void IsSegmentCacheEnabled_DefaultsOffUntilExplicitlyEnabled()
     {
         var config = new ConfigManager();
 
-        Assert.True(config.IsSegmentCacheEnabled());
+        Assert.False(config.IsSegmentCacheEnabled());
 
         config.UpdateValues(
         [
             new ConfigItem
             {
                 ConfigName = ConfigKeys.UsenetSegmentCacheEnabled,
-                ConfigValue = "false",
+                ConfigValue = "true",
             },
         ]);
 
-        Assert.False(config.IsSegmentCacheEnabled());
+        Assert.True(config.IsSegmentCacheEnabled());
     }
 
     [Fact]
