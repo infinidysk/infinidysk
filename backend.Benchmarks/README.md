@@ -66,7 +66,7 @@ HTTP-like sink copy. It is small enough to profile under a 2-core, roughly 8 GB
 container without the client/server loopback corpora exhausting the cgroup.
 
 `--set cold` uses 342 × 768 KiB articles (256.5 MiB), 20 connections, width 4,
-a 40-batch article window, 40 ms BODY-response delay, and a 6 MB/s per-connection
+a 40-article window, 40 ms BODY-response delay, and a 6 MB/s per-connection
 bandwidth limit. It delays both the greeting and accepted AUTHINFO reply by
 150 ms and reports the time from the first accepted connection to the last
 increase in peak active connections. This models connection-ramp latency but
