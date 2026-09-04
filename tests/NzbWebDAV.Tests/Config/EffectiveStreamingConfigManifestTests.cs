@@ -28,7 +28,7 @@ public sealed class EffectiveStreamingConfigManifestTests
         Assert.Equal(config.GetMaxDownloadConnections(), document.Connections.EffectiveTotalDownloadLimit);
         Assert.False(document.Connections.PerStreamModeEnabled);
         Assert.True(document.Connections.WarmConnectionsEnabled);
-        Assert.False(document.Connections.ReadStartWarmupEnabled);
+        Assert.True(document.Connections.ReadStartWarmupEnabled);
         Assert.Equal(config.GetInFlightArticleBudgetBytes(), document.Memory.InFlightArticleBudgetBytes);
         Assert.True(document.Memory.SharedStreamsEnabled);
         Assert.False(document.SegmentCache.Enabled);

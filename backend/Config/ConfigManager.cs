@@ -1208,7 +1208,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     public bool IsReadStartWarmupEnabled()
     {
         var value = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetReadStartWarmupEnabled));
-        return value is not null && bool.TryParse(value, out var enabled) && enabled;
+        return value is null || (bool.TryParse(value, out var enabled) && enabled);
     }
 
     public bool IsSharedStreamsEnabled()

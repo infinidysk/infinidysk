@@ -7,11 +7,11 @@ namespace NzbWebDAV.Tests.Config;
 public sealed class ReadStartWarmupConfigTests
 {
     [Fact]
-    public void Default_IsDisabled()
+    public void Default_IsEnabled()
     {
         var config = new ConfigManager();
 
-        Assert.False(config.IsReadStartWarmupEnabled());
+        Assert.True(config.IsReadStartWarmupEnabled());
         Assert.Equal(
             EffectiveConfigSource.Default,
             config.GetEffectiveSource(ConfigKeys.UsenetReadStartWarmupEnabled));
@@ -26,15 +26,15 @@ public sealed class ReadStartWarmupConfigTests
             new ConfigItem
             {
                 ConfigName = ConfigKeys.UsenetReadStartWarmupEnabled,
-                ConfigValue = "false",
+                ConfigValue = "true",
             },
         ]);
         config.ApplyEnvironmentOverlay(ConfigEnvironmentOverlay.LoadFromEnvironment(new Hashtable
         {
-            ["NZBDAV_CONFIG__USENET__READ_START_WARMUP__ENABLED"] = "true",
+            ["NZBDAV_CONFIG__USENET__READ_START_WARMUP__ENABLED"] = "false",
         }));
 
-        Assert.True(config.IsReadStartWarmupEnabled());
+        Assert.False(config.IsReadStartWarmupEnabled());
         Assert.True(config.IsEnvironmentManaged(ConfigKeys.UsenetReadStartWarmupEnabled));
         Assert.Equal(
             EffectiveConfigSource.Environment,
