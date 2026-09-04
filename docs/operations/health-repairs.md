@@ -38,6 +38,13 @@ The list follows Health-check retention and is cleared with the Health-check sta
 **Settings → Maintenance**. It records automatic health actions only — deleting items manually or
 through the API does not add a repair-history row.
 
+Use **Re-check action needed** [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
+in the Health history header to queue another check for every live file whose latest result still
+requires action. Each file is queued once, including files still present in SAB history; older
+**Action needed** events that were superseded by a successful check are ignored. Existing history
+rows remain available as an audit trail. Re-checks pause while downloads are processing and follow
+the configured health-check and repair schedules.
+
 ## Manual checks
 
 Use the Health UI / repairs flows in the app to inspect failures. Known transport issues should appear as clear warnings in logs rather than opaque crashes — see [Logs](logs-crash-dumps.md).
