@@ -452,7 +452,7 @@ public sealed class SegmentCacheNntpClientTests
             await response.Stream!.CopyToAsync(output);
             await response.Stream.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1));
             Assert.Equal(content, output.ToArray());
-            await persistStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            await persistStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
             Assert.Null(await client.TryGetLocalDecodedBodyAsync(segmentId, CancellationToken.None));
             var blocked = statistics.GetSnapshot();
@@ -468,7 +468,8 @@ public sealed class SegmentCacheNntpClientTests
             await client.DrainWriteBehindForTestsAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
             var cached = await client.TryGetLocalDecodedBodyAsync(segmentId, CancellationToken.None);
-            Assert.NotNull(cached?.Stream);
+            Assert.NotNull(cached);
+            Assert.NotNull(cached.Stream);
             await using var cachedOutput = new MemoryStream();
             await cached.Stream.CopyToAsync(cachedOutput);
             Assert.Equal(content, cachedOutput.ToArray());

@@ -236,6 +236,7 @@ internal sealed class SegmentCacheWriteBehind : IDisposable
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested)
         {
+            // Worker stop is expected; the finally block releases all queued reservations.
         }
         finally
         {

@@ -75,7 +75,6 @@ public sealed class MemoryComponentSnapshotBuilder(
         var bufferPool = BufferPoolDiagnostics.Shared.Snapshot();
         var segmentPool = (PooledBufferStream.DefaultPool as SegmentBufferPool)?.MemorySnapshot();
         var reads = concurrentReadTracker.Snapshot();
-        var cache = segmentCacheStatistics.GetSnapshot();
         var writer = segmentCacheStatistics.GetWriterSnapshot();
 
         SegmentBufferMemorySnapshot? segmentBuffers = segmentPool is { } pool
@@ -107,8 +106,8 @@ public sealed class MemoryComponentSnapshotBuilder(
         var cacheWriter = new SegmentCacheWriterMemorySnapshot(
             Supported: writer.HasValue,
             WriteBudgetBytes: writer?.BudgetBytes,
-            QueuedWriteBytes: cache.QueuedWriteBytes,
-            PeakQueuedWriteBytes: cache.PeakQueuedWriteBytes,
+            QueuedWriteBytes: writer?.ReservedBytes,
+            PeakQueuedWriteBytes: writer?.PeakReservedBytes,
             QueuedJobs: writer?.QueuedJobs,
             ActiveJobs: writer?.ActiveJobs,
             CapacitySkipsTotal: writer?.CapacitySkips);
