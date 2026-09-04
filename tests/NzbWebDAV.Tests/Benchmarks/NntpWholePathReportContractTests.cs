@@ -172,4 +172,12 @@ public sealed class NntpWholePathReportContractTests
         await Assert.ThrowsAsync<ArgumentException>(() =>
             PerformanceReportCli.TryHandleAsync(["--set", "sustained", "--unexpected"]));
     }
+
+    [Fact]
+    public async Task Cli_RejectsCopyChunkRepetitionsForOtherReports()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            PerformanceReportCli.TryHandleAsync(
+                ["--nntp-whole-path-report", "--repetitions", "3"]));
+    }
 }

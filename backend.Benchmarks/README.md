@@ -65,6 +65,23 @@ are deterministic gates.
 HTTP-like sink copy. It is small enough to profile under a 2-core, roughly 8 GB
 container without the client/server loopback corpora exhausting the cgroup.
 
+To compare HTTP response-copy chunks without changing production behavior, run:
+
+```bash
+dotnet run --project backend.Benchmarks -c Release -- \
+  --http-copy-chunk-report --repetitions 5 --json /tmp/http-copy-chunks.json
+```
+
+The experiment uses the 256 MiB profile scenario and rotates 64, 128, and
+256 KiB candidates across repetitions. It hash-verifies each candidate before
+timing, then records every sample plus median and median absolute deviation for
+wall time, throughput, client CPU, allocations, and time to first byte. On
+macOS, set `RAPIDYENC_LIBRARY_PATH` as described above.
+
+This is a localhost NNTP and HTTP-like sink measurement, not an authoritative
+WebDAV deployment result. Use it to select candidates for direct-backend testing
+on the target deployment; do not infer a universal throughput gain from it.
+
 `--set cold` compares demand-only and read-start-prewarmed scenarios using
 342 × 768 KiB articles (256.5 MiB), 20 connections, width 4,
 a 40-article window, 40 ms BODY-response delay, and a 6 MB/s per-connection

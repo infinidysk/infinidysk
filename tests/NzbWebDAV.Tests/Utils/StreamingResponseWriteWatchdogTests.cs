@@ -7,6 +7,12 @@ namespace NzbWebDAV.Tests.Utils;
 public class StreamingResponseWriteWatchdogTests
 {
     [Fact]
+    public void CopyChunkBytes_RemainsSixtyFourKiB()
+    {
+        Assert.Equal(64 * 1024, StreamingResponseWriteWatchdog.CopyChunkBytes);
+    }
+
+    [Fact]
     public async Task ObserveWrite_TrickleUnderContention_SignalsReclaim()
     {
         var budget = new InFlightArticleBudget(1_000);

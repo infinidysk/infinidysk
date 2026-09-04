@@ -19,6 +19,7 @@ internal static class NntpWholePathReport
 {
     internal const string ReportName = "nntp-whole-path";
     internal const int CorpusSeed = 1025;
+    internal const int DefaultResponseCopyChunkBytes = 64 * 1024;
     private const int TimedRepetitions = 3;
 
     public static async Task RunAsync(
@@ -37,15 +38,27 @@ internal static class NntpWholePathReport
         foreach (var scenario in selected)
         {
             // Tiered JIT and native dispatch setup are intentionally discarded.
-            await ExecuteAsync(scenario, verifyHash: false, httpLike: scenario.Layer == NntpWholePathLayer.HttpLike)
+            await ExecuteAsync(
+                    scenario,
+                    verifyHash: false,
+                    httpLike: scenario.Layer == NntpWholePathLayer.HttpLike,
+                    DefaultResponseCopyChunkBytes)
                 .ConfigureAwait(false);
-            var correctness = await ExecuteAsync(scenario, verifyHash: true, httpLike: scenario.Layer == NntpWholePathLayer.HttpLike)
+            var correctness = await ExecuteAsync(
+                    scenario,
+                    verifyHash: true,
+                    httpLike: scenario.Layer == NntpWholePathLayer.HttpLike,
+                    DefaultResponseCopyChunkBytes)
                 .ConfigureAwait(false);
 
             NntpWholePathTiming? total = null;
             for (var repetition = 0; repetition < TimedRepetitions; repetition++)
             {
-                var timed = await ExecuteAsync(scenario, verifyHash: false, httpLike: scenario.Layer == NntpWholePathLayer.HttpLike)
+                var timed = await ExecuteAsync(
+                    scenario,
+                    verifyHash: false,
+                    httpLike: scenario.Layer == NntpWholePathLayer.HttpLike,
+                    DefaultResponseCopyChunkBytes)
                     .ConfigureAwait(false);
                 total = total is null ? timed.Timing : Add(total, timed.Timing);
             }
@@ -107,10 +120,17 @@ internal static class NntpWholePathReport
         await server.WriteSnapshotAsync(arguments.CountersPath, CancellationToken.None).ConfigureAwait(false);
     }
 
+    internal static Task<NntpWholePathResult> ExecuteForCopyChunkAsync(
+        NntpWholePathScenario scenario,
+        bool verifyHash,
+        int responseCopyChunkBytes) =>
+        ExecuteAsync(scenario, verifyHash, httpLike: true, responseCopyChunkBytes);
+
     private static async Task<NntpWholePathResult> ExecuteAsync(
         NntpWholePathScenario scenario,
         bool verifyHash,
-        bool httpLike)
+        bool httpLike,
+        int responseCopyChunkBytes)
     {
         if (scenario.UseTls)
             throw new NotSupportedException(
@@ -133,6 +153,7 @@ internal static class NntpWholePathReport
             var cpuBefore = process.TotalProcessorTime;
             var allocatedBefore = GC.GetTotalAllocatedBytes(precise: false);
             var collectionCounts = new[] { GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2) };
+            var startedTimestamp = Stopwatch.GetTimestamp();
             var started = Stopwatch.StartNew();
             var bytes = scenario.Layer switch
             {
@@ -142,7 +163,8 @@ internal static class NntpWholePathReport
                     scenario, server.Port, corpus, callbackCounts, verifyHash).ConfigureAwait(false),
                 NntpWholePathLayer.BufferedStream or NntpWholePathLayer.HttpLike =>
                     await ReadBufferedStreamAsync(
-                        scenario, server.Port, corpus, callbackCounts, budget, verifyHash, httpLike)
+                        scenario, server.Port, corpus, callbackCounts, budget, verifyHash, httpLike,
+                        responseCopyChunkBytes, startedTimestamp)
                     .ConfigureAwait(false),
                 _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
             };
@@ -180,6 +202,7 @@ internal static class NntpWholePathReport
                     serverCpu,
                     clientCpu / (bytes.Count / 1_000_000_000d),
                     bytes.Count / elapsed / 1_000_000d,
+                    bytes.TimeToFirstByte?.TotalMilliseconds ?? 0,
                     serverSnapshot.TimeToPeakActiveMs,
                     GC.GetTotalAllocatedBytes(precise: false) - allocatedBefore,
                     GC.CollectionCount(0) - collectionCounts[0],
@@ -234,7 +257,9 @@ internal static class NntpWholePathReport
         CallbackCounts counts,
         InFlightArticleBudget budget,
         bool verifyHash,
-        bool httpLike)
+        bool httpLike,
+        int responseCopyChunkBytes,
+        long copyStartedTimestamp)
     {
         using var provider = CreateProvider(scenario, port);
         var ids = corpus.Articles.Select(article => article.SegmentId).ToArray();
@@ -261,17 +286,18 @@ internal static class NntpWholePathReport
             inFlightArticleBudget: budget,
             bodyPipelineBatchWidth: scenario.BatchWidth);
 
-        if (verifyHash)
-            return await CopyAndHashAsync(stream, CancellationToken.None).ConfigureAwait(false);
         if (httpLike)
         {
-            var sink = new HttpLikeCountingSink();
-            await sink.CopyFromAsync(stream, CancellationToken.None).ConfigureAwait(false);
-            return new ReadResult(sink.BytesWritten, null);
+            var sink = new HttpLikeCountingSink(responseCopyChunkBytes, copyStartedTimestamp);
+            var sha256 = await sink.CopyFromAsync(stream, verifyHash, CancellationToken.None)
+                .ConfigureAwait(false);
+            return new ReadResult(sink.BytesWritten, sha256, sink.TimeToFirstByte);
         }
+        if (verifyHash)
+            return await CopyAndHashAsync(stream, CancellationToken.None).ConfigureAwait(false);
 
         await stream.CopyToAsync(Stream.Null, CancellationToken.None).ConfigureAwait(false);
-        return new ReadResult(corpus.ExpectedBytes, null);
+        return new ReadResult(corpus.ExpectedBytes, null, null);
     }
 
 #pragma warning disable CA2000 // MultiProviderNntpClient owns and disposes its MultiConnectionNntpClient and pool.
@@ -329,7 +355,10 @@ internal static class NntpWholePathReport
             }
             await batch.Completion.ConfigureAwait(false);
         }
-        return new ReadResult(total, hash is null ? null : Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant());
+        return new ReadResult(
+            total,
+            hash is null ? null : Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant(),
+            null);
     }
 
     private static async Task<ReadResult> CopyAndHashAsync(Stream stream, CancellationToken cancellationToken)
@@ -345,7 +374,10 @@ internal static class NntpWholePathReport
             hash.AppendData(buffer, 0, read);
             total += read;
         }
-        return new ReadResult(total, Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant());
+        return new ReadResult(
+            total,
+            Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant(),
+            null);
     }
 
     private static async Task<int> DrainAsync(Stream stream, IncrementalHash? hash, CancellationToken cancellationToken)
@@ -368,6 +400,7 @@ internal static class NntpWholePathReport
         left.ServerCpuSeconds + right.ServerCpuSeconds,
         left.ClientCpuSecondsPerGb + right.ClientCpuSecondsPerGb,
         left.ThroughputMbps + right.ThroughputMbps,
+        left.FirstByteMs + right.FirstByteMs,
         left.TimeToPeakActiveMs + right.TimeToPeakActiveMs,
         left.ClientAllocatedBytes + right.ClientAllocatedBytes,
         left.Gen0Collections + right.Gen0Collections,
@@ -380,13 +413,14 @@ internal static class NntpWholePathReport
         value.ServerCpuSeconds / divisor,
         value.ClientCpuSecondsPerGb / divisor,
         value.ThroughputMbps / divisor,
+        value.FirstByteMs / divisor,
         value.TimeToPeakActiveMs / divisor,
         value.ClientAllocatedBytes / divisor,
         value.Gen0Collections / divisor,
         value.Gen1Collections / divisor,
         value.Gen2Collections / divisor);
 
-    private readonly record struct ReadResult(long Count, string? Sha256);
+    private readonly record struct ReadResult(long Count, string? Sha256, TimeSpan? TimeToFirstByte);
 
     private sealed class CallbackCounts
     {

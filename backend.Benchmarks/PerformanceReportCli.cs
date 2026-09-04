@@ -11,11 +11,12 @@ internal static class PerformanceReportCli
         string? jsonPath = null;
         string scenarioSet = "quick";
         string? scenarioName = null;
+        int? repetitions = null;
         LoopbackServerArguments? serverArguments = null;
         for (var i = 0; i < args.Length;)
         {
             var arg = args[i];
-            if (arg is "--streaming-report" or "--sab-api-report" or "--nntp-whole-path-report")
+            if (arg is "--streaming-report" or "--sab-api-report" or "--nntp-whole-path-report" or "--http-copy-chunk-report")
             {
                 if (report is not null)
                     throw new ArgumentException("Multiple performance reports in one invocation.");
@@ -23,7 +24,8 @@ internal static class PerformanceReportCli
                 {
                     "--streaming-report" => "streaming",
                     "--sab-api-report" => "sab-api",
-                    _ => "nntp-whole-path",
+                    "--nntp-whole-path-report" => "nntp-whole-path",
+                    _ => "http-copy-chunk",
                 };
                 i++;
                 continue;
@@ -64,7 +66,17 @@ internal static class PerformanceReportCli
                 continue;
             }
 
-            if (report is not null || jsonPath is not null || scenarioName is not null || scenarioSet != "quick")
+            if (arg == "--repetitions")
+            {
+                if (i + 1 >= args.Length)
+                    throw new ArgumentException("--repetitions requires a positive integer.");
+                repetitions = ParsePositiveInt(args[i], args[i + 1]);
+                i += 2;
+                continue;
+            }
+
+            if (report is not null || jsonPath is not null || scenarioName is not null ||
+                repetitions is not null || scenarioSet != "quick")
                 throw new ArgumentException($"Unexpected argument '{arg}'.");
             return false;
         }
@@ -82,6 +94,8 @@ internal static class PerformanceReportCli
                     "--json requires --streaming-report, --sab-api-report, or --nntp-whole-path-report.");
             if (scenarioName is not null || scenarioSet != "quick")
                 throw new ArgumentException("--set and --scenario require --nntp-whole-path-report.");
+            if (repetitions is not null)
+                throw new ArgumentException("--repetitions requires --http-copy-chunk-report.");
             return false;
         }
 
@@ -93,11 +107,22 @@ internal static class PerformanceReportCli
 
         if (report == "nntp-whole-path")
         {
+            if (repetitions is not null)
+                throw new ArgumentException("--repetitions requires --http-copy-chunk-report.");
             await NntpWholePathReport.RunAsync(jsonPath, scenarioSet, scenarioName).ConfigureAwait(false);
             return true;
         }
 
-        if (scenarioName is not null || scenarioSet != "quick")
+        if (report == "http-copy-chunk")
+        {
+            if (scenarioSet != "quick")
+                throw new ArgumentException("--set is not used with --http-copy-chunk-report.");
+            await HttpResponseCopyChunkReport.RunAsync(jsonPath, scenarioName, repetitions ?? 5)
+                .ConfigureAwait(false);
+            return true;
+        }
+
+        if (scenarioName is not null || repetitions is not null || scenarioSet != "quick")
             throw new ArgumentException("--set and --scenario require --nntp-whole-path-report.");
         if (jsonPath is null)
             throw new ArgumentException("--sab-api-report requires --json <path>.");
