@@ -5,6 +5,7 @@ public class ProviderMinute
     public long Minute { get; set; }
     public string Provider { get; set; } = null!;
     public long Articles { get; set; }
+    public long ClientArticles { get; set; }
     public long BytesFetched { get; set; }
     public long Misses { get; set; }
     public long Errors { get; set; }

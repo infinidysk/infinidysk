@@ -6,6 +6,7 @@ import { formatBytes, formatNumber } from "../../utils/format";
 export type ThroughputChartProps = {
   points: ThroughputPoint[];
   totalArticles: number;
+  totalClientArticles: number;
   totalMisses: number;
   totalErrors: number;
   totalBytesServed: number;
@@ -21,6 +22,7 @@ const BOT_PAD = 4;
 export function ThroughputChart({
   points,
   totalArticles,
+  totalClientArticles,
   totalMisses,
   totalErrors,
   totalBytesServed,
@@ -40,20 +42,25 @@ export function ThroughputChart({
     setKeyboardBucket(null);
   }, [window]);
 
-  const { articlesPath, errorsPath, maxArticles, maxNetworkRate, xPercent, yPercent } =
+  const { clientArticlesPath, appArticlesPath, errorsPath, maxArticles, maxClientArticles, maxAppArticles, maxNetworkRate, xPercent, yPercent } =
     useMemo(() => {
       if (points.length === 0) {
         return {
-          articlesPath: "",
+          clientArticlesPath: "",
+          appArticlesPath: "",
           errorsPath: "",
           maxArticles: 0,
+          maxClientArticles: 0,
+          maxAppArticles: 0,
           maxNetworkRate: 0,
           xPercent: (_: number) => 0,
           yPercent: (_: number) => 0,
         };
       }
-      const peakArticles = Math.max(0, ...points.map((p) => p.articles));
-      const scaleMax = Math.max(1, peakArticles);
+      const peakClientArticles = Math.max(0, ...points.map(clientArticles));
+      const peakAppArticles = Math.max(0, ...points.map(appArticles));
+      const peakArticles = Math.max(peakClientArticles, peakAppArticles);
+      const scaleMax = Math.max(1, peakArticles, ...points.map((p) => p.errors));
       const maxRate = Math.max(0, ...points.map((p) => (p.bytesFetched ?? 0) / bucketSeconds));
       const xStep = points.length > 1 ? VB_W / (points.length - 1) : 0;
       const innerH = VB_H - TOP_PAD - BOT_PAD;
@@ -64,9 +71,12 @@ export function ThroughputChart({
         100 - ((v / scaleMax) * (1 - (TOP_PAD + BOT_PAD) / VB_H) * 100 + (BOT_PAD / VB_H) * 100);
 
       return {
-        articlesPath: buildArticlesSeriesPath(points, xStep, y),
+        clientArticlesPath: buildArticlesSeriesPath(points, clientArticles, xStep, y),
+        appArticlesPath: buildArticlesSeriesPath(points, appArticles, xStep, y),
         errorsPath: buildSparseSeriesPath(points, (p) => p.errors, xStep, y),
         maxArticles: peakArticles,
+        maxClientArticles: peakClientArticles,
+        maxAppArticles: peakAppArticles,
         maxNetworkRate: maxRate,
         xPercent: xPct,
         yPercent: yPct,
@@ -138,7 +148,8 @@ export function ThroughputChart({
   };
 
   const hasData = points.length > 0;
-  const hasArticleActivity = maxArticles > 0;
+  const safeTotalClientArticles = Math.min(totalArticles, Math.max(0, totalClientArticles ?? 0));
+  const totalAppArticles = totalArticles - safeTotalClientArticles;
   const bucketLabel =
     window === "1h" || window === "24h" ? "min" : window === "all" ? "day" : "hour";
   const hover = cursorIdx !== null ? (points[cursorIdx] ?? null) : null;
@@ -147,6 +158,8 @@ export function ThroughputChart({
     ? describeThroughputBucket(keyboardPoint, window, bucketSeconds)
     : "";
   const hoverNetworkRate = hover ? (hover.bytesFetched ?? 0) / bucketSeconds : 0;
+  const hoverClientArticles = hover ? clientArticles(hover) : 0;
+  const hoverAppArticles = hover ? appArticles(hover) : 0;
   const tooltipPlacement =
     cursorIdx === null || points.length < 2
       ? "tooltip-top"
@@ -164,7 +177,7 @@ export function ThroughputChart({
           <div>
             <h3 className="card-title text-base">Activity</h3>
             <p className="text-xs text-base-content/50">
-              Articles fetched per {bucketLabel}, last {window}
+              Article reads per {bucketLabel}, last {window}
             </p>
           </div>
           <div className="flex gap-[18px]">
@@ -191,7 +204,7 @@ export function ThroughputChart({
                 className={styles.chartArea}
                 tabIndex={0}
                 role="img"
-                aria-label={`${formatNumber(totalArticles)} articles, ${formatNumber(totalErrors)} errors, ${formatBytes(totalBytesServed)} served. Use arrow keys for bucket details.`}
+                aria-label={`${formatNumber(safeTotalClientArticles)} client reads, ${formatNumber(totalAppArticles)} app reads, ${formatNumber(totalArticles)} articles total, ${formatNumber(totalErrors)} errors, ${formatBytes(totalBytesServed)} served. Use arrow keys for bucket details.`}
                 aria-describedby="overview-throughput-keyboard-status"
                 onMouseMove={handleMouseMove}
                 onMouseLeave={handleMouseLeave}
@@ -226,8 +239,11 @@ export function ThroughputChart({
                     y2={TOP_PAD.toFixed(1)}
                     className={styles.gridline}
                   />
-                  {hasArticleActivity && (
-                    <path d={articlesPath} className={styles.lineArticles} data-series="articles" />
+                  {maxClientArticles > 0 && (
+                    <path d={clientArticlesPath} className={styles.lineClient} data-series="client-articles" />
+                  )}
+                  {maxAppArticles > 0 && (
+                    <path d={appArticlesPath} className={styles.lineApp} data-series="app-articles" />
                   )}
                   {totalErrors > 0 && errorsPath && (
                     <path d={errorsPath} className={styles.lineErrors} data-series="errors" />
@@ -241,7 +257,7 @@ export function ThroughputChart({
                       className={`tooltip tooltip-open ${tooltipPlacement} ${styles.hoverTooltip}`}
                       style={{
                         left: `${xPercent(cursorIdx)}%`,
-                        top: `${yPercent(hover.articles)}%`,
+                        top: `${yPercent(Math.max(hoverClientArticles, hoverAppArticles))}%`,
                       }}
                     >
                       <div className="tooltip-content">
@@ -249,7 +265,9 @@ export function ThroughputChart({
                           <div className="font-semibold">
                             {formatBucketTime(hover.bucket, window)}
                           </div>
-                          <div>{formatNumber(hover.articles)} articles</div>
+                          <div>{formatNumber(hoverClientArticles)} client reads</div>
+                          <div>{formatNumber(hoverAppArticles)} app reads</div>
+                          <div>{formatNumber(hover.articles)} articles total</div>
                           {hoverNetworkRate > 0 && (
                             <div>{formatBytes(hoverNetworkRate)}/s downloaded</div>
                           )}
@@ -304,7 +322,11 @@ export function ThroughputChart({
             <div className="mt-2 flex flex-wrap items-center gap-3.5 text-[11px] text-base-content/50">
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block h-0.5 w-2.5 bg-success" />
-                Articles
+                Client reads · {formatNumber(safeTotalClientArticles)}
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block w-2.5 border-t-2 border-dashed border-info" />
+                App reads · {formatNumber(totalAppArticles)}
                 {maxNetworkRate > 0 && <> · peak {formatBytes(maxNetworkRate)}/s</>}
               </span>
               {totalErrors > 0 && (
@@ -338,6 +360,7 @@ export function ThroughputChart({
  */
 function buildArticlesSeriesPath(
   points: ThroughputPoint[],
+  getValue: (p: ThroughputPoint) => number,
   xStep: number,
   y: (v: number) => number,
 ): string {
@@ -345,14 +368,14 @@ function buildArticlesSeriesPath(
   let i = 0;
   while (i < points.length) {
     const current = points[i];
-    if (!current || current.articles <= 0) {
+    if (!current || getValue(current) <= 0) {
       i++;
       continue;
     }
     const runStart = i;
     while (i < points.length) {
       const p = points[i];
-      if (!p || p.articles <= 0) break;
+      if (!p || getValue(p) <= 0) break;
       i++;
     }
     const runEnd = i - 1;
@@ -363,7 +386,7 @@ function buildArticlesSeriesPath(
       const p = points[j];
       if (!p) continue;
       const x = (j * xStep).toFixed(1);
-      const yy = y(p.articles).toFixed(1);
+      const yy = y(getValue(p)).toFixed(1);
       parts.push(`${j === from ? "M" : "L"}${x},${yy}`);
     }
     // Edge-of-window isolated spike with no adjacent zero needs a tiny stroke.
@@ -371,7 +394,7 @@ function buildArticlesSeriesPath(
       const p = points[from];
       if (p) {
         const x2 = (from * xStep + Math.max(xStep * 0.15, 1)).toFixed(1);
-        const yy = y(p.articles).toFixed(1);
+        const yy = y(getValue(p)).toFixed(1);
         parts.push(`L${x2},${yy}`);
       }
     }
@@ -451,7 +474,9 @@ function describeThroughputBucket(
 ): string {
   const parts = [
     formatBucketTime(point.bucket, window),
-    `${formatNumber(point.articles)} articles`,
+    `${formatNumber(clientArticles(point))} client reads`,
+    `${formatNumber(appArticles(point))} app reads`,
+    `${formatNumber(point.articles)} articles total`,
   ];
   const rate = (point.bytesFetched ?? 0) / bucketSeconds;
   if (rate > 0) parts.push(`${formatBytes(rate)}/s downloaded`);
@@ -459,6 +484,14 @@ function describeThroughputBucket(
   if (point.errors > 0) parts.push(`${formatNumber(point.errors)} errors`);
   if (point.bytesServed > 0) parts.push(`${formatBytes(point.bytesServed)} served`);
   return parts.join(", ");
+}
+
+function clientArticles(point: ThroughputPoint): number {
+  return Math.min(point.articles, Math.max(0, point.clientArticles ?? 0));
+}
+
+function appArticles(point: ThroughputPoint): number {
+  return Math.max(0, point.articles - clientArticles(point));
 }
 
 function formatBucketTime(ms: number, window: OverviewWindow): string {

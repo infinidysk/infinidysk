@@ -40,7 +40,7 @@ describe("mergeOverviewStats", () => {
         totalMisses: 40,
         totalErrors: 2,
         throughput: [
-          { bucket: 1, articles: 5, misses: 2, errors: 0, bytesServed: 10, bytesFetched: 20 },
+          { bucket: 1, articles: 5, clientArticles: 0, misses: 2, errors: 0, bytesServed: 10, bytesFetched: 20 },
         ],
         tiles: {
           activeReads: 2,
@@ -66,7 +66,7 @@ describe("mergeOverviewStats", () => {
       partial({
         includedSections: ["window"],
         throughput: [
-          { bucket: 1, articles: 5, misses: 1, errors: 0, bytesServed: 10, bytesFetched: 20 },
+          { bucket: 1, articles: 5, clientArticles: 0, misses: 1, errors: 0, bytesServed: 10, bytesFetched: 20 },
         ],
       }),
     );
