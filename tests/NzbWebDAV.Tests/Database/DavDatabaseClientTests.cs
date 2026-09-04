@@ -83,6 +83,36 @@ public sealed class DavDatabaseClientTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GetDirectoryChildrenEnumerableAsync_DisposesStreamingContextWhenStoppedEarly()
+    {
+        var directory = DavItem.New(
+            Guid.NewGuid(), DavItem.Root, "shows", null,
+            DavItem.ItemType.Directory, DavItem.ItemSubType.Directory,
+            null, null, null, null);
+        _context.Items.AddRange(
+            directory,
+            DavItem.New(
+                Guid.NewGuid(), directory, "episode1.mkv", 100,
+                DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile,
+                null, null, null, null),
+            DavItem.New(
+                Guid.NewGuid(), directory, "episode2.mkv", 100,
+                DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile,
+                null, null, null, null));
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        await foreach (var child in _client.GetDirectoryChildrenEnumerableAsync(directory.Id))
+        {
+            Assert.Equal("episode1.mkv", child.Name);
+            Assert.False(_contextFactory.LastCreatedContext!.IsDisposed);
+            break;
+        }
+
+        Assert.True(_contextFactory.LastCreatedContext!.IsDisposed);
+    }
+
+    [Fact]
     public async Task GetDavMultipartFileAsync_BackfillsExpectedSizeForLegacyLazyMetadata()
     {
         var id = Guid.NewGuid();
