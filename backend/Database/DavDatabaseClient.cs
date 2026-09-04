@@ -9,7 +9,10 @@ using Serilog;
 
 namespace NzbWebDAV.Database;
 
-public sealed class DavDatabaseClient(DavDatabaseContext ctx, IBlobStore? blobStore = null)
+public sealed class DavDatabaseClient(
+    DavDatabaseContext ctx,
+    IBlobStore? blobStore = null,
+    IDbContextFactory<DavDatabaseContext>? dbContextFactory = null)
 {
     public DavDatabaseContext Ctx => ctx;
 
@@ -36,18 +39,10 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx, IBlobStore? blobSt
         return GetDirectoryChildrenQuery(dirId).ToListAsync(ct);
     }
 
-    public async IAsyncEnumerable<DavItem> GetDirectoryChildrenEnumerableAsync(
+    public IAsyncEnumerable<DavItem> GetDirectoryChildrenEnumerableAsync(
         Guid dirId,
-        [EnumeratorCancellation] CancellationToken ct = default)
-    {
-        await foreach (var child in GetDirectoryChildrenQuery(dirId)
-                           .AsAsyncEnumerable()
-                           .WithCancellation(ct)
-                           .ConfigureAwait(false))
-        {
-            yield return child;
-        }
-    }
+        CancellationToken ct = default) =>
+        StreamQueryAsync(streamingContext => GetDirectoryChildrenQuery(streamingContext, dirId), ct);
 
     public async Task<List<DavItem>> GetItemsByIdsBatchedAsync(
         IEnumerable<Guid> ids, int batchSize = 500, CancellationToken ct = default)
@@ -64,12 +59,41 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx, IBlobStore? blobSt
             .FirstOrDefaultAsync(x => x.ParentId == dirId && x.Name == childName, ct);
     }
 
-    private IQueryable<DavItem> GetDirectoryChildrenQuery(Guid dirId)
+    private IQueryable<DavItem> GetDirectoryChildrenQuery(Guid dirId) => GetDirectoryChildrenQuery(ctx, dirId);
+
+    private static IQueryable<DavItem> GetDirectoryChildrenQuery(DavDatabaseContext context, Guid dirId)
     {
-        return ctx.Items
+        return context.Items
             .AsNoTracking()
             .Where(x => x.ParentId == dirId)
             .OrderBy(x => x.Name);
+    }
+
+    private async IAsyncEnumerable<DavItem> StreamQueryAsync(
+        Func<DavDatabaseContext, IQueryable<DavItem>> queryFactory,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        // NWebDav may query the scoped context while consuming this stream, so keep the
+        // reader on a factory-owned context when one is available through production DI.
+        var streamingContext = dbContextFactory is null
+            ? ctx
+            : await dbContextFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+
+        try
+        {
+            await foreach (var item in queryFactory(streamingContext)
+                               .AsAsyncEnumerable()
+                               .WithCancellation(ct)
+                               .ConfigureAwait(false))
+            {
+                yield return item;
+            }
+        }
+        finally
+        {
+            if (!ReferenceEquals(streamingContext, ctx))
+                await streamingContext.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     // Resolves a persisted item by its absolute virtual path in a single indexed lookup,
@@ -851,27 +875,25 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx, IBlobStore? blobSt
         return GetCompletedSymlinkCategoryChildrenQuery(category).ToListAsync(ct);
     }
 
-    public async IAsyncEnumerable<DavItem> GetCompletedSymlinkCategoryChildrenEnumerableAsync(
+    public IAsyncEnumerable<DavItem> GetCompletedSymlinkCategoryChildrenEnumerableAsync(
         string category,
-        [EnumeratorCancellation] CancellationToken ct = default)
-    {
-        await foreach (var child in GetCompletedSymlinkCategoryChildrenQuery(category)
-                           .AsAsyncEnumerable()
-                           .WithCancellation(ct)
-                           .ConfigureAwait(false))
-        {
-            yield return child;
-        }
-    }
+        CancellationToken ct = default) =>
+        StreamQueryAsync(streamingContext =>
+            GetCompletedSymlinkCategoryChildrenQuery(streamingContext, category), ct);
 
-    private IQueryable<DavItem> GetCompletedSymlinkCategoryChildrenQuery(string category)
+    private IQueryable<DavItem> GetCompletedSymlinkCategoryChildrenQuery(string category) =>
+        GetCompletedSymlinkCategoryChildrenQuery(ctx, category);
+
+    private static IQueryable<DavItem> GetCompletedSymlinkCategoryChildrenQuery(
+        DavDatabaseContext context,
+        string category)
     {
-        var query = from historyItem in Ctx.HistoryItems
+        var query = from historyItem in context.HistoryItems
             .AsNoTracking()
                     where historyItem.Category == category
                           && historyItem.DownloadStatus == HistoryItem.DownloadStatusOption.Completed
                           && historyItem.DownloadDirId != null
-                    join davItem in Ctx.Items.AsNoTracking() on historyItem.DownloadDirId equals davItem.Id
+                    join davItem in context.Items.AsNoTracking() on historyItem.DownloadDirId equals davItem.Id
                     where davItem.Type == DavItem.ItemType.Directory
                     select davItem;
         return query.Distinct().OrderBy(x => x.Name);

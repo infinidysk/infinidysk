@@ -18,6 +18,7 @@ public sealed class DavDatabaseClientTests : IAsyncLifetime
     private readonly string _databasePath =
         Path.Join(Path.GetTempPath(), $"nzbdav-tests-{Guid.NewGuid():N}.sqlite");
     private DavDatabaseContext _context = null!;
+    private TrackingDbContextFactory _contextFactory = null!;
     private DavDatabaseClient _client = null!;
 
     public async Task InitializeAsync()
@@ -31,7 +32,8 @@ public sealed class DavDatabaseClientTests : IAsyncLifetime
             .Options;
         _context = new DavDatabaseContext(options);
         await _context.Database.MigrateAsync();
-        _client = new DavDatabaseClient(_context);
+        _contextFactory = new TrackingDbContextFactory(options);
+        _client = new DavDatabaseClient(_context, dbContextFactory: _contextFactory);
     }
 
     [Fact]
@@ -70,6 +72,8 @@ public sealed class DavDatabaseClientTests : IAsyncLifetime
         Assert.Equal(
             new[] { "first.mkv", "science-fiction" },
             streamedChildren.Select(item => item.Name));
+        Assert.NotSame(_context, _contextFactory.LastCreatedContext);
+        Assert.True(_contextFactory.LastCreatedContext!.IsDisposed);
 
         Assert.Equal(350, await _client.GetRecursiveSize(directory.Id));
         Assert.Equal(firstFile.Id, (await _client.GetFileById(firstFile.Id.ToString()))?.Id);
@@ -463,5 +467,32 @@ public sealed class DavDatabaseClientTests : IAsyncLifetime
     {
         await _context.DisposeAsync();
         File.Delete(_databasePath);
+    }
+
+    private sealed class TrackingDbContextFactory(DbContextOptions<DavDatabaseContext> options)
+        : IDbContextFactory<DavDatabaseContext>
+    {
+        public TrackingDavDatabaseContext? LastCreatedContext { get; private set; }
+
+        public DavDatabaseContext CreateDbContext()
+        {
+            LastCreatedContext = new TrackingDavDatabaseContext(options);
+            return LastCreatedContext;
+        }
+
+        public Task<DavDatabaseContext> CreateDbContextAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(CreateDbContext());
+    }
+
+    private sealed class TrackingDavDatabaseContext(DbContextOptions<DavDatabaseContext> options)
+        : DavDatabaseContext(options)
+    {
+        public bool IsDisposed { get; private set; }
+
+        public override async ValueTask DisposeAsync()
+        {
+            IsDisposed = true;
+            await base.DisposeAsync();
+        }
     }
 }

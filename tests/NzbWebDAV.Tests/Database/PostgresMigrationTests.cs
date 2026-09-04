@@ -358,6 +358,85 @@ public sealed class PostgresMigrationTests
         }
     }
 
+    [SkippableFact]
+    public async Task StreamedDirectoryQueries_AllowInterleavedScopedContextQueries()
+    {
+        Skip.IfNot(
+            DatabaseProviderConfig.IsPostgres,
+            "PostgreSQL migration tests require DATABASE_PROVIDER=postgres.");
+
+        var schema = $"nzbdav_streaming_{Guid.NewGuid():N}";
+        var connectionString = DatabaseProviderConfig.PostgresConnectionString;
+        await using var adminConnection = new NpgsqlConnection(connectionString);
+        await adminConnection.OpenAsync();
+        await ExecuteAsync(adminConnection, $"CREATE SCHEMA \"{schema}\"");
+
+        try
+        {
+            var scopedConnectionString = new NpgsqlConnectionStringBuilder(connectionString)
+            {
+                SearchPath = schema
+            }.ConnectionString;
+            var options = new DbContextOptionsBuilder<PostgresDavDatabaseContext>()
+                .UseNpgsql(scopedConnectionString)
+                .Options;
+
+            await using var context = new PostgresDavDatabaseContext(options);
+            using var migrationTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await context.Database.MigrateAsync(migrationTimeout.Token);
+
+            var directory = DavItem.New(
+                Guid.NewGuid(), DavItem.Root, "shows", null,
+                DavItem.ItemType.Directory, DavItem.ItemSubType.Directory,
+                null, null, null, null);
+            var firstFile = DavItem.New(
+                Guid.NewGuid(), directory, "episode1.mkv", 100,
+                DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile,
+                null, null, null, null);
+            var secondFile = DavItem.New(
+                Guid.NewGuid(), directory, "episode2.mkv", 100,
+                DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile,
+                null, null, null, null);
+            context.Items.AddRange(directory, firstFile, secondFile);
+            context.HistoryItems.Add(new HistoryItem
+            {
+                Id = Guid.NewGuid(),
+                CreatedAt = DateTime.Now,
+                FileName = "shows.nzb",
+                JobName = "shows",
+                Category = "tv",
+                DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+                DownloadDirId = directory.Id,
+            });
+            await context.SaveChangesAsync();
+            context.ChangeTracker.Clear();
+
+            var contextFactory = new PostgresTestDbContextFactory(options);
+            var client = new DavDatabaseClient(context, dbContextFactory: contextFactory);
+
+            var children = new List<DavItem>();
+            await foreach (var child in client.GetDirectoryChildrenEnumerableAsync(directory.Id))
+            {
+                children.Add(child);
+                Assert.NotNull(await client.GetDirectoryChildAsync(directory.Id, child.Name));
+            }
+            Assert.Equal(2, children.Count);
+
+            var completedDirectories = new List<DavItem>();
+            await foreach (var child in client.GetCompletedSymlinkCategoryChildrenEnumerableAsync("tv"))
+            {
+                completedDirectories.Add(child);
+                Assert.NotNull(await client.GetDirectoryChildAsync(DavItem.Root.Id, child.Name));
+            }
+            Assert.Single(completedDirectories);
+            Assert.Equal(2, contextFactory.CreatedCount);
+        }
+        finally
+        {
+            await ExecuteAsync(adminConnection, $"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+        }
+    }
+
     private static DavItem CreateItem(string name, DateTime createdAt)
     {
         var id = Guid.NewGuid();
@@ -441,6 +520,21 @@ public sealed class PostgresMigrationTests
     {
         await using var command = new NpgsqlCommand(commandText, connection);
         await command.ExecuteNonQueryAsync();
+    }
+
+    private sealed class PostgresTestDbContextFactory(
+        DbContextOptions<PostgresDavDatabaseContext> options) : IDbContextFactory<DavDatabaseContext>
+    {
+        public int CreatedCount { get; private set; }
+
+        public DavDatabaseContext CreateDbContext()
+        {
+            CreatedCount++;
+            return new PostgresDavDatabaseContext(options);
+        }
+
+        public Task<DavDatabaseContext> CreateDbContextAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(CreateDbContext());
     }
 
     private sealed class SabControllerFixture : IAsyncDisposable
