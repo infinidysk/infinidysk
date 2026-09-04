@@ -75,6 +75,19 @@ internal sealed class AdminOpenApiDocumentTransformer : IOpenApiDocumentTransfor
             Required = new HashSet<string> { "status", "queuedCount", "alreadyRunning" },
         };
 
+        document.Components.Schemas["RequeueActionNeededHealthChecksResponse"] = new OpenApiSchema
+        {
+            Type = JsonSchemaType.Object,
+            Description = "Success response for POST /api/requeue-action-needed-health-checks.",
+            Properties = new Dictionary<string, IOpenApiSchema>
+            {
+                ["status"] = new OpenApiSchema { Type = JsonSchemaType.Boolean },
+                ["error"] = new OpenApiSchema { Type = JsonSchemaType.String },
+                ["requeuedCount"] = new OpenApiSchema { Type = JsonSchemaType.Integer, Format = "int32" },
+            },
+            Required = new HashSet<string> { "status", "requeuedCount" },
+        };
+
         document.Security ??= [];
         document.Security.Add(new OpenApiSecurityRequirement
         {

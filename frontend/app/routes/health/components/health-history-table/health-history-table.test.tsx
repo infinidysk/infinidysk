@@ -1,10 +1,21 @@
+// @vitest-environment jsdom
+import { cleanup, render as renderDom, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HealthCheckResult } from "~/clients/backend-client.server";
 import { HealthHistoryTable, type HealthHistoryFilter } from "./health-history-table";
 
-function render(items: HealthCheckResult[] = [], filter: HealthHistoryFilter = "all") {
-  return renderToStaticMarkup(
+function table(
+  items: HealthCheckResult[] = [],
+  filter: HealthHistoryFilter = "all",
+  options: {
+    canRequeueActionNeeded?: boolean;
+    requeueingActionNeeded?: boolean;
+    onRequeueActionNeeded?: () => void;
+  } = {},
+) {
+  return (
     <HealthHistoryTable
       items={items}
       totalCount={items.length}
@@ -13,13 +24,22 @@ function render(items: HealthCheckResult[] = [], filter: HealthHistoryFilter = "
       pageSizeOptions={[25, 50]}
       filter={filter}
       refreshing={false}
+      canRequeueActionNeeded={options.canRequeueActionNeeded ?? false}
+      requeueingActionNeeded={options.requeueingActionNeeded ?? false}
       onFilterSelected={vi.fn()}
       onPageSelected={vi.fn()}
       onPageSizeSelected={vi.fn()}
       onRefresh={vi.fn()}
-    />,
+      onRequeueActionNeeded={options.onRequeueActionNeeded ?? vi.fn()}
+    />
   );
 }
+
+function render(items: HealthCheckResult[] = [], filter: HealthHistoryFilter = "all") {
+  return renderToStaticMarkup(table(items, filter));
+}
+
+afterEach(cleanup);
 
 describe("HealthHistoryTable", () => {
   it("shows the snapped NZB identity and deleted disposition", () => {
@@ -122,5 +142,39 @@ describe("HealthHistoryTable", () => {
     expect(markup).toContain("badge-warning");
     expect(markup).toContain("Streaming payload missing.");
     expect(markup).not.toContain("badge-info");
+  });
+
+  it("shows the bulk re-check action only when permitted", () => {
+    const allowed = renderToStaticMarkup(table([], "all", { canRequeueActionNeeded: true }));
+    const hidden = renderToStaticMarkup(table());
+
+    expect(allowed).toContain("Re-check action needed");
+    expect(hidden).not.toContain("Re-check action needed");
+  });
+
+  it("disables the bulk action while items are being queued", () => {
+    const markup = renderToStaticMarkup(
+      table([], "all", {
+        canRequeueActionNeeded: true,
+        requeueingActionNeeded: true,
+      }),
+    );
+
+    expect(markup).toContain("Queueing...");
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>.*Queueing\.\.\.<\/button>/);
+  });
+
+  it("invokes the bulk re-check callback", async () => {
+    const onRequeueActionNeeded = vi.fn();
+    renderDom(
+      table([], "all", {
+        canRequeueActionNeeded: true,
+        onRequeueActionNeeded,
+      }),
+    );
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Re-check action needed" }));
+
+    expect(onRequeueActionNeeded).toHaveBeenCalledOnce();
   });
 });

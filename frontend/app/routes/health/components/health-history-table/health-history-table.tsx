@@ -1,5 +1,5 @@
 import type { HealthCheckResult } from "~/clients/backend-client.server";
-import { Badge, Icon, RadioJoinFilter } from "~/components/ui";
+import { Badge, Button, Icon, RadioJoinFilter } from "~/components/ui";
 import { Pagination } from "~/components/pagination/pagination";
 import { Truncate } from "~/components/truncate/truncate";
 
@@ -13,10 +13,13 @@ export type HealthHistoryTableProps = {
   pageSizeOptions: readonly number[];
   filter: HealthHistoryFilter;
   refreshing: boolean;
+  canRequeueActionNeeded: boolean;
+  requeueingActionNeeded: boolean;
   onFilterSelected: (filter: HealthHistoryFilter) => void;
   onPageSelected: (page: number) => void;
   onPageSizeSelected: (pageSize: number) => void;
   onRefresh: () => void;
+  onRequeueActionNeeded: () => void;
 };
 
 const desktopHeaderClass =
@@ -37,10 +40,13 @@ export function HealthHistoryTable({
   pageSizeOptions,
   filter,
   refreshing,
+  canRequeueActionNeeded,
+  requeueingActionNeeded,
   onFilterSelected,
   onPageSelected,
   onPageSizeSelected,
   onRefresh,
+  onRequeueActionNeeded,
 }: HealthHistoryTableProps) {
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
@@ -58,15 +64,26 @@ export function HealthHistoryTable({
               to your health-check retention setting.
             </p>
           </div>
-          <button
-            type="button"
-            className="btn btn-sm gap-2"
-            onClick={onRefresh}
-            disabled={refreshing}
-          >
-            <Icon name="refresh" className={`!text-[16px] ${refreshing ? "animate-spin" : ""}`} />
-            Refresh
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {canRequeueActionNeeded && (
+              <Button
+                variant="outline"
+                size="small"
+                onClick={onRequeueActionNeeded}
+                disabled={requeueingActionNeeded}
+              >
+                <Icon
+                  name={requeueingActionNeeded ? "progress_activity" : "replay"}
+                  className={`!text-[16px] ${requeueingActionNeeded ? "animate-spin" : ""}`}
+                />
+                {requeueingActionNeeded ? "Queueing..." : "Re-check action needed"}
+              </Button>
+            )}
+            <Button onClick={onRefresh} disabled={refreshing}>
+              <Icon name="refresh" className={`!text-[16px] ${refreshing ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-base-content/10 px-4 py-3 md:px-6">

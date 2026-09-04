@@ -1,6 +1,9 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using NzbWebDAV.Config;
+using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
 using NzbWebDAV.Tests.TestUtils;
@@ -114,6 +117,45 @@ public sealed class AdminContractTests
         Assert.Equal(3, json.RootElement.GetProperty("uncheckedCount").GetInt32());
     }
 
+    [Fact]
+    public async Task ActionNeededHealthChecks_RequeuesOnlyFilesWhoseLatestResultNeedsAction()
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var client = factory.CreateAuthenticatedClient();
+        var now = DateTimeOffset.UtcNow;
+        var current = NewScheduledUsenetFile("current-action-needed.mkv");
+        var stale = NewScheduledUsenetFile("stale-action-needed.mkv");
+        await factory.AddDavItemsAsync(current, stale);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<DavDatabaseContext>();
+            context.HealthCheckResults.AddRange(
+                NewHealthResult(current, now.AddMinutes(-2), HealthCheckResult.RepairAction.None),
+                NewHealthResult(current, now.AddMinutes(-1), HealthCheckResult.RepairAction.ActionNeeded),
+                NewHealthResult(stale, now.AddMinutes(-2), HealthCheckResult.RepairAction.ActionNeeded),
+                NewHealthResult(stale, now.AddMinutes(-1), HealthCheckResult.RepairAction.Repaired));
+            await context.SaveChangesAsync();
+        }
+
+        using var response = await client.PostAsync(
+            "/api/requeue-action-needed-health-checks",
+            content: null);
+        using var json = await SabContractAssertions.AssertSuccessAsync(response);
+
+        JsonContractValidator.AssertMatchesSchema(
+            json.RootElement,
+            "admin/v1/requeue-action-needed-health-checks.schema.json");
+        Assert.Equal(1, json.RootElement.GetProperty("requeuedCount").GetInt32());
+        using var verifyScope = factory.Services.CreateScope();
+        var verifyContext = verifyScope.ServiceProvider.GetRequiredService<DavDatabaseContext>();
+        var updated = await verifyContext.Items
+            .Where(x => x.Id == current.Id || x.Id == stale.Id)
+            .ToDictionaryAsync(x => x.Id);
+        Assert.Equal(HealthCheckService.ForcedRecheckSentinel, updated[current.Id].NextHealthCheck);
+        Assert.NotEqual(HealthCheckService.ForcedRecheckSentinel, updated[stale.Id].NextHealthCheck);
+    }
+
     private static DavItem NewUncheckedUsenetFile(string name) => DavItem.New(
         Guid.NewGuid(),
         DavItem.ContentFolder,
@@ -125,6 +167,28 @@ public sealed class AdminContractTests
         lastHealthCheck: null,
         historyItemId: null,
         fileBlobId: null);
+
+    private static DavItem NewScheduledUsenetFile(string name)
+    {
+        var item = NewUncheckedUsenetFile(name);
+        item.NextHealthCheck = DateTimeOffset.UtcNow.AddDays(1);
+        return item;
+    }
+
+    private static HealthCheckResult NewHealthResult(
+        DavItem item,
+        DateTimeOffset createdAt,
+        HealthCheckResult.RepairAction repairStatus) => new()
+        {
+            Id = Guid.NewGuid(),
+            CreatedAt = createdAt,
+            DavItemId = item.Id,
+            Path = item.Path,
+            Result = repairStatus == HealthCheckResult.RepairAction.None
+                ? HealthCheckResult.HealthResult.Healthy
+                : HealthCheckResult.HealthResult.Unhealthy,
+            RepairStatus = repairStatus,
+        };
 
     [Fact]
     public async Task WebDavItemList_ReturnsSeededDirectoryChildren()

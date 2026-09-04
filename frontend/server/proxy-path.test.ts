@@ -61,6 +61,8 @@ describe("isReadOnlyDeniedBackendMutation", () => {
     "/api/remove-missing-payloads/",
     "/api/remove-missing-payloads%2F",
     "/%61pi/remove-missing-payloads",
+    "/api/requeue-action-needed-health-checks",
+    "/api/requeue-action-needed-health-checks/",
     "/api/trigger-health-check",
     "/api/trigger-health-check/run",
     "/api/trigger-health-check%2Frun",

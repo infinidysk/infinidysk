@@ -43,6 +43,11 @@ const topicSubscriptions = {
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 250] as const;
 const DEFAULT_PAGE_SIZE = 25;
 
+type RequeueFeedback = {
+  variant: "success" | "danger";
+  message: string;
+};
+
 function parsePage(value: string | null): number {
   const page = parseInt(value ?? "1", 10);
   return Number.isFinite(page) && page > 0 ? page : 1;
@@ -125,6 +130,8 @@ export default function Health({ loaderData }: Route.ComponentProps) {
   );
   const [triggerState, setTriggerState] = useState<"idle" | "pending" | "error">("idle");
   const [triggerError, setTriggerError] = useState<string | null>(null);
+  const [requeueingActionNeeded, setRequeueingActionNeeded] = useState(false);
+  const [requeueFeedback, setRequeueFeedback] = useState<RequeueFeedback | null>(null);
   const [historyStats, setHistoryStats] = useState(loaderData.historyStats);
   const [historyItems, setHistoryItems] = useState(loaderData.historyItems);
   const [historyTotalCount, setHistoryTotalCount] = useState(loaderData.historyTotalCount);
@@ -294,6 +301,42 @@ export default function Health({ loaderData }: Route.ComponentProps) {
     }
   }, [revalidator]);
 
+  const onRequeueActionNeeded = useCallback(async () => {
+    setRequeueingActionNeeded(true);
+    setRequeueFeedback(null);
+    try {
+      const response = await fetch(withUrlBase("/api/requeue-action-needed-health-checks"), {
+        method: "POST",
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        setRequeueFeedback({
+          variant: "danger",
+          message: body?.error || "Could not queue action-needed items for re-check.",
+        });
+        return;
+      }
+
+      const body = (await response.json()) as { requeuedCount?: number };
+      const requeuedCount = body.requeuedCount ?? 0;
+      setRequeueFeedback({
+        variant: "success",
+        message:
+          requeuedCount === 0
+            ? "No current action-needed items to re-check."
+            : `Queued ${requeuedCount.toLocaleString()} item${requeuedCount === 1 ? "" : "s"} for re-check.`,
+      });
+      void revalidator.revalidate();
+    } catch {
+      setRequeueFeedback({
+        variant: "danger",
+        message: "Could not queue action-needed items for re-check.",
+      });
+    } finally {
+      setRequeueingActionNeeded(false);
+    }
+  }, [revalidator]);
+
   const onWebsocketMessage = useCallback(
     (topic: string, message: string) => {
       if (topic == topicNames.healthItemStatus) onHealthItemStatus(message);
@@ -384,6 +427,20 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         isEnabled={isEnabled}
         healthCheckItems={getVisibleHealthCheckItems(queueItems)}
       />
+      {requeueFeedback && (
+        <Alert
+          className="alert-soft py-3 text-sm"
+          variant={requeueFeedback.variant}
+          role="status"
+          aria-live="polite"
+        >
+          <Icon
+            name={requeueFeedback.variant === "success" ? "check_circle" : "error"}
+            className="shrink-0 !text-[20px]"
+          />
+          <span>{requeueFeedback.message}</span>
+        </Alert>
+      )}
       <HealthHistoryTable
         items={historyItems}
         totalCount={historyTotalCount}
@@ -392,10 +449,13 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         pageSizeOptions={PAGE_SIZE_OPTIONS}
         filter={loaderData.historyFilter}
         refreshing={revalidator.state !== "idle"}
+        canRequeueActionNeeded={isEnabled && !isReadOnly}
+        requeueingActionNeeded={requeueingActionNeeded}
         onFilterSelected={onHistoryFilterSelected}
         onPageSelected={(page) => setHistoryParams({ page })}
         onPageSizeSelected={onHistoryPageSizeSelected}
         onRefresh={() => void revalidator.revalidate()}
+        onRequeueActionNeeded={() => void onRequeueActionNeeded()}
       />
     </div>
   );

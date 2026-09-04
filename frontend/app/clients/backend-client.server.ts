@@ -526,6 +526,16 @@ class BackendClient {
     );
   }
 
+  public async requeueActionNeededHealthChecks(): Promise<{ requeuedCount: number }> {
+    return await call<{ requeuedCount: number }>(
+      adminApi.requeueActionNeededHealthChecks,
+      "Failed to requeue action-needed health checks",
+      {
+        method: "POST",
+      },
+    );
+  }
+
   public async getWatchdogEntries(limit: number = 200): Promise<WatchdogEntry[]> {
     const data = await call<{ entries?: WatchdogEntry[] }>(
       `${adminApi.getWatchdogEntries}?limit=${limit}`,

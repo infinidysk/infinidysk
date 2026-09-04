@@ -15,6 +15,7 @@ const READ_ONLY_DENIED_POST_PATHS = new Set([
   "/api/remove-missing-payloads",
   "/api/setup-wizard/complete",
   "/api/setup-wizard/skip",
+  "/api/requeue-action-needed-health-checks",
   "/api/trigger-health-check",
 ]);
 

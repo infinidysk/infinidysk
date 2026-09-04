@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/requeue-action-needed-health-checks.schema.json",
+  "title": "Admin requeue-action-needed-health-checks success",
+  "type": "object",
+  "required": ["status", "requeuedCount"],
+  "properties": {
+    "status": { "const": true },
+    "error": { "type": ["string", "null"] },
+    "requeuedCount": { "type": "integer", "minimum": 0 }
+  }
+}

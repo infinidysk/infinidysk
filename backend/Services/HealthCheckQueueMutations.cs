@@ -6,6 +6,8 @@ namespace NzbWebDAV.Services;
 
 public static class HealthCheckQueueMutations
 {
+    private const int UpdateBatchSize = 500;
+
     public static Task<int> MakeDueAsync(DavDatabaseContext context, CancellationToken cancellationToken) =>
         context.Items
             .Where(x => x.Type == DavItem.ItemType.UsenetFile)
@@ -13,4 +15,46 @@ public static class HealthCheckQueueMutations
             .ExecuteUpdateAsync(
                 x => x.SetProperty(item => item.NextHealthCheck, (DateTimeOffset?)null),
                 cancellationToken);
+
+    public static async Task<int> RequeueLatestActionNeededAsync(
+        DavDatabaseContext context,
+        CancellationToken cancellationToken)
+    {
+        var actionNeededIds = new List<Guid>();
+        Guid? previousDavItemId = null;
+
+        await foreach (var result in context.HealthCheckResults
+            .AsNoTracking()
+            .OrderBy(x => x.DavItemId)
+            .ThenByDescending(x => x.CreatedAt)
+            .ThenByDescending(x => x.Id)
+            .Select(x => new { x.DavItemId, x.RepairStatus })
+            .AsAsyncEnumerable()
+            .WithCancellation(cancellationToken)
+            .ConfigureAwait(false))
+        {
+            if (result.DavItemId == previousDavItemId) continue;
+            previousDavItemId = result.DavItemId;
+            if (result.RepairStatus == HealthCheckResult.RepairAction.ActionNeeded)
+                actionNeededIds.Add(result.DavItemId);
+        }
+
+        var requeuedCount = 0;
+        foreach (var batch in actionNeededIds.Chunk(UpdateBatchSize))
+        {
+            requeuedCount += await context.Items
+                .Where(x => batch.Contains(x.Id))
+                .Where(x => x.Type == DavItem.ItemType.UsenetFile)
+                .Where(x => x.NextHealthCheck != DateTimeOffset.UnixEpoch)
+                .Where(x => x.NextHealthCheck != HealthCheckService.ForcedRecheckSentinel)
+                .ExecuteUpdateAsync(
+                    x => x.SetProperty(
+                        item => item.NextHealthCheck,
+                        HealthCheckService.ForcedRecheckSentinel),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return requeuedCount;
+    }
 }
