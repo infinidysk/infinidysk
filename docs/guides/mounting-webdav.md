@@ -32,6 +32,14 @@ user = your-webdav-user
 pass = your-obscured-password
 ```
 
+!!! important
+
+  The rclone sidecar is a backend service and shares the Compose network with
+  InfiniDysk. Point it directly at the backend on port `8080`. Sending WebDAV
+  traffic through the frontend on port `3000` adds proxy overhead and reduces
+  streaming performance. Use the frontend URL only when an rclone client cannot
+  access the backend service over the network.
+
 ```bash
 chmod 600 rclone.conf
 ```
