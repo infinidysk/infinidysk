@@ -188,17 +188,19 @@ public class WebDavObservabilityMiddlewareTests : IDisposable
     }
 
     [Fact]
-    public async Task Get_WithFirstByte_PastStallThreshold_CountsStalledStream()
+    public async Task Get_WithIdleGap_PastStallThreshold_CountsStalledStream()
     {
         WebDavObservabilityMiddleware.SlowThresholdOverride = TimeSpan.FromHours(1);
-        // Stalled means strictly over the threshold; a negative override keeps the
-        // test deterministic instead of racing a zero-millisecond request.
-        WebDavObservabilityMiddleware.StallThresholdOverride = TimeSpan.FromMilliseconds(-1);
+        WebDavObservabilityMiddleware.StallThresholdOverride = TimeSpan.FromMilliseconds(1);
         var context = new DefaultHttpContext();
         context.Request.Method = "GET";
         context.Request.Path = "/content/tv/show.mkv";
         var middleware = new WebDavObservabilityMiddleware(async ctx =>
-            await ctx.Response.Body.WriteAsync(new byte[] { 1 }));
+        {
+            await ctx.Response.Body.WriteAsync(new byte[] { 1 });
+            await Task.Delay(20);
+            await ctx.Response.Body.WriteAsync(new byte[] { 1 });
+        });
 
         await middleware.InvokeAsync(context);
 
@@ -263,6 +265,8 @@ public class WebDavObservabilityMiddlewareTests : IDisposable
     [Fact]
     public async Task AbortedGet_AfterFirstByte_IsNotAbortedBeforeFirstByte()
     {
+        WebDavObservabilityMiddleware.SlowThresholdOverride = TimeSpan.FromHours(1);
+        WebDavObservabilityMiddleware.StallThresholdOverride = TimeSpan.FromMilliseconds(-1);
         var context = new DefaultHttpContext();
         context.Request.Method = "GET";
         context.Request.Path = "/content/tv/show.mkv";
@@ -275,6 +279,7 @@ public class WebDavObservabilityMiddlewareTests : IDisposable
         var counters = WebDavObservabilityMiddleware.Snapshot();
         Assert.Equal(1, counters["aborted"]);
         Assert.False(counters.ContainsKey("abortedBeforeFirstByte"));
+        Assert.False(counters.ContainsKey("stalledStreams"));
     }
 
     [Fact]
@@ -386,26 +391,31 @@ public class WebDavObservabilityMiddlewareTests : IDisposable
         public override void SetLength(long value) => throw new NotSupportedException();
     }
 
-    // firstByteOrMinusOne stands in for long? because InlineData cannot convert int
+    // Sentinel values stand in for long? because InlineData cannot convert int
     // constants to Nullable<long> through reflection.
     [Theory]
-    [InlineData("PROPFIND", -1, 6_000, WebDavObservabilityMiddleware.SlowKind.Metadata)]
-    [InlineData("PROPFIND", -1, 100, WebDavObservabilityMiddleware.SlowKind.None)]
-    [InlineData("HEAD", -1, 6_000, WebDavObservabilityMiddleware.SlowKind.Metadata)]
-    [InlineData("DELETE", -1, 6_000, WebDavObservabilityMiddleware.SlowKind.None)]
-    [InlineData("GET", -1, 6_000, WebDavObservabilityMiddleware.SlowKind.FirstByte)]
-    [InlineData("GET", -1, 100, WebDavObservabilityMiddleware.SlowKind.None)]
-    [InlineData("GET", 6_000, 7_000, WebDavObservabilityMiddleware.SlowKind.FirstByte)]
-    [InlineData("GET", 10, 10_000, WebDavObservabilityMiddleware.SlowKind.LongStream)]
-    [InlineData("GET", 10, 60_000, WebDavObservabilityMiddleware.SlowKind.LongStream)]
-    [InlineData("GET", 10, 61_000, WebDavObservabilityMiddleware.SlowKind.Stalled)]
-    [InlineData("GET", 10, 100, WebDavObservabilityMiddleware.SlowKind.None)]
+    [InlineData("PROPFIND", -1, -1, 6_000, WebDavObservabilityMiddleware.SlowKind.Metadata)]
+    [InlineData("PROPFIND", -1, -1, 100, WebDavObservabilityMiddleware.SlowKind.None)]
+    [InlineData("HEAD", -1, -1, 6_000, WebDavObservabilityMiddleware.SlowKind.Metadata)]
+    [InlineData("DELETE", -1, -1, 6_000, WebDavObservabilityMiddleware.SlowKind.None)]
+    [InlineData("GET", -1, -1, 6_000, WebDavObservabilityMiddleware.SlowKind.FirstByte)]
+    [InlineData("GET", -1, -1, 100, WebDavObservabilityMiddleware.SlowKind.None)]
+    [InlineData("GET", 6_000, 10, 7_000, WebDavObservabilityMiddleware.SlowKind.FirstByte)]
+    [InlineData("GET", 10, 100, 10_000, WebDavObservabilityMiddleware.SlowKind.LongStream)]
+    [InlineData("GET", 10, 100, 600_000, WebDavObservabilityMiddleware.SlowKind.LongStream)]
+    [InlineData("GET", 10, 60_000, 600_000, WebDavObservabilityMiddleware.SlowKind.LongStream)]
+    [InlineData("GET", 10, 60_001, 61_000, WebDavObservabilityMiddleware.SlowKind.Stalled)]
+    [InlineData("GET", 10, 10, 100, WebDavObservabilityMiddleware.SlowKind.None)]
     public void ClassifySlow_AttributesByWhereTimeWent(
-        string method, long firstByteOrMinusOne, long elapsedMs, WebDavObservabilityMiddleware.SlowKind expected)
+        string method, long firstByteOrMinusOne, long maxIdleOrMinusOne, long elapsedMs,
+        WebDavObservabilityMiddleware.SlowKind expected)
     {
         long? firstByteMs = firstByteOrMinusOne >= 0 ? firstByteOrMinusOne : null;
+        long? maxIdleMs = maxIdleOrMinusOne >= 0 ? maxIdleOrMinusOne : null;
 
-        Assert.Equal(expected, WebDavObservabilityMiddleware.ClassifySlow(method, firstByteMs, elapsedMs));
+        Assert.Equal(
+            expected,
+            WebDavObservabilityMiddleware.ClassifySlow(method, firstByteMs, maxIdleMs, elapsedMs));
     }
 
     [Fact]
@@ -413,7 +423,8 @@ public class WebDavObservabilityMiddlewareTests : IDisposable
     {
         // Regression: a healthy stream that outlives the slow threshold and ends by
         // client close must not be attributed as server latency.
-        var kind = WebDavObservabilityMiddleware.ClassifySlow("GET", firstByteMs: 10, elapsedMs: 10_000);
+        var kind = WebDavObservabilityMiddleware.ClassifySlow(
+            "GET", firstByteMs: 10, maxIdleMs: 9_000, elapsedMs: 70_000, aborted: true);
 
         Assert.Equal(WebDavObservabilityMiddleware.SlowKind.LongStream, kind);
     }

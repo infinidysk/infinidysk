@@ -14,12 +14,12 @@ namespace NzbWebDAV.Middlewares;
 /// For GETs the decisive clock runs to the first response byte (path resolution, first
 /// NNTP fetch, decode): a ranged stream's total duration is paced by the client and says
 /// nothing about the server. Metadata methods (PROPFIND, HEAD, ...) keep total-duration
-/// semantics because their responses are small. A GET with a fast first byte whose total
-/// duration exceeds the stall threshold is counted separately as a stalled stream. Slow
+/// semantics because their responses are small. A GET with a fast first byte is stalled
+/// only when no body write is attempted for the stall threshold. Slow
 /// warnings are throttled per category so a busy host cannot flood the warnings ring
 /// that support packs rely on.
 ///
-/// Known limitation: first-byte timing wraps Response.Body and does not observe
+/// Known limitation: response timing wraps Response.Body and does not observe
 /// IHttpResponseBodyFeature sendfile paths; the WebDAV GET path streams via Response.Body.
 /// </summary>
 public class WebDavObservabilityMiddleware(RequestDelegate next)
@@ -71,7 +71,7 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
 
         var originalBody = context.Response.Body;
 #pragma warning disable CA2000 // wrapper ownership transfers to the response for the duration of next(); it owns no resources and never disposes the wrapped body
-        var recordingStream = isGet ? new FirstByteRecordingStream(originalBody, stopwatch) : null;
+        var recordingStream = isGet ? new ResponseTimingStream(originalBody, stopwatch) : null;
 #pragma warning restore CA2000
         if (recordingStream is not null)
             context.Response.Body = recordingStream;
@@ -90,13 +90,15 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
             var elapsedMs = stopwatch.ElapsedMilliseconds;
             var path = context.Request.Path.Value ?? context.Request.Path.ToUriComponent();
             var firstByteMs = recordingStream?.FirstByteElapsedMilliseconds;
+            var maxIdleMs = recordingStream?.GetMaxIdleElapsedMilliseconds(elapsedMs);
+            var aborted = context.RequestAborted.IsCancellationRequested;
 
             Increment("total");
 
             var failed = status >= 500;
             if (failed) Increment("failed");
 
-            if (context.RequestAborted.IsCancellationRequested)
+            if (aborted)
             {
                 Increment("aborted");
                 // recordingStream exists exactly for GETs; a null first-byte mark
@@ -112,7 +114,7 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
                     method, path, status, elapsedMs);
             }
 
-            switch (ClassifySlow(method, firstByteMs, elapsedMs))
+            switch (ClassifySlow(method, firstByteMs, maxIdleMs, elapsedMs, aborted))
             {
                 case SlowKind.FirstByte:
                     Increment("slowFirstByte");
@@ -140,8 +142,8 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
                     if (!failed && StallThrottle.TryEmit(out var stallSuppressed))
                         Log.Warning(
                             "Stalled WebDAV stream. Method={Method} Path={Path} Status={Status} " +
-                            "FirstByteMs={FirstByteMs} DurationMs={DurationMs} Suppressed={Suppressed}",
-                            method, path, status, firstByteMs ?? 0, elapsedMs, stallSuppressed);
+                            "FirstByteMs={FirstByteMs} IdleMs={IdleMs} DurationMs={DurationMs} Suppressed={Suppressed}",
+                            method, path, status, firstByteMs ?? 0, maxIdleMs ?? 0, elapsedMs, stallSuppressed);
                     break;
 
                 case SlowKind.LongStream:
@@ -152,7 +154,8 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
     }
 
     // Pure classification so the timing tiers are testable without clock-dependent tests.
-    internal static SlowKind ClassifySlow(string method, long? firstByteMs, long elapsedMs)
+    internal static SlowKind ClassifySlow(
+        string method, long? firstByteMs, long? maxIdleMs, long elapsedMs, bool aborted = false)
     {
         var slowMs = (SlowThresholdOverride ?? SlowThreshold).TotalMilliseconds;
         var stallMs = (StallThresholdOverride ?? StallThreshold).TotalMilliseconds;
@@ -166,9 +169,7 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
         if (firstByte >= slowMs)
             return SlowKind.FirstByte;
 
-        // Stalled means strictly over the threshold; a stream ending exactly at
-        // the boundary is still a healthy long stream.
-        if (elapsedMs > stallMs)
+        if (!aborted && maxIdleMs > stallMs)
             return SlowKind.Stalled;
 
         return elapsedMs >= slowMs ? SlowKind.LongStream : SlowKind.None;
@@ -248,9 +249,12 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
     /// <summary>
     /// Records the elapsed time of the first body write; pass-through otherwise.
     /// </summary>
-    private sealed class FirstByteRecordingStream(Stream inner, Stopwatch stopwatch) : Stream
+    private sealed class ResponseTimingStream(Stream inner, Stopwatch stopwatch) : Stream
     {
+        private readonly object _timingLock = new();
         private long _firstByteMs;
+        private long _lastWriteCompletedMs;
+        private long _maxIdleMs;
         private int _firstByteRecorded;
 
         public long? FirstByteElapsedMilliseconds
@@ -263,38 +267,68 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
             }
         }
 
-        private void RecordFirstByte(int count)
+        public long? GetMaxIdleElapsedMilliseconds(long completedMs)
         {
-            // Zero-length writes carry no body byte; recording them would mark a
-            // first byte that never went out and misclassify the request.
+            lock (_timingLock)
+            {
+                if (_firstByteRecorded == 0)
+                    return null;
+
+                return Math.Max(_maxIdleMs, completedMs - _lastWriteCompletedMs);
+            }
+        }
+
+        private void RecordWriteStarted(int count)
+        {
             if (count <= 0) return;
-            if (Volatile.Read(ref _firstByteRecorded) != 0) return;
-            // Value before the flag so a reader that observes the flag also
-            // observes the timestamp (release/acquire pairing).
-            Interlocked.Exchange(ref _firstByteMs, stopwatch.ElapsedMilliseconds);
-            Volatile.Write(ref _firstByteRecorded, 1);
+
+            lock (_timingLock)
+            {
+                if (_firstByteRecorded == 0) return;
+                _maxIdleMs = Math.Max(_maxIdleMs, stopwatch.ElapsedMilliseconds - _lastWriteCompletedMs);
+            }
+        }
+
+        private void RecordWriteCompleted(int count)
+        {
+            if (count <= 0) return;
+
+            lock (_timingLock)
+            {
+                var completedMs = stopwatch.ElapsedMilliseconds;
+                if (_firstByteRecorded == 0)
+                {
+                    _firstByteMs = completedMs;
+                    Volatile.Write(ref _firstByteRecorded, 1);
+                }
+
+                _lastWriteCompletedMs = completedMs;
+            }
         }
 
         // Record only after the inner write succeeds: a failed write (client
         // disconnect, timeout) never put a byte on the wire.
         public override void Write(byte[] buffer, int offset, int count)
         {
+            RecordWriteStarted(count);
             inner.Write(buffer, offset, count);
-            RecordFirstByte(count);
+            RecordWriteCompleted(count);
         }
 
         public override async Task WriteAsync(
             byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
+            RecordWriteStarted(count);
             await inner.WriteAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
-            RecordFirstByte(count);
+            RecordWriteCompleted(count);
         }
 
         public override async ValueTask WriteAsync(
             ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
+            RecordWriteStarted(buffer.Length);
             await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
-            RecordFirstByte(buffer.Length);
+            RecordWriteCompleted(buffer.Length);
         }
 
         public override void Flush() => inner.Flush();

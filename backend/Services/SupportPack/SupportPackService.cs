@@ -279,8 +279,8 @@ public sealed class SupportPackService(
         startup: total, failed (5xx), aborted (client closed early, normal on seeks),
         slowFirstByte (GETs whose first byte took over five seconds - genuine
         server-side latency), slowMetadata (PROPFIND/HEAD over five seconds),
-        stalledStreams (streams still open after a minute), and longStreams (healthy
-        client-paced reads that simply outlived five seconds - not a server problem).
+        stalledStreams (streams with no body write attempted for over a minute), and
+        longStreams (healthy client-paced reads that simply outlived five seconds).
         slow is the sum of the three attention-worthy kinds.
         abortedBeforeFirstByte is the subset of aborted GETs that produced no body
         byte - those point at server-side latency, unlike an ordinary seek abort.
