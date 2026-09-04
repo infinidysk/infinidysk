@@ -634,7 +634,10 @@
         "description": "Success response for POST /api/requeue-action-needed-health-checks.",
         "properties": {
           "error": {
-            "type": "string"
+            "type": [
+              "null",
+              "string"
+            ]
           },
           "requeuedCount": {
             "format": "int32",

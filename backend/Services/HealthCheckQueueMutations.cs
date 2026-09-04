@@ -39,6 +39,18 @@ public static class HealthCheckQueueMutations
                 actionNeededIds.Add(result.DavItemId);
         }
 
+        return await RequeueActionNeededIdsAsync(
+                context,
+                actionNeededIds,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    internal static async Task<int> RequeueActionNeededIdsAsync(
+        DavDatabaseContext context,
+        IReadOnlyCollection<Guid> actionNeededIds,
+        CancellationToken cancellationToken)
+    {
         var requeuedCount = 0;
         foreach (var batch in actionNeededIds.Chunk(UpdateBatchSize))
         {
@@ -47,6 +59,12 @@ public static class HealthCheckQueueMutations
                 .Where(x => x.Type == DavItem.ItemType.UsenetFile)
                 .Where(x => x.NextHealthCheck != DateTimeOffset.UnixEpoch)
                 .Where(x => x.NextHealthCheck != HealthCheckService.ForcedRecheckSentinel)
+                .Where(x => context.HealthCheckResults
+                    .Where(result => result.DavItemId == x.Id)
+                    .OrderByDescending(result => result.CreatedAt)
+                    .ThenByDescending(result => result.Id)
+                    .Select(result => (HealthCheckResult.RepairAction?)result.RepairStatus)
+                    .FirstOrDefault() == HealthCheckResult.RepairAction.ActionNeeded)
                 .ExecuteUpdateAsync(
                     x => x.SetProperty(
                         item => item.NextHealthCheck,

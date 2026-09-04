@@ -118,6 +118,36 @@ public sealed class RequeueActionNeededHealthChecksControllerTests : IAsyncLifet
     }
 
     [Fact]
+    public async Task RequeueActionNeededIdsAsync_SkipsItemWhenNewerHealthyResultArrives()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var item = NewItem("recovered.mkv", now.AddDays(1));
+        _context.Items.Add(item);
+        _context.HealthCheckResults.Add(NewResult(
+            item,
+            now.AddMinutes(-1),
+            HealthCheckResult.RepairAction.ActionNeeded));
+        await _context.SaveChangesAsync();
+
+        var selectedIds = new[] { item.Id };
+        _context.HealthCheckResults.Add(NewResult(
+            item,
+            now,
+            HealthCheckResult.RepairAction.None));
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var requeuedCount = await HealthCheckQueueMutations.RequeueActionNeededIdsAsync(
+            _context,
+            selectedIds,
+            CancellationToken.None);
+
+        Assert.Equal(0, requeuedCount);
+        var updated = await _context.Items.SingleAsync(x => x.Id == item.Id);
+        Assert.NotEqual(HealthCheckService.ForcedRecheckSentinel, updated.NextHealthCheck);
+    }
+
+    [Fact]
     public async Task RequeueAsync_GetRequestReturnsMethodNotAllowedWithoutUpdatingItems()
     {
         var item = NewItem("method.mkv", DateTimeOffset.UtcNow.AddDays(1));

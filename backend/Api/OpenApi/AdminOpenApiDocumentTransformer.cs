@@ -82,7 +82,10 @@ internal sealed class AdminOpenApiDocumentTransformer : IOpenApiDocumentTransfor
             Properties = new Dictionary<string, IOpenApiSchema>
             {
                 ["status"] = new OpenApiSchema { Type = JsonSchemaType.Boolean },
-                ["error"] = new OpenApiSchema { Type = JsonSchemaType.String },
+                ["error"] = new OpenApiSchema
+                {
+                    Type = JsonSchemaType.String | JsonSchemaType.Null,
+                },
                 ["requeuedCount"] = new OpenApiSchema { Type = JsonSchemaType.Integer, Format = "int32" },
             },
             Required = new HashSet<string> { "status", "requeuedCount" },
