@@ -2,13 +2,14 @@
 
 Open `http://your-server:3000` after the container is healthy.
 
-After the first administrator login on a new or upgraded existing installation,
-InfiniDysk opens the guided **[Setup Guide](setup-guide.md)**
+After the first administrator login on a new installation, InfiniDysk opens the
+guided **[Setup Guide](setup-guide.md)**
 <span class="nzbdav-since">since 1.3.0</span>.
 It configures import strategy, the recommended cache layer, rclone or STRM paths,
 content ingestion, scheduled backups, and Library Directory. You may skip it and
 use the manual Settings sequence below; **Setup Guide** remains available in the
-main navigation.
+main navigation. Existing installations open on **Overview** after upgrading and
+can launch the guide there when wanted.
 
 !!! tip "Headless ConfigItems vs first-run account"
 

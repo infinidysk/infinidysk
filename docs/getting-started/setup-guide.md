@@ -5,8 +5,8 @@ description: "Use InfiniDysk's guided setup for Plex symlinks or Emby/Jellyfin S
 # Setup Guide <span class="nzbdav-since">since 1.3.0</span>
 
 InfiniDysk opens **Setup Guide** after the first administrator signs in on a new
-or upgraded installation. Complete it, or choose **Skip setup** to stop the
-automatic prompt. You can run it again at any time from the main navigation.
+installation. Existing installations continue to open on **Overview** after an
+upgrade. You can run the guide at any time from the main navigation.
 
 The guide is worth completing even on a long-running installation: it reviews
 best-practice configuration such as pairing Symlinks with rclone VFS read-ahead
