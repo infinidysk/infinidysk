@@ -358,6 +358,48 @@ public sealed class DavDatabaseClientTests : IAsyncLifetime
         };
     }
 
+    [Fact]
+    public async Task GetDirectoryChildrenEnumerableAsync_DoesNotHoldReaderOpenWhileYielding()
+    {
+        // Regression test for the NpgsqlOperationInProgressException seen in production:
+        // WebDAV callers (NWebDav's request handlers, which we don't control) may issue
+        // another query on this same request-scoped DbContext while consuming the items
+        // yielded from a directory listing. If the listing streams its results, the
+        // underlying reader is still open when that second query runs, and EF Core throws
+        // "A second operation was started on this context instance before a previous
+        // operation completed" (Npgsql surfaces this as NpgsqlOperationInProgressException).
+        // After eagerly materializing the listing before yielding, a second query issued
+        // mid-enumeration must succeed instead of throwing.
+        var directory = DavItem.New(
+            Guid.NewGuid(), DavItem.Root, "shows", null,
+            DavItem.ItemType.Directory, DavItem.ItemSubType.Directory,
+            null, null, null, null);
+        var firstFile = DavItem.New(
+            Guid.NewGuid(), directory, "episode1.mkv", 100,
+            DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile,
+            null, null, null, null);
+        var secondFile = DavItem.New(
+            Guid.NewGuid(), directory, "episode2.mkv", 100,
+            DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile,
+            null, null, null, null);
+
+        _context.Items.AddRange(directory, firstFile, secondFile);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var seen = new List<DavItem>();
+        await foreach (var child in _client.GetDirectoryChildrenEnumerableAsync(directory.Id))
+        {
+            seen.Add(child);
+            // Simulates a caller (e.g. a WebDAV handler resolving per-item properties)
+            // issuing a second, unrelated query on the same context mid-enumeration.
+            var lookup = await _client.GetDirectoryChildAsync(directory.Id, child.Name);
+            Assert.NotNull(lookup);
+        }
+
+        Assert.Equal(2, seen.Count);
+    }
+
     public async Task DisposeAsync()
     {
         await _context.DisposeAsync();

@@ -39,11 +39,18 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         Guid dirId,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
-        await foreach (var child in GetDirectoryChildrenQuery(dirId)
-                           .AsAsyncEnumerable()
-                           .WithCancellation(ct)
-                           .ConfigureAwait(false))
+        // Materialize eagerly instead of streaming via AsAsyncEnumerable(). A streaming
+        // query holds the DbContext's single Npgsql reader open for as long as the caller
+        // takes to consume each yielded item; if the caller (e.g. NWebDav's WebDAV request
+        // handlers, which we don't control) issues any other query on this same
+        // request-scoped DbContext while iterating, that second query collides with the
+        // still-open reader and throws NpgsqlOperationInProgressException. Fetching the
+        // full result set up front closes the reader immediately, before any item is
+        // yielded, so nothing the caller does afterward can race it.
+        var children = await GetDirectoryChildrenQuery(dirId).ToListAsync(ct).ConfigureAwait(false);
+        foreach (var child in children)
         {
+            ct.ThrowIfCancellationRequested();
             yield return child;
         }
     }
@@ -779,11 +786,13 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         string category,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
-        await foreach (var child in GetCompletedSymlinkCategoryChildrenQuery(category)
-                           .AsAsyncEnumerable()
-                           .WithCancellation(ct)
-                           .ConfigureAwait(false))
+        // See GetDirectoryChildrenEnumerableAsync above: materialize eagerly rather than
+        // streaming, so the reader on this request-scoped DbContext is closed before any
+        // item is yielded back to a caller that may issue further queries on it.
+        var children = await GetCompletedSymlinkCategoryChildrenQuery(category).ToListAsync(ct).ConfigureAwait(false);
+        foreach (var child in children)
         {
+            ct.ThrowIfCancellationRequested();
             yield return child;
         }
     }
