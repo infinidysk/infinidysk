@@ -147,23 +147,28 @@ public sealed class RequeueActionNeededHealthChecksControllerTests : IAsyncLifet
         Assert.NotEqual(HealthCheckService.ForcedRecheckSentinel, updated.NextHealthCheck);
     }
 
-    [Fact]
-    public async Task RequeueAsync_SkipsConflictingResultsWithEqualTimestamps()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RequeueAsync_SkipsConflictingResultsWithEqualTimestamps(
+        bool actionNeededHasLargerId)
     {
         var createdAt = DateTimeOffset.UtcNow;
         var item = NewItem("same-timestamp.mkv", createdAt.AddDays(1));
+        var smallerId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+        var largerId = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff");
         _context.Items.Add(item);
         _context.HealthCheckResults.AddRange(
             NewResult(
                 item,
                 createdAt,
                 HealthCheckResult.RepairAction.ActionNeeded,
-                Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff")),
+                actionNeededHasLargerId ? largerId : smallerId),
             NewResult(
                 item,
                 createdAt,
                 HealthCheckResult.RepairAction.None,
-                Guid.Parse("00000000-0000-0000-0000-000000000001")));
+                actionNeededHasLargerId ? smallerId : largerId));
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
 
