@@ -41,6 +41,22 @@ public sealed class ReadStartWarmupConfigTests
             config.GetEffectiveSource(ConfigKeys.UsenetReadStartWarmupEnabled));
     }
 
+    [Fact]
+    public void InvalidStoredValue_RemainsEnabled()
+    {
+        var config = new ConfigManager();
+        config.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.UsenetReadStartWarmupEnabled,
+                ConfigValue = "invalid",
+            },
+        ]);
+
+        Assert.True(config.IsReadStartWarmupEnabled());
+    }
+
     [Theory]
     [InlineData("true")]
     [InlineData("false")]
