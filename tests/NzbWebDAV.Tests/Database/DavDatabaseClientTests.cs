@@ -1,4 +1,7 @@
+using System.Collections;
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Migrations;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Interceptors;
@@ -17,6 +20,7 @@ public sealed class DavDatabaseClientTests : IAsyncLifetime
 {
     private readonly string _databasePath =
         Path.Join(Path.GetTempPath(), $"nzbdav-tests-{Guid.NewGuid():N}.sqlite");
+    private readonly RowCountingDbCommandInterceptor _rowCounter = new();
     private DavDatabaseContext _context = null!;
     private TrackingDbContextFactory _contextFactory = null!;
     private DavDatabaseClient _client = null!;
@@ -25,7 +29,7 @@ public sealed class DavDatabaseClientTests : IAsyncLifetime
     {
         var options = new DbContextOptionsBuilder<DavDatabaseContext>()
             .UseSqlite($"Data Source={_databasePath}")
-            .AddInterceptors(new SqliteForeignKeyEnabler())
+            .AddInterceptors(new SqliteForeignKeyEnabler(), _rowCounter)
             .ReplaceService<
                 IMigrationsSqlGenerator,
                 SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
@@ -83,7 +87,7 @@ public sealed class DavDatabaseClientTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task GetDirectoryChildrenEnumerableAsync_DisposesStreamingContextWhenStoppedEarly()
+    public async Task GetDirectoryChildrenEnumerableAsync_StreamsOneRowAndDisposesWhenStoppedEarly()
     {
         var directory = DavItem.New(
             Guid.NewGuid(), DavItem.Root, "shows", null,
@@ -102,14 +106,20 @@ public sealed class DavDatabaseClientTests : IAsyncLifetime
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
 
-        await foreach (var child in _client.GetDirectoryChildrenEnumerableAsync(directory.Id))
+        _rowCounter.Reset();
+        await using (var enumerator = _client.GetDirectoryChildrenEnumerableAsync(directory.Id).GetAsyncEnumerator())
         {
-            Assert.Equal("episode1.mkv", child.Name);
+            Assert.True(await enumerator.MoveNextAsync());
+            Assert.Equal("episode1.mkv", enumerator.Current.Name);
+            Assert.Equal(1, _rowCounter.SuccessfulReads);
             Assert.False(_contextFactory.LastCreatedContext!.IsDisposed);
-            break;
         }
 
         Assert.True(_contextFactory.LastCreatedContext!.IsDisposed);
+
+        _rowCounter.Reset();
+        Assert.Equal(2, (await _client.GetDirectoryChildrenAsync(directory.Id)).Count);
+        Assert.Equal(2, _rowCounter.SuccessfulReads);
     }
 
     [Fact]
@@ -522,6 +532,98 @@ public sealed class DavDatabaseClientTests : IAsyncLifetime
         public override async ValueTask DisposeAsync()
         {
             IsDisposed = true;
+            await base.DisposeAsync();
+        }
+    }
+
+    private sealed class RowCountingDbCommandInterceptor : DbCommandInterceptor
+    {
+        private int _successfulReads;
+
+        public int SuccessfulReads => Volatile.Read(ref _successfulReads);
+
+        public void Reset() => Interlocked.Exchange(ref _successfulReads, 0);
+
+        public override DbDataReader ReaderExecuted(
+            DbCommand command,
+            CommandExecutedEventData eventData,
+            DbDataReader result) => new RowCountingDbDataReader(result, RecordRead);
+
+        public override ValueTask<DbDataReader> ReaderExecutedAsync(
+            DbCommand command,
+            CommandExecutedEventData eventData,
+            DbDataReader result,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult<DbDataReader>(new RowCountingDbDataReader(result, RecordRead));
+
+        private void RecordRead(bool hasRow)
+        {
+            if (hasRow) Interlocked.Increment(ref _successfulReads);
+        }
+    }
+
+    private sealed class RowCountingDbDataReader(DbDataReader inner, Action<bool> recordRead) : DbDataReader
+    {
+        public override object this[int ordinal] => inner[ordinal];
+        public override object this[string name] => inner[name];
+        public override int Depth => inner.Depth;
+        public override int FieldCount => inner.FieldCount;
+        public override bool HasRows => inner.HasRows;
+        public override bool IsClosed => inner.IsClosed;
+        public override int RecordsAffected => inner.RecordsAffected;
+
+        public override bool Read()
+        {
+            var hasRow = inner.Read();
+            recordRead(hasRow);
+            return hasRow;
+        }
+
+        public override async Task<bool> ReadAsync(CancellationToken cancellationToken)
+        {
+            var hasRow = await inner.ReadAsync(cancellationToken);
+            recordRead(hasRow);
+            return hasRow;
+        }
+
+        public override bool NextResult() => inner.NextResult();
+        public override Task<bool> NextResultAsync(CancellationToken cancellationToken) =>
+            inner.NextResultAsync(cancellationToken);
+        public override string GetName(int ordinal) => inner.GetName(ordinal);
+        public override string GetDataTypeName(int ordinal) => inner.GetDataTypeName(ordinal);
+        public override Type GetFieldType(int ordinal) => inner.GetFieldType(ordinal);
+        public override object GetValue(int ordinal) => inner.GetValue(ordinal);
+        public override int GetValues(object[] values) => inner.GetValues(values);
+        public override int GetOrdinal(string name) => inner.GetOrdinal(name);
+        public override bool GetBoolean(int ordinal) => inner.GetBoolean(ordinal);
+        public override byte GetByte(int ordinal) => inner.GetByte(ordinal);
+        public override long GetBytes(int ordinal, long dataOffset, byte[]? buffer, int bufferOffset, int length) =>
+            inner.GetBytes(ordinal, dataOffset, buffer, bufferOffset, length);
+        public override char GetChar(int ordinal) => inner.GetChar(ordinal);
+        public override long GetChars(int ordinal, long dataOffset, char[]? buffer, int bufferOffset, int length) =>
+            inner.GetChars(ordinal, dataOffset, buffer, bufferOffset, length);
+        public override Guid GetGuid(int ordinal) => inner.GetGuid(ordinal);
+        public override short GetInt16(int ordinal) => inner.GetInt16(ordinal);
+        public override int GetInt32(int ordinal) => inner.GetInt32(ordinal);
+        public override long GetInt64(int ordinal) => inner.GetInt64(ordinal);
+        public override float GetFloat(int ordinal) => inner.GetFloat(ordinal);
+        public override double GetDouble(int ordinal) => inner.GetDouble(ordinal);
+        public override string GetString(int ordinal) => inner.GetString(ordinal);
+        public override decimal GetDecimal(int ordinal) => inner.GetDecimal(ordinal);
+        public override DateTime GetDateTime(int ordinal) => inner.GetDateTime(ordinal);
+        public override bool IsDBNull(int ordinal) => inner.IsDBNull(ordinal);
+        public override IEnumerator GetEnumerator() => ((IEnumerable)inner).GetEnumerator();
+
+        public override void Close() => inner.Close();
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) inner.Dispose();
+            base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            await inner.DisposeAsync();
             await base.DisposeAsync();
         }
     }
