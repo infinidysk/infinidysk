@@ -26,6 +26,7 @@ import { applyCanonicalForwardedHeaders } from "./forwarded-headers";
 import { backendProxyTimeoutOptions } from "./backend-proxy-options";
 import { handleBackendProxyResponse } from "./backend-proxy-response";
 import { oidcRouter } from "./oidc-routes";
+import { observeRcloneProxyRequest } from "./rclone-proxy-warning.server";
 import { URL_BASE } from "~/utils/url-base";
 
 export const app = express();
@@ -141,6 +142,8 @@ app.use(credentialRateLimiter);
 
 app.use(async (req, res, next) => {
   if (shouldProxyToBackend(req.method, req.path)) {
+    observeRcloneProxyRequest(req.headers["user-agent"], logger.warn);
+
     const decodedPath = safeDecodePath(req.path);
     if (decodedPath === "/metrics" && !(await isAuthenticated(req))) {
       res.status(401).type("text/plain").send("Metrics authentication required.");

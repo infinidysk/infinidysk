@@ -26,7 +26,9 @@ import { ServiceProviderGate } from "./components/service-provider-gate";
 import { StreamTracingBanner } from "./components/stream-tracing-banner";
 import { LegacyImageBanner } from "./components/legacy-image-banner";
 import { ResetAdminPasswordBanner } from "./components/reset-admin-password-banner";
+import { RcloneProxyWarningBanner } from "./components/rclone-proxy-warning-banner";
 import { isOidcEnabled } from "../server/oidc.server";
+import { isRcloneProxyWarningActive } from "../server/rclone-proxy-warning.server";
 import { getServiceProvider } from "./utils/service-provider.server";
 import { isResetAdminPasswordSet } from "./utils/reset-admin-password.server";
 import { withUrlBase } from "~/utils/url-base";
@@ -44,6 +46,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       useLayout: false,
       serviceProvider: null,
       isResetAdminPasswordSet: resetAdminPasswordSet,
+      rcloneProxyWarningActive: false,
     };
   }
 
@@ -71,6 +74,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     // Baked into images published to the deprecated ghcr.io/nzbdav/nzbdav path.
     isLegacyImage: process.env["NZBDAV_LEGACY_IMAGE"] === "true",
     isResetAdminPasswordSet: resetAdminPasswordSet,
+    rcloneProxyWarningActive: isRcloneProxyWarningActive(),
     version,
     updateAvailable: await checkForUpdate(version),
     isFrontendAuthDisabled: IS_FRONTEND_AUTH_DISABLED,
@@ -138,6 +142,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
     useLayout,
     isLegacyImage,
     isResetAdminPasswordSet,
+    rcloneProxyWarningActive,
     version,
     updateAvailable,
     isFrontendAuthDisabled,
@@ -184,6 +189,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
                     isResetAdminPasswordSet={isResetAdminPasswordSet ?? false}
                   />
                   <LegacyImageBanner isLegacyImage={isLegacyImage ?? false} />
+                  <RcloneProxyWarningBanner active={rcloneProxyWarningActive ?? false} />
                   <StreamTracingBanner isReadOnly={role === "readonly"} />
                 </div>
                 {outlet}

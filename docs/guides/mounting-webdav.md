@@ -26,7 +26,7 @@ docker run --rm -it rclone/rclone obscure "<your-webdav-password>"
 ```ini
 [nzbdav]
 type = webdav
-url = http://nzbdav:3000/
+url = http://nzbdav:8080/
 vendor = other
 user = your-webdav-user
 pass = your-obscured-password
@@ -39,6 +39,19 @@ chmod 600 rclone.conf
 !!! note
 
     Rclone's obscured password is not strong encryption — protect the file.
+
+    Port `8080` is the backend WebDAV endpoint inside the trusted Docker network.
+    Pointing the rclone sidecar there avoids sending streamed bytes through the Node
+    frontend on port `3000`. Do not publish backend port `8080` to an untrusted network;
+    browser and admin traffic should continue to use port `3000`.
+
+### Frontend proxy warning [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
+
+If the frontend detects an rclone client on port `3000`, it emits an operator warning
+at most once every 30 minutes and shows a non-dismissible warning in the admin UI.
+Continued proxied traffic keeps the warning active. After rclone is moved to port `8080`,
+the warning clears once the 30-minute observation window expires. An open admin tab
+refreshes this status once per minute.
 
 ## Sidecar Compose service
 
