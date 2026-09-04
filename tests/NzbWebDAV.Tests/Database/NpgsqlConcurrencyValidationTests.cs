@@ -6,11 +6,13 @@ using NzbWebDAV.Tests.TestUtils;
 
 namespace NzbWebDAV.Tests.Database;
 
-// Opt-in validation, not part of the standard suite: requires a live Postgres on
-// 127.0.0.1:15432 (e.g. `docker run -d -e POSTGRES_PASSWORD=test -e POSTGRES_USER=test
-// -e POSTGRES_DB=nzbdav_test -p 15432:5432 postgres:16`), RUN_NPGSQL_CONCURRENCY_TESTS=1,
-// and DATABASE_PROVIDER=postgres (see OptInPostgresFactAttribute for why the latter is
-// required -- it's not just a gate, DavDatabaseContext's model shape depends on it).
+// Opt-in validation, not part of the standard suite: requires RUN_NPGSQL_CONCURRENCY_TESTS=1,
+// DATABASE_PROVIDER=postgres, and DATABASE_CONNECTION_STRING pointing at a live Postgres
+// (e.g. `docker run -d -e POSTGRES_PASSWORD=test -e POSTGRES_USER=test -e
+// POSTGRES_DB=nzbdav_test -p 15432:5432 postgres:16` then
+// DATABASE_CONNECTION_STRING="Host=127.0.0.1;Port=15432;Database=nzbdav_test;Username=test;Password=test").
+// DATABASE_PROVIDER=postgres is required for more than gating -- see
+// OptInPostgresFactAttribute, DavDatabaseContext's model shape depends on it too.
 // Exists because SQLite does NOT reproduce the
 // NpgsqlOperationInProgressException this guards against — the concurrency-safety bug in
 // GetDirectoryChildrenEnumerableAsync only surfaces against real Npgsql, so a SQLite-only
@@ -33,8 +35,7 @@ namespace NzbWebDAV.Tests.Database;
 // Npgsql legacy-timestamp compatibility switch is needed here.
 public sealed class NpgsqlConcurrencyValidationTests : IAsyncLifetime
 {
-    private const string BaseConnectionString =
-        "Host=127.0.0.1;Port=15432;Database=nzbdav_test;Username=test;Password=test";
+    private string BaseConnectionString => DatabaseProviderConfig.PostgresConnectionString;
 
     private readonly string _schema = $"nzbdav_test_{Guid.NewGuid():N}";
     private DavDatabaseContext _context = null!;
@@ -58,7 +59,8 @@ public sealed class NpgsqlConcurrencyValidationTests : IAsyncLifetime
             .UseNpgsql(scopedConnectionString)
             .Options;
         _context = new PostgresDavDatabaseContext(options);
-        await _context.Database.MigrateAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        using var migrateTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await _context.Database.MigrateAsync(migrateTimeout.Token).WaitAsync(TimeSpan.FromSeconds(30));
         _client = new DavDatabaseClient(_context);
     }
 
