@@ -55,6 +55,17 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
                     },
                 },
             };
+            operation.Responses["409"] = new OpenApiResponse
+            {
+                Description = "Background repairs are disabled.",
+                Content = new Dictionary<string, OpenApiMediaType>
+                {
+                    ["application/json"] = new OpenApiMediaType
+                    {
+                        Schema = new OpenApiSchemaReference("BaseApiResponse"),
+                    },
+                },
+            };
         }
         if (!operation.Responses.ContainsKey("200") && !operation.Responses.ContainsKey("202"))
             operation.Responses["200"] = new OpenApiResponse { Description = "Success." };

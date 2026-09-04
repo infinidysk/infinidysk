@@ -8492,13 +8492,13 @@
           },
           "409": {
             "content": {
-              "application/problem+json": {
+              "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "$ref": "#/components/schemas/BaseApiResponse"
                 }
               }
             },
-            "description": "Conflict."
+            "description": "Background repairs are disabled."
           },
           "500": {
             "content": {

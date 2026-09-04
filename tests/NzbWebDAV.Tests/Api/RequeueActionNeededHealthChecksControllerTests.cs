@@ -148,6 +148,33 @@ public sealed class RequeueActionNeededHealthChecksControllerTests : IAsyncLifet
     }
 
     [Fact]
+    public async Task RequeueAsync_SkipsConflictingResultsWithEqualTimestamps()
+    {
+        var createdAt = DateTimeOffset.UtcNow;
+        var item = NewItem("same-timestamp.mkv", createdAt.AddDays(1));
+        _context.Items.Add(item);
+        _context.HealthCheckResults.AddRange(
+            NewResult(
+                item,
+                createdAt,
+                HealthCheckResult.RepairAction.ActionNeeded,
+                Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff")),
+            NewResult(
+                item,
+                createdAt,
+                HealthCheckResult.RepairAction.None,
+                Guid.Parse("00000000-0000-0000-0000-000000000001")));
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var response = await InvokeAsync();
+
+        Assert.Equal(0, response.RequeuedCount);
+        var updated = await _context.Items.SingleAsync(x => x.Id == item.Id);
+        Assert.NotEqual(HealthCheckService.ForcedRecheckSentinel, updated.NextHealthCheck);
+    }
+
+    [Fact]
     public async Task RequeueAsync_GetRequestReturnsMethodNotAllowedWithoutUpdatingItems()
     {
         var item = NewItem("method.mkv", DateTimeOffset.UtcNow.AddDays(1));
@@ -223,16 +250,18 @@ public sealed class RequeueActionNeededHealthChecksControllerTests : IAsyncLifet
     private static HealthCheckResult NewResult(
         DavItem item,
         DateTimeOffset createdAt,
-        HealthCheckResult.RepairAction repairStatus) =>
-        NewResult(item.Id, item.Path, createdAt, repairStatus);
+        HealthCheckResult.RepairAction repairStatus,
+        Guid? id = null) =>
+        NewResult(item.Id, item.Path, createdAt, repairStatus, id);
 
     private static HealthCheckResult NewResult(
         Guid davItemId,
         string path,
         DateTimeOffset createdAt,
-        HealthCheckResult.RepairAction repairStatus) => new()
+        HealthCheckResult.RepairAction repairStatus,
+        Guid? id = null) => new()
         {
-            Id = Guid.NewGuid(),
+            Id = id ?? Guid.NewGuid(),
             CreatedAt = createdAt,
             DavItemId = davItemId,
             Path = path,

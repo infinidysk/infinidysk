@@ -21,23 +21,40 @@ public static class HealthCheckQueueMutations
         CancellationToken cancellationToken)
     {
         var actionNeededIds = new List<Guid>();
-        Guid? previousDavItemId = null;
+        Guid? currentDavItemId = null;
+        var latestCreatedAt = DateTimeOffset.MinValue;
+        var latestResultsAllNeedAction = false;
 
         await foreach (var result in context.HealthCheckResults
             .AsNoTracking()
             .OrderBy(x => x.DavItemId)
             .ThenByDescending(x => x.CreatedAt)
-            .ThenByDescending(x => x.Id)
-            .Select(x => new { x.DavItemId, x.RepairStatus })
+            .Select(x => new { x.DavItemId, x.CreatedAt, x.RepairStatus })
             .AsAsyncEnumerable()
             .WithCancellation(cancellationToken)
             .ConfigureAwait(false))
         {
-            if (result.DavItemId == previousDavItemId) continue;
-            previousDavItemId = result.DavItemId;
-            if (result.RepairStatus == HealthCheckResult.RepairAction.ActionNeeded)
-                actionNeededIds.Add(result.DavItemId);
+            if (result.DavItemId != currentDavItemId)
+            {
+                if (currentDavItemId is Guid completedId && latestResultsAllNeedAction)
+                    actionNeededIds.Add(completedId);
+
+                currentDavItemId = result.DavItemId;
+                latestCreatedAt = result.CreatedAt;
+                latestResultsAllNeedAction =
+                    result.RepairStatus == HealthCheckResult.RepairAction.ActionNeeded;
+                continue;
+            }
+
+            if (result.CreatedAt == latestCreatedAt)
+            {
+                latestResultsAllNeedAction &=
+                    result.RepairStatus == HealthCheckResult.RepairAction.ActionNeeded;
+            }
         }
+
+        if (currentDavItemId is Guid finalId && latestResultsAllNeedAction)
+            actionNeededIds.Add(finalId);
 
         return await RequeueActionNeededIdsAsync(
                 context,
@@ -59,12 +76,18 @@ public static class HealthCheckQueueMutations
                 .Where(x => x.Type == DavItem.ItemType.UsenetFile)
                 .Where(x => x.NextHealthCheck != DateTimeOffset.UnixEpoch)
                 .Where(x => x.NextHealthCheck != HealthCheckService.ForcedRecheckSentinel)
-                .Where(x => context.HealthCheckResults
-                    .Where(result => result.DavItemId == x.Id)
-                    .OrderByDescending(result => result.CreatedAt)
-                    .ThenByDescending(result => result.Id)
-                    .Select(result => (HealthCheckResult.RepairAction?)result.RepairStatus)
-                    .FirstOrDefault() == HealthCheckResult.RepairAction.ActionNeeded)
+                .Where(x => context.HealthCheckResults.Any(result =>
+                    result.DavItemId == x.Id &&
+                    result.RepairStatus == HealthCheckResult.RepairAction.ActionNeeded &&
+                    !context.HealthCheckResults.Any(newer =>
+                        newer.DavItemId == x.Id &&
+                        newer.CreatedAt > result.CreatedAt)))
+                .Where(x => !context.HealthCheckResults.Any(result =>
+                    result.DavItemId == x.Id &&
+                    result.RepairStatus != HealthCheckResult.RepairAction.ActionNeeded &&
+                    !context.HealthCheckResults.Any(newer =>
+                        newer.DavItemId == x.Id &&
+                        newer.CreatedAt > result.CreatedAt)))
                 .ExecuteUpdateAsync(
                     x => x.SetProperty(
                         item => item.NextHealthCheck,

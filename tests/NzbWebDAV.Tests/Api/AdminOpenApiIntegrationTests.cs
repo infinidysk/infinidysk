@@ -115,6 +115,19 @@ public sealed class AdminOpenApiIntegrationTests(NzbDavWebApplicationFactory fac
                     .GetProperty("$ref")
                     .GetString());
 
+            var requeueActionNeeded = paths
+                .GetProperty("/api/requeue-action-needed-health-checks")
+                .GetProperty("post");
+            Assert.Equal(
+                "#/components/schemas/BaseApiResponse",
+                requeueActionNeeded.GetProperty("responses")
+                    .GetProperty("409")
+                    .GetProperty("content")
+                    .GetProperty("application/json")
+                    .GetProperty("schema")
+                    .GetProperty("$ref")
+                    .GetString());
+
             var apiKey = root.GetProperty("components")
                 .GetProperty("securitySchemes")
                 .GetProperty("ApiKey");
