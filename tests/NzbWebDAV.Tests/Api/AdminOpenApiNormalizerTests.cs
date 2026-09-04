@@ -21,12 +21,11 @@ public sealed class AdminOpenApiNormalizerTests
 
         var normalized = AdminOpenApiNormalizer.Normalize(input);
 
-        Assert.Equal(
-            """
+        var expected = """
             {
               "info": {
                 "title": "t",
-                "version": "2.0.0"
+                "version": "__CONTRACT_VERSION__"
               },
               "openapi": "3.1.0",
               "paths": {
@@ -48,8 +47,11 @@ public sealed class AdminOpenApiNormalizerTests
               ]
             }
 
-            """.Replace("\r\n", "\n", StringComparison.Ordinal),
-            normalized);
+            """
+            .Replace("__CONTRACT_VERSION__", AdminApiContractCatalog.ContractVersion, StringComparison.Ordinal)
+            .Replace("\r\n", "\n", StringComparison.Ordinal);
+
+        Assert.Equal(expected, normalized);
         Assert.EndsWith("\n", normalized, StringComparison.Ordinal);
         Assert.False(normalized.EndsWith("\n\n", StringComparison.Ordinal));
     }
