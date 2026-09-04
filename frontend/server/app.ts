@@ -27,6 +27,7 @@ import { backendProxyTimeoutOptions } from "./backend-proxy-options";
 import { handleBackendProxyResponse } from "./backend-proxy-response";
 import { oidcRouter } from "./oidc-routes";
 import { observeRcloneProxyRequest } from "./rclone-proxy-warning.server";
+import { admitAndForwardBackendRequest } from "./backend-proxy-admission";
 import { URL_BASE } from "~/utils/url-base";
 
 export const app = express();
@@ -142,28 +143,33 @@ app.use(credentialRateLimiter);
 
 app.use(async (req, res, next) => {
   if (shouldProxyToBackend(req.method, req.path)) {
-    observeRcloneProxyRequest(req.headers["user-agent"], logger.warn);
-
     const decodedPath = safeDecodePath(req.path);
-    if (decodedPath === "/metrics" && !(await isAuthenticated(req))) {
-      res.status(401).type("text/plain").send("Metrics authentication required.");
-      return;
-    }
-
-    await setApiKeyForAuthenticatedRequests(req, getFrontendRuntimeConfig().frontendBackendApiKey);
-
-    if (isReadOnlyDeniedBackendMutation(req.method, req.path)) {
-      const user = await getSessionUser(req);
-      if (user?.role === "readonly") {
-        res.status(403).json({
-          status: false,
-          error: "Read-only users cannot perform destructive maintenance.",
-        });
-        return;
-      }
-    }
-
-    return forwardToBackend(req, res, next);
+    return admitAndForwardBackendRequest(
+      {
+        requiresMetricsAuthentication: decodedPath === "/metrics",
+        isReadOnlyMutation: isReadOnlyDeniedBackendMutation(req.method, req.path),
+        userAgent: req.headers["user-agent"],
+      },
+      {
+        isAuthenticated: () => isAuthenticated(req),
+        injectApiKey: () =>
+          setApiKeyForAuthenticatedRequests(req, getFrontendRuntimeConfig().frontendBackendApiKey),
+        getRole: async () => (await getSessionUser(req))?.role ?? null,
+        rejectMetrics: () => {
+          res.status(401).type("text/plain").send("Metrics authentication required.");
+        },
+        rejectReadOnlyMutation: () => {
+          res.status(403).json({
+            status: false,
+            error: "Read-only users cannot perform destructive maintenance.",
+          });
+        },
+        observeRclone: (userAgent) => observeRcloneProxyRequest(userAgent, logger.warn),
+        forward: () => {
+          void forwardToBackend(req, res, next);
+        },
+      },
+    );
   }
   next();
 });

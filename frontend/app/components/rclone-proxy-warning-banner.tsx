@@ -8,6 +8,10 @@ export function RcloneProxyWarningBanner({ active: initiallyActive }: { active: 
   const [active, setActive] = useState(initiallyActive);
 
   useEffect(() => {
+    setActive(initiallyActive);
+  }, [initiallyActive]);
+
+  useEffect(() => {
     let stopped = false;
     const refresh = async () => {
       if (document.visibilityState === "hidden") return;

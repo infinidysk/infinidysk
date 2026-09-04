@@ -29,6 +29,17 @@ describe("RcloneProxyWarningBanner", () => {
     expect(container.innerHTML).toBe("");
   });
 
+  it("synchronizes with root-loader revalidation without waiting for the poll", () => {
+    const { rerender } = render(<RcloneProxyWarningBanner active={false} />);
+    expect(screen.queryByText("rclone is using the frontend proxy")).toBeNull();
+
+    rerender(<RcloneProxyWarningBanner active />);
+    expect(screen.getByText("rclone is using the frontend proxy")).toBeTruthy();
+
+    rerender(<RcloneProxyWarningBanner active={false} />);
+    expect(screen.queryByText("rclone is using the frontend proxy")).toBeNull();
+  });
+
   it("activates and clears from the lightweight status poll", async () => {
     vi.useFakeTimers();
     const states = [true, false];
