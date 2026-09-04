@@ -76,6 +76,12 @@ that option to force-delete linked items at the threshold. With the default valu
 unlinked files are kept and surfaced as **Action needed**; set a value greater than `0` to
 auto-remove them after repeated failures.
 
+For linked files downloaded before Arr provenance tracking was available, InfiniDysk first tries
+to recover the original download from exact Arr import history, then falls back to the retained SAB
+`nzo_id`. Arr must still confirm grabbed history for that ID before InfiniDysk removes the media,
+marks the download failed, or requests a replacement. If that history has expired, the file remains
+untouched and is surfaced as **Action needed** instead of risking the wrong release.
+
 Successful full-file playback and a successful background health check reset the in-memory failure
 count. The count resets when InfiniDysk restarts, so it is intentionally not a durable replacement for
 health checks.

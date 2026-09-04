@@ -405,6 +405,7 @@ public class ArrLinkedRepairDecisionTests
     {
         var observed = new List<Guid>();
         var arrDownloadId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        var legacyDownloadId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
         var clients = new ArrClient[]
         {
             new ScriptedArrClient(
@@ -421,7 +422,11 @@ public class ArrLinkedRepairDecisionTests
         };
 
         var result = await HealthCheckService.DecideArrLinkedRepairAsync(
-            clients, LibraryPath, arrDownloadId, CancellationToken.None);
+            clients,
+            LibraryPath,
+            arrDownloadId,
+            CancellationToken.None,
+            legacyDownloadId: legacyDownloadId);
 
         Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded, result.Decision);
         Assert.Equal([arrDownloadId], observed);
@@ -429,9 +434,8 @@ public class ArrLinkedRepairDecisionTests
     }
 
     [Fact]
-    public async Task NullProvenance_NeverFallsBackToLocalIds()
+    public async Task NullProvenance_WithoutLegacyIdentityDefers()
     {
-        var nzbBlobId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
         var clients = new ArrClient[]
         {
             new ScriptedArrClient(
@@ -449,13 +453,44 @@ public class ArrLinkedRepairDecisionTests
 
         Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferMissingDownloadIdentity, result.Decision);
         Assert.Null(result.RecoveredDownloadId);
-        _ = nzbBlobId;
+    }
+
+    [Fact]
+    public async Task MissingProvenance_UsesVerifiedLegacyDownloadId()
+    {
+        var legacyDownloadId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, downloadId) =>
+                {
+                    Assert.Equal(legacyDownloadId, downloadId);
+                    return Task.FromResult(ArrRepairOutcome.RemoveAndBlocklistSucceeded);
+                },
+                importHistory: (_, _, _) => Task.FromResult(new ArrHistory())),
+        };
+
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients,
+            LibraryPath,
+            null,
+            CancellationToken.None,
+            legacyDownloadId: legacyDownloadId);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded, result.Decision);
+        Assert.Null(result.RecoveredDownloadId);
     }
 
     [Fact]
     public async Task UniqueExactLegacyRecovery_IsUsedAndReturned()
     {
         var recovered = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
+        var legacyDownloadId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
         var clients = new ArrClient[]
         {
             new ScriptedArrClient(
@@ -489,11 +524,136 @@ public class ArrLinkedRepairDecisionTests
         };
 
         var result = await HealthCheckService.DecideArrLinkedRepairAsync(
-            clients, LibraryPath, null, CancellationToken.None);
+            clients,
+            LibraryPath,
+            null,
+            CancellationToken.None,
+            legacyDownloadId: legacyDownloadId);
 
         Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded, result.Decision);
         Assert.Equal(recovered, result.RecoveredDownloadId);
         Assert.Equal("http://radarr.test", result.RecoveryHost);
+    }
+
+    [Fact]
+    public async Task AmbiguousProvenance_UsesVerifiedLegacyDownloadId()
+    {
+        var first = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var second = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        var legacyDownloadId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, downloadId) =>
+                {
+                    Assert.Equal(legacyDownloadId, downloadId);
+                    return Task.FromResult(ArrRepairOutcome.RemoveAndBlocklistSucceeded);
+                },
+                importHistory: (_, _, _) => Task.FromResult(new ArrHistory
+                {
+                    TotalRecords = 2,
+                    Records =
+                    [
+                        new ArrHistoryRecord
+                        {
+                            DownloadId = first.ToString(),
+                            EventType = 3,
+                            Data = new ArrHistoryData { FileId = "1", ImportedPath = LibraryPath },
+                        },
+                        new ArrHistoryRecord
+                        {
+                            DownloadId = second.ToString(),
+                            EventType = 3,
+                            Data = new ArrHistoryData { FileId = "1", ImportedPath = LibraryPath },
+                        },
+                    ],
+                })),
+        };
+
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients,
+            LibraryPath,
+            null,
+            CancellationToken.None,
+            legacyDownloadId: legacyDownloadId);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded, result.Decision);
+        Assert.Null(result.RecoveredDownloadId);
+    }
+
+    [Fact]
+    public async Task MissingProvenance_UnrecognizedLegacyIdDefersAsMissingHistory()
+    {
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, _) => Task.FromResult(ArrRepairOutcome.DownloadHistoryNotFound),
+                importHistory: (_, _, _) => Task.FromResult(new ArrHistory())),
+        };
+
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients,
+            LibraryPath,
+            null,
+            CancellationToken.None,
+            legacyDownloadId: Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"));
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferMissingDownloadHistory, result.Decision);
+    }
+
+    [Fact]
+    public async Task AmbiguousProvenance_UnrecognizedLegacyIdRemainsAmbiguous()
+    {
+        var first = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var second = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, _) => Task.FromResult(ArrRepairOutcome.DownloadHistoryNotFound),
+                importHistory: (_, _, _) => Task.FromResult(new ArrHistory
+                {
+                    TotalRecords = 2,
+                    Records =
+                    [
+                        new ArrHistoryRecord
+                        {
+                            DownloadId = first.ToString(),
+                            EventType = 3,
+                            Data = new ArrHistoryData { FileId = "1", ImportedPath = LibraryPath },
+                        },
+                        new ArrHistoryRecord
+                        {
+                            DownloadId = second.ToString(),
+                            EventType = 3,
+                            Data = new ArrHistoryData { FileId = "1", ImportedPath = LibraryPath },
+                        },
+                    ],
+                })),
+        };
+
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients,
+            LibraryPath,
+            null,
+            CancellationToken.None,
+            legacyDownloadId: Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"));
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferAmbiguousDownloadIdentity, result.Decision);
     }
 
     [Fact]
@@ -691,6 +851,35 @@ public class ArrLinkedRepairDecisionTests
 
         var result = await HealthCheckService.DecideArrLinkedRepairAsync(
             clients, LibraryPath, DownloadId, CancellationToken.None);
+
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, result.Decision);
+    }
+
+    [Fact]
+    public async Task UnreachableOwnerPlusLegacyHistoryMiss_ReturnsDeferUnreachable()
+    {
+        var clients = new ArrClient[]
+        {
+            new ScriptedArrClient(
+                host: "http://unreachable",
+                rootFolders: () => throw new HttpRequestException("down"),
+                removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not be called")),
+            new ScriptedArrClient(
+                host: "http://radarr",
+                rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+                {
+                    new() { Path = "/media/movies" },
+                }),
+                removeAndBlocklist: (_, _) => Task.FromResult(ArrRepairOutcome.DownloadHistoryNotFound),
+                importHistory: (_, _, _) => Task.FromResult(new ArrHistory())),
+        };
+
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
+            clients,
+            LibraryPath,
+            null,
+            CancellationToken.None,
+            legacyDownloadId: Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"));
 
         Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferUnreachable, result.Decision);
     }

@@ -2404,7 +2404,8 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         Guid? downloadId,
         CancellationToken ct,
         Func<ArrClient, IReadOnlyList<string>, bool>? shouldRequestSearch = null,
-        ArrInstanceBackoff? arrBackoff = null)
+        ArrInstanceBackoff? arrBackoff = null,
+        Guid? legacyDownloadId = null)
     {
         var anInstanceFailed = false;
         var sawConfiguredClient = false;
@@ -2526,12 +2527,22 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 else if (resolution.Kind == ArrDownloadIdResolutionKind.Ambiguous)
                 {
                     sawAmbiguousIdentity = true;
-                    continue;
+                    if (legacyDownloadId is null)
+                        continue;
+                    // Pre-provenance items retained the SAB nzo_id locally. Arr still has to
+                    // confirm grabbed history for it inside RemoveAndBlocklist before mutation.
+                    effectiveId = legacyDownloadId;
                 }
                 else
                 {
-                    sawMissingIdentity = true;
-                    continue;
+                    if (legacyDownloadId is null)
+                    {
+                        sawMissingIdentity = true;
+                        continue;
+                    }
+                    // This is only a candidate, not recovered provenance. Do not persist it as
+                    // ArrDownloadId unless exact import history independently proves the value.
+                    effectiveId = legacyDownloadId;
                 }
             }
 
@@ -2918,7 +2929,8 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                         .ToArray(),
                     arrConfig.EffectiveQueueReplacementSearchLimit(),
                     arrConfig.EffectiveQueueReplacementSearchWindow()),
-                _arrBackoff).ConfigureAwait(false);
+                _arrBackoff,
+                legacyDownloadId: davItem.NzbBlobId ?? davItem.HistoryItemId).ConfigureAwait(false);
 
             if (davItem.ArrDownloadId is null && arrResult.RecoveredDownloadId is { } recovered)
             {
