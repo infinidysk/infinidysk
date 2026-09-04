@@ -322,6 +322,29 @@ public class WebDavObservabilityMiddlewareTests : IDisposable
     }
 
     [Fact]
+    public async Task Get_WhenWriteBlocksThenThrows_DoesNotCountWriteTimeAsIdle()
+    {
+        WebDavObservabilityMiddleware.SlowThresholdOverride = TimeSpan.FromHours(1);
+        WebDavObservabilityMiddleware.StallThresholdOverride = TimeSpan.FromMilliseconds(100);
+        var context = new DefaultHttpContext();
+        context.Request.Method = "GET";
+        context.Request.Path = "/content/tv/show.mkv";
+        context.Response.Body = new DelayedSecondWriteFailureStream();
+        var middleware = new WebDavObservabilityMiddleware(async ctx =>
+        {
+            await ctx.Response.Body.WriteAsync(new byte[] { 1 });
+            await ctx.Response.Body.WriteAsync(new byte[] { 2 });
+        });
+
+        await Assert.ThrowsAsync<IOException>(() => middleware.InvokeAsync(context));
+
+        var counters = WebDavObservabilityMiddleware.Snapshot();
+        Assert.False(context.RequestAborted.IsCancellationRequested);
+        Assert.False(counters.ContainsKey("stalledStreams"));
+        Assert.False(counters.ContainsKey("slow"));
+    }
+
+    [Fact]
     public async Task SlowWarnings_AreThrottledPerCategory()
     {
         WebDavObservabilityMiddleware.SlowThresholdOverride = TimeSpan.Zero;
@@ -384,6 +407,39 @@ public class WebDavObservabilityMiddlewareTests : IDisposable
         public override ValueTask WriteAsync(
             ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
             throw new IOException("simulated client disconnect");
+
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+    }
+
+    private sealed class DelayedSecondWriteFailureStream : Stream
+    {
+        private int _writeCount;
+
+        public override bool CanWrite => true;
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+
+        public override async ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _writeCount) == 1)
+                return;
+
+            await Task.Delay(200, cancellationToken);
+            throw new IOException("simulated delayed write failure");
+        }
 
         public override void Flush() { }
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();

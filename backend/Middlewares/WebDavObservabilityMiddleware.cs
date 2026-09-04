@@ -253,8 +253,9 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
     {
         private readonly object _timingLock = new();
         private long _firstByteMs;
-        private long _lastWriteCompletedMs;
+        private long _idleStartedMs;
         private long _maxIdleMs;
+        private int _activeWrites;
         private int _firstByteRecorded;
 
         public long? FirstByteElapsedMilliseconds
@@ -274,7 +275,9 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
                 if (_firstByteRecorded == 0)
                     return null;
 
-                return Math.Max(_maxIdleMs, completedMs - _lastWriteCompletedMs);
+                return _activeWrites == 0
+                    ? Math.Max(_maxIdleMs, completedMs - _idleStartedMs)
+                    : _maxIdleMs;
             }
         }
 
@@ -284,51 +287,78 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
 
             lock (_timingLock)
             {
-                if (_firstByteRecorded == 0) return;
-                _maxIdleMs = Math.Max(_maxIdleMs, stopwatch.ElapsedMilliseconds - _lastWriteCompletedMs);
+                var startedMs = stopwatch.ElapsedMilliseconds;
+                if (_firstByteRecorded != 0 && _activeWrites == 0)
+                    _maxIdleMs = Math.Max(_maxIdleMs, startedMs - _idleStartedMs);
+
+                _activeWrites++;
             }
         }
 
-        private void RecordWriteCompleted(int count)
+        private void RecordWriteFinished(int count, bool succeeded)
         {
             if (count <= 0) return;
 
             lock (_timingLock)
             {
-                var completedMs = stopwatch.ElapsedMilliseconds;
-                if (_firstByteRecorded == 0)
+                var finishedMs = stopwatch.ElapsedMilliseconds;
+                if (succeeded && _firstByteRecorded == 0)
                 {
-                    _firstByteMs = completedMs;
+                    _firstByteMs = finishedMs;
                     Volatile.Write(ref _firstByteRecorded, 1);
                 }
 
-                _lastWriteCompletedMs = completedMs;
+                _activeWrites--;
+                if (_activeWrites == 0)
+                    _idleStartedMs = finishedMs;
             }
         }
 
-        // Record only after the inner write succeeds: a failed write (client
-        // disconnect, timeout) never put a byte on the wire.
         public override void Write(byte[] buffer, int offset, int count)
         {
             RecordWriteStarted(count);
-            inner.Write(buffer, offset, count);
-            RecordWriteCompleted(count);
+            var succeeded = false;
+            try
+            {
+                inner.Write(buffer, offset, count);
+                succeeded = true;
+            }
+            finally
+            {
+                RecordWriteFinished(count, succeeded);
+            }
         }
 
         public override async Task WriteAsync(
             byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
             RecordWriteStarted(count);
-            await inner.WriteAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
-            RecordWriteCompleted(count);
+            var succeeded = false;
+            try
+            {
+                await inner.WriteAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
+                succeeded = true;
+            }
+            finally
+            {
+                RecordWriteFinished(count, succeeded);
+            }
         }
 
         public override async ValueTask WriteAsync(
             ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
             RecordWriteStarted(buffer.Length);
-            await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
-            RecordWriteCompleted(buffer.Length);
+            var succeeded = false;
+            try
+            {
+                await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+                succeeded = true;
+            }
+            finally
+            {
+                RecordWriteFinished(buffer.Length, succeeded);
+            }
         }
 
         public override void Flush() => inner.Flush();
