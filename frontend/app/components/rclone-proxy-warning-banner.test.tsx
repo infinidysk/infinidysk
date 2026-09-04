@@ -61,7 +61,8 @@ describe("RcloneProxyWarningBanner", () => {
     rerender(<RcloneProxyWarningBanner active={false} />);
 
     await act(async () => {
-      resolveStatus?.({ ok: true, json: () => Promise.resolve({ active: true }) });
+      if (!resolveStatus) throw new Error("Expected a pending status request");
+      resolveStatus({ ok: true, json: () => Promise.resolve({ active: true }) });
       await Promise.resolve();
     });
 
