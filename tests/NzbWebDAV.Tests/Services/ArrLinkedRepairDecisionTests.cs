@@ -699,10 +699,11 @@ public class ArrLinkedRepairDecisionTests
     }
 
     [Fact]
-    public async Task UniqueRecoveryThenAmbiguousInstance_DoesNotReturnRecoveredId()
+    public async Task UniqueRecoveryThenAmbiguousLegacySuccess_DoesNotReturnRecoveredId()
     {
         var recovered = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
         var other = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        var legacyDownloadId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
         var clients = new ArrClient[]
         {
             new ScriptedArrClient(
@@ -735,7 +736,11 @@ public class ArrLinkedRepairDecisionTests
                 {
                     new() { Path = "/media/movies" },
                 }),
-                removeAndBlocklist: (_, _) => throw new InvalidOperationException("must not mutate"),
+                removeAndBlocklist: (_, id) =>
+                {
+                    Assert.Equal(legacyDownloadId, id);
+                    return Task.FromResult(ArrRepairOutcome.RemoveAndBlocklistSucceeded);
+                },
                 importHistory: (_, _, _) => Task.FromResult(new ArrHistory
                 {
                     TotalRecords = 2,
@@ -758,9 +763,13 @@ public class ArrLinkedRepairDecisionTests
         };
 
         var result = await HealthCheckService.DecideArrLinkedRepairAsync(
-            clients, LibraryPath, null, CancellationToken.None);
+            clients,
+            LibraryPath,
+            null,
+            CancellationToken.None,
+            legacyDownloadId: legacyDownloadId);
 
-        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.DeferAmbiguousDownloadIdentity, result.Decision);
+        Assert.Equal(HealthCheckService.ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded, result.Decision);
         Assert.Null(result.RecoveredDownloadId);
     }
 

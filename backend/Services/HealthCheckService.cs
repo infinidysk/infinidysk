@@ -2571,7 +2571,9 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 continue;
             }
 
-            var persistedRecovery = recoveredConflict ? null : recoveredDownloadId;
+            var persistedRecovery = recoveredConflict || sawAmbiguousIdentity
+                ? null
+                : recoveredDownloadId;
             if (repairOutcome == ArrRepairOutcome.RemoveAndBlocklistSucceeded)
             {
                 return new ArrLinkedRepairResult(
