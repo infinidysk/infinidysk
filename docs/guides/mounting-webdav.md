@@ -38,7 +38,9 @@ pass = your-obscured-password
   InfiniDysk. Point it directly at the backend on port `8080`. Sending WebDAV
   traffic through the frontend on port `3000` adds proxy overhead and reduces
   streaming performance. Use the frontend URL only when an rclone client cannot
-  access the backend service over the network.
+  access the backend service over the network. Do not publish backend port `8080`
+  to an untrusted network; browser and admin traffic should continue to use port
+  `3000`.
 
 ```bash
 chmod 600 rclone.conf
@@ -47,11 +49,6 @@ chmod 600 rclone.conf
 !!! note
 
     Rclone's obscured password is not strong encryption — protect the file.
-
-    Port `8080` is the backend WebDAV endpoint inside the trusted Docker network.
-    Pointing the rclone sidecar there avoids sending streamed bytes through the Node
-    frontend on port `3000`. Do not publish backend port `8080` to an untrusted network;
-    browser and admin traffic should continue to use port `3000`.
 
 ### Frontend proxy warning [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
 
