@@ -40,6 +40,34 @@ describe("RcloneProxyWarningBanner", () => {
     expect(screen.queryByText("rclone is using the frontend proxy")).toBeNull();
   });
 
+  it("ignores a delayed poll response after root-loader revalidation", async () => {
+    vi.useFakeTimers();
+    let resolveStatus:
+      ((value: { ok: true; json: () => Promise<{ active: boolean }> }) => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<{ ok: true; json: () => Promise<{ active: boolean }> }>((resolve) => {
+            resolveStatus = resolve;
+          }),
+      ),
+    );
+    const { rerender } = render(<RcloneProxyWarningBanner active />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RCLONE_PROXY_STATUS_POLL_MS);
+    });
+    rerender(<RcloneProxyWarningBanner active={false} />);
+
+    await act(async () => {
+      resolveStatus?.({ ok: true, json: () => Promise.resolve({ active: true }) });
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("rclone is using the frontend proxy")).toBeNull();
+  });
+
   it("activates and clears from the lightweight status poll", async () => {
     vi.useFakeTimers();
     const states = [true, false];

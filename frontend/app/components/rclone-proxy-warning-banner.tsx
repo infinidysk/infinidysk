@@ -1,13 +1,15 @@
 import { Alert, Icon } from "~/components/ui";
 import { withUrlBase } from "~/utils/url-base";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export const RCLONE_PROXY_STATUS_POLL_MS = 60_000;
 
 export function RcloneProxyWarningBanner({ active: initiallyActive }: { active: boolean }) {
   const [active, setActive] = useState(initiallyActive);
+  const requestGeneration = useRef(0);
 
   useEffect(() => {
+    requestGeneration.current += 1;
     setActive(initiallyActive);
   }, [initiallyActive]);
 
@@ -15,13 +17,20 @@ export function RcloneProxyWarningBanner({ active: initiallyActive }: { active: 
     let stopped = false;
     const refresh = async () => {
       if (document.visibilityState === "hidden") return;
+      const generation = ++requestGeneration.current;
       try {
         const response = await fetch(withUrlBase("/rclone-proxy-warning"), {
           headers: { Accept: "application/json" },
         });
         if (!response.ok) return;
         const status = (await response.json()) as { active?: unknown };
-        if (!stopped && typeof status.active === "boolean") setActive(status.active);
+        if (
+          !stopped &&
+          generation === requestGeneration.current &&
+          typeof status.active === "boolean"
+        ) {
+          setActive(status.active);
+        }
       } catch {
         // Keep the last known state while the frontend route is unavailable.
       }
