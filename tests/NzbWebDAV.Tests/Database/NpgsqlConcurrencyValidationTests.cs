@@ -2,17 +2,25 @@ using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
+using NzbWebDAV.Tests.TestUtils;
 
 namespace NzbWebDAV.Tests.Database;
 
 // Opt-in validation, not part of the standard suite: requires a live Postgres on
 // 127.0.0.1:15432 (e.g. `docker run -d -e POSTGRES_PASSWORD=test -e POSTGRES_USER=test
-// -e POSTGRES_DB=nzbdav_test -p 15432:5432 postgres:16`). Exists because SQLite does
-// NOT reproduce the NpgsqlOperationInProgressException this guards against — the
-// concurrency-safety bug in GetDirectoryChildrenEnumerableAsync only surfaces against
-// real Npgsql, so a SQLite-only suite can't catch a regression here. Verified: fails
-// with the exact production stack trace against the pre-fix code, passes against the
-// fixed code.
+// -e POSTGRES_DB=nzbdav_test -p 15432:5432 postgres:16`) and RUN_NPGSQL_CONCURRENCY_TESTS=1
+// (see OptInPostgresFactAttribute). Exists because SQLite does NOT reproduce the
+// NpgsqlOperationInProgressException this guards against — the concurrency-safety bug in
+// GetDirectoryChildrenEnumerableAsync only surfaces against real Npgsql, so a SQLite-only
+// suite can't catch a regression here. Verified: fails with the exact production stack
+// trace against the pre-fix code, passes against the fixed code.
+//
+// Uses [OptInPostgresFactAttribute], not this project's usual [SkippableFact] +
+// Skip.IfNot() pattern: this class's Postgres connection happens in
+// IAsyncLifetime.InitializeAsync(), which xUnit runs before the test body -- a body-level
+// Skip.IfNot() would already be too late to stop that connection attempt when Postgres
+// isn't available. FactAttribute.Skip is evaluated at discovery time, before
+// InitializeAsync ever runs, which is what actually prevents the connection attempt.
 public sealed class NpgsqlConcurrencyValidationTests : IAsyncLifetime
 {
     private const string ConnectionString =
@@ -35,7 +43,7 @@ public sealed class NpgsqlConcurrencyValidationTests : IAsyncLifetime
         _client = new DavDatabaseClient(_context);
     }
 
-    [Fact]
+    [OptInPostgresFact]
     public async Task GetDirectoryChildrenEnumerableAsync_AgainstRealNpgsql_SurvivesConcurrentQuery()
     {
         var directory = DavItem.New(
@@ -66,7 +74,7 @@ public sealed class NpgsqlConcurrencyValidationTests : IAsyncLifetime
         Assert.Equal(2, seen.Count);
     }
 
-    [Fact]
+    [OptInPostgresFact]
     public async Task GetCompletedSymlinkCategoryChildrenEnumerableAsync_AgainstRealNpgsql_SurvivesConcurrentQuery()
     {
         var directory = DavItem.New(
@@ -111,7 +119,7 @@ public sealed class NpgsqlConcurrencyValidationTests : IAsyncLifetime
     // future change adds any per-item DB call inside either controller loop or the
     // HealthCheckService scan loop, it will reproduce this exact exception in
     // production, and this test documents why.
-    [Fact]
+    [OptInPostgresFact]
     public async Task HealthCheckQueueItems_StreamedWithInterleavedQuery_ThrowsOnRealNpgsql()
     {
         var file = DavItem.New(
