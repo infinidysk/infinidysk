@@ -42,46 +42,55 @@ export function ThroughputChart({
     setKeyboardBucket(null);
   }, [window]);
 
-  const { clientArticlesPath, appArticlesPath, errorsPath, maxArticles, maxClientArticles, maxAppArticles, maxNetworkRate, xPercent, yPercent } =
-    useMemo(() => {
-      if (points.length === 0) {
-        return {
-          clientArticlesPath: "",
-          appArticlesPath: "",
-          errorsPath: "",
-          maxArticles: 0,
-          maxClientArticles: 0,
-          maxAppArticles: 0,
-          maxNetworkRate: 0,
-          xPercent: (_: number) => 0,
-          yPercent: (_: number) => 0,
-        };
-      }
-      const peakClientArticles = Math.max(0, ...points.map(clientArticles));
-      const peakAppArticles = Math.max(0, ...points.map(appArticles));
-      const peakArticles = Math.max(peakClientArticles, peakAppArticles);
-      const scaleMax = Math.max(1, peakArticles, ...points.map((p) => p.errors));
-      const maxRate = Math.max(0, ...points.map((p) => (p.bytesFetched ?? 0) / bucketSeconds));
-      const xStep = points.length > 1 ? VB_W / (points.length - 1) : 0;
-      const innerH = VB_H - TOP_PAD - BOT_PAD;
-      const y = (v: number) => VB_H - BOT_PAD - (v / scaleMax) * innerH;
-
-      const xPct = (i: number) => (points.length > 1 ? (i / (points.length - 1)) * 100 : 50);
-      const yPct = (v: number) =>
-        100 - ((v / scaleMax) * (1 - (TOP_PAD + BOT_PAD) / VB_H) * 100 + (BOT_PAD / VB_H) * 100);
-
+  const {
+    clientArticlesPath,
+    appArticlesPath,
+    errorsPath,
+    maxArticles,
+    maxClientArticles,
+    maxAppArticles,
+    maxNetworkRate,
+    xPercent,
+    yPercent,
+  } = useMemo(() => {
+    if (points.length === 0) {
       return {
-        clientArticlesPath: buildArticlesSeriesPath(points, clientArticles, xStep, y),
-        appArticlesPath: buildArticlesSeriesPath(points, appArticles, xStep, y),
-        errorsPath: buildSparseSeriesPath(points, (p) => p.errors, xStep, y),
-        maxArticles: peakArticles,
-        maxClientArticles: peakClientArticles,
-        maxAppArticles: peakAppArticles,
-        maxNetworkRate: maxRate,
-        xPercent: xPct,
-        yPercent: yPct,
+        clientArticlesPath: "",
+        appArticlesPath: "",
+        errorsPath: "",
+        maxArticles: 0,
+        maxClientArticles: 0,
+        maxAppArticles: 0,
+        maxNetworkRate: 0,
+        xPercent: (_: number) => 0,
+        yPercent: (_: number) => 0,
       };
-    }, [points, bucketSeconds]);
+    }
+    const peakClientArticles = Math.max(0, ...points.map(clientArticles));
+    const peakAppArticles = Math.max(0, ...points.map(appArticles));
+    const peakArticles = Math.max(peakClientArticles, peakAppArticles);
+    const scaleMax = Math.max(1, peakArticles, ...points.map((p) => p.errors));
+    const maxRate = Math.max(0, ...points.map((p) => (p.bytesFetched ?? 0) / bucketSeconds));
+    const xStep = points.length > 1 ? VB_W / (points.length - 1) : 0;
+    const innerH = VB_H - TOP_PAD - BOT_PAD;
+    const y = (v: number) => VB_H - BOT_PAD - (v / scaleMax) * innerH;
+
+    const xPct = (i: number) => (points.length > 1 ? (i / (points.length - 1)) * 100 : 50);
+    const yPct = (v: number) =>
+      100 - ((v / scaleMax) * (1 - (TOP_PAD + BOT_PAD) / VB_H) * 100 + (BOT_PAD / VB_H) * 100);
+
+    return {
+      clientArticlesPath: buildArticlesSeriesPath(points, clientArticles, xStep, y),
+      appArticlesPath: buildArticlesSeriesPath(points, appArticles, xStep, y),
+      errorsPath: buildSparseSeriesPath(points, (p) => p.errors, xStep, y),
+      maxArticles: peakArticles,
+      maxClientArticles: peakClientArticles,
+      maxAppArticles: peakAppArticles,
+      maxNetworkRate: maxRate,
+      xPercent: xPct,
+      yPercent: yPct,
+    };
+  }, [points, bucketSeconds]);
 
   const xTicks = useMemo(() => {
     if (points.length === 0) return [];
@@ -240,10 +249,18 @@ export function ThroughputChart({
                     className={styles.gridline}
                   />
                   {maxClientArticles > 0 && (
-                    <path d={clientArticlesPath} className={styles.lineClient} data-series="client-articles" />
+                    <path
+                      d={clientArticlesPath}
+                      className={styles.lineClient}
+                      data-series="client-articles"
+                    />
                   )}
                   {maxAppArticles > 0 && (
-                    <path d={appArticlesPath} className={styles.lineApp} data-series="app-articles" />
+                    <path
+                      d={appArticlesPath}
+                      className={styles.lineApp}
+                      data-series="app-articles"
+                    />
                   )}
                   {totalErrors > 0 && errorsPath && (
                     <path d={errorsPath} className={styles.lineErrors} data-series="errors" />
