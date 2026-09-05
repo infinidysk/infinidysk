@@ -1,5 +1,99 @@
 # Changelog
 
+## [1.3.0](https://github.com/infinidysk/infinidysk/compare/v1.2.7...v1.3.0) (2026-09-04)
+
+
+### Features
+
+* **health:** clean up mounts whose streaming payloads are missing ([#1218](https://github.com/infinidysk/infinidysk/issues/1218)) ([aa83ef3](https://github.com/infinidysk/infinidysk/commit/aa83ef32662d84bdb59cdce41bcbe7f7ea72c5f0))
+* **health:** expose segment-buffer eviction causes and throttle forced GC ([#1230](https://github.com/infinidysk/infinidysk/issues/1230)) ([cbd87e5](https://github.com/infinidysk/infinidysk/commit/cbd87e5b4e760e0c274af4bd08962229b251bd4d))
+* **health:** parallel health checks with shared connection gate and queue coexistence ([#1208](https://github.com/infinidysk/infinidysk/issues/1208)) ([b42ac42](https://github.com/infinidysk/infinidysk/commit/b42ac422a62ae20e60b65a2b356a4b723a3dc9da))
+* **health:** re-check action-needed files from Health history ([#1336](https://github.com/infinidysk/infinidysk/issues/1336)) ([2043c96](https://github.com/infinidysk/infinidysk/commit/2043c96906fa3c44f01eb93daec7a83f744b9077))
+* **health:** re-run health checks across the whole library from Settings → Maintenance ([#1203](https://github.com/infinidysk/infinidysk/issues/1203)) ([bb54a92](https://github.com/infinidysk/infinidysk/commit/bb54a92b77c6147eb547685e5f75b96ef8f089b9))
+* **health:** turn on background repairs by default ([#1284](https://github.com/infinidysk/infinidysk/issues/1284)) ([c3229c2](https://github.com/infinidysk/infinidysk/commit/c3229c2a386e4bb678e85956aeb444788e87bbda))
+* **nntp:** split transfer and metadata connection budgets ([#1207](https://github.com/infinidysk/infinidysk/issues/1207)) ([39e04c1](https://github.com/infinidysk/infinidysk/commit/39e04c126377be0e025c3838c0fdcc1433884506))
+* **queue:** name a lone imported video after its release folder ([#1149](https://github.com/infinidysk/infinidysk/issues/1149)) ([c7530c0](https://github.com/infinidysk/infinidysk/commit/c7530c0bd265852329f49d71fd5ccdea09970a73))
+* **scheduling:** schedule health checks, repairs, and queue downloads by time of day ([#1153](https://github.com/infinidysk/infinidysk/issues/1153)) ([5e6a3ff](https://github.com/infinidysk/infinidysk/commit/5e6a3ff0d82187739adad227a543bbaa2128a006))
+* **ui:** guide first-run setup for Plex, Emby, and Jellyfin ([#1306](https://github.com/infinidysk/infinidysk/issues/1306)) ([b31a220](https://github.com/infinidysk/infinidysk/commit/b31a22080f7615b4abf96f918ad90438563840e8))
+* **ui:** inspect each provider's speed history from Overview ([#1151](https://github.com/infinidysk/infinidysk/issues/1151)) ([ea6ce14](https://github.com/infinidysk/infinidysk/commit/ea6ce1428910217442c8c10d69d5f621b5138bd8))
+* **ui:** setup wizard always suggests rclone RC notifications for symlink installs ([#1320](https://github.com/infinidysk/infinidysk/issues/1320)) ([502995d](https://github.com/infinidysk/infinidysk/commit/502995dd8308a83a18b14c9b855a6061690ad987))
+* **ui:** show active queue jobs and history in one list ([#1286](https://github.com/infinidysk/infinidysk/issues/1286)) ([e6b2e21](https://github.com/infinidysk/infinidysk/commit/e6b2e21285a0e7c19c4910c1e3d2935f2f66e851))
+* **ui:** warn when rclone streams through port 3000 ([#1328](https://github.com/infinidysk/infinidysk/issues/1328)) ([eae59a5](https://github.com/infinidysk/infinidysk/commit/eae59a5593fbdb1f3d83297cd3d300d699acb8bb))
+* **ui:** warn when Segment Cache duplicates rclone VFS read-ahead ([#1319](https://github.com/infinidysk/infinidysk/issues/1319)) ([eebc880](https://github.com/infinidysk/infinidysk/commit/eebc88029b6ee101c1475f0da2e906309999229b))
+* **usenet:** add memory ownership telemetry ([#1295](https://github.com/infinidysk/infinidysk/issues/1295)) ([04cac95](https://github.com/infinidysk/infinidysk/commit/04cac95850c342b0b7ad7a86b918a6cdf5767f40))
+* **usenet:** cap total Usenet download bandwidth ([#1152](https://github.com/infinidysk/infinidysk/issues/1152)) ([ecd2193](https://github.com/infinidysk/infinidysk/commit/ecd21933df54c52f9eba93251ad48919ff6e6e4e))
+* **usenet:** improve batching for short and medium range reads (opt-in) ([#1292](https://github.com/infinidysk/infinidysk/issues/1292)) ([21a499f](https://github.com/infinidysk/infinidysk/commit/21a499f5932641250ae30dd706a3cf17c85bf35f))
+* **usenet:** leftover segment-cache files are cleaned up on startup when the cache is disabled ([#1321](https://github.com/infinidysk/infinidysk/issues/1321)) ([a9c69f8](https://github.com/infinidysk/infinidysk/commit/a9c69f830580f7095d2ffd53a76ad6d6982b7c9f))
+* **usenet:** let long reads expand provider connections faster ([#1324](https://github.com/infinidysk/infinidysk/issues/1324)) ([9044421](https://github.com/infinidysk/infinidysk/commit/9044421ecaef71048dff09626b86afe02b4a2b7a))
+* **usenet:** let segment cache writes run behind playback ([#1325](https://github.com/infinidysk/infinidysk/issues/1325)) ([5cd2aee](https://github.com/infinidysk/infinidysk/commit/5cd2aee3b70622a380ec4cd94a209ec300559523))
+* **usenet:** make provider circuit-breaker cooldowns configurable ([#1118](https://github.com/infinidysk/infinidysk/issues/1118)) ([56e9415](https://github.com/infinidysk/infinidysk/commit/56e941593bb1313b2ac9757016cfe972d249084c))
+* **usenet:** measure production pipelined cache bypass before the warm-read fix ([#1288](https://github.com/infinidysk/infinidysk/issues/1288)) ([a3a0d7b](https://github.com/infinidysk/infinidysk/commit/a3a0d7bf877cf65d6a86a0db4ca52edc48a8648d))
+* **usenet:** segment cache is off by default for new installs; existing installs keep their current behavior ([#1322](https://github.com/infinidysk/infinidysk/issues/1322)) ([d0d18c0](https://github.com/infinidysk/infinidysk/commit/d0d18c02a672fec7c131dff6b0af80398a655a07))
+* **usenet:** warm provider connections when long reads start ([#1330](https://github.com/infinidysk/infinidysk/issues/1330)) ([83a431c](https://github.com/infinidysk/infinidysk/commit/83a431cdfc21adcdb5322fd78c834688d13142d9))
+
+
+### Bug Fixes
+
+* **api:** reject invalid Warden source uploads with 400 and count UTF-8 bytes ([#1274](https://github.com/infinidysk/infinidysk/issues/1274)) ([08f5567](https://github.com/infinidysk/infinidysk/commit/08f5567271644c3044dc339922fc980cdc8e8c73))
+* **arr:** prevent overlapping Watchtower cycles after a timeout ([#1278](https://github.com/infinidysk/infinidysk/issues/1278)) ([28a9eba](https://github.com/infinidysk/infinidysk/commit/28a9ebad42149933a770e488f4fd36dbc518f631))
+* **arr:** reject oversized Newznab and Watchtower list responses instead of parsing them unbounded ([#1279](https://github.com/infinidysk/infinidysk/issues/1279)) ([b9be02e](https://github.com/infinidysk/infinidysk/commit/b9be02eb3db846f3a6504af92bd93c6d9817c1a6))
+* **db:** container no longer dumps a stack trace per file when local streaming metadata is corrupt ([#1297](https://github.com/infinidysk/infinidysk/issues/1297)) ([cd9b120](https://github.com/infinidysk/infinidysk/commit/cd9b1205c1c8b312c3e0a14540dfa249d6ebd201))
+* **db:** retry backup directory initialization in the scheduler ([#1269](https://github.com/infinidysk/infinidysk/issues/1269)) ([32b07bf](https://github.com/infinidysk/infinidysk/commit/32b07bfb5aef4f836ffc498a87744a19e66bf7cf))
+* **db:** skip a maintenance sweep instead of stopping the host when SQLite is busy ([#1268](https://github.com/infinidysk/infinidysk/issues/1268)) ([f846184](https://github.com/infinidysk/infinidysk/commit/f84618478024a399b0d844c3b16dce1ef621ca07))
+* **deps:** Bump fast-uri from 3.1.5 to 3.1.7 in /frontend ([#1312](https://github.com/infinidysk/infinidysk/issues/1312)) ([219ac28](https://github.com/infinidysk/infinidysk/commit/219ac28b808483c0e6e11cb6f9fbf5cc86385b16))
+* **deps:** Bump github/codeql-action in the github-actions group ([#1256](https://github.com/infinidysk/infinidysk/issues/1256)) ([79a4861](https://github.com/infinidysk/infinidysk/commit/79a486147b178877292d8fd08363fd4117092a25))
+* **deps:** Bump github/codeql-action in the github-actions group ([#1315](https://github.com/infinidysk/infinidysk/issues/1315)) ([99ec38c](https://github.com/infinidysk/infinidysk/commit/99ec38cc56c39ddf645076066c42d54843f2ed4a))
+* **deps:** Bump qs from 6.15.3 to 6.16.0 in /frontend ([#1316](https://github.com/infinidysk/infinidysk/issues/1316)) ([51bc1b5](https://github.com/infinidysk/infinidysk/commit/51bc1b5cd6bc500a31d3e7ec72e73910e87714dd))
+* **deps:** Bump the npm-minor-and-patch group ([#1254](https://github.com/infinidysk/infinidysk/issues/1254)) ([23c7ba8](https://github.com/infinidysk/infinidysk/commit/23c7ba8e0ae753888e402c178aa73c102fbc028e))
+* **deps:** Bump the npm-minor-and-patch group ([#1313](https://github.com/infinidysk/infinidysk/issues/1313)) ([484dafc](https://github.com/infinidysk/infinidysk/commit/484dafc57eb084bcd4afc8b62b05a5d96339909b))
+* **deps:** Bump the nuget-minor-and-patch group with 2 updates ([#1314](https://github.com/infinidysk/infinidysk/issues/1314)) ([a0377e5](https://github.com/infinidysk/infinidysk/commit/a0377e5ccdf3681a070a5879a6418ec263764a6f))
+* **deps:** Bump the nuget-minor-and-patch group with 3 updates ([#1255](https://github.com/infinidysk/infinidysk/issues/1255)) ([f8ede69](https://github.com/infinidysk/infinidysk/commit/f8ede696fd27e6e6c26c7d15748ca85a180d17ae))
+* **deps:** Bump zensical from 0.0.56 to 0.0.57 in the docs-python group ([#1253](https://github.com/infinidysk/infinidysk/issues/1253)) ([c9c5b97](https://github.com/infinidysk/infinidysk/commit/c9c5b97d81758ec4e7f55e79a7f85ea371a21efe))
+* **health:** clarify Library Directory requirements ([#1302](https://github.com/infinidysk/infinidysk/issues/1302)) ([8843fb7](https://github.com/infinidysk/infinidysk/commit/8843fb778df74ea1ef8e3c9ae032d669076713c9))
+* **health:** keep prune and unlinked-file cleanup running if progress reporting fails ([#1272](https://github.com/infinidysk/infinidysk/issues/1272)) ([d62d57e](https://github.com/infinidysk/infinidysk/commit/d62d57eb33f0661b6ac2e6d7cebad504f7da5e80))
+* **health:** recover libraries downloaded before 1.3.0 ([#1335](https://github.com/infinidysk/infinidysk/issues/1335)) ([528eca5](https://github.com/infinidysk/infinidysk/commit/528eca5f2fc2ba362441848c02cb024c994336fe))
+* **health:** recover PAR2 repair after transient patch catalog load failures ([#1277](https://github.com/infinidysk/infinidysk/issues/1277)) ([f7a27f3](https://github.com/infinidysk/infinidysk/commit/f7a27f395a05bc3e76191b038425483e2a0f10bd))
+* **health:** repair Arr-linked files after SAB history cleanup ([#1282](https://github.com/infinidysk/infinidysk/issues/1282)) ([e5cf9c9](https://github.com/infinidysk/infinidysk/commit/e5cf9c9295cca9c81da7f21a5afc4d6975e3d9a0))
+* **health:** stop deleting linked files after inconclusive Arr lookups ([#1229](https://github.com/infinidysk/infinidysk/issues/1229)) ([997eb59](https://github.com/infinidysk/infinidysk/commit/997eb59b2c2b1a270c6f1bc3e2db3a60986c10b1)), closes [#1221](https://github.com/infinidysk/infinidysk/issues/1221)
+* **hosting:** backend exits nonzero after a hosted background service crashes ([#1273](https://github.com/infinidysk/infinidysk/issues/1273)) ([8990114](https://github.com/infinidysk/infinidysk/commit/899011478f4bbe5fa6867a4fde6e667f1a86ecbf))
+* **nntp:** keep streaming when an article-completion observer throws ([#1275](https://github.com/infinidysk/infinidysk/issues/1275)) ([6cc3ee1](https://github.com/infinidysk/infinidysk/commit/6cc3ee122028c14537df804e37854d2c894d5750))
+* **queue:** restart instead of serving a dead queue after processor failure ([#1287](https://github.com/infinidysk/infinidysk/issues/1287)) ([cb77327](https://github.com/infinidysk/infinidysk/commit/cb77327fd26e80bf61e64b1b5edc12e0d6135251))
+* **rclone:** improve mount recommendations and RC connection tests ([#1311](https://github.com/infinidysk/infinidysk/issues/1311)) ([efca97d](https://github.com/infinidysk/infinidysk/commit/efca97d333bf984fc7bc5ddb5a06dc34d705178c))
+* **sab:** deleting a queue item that is failing at the same moment no longer returns HTTP 500 ([#1309](https://github.com/infinidysk/infinidysk/issues/1309)) ([71a52c8](https://github.com/infinidysk/infinidysk/commit/71a52c878a0634c3eb72a2ea95ce498b3101795a))
+* **ui:** align streaming bandwidth input width ([#1260](https://github.com/infinidysk/infinidysk/issues/1260)) ([ec10a5a](https://github.com/infinidysk/infinidysk/commit/ec10a5a9e4cb4d2acebfa8195d7d121e1775c2ef))
+* **ui:** compact idle Right now, keep Arr Health on-screen, and tooltip the rename setting ([#1265](https://github.com/infinidysk/infinidysk/issues/1265)) ([5e89125](https://github.com/infinidysk/infinidysk/commit/5e89125aac14701b68b1681e940e6a197c0b2500))
+* **ui:** keep Arr Health last-import tooltip inside the dashboard ([#1283](https://github.com/infinidysk/infinidysk/issues/1283)) ([d62a8b5](https://github.com/infinidysk/infinidysk/commit/d62a8b516c584e95dec96a638aaf81968dcdfb87))
+* **ui:** keep existing installs on overview ([#1333](https://github.com/infinidysk/infinidysk/issues/1333)) ([2329c0d](https://github.com/infinidysk/infinidysk/commit/2329c0d9603015fb105cda92c5d5e503ae4d3304))
+* **ui:** keep overview stats and help text usable on phones ([#1259](https://github.com/infinidysk/infinidysk/issues/1259)) ([f9439ff](https://github.com/infinidysk/infinidysk/commit/f9439ffdaee011e0304ca3e25a923664087f6b7d))
+* **ui:** per-provider MB/s chart stays continuous when there is no traffic ([#1228](https://github.com/infinidysk/infinidysk/issues/1228)) ([012168b](https://github.com/infinidysk/infinidysk/commit/012168bf005d4a0ee21fd8bc32409a246e117880))
+* **ui:** prevent malformed websocket traffic from stopping the frontend ([#1280](https://github.com/infinidysk/infinidysk/issues/1280)) ([80d28df](https://github.com/infinidysk/infinidysk/commit/80d28df2bbdd28671a579e239550c135dd7fee73))
+* **ui:** reject a missing frontend/backend API key before the UI starts listening ([#1270](https://github.com/infinidysk/infinidysk/issues/1270)) ([f55a3fc](https://github.com/infinidysk/infinidysk/commit/f55a3fcf56fffeeca69f4cccc8815bbf89bead87))
+* **ui:** remove experimental tag from container-aware gap fill ([#1307](https://github.com/infinidysk/infinidysk/issues/1307)) ([412fc69](https://github.com/infinidysk/infinidysk/commit/412fc6988cbefa622d410577d8794bd6a7deda56))
+* **ui:** repair settings remain saved after refresh ([#1301](https://github.com/infinidysk/infinidysk/issues/1301)) ([381c512](https://github.com/infinidysk/infinidysk/commit/381c512a9bf05d8b5936f623aa5b352f1228eb0c))
+* **ui:** show a clear error and exit when the frontend port is already in use ([#1276](https://github.com/infinidysk/infinidysk/issues/1276)) ([60b5518](https://github.com/infinidysk/infinidysk/commit/60b5518f8adaf368004e86d6d1296bf08d047b71))
+* **ui:** stabilize the overview dashboard layout ([#1257](https://github.com/infinidysk/infinidysk/issues/1257)) ([2e72fe9](https://github.com/infinidysk/infinidysk/commit/2e72fe941f414026e5ef2468f2e3c2196f78948f))
+* **ui:** stop Arr Health table from showing a phantom horizontal scrollbar ([#1267](https://github.com/infinidysk/infinidysk/issues/1267)) ([81008cc](https://github.com/infinidysk/infinidysk/commit/81008cce69cbcf98454e582463a60933dab6a455))
+* **usenet:** harden timeout connection lifecycle ([#1224](https://github.com/infinidysk/infinidysk/issues/1224)) ([72f4d79](https://github.com/infinidysk/infinidysk/commit/72f4d7912f4d19dcc6cac279dfc54aafdcb16fbd))
+* **usenet:** keep pooling and config updates running if a telemetry observer throws ([#1271](https://github.com/infinidysk/infinidysk/issues/1271)) ([ba5ae40](https://github.com/infinidysk/infinidysk/commit/ba5ae406cd27e9c5bef6ad2bf70e9ddd99f8c5f1))
+* **usenet:** preserve streaming priority and release every pipelined batch resource ([#1291](https://github.com/infinidysk/infinidysk/issues/1291)) ([a2c1151](https://github.com/infinidysk/infinidysk/commit/a2c11515f3cb98f0721793098d500dfdc1d7c5b2))
+* **usenet:** warm rereads no longer re-download cached pipelined segments ([#1289](https://github.com/infinidysk/infinidysk/issues/1289)) ([368a7da](https://github.com/infinidysk/infinidysk/commit/368a7da7eba93cdf0e41a206bdd3a51f3ec0c9ef))
+* **webdav:** directory listings no longer fail with HTTP 500 when a filename contains XML-invalid characters ([#1310](https://github.com/infinidysk/infinidysk/issues/1310)) ([1dfdcaa](https://github.com/infinidysk/infinidysk/commit/1dfdcaa79d9769607e1a31ee74d40309af50b70e))
+* **webdav:** prevent PostgreSQL listing failures without buffering directories ([#1332](https://github.com/infinidysk/infinidysk/issues/1332)) ([dd7cc42](https://github.com/infinidysk/infinidysk/commit/dd7cc4283aab69f4ea2cb6b89ed538b7cd5faaac))
+* **webdav:** stop healthy playback triggering stalled-stream warnings ([#1334](https://github.com/infinidysk/infinidysk/issues/1334)) ([b01c0bd](https://github.com/infinidysk/infinidysk/commit/b01c0bd9d6ce97b08be6377558536372a3e5a222))
+
+
+### Performance Improvements
+
+* **health:** background health checks scan large libraries much faster ([#1303](https://github.com/infinidysk/infinidysk/issues/1303)) ([d8dce34](https://github.com/infinidysk/infinidysk/commit/d8dce34ae1c53e1b995279a549cd2e4174e092da))
+* **queue:** fail dead NZBs after one probe instead of scanning every article ([#1148](https://github.com/infinidysk/infinidysk/issues/1148)) ([23bcf61](https://github.com/infinidysk/infinidysk/commit/23bcf61b6e3b1ff52c1db8bd4529a845cb94c355))
+* **usenet:** default segment buffer retention to capacity ([#1299](https://github.com/infinidysk/infinidysk/issues/1299)) ([51c0ed8](https://github.com/infinidysk/infinidysk/commit/51c0ed8fa35a678a715aa1877d2bff792aa64dee))
+* **webdav:** start ranged playback without waiting for the full first article ([#1290](https://github.com/infinidysk/infinidysk/issues/1290)) ([d3e5815](https://github.com/infinidysk/infinidysk/commit/d3e58153f93cae9840861b04e6d3e1c55abda667))
+
+
+### UX
+
+* **ui:** move health-check and repair windows onto the background repairs card ([#1285](https://github.com/infinidysk/infinidysk/issues/1285)) ([463a023](https://github.com/infinidysk/infinidysk/commit/463a0231a68deb1cdd7440a6574d017f40b11613))
+
 ## [1.2.7](https://github.com/infinidysk/infinidysk/compare/v1.2.6...v1.2.7) (2026-08-28)
 
 
