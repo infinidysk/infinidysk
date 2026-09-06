@@ -7,10 +7,21 @@ public class SegmentFetch
     public string Provider { get; set; } = null!;
     public Guid? ReadSessionId { get; set; }
     public Guid? QueueItemId { get; set; }
+    public FetchWorkload Workload { get; set; }
     public long Bytes { get; set; }
     public int DurationMs { get; set; }
     public FetchStatus Status { get; set; }
     public int Retries { get; set; }
+
+    // Values are persisted; append new members without renumbering existing ones.
+    public enum FetchWorkload
+    {
+        Unknown = 0,
+        Streaming = 1,
+        Queue = 2,
+        Maintenance = 3,
+        Background = 4,
+    }
 
     public enum FetchStatus
     {

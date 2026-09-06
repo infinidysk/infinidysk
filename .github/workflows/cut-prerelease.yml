@@ -255,12 +255,4 @@ jobs:
               "${RELEASE_TAG}" "${IMAGE}" "${REPO}" "${RELEASE_TAG}" "${BASE_LABEL}" "${CHANGELOG}")
           fi
 
-          MAX_LEN=1900
-          if [ "${#ANNOUNCEMENT_BODY}" -gt "${MAX_LEN}" ]; then
-            ANNOUNCEMENT_BODY="${ANNOUNCEMENT_BODY:0:$((MAX_LEN - 3))}..."
-          fi
-
-          ESCAPED_BODY=$(printf '%s' "$ANNOUNCEMENT_BODY" | jq -Rsa .)
-          curl --fail-with-body -sS -H "Content-Type: application/json" \
-            -d "{\"content\": ${ESCAPED_BODY}, \"flags\": 4, \"allowed_mentions\": {\"parse\": []}}" \
-            "$DISCORD_ANNOUNCEMENTS_WEBHOOK_URL"
+          printf '%s' "$ANNOUNCEMENT_BODY" | bash .github/scripts/post-discord-messages.sh

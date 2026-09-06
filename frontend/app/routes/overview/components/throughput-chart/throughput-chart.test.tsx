@@ -5,9 +5,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ThroughputPoint } from "~/clients/backend-client.server";
 import { ThroughputChart } from "./throughput-chart";
 
-const point = (articles: number, errors = 0): ThroughputPoint => ({
+const point = (articles: number, clientArticles = 0, errors = 0): ThroughputPoint => ({
   bucket: 0,
   articles,
+  clientArticles,
   misses: 0,
   errors,
   bytesServed: 0,
@@ -19,6 +20,7 @@ function renderMarkup(points: ThroughputPoint[], totalErrors = 0) {
     <ThroughputChart
       points={points}
       totalArticles={points.reduce((sum, item) => sum + item.articles, 0)}
+      totalClientArticles={points.reduce((sum, item) => sum + item.clientArticles, 0)}
       totalMisses={0}
       totalErrors={totalErrors}
       totalBytesServed={0}
@@ -30,7 +32,7 @@ function renderMarkup(points: ThroughputPoint[], totalErrors = 0) {
 
 function articlesPathD(markup: string): string {
   const match = markup.match(
-    /d="([^"]*)"[^>]*data-series="articles"|data-series="articles"[^>]*d="([^"]*)"/,
+    /d="([^"]*)"[^>]*data-series="client-articles"|data-series="client-articles"[^>]*d="([^"]*)"/,
   );
   return match?.[1] ?? match?.[2] ?? "";
 }
@@ -40,20 +42,47 @@ describe("ThroughputChart", () => {
     cleanup();
   });
   it("does not draw the green series when every article bucket is zero", () => {
-    const markup = renderMarkup([point(0, 1), point(0)], 1);
+    const markup = renderMarkup([point(0, 0, 1), point(0)], 1);
 
-    expect(markup).not.toContain('data-series="articles"');
+    expect(markup).not.toContain('data-series="client-articles"');
+    expect(markup).not.toContain('data-series="app-articles"');
     expect(markup).toContain('data-series="errors"');
   });
 
   it("draws the green series when an article bucket has activity", () => {
-    const markup = renderMarkup([point(0), point(2)]);
+    const markup = renderMarkup([point(0), point(2, 2)]);
 
-    expect(markup).toContain('data-series="articles"');
+    expect(markup).toContain('data-series="client-articles"');
+  });
+
+  it("keeps aggregate download throughput neutral instead of labeling it as app reads", () => {
+    const markup = renderToStaticMarkup(
+      <ThroughputChart
+        points={[
+          {
+            ...point(10, 10, 0),
+            bucket: 0,
+            bytesFetched: 60 * 1024 * 1024,
+            bytesServed: 0,
+          },
+        ]}
+        totalArticles={10}
+        totalClientArticles={10}
+        totalMisses={0}
+        totalErrors={0}
+        totalBytesServed={0}
+        bucketSizeMs={60_000}
+        window="24h"
+      />,
+    );
+
+    expect(markup).toContain("Client reads · 10");
+    expect(markup).toContain("Peak download");
+    expect(markup).not.toContain("App reads · 0 · peak");
   });
 
   it("skips idle stretches but anchors each run to leading and trailing zeros", () => {
-    const markup = renderMarkup([point(0), point(5), point(0), point(0), point(3), point(0)]);
+    const markup = renderMarkup([point(0), point(5, 5), point(0), point(0), point(3, 3), point(0)]);
     const d = articlesPathD(markup);
 
     expect(d).not.toBe("");
@@ -83,6 +112,7 @@ describe("ThroughputChart", () => {
       <ThroughputChart
         points={points}
         totalArticles={11}
+        totalClientArticles={0}
         totalMisses={1}
         totalErrors={2}
         totalBytesServed={100}
@@ -108,6 +138,7 @@ describe("ThroughputChart", () => {
       <ThroughputChart
         points={updated}
         totalArticles={15}
+        totalClientArticles={0}
         totalMisses={1}
         totalErrors={4}
         totalBytesServed={100}
@@ -128,6 +159,7 @@ describe("ThroughputChart", () => {
       <ThroughputChart
         points={points}
         totalArticles={11}
+        totalClientArticles={0}
         totalMisses={0}
         totalErrors={2}
         totalBytesServed={0}
@@ -150,6 +182,7 @@ describe("ThroughputChart", () => {
       <ThroughputChart
         points={shifted}
         totalArticles={12}
+        totalClientArticles={0}
         totalMisses={0}
         totalErrors={2}
         totalBytesServed={0}
