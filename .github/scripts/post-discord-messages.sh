@@ -14,6 +14,7 @@ trap 'rm -f "$TMP"' EXIT
 
 perl -CS -MEncode -e '
   binmode STDIN, ":raw";
+  binmode STDOUT, ":raw";
   my $value = Encode::decode("UTF-8", do { local $/; <STDIN> });
   my $prefix = "_(continued)_\n\n";
   my $max = 1900;
@@ -33,53 +34,85 @@ perl -CS -MEncode -e '
     $message_number++;
   }
 
-  sub split_line {
-    my ($line, $available) = @_;
-    my @chunks;
-    my $chunk = "";
-    my $units = 0;
-    for my $grapheme ($line =~ /\X/g) {
-      my $grapheme_units = utf16_units($grapheme);
-      if ($units + $grapheme_units > $available) {
-        # Prefer whitespace boundaries so Markdown constructs remain intact.
-        if ($chunk =~ /^(.*\s)(.*)$/s) {
-          push @chunks, $1;
-          $chunk = $2;
-          $units = utf16_units($chunk);
-        } else {
-          push @chunks, $chunk;
-          $chunk = "";
-          $units = 0;
-        }
-      }
-      $chunk .= $grapheme;
-      $units += $grapheme_units;
+  sub new_markdown_state {
+    return { bold => 0, fenced => 0 };
+  }
+
+  sub advance_markdown_state {
+    my ($state, $token) = @_;
+    if ($token eq "```") {
+      $state->{fenced} = !$state->{fenced};
+    } elsif (!$state->{fenced} && $token eq "**") {
+      $state->{bold} = !$state->{bold};
     }
-    push @chunks, $chunk if length($chunk);
-    return @chunks;
+  }
+
+  sub markdown_state_for {
+    my ($text) = @_;
+    my $state = new_markdown_state();
+    while ($text =~ /```|\[[^\]\r\n]*\]\([^\)\r\n]*\)|`[^`\r\n]*`|\\\X|\*\*|\X/g) {
+      advance_markdown_state($state, $&);
+    }
+    return $state;
+  }
+
+  sub closing_markdown {
+    my ($state) = @_;
+    my $closing = "";
+    $closing .= "\n```" if $state->{fenced};
+    $closing .= "**" if $state->{bold};
+    return $closing;
+  }
+
+  sub opening_markdown {
+    my ($state) = @_;
+    my $opening = "";
+    $opening .= "**" if $state->{bold};
+    $opening .= "```\n" if $state->{fenced};
+    return $opening;
   }
 
   my $message = "";
-  for my $line ($value =~ /.*(?:\n|\z)/g) {
-    next unless length($line);
-    my $available = $max - ($message_number ? length(Encode::decode("UTF-8", $prefix)) : 0);
-    if (utf16_units($message . $line) <= $available) {
-      $message .= $line;
-      next;
-    }
-    emit($message);
-    $message = "";
-    $available = $max - length(Encode::decode("UTF-8", $prefix));
-    for my $chunk (split_line($line, $available)) {
-      if (utf16_units($chunk) > $available) {
-        die "Unable to split a Discord message within the UTF-16 content limit\n";
+  my $state = new_markdown_state();
+  my $last_safe_break = 0;
+  TOKEN: while ($value =~ /```|\[[^\]\r\n]*\]\([^\)\r\n]*\)|`[^`\r\n]*`|\\\X|\*\*|\X/g) {
+    my $token = $&;
+    my $token_units = utf16_units($token);
+
+    while (1) {
+      my $available = $max - ($message_number ? utf16_units($prefix) : 0);
+      # Reserve enough room to close and reopen combined bold and fenced-code state.
+      my $content_budget = $available - 13;
+      if (utf16_units($message) + $token_units <= $content_budget) {
+        $message .= $token;
+        advance_markdown_state($state, $token);
+        if (!$state->{fenced} && !$state->{bold} && $token =~ /\s\z/) {
+          $last_safe_break = length($message);
+        }
+        next TOKEN;
       }
-      emit($chunk);
-      $available = $max - length(Encode::decode("UTF-8", $prefix));
+
+      if ($last_safe_break) {
+        my $tail = substr($message, $last_safe_break);
+        emit(substr($message, 0, $last_safe_break));
+        $message = $tail;
+        $state = markdown_state_for($message);
+        $last_safe_break = 0;
+        next;
+      }
+
+      my $closing = closing_markdown($state);
+      if (length($message)) {
+        emit($message . $closing);
+        $message = opening_markdown($state);
+        next;
+      }
+
+      die "A single Markdown construct exceeds the Discord UTF-16 content limit\n";
     }
   }
 
-  emit($message);
+  emit($message . closing_markdown($state));
 ' > "$TMP"
 
 while IFS= read -r -d '' body; do

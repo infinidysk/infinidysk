@@ -263,6 +263,9 @@ jobs:
       - name: Verify performance baseline gate fixtures
         run: bash scripts/test-performance-baseline-gate.sh
 
+      - name: Verify Discord announcement chunking
+        run: bash .github/scripts/test-post-discord-messages.sh
+
       - name: Verify admin OpenAPI compatibility fixtures
         run: bash scripts/test-admin-openapi-compat.sh
 
