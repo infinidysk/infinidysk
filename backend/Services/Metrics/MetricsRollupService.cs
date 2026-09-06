@@ -166,20 +166,23 @@ public class MetricsRollupService(
         // tracker already deposited via ApplyByteCountersAsync.
         await db.Database.ExecuteSqlRawAsync(
             """
-            INSERT INTO ThroughputMinutes (Minute, BytesServed, BytesFetched, Articles, ClientArticles, Misses, Errors, ActiveReadsMax)
+            INSERT INTO ThroughputMinutes (Minute, BytesServed, BytesFetched, Articles, ClientArticles, ClientArticlesFinalized, Misses, Errors, ActiveReadsMax)
             SELECT
                 {0} AS Minute,
                 COALESCE((SELECT SUM(BytesServed) FROM ReadSessions WHERE EndedAt >= {0} AND EndedAt < {1}), 0) AS BytesServed,
                 0 AS BytesFetched,
                 COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1}), 0) AS Articles,
                 COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Workload = {2}), 0) AS ClientArticles,
+                1 AS ClientArticlesFinalized,
                 COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Status = 1), 0) AS Misses,
                 COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Status NOT IN (0, 1)), 0) AS Errors,
                 0 AS ActiveReadsMax
             ON CONFLICT(Minute) DO UPDATE SET
                 BytesServed  = excluded.BytesServed,
                 Articles     = excluded.Articles,
-                ClientArticles = excluded.ClientArticles,
+                ClientArticles = CASE WHEN ThroughputMinutes.ClientArticlesFinalized
+                    THEN ThroughputMinutes.ClientArticles ELSE excluded.ClientArticles END,
+                ClientArticlesFinalized = excluded.ClientArticlesFinalized,
                 Misses       = excluded.Misses,
                 Errors       = excluded.Errors;
             """,
@@ -192,10 +195,11 @@ public class MetricsRollupService(
         // scoreboard. FailoverMisses can contain multiple edges for one rescue.
         await db.Database.ExecuteSqlRawAsync(
             """
-            INSERT INTO ProviderMinutes (Minute, Provider, Articles, ClientArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist)
+            INSERT INTO ProviderMinutes (Minute, Provider, Articles, ClientArticles, ClientArticlesFinalized, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist)
             SELECT {0}, Provider,
                 COUNT(*),
                 SUM(CASE WHEN Workload = {2} THEN 1 ELSE 0 END),
+                1,
                 0,
                 SUM(CASE WHEN Status = 1 THEN 1 ELSE 0 END),
                 SUM(CASE WHEN Status NOT IN (0, 1) THEN 1 ELSE 0 END),
@@ -211,7 +215,9 @@ public class MetricsRollupService(
             GROUP BY Provider
             ON CONFLICT(Minute, Provider) DO UPDATE SET
                 Articles      = excluded.Articles,
-                ClientArticles = excluded.ClientArticles,
+                ClientArticles = CASE WHEN ProviderMinutes.ClientArticlesFinalized
+                    THEN ProviderMinutes.ClientArticles ELSE excluded.ClientArticles END,
+                ClientArticlesFinalized = excluded.ClientArticlesFinalized,
                 Misses        = excluded.Misses,
                 Errors        = excluded.Errors,
                 Retries       = excluded.Retries,

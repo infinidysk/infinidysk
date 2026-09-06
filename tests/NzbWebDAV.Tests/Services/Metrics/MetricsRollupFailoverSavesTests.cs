@@ -116,6 +116,36 @@ public sealed class MetricsRollupFailoverSavesTests
         });
     }
 
+    [Fact]
+    public async Task RollupMinute_RetainedSourceRows_PreservesFinalizedClientArticles()
+    {
+        await withMetricsDb(async context =>
+        {
+            await context.Database.ExecuteSqlRawAsync(
+                """
+                INSERT INTO SegmentFetches
+                    (At, Provider, ReadSessionId, QueueItemId, Workload, Bytes, DurationMs, Status, Retries)
+                VALUES
+                    ({0}, 'streaming', NULL, NULL, 1, 0, 20, 0, 0),
+                    ({1}, 'streaming', NULL, NULL, 1, 0, 30, 0, 0);
+                """,
+                Minute + 1, Minute + 2);
+
+            await MetricsRollupService.RollupMinuteAsync(context, Minute);
+            await context.Database.ExecuteSqlRawAsync(
+                "DELETE FROM SegmentFetches WHERE At = {0}", Minute + 1);
+
+            await MetricsRollupService.RollupMinuteAsync(context, Minute);
+
+            var throughput = await context.ThroughputMinutes.AsNoTracking().SingleAsync();
+            var provider = await context.ProviderMinutes.AsNoTracking().SingleAsync();
+            Assert.Equal(2, throughput.ClientArticles);
+            Assert.Equal(2, provider.ClientArticles);
+            Assert.True(throughput.ClientArticlesFinalized);
+            Assert.True(provider.ClientArticlesFinalized);
+        });
+    }
+
     private static async Task withMetricsDb(Func<MetricsDbContext, Task> body)
     {
         var databasePath = Path.Join(
