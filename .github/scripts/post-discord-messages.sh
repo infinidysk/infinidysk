@@ -35,22 +35,37 @@ perl -CS -MEncode -e '
   }
 
   sub new_markdown_state {
-    return { bold => 0, fenced => 0 };
+    return { fenced => 0, spans => {}, stack => [] };
+  }
+
+  sub copy_markdown_state {
+    my ($state) = @_;
+    return {
+      fenced => $state->{fenced},
+      spans => { %{ $state->{spans} } },
+      stack => [ @{ $state->{stack} } ],
+    };
   }
 
   sub advance_markdown_state {
     my ($state, $token) = @_;
     if ($token eq "```") {
       $state->{fenced} = !$state->{fenced};
-    } elsif (!$state->{fenced} && $token eq "**") {
-      $state->{bold} = !$state->{bold};
+    } elsif (!$state->{fenced} && $token =~ /^(?:\*\*|__|\*|_|~~|\|\|)$/) {
+      if ($state->{spans}{$token}) {
+        $state->{spans}{$token} = 0;
+        @{ $state->{stack} } = grep { $_ ne $token } @{ $state->{stack} };
+      } else {
+        $state->{spans}{$token} = 1;
+        push @{ $state->{stack} }, $token;
+      }
     }
   }
 
   sub markdown_state_for {
     my ($text) = @_;
     my $state = new_markdown_state();
-    while ($text =~ /```|\[[^\]\r\n]*\]\([^\)\r\n]*\)|`[^`\r\n]*`|\\\X|\*\*|\X/g) {
+    while ($text =~ /```|\[[^\]\r\n]*\]\([^\)\r\n]*\)|`[^`\r\n]*`|\\\X|\*\*|__|~~|\|\||\*|_|\X/g) {
       advance_markdown_state($state, $&);
     }
     return $state;
@@ -60,14 +75,14 @@ perl -CS -MEncode -e '
     my ($state) = @_;
     my $closing = "";
     $closing .= "\n```" if $state->{fenced};
-    $closing .= "**" if $state->{bold};
+    $closing .= $_ for reverse @{ $state->{stack} };
     return $closing;
   }
 
   sub opening_markdown {
     my ($state) = @_;
     my $opening = "";
-    $opening .= "**" if $state->{bold};
+    $opening .= $_ for @{ $state->{stack} };
     $opening .= "```\n" if $state->{fenced};
     return $opening;
   }
@@ -75,18 +90,18 @@ perl -CS -MEncode -e '
   my $message = "";
   my $state = new_markdown_state();
   my $last_safe_break = 0;
-  TOKEN: while ($value =~ /```|\[[^\]\r\n]*\]\([^\)\r\n]*\)|`[^`\r\n]*`|\\\X|\*\*|\X/g) {
+  TOKEN: while ($value =~ /```|\[[^\]\r\n]*\]\([^\)\r\n]*\)|`[^`\r\n]*`|\\\X|\*\*|__|~~|\|\||\*|_|\X/g) {
     my $token = $&;
     my $token_units = utf16_units($token);
 
     while (1) {
       my $available = $max - ($message_number ? utf16_units($prefix) : 0);
-      # Reserve enough room to close and reopen combined bold and fenced-code state.
-      my $content_budget = $available - 13;
-      if (utf16_units($message) + $token_units <= $content_budget) {
+      my $candidate_state = copy_markdown_state($state);
+      advance_markdown_state($candidate_state, $token);
+      if (utf16_units($message . $token . closing_markdown($candidate_state)) <= $available) {
         $message .= $token;
-        advance_markdown_state($state, $token);
-        if (!$state->{fenced} && !$state->{bold} && $token =~ /\s\z/) {
+        $state = $candidate_state;
+        if (!$state->{fenced} && !@{ $state->{stack} } && $token =~ /\s\z/) {
           $last_safe_break = length($message);
         }
         next TOKEN;
@@ -117,7 +132,7 @@ perl -CS -MEncode -e '
 
 while IFS= read -r -d '' body; do
   escaped_body=$(printf '%s' "$body" | jq -Rsa .)
-  curl --fail-with-body -sS -H "Content-Type: application/json" \
+  curl --fail-with-body -sS --connect-timeout 10 --max-time 30 -H "Content-Type: application/json" \
     -d "{\"content\": ${escaped_body}, \"flags\": 4, \"allowed_mentions\": {\"parse\": []}}" \
     "$DISCORD_ANNOUNCEMENTS_WEBHOOK_URL" >/dev/null
 done < "$TMP"
