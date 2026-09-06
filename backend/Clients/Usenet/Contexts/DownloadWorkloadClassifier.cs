@@ -1,4 +1,5 @@
 using NzbWebDAV.Clients.Usenet.Concurrency;
+using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Services.Metrics;
 
@@ -15,5 +16,17 @@ internal static class DownloadWorkloadClassifier
         if (cancellationToken.GetContext<DownloadPriorityContext>()?.Priority == SemaphorePriority.High)
             return DownloadWorkload.Streaming;
         return DownloadWorkload.Background;
+    }
+
+    internal static SegmentFetch.FetchWorkload ClassifyForMetrics(CancellationToken cancellationToken)
+    {
+        return Classify(cancellationToken) switch
+        {
+            DownloadWorkload.Streaming => SegmentFetch.FetchWorkload.Streaming,
+            DownloadWorkload.Queue => SegmentFetch.FetchWorkload.Queue,
+            DownloadWorkload.Maintenance => SegmentFetch.FetchWorkload.Maintenance,
+            DownloadWorkload.Background => SegmentFetch.FetchWorkload.Background,
+            _ => SegmentFetch.FetchWorkload.Unknown,
+        };
     }
 }

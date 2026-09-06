@@ -12,6 +12,7 @@ public class GetOverviewStatsResponse
     /// <summary>Chart bucket width in ms for normalizing throughput totals into rates.</summary>
     public long ThroughputBucketSizeMs { get; init; }
     public long TotalArticles { get; init; }
+    public long TotalClientArticles { get; init; }
     public long TotalMisses { get; init; }
     public long TotalErrors { get; init; }
     public long TotalBytesFetched { get; init; }
@@ -62,6 +63,7 @@ public class GetOverviewStatsResponse
     {
         public long Bucket { get; init; }
         public long Articles { get; init; }
+        public long ClientArticles { get; init; }
         public long Misses { get; init; }
         public long Errors { get; init; }
         public long BytesServed { get; init; }

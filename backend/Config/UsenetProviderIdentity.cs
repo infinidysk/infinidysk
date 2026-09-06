@@ -294,11 +294,12 @@ public static class UsenetProviderIdentity
         {
             await db.Database.ExecuteSqlRawAsync(
                 """
-                INSERT INTO ProviderMinutes (Minute, Provider, Articles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist)
-                SELECT Minute, {0}, Articles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist
+                INSERT INTO ProviderMinutes (Minute, Provider, Articles, ClientArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist)
+                SELECT Minute, {0}, Articles, ClientArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist
                 FROM ProviderMinutes WHERE Provider = {1}
                 ON CONFLICT(Minute, Provider) DO UPDATE SET
                     Articles = ProviderMinutes.Articles + excluded.Articles,
+                    ClientArticles = ProviderMinutes.ClientArticles + excluded.ClientArticles,
                     BytesFetched = ProviderMinutes.BytesFetched + excluded.BytesFetched,
                     Misses = ProviderMinutes.Misses + excluded.Misses,
                     Errors = ProviderMinutes.Errors + excluded.Errors,
@@ -320,11 +321,12 @@ public static class UsenetProviderIdentity
         {
             await db.Database.ExecuteSqlRawAsync(
                 """
-                INSERT INTO ProviderHourly (Hour, Provider, Articles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, P95DurationMs)
-                SELECT Hour, {0}, Articles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, P95DurationMs
+                INSERT INTO ProviderHourly (Hour, Provider, Articles, ClientArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, P95DurationMs)
+                SELECT Hour, {0}, Articles, ClientArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, P95DurationMs
                 FROM ProviderHourly WHERE Provider = {1}
                 ON CONFLICT(Hour, Provider) DO UPDATE SET
                     Articles = ProviderHourly.Articles + excluded.Articles,
+                    ClientArticles = ProviderHourly.ClientArticles + excluded.ClientArticles,
                     BytesFetched = ProviderHourly.BytesFetched + excluded.BytesFetched,
                     Misses = ProviderHourly.Misses + excluded.Misses,
                     Errors = ProviderHourly.Errors + excluded.Errors,

@@ -1039,6 +1039,7 @@ export type OverviewStatsResponse = {
   throughput: ThroughputPoint[];
   throughputBucketSizeMs: number;
   totalArticles: number;
+  totalClientArticles: number;
   totalMisses: number;
   totalErrors: number;
   totalBytesFetched: number;
@@ -1188,6 +1189,7 @@ export type FailoverBucket = {
 export type ThroughputPoint = {
   bucket: number;
   articles: number;
+  clientArticles: number;
   misses: number;
   errors: number;
   bytesServed: number;

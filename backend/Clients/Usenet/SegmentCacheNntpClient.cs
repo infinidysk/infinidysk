@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Services;
@@ -108,7 +109,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         if (MultiProviderNntpClient.AttributionContext.Value != null)
             return await base.DecodedBodyAsync(segmentId, onConnectionReadyAgain, ct).ConfigureAwait(false);
 
-        var local = TryOpenCacheResponse(segmentId);
+        var local = TryOpenCacheResponse(segmentId, ct);
         if (local.Found)
         {
             ArticleBodyCompletion.InvokeContained(onConnectionReadyAgain, ArticleBodyResult.Retrieved);
@@ -124,7 +125,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
     {
         if (MultiProviderNntpClient.AttributionContext.Value == null)
         {
-            var local = TryOpenCacheResponse(segmentId);
+            var local = TryOpenCacheResponse(segmentId, ct);
             if (local.Found)
                 return local.Response;
         }
@@ -148,7 +149,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         if (MultiProviderNntpClient.AttributionContext.Value != null)
             return await base.DecodedBodyAsync(segmentId, exclusiveConnection, ct).ConfigureAwait(false);
 
-        var local = TryOpenCacheResponse(segmentId);
+        var local = TryOpenCacheResponse(segmentId, ct);
         if (local.Found)
         {
             ArticleBodyCompletion.InvokeContained(
@@ -174,7 +175,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         return LocalDataBatchOverlay.ExecuteAsync(
             segmentIds,
             onConnectionReadyAgain,
-            TryOpenCacheResponse,
+            segmentId => TryOpenCacheResponse(segmentId, cancellationToken),
             (misses, callback, token) => base.DecodedBodiesAsync(misses, callback, token),
             TransformRemoteForCachingAsync,
             cancellationToken);
@@ -194,21 +195,21 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         return LocalDataBatchOverlay.ExecuteAsync(
             segmentIds,
             exclusiveConnection.OnConnectionReadyAgain,
-            TryOpenCacheResponse,
+            segmentId => TryOpenCacheResponse(segmentId, cancellationToken),
             (misses, callback, token) =>
                 base.DecodedBodiesAsync(misses, new UsenetExclusiveConnection(callback), token),
             TransformRemoteForCachingAsync,
             cancellationToken);
     }
 
-    private LocalLookupResult TryOpenCacheResponse(SegmentId segmentId)
+    private LocalLookupResult TryOpenCacheResponse(SegmentId segmentId, CancellationToken cancellationToken)
     {
         string id = segmentId;
         var lookup = TryServeFromCache(id, out var cached, out var servedBytes);
         if (lookup == CacheLookupResult.Hit)
         {
             _statistics.RecordHit(servedBytes);
-            RecordCacheHit();
+            RecordCacheHit(DownloadWorkloadClassifier.ClassifyForMetrics(cancellationToken));
             return LocalLookupResult.Hit(cached!);
         }
 
@@ -453,7 +454,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         PublishIndexGauges();
     }
 
-    private void RecordCacheHit()
+    private void RecordCacheHit(SegmentFetch.FetchWorkload workload)
     {
         _usageTracker?.RecordSuccess(CacheProviderName);
         PrometheusMetrics.Current?.RecordSegmentFetch(CacheProviderName, "ok", TimeSpan.Zero);
@@ -462,6 +463,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
             At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             Provider = CacheProviderName,
             ReadSessionId = MultiProviderNntpClient.CurrentReadSessionId,
+            Workload = workload,
             Bytes = 0,
             DurationMs = 0,
             Status = SegmentFetch.FetchStatus.Ok,

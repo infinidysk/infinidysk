@@ -136,8 +136,8 @@ public class MetricsRollupService(
             await db.Database.ExecuteSqlRawAsync(
                 """
                 INSERT INTO ProviderHourly
-                    (Hour, Provider, Articles, BytesFetched, Misses, Errors, Retries, SumDurationMs, P95DurationMs)
-                VALUES ({0}, {1}, 0, {2}, 0, 0, 0, 0, NULL)
+                    (Hour, Provider, Articles, ClientArticles, BytesFetched, Misses, Errors, Retries, SumDurationMs, P95DurationMs)
+                VALUES ({0}, {1}, 0, 0, {2}, 0, 0, 0, 0, NULL)
                 ON CONFLICT(Hour, Provider) DO UPDATE SET
                     BytesFetched = ProviderHourly.BytesFetched + excluded.BytesFetched;
                 """,
@@ -146,8 +146,8 @@ public class MetricsRollupService(
             await db.Database.ExecuteSqlRawAsync(
                 """
                 INSERT INTO ThroughputMinutes
-                    (Minute, BytesServed, BytesFetched, Articles, Misses, Errors, ActiveReadsMax)
-                VALUES ({0}, 0, {1}, 0, 0, 0, 0)
+                    (Minute, BytesServed, BytesFetched, Articles, ClientArticles, Misses, Errors, ActiveReadsMax)
+                VALUES ({0}, 0, {1}, 0, 0, 0, 0, 0)
                 ON CONFLICT(Minute) DO UPDATE SET
                     BytesFetched = ThroughputMinutes.BytesFetched + excluded.BytesFetched;
                 """,
@@ -158,6 +158,7 @@ public class MetricsRollupService(
     internal static async Task RollupMinuteAsync(MetricsDbContext db, long minute)
     {
         var next = minute + OneMinute;
+        var streamingWorkload = (int)SegmentFetch.FetchWorkload.Streaming;
 
         // ThroughputMinute: read-session bytes (downstream) + fetch bytes (upstream).
         // BytesFetched intentionally omitted from ON CONFLICT — owned by ProviderBytesTracker.
@@ -165,22 +166,24 @@ public class MetricsRollupService(
         // tracker already deposited via ApplyByteCountersAsync.
         await db.Database.ExecuteSqlRawAsync(
             """
-            INSERT INTO ThroughputMinutes (Minute, BytesServed, BytesFetched, Articles, Misses, Errors, ActiveReadsMax)
+            INSERT INTO ThroughputMinutes (Minute, BytesServed, BytesFetched, Articles, ClientArticles, Misses, Errors, ActiveReadsMax)
             SELECT
                 {0} AS Minute,
                 COALESCE((SELECT SUM(BytesServed) FROM ReadSessions WHERE EndedAt >= {0} AND EndedAt < {1}), 0) AS BytesServed,
                 0 AS BytesFetched,
                 COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1}), 0) AS Articles,
+                COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Workload = {2}), 0) AS ClientArticles,
                 COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Status = 1), 0) AS Misses,
                 COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Status NOT IN (0, 1)), 0) AS Errors,
                 0 AS ActiveReadsMax
             ON CONFLICT(Minute) DO UPDATE SET
                 BytesServed  = excluded.BytesServed,
                 Articles     = excluded.Articles,
+                ClientArticles = excluded.ClientArticles,
                 Misses       = excluded.Misses,
                 Errors       = excluded.Errors;
             """,
-            minute, next).ConfigureAwait(false);
+            minute, next, streamingWorkload).ConfigureAwait(false);
 
         // ProviderMinute: per-provider counters. BytesFetched intentionally omitted from
         // ON CONFLICT — the tracker is the sole writer of that column.
@@ -189,15 +192,16 @@ public class MetricsRollupService(
         // scoreboard. FailoverMisses can contain multiple edges for one rescue.
         await db.Database.ExecuteSqlRawAsync(
             """
-            INSERT INTO ProviderMinutes (Minute, Provider, Articles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist)
+            INSERT INTO ProviderMinutes (Minute, Provider, Articles, ClientArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist)
             SELECT {0}, Provider,
                 COUNT(*),
+                SUM(CASE WHEN Workload = {2} THEN 1 ELSE 0 END),
                 0,
                 SUM(CASE WHEN Status = 1 THEN 1 ELSE 0 END),
                 SUM(CASE WHEN Status NOT IN (0, 1) THEN 1 ELSE 0 END),
                 SUM(Retries),
                 (SELECT COUNT(*) FROM MetricEvents e
-                    WHERE e.Kind = {2} AND e.Tag1 = SegmentFetches.Provider
+                    WHERE e.Kind = {3} AND e.Tag1 = SegmentFetches.Provider
                         AND e.At >= {0} AND e.At < {1}),
                 -- Ok-only durations so Overview "Avg ok ms" is not inflated by misses/errors.
                 SUM(CASE WHEN Status = 0 THEN DurationMs ELSE 0 END),
@@ -207,23 +211,25 @@ public class MetricsRollupService(
             GROUP BY Provider
             ON CONFLICT(Minute, Provider) DO UPDATE SET
                 Articles      = excluded.Articles,
+                ClientArticles = excluded.ClientArticles,
                 Misses        = excluded.Misses,
                 Errors        = excluded.Errors,
                 Retries       = excluded.Retries,
                 FailoverSaves = excluded.FailoverSaves,
                 SumDurationMs = excluded.SumDurationMs;
             """,
-            minute, next, MetricsWriter.FailoverSaveEventKind).ConfigureAwait(false);
+                minute, next, streamingWorkload, MetricsWriter.FailoverSaveEventKind).ConfigureAwait(false);
     }
 
-    private static async Task RollupHourAsync(MetricsDbContext db, long hour)
+            internal static async Task RollupHourAsync(MetricsDbContext db, long hour)
     {
         var next = hour + OneHour;
         await db.Database.ExecuteSqlRawAsync(
             """
-            INSERT INTO ProviderHourly (Hour, Provider, Articles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, P95DurationMs)
+            INSERT INTO ProviderHourly (Hour, Provider, Articles, ClientArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, P95DurationMs)
             SELECT {0}, Provider,
                 SUM(Articles),
+                SUM(ClientArticles),
                 SUM(BytesFetched),
                 SUM(Misses),
                 SUM(Errors),
@@ -236,6 +242,7 @@ public class MetricsRollupService(
             GROUP BY Provider
             ON CONFLICT(Hour, Provider) DO UPDATE SET
                 Articles      = excluded.Articles,
+                ClientArticles = excluded.ClientArticles,
                 BytesFetched  = excluded.BytesFetched,
                 Misses        = excluded.Misses,
                 Errors        = excluded.Errors,

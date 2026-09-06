@@ -30,9 +30,17 @@
   vector-effect: non-scaling-stroke;
 }
 
-.lineArticles {
+.lineClient {
   stroke: var(--color-success);
   stroke-width: 1.5;
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.lineApp {
+  stroke: var(--color-info);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
   fill: none;
   vector-effect: non-scaling-stroke;
 }

@@ -6,6 +6,7 @@ public class ThroughputMinute
     public long BytesServed { get; set; }
     public long BytesFetched { get; set; }
     public long Articles { get; set; }
+    public long ClientArticles { get; set; }
     public long Misses { get; set; }
     public long Errors { get; set; }
     public int ActiveReadsMax { get; set; }
