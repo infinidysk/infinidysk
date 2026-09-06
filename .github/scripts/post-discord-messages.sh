@@ -9,8 +9,6 @@ if [[ ! "$DISCORD_ANNOUNCEMENTS_WEBHOOK_URL" =~ ^https://[^[:space:]]+$ ]]; then
   exit 1
 fi
 
-MAX_LEN=1900
-CONTINUATION_PREFIX=$'_(continued)_\n\n'
 TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 
