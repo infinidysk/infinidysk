@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.1](https://github.com/infinidysk/infinidysk/compare/v1.3.0...v1.3.1) (2026-09-06)
+
+
+### Bug Fixes
+
+* **deps:** Bump Scalar.AspNetCore from 2.17.1 to 2.17.2 ([#1339](https://github.com/infinidysk/infinidysk/issues/1339)) ([e3737c6](https://github.com/infinidysk/infinidysk/commit/e3737c6a45d2cf5d3ab07eb32907b4cb461ff582))
+* **deps:** Bump the npm-minor-and-patch group across 1 directory with 4 updates ([#1341](https://github.com/infinidysk/infinidysk/issues/1341)) ([4e32bb6](https://github.com/infinidysk/infinidysk/commit/4e32bb6b5368ca533efc4a96ad73c19355c53b84))
+* **deps:** Bump the react-router group across 1 directory with 5 updates ([#1337](https://github.com/infinidysk/infinidysk/issues/1337)) ([11c2c02](https://github.com/infinidysk/infinidysk/commit/11c2c027d465664806a0aebc6c013a8cd6a3efbf))
+
 ## [1.3.0](https://github.com/infinidysk/infinidysk/compare/v1.2.7...v1.3.0) (2026-09-04)
 
 
