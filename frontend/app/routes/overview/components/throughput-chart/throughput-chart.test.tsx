@@ -55,6 +55,13 @@ describe("ThroughputChart", () => {
     expect(markup).toContain('data-series="client-articles"');
   });
 
+  it("labels the y-axis with the error-dominant coordinate scale", () => {
+    const markup = renderMarkup([point(2, 2, 10)], 10);
+
+    expect(markup).toContain(">10</span>");
+    expect(markup).toContain(">5</span>");
+  });
+
   it("keeps aggregate download throughput neutral instead of labeling it as app reads", () => {
     const markup = renderToStaticMarkup(
       <ThroughputChart

@@ -140,6 +140,20 @@ public class ProviderMetricsKeyTests
             BytesFetched = 100,
             Articles = 1,
         });
+        harness.Context.ProviderMinutes.AddRange(
+            new ProviderMinute
+            {
+                Minute = hour,
+                Provider = "news.example.com",
+                ClientArticles = 4,
+                ClientArticlesFinalized = true,
+            },
+            new ProviderMinute
+            {
+                Minute = hour,
+                Provider = firstKey,
+                ClientArticles = 1,
+            });
         await harness.Context.SaveChangesAsync();
 
         await UsenetProviderIdentity.RemapHostKeyedMetricsAsync(
@@ -152,6 +166,9 @@ public class ProviderMetricsKeyTests
         Assert.Equal(11, firstRow.Articles);
         Assert.False(await verify.ProviderHourly.AnyAsync(x => x.Provider == "news.example.com"));
         Assert.False(await verify.ProviderHourly.AnyAsync(x => x.Provider == secondKey));
+        var minuteRow = await verify.ProviderMinutes.SingleAsync(x => x.Provider == firstKey && x.Minute == hour);
+        Assert.Equal(5, minuteRow.ClientArticles);
+        Assert.True(minuteRow.ClientArticlesFinalized);
     }
 
     [Fact]

@@ -47,6 +47,7 @@ export function ThroughputChart({
     appArticlesPath,
     errorsPath,
     maxArticles,
+    scaleMax,
     maxClientArticles,
     maxAppArticles,
     maxNetworkRate,
@@ -59,6 +60,7 @@ export function ThroughputChart({
         appArticlesPath: "",
         errorsPath: "",
         maxArticles: 0,
+        scaleMax: 0,
         maxClientArticles: 0,
         maxAppArticles: 0,
         maxNetworkRate: 0,
@@ -84,6 +86,7 @@ export function ThroughputChart({
       appArticlesPath: buildArticlesSeriesPath(points, appArticles, xStep, y),
       errorsPath: buildSparseSeriesPath(points, (p) => p.errors, xStep, y),
       maxArticles: peakArticles,
+      scaleMax,
       maxClientArticles: peakClientArticles,
       maxAppArticles: peakAppArticles,
       maxNetworkRate: maxRate,
@@ -205,8 +208,8 @@ export function ThroughputChart({
           <>
             <div className={styles.plot}>
               <div className="flex h-40 w-9 shrink-0 flex-col items-end justify-between text-[10px] text-base-content/50 tabular-nums select-none">
-                <span>{formatNumber(maxArticles)}</span>
-                <span>{formatNumber(Math.round(maxArticles / 2))}</span>
+                <span>{formatNumber(scaleMax)}</span>
+                <span>{formatNumber(Math.round(scaleMax / 2))}</span>
                 <span>0</span>
               </div>
               <div
