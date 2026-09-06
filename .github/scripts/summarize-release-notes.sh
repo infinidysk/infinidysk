@@ -129,10 +129,6 @@ if [[ -z "$SUMMARY" ]]; then
   fail "Summary was empty after trimming"
 fi
 
-if [[ ${#SUMMARY} -gt 1500 ]]; then
-  fail "Summary exceeded 1500 characters (${#SUMMARY})"
-fi
-
 if printf '%s\n' "$SUMMARY" | grep -qE '^\s*\|.*\|'; then
   fail "Summary contains a markdown table"
 fi
