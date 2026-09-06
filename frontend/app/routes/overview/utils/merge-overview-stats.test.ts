@@ -61,11 +61,11 @@ describe("mergeOverviewStats", () => {
     );
 
     expect(withWindow.totalArticles).toBe(99);
-  expect(withWindow.totalClientArticles).toBe(30);
+    expect(withWindow.totalClientArticles).toBe(30);
     expect(withWindow.totalMisses).toBe(40);
     expect(withWindow.totalErrors).toBe(2);
     expect(withWindow.throughput).toHaveLength(1);
-  expect(withWindow.throughput[0]?.clientArticles).toBe(3);
+    expect(withWindow.throughput[0]?.clientArticles).toBe(3);
     expect(withWindow.catalogue.fileCount).toBe(42);
     expect(withWindow.indexers).toHaveLength(1);
     expect(withWindow.includedSections).toEqual(expect.arrayContaining(["static", "window"]));
@@ -100,7 +100,7 @@ describe("mergeOverviewStats", () => {
     );
 
     expect(withDetail.throughput).toHaveLength(1);
-  expect(withDetail.throughput[0]?.clientArticles).toBe(4);
+    expect(withDetail.throughput[0]?.clientArticles).toBe(4);
     expect(withDetail.latency.p50Ms).toBe(12);
     expect(withDetail.errors).toEqual([{ status: "Missing", count: 3 }]);
   });
