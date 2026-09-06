@@ -55,6 +55,32 @@ describe("ThroughputChart", () => {
     expect(markup).toContain('data-series="client-articles"');
   });
 
+  it("keeps aggregate download throughput neutral instead of labeling it as app reads", () => {
+    const markup = renderToStaticMarkup(
+      <ThroughputChart
+        points={[
+          {
+            ...point(10, 10, 0),
+            bucket: 0,
+            bytesFetched: 60 * 1024 * 1024,
+            bytesServed: 0,
+          },
+        ]}
+        totalArticles={10}
+        totalClientArticles={10}
+        totalMisses={0}
+        totalErrors={0}
+        totalBytesServed={0}
+        bucketSizeMs={60_000}
+        window="24h"
+      />,
+    );
+
+    expect(markup).toContain("Client reads · 10");
+    expect(markup).toContain("Peak download");
+    expect(markup).not.toContain("App reads · 0 · peak");
+  });
+
   it("skips idle stretches but anchors each run to leading and trailing zeros", () => {
     const markup = renderMarkup([point(0), point(5, 5), point(0), point(0), point(3, 3), point(0)]);
     const d = articlesPathD(markup);

@@ -344,8 +344,13 @@ export function ThroughputChart({
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block w-2.5 border-t-2 border-dashed border-info" />
                 App reads · {formatNumber(totalAppArticles)}
-                {maxNetworkRate > 0 && <> · peak {formatBytes(maxNetworkRate)}/s</>}
               </span>
+              {maxNetworkRate > 0 && (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-block h-0.5 w-2.5 bg-base-content/40" />
+                  Peak download · {formatBytes(maxNetworkRate)}/s
+                </span>
+              )}
               {totalErrors > 0 && (
                 <span className="inline-flex items-center gap-1.5">
                   <span className="inline-block h-0.5 w-2.5 bg-error" />
