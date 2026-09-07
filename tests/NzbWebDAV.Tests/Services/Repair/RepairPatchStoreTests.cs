@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using NzbWebDAV.Services.Repair;
 using UsenetSharp.Models;
 
@@ -8,6 +9,101 @@ namespace NzbWebDAV.Tests.Services.Repair;
 public sealed class RepairPatchStoreTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BatchPublication_RetainsCompleteEntriesAndRespectsCapacity(bool failSecond)
+    {
+        var dir = NewTempDir("batch");
+        var fail = false;
+        try
+        {
+            var store = new RepairPatchStore(dir, 50, null, index =>
+            {
+                if (fail && index == 1) throw new IOException("scripted finalization failure");
+            });
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            store.CommitPatch("old", new byte[40], Header(40));
+            fail = failSecond;
+            var batch = new[] { ("first", new byte[20], Header(20)), ("second", new byte[20], Header(20)) };
+            if (failSecond)
+                Assert.Throws<IOException>(() => store.CommitPatches(batch));
+            else
+                store.CommitPatches(batch);
+
+            Assert.True(store.HasUsablePatch("first"));
+            Assert.Equal(!failSecond, store.HasUsablePatch("second"));
+            Assert.False(store.Contains("old"));
+            Assert.InRange(store.CurrentBytes, 20, 50);
+            Assert.Empty(Directory.GetFiles(dir, "*.tmp", SearchOption.AllDirectories));
+            var reloaded = new RepairPatchStore(dir, 50);
+            await reloaded.EnsureCatalogLoadedAsync(CancellationToken.None);
+            Assert.True(reloaded.HasUsablePatch("first"));
+        }
+        finally { DeleteDir(dir); }
+    }
+
+    [Fact]
+    public async Task OversizedBatch_WritesNothing()
+    {
+        var dir = NewTempDir("oversized");
+        try
+        {
+            var store = new RepairPatchStore(dir, 10);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            Assert.Throws<ArgumentException>(() => store.CommitPatches([
+                ("one", new byte[6], Header(6)), ("two", new byte[6], Header(6))]));
+            Assert.Empty(Directory.GetFiles(dir, "*", SearchOption.AllDirectories));
+            Assert.Equal(0, store.CurrentBytes);
+        }
+        finally { DeleteDir(dir); }
+    }
+
+    [Fact]
+    public async Task OpenReader_SurvivesReplacementAndEviction()
+    {
+        var dir = NewTempDir("generation");
+        try
+        {
+            var store = new RepairPatchStore(dir, 10);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            store.CommitPatch("segment", "old-bytes"u8.ToArray(), Header(9));
+            Assert.True(store.TryGet("segment", out var old));
+            await using var oldStream = old!.Stream!;
+            store.CommitPatch("segment", "new"u8.ToArray(), Header(3));
+            Assert.True(store.TryGet("segment", out var current));
+            await using var currentStream = current!.Stream!;
+            store.CommitPatch("replacement", new byte[10], Header(10));
+            Assert.False(store.HasUsablePatch("segment"));
+            await using var oldBytes = new MemoryStream();
+            await oldStream.CopyToAsync(oldBytes);
+            await using var currentBytes = new MemoryStream();
+            await currentStream.CopyToAsync(currentBytes);
+            Assert.Equal("old-bytes"u8.ToArray(), oldBytes.ToArray());
+            Assert.Equal("new"u8.ToArray(), currentBytes.ToArray());
+        }
+        finally { DeleteDir(dir); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MissingOrMalformedPair_IsNotCataloged(bool brokenHeader)
+    {
+        var dir = NewTempDir("invalid-pair");
+        try
+        {
+            var body = WriteBlob(dir, "broken", new byte[8]);
+            if (brokenHeader) File.WriteAllText(body + ".h", "invalid");
+            else File.Delete(body + ".h");
+            var store = new RepairPatchStore(dir, 100);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            Assert.False(store.HasUsablePatch("broken"));
+            Assert.Equal(0, store.EntryCount);
+        }
+        finally { DeleteDir(dir); }
+    }
 
     private static UsenetYencHeader Header(int size) => new()
     {
@@ -447,6 +543,7 @@ public sealed class RepairPatchStoreTests
         var path = Path.Join(dir, hash[..2], hash);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllBytes(path, content);
+        File.WriteAllText(path + ".h", JsonSerializer.Serialize(Header(content.Length), new JsonSerializerOptions { IncludeFields = true }));
         return path;
     }
 

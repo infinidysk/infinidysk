@@ -1,6 +1,8 @@
+using System.Runtime.CompilerServices;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
@@ -11,6 +13,141 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 
 public sealed class RepairedSegmentNntpClientTests
 {
+    [Fact]
+    public async Task Stat_UsesUsablePatchWithoutHitMetrics_AndDropsMissingHeader()
+    {
+        var dir = Path.Join(Path.GetTempPath(), "par2-stat-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            store.CommitPatch("local", [1], HeaderFor([1]));
+            var inner = new FakeNntpClient(new Dictionary<string, byte[]>());
+            using var client = new RepairedSegmentNntpClient(inner, store);
+
+            Assert.Equal(223, (await client.StatAsync("local", CancellationToken.None)).ResponseCode);
+            Assert.Empty(inner.StatRequestOrder);
+            Assert.Equal(0, store.HitCount);
+            File.Delete(Assert.Single(Directory.GetFiles(dir, "*.h", SearchOption.AllDirectories)));
+            Assert.False((await client.StatAsync("local", CancellationToken.None)).ArticleExists);
+            Assert.False(store.Contains("local"));
+            Assert.Equal(["local"], inner.StatRequestOrder);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Stats_OnlyRequestsMissesInOriginalOrder(bool allLocal)
+    {
+        var dir = Path.Join(Path.GetTempPath(), "par2-stats-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            store.CommitPatch("local", [1], HeaderFor([1]));
+            using var inner = new TrackingStatClient("normal");
+            using var client = new RepairedSegmentNntpClient(inner, store);
+            string[] ids = allLocal ? ["local", "local"] : ["local", "remote", "local", "remote"];
+            var observed = new List<string>();
+            await foreach (var result in client.StatsPipelinedAsync(ids, 2, CancellationToken.None))
+                observed.Add(result.SegmentId);
+
+            Assert.Equal(ids, observed);
+            Assert.Equal(allLocal ? [] : ["remote", "remote"], inner.Requested);
+            Assert.Equal(!allLocal, inner.Disposed);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Theory]
+    [InlineData("early")]
+    [InlineData("mismatch")]
+    [InlineData("missing")]
+    [InlineData("extra")]
+    [InlineData("exception")]
+    [InlineData("cancel")]
+    public async Task Stats_DisposesRemoteIteratorOnEveryExit(string mode)
+    {
+        var dir = Path.Join(Path.GetTempPath(), "par2-stat-exit-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            using var inner = new TrackingStatClient(mode);
+            using var client = new RepairedSegmentNntpClient(inner, store);
+            using var cancellation = new CancellationTokenSource();
+            async Task ConsumeAsync()
+            {
+                await foreach (var result in client.StatsPipelinedAsync(["one", "two"], 2, cancellation.Token))
+                {
+                    if (mode == "early") break;
+                    if (mode == "cancel") cancellation.Cancel();
+                    Assert.NotNull(result);
+                }
+            }
+            if (mode == "early") await ConsumeAsync();
+            else if (mode == "cancel") await Assert.ThrowsAnyAsync<OperationCanceledException>(ConsumeAsync);
+            else if (mode == "exception") await Assert.ThrowsAsync<IOException>(ConsumeAsync);
+            else await Assert.ThrowsAsync<UsenetUnexpectedResponseException>(ConsumeAsync);
+            Assert.True(inner.Disposed);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public async Task Stats_ProviderAttributionBypassesLocalPatch()
+    {
+        var dir = Path.Join(Path.GetTempPath(), "par2-stat-attribution-" + Guid.NewGuid().ToString("N"));
+        var previous = MultiProviderNntpClient.AttributionContext.Value;
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            store.CommitPatch("local", [1], HeaderFor([1]));
+            using var inner = new TrackingStatClient("normal");
+            using var client = new RepairedSegmentNntpClient(inner, store);
+            MultiProviderNntpClient.AttributionContext.Value = new MultiProviderNntpClient.ResponderAttribution();
+            Assert.False((await client.StatAsync("local", CancellationToken.None)).ArticleExists);
+            await foreach (var result in client.StatsPipelinedAsync(["local"], 2, CancellationToken.None))
+                Assert.Equal("local", result.SegmentId);
+            Assert.Equal(["local"], inner.Requested);
+            Assert.True(inner.Disposed);
+        }
+        finally
+        {
+            MultiProviderNntpClient.AttributionContext.Value = previous;
+            Directory.Delete(dir, true);
+        }
+    }
+
+    private sealed class TrackingStatClient(string mode) : WrappingNntpClient(new FakeNntpClient(new Dictionary<string, byte[]>()))
+    {
+        public List<string> Requested { get; } = [];
+        public bool Disposed { get; private set; }
+
+        public override async IAsyncEnumerable<PipelinedStatResult> StatsPipelinedAsync(
+            IReadOnlyList<string> segmentIds, int depth, [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            Requested.AddRange(segmentIds);
+            try
+            {
+                await Task.CompletedTask;
+                foreach (var id in segmentIds)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (mode == "missing") yield break;
+                    if (mode == "exception") throw new IOException("scripted STAT failure");
+                    yield return new PipelinedStatResult { SegmentId = mode == "mismatch" ? "wrong" : id, Exists = true };
+                }
+                if (mode == "extra")
+                    yield return new PipelinedStatResult { SegmentId = "extra", Exists = true };
+            }
+            finally { Disposed = true; }
+        }
+    }
+
     private static UsenetYencHeader HeaderFor(byte[] content) => new()
     {
         FileName = "test.bin",

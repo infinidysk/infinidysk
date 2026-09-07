@@ -19,6 +19,7 @@ public sealed class RepairPatchStore
     private readonly object _evictLock = new();
     private readonly object _catalogLoadSync = new();
     private readonly Func<CancellationToken, IEnumerable<string>> _enumerateCacheFiles;
+    private readonly Action<int>? _beforeFinalize;
     private Task? _catalogLoadInFlight;
     private long _currentBytes;
     private int _catalogReady;
@@ -35,10 +36,13 @@ public sealed class RepairPatchStore
     internal RepairPatchStore(
         string cacheDir,
         long maxBytes,
-        Func<CancellationToken, IEnumerable<string>>? enumerateCacheFiles)
+        Func<CancellationToken, IEnumerable<string>>? enumerateCacheFiles,
+        Action<int>? beforeFinalize = null)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBytes);
         _dir = cacheDir;
         _maxBytes = maxBytes;
+        _beforeFinalize = beforeFinalize;
         Directory.CreateDirectory(_dir);
         _enumerateCacheFiles = enumerateCacheFiles
             ?? (_ => Directory.EnumerateFiles(_dir, "*", SearchOption.AllDirectories));
@@ -47,6 +51,7 @@ public sealed class RepairPatchStore
 
     public bool IsCatalogReady => Volatile.Read(ref _catalogReady) != 0;
     internal long CurrentBytes => Interlocked.Read(ref _currentBytes);
+    internal long MaxBytes => _maxBytes;
     internal int EntryCount => _index.Count;
     internal long HitCount => Interlocked.Read(ref _hitCount);
     internal long EvictionCount => Interlocked.Read(ref _evictionCount);
@@ -60,62 +65,88 @@ public sealed class RepairPatchStore
         if (!IsCatalogReady) return false;
 
         var hash = Hash(segmentId);
-        if (!_index.TryGetValue(hash, out var entry)) return false;
-
-        var blobPath = BlobPath(hash);
-        try
+        lock (_evictLock)
         {
-            var header = JsonSerializer.Deserialize<UsenetYencHeader>(
-                File.ReadAllText(blobPath + ".h"), HeaderJsonOptions);
-            if (header == null || header.PartSize != entry.Size)
+            if (!_index.TryGetValue(hash, out var entry)) return false;
+            if (!TryReadHeader(hash, entry.Size, out var header))
             {
                 Drop(hash);
                 return false;
             }
 
-            var fileStream = new FileStream(blobPath, FileMode.Open, FileAccess.Read,
-                FileShare.Read | FileShare.Delete, bufferSize: 81920, useAsync: true);
-            entry.LastAccessTicks = DateTime.UtcNow.Ticks;
-            Interlocked.Increment(ref _hitCount);
-            response = new UsenetDecodedBodyResponse
+            FileStream? fileStream = null;
+            try
             {
-                SegmentId = segmentId,
-                ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
-                ResponseMessage = "222 - Article retrieved from repair patch store",
-                Stream = new CachedYencStream(header, fileStream),
-            };
-            return true;
-        }
-        catch (Exception e) when (e is not OutOfMemoryException)
-        {
-            Log.Debug(e, "Repair patch store: dropping unreadable patch for {SegmentId}", segmentId);
-            Drop(hash);
-            return false;
+                fileStream = new FileStream(BlobPath(hash), FileMode.Open, FileAccess.Read,
+                    FileShare.Read | FileShare.Delete, bufferSize: 81920, useAsync: true);
+                if (fileStream.Length != entry.Size)
+                {
+                    Drop(hash);
+                    return false;
+                }
+                entry.LastAccessTicks = DateTime.UtcNow.Ticks;
+                Interlocked.Increment(ref _hitCount);
+                response = new UsenetDecodedBodyResponse
+                {
+                    SegmentId = segmentId,
+                    ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
+                    ResponseMessage = "222 - Article retrieved from repair patch store",
+                    Stream = new CachedYencStream(header!, fileStream),
+                };
+                fileStream = null;
+                return true;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                Log.Debug(e, "Repair patch store: dropping unreadable patch for {SegmentId}", segmentId);
+                Drop(hash);
+                return false;
+            }
+            finally
+            {
+                fileStream?.Dispose();
+            }
         }
     }
 
     public bool IsRepaired(string segmentId, long expectedSize)
+        => HasUsablePatch(segmentId, expectedSize);
+
+    public bool HasUsablePatch(string segmentId) => HasUsablePatch(segmentId, null);
+
+    private bool HasUsablePatch(string segmentId, long? expectedSize)
     {
         if (!IsCatalogReady) return false;
-
         var hash = Hash(segmentId);
-        if (!_index.TryGetValue(hash, out var entry) || entry.Size != expectedSize)
-            return false;
+        lock (_evictLock)
+        {
+            if (!_index.TryGetValue(hash, out var entry)) return false;
+            if (!TryReadHeader(hash, entry.Size, out _))
+            {
+                Drop(hash);
+                return false;
+            }
+            return expectedSize is null || entry.Size == expectedSize;
+        }
+    }
 
+    private bool TryReadHeader(string hash, long size, out UsenetYencHeader? header)
+    {
+        header = null;
         var blobPath = BlobPath(hash);
-        if (!File.Exists(blobPath) || !File.Exists(blobPath + ".h"))
-            return false;
-
         try
         {
-            var header = JsonSerializer.Deserialize<UsenetYencHeader>(
+            var bodyInfo = new FileInfo(blobPath);
+            var headerInfo = new FileInfo(blobPath + ".h");
+            if (!bodyInfo.Exists || bodyInfo.Length != size || !headerInfo.Exists || headerInfo.Length > 1024 * 1024)
+                return false;
+            header = JsonSerializer.Deserialize<UsenetYencHeader>(
                 File.ReadAllText(blobPath + ".h"), HeaderJsonOptions);
-            return header != null && header.PartSize == expectedSize;
+            return header is not null && header.PartSize == size;
         }
-        catch (Exception e) when (e is not OutOfMemoryException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
         {
-            Log.Debug(e, "Repair patch store: dropping unreadable patch for {SegmentId}", segmentId);
-            Drop(hash);
+            Log.Debug(e, "Repair patch store: unreadable stored header/body pair");
             return false;
         }
     }
@@ -125,41 +156,61 @@ public sealed class RepairPatchStore
         CommitPatches([(segmentId, bytes, header)]);
     }
 
-    /// <summary>
-    /// Writes every patch to a temp file first, then publishes them together so a
-    /// verification failure before this call cannot leave a partial catalog.
-    /// </summary>
     public void CommitPatches(IReadOnlyList<(string SegmentId, byte[] Bytes, UsenetYencHeader Header)> patches)
     {
+        var hashes = new HashSet<string>(StringComparer.Ordinal);
+        long batchBytes = 0;
+        foreach (var (segmentId, bytes, header) in patches)
+        {
+            if (bytes.Length != header.PartSize)
+                throw new ArgumentException("Patch bytes length does not match yEnc header PartSize.", nameof(patches));
+            if (!hashes.Add(Hash(segmentId)))
+                throw new ArgumentException("Patch batch contains duplicate segment IDs.", nameof(patches));
+            batchBytes = checked(batchBytes + bytes.Length);
+        }
+        if (batchBytes > _maxBytes)
+            throw new ArgumentException("Patch batch exceeds the repair patch store capacity.", nameof(patches));
+
         var staged = new List<(string Hash, string TempPath, string HeaderPath, long Size)>(patches.Count);
         try
         {
             foreach (var (segmentId, bytes, header) in patches)
             {
-                if (bytes.Length != header.PartSize)
-                    throw new ArgumentException("Patch bytes length does not match yEnc header PartSize.");
-
                 var hash = Hash(segmentId);
                 var blobPath = BlobPath(hash);
                 Directory.CreateDirectory(Path.GetDirectoryName(blobPath)!);
                 var tempPath = blobPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
                 var headerPath = blobPath + ".h." + Guid.NewGuid().ToString("N") + ".tmp";
+                staged.Add((hash, tempPath, headerPath, bytes.Length));
                 File.WriteAllBytes(tempPath, bytes);
                 File.WriteAllText(headerPath, JsonSerializer.Serialize(header, HeaderJsonOptions));
-                staged.Add((hash, tempPath, headerPath, bytes.Length));
             }
 
-            foreach (var (hash, tempPath, headerPath, size) in staged)
+            lock (_evictLock)
             {
-                var blobPath = BlobPath(hash);
-                // Publish bytes before the header so readers never observe a header
-                // whose blob is still missing or from a previous generation.
-                File.Move(tempPath, blobPath, overwrite: true);
-                File.Move(headerPath, blobPath + ".h", overwrite: true);
-                OnFinalized(hash, size);
+                try
+                {
+                    for (var index = 0; index < staged.Count; index++)
+                    {
+                        _beforeFinalize?.Invoke(index);
+                        var (hash, tempPath, headerPath, size) = staged[index];
+                        var blobPath = BlobPath(hash);
+                        if (_index.TryRemove(hash, out var previous)) _currentBytes -= previous.Size;
+                        File.Delete(blobPath + ".h");
+                        File.Move(tempPath, blobPath, overwrite: true);
+                        File.Move(headerPath, blobPath + ".h", overwrite: true);
+                        _index[hash] = new CacheEntry { Size = size, LastAccessTicks = DateTime.UtcNow.Ticks };
+                        _currentBytes += size;
+                    }
+                }
+                finally
+                {
+                    EvictIfNeeded(hashes);
+                    PrometheusMetrics.Current?.SetPar2PatchStoreBytes(_currentBytes);
+                }
             }
         }
-        catch
+        finally
         {
             foreach (var (_, tempPath, headerPath, _) in staged)
             {
@@ -167,20 +218,7 @@ public sealed class RepairPatchStore
                 SafeDelete(headerPath);
             }
 
-            throw;
         }
-    }
-
-    private void OnFinalized(string hash, long size)
-    {
-        lock (_evictLock)
-        {
-            if (_index.TryGetValue(hash, out var existing)) _currentBytes -= existing.Size;
-            _index[hash] = new CacheEntry { Size = size, LastAccessTicks = DateTime.UtcNow.Ticks };
-            _currentBytes += size;
-        }
-
-        EvictIfNeeded();
     }
 
     private void Drop(string hash)
@@ -188,13 +226,12 @@ public sealed class RepairPatchStore
         lock (_evictLock)
         {
             if (_index.TryRemove(hash, out var entry)) _currentBytes -= entry.Size;
+            SafeDelete(BlobPath(hash));
+            SafeDelete(BlobPath(hash) + ".h");
         }
-
-        SafeDelete(BlobPath(hash));
-        SafeDelete(BlobPath(hash) + ".h");
     }
 
-    private void EvictIfNeeded()
+    private void EvictIfNeeded(HashSet<string>? protectedHashes = null)
     {
         if (Interlocked.Read(ref _currentBytes) <= _maxBytes) return;
         lock (_evictLock)
@@ -203,6 +240,7 @@ public sealed class RepairPatchStore
             foreach (var kv in _index.OrderBy(x => x.Value.LastAccessTicks).ToList())
             {
                 if (_currentBytes <= _maxBytes) break;
+                if (protectedHashes?.Contains(kv.Key) == true) continue;
                 if (!_index.TryRemove(kv.Key, out var entry)) continue;
                 _currentBytes -= entry.Size;
                 Interlocked.Increment(ref _evictionCount);
@@ -302,11 +340,29 @@ public sealed class RepairPatchStore
             }
 
             if (file.EndsWith(".h", StringComparison.Ordinal))
+            {
+                var header = new FileInfo(file);
+                if (!File.Exists(file[..^2]) && header.Exists && DateTime.UtcNow - header.LastWriteTimeUtc > TimeSpan.FromHours(1))
+                    SafeDelete(file);
                 continue;
+            }
 
             var info = new FileInfo(file);
             if (!info.Exists)
                 continue;
+
+            lock (_evictLock)
+            {
+                if (!TryReadHeader(Path.GetFileName(file), info.Length, out _))
+                {
+                    if (DateTime.UtcNow - info.LastWriteTimeUtc > TimeSpan.FromHours(1))
+                    {
+                        SafeDelete(file);
+                        SafeDelete(file + ".h");
+                    }
+                    continue;
+                }
+            }
 
             var entry = new CacheEntry
             {
@@ -330,7 +386,8 @@ public sealed class RepairPatchStore
             foreach (var (hash, scannedEntry) in snapshot.Entries)
             {
                 // A live entry finalized during scanning is newer and wins.
-                if (_index.TryAdd(hash, scannedEntry))
+                if (!_index.ContainsKey(hash) && TryReadHeader(hash, scannedEntry.Size, out _)
+                    && _index.TryAdd(hash, scannedEntry))
                     _currentBytes = checked(_currentBytes + scannedEntry.Size);
             }
 
