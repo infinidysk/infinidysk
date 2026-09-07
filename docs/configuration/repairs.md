@@ -27,6 +27,62 @@ Background health monitoring, PAR2 reconstruction, and replacement of unhealthy 
 | Repair quiet hours [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `repair.action-schedule` | empty (always on) | JSON weekly windows for starting repairs |
 | Library Directory | `media.library-dir` | empty | Organized library root in the container — parent of your Arr root folders. Never the rclone mount or `/completed-symlinks` |
 
+## PAR2 gap repair [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }
+
+PAR2 can reconstruct missing or corrupt Usenet articles using parity in the retained NZB.
+It does not require a Library Directory or an *Arr instance; that prerequisite was removed
+in 1.2.5. Both Background Repairs and PAR2 gap repair must be enabled.
+
+| Control | Config key | Default | Effective range or behavior |
+|---------|------------|---------|-----------------------------|
+| PAR2 gap repair | `repair.par2-enabled` | on | Background Repairs is the master switch |
+| Prefer PAR2 over *Arr replacement | `repair.par2-preferred-over-arr` | on | Try parity first; without an *Arr replacement path, PAR2 is still attempted |
+| Maximum missing slices | `repair.par2-max-missing-slices` | `8` | 1-64; applies to the combined unavailable slices in the recovery set, including damage found during source checks |
+| Maximum release size (GiB) | `repair.par2-max-release-gb` | `16` | 1-200; total recoverable source-volume bytes, checked before content reads |
+| Maximum repair memory (MiB) | `repair.par2-max-memory-mb` | `256` | 64-2048; conservative repair-owned working-memory budget, not total process RSS |
+| Maximum patch store (GiB) | `repair.par2-max-patch-gb` | `4` | 1-100; cataloged patch-body capacity; restart to apply a changed store capacity |
+| PAR2 fetch concurrency | `repair.par2-fetch-concurrency` | `2` | 1-8; upper bound for repair fetches, not a promise to parallelize every phase |
+| Failure cooldown (hours) | `repair.par2-failure-cooldown-hours` | `6` | 1-168; failed/infeasible attempts are deferred, with at most three provider-repair attempts per job |
+
+Health checks and attributed streaming failures can request repair. Playback gap/corruption
+reports enqueue background work; playback never waits for reconstruction. Until a patch is
+available, reads retain their existing safe gap-fill or failure behavior. A gap fill does not
+guarantee that an archive or media player can continue playback.
+
+Repair checks PAR2 packet hashes and source-slice checksums, reconstructs unavailable slices,
+and verifies every affected volume's whole-file MD5 before publishing any segment patches.
+Only validated posted bytes are stored. Sources and parity are read through Usenet without
+downloading or extracting a whole release to disk. One repair owner runs at a time across
+health and playback requests; additional jobs wait without multiplying the memory budget.
+
+The budget includes NZB/PAR2 metadata, source windows, reconstruction buffers, and staged
+patches. Discovery also limits metadata candidates to 128, metadata scanning to 512 MiB,
+and unnamed magic probes to 64 candidates with at most 64 bytes per probe. A recovery set
+must contain 1-32,768 input slices. An unsupported layout, ambiguous identity, exhausted
+limit, or insufficient parity produces a clear infeasible reason rather than guessed bytes.
+
+## RAR and multipart repair [since 1.4.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.0){ .nzbdav-since }
+
+Targeted repair supports current multipart items and legacy RAR items, including encrypted
+posted volumes and unresolved lazy parts when their article geometry can be established.
+PAR2 protects the **posted archive-volume bytes**, not the extracted movie or its decrypted
+contents. Repair does not invoke archive extraction, decryption, or lazy member resolution.
+
+Reported article IDs must belong uniquely to the mounted item's retained NZB. Filenames only
+prioritize candidates: exact length plus a prefix hash or intact PAR2-verified slices establish
+volume identity. Trusted persisted subsequences and consistent yEnc headers establish exact
+article boundaries. NZB byte counts alone are not trusted; adjacent unavailable articles with
+no exact boundaries can make repair infeasible.
+
+One attempt uses **one recovery set** covering all reported volumes. It checks every recoverable
+source for additional damage and reconstructs the union once. Reports spanning independent
+sets are not combined. Multipart repair requires specific article IDs; full-file verify-all
+and durable multipart degraded/corrupt indexes are not supported. Existing plain-NZB damage
+tracking and verify-all behavior remain available.
+
+See [PAR2 storage and diagnostics](../operations/health-repairs.md#par2-storage-and-diagnostics)
+for restart persistence, storage cleanup, and progress reporting.
+
 ## Health-check and repair windows [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
 
 Same JSON shape as [download schedule](queue.md#download-schedule-since-130): `{ "Enabled": true, "Windows": [{ "Days": [1,2,3,4,5], "StartMinute": 0, "EndMinute": 420 }] }`. Empty or disabled is unrestricted. Times use the host local timezone (container `TZ`).
