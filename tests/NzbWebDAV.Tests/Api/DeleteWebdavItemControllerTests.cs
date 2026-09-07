@@ -426,6 +426,75 @@ public sealed class DeleteWebdavItemControllerTests : IAsyncLifetime
             .SingleOrDefaultAsync(x => x.Id == nzbBlobId));
     }
 
+    [Fact]
+    public async Task DeleteAsync_LegacyJobFolderWithoutHistoryItemId_PrunesCompletedHistoryByDownloadDirId()
+    {
+        // Mount folders created before DavItems.HistoryItemId existed carry no back-reference;
+        // the only link is HistoryItems.DownloadDirId → job folder.
+        var (jobDir, completedHistoryId, _) = await SeedLegacyContentReleaseAsync("Legacy.Show.S01E01");
+
+        // A Failed row pointing at the same folder must survive (mark-failed reuses DownloadDirId).
+        var failedHistoryId = Guid.NewGuid();
+        var failedBlobId = Guid.NewGuid();
+        var failedHistory = CreateHistory(failedHistoryId, "Legacy.Show.S01E01.dup.nzb", "tv", failedBlobId);
+        failedHistory.DownloadStatus = HistoryItem.DownloadStatusOption.Failed;
+        failedHistory.DownloadDirId = jobDir.Id;
+        _context.HistoryItems.Add(failedHistory);
+        _context.NzbNames.Add(new NzbName { Id = failedBlobId, FileName = failedHistory.FileName });
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var result = await InvokeDeleteAsync(jobDir.Path);
+        Assert.Equal(200, GetStatusCode(result));
+
+        Assert.Null(await _context.Items.AsNoTracking().SingleOrDefaultAsync(x => x.Id == jobDir.Id));
+        Assert.Null(await _context.HistoryItems.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == completedHistoryId));
+        Assert.NotNull(await _context.HistoryItems.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == failedHistoryId));
+    }
+
+    [Fact]
+    public async Task DeleteAsync_LegacyFileOnly_KeepsHistoryWhileJobFolderExists()
+    {
+        var (jobDir, completedHistoryId, file) = await SeedLegacyContentReleaseAsync("Legacy.Show.S01E02");
+
+        var result = await InvokeDeleteAsync(file.Path);
+        Assert.Equal(200, GetStatusCode(result));
+
+        Assert.NotNull(await _context.Items.AsNoTracking().SingleOrDefaultAsync(x => x.Id == jobDir.Id));
+        Assert.NotNull(await _context.HistoryItems.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == completedHistoryId));
+    }
+
+    private async Task<(DavItem JobDir, Guid HistoryId, DavItem File)> SeedLegacyContentReleaseAsync(string jobName)
+    {
+        var historyId = Guid.NewGuid();
+        var nzbBlobId = Guid.NewGuid();
+        var categoryDir = await EnsureCategoryAsync("tv");
+        var jobDir = NewDir(Guid.NewGuid(), categoryDir, jobName);
+        var file = DavItem.New(
+            Guid.NewGuid(),
+            jobDir,
+            "episode.mkv",
+            100,
+            DavItem.ItemType.UsenetFile,
+            DavItem.ItemSubType.NzbFile,
+            null,
+            null,
+            historyItemId: null,
+            Guid.NewGuid(),
+            nzbBlobId);
+        var history = CreateHistory(historyId, $"{jobName}.nzb", "tv", nzbBlobId);
+        history.DownloadDirId = jobDir.Id;
+        _context.HistoryItems.Add(history);
+        _context.NzbNames.Add(new NzbName { Id = nzbBlobId, FileName = $"{jobName}.nzb" });
+        _context.Items.AddRange(jobDir, file);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+        return (jobDir, historyId, file);
+    }
+
     private DeleteWebdavItemController CreateDeleteController()
     {
         var controller = new DeleteWebdavItemController(

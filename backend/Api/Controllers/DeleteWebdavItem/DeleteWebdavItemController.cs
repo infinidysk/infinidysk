@@ -81,8 +81,16 @@ public class DeleteWebdavItemController(
                 .Select(x => x.HistoryItemId!.Value)
                 .Distinct()
                 .ToList();
+            var deletedDirectoryIds = subtree
+                .Where(x => x.Type == DavItem.ItemType.Directory)
+                .Select(x => x.Id)
+                .ToList();
             var prunedHistoryIds = await dbClient
-                .PruneUnreferencedHistoryItemsAsync(historyIds, source: "explore-delete", ct: ct)
+                .PruneUnreferencedHistoryItemsAsync(
+                    historyIds,
+                    source: "explore-delete",
+                    ct: ct,
+                    deletedDirectoryIds: deletedDirectoryIds)
                 .ConfigureAwait(false);
 
             await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);

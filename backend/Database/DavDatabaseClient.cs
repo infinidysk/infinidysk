@@ -812,12 +812,33 @@ public sealed class DavDatabaseClient(
     public async Task<List<Guid>> PruneUnreferencedHistoryItemsAsync(
         IReadOnlyCollection<Guid> historyItemIds,
         string source = "webdav-unreferenced-prune",
+        IReadOnlyCollection<Guid>? deletedDirectoryIds = null,
         CancellationToken ct = default)
     {
-        if (historyItemIds.Count == 0) return [];
-
         const int batchSize = 500;
-        var distinctIds = historyItemIds.Distinct().ToList();
+        var candidateIds = historyItemIds.ToHashSet();
+
+        // Mount folders created before DavItems.HistoryItemId existed (2026-02) carry no
+        // back-reference, so their Completed history row is only reachable via DownloadDirId.
+        if (deletedDirectoryIds is { Count: > 0 })
+        {
+            foreach (var chunk in deletedDirectoryIds.Distinct().Chunk(batchSize))
+            {
+                var batch = chunk.ToList();
+                var legacyIds = await Ctx.HistoryItems
+                    .AsNoTracking()
+                    .Where(h => h.DownloadStatus == HistoryItem.DownloadStatusOption.Completed
+                                && h.DownloadDirId != null
+                                && batch.Contains(h.DownloadDirId.Value))
+                    .Select(h => h.Id)
+                    .ToListAsync(ct)
+                    .ConfigureAwait(false);
+                candidateIds.UnionWith(legacyIds);
+            }
+        }
+
+        if (candidateIds.Count == 0) return [];
+        var distinctIds = candidateIds.ToList();
 
         var stillReferenced = new HashSet<Guid>();
         foreach (var chunk in distinctIds.Chunk(batchSize))

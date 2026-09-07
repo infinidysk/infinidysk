@@ -132,7 +132,7 @@ public class DatabaseStoreCollection(
             DeletionAuditLog.Record("webdav-delete", davItem, "client DELETE on directory");
             dbClient.Ctx.Items.Remove(davItem);
             await dbClient.Ctx.SaveChangesAsync().ConfigureAwait(false);
-            await PruneEmptyHistoryAsync(historyItemId, request.CancellationToken).ConfigureAwait(false);
+            await PruneEmptyHistoryAsync(historyItemId, request.CancellationToken, davItem.Id).ConfigureAwait(false);
             return DavStatusCode.Ok;
         }
 
@@ -144,15 +144,18 @@ public class DatabaseStoreCollection(
     // remove the HistoryItem too. Without this, external tools polling /api?mode=history
     // (third-party SAB-compatible clients, Sonarr, etc.) see the entry as Completed and hand the
     // player a URL pointing at the file we just deleted — re-clicking never re-enqueues.
-    private async Task PruneEmptyHistoryAsync(Guid? historyItemId, CancellationToken ct)
+    private async Task PruneEmptyHistoryAsync(Guid? historyItemId, CancellationToken ct, Guid? deletedDirectoryId = null)
     {
-        if (historyItemId is null) return;
+        if (historyItemId is null && deletedDirectoryId is null) return;
         var pruned = await dbClient.PruneUnreferencedHistoryItemsAsync(
-                [historyItemId.Value], source: "webdav-unreferenced-prune", ct: ct)
+                historyItemId is { } id ? [id] : [],
+                source: "webdav-unreferenced-prune",
+                ct: ct,
+                deletedDirectoryIds: deletedDirectoryId is { } dirId ? [dirId] : null)
             .ConfigureAwait(false);
         if (pruned.Count == 0) return;
 
         await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
-        _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemRemoved, pruned[0].ToString());
+        _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemRemoved, string.Join(",", pruned));
     }
 }
