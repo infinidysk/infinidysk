@@ -7,6 +7,9 @@ public sealed class Gf16Field
 {
     private const uint Polynomial = 0x1100B;
     public const int Order = 65536;
+    public const int MaxInputSlices = 32768;
+
+    private static readonly ushort[] InputLogarithms = BuildInputLogarithms();
 
     private readonly ushort[] _log = new ushort[Order];
     private readonly ushort[] _exp = new ushort[Order];
@@ -47,16 +50,30 @@ public sealed class Gf16Field
     {
         if (exponent == 0) return 1;
         if (baseValue == 0) return 0;
-        var log = _log[baseValue] * exponent;
+        var log = (long)_log[baseValue] * exponent;
         log %= Order - 1;
         if (log < 0) log += Order - 1;
-        return _exp[log];
+        return _exp[(int)log];
     }
 
-    /// <summary>PAR2 coefficient for recovery-set file index and RecvSlic exponent.</summary>
     public ushort RecoveryCoefficient(uint exponent, int fileIndex)
     {
-        var basePow = Pow(2, (int)exponent);
-        return Pow(basePow, fileIndex);
+        ArgumentOutOfRangeException.ThrowIfNegative(fileIndex);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(fileIndex, MaxInputSlices);
+        var logarithm = (ulong)InputLogarithms[fileIndex] * exponent % (Order - 1);
+        return _exp[(int)logarithm];
+    }
+
+    private static ushort[] BuildInputLogarithms()
+    {
+        var logarithms = new ushort[MaxInputSlices];
+        var index = 0;
+        for (var exponent = 1; exponent < Order - 1; exponent++)
+        {
+            if (exponent % 3 != 0 && exponent % 5 != 0 && exponent % 17 != 0 && exponent % 257 != 0)
+                logarithms[index++] = (ushort)exponent;
+        }
+
+        return logarithms;
     }
 }

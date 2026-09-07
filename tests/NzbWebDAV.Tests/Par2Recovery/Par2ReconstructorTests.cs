@@ -6,15 +6,16 @@ namespace NzbWebDAV.Tests.Par2Recovery;
 
 public sealed class Par2ReconstructorTests
 {
-    [Fact]
-    public async Task Reconstruct_SingleMissingSlice_MatchesOriginal()
+    [Theory]
+    [InlineData(4096UL)]
+    [InlineData(6144UL)]
+    public async Task Reconstruct_SingleMissingSlice_MatchesOriginal(ulong sliceSize)
     {
-        var fileData = new byte[5000];
+        var fileData = new byte[checked((int)sliceSize + 903)];
         for (var i = 0; i < fileData.Length; i++)
             fileData[i] = (byte)(i * 3);
 
-        const ulong sliceSize = 4096;
-        var (_, volume) = Par2TestEncoder.EncodeSet("content.mkv", fileData, sliceSize, [0u, 1u]);
+        var (_, volume) = Par2TestEncoder.EncodeSet("content.mkv", fileData, sliceSize, [1u]);
 
         var descriptors = new Dictionary<string, FileDesc>();
         var ifscs = new Dictionary<string, IfscPacket>();

@@ -107,7 +107,7 @@ public sealed class Par2Reconstructor
                             return Fail($"Slice {sliceIndex} longer than slice size.");
                         Array.Clear(sliceBuffer, 0, sliceSize);
                         fetched.AsSpan(0, fetched.Length).CopyTo(sliceBuffer);
-                        if (!VerifySliceChecksum(sliceBuffer, checksum))
+                        if (!VerifySliceChecksum(sliceBuffer.AsSpan(0, sliceSize), checksum))
                         {
                             if (isMissing)
                             {
@@ -225,11 +225,11 @@ public sealed class Par2Reconstructor
         throw new ArgumentOutOfRangeException(nameof(globalSlice));
     }
 
-    internal static bool VerifySliceChecksum(byte[] slice, IfscPacket.SliceChecksum checksum)
+    internal static bool VerifySliceChecksum(ReadOnlySpan<byte> slice, IfscPacket.SliceChecksum checksum)
     {
         var md5 = MD5.HashData(slice);
         if (!md5.AsSpan().SequenceEqual(checksum.Md5)) return false;
-        var crc = BitConverter.ToUInt32(Crc32.Hash(slice));
+        var crc = Crc32.HashToUInt32(slice);
         return crc == checksum.Crc32;
     }
 
