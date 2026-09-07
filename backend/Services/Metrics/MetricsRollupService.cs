@@ -180,8 +180,7 @@ public class MetricsRollupService(
             ON CONFLICT(Minute) DO UPDATE SET
                 BytesServed  = excluded.BytesServed,
                 Articles     = excluded.Articles,
-                ClientArticles = CASE WHEN ThroughputMinutes.ClientArticlesFinalized
-                    THEN ThroughputMinutes.ClientArticles ELSE excluded.ClientArticles END,
+                ClientArticles = MAX(ThroughputMinutes.ClientArticles, excluded.ClientArticles),
                 ClientArticlesFinalized = excluded.ClientArticlesFinalized,
                 Misses       = excluded.Misses,
                 Errors       = excluded.Errors;
@@ -215,8 +214,7 @@ public class MetricsRollupService(
             GROUP BY Provider
             ON CONFLICT(Minute, Provider) DO UPDATE SET
                 Articles      = excluded.Articles,
-                ClientArticles = CASE WHEN ProviderMinutes.ClientArticlesFinalized
-                    THEN ProviderMinutes.ClientArticles ELSE excluded.ClientArticles END,
+                ClientArticles = MAX(ProviderMinutes.ClientArticles, excluded.ClientArticles),
                 ClientArticlesFinalized = excluded.ClientArticlesFinalized,
                 Misses        = excluded.Misses,
                 Errors        = excluded.Errors,
@@ -227,7 +225,7 @@ public class MetricsRollupService(
                 minute, next, streamingWorkload, MetricsWriter.FailoverSaveEventKind).ConfigureAwait(false);
     }
 
-            internal static async Task RollupHourAsync(MetricsDbContext db, long hour)
+    internal static async Task RollupHourAsync(MetricsDbContext db, long hour)
     {
         var next = hour + OneHour;
         await db.Database.ExecuteSqlRawAsync(

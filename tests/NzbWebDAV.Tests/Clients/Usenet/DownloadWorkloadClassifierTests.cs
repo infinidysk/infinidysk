@@ -1,5 +1,6 @@
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Extensions;
 
@@ -18,13 +19,24 @@ public sealed class DownloadWorkloadClassifierTests
     }
 
     [Fact]
-    public void ClassifyForMetrics_HighPriority_IsStreaming()
+    public void ClassifyForMetrics_HighPriorityWithoutReadSession_IsBackground()
     {
         using var source = new CancellationTokenSource();
         using var scope = source.Token.SetContext(new DownloadPriorityContext
         {
             Priority = SemaphorePriority.High,
         });
+
+        var result = DownloadWorkloadClassifier.ClassifyForMetrics(source.Token);
+
+        Assert.Equal(SegmentFetch.FetchWorkload.Background, result);
+    }
+
+    [Fact]
+    public void ClassifyForMetrics_ReadSession_IsStreaming()
+    {
+        using var source = new CancellationTokenSource();
+        using var scope = MultiProviderNntpClient.BeginReadSessionScope(Guid.NewGuid());
 
         var result = DownloadWorkloadClassifier.ClassifyForMetrics(source.Token);
 

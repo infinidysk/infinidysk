@@ -20,13 +20,15 @@ internal static class DownloadWorkloadClassifier
 
     internal static SegmentFetch.FetchWorkload ClassifyForMetrics(CancellationToken cancellationToken)
     {
+        if (MultiProviderNntpClient.CurrentReadSessionId is not null)
+            return SegmentFetch.FetchWorkload.Streaming;
+
         return Classify(cancellationToken) switch
         {
-            DownloadWorkload.Streaming => SegmentFetch.FetchWorkload.Streaming,
             DownloadWorkload.Queue => SegmentFetch.FetchWorkload.Queue,
             DownloadWorkload.Maintenance => SegmentFetch.FetchWorkload.Maintenance,
             DownloadWorkload.Background => SegmentFetch.FetchWorkload.Background,
-            _ => SegmentFetch.FetchWorkload.Unknown,
+            _ => SegmentFetch.FetchWorkload.Background,
         };
     }
 }
