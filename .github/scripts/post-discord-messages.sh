@@ -10,7 +10,8 @@ if [[ ! "$DISCORD_ANNOUNCEMENTS_WEBHOOK_URL" =~ ^https://[^[:space:]]+$ ]]; then
 fi
 
 TMP=$(mktemp)
-trap 'rm -f "$TMP"' EXIT
+RESPONSE=$(mktemp)
+trap 'rm -f "$TMP" "$RESPONSE"' EXIT
 
 perl -CS -MEncode -e '
   binmode STDIN, ":raw";
@@ -51,7 +52,7 @@ perl -CS -MEncode -e '
     my ($state, $token) = @_;
     if ($token eq "```") {
       $state->{fenced} = !$state->{fenced};
-    } elsif (!$state->{fenced} && $token =~ /^(?:\*\*|__|\*|_|~~|\|\|)$/) {
+    } elsif (!$state->{fenced} && $token =~ /^(?:\*\*|__|~~|\|\|)$/) {
       if ($state->{spans}{$token}) {
         $state->{spans}{$token} = 0;
         @{ $state->{stack} } = grep { $_ ne $token } @{ $state->{stack} };
@@ -65,7 +66,7 @@ perl -CS -MEncode -e '
   sub markdown_state_for {
     my ($text) = @_;
     my $state = new_markdown_state();
-    while ($text =~ /```|\[[^\]\r\n]*\]\([^\)\r\n]*\)|`[^`\r\n]*`|\\\X|\*\*|__|~~|\|\||\*|_|\X/g) {
+    while ($text =~ /```|\[[^\]\r\n]*\]\([^\)\r\n]*\)|`[^`\r\n]*`|\\\X|\*\*|__|~~|\|\||\X/g) {
       advance_markdown_state($state, $&);
     }
     return $state;
@@ -90,7 +91,7 @@ perl -CS -MEncode -e '
   my $message = "";
   my $state = new_markdown_state();
   my $last_safe_break = 0;
-  TOKEN: while ($value =~ /```|\[[^\]\r\n]*\]\([^\)\r\n]*\)|`[^`\r\n]*`|\\\X|\*\*|__|~~|\|\||\*|_|\X/g) {
+  TOKEN: while ($value =~ /```|\[[^\]\r\n]*\]\([^\)\r\n]*\)|`[^`\r\n]*`|\\\X|\*\*|__|~~|\|\||\X/g) {
     my $token = $&;
     my $token_units = utf16_units($token);
 
@@ -132,7 +133,27 @@ perl -CS -MEncode -e '
 
 while IFS= read -r -d '' body; do
   escaped_body=$(printf '%s' "$body" | jq -Rsa .)
-  curl --fail-with-body -sS --connect-timeout 10 --max-time 30 -H "Content-Type: application/json" \
-    -d "{\"content\": ${escaped_body}, \"flags\": 4, \"allowed_mentions\": {\"parse\": []}}" \
-    "$DISCORD_ANNOUNCEMENTS_WEBHOOK_URL" >/dev/null
+  while true; do
+    if ! status=$(curl -sS --connect-timeout 10 --max-time 30 \
+      --output "$RESPONSE" --write-out '%{http_code}' -H "Content-Type: application/json" \
+      -d "{\"content\": ${escaped_body}, \"flags\": 4, \"allowed_mentions\": {\"parse\": []}}" \
+      "$DISCORD_ANNOUNCEMENTS_WEBHOOK_URL"); then
+      exit 1
+    fi
+
+    if [[ "$status" =~ ^2[0-9]{2}$ ]]; then
+      break
+    fi
+
+    if [[ "$status" != "429" ]]; then
+      cat "$RESPONSE" >&2
+      exit 1
+    fi
+
+    if ! retry_after=$(jq -er '.retry_after | numbers | select(. >= 0 and . <= 3600)' "$RESPONSE"); then
+      echo "Discord rate-limit response did not include a valid retry_after delay" >&2
+      exit 1
+    fi
+    sleep "$retry_after"
+  done
 done < "$TMP"
