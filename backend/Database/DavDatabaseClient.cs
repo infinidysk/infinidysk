@@ -822,9 +822,8 @@ public sealed class DavDatabaseClient(
         // back-reference, so their Completed history row is only reachable via DownloadDirId.
         if (deletedDirectoryIds is { Count: > 0 })
         {
-            foreach (var chunk in deletedDirectoryIds.Distinct().Chunk(batchSize))
+            foreach (var batch in deletedDirectoryIds.Distinct().Chunk(batchSize).Select(chunk => chunk.ToList()))
             {
-                var batch = chunk.ToList();
                 var legacyIds = await Ctx.HistoryItems
                     .AsNoTracking()
                     .Where(h => h.DownloadStatus == HistoryItem.DownloadStatusOption.Completed
