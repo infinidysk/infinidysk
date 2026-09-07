@@ -81,6 +81,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine
 # Label the image
 ARG REPO_URL
 LABEL org.opencontainers.image.source=${REPO_URL}
+LABEL org.opencontainers.image.licenses=MIT
 
 # Prepare environment
 WORKDIR /app
