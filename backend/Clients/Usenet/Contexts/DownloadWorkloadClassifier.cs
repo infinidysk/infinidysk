@@ -20,7 +20,7 @@ internal static class DownloadWorkloadClassifier
 
     internal static SegmentFetch.FetchWorkload ClassifyForMetrics(CancellationToken cancellationToken)
     {
-        if (MultiProviderNntpClient.CurrentReadSessionId is not null)
+        if (MultiProviderNntpClient.CurrentReadSessionId is not null || SharedStreamPumpContext.IsActive)
             return SegmentFetch.FetchWorkload.Streaming;
 
         return Classify(cancellationToken) switch

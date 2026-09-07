@@ -1,4 +1,7 @@
 using System.Text;
+using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
@@ -16,6 +19,29 @@ public class SharedStreamEntryTests : IDisposable
 
     public void Dispose()
         => SynchronousObserverInvoker.ResetFailureLogThrottleForTests();
+
+    [Fact]
+    public async Task Pump_ClassifiesUpstreamReadsAsClientStreaming_WithoutInheritingReaderSession()
+    {
+        var payload = Encoding.ASCII.GetBytes("shared-pump-client-reads-payload");
+        var upstream = new WorkloadRecordingStream(payload);
+        var readerSession = Guid.NewGuid();
+
+        SharedStreamEntry entry;
+        using (MultiProviderNntpClient.BeginReadSessionScope(readerSession))
+            entry = StartEntry(upstream, payload.Length, ringSize: 64, chunkSize: 8, leadBytes: 64);
+        await using var entryLease = entry;
+        await using var reader = Attach(entry, 0);
+        Assert.Equal(payload, await ReadAllAsync(reader));
+
+        var observations = upstream.Snapshot();
+        Assert.NotEmpty(observations);
+        Assert.All(observations, o =>
+        {
+            Assert.Null(o.ReadSessionId);
+            Assert.Equal(SegmentFetch.FetchWorkload.Streaming, o.Workload);
+        });
+    }
 
     [Fact]
     public async Task TwoReaders_AreByteExact_AndFetchEachSegmentOnce()
@@ -550,6 +576,29 @@ public class SharedStreamEntryTests : IDisposable
             var read = await base.ReadAsync(buffer[..allowed], cancellationToken).ConfigureAwait(false);
             _consumed += read;
             return read;
+        }
+    }
+
+    private sealed class WorkloadRecordingStream(byte[] data) : MemoryStream(data)
+    {
+        private readonly List<(Guid? ReadSessionId, SegmentFetch.FetchWorkload Workload)> _observations = [];
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            lock (_observations)
+            {
+                _observations.Add((
+                    MultiProviderNntpClient.CurrentReadSessionId,
+                    DownloadWorkloadClassifier.ClassifyForMetrics(cancellationToken)));
+            }
+
+            return base.ReadAsync(buffer, cancellationToken);
+        }
+
+        public (Guid? ReadSessionId, SegmentFetch.FetchWorkload Workload)[] Snapshot()
+        {
+            lock (_observations)
+                return _observations.ToArray();
         }
     }
 

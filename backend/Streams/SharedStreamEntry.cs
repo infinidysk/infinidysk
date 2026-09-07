@@ -259,6 +259,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         {
             var upstream = _upstream
                 ?? throw new InvalidOperationException("Shared stream pump started without an upstream.");
+            using var pumpScope = SharedStreamPumpContext.Begin();
             using var fetchAttribution = FetchAttributionContext.Begin(System.IO.Path.GetFileName(Path));
             if (Anchor > 0 && upstream.CanSeek)
                 upstream.Seek(Anchor, SeekOrigin.Begin);

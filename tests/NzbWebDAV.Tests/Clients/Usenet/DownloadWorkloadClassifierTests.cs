@@ -44,6 +44,31 @@ public sealed class DownloadWorkloadClassifierTests
     }
 
     [Fact]
+    public void ClassifyForMetrics_SharedStreamPumpWithoutReadSession_IsStreaming()
+    {
+        using var source = new CancellationTokenSource();
+        using var scope = SharedStreamPumpContext.Begin();
+
+        var result = DownloadWorkloadClassifier.ClassifyForMetrics(source.Token);
+
+        Assert.Equal(SegmentFetch.FetchWorkload.Streaming, result);
+    }
+
+    [Fact]
+    public void SharedStreamPumpContext_DisposeRestoresPreviousState()
+    {
+        using var source = new CancellationTokenSource();
+
+        using (SharedStreamPumpContext.Begin())
+            Assert.True(SharedStreamPumpContext.IsActive);
+
+        Assert.False(SharedStreamPumpContext.IsActive);
+        Assert.Equal(
+            SegmentFetch.FetchWorkload.Background,
+            DownloadWorkloadClassifier.ClassifyForMetrics(source.Token));
+    }
+
+    [Fact]
     public void ClassifyForMetrics_QueueContext_IsQueue()
     {
         using var source = new CancellationTokenSource();
