@@ -65,7 +65,8 @@ public class RetryHistoryController(
         if (historyItem is null)
             throw new BadHttpRequestException("History item not found.");
 
-        if (historyItem.DownloadStatus != HistoryItem.DownloadStatusOption.Failed)
+        if (historyItem.DownloadStatus != HistoryItem.DownloadStatusOption.Failed
+            && await DownloadFolderExistsAsync(historyItem, ct).ConfigureAwait(false))
             throw new BadHttpRequestException("Only failed history items can be retried.");
 
         if (historyItem.NzbBlobId is null)
@@ -97,6 +98,16 @@ public class RetryHistoryController(
             throw new BadHttpRequestException("Failed to re-queue NZB.");
 
         return Guid.Parse(addResponse.NzoIds[0]);
+    }
+
+    // Completed rows whose download folder is gone are reported as Failed in mode=history, so the
+    // UI offers Retry for them; accept it here for the same rows.
+    private async Task<bool> DownloadFolderExistsAsync(HistoryItem historyItem, CancellationToken ct)
+    {
+        if (historyItem.DownloadDirId is null) return false;
+        return await dbClient.Ctx.Items.AsNoTracking()
+            .AnyAsync(d => d.Id == historyItem.DownloadDirId, ct)
+            .ConfigureAwait(false);
     }
 
     protected override async Task<IActionResult> Handle()

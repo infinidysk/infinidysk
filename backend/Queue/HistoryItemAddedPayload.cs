@@ -9,6 +9,8 @@ namespace NzbWebDAV.Queue;
 /// </summary>
 public sealed class HistoryItemAddedPayload
 {
+    public const string DownloadFolderMissingFailMessage = "Download folder no longer exists.";
+
     [JsonPropertyName("nzo_id")] public string NzoId { get; init; } = null!;
     [JsonPropertyName("nzb_name")] public string NzbName { get; init; } = null!;
     [JsonPropertyName("name")] public string JobName { get; init; } = null!;
@@ -32,23 +34,33 @@ public sealed class HistoryItemAddedPayload
         IReadOnlyDictionary<string, long>? providerUsage = null,
         IReadOnlyDictionary<string, (string Host, string? Nickname)>? displayByMetricsKey = null)
     {
+        // A Completed slot with an empty `storage` is a state SABnzbd never produces; Sonarr/Radarr
+        // warn "Download doesn't contain intermediate path" forever instead of handling it.
+        var downloadFolderMissing = IsDownloadFolderMissing(historyItem, downloadFolder);
         return new HistoryItemAddedPayload
         {
             NzoId = historyItem.Id.ToString(),
             NzbName = historyItem.FileName,
             JobName = historyItem.JobName,
             Category = historyItem.Category,
-            Status = historyItem.DownloadStatus,
+            Status = downloadFolderMissing
+                ? HistoryItem.DownloadStatusOption.Failed
+                : historyItem.DownloadStatus,
             SizeInBytes = historyItem.TotalSegmentBytes,
             DownloadPath = GetDownloadPath(historyItem, downloadFolder, configManager),
             DownloadTimeSeconds = historyItem.DownloadTimeSeconds,
             Completed = new DateTimeOffset(historyItem.CreatedAt).ToUnixTimeSeconds(),
-            FailMessage = historyItem.FailMessage ?? "",
+            FailMessage = downloadFolderMissing
+                ? DownloadFolderMissingFailMessage
+                : historyItem.FailMessage ?? "",
             NzbBlobId = historyItem.NzbBlobId?.ToString(),
             Indexer = historyItem.IndexerName,
             Providers = QueueItemAddedPayload.MapProviders(providerUsage, displayByMetricsKey),
         };
     }
+
+    public static bool IsDownloadFolderMissing(HistoryItem historyItem, DavItem? downloadFolder) =>
+        historyItem.DownloadStatus == HistoryItem.DownloadStatusOption.Completed && downloadFolder == null;
 
     private static string? GetDownloadPath(
         HistoryItem historyItem,

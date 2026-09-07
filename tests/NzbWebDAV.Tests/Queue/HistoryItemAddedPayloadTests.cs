@@ -16,7 +16,7 @@ public sealed class HistoryItemAddedPayloadTests
         ]);
 
         var payload = HistoryItemAddedPayload.FromHistoryItem(
-            HistoryItem("movies"),
+            NewHistoryItem("movies"),
             new DavItem { Name = "Movie" },
             config);
 
@@ -36,18 +36,58 @@ public sealed class HistoryItemAddedPayloadTests
         ]);
 
         var payload = HistoryItemAddedPayload.FromHistoryItem(
-            HistoryItem("tv"),
+            NewHistoryItem("tv"),
             new DavItem { Name = "Show" },
             config);
 
         Assert.Equal(Path.Join("/mnt/jellyfin", "tv", "Show"), payload.DownloadPath);
     }
 
-    private static HistoryItem HistoryItem(string category) => new()
+    [Fact]
+    public void CompletedWithoutDownloadFolder_ReportsFailedWithReason()
+    {
+        var payload = HistoryItemAddedPayload.FromHistoryItem(
+            NewHistoryItem("movies", HistoryItem.DownloadStatusOption.Completed),
+            downloadFolder: null,
+            new ConfigManager());
+
+        Assert.Equal(HistoryItem.DownloadStatusOption.Failed, payload.Status);
+        Assert.Equal(HistoryItemAddedPayload.DownloadFolderMissingFailMessage, payload.FailMessage);
+        Assert.Null(payload.DownloadPath);
+    }
+
+    [Fact]
+    public void CompletedWithDownloadFolder_StaysCompleted()
+    {
+        var payload = HistoryItemAddedPayload.FromHistoryItem(
+            NewHistoryItem("movies", HistoryItem.DownloadStatusOption.Completed),
+            new DavItem { Name = "Movie" },
+            new ConfigManager());
+
+        Assert.Equal(HistoryItem.DownloadStatusOption.Completed, payload.Status);
+        Assert.Equal("", payload.FailMessage);
+    }
+
+    [Fact]
+    public void FailedWithoutDownloadFolder_KeepsOriginalFailMessage()
+    {
+        var historyItem = NewHistoryItem("movies", HistoryItem.DownloadStatusOption.Failed);
+        historyItem.FailMessage = "Missing articles.";
+
+        var payload = HistoryItemAddedPayload.FromHistoryItem(historyItem, downloadFolder: null, new ConfigManager());
+
+        Assert.Equal(HistoryItem.DownloadStatusOption.Failed, payload.Status);
+        Assert.Equal("Missing articles.", payload.FailMessage);
+    }
+
+    private static HistoryItem NewHistoryItem(
+        string category,
+        HistoryItem.DownloadStatusOption status = HistoryItem.DownloadStatusOption.Completed) => new()
     {
         Id = Guid.NewGuid(),
         FileName = "release.nzb",
         JobName = "release",
         Category = category,
+        DownloadStatus = status,
     };
 }

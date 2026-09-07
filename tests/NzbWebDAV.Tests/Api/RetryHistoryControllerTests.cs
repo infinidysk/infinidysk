@@ -194,21 +194,44 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RetryHistoryAsync_CompletedHistory_ThrowsBadRequest()
+    public async Task RetryHistoryAsync_CompletedHistoryWithDownloadFolder_ThrowsBadRequest()
     {
         var historyId = Guid.NewGuid();
+        var downloadDir = await SeedContentFolderAsync("tv", "Completed.Show");
         await SeedHistoryAsync(
             historyId,
             "Completed.Show.nzb",
             "tv",
             HistoryItem.DownloadStatusOption.Completed,
-            writeBlob: true);
+            writeBlob: true,
+            downloadDirId: downloadDir.Id);
 
         var request = await CreateRequest(historyId);
         var ex = await Assert.ThrowsAsync<BadHttpRequestException>(
             () => CreateController().RetryHistoryAsync(request));
         Assert.Equal("Only failed history items can be retried.", ex.Message);
         Assert.Empty(await _context.QueueItems.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task RetryHistoryAsync_CompletedHistoryWithMissingDownloadFolder_Requeues()
+    {
+        // mode=history reports these rows as Failed, so the Retry the UI offers must work.
+        var historyId = Guid.NewGuid();
+        await SeedHistoryAsync(
+            historyId,
+            "Orphaned.Show.nzb",
+            "tv",
+            HistoryItem.DownloadStatusOption.Completed,
+            writeBlob: true,
+            downloadDirId: Guid.NewGuid());
+
+        var response = await CreateController().RetryHistoryAsync(await CreateRequest(historyId));
+
+        Assert.True(response.Status);
+        var newId = Guid.Parse(response.NzoId!);
+        Assert.NotEqual(historyId, newId);
+        Assert.NotNull(await _context.QueueItems.AsNoTracking().SingleOrDefaultAsync(q => q.Id == newId));
     }
 
     [Fact]
@@ -338,7 +361,8 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
         string category,
         HistoryItem.DownloadStatusOption status,
         bool writeBlob,
-        Guid? arrDownloadId = null)
+        Guid? arrDownloadId = null,
+        Guid? downloadDirId = null)
     {
         if (writeBlob)
         {
@@ -372,6 +396,7 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
                 : null,
             NzbBlobId = id,
             ArrDownloadId = arrDownloadId,
+            DownloadDirId = downloadDirId,
             IndexerName = "test-indexer",
             ContentGroupKey = "group-key",
         });
@@ -379,4 +404,27 @@ public sealed class RetryHistoryControllerTests : IAsyncLifetime
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
     }
+
+    private async Task<DavItem> SeedContentFolderAsync(string category, string jobName)
+    {
+        var categoryDir = NewDir(DavItem.ContentFolder, category);
+        var jobDir = NewDir(categoryDir, jobName);
+        _context.Items.AddRange(categoryDir, jobDir);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+        return jobDir;
+    }
+
+    private static DavItem NewDir(DavItem parent, string name) =>
+        DavItem.New(
+            Guid.NewGuid(),
+            parent,
+            name,
+            null,
+            DavItem.ItemType.Directory,
+            DavItem.ItemSubType.Directory,
+            null,
+            null,
+            null,
+            null);
 }

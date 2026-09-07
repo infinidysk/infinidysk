@@ -29,7 +29,7 @@ public class GetHistoryController(
         if (request.HasUnsupportedStatus)
             query = query.Where(_ => false);
         else if (request.Status is { } status)
-            query = query.Where(q => q.DownloadStatus == status);
+            query = ApplyEffectiveStatusFilter(query, status);
 
         // Get total count before querying the page: DbContext does not support
         // concurrent operations.
@@ -79,7 +79,21 @@ public class GetHistoryController(
             }
         };
     }
-
+    // Completed rows whose download folder is gone are reported as Failed by
+    // HistoryItemAddedPayload, so status filtering has to use that same effective status.
+    private IQueryable<HistoryItem> ApplyEffectiveStatusFilter(
+        IQueryable<HistoryItem> query,
+        HistoryItem.DownloadStatusOption status)
+    {
+        var items = dbClient.Ctx.Items;
+        return status == HistoryItem.DownloadStatusOption.Completed
+            ? query.Where(q =>
+                q.DownloadStatus == HistoryItem.DownloadStatusOption.Completed
+                && items.Any(d => d.Id == q.DownloadDirId))
+            : query.Where(q =>
+                q.DownloadStatus != HistoryItem.DownloadStatusOption.Completed
+                || !items.Any(d => d.Id == q.DownloadDirId));
+    }
     protected override async Task<IActionResult> Handle()
     {
         var request = new GetHistoryRequest(Context, Config);
