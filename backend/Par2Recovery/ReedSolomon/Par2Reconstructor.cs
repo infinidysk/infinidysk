@@ -85,6 +85,7 @@ public sealed class Par2Reconstructor
 #pragma warning restore CA2000
                 long bytesHashed = 0;
                 bool hashContiguous = true;
+                pendingFileHashes.Add((desc, fileMd5, bytesHashed, hashContiguous));
 
                 for (var local = 0; local < ifsc.Slices.Count; local++)
                 {
@@ -148,7 +149,7 @@ public sealed class Par2Reconstructor
                     }
                 }
 
-                pendingFileHashes.Add((desc, fileMd5, bytesHashed, hashContiguous));
+                pendingFileHashes[fileIndex] = (desc, fileMd5, bytesHashed, hashContiguous);
                 globalSlice += ifsc.Slices.Count;
             }
 

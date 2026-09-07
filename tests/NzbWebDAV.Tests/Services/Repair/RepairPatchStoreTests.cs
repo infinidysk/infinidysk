@@ -8,6 +8,37 @@ namespace NzbWebDAV.Tests.Services.Repair;
 
 public sealed class RepairPatchStoreTests
 {
+    [Fact]
+    public async Task FailedReplacementBatch_EvictsUnfinalizedOldEntriesToStayWithinCapacity()
+    {
+        var directory = Path.Join(Path.GetTempPath(), "par2-partial-cap-" + Guid.NewGuid().ToString("N"));
+        var fail = false;
+        try
+        {
+            var store = new RepairPatchStore(directory, 100, enumerateCacheFiles: null, beforeFinalize: index =>
+            {
+                if (fail && index == 1) throw new IOException("injected finalization failure");
+            });
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            store.CommitPatch("second", new byte[90], Header(90));
+            fail = true;
+            Assert.Throws<IOException>(() => store.CommitPatches([
+                ("first", new byte[80], Header(80)), ("second", new byte[20], Header(20)),
+            ]));
+            Assert.True(store.HasUsablePatch("first"));
+            Assert.False(store.HasUsablePatch("second"));
+            Assert.Equal(80, store.CurrentBytes);
+            Assert.Empty(Directory.GetFiles(directory, "*.tmp", SearchOption.AllDirectories));
+        }
+        finally { Directory.Delete(directory, true); }
+
+        static UsenetYencHeader Header(int size) => new()
+        {
+            FileName = "volume.rar", FileSize = size, PartSize = size, PartOffset = 0,
+            PartNumber = 1, TotalParts = 1, LineLength = 128,
+        };
+    }
+
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
 
     [Theory]

@@ -188,6 +188,7 @@ public sealed class RepairPatchStore
 
             lock (_evictLock)
             {
+                var finalized = new HashSet<string>(StringComparer.Ordinal);
                 try
                 {
                     for (var index = 0; index < staged.Count; index++)
@@ -201,11 +202,12 @@ public sealed class RepairPatchStore
                         File.Move(headerPath, blobPath + ".h", overwrite: true);
                         _index[hash] = new CacheEntry { Size = size, LastAccessTicks = DateTime.UtcNow.Ticks };
                         _currentBytes += size;
+                        finalized.Add(hash);
                     }
                 }
                 finally
                 {
-                    EvictIfNeeded(hashes);
+                    EvictIfNeeded(finalized);
                     PrometheusMetrics.Current?.SetPar2PatchStoreBytes(_currentBytes);
                 }
             }
@@ -341,9 +343,12 @@ public sealed class RepairPatchStore
 
             if (file.EndsWith(".h", StringComparison.Ordinal))
             {
-                var header = new FileInfo(file);
-                if (!File.Exists(file[..^2]) && header.Exists && DateTime.UtcNow - header.LastWriteTimeUtc > TimeSpan.FromHours(1))
-                    SafeDelete(file);
+                lock (_evictLock)
+                {
+                    var header = new FileInfo(file);
+                    if (!File.Exists(file[..^2]) && header.Exists && DateTime.UtcNow - header.LastWriteTimeUtc > TimeSpan.FromHours(1))
+                        SafeDelete(file);
+                }
                 continue;
             }
 
@@ -353,6 +358,8 @@ public sealed class RepairPatchStore
 
             lock (_evictLock)
             {
+                info.Refresh();
+                if (!info.Exists) continue;
                 if (!TryReadHeader(Path.GetFileName(file), info.Length, out _))
                 {
                     if (DateTime.UtcNow - info.LastWriteTimeUtc > TimeSpan.FromHours(1))
