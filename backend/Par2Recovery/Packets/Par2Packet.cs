@@ -9,6 +9,14 @@ namespace NzbWebDAV.Par2Recovery.Packets
     {
         public Par2PacketHeader Header { get; protected set; }
 
+        internal IDisposable? MemoryReservation { get; set; }
+
+        internal void ReleaseMemory()
+        {
+            MemoryReservation?.Dispose();
+            MemoryReservation = null;
+        }
+
         public Par2Packet(Par2PacketHeader header)
         {
             Header = header;

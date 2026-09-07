@@ -14,12 +14,20 @@ public class NzbDocument
 
     public List<NzbFile> Files { get; } = [];
 
-    public static async Task<NzbDocument> LoadAsync(Stream stream, CancellationToken ct = default)
+    public static Task<NzbDocument> LoadAsync(Stream stream, CancellationToken ct = default)
+        => LoadAsync(stream, null, ct);
+
+    internal static async Task<NzbDocument> LoadAsync(Stream stream, NzbReadOptions? options, CancellationToken ct)
     {
         try
         {
+            ct.ThrowIfCancellationRequested();
+            using var reservation = options?.ReserveReader();
             var document = new NzbDocument();
-            using var reader = XmlReader.Create(stream, XmlSettings);
+            var settings = XmlSettings.Clone();
+            if (options is not null)
+                settings.MaxCharactersInDocument = options.MaxXmlCharacters;
+            using var reader = XmlReader.Create(stream, settings);
 
             // XmlReader.ReadAsync doesn't take a token; check between reads so a
             // cancelled queue worker stops promptly once the current read returns.
@@ -30,10 +38,10 @@ public class NzbDocument
                 switch (reader.Name)
                 {
                     case "head":
-                        await ReadHeadAsync(reader, document.Metadata, ct).ConfigureAwait(false);
+                        await ReadHeadAsync(reader, document.Metadata, options, ct).ConfigureAwait(false);
                         break;
                     case "file":
-                        var file = await ReadFileAsync(reader, ct).ConfigureAwait(false);
+                        var file = await ReadFileAsync(reader, options, document.Files.Count, ct).ConfigureAwait(false);
                         document.Files.Add(file);
                         break;
                 }
@@ -56,6 +64,7 @@ public class NzbDocument
     private static async Task ReadHeadAsync(
         XmlReader reader,
         Dictionary<string, string> metadata,
+        NzbReadOptions? options,
         CancellationToken ct)
     {
         if (reader.IsEmptyElement)
@@ -70,7 +79,8 @@ public class NzbDocument
             if (reader is { NodeType: XmlNodeType.Element, Name: "meta" })
             {
                 var type = reader.GetAttribute("type") ?? string.Empty;
-                var value = await reader.ReadElementContentAsStringAsync().ConfigureAwait(false);
+                var value = await ReadTextAsync(reader, options?.MaxMetadataLength, ct).ConfigureAwait(false);
+                options?.AddMetadata(type, value);
                 metadata.Add(type, value);
 
                 // ReadElementContentAsStringAsync advances the reader - continue to check current position
@@ -83,11 +93,13 @@ public class NzbDocument
         }
     }
 
-    private static async Task<NzbFile> ReadFileAsync(XmlReader reader, CancellationToken ct)
+    private static async Task<NzbFile> ReadFileAsync(XmlReader reader, NzbReadOptions? options, int count, CancellationToken ct)
     {
+        var subject = reader.GetAttribute("subject") ?? string.Empty;
+        options?.AddFile(count, subject);
         var file = new NzbFile
         {
-            Subject = reader.GetAttribute("subject") ?? string.Empty
+            Subject = subject
         };
 
         if (reader.IsEmptyElement)
@@ -101,7 +113,7 @@ public class NzbDocument
 
             if (reader is { NodeType: XmlNodeType.Element, Name: "segments" })
             {
-                await ReadSegmentsAsync(reader, file, ct).ConfigureAwait(false);
+                await ReadSegmentsAsync(reader, file, options, ct).ConfigureAwait(false);
             }
         }
 
@@ -109,7 +121,7 @@ public class NzbDocument
         return file;
     }
 
-    private static async Task ReadSegmentsAsync(XmlReader reader, NzbFile file, CancellationToken ct)
+    private static async Task ReadSegmentsAsync(XmlReader reader, NzbFile file, NzbReadOptions? options, CancellationToken ct)
     {
         if (reader.IsEmptyElement)
             return;
@@ -124,11 +136,13 @@ public class NzbDocument
                 ct.ThrowIfCancellationRequested();
                 var bytesAttr = reader.GetAttribute("bytes");
                 var numberAttr = reader.GetAttribute("number");
+                var messageId = (await ReadTextAsync(reader, options?.MaxMessageIdLength, ct).ConfigureAwait(false)).Trim();
+                options?.AddSegment(messageId);
                 var segment = new NzbSegment
                 {
                     Bytes = long.TryParse(bytesAttr, out var bytes) ? bytes : 0,
                     Number = int.TryParse(numberAttr, out var number) ? number : null,
-                    MessageId = (await reader.ReadElementContentAsStringAsync().ConfigureAwait(false)).Trim()
+                    MessageId = messageId
                 };
                 file.Segments.Add(segment);
 
@@ -140,5 +154,42 @@ public class NzbDocument
             if (!await reader.ReadAsync().ConfigureAwait(false))
                 break;
         }
+    }
+
+    private static async Task<string> ReadTextAsync(XmlReader reader, int? limit, CancellationToken ct)
+    {
+        if (limit is null)
+            return await reader.ReadElementContentAsStringAsync().ConfigureAwait(false);
+        if (reader.IsEmptyElement)
+        {
+            await reader.ReadAsync().ConfigureAwait(false);
+            return string.Empty;
+        }
+
+        var buffer = new char[limit.Value + 1];
+        var length = 0;
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (reader.NodeType == XmlNodeType.EndElement)
+            {
+                await reader.ReadAsync().ConfigureAwait(false);
+                return new string(buffer, 0, length);
+            }
+            if (reader.NodeType is XmlNodeType.Comment or XmlNodeType.ProcessingInstruction)
+                continue;
+            if (reader.NodeType is not (XmlNodeType.Text or XmlNodeType.CDATA or XmlNodeType.Whitespace or XmlNodeType.SignificantWhitespace))
+                throw new InvalidDataException("NZB text contains nested elements.");
+            int read;
+            while ((read = await reader.ReadValueChunkAsync(buffer, length, buffer.Length - length).ConfigureAwait(false)) > 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                length += read;
+                if (length > limit)
+                    throw new InvalidDataException("NZB text exceeds repair parsing limits.");
+            }
+        }
+
+        throw new InvalidDataException("Truncated NZB text.");
     }
 }

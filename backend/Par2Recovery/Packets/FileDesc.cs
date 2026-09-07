@@ -1,10 +1,12 @@
-﻿using System.Text;
+﻿using System.Buffers.Binary;
+using System.Text;
 
 namespace NzbWebDAV.Par2Recovery.Packets
 {
     public class FileDesc : Par2Packet
     {
         public const string PacketType = "PAR 2.0\0FileDesc";
+        public const int MaxFileNameBytes = 100_000;
 
         private static readonly Encoding StrictUtf8 = new UTF8Encoding(
             encoderShouldEmitUTF8Identifier: false,
@@ -22,6 +24,9 @@ namespace NzbWebDAV.Par2Recovery.Packets
 
         protected override void ParseBody(byte[] body)
         {
+            if (body.Length < 56 || body.Length - 56 > MaxFileNameBytes)
+                throw new InvalidDataException("FileDesc packet has an invalid filename length.");
+
             // 16	MD5 Hash	The File ID.
             FileID = new byte[16];
             Buffer.BlockCopy(body, 0, FileID, 0, 16);
@@ -35,7 +40,7 @@ namespace NzbWebDAV.Par2Recovery.Packets
             Buffer.BlockCopy(body, 32, File16kHash, 0, 16);
 
             // 8	8-byte uint	Length of the file.
-            FileLength = BitConverter.ToUInt64(body, 48);
+            FileLength = BinaryPrimitives.ReadUInt64LittleEndian(body.AsSpan(48));
 
             // ?*4	ASCII/UTF-8 char array	Name of the file. Not guaranteed null-terminated.
             var nameBuffer = new byte[body.Length - 56];

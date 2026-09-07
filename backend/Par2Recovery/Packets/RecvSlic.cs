@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+
 namespace NzbWebDAV.Par2Recovery.Packets
 {
     /// <summary>
@@ -19,6 +21,13 @@ namespace NzbWebDAV.Par2Recovery.Packets
             _readPayload = readPayload;
         }
 
+        internal RecvSlic(Par2PacketHeader header, uint exponent, byte[] payload) : base(header)
+        {
+            _readPayload = true;
+            Exponent = exponent;
+            Payload = payload;
+        }
+
         protected override bool SkipBody => !_readPayload;
 
         protected override void ParseBody(byte[] body)
@@ -29,7 +38,7 @@ namespace NzbWebDAV.Par2Recovery.Packets
             if (body.Length < 4)
                 throw new InvalidDataException("RecvSlic body too short for exponent.");
 
-            Exponent = BitConverter.ToUInt32(body, 0);
+            Exponent = BinaryPrimitives.ReadUInt32LittleEndian(body);
             Payload = new byte[body.Length - 4];
             if (Payload.Length > 0)
                 Buffer.BlockCopy(body, 4, Payload, 0, Payload.Length);

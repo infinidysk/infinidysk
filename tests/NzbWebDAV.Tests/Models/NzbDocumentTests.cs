@@ -1,12 +1,58 @@
 using System.Text;
 using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
+using NzbWebDAV.Par2Recovery;
 using NzbWebDAV.Tests.TestUtils;
 
 namespace NzbWebDAV.Tests.Models;
 
 public class NzbDocumentTests
 {
+    [Theory]
+    [InlineData(1, 8, "<file/><file/>")]
+    [InlineData(8, 1, "<file><segments><segment>one</segment><segment>two</segment></segments></file>")]
+    [InlineData(8, 8, "<file subject='toolong'/>")]
+    [InlineData(8, 8, "<file><segments><segment>toolong</segment></segments></file>")]
+    public async Task LoadAsync_OptInLimitsRejectBeforeRetainingMoreEntries(int files, int segments, string body)
+    {
+        var budget = new Par2MemoryBudget(1024 * 1024);
+        var options = new NzbReadOptions(4096, budget.Charge, budget.Reserve)
+        {
+            MaxFiles = files, MaxSegments = segments, MaxSubjectLength = 4, MaxMessageIdLength = 4,
+        };
+        await using var stream = new MemoryStream(Encoding.UTF8.GetBytes("<nzb>" + body + "</nzb>"));
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => NzbDocument.LoadAsync(stream, options, CancellationToken.None));
+        Assert.True(budget.PeakBytes <= budget.Limit);
+    }
+
+    [Fact]
+    public async Task LoadAsync_OptInBudgetStopsSmallLegalDocument()
+    {
+        var budget = new Par2MemoryBudget(100_000);
+        var options = new NzbReadOptions(4096, budget.Charge, budget.Reserve);
+        var xml = "<nzb>" + string.Concat(Enumerable.Repeat("<file subject='file'/>", 20)) + "</nzb>";
+        await using var stream = new MemoryStream(Encoding.UTF8.GetBytes(xml));
+
+        await Assert.ThrowsAsync<Par2BudgetExceededException>(() => NzbDocument.LoadAsync(stream, options, CancellationToken.None));
+        Assert.True(budget.ReservedBytes < 100_000);
+    }
+
+    [Fact]
+    public async Task LoadAsync_OptInLimitsPreserveMetadataAndFallbacks()
+    {
+        const string xml = "<nzb><head><meta type='category'>movies</meta></head><file subject='file'><segments><segment number='1'>a</segment><segment number='1'>b</segment></segments></file></nzb>";
+        var budget = new Par2MemoryBudget(1024 * 1024);
+        var options = new NzbReadOptions(4096, budget.Charge, budget.Reserve);
+        await using var stream = new MemoryStream(Encoding.UTF8.GetBytes(xml));
+
+        var document = await NzbDocument.LoadAsync(stream, options, CancellationToken.None);
+
+        Assert.Equal("movies", document.Metadata["category"]);
+        Assert.Equal(["b"], Assert.Single(Assert.Single(document.Files).Segments).FallbackMessageIds);
+        Assert.InRange(budget.ReservedBytes, 1, 4096);
+    }
+
     [Fact]
     public async Task LoadAsync_ParsesMetadataFilesAndSegments()
     {

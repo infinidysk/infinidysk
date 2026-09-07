@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+
 namespace NzbWebDAV.Par2Recovery.Packets;
 
 /// <summary>
@@ -21,13 +23,13 @@ public sealed class MainPacket : Par2Packet
 
     protected override void ParseBody(byte[] body)
     {
-        if (body.Length < 12)
+        if (body.Length < 12 || (body.Length - 12) % 16 != 0)
             throw new InvalidDataException("Main packet body too short.");
 
-        SliceSize = BitConverter.ToUInt64(body, 0);
-        RecoverySetFileCount = BitConverter.ToUInt32(body, 8);
+        SliceSize = BinaryPrimitives.ReadUInt64LittleEndian(body);
+        RecoverySetFileCount = BinaryPrimitives.ReadUInt32LittleEndian(body.AsSpan(8));
 
-        if (SliceSize < MinSliceSize || SliceSize > MaxSliceSize)
+        if (SliceSize < MinSliceSize || SliceSize > MaxSliceSize || SliceSize % 4 != 0)
             throw new InvalidDataException($"Main packet slice size {SliceSize} out of range.");
 
         if (RecoverySetFileCount > MaxFileCount)
@@ -38,10 +40,13 @@ public sealed class MainPacket : Par2Packet
             throw new InvalidDataException("Main packet FileID list truncated.");
 
         var ids = new List<byte[]>((int)RecoverySetFileCount);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < RecoverySetFileCount; i++)
         {
             var id = new byte[16];
             Buffer.BlockCopy(body, 12 + i * 16, id, 0, 16);
+            if (!seen.Add(Convert.ToHexString(id)))
+                throw new InvalidDataException("Main packet contains duplicate recoverable FileIDs.");
             ids.Add(id);
         }
 

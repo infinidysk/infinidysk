@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+
 namespace NzbWebDAV.Par2Recovery.Packets;
 
 /// <summary>
@@ -29,13 +31,15 @@ public sealed class IfscPacket : Par2Packet
             throw new InvalidDataException("IFSC packet slice list length is not a multiple of 20.");
 
         var sliceCount = remainder / 20;
+        if (sliceCount > ReedSolomon.Gf16Field.MaxInputSlices)
+            throw new InvalidDataException("IFSC exceeds the PAR2 input slice limit.");
         var slices = new List<SliceChecksum>(sliceCount);
         for (var i = 0; i < sliceCount; i++)
         {
             var offset = 16 + i * 20;
             var md5 = new byte[16];
             Buffer.BlockCopy(body, offset, md5, 0, 16);
-            var crc = BitConverter.ToUInt32(body, offset + 16);
+            var crc = BinaryPrimitives.ReadUInt32LittleEndian(body.AsSpan(offset + 16));
             slices.Add(new SliceChecksum(md5, crc));
         }
 
