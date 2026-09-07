@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Services.Observability;
@@ -165,7 +166,8 @@ public sealed class RepairPatchStore
                 return false;
             header = JsonSerializer.Deserialize<UsenetYencHeader>(
                 File.ReadAllText(blobPath + ".h"), HeaderJsonOptions);
-            return header is not null && header.PartSize == size;
+            return header is not null && header.PartSize == size
+                                      && SegmentCacheNntpClient.IsCoherentHeader(header);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
         {
@@ -185,8 +187,8 @@ public sealed class RepairPatchStore
         long batchBytes = 0;
         foreach (var (segmentId, bytes, header) in patches)
         {
-            if (bytes.Length != header.PartSize)
-                throw new ArgumentException("Patch bytes length does not match yEnc header PartSize.", nameof(patches));
+            if (bytes.Length != header.PartSize || !SegmentCacheNntpClient.IsCoherentHeader(header))
+                throw new ArgumentException("Patch bytes and yEnc header must form a coherent article part.", nameof(patches));
             if (!hashes.Add(Hash(segmentId)))
                 throw new ArgumentException("Patch batch contains duplicate segment IDs.", nameof(patches));
             batchBytes = checked(batchBytes + bytes.Length);

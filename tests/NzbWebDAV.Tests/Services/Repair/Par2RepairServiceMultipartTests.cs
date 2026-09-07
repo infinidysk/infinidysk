@@ -180,7 +180,10 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
             proceed.TrySetResult();
             await cancellation.CancelAsync();
             try { await workers; }
-            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+                Assert.True(cancellation.IsCancellationRequested);
+            }
             Par2RepairTriggerSink.Current = previousSink;
             Par2RepairTriggerSink.TestReports = previousReports;
         }
@@ -527,7 +530,10 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
             proceed.TrySetResult();
             await ownerCancellation.CancelAsync();
             try { await owner; }
-            catch (OperationCanceledException) when (ownerCancellation.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (ownerCancellation.IsCancellationRequested)
+            {
+                Assert.True(ownerCancellation.IsCancellationRequested);
+            }
         }
     }
 
@@ -571,7 +577,10 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
             proceed.TrySetResult();
             await cancellation.CancelAsync();
             try { await owner; }
-            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+                Assert.True(cancellation.IsCancellationRequested);
+            }
         }
     }
 
@@ -629,7 +638,10 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
         {
             await cancellation.CancelAsync();
             try { await workers; }
-            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+                Assert.True(cancellation.IsCancellationRequested);
+            }
         }
     }
 
@@ -751,12 +763,34 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
         Assert.False(release.Store.HasUsablePatch(id));
     }
 
+    [Fact]
+    public async Task PlainUntrustedPersistedRanges_UseExactYencGeometry()
+    {
+        var data = Data(12288, "plain-untrusted-ranges");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.bin", data, [2048, 4096, 6144], [1]),
+        ], [1, 2], DavItem.ItemSubType.NzbFile, trustedRanges: false);
+        var payload = await BlobStore.ReadBlob<DavNzbFile>(release.Item.FileBlobId!.Value);
+        Assert.NotNull(payload);
+        payload.SegmentByteRanges = [
+            LongRange.FromStartAndSize(0, 4096),
+            LongRange.FromStartAndSize(4096, 4096),
+            LongRange.FromStartAndSize(8192, 4096),
+        ];
+        payload.SegmentByteRangesTrusted = false;
+        await BlobStore.WriteBlob(release.Item.FileBlobId.Value, payload);
+
+        Assert.Equal(Par2RepairOutcome.Repaired, await release.Service.TryPar2RepairAsync(release.Item,
+            [release.Files[0].Ids[1]], CancellationToken.None));
+        await AssertPatchAsync(release, 0, 1);
+    }
+
     [Theory]
     [InlineData("single", 4096)]
     [InlineData("uneven", 6144)]
     public async Task RealCorpus_PlainRepairTrimsFinalPatch(string prefix, int sliceSize)
     {
-        var data = await File.ReadAllBytesAsync(Path.Combine(Par2CmdlineInteropTests.CorpusDirectory, "alpha.bin"));
+        var data = await File.ReadAllBytesAsync(Path.Join(Par2CmdlineInteropTests.CorpusDirectory, "alpha.bin"));
         var sizes = Enumerable.Range(0, (data.Length + sliceSize - 1) / sliceSize)
             .Select(index => Math.Min(sliceSize, data.Length - sliceSize * index)).ToArray();
         var parity = await CorpusParityAsync(prefix);
@@ -774,7 +808,8 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
         var files = new List<Par2RepairTestReleaseBuilder.SourceFile>();
         foreach (var name in new[] { "alpha.bin", "beta.bin", "gamma.bin" })
         {
-            var bytes = await File.ReadAllBytesAsync(Path.Combine(Par2CmdlineInteropTests.CorpusDirectory, name));
+            var bytes = await File.ReadAllBytesAsync(Path.Join(
+                Par2CmdlineInteropTests.CorpusDirectory, Path.GetFileName(name)));
             files.Add(new(name, bytes, Sizes(bytes.Length), name == "alpha.bin" ? [0] : name == "beta.bin" ? [6] : []));
         }
         await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync(files, [],
@@ -787,8 +822,10 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
     }
 
     private static async Task<(byte[] Index, byte[] Recovery)> CorpusParityAsync(string prefix)
-        => (await File.ReadAllBytesAsync(Path.Combine(Par2CmdlineInteropTests.CorpusDirectory, prefix + ".par2")),
-            await File.ReadAllBytesAsync(Directory.GetFiles(Par2CmdlineInteropTests.CorpusDirectory, prefix + ".vol*.par2").Single()));
+        => (await File.ReadAllBytesAsync(Path.Join(
+                Par2CmdlineInteropTests.CorpusDirectory, Path.GetFileName(prefix + ".par2"))),
+            await File.ReadAllBytesAsync(Directory.GetFiles(
+                Par2CmdlineInteropTests.CorpusDirectory, Path.GetFileName(prefix) + ".vol*.par2").Single()));
 
     private static async Task AssertPatchAsync(Par2RepairTestReleaseBuilder.SeededRelease release, int fileIndex, int segmentIndex)
     {

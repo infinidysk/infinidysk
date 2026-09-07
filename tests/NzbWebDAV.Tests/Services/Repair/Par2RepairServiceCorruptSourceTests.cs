@@ -469,9 +469,11 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         await using var release = await SeedAsync(fileData, EqualSegments(3), [0u, 1u],
             omitFromProvider: [0], corruptOnRead: [1]);
         var previousStore = BlobStore.Current;
+        FailingDamageWriteStore? failingStore = null;
         release.Service.BeforePatchPublicationForTests = _ =>
         {
-            BlobStore.Use(new FailingDamageWriteStore(previousStore));
+            failingStore = new FailingDamageWriteStore(previousStore);
+            BlobStore.Use(failingStore);
             return Task.CompletedTask;
         };
         try
@@ -484,16 +486,25 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         var job = await ReadJobAsync(release.Item.Id);
         Assert.Equal(Par2RepairJob.RepairJobState.Succeeded, job.State);
         Assert.Null(job.NextAttemptAt);
+        Assert.NotNull(failingStore);
+        Assert.True(failingStore.WriteCount > 0);
         Assert.Equal(fileData.AsSpan(0, SliceSize).ToArray(), await ReadPatchAsync(release.Store, release.ContentSegmentIds[0]));
         Assert.Equal(fileData.AsSpan(SliceSize, SliceSize).ToArray(), await ReadPatchAsync(release.Store, release.ContentSegmentIds[1]));
     }
 
     private sealed class FailingDamageWriteStore(IBlobStore inner) : IBlobStore
     {
+        public int WriteCount { get; private set; }
         public Task WriteBlob(Guid id, Stream stream, CancellationToken cancellationToken = default)
-            => Task.FromException(new IOException("Injected damage-record write failure."));
+        {
+            WriteCount++;
+            return Task.FromException(new IOException("Injected damage-record write failure."));
+        }
         public Task WriteBlob<T>(Guid id, T blob, CancellationToken cancellationToken = default)
-            => Task.FromException(new IOException("Injected damage-record write failure."));
+        {
+            WriteCount++;
+            return Task.FromException(new IOException("Injected damage-record write failure."));
+        }
         public Stream? ReadBlob(Guid id) => inner.ReadBlob(id);
         public Task<T?> ReadBlob<T>(Guid id) => inner.ReadBlob<T>(id);
         public bool Exists(Guid id) => inner.Exists(id);

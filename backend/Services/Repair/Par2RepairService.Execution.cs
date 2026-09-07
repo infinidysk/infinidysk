@@ -49,7 +49,7 @@ public partial class Par2RepairService
             layouts = resolved.Layouts;
             var sliceSize = checked((int)set.Main.SliceSize);
             var unavailableSlices = new HashSet<int>();
-            accessor = new ResolvedSliceAccessor(layouts, _usenetClient, reads, unavailableSlices);
+            accessor = new ResolvedSliceAccessor(layouts, _usenetClient, reads, unavailableSlices.Contains);
             _activeSource = accessor;
             foreach (var layout in layouts)
             {

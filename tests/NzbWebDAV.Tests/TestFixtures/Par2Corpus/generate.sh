@@ -24,9 +24,9 @@ par2 verify -q -t1 set.par2
 par2 verify -q -t1 single.par2
 par2 verify -q -t1 uneven.par2
 if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum alpha.bin beta.bin gamma.bin *.par2 > SHA256SUMS
+    sha256sum -- alpha.bin beta.bin gamma.bin *.par2 > SHA256SUMS
 elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 alpha.bin beta.bin gamma.bin *.par2 > SHA256SUMS
+    shasum -a 256 -- alpha.bin beta.bin gamma.bin *.par2 > SHA256SUMS
 else
     printf '%s\n' 'SHA-256 checksum generation requires sha256sum or shasum.' >&2
     exit 1

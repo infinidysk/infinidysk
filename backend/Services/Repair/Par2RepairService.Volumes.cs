@@ -154,7 +154,8 @@ public partial class Par2RepairService
         LongRange[] ranges;
         try
         {
-            ranges = payload.PlainFile is { } plain && ids.SequenceEqual(plain.SegmentIds)
+            ranges = payload.PlainFile is { SegmentByteRangesTrusted: true } plain
+                     && ids.SequenceEqual(plain.SegmentIds)
                 ? BuildSegmentRanges(plain, ids.Length, length)
                 : await ResolveVolumeRangesAsync(file, payload, length, reads, ct).ConfigureAwait(false);
         }

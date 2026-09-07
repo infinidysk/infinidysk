@@ -103,9 +103,8 @@ public sealed class RepairPatchStoreTests
         {
             WriteBlob(dir, "valid@test", [1, 2, 3]);
             string[] names = ["x", "notes.txt", new string('A', 63), new string('A', 65), new string('G', 64), new string('a', 64)];
-            foreach (var name in names)
+            foreach (var path in names.Select(name => Path.Join(dir, name)))
             {
-                var path = Path.Join(dir, name);
                 await File.WriteAllBytesAsync(path, [42]);
                 await File.WriteAllTextAsync(path + ".h", "{}");
                 File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddHours(-2));
@@ -219,6 +218,29 @@ public sealed class RepairPatchStoreTests
             await store.EnsureCatalogLoadedAsync(CancellationToken.None);
             Assert.False(store.HasUsablePatch("broken"));
             Assert.Equal(0, store.EntryCount);
+        }
+        finally { DeleteDir(dir); }
+    }
+
+    [Fact]
+    public async Task StructurallyInvalidYencHeader_IsRejectedBeforeCommitAndCatalog()
+    {
+        var dir = NewTempDir("invalid-header");
+        try
+        {
+            var invalid = Header(8);
+            invalid.PartOffset = -1;
+            var store = new RepairPatchStore(dir, 100);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            Assert.Throws<ArgumentException>(() => store.CommitPatch("invalid", new byte[8], invalid));
+            Assert.Equal(0, store.EntryCount);
+
+            var path = WriteBlob(dir, "invalid", new byte[8]);
+            await File.WriteAllTextAsync(path + ".h", JsonSerializer.Serialize(invalid, RepairPatchStore.HeaderJsonOptions));
+            var reloaded = new RepairPatchStore(dir, 100);
+            await reloaded.EnsureCatalogLoadedAsync(CancellationToken.None);
+            Assert.False(reloaded.HasUsablePatch("invalid"));
+            Assert.Equal(0, reloaded.EntryCount);
         }
         finally { DeleteDir(dir); }
     }

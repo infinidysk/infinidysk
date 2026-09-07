@@ -10,7 +10,7 @@ public partial class Par2RepairService
         private readonly IReadOnlyList<SourceLayout> _layouts;
         private readonly UsenetStreamingClient _client;
         private readonly RepairReadContext _reads;
-        private readonly HashSet<int> _unavailableSlices;
+        private readonly Func<int, bool> _isUnavailableSlice;
         private readonly Dictionary<int, (byte[] Bytes, IDisposable Reservation)> _bodies = new();
         private readonly Dictionary<int, HashSet<int>> _missing = new();
         private readonly Dictionary<int, HashSet<int>> _corrupt = new();
@@ -20,13 +20,13 @@ public partial class Par2RepairService
         private long _retainedByteLimit;
 
         public ResolvedSliceAccessor(IReadOnlyList<SourceLayout> layouts, UsenetStreamingClient client,
-            RepairReadContext reads, HashSet<int> unavailableSlices)
+            RepairReadContext reads, Func<int, bool> isUnavailableSlice)
         {
             _layouts = layouts;
             _layout = layouts[0];
             _client = client;
             _reads = reads;
-            _unavailableSlices = unavailableSlices;
+            _isUnavailableSlice = isUnavailableSlice;
             _retainedByteLimit = reads.Budget.Limit;
             foreach (var layout in layouts)
             {
@@ -68,7 +68,7 @@ public partial class Par2RepairService
         public async Task<byte[]?> FetchSliceBytesAsync(int globalSlice, int sliceSize, CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
-            if (_unavailableSlices.Contains(globalSlice)) return null;
+            if (_isUnavailableSlice(globalSlice)) return null;
             var layout = FindLayout(globalSlice);
             if (layout is null) return null;
             UseLayout(layout);
@@ -92,7 +92,7 @@ public partial class Par2RepairService
         }
 
         public Task<byte[]?> GetSegmentBodyForPatchAsync(int index, CancellationToken ct)
-            => _layout.Map.GlobalSlicesForSegment(index).All(_unavailableSlices.Contains)
+            => _layout.Map.GlobalSlicesForSegment(index).All(_isUnavailableSlice)
                 ? Task.FromResult<byte[]?>(null) : GetBodyAsync(index, ct);
 
         private SourceLayout? FindLayout(int globalSlice)
