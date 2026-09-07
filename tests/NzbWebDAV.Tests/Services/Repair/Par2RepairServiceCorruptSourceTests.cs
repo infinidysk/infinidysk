@@ -1,4 +1,3 @@
-using System.Text;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
@@ -463,6 +462,44 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         Assert.False(release.Store.Contains(release.ContentSegmentIds[2]));
     }
 
+    [Fact]
+    public async Task DamagePersistenceFailure_DoesNotInvalidatePublishedRepair()
+    {
+        var fileData = PatternBytes(SliceSize * 3, 0xCA);
+        await using var release = await SeedAsync(fileData, EqualSegments(3), [0u, 1u],
+            omitFromProvider: [0], corruptOnRead: [1]);
+        var previousStore = BlobStore.Current;
+        release.Service.BeforePatchPublicationForTests = _ =>
+        {
+            BlobStore.Use(new FailingDamageWriteStore(previousStore));
+            return Task.CompletedTask;
+        };
+        try
+        {
+            Assert.Equal(Par2RepairOutcome.Repaired, await release.Service.TryPar2RepairAsync(release.Item,
+                [release.ContentSegmentIds[0]], CancellationToken.None));
+        }
+        finally { BlobStore.Use(previousStore); }
+
+        var job = await ReadJobAsync(release.Item.Id);
+        Assert.Equal(Par2RepairJob.RepairJobState.Succeeded, job.State);
+        Assert.Null(job.NextAttemptAt);
+        Assert.Equal(fileData.AsSpan(0, SliceSize).ToArray(), await ReadPatchAsync(release.Store, release.ContentSegmentIds[0]));
+        Assert.Equal(fileData.AsSpan(SliceSize, SliceSize).ToArray(), await ReadPatchAsync(release.Store, release.ContentSegmentIds[1]));
+    }
+
+    private sealed class FailingDamageWriteStore(IBlobStore inner) : IBlobStore
+    {
+        public Task WriteBlob(Guid id, Stream stream, CancellationToken cancellationToken = default)
+            => Task.FromException(new IOException("Injected damage-record write failure."));
+        public Task WriteBlob<T>(Guid id, T blob, CancellationToken cancellationToken = default)
+            => Task.FromException(new IOException("Injected damage-record write failure."));
+        public Stream? ReadBlob(Guid id) => inner.ReadBlob(id);
+        public Task<T?> ReadBlob<T>(Guid id) => inner.ReadBlob<T>(id);
+        public bool Exists(Guid id) => inner.Exists(id);
+        public bool Delete(Guid id) => inner.Delete(id);
+    }
+
     private async Task<SeededRelease> SeedAsync(
         byte[] targetData,
         int[] targetSegmentSizes,
@@ -523,61 +560,6 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
     }
 
     private static byte[] Slice(byte[] data, int start, int count) => data.AsSpan(start, count).ToArray();
-
-    private static (string[] Ids, LongRange[] Ranges, byte[][] Parts) Split(
-        byte[] data, int[] sizes, string prefix)
-    {
-        var ids = new string[sizes.Length];
-        var ranges = new LongRange[sizes.Length];
-        var parts = new byte[sizes.Length][];
-        var offset = 0;
-        for (var i = 0; i < sizes.Length; i++)
-        {
-            ids[i] = $"{prefix}-{i}@test";
-            ranges[i] = LongRange.FromStartAndSize(offset, sizes[i]);
-            parts[i] = data.AsSpan(offset, sizes[i]).ToArray();
-            offset += sizes[i];
-        }
-
-        if (offset != data.Length)
-            throw new ArgumentException("Segment sizes must cover the file.");
-        return (ids, ranges, parts);
-    }
-
-    private static void AddPayloads(
-        Dictionary<string, byte[]> payloads,
-        Dictionary<string, LongRange> rangesById,
-        string[] ids,
-        byte[][] parts,
-        LongRange[] ranges)
-    {
-        for (var i = 0; i < ids.Length; i++)
-        {
-            payloads[ids[i]] = parts[i];
-            rangesById[ids[i]] = ranges[i];
-        }
-    }
-
-    private static string BuildNzbXml(IReadOnlyList<(string Name, List<(string Id, int Bytes)> Segments)> files)
-    {
-        var xml = new StringBuilder();
-        xml.Append("""<?xml version="1.0" encoding="utf-8"?><nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">""");
-        foreach (var (name, segments) in files)
-        {
-            xml.Append("<file subject=\"&quot;").Append(name).Append("&quot; yEnc\">");
-            xml.Append("<segments>");
-            for (var i = 0; i < segments.Count; i++)
-            {
-                xml.Append("<segment bytes=\"").Append(segments[i].Bytes).Append("\" number=\"")
-                    .Append(i + 1).Append("\">").Append(segments[i].Id).Append("</segment>");
-            }
-
-            xml.Append("</segments></file>");
-        }
-
-        xml.Append("</nzb>");
-        return xml.ToString();
-    }
 
     private static async Task<byte[]> ReadPatchAsync(RepairPatchStore store, string segmentId)
     {

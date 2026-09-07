@@ -26,7 +26,8 @@ internal sealed class Par2RepairTestReleaseBuilder(ConfigManager config, string 
         Func<int, int, byte[], Stream>? streamFactory = null,
         (byte[] Index, byte[] Recovery)? parity = null,
         bool obfuscatedParity = false,
-        IReadOnlyList<(string Name, byte[] Bytes)>? additionalParity = null)
+        IReadOnlyList<(string Name, byte[] Bytes)>? additionalParity = null,
+        long? recoveryFileSize = null)
     {
         var token = Guid.NewGuid().ToString("N")[..8];
         var hashOverrides = files.Where(file => file.FileHashOverride is not null)
@@ -63,7 +64,7 @@ internal sealed class Par2RepairTestReleaseBuilder(ConfigManager config, string 
         }
 
         AddParity("aaa-index-" + token + "@test", obfuscatedParity ? "unknown-index" : "release.par2", indexBytes);
-        AddParity("zzz-volume-" + token + "@test", obfuscatedParity ? "unknown-recovery" : "release.vol00+08.par2", recoveryBytes);
+        AddParity("zzz-volume-" + token + "@test", obfuscatedParity ? "unknown-recovery" : "release.vol00+08.par2", recoveryBytes, recoveryFileSize);
         foreach (var (entry, index) in (additionalParity ?? []).Select((entry, index) => (entry, index)))
             AddParity($"000-extra-{index}-{token}@test", entry.Name, entry.Bytes);
         var fake = new FakeNntpClient(payloads, useCachedYencStreams: true, yencHeaders: headers,
@@ -127,10 +128,11 @@ internal sealed class Par2RepairTestReleaseBuilder(ConfigManager config, string 
         var usenet = new UsenetStreamingClient(fake, store);
         return new SeededRelease(item, posted, fake, store, new Par2RepairService(config, usenet, store), usenet, patchDir);
 
-        void AddParity(string id, string name, byte[] bytes)
+        void AddParity(string id, string name, byte[] bytes, long? declaredSize = null)
         {
             payloads[id] = bytes;
             headers[id] = Header(name, bytes.Length, 0, 1, LongRange.FromStartAndSize(0, bytes.Length));
+            if (declaredSize is { } size) headers[id].FileSize = size;
             nzb.Add(new XElement("file", new XAttribute("subject", $"\"{name}\" yEnc"),
                 new XElement("segments", new XElement("segment", new XAttribute("bytes", bytes.Length), new XAttribute("number", 1), id))));
         }

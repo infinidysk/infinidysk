@@ -105,6 +105,9 @@ public partial class Par2RepairService
         var coveredOwners = new HashSet<NzbFile>(ReferenceEqualityComparer.Instance);
         await foreach (var set in DiscoverPar2SetsAsync(document, reads, ct).ConfigureAwait(false))
         {
+            ct.ThrowIfCancellationRequested();
+            var sourceCandidates = document.Files.Where(file => !reads.ParityFiles.Contains(file) && file.Segments.Count > 0).ToArray();
+            reads.AdmitSourceComparisons(sourceCandidates.Length, set.Main.FileIds.Count);
             var layouts = new List<SourceLayout>();
             var usedFiles = new HashSet<NzbFile>(ReferenceEqualityComparer.Instance);
             var complete = true;
@@ -114,7 +117,7 @@ public partial class Par2RepairService
                 var descriptor = set.FileDescsById[key];
                 var checksums = set.IfscsByFileId[key];
                 SourceLayout? match = null;
-                foreach (var candidate in document.Files.Where(file => !reads.ParityFiles.Contains(file) && file.Segments.Count > 0)
+                foreach (var candidate in sourceCandidates
                              .OrderByDescending(file => string.Equals(file.GetSubjectFileName(), Path.GetFileName(descriptor.FileName), StringComparison.OrdinalIgnoreCase))
                              .ThenBy(file => file.Segments[0].MessageId, StringComparer.Ordinal))
                 {
@@ -151,10 +154,9 @@ public partial class Par2RepairService
         LongRange[] ranges;
         try
         {
-            if (payload.PlainFile is { } plain && ids.SequenceEqual(plain.SegmentIds))
-                ranges = BuildSegmentRanges(plain, ids.Length, length);
-            else
-                ranges = await ResolveVolumeRangesAsync(file, payload, length, reads, ct).ConfigureAwait(false);
+            ranges = payload.PlainFile is { } plain && ids.SequenceEqual(plain.SegmentIds)
+                ? BuildSegmentRanges(plain, ids.Length, length)
+                : await ResolveVolumeRangesAsync(file, payload, length, reads, ct).ConfigureAwait(false);
         }
         catch (InvalidDataException exception)
         {
@@ -193,7 +195,7 @@ public partial class Par2RepairService
         {
             foreach (var index in Enumerable.Range(0, file.Segments.Count).OrderBy(index => index == 0 ? 0 : index == file.Segments.Count - 1 ? 1 : 2))
             {
-                var header = await ReadHeaderCoreAsync(file.Segments[index].MessageId, reads, ct).ConfigureAwait(false);
+                var header = await ReadHeaderCoreAsync(file.Segments[index].MessageId, reads, ct, identity: true).ConfigureAwait(false);
                 if (header is not { FileSize: > 0 }) continue;
                 var observation = new NzbFileObservation(header.FileSize, null);
                 reads.Observations[file] = observation;
@@ -227,7 +229,7 @@ public partial class Par2RepairService
             {
                 var id = file.Segments[index].MessageId;
                 if (evidence[index] is not null && !reads.Headers.ContainsKey(id)) continue;
-                var header = await ReadHeaderCoreAsync(id, reads, ct).ConfigureAwait(false);
+                var header = await ReadHeaderCoreAsync(id, reads, ct, identity: true).ConfigureAwait(false);
                 if (header is null) continue;
                 if (header.FileSize != length || header.TotalParts != evidence.Length || header.PartNumber != index + 1
                     || header.PartOffset < 0 || header.PartSize <= 0)
@@ -254,29 +256,22 @@ public partial class Par2RepairService
         var length = (int)Math.Min(16 * 1024, layout.Map.FileLength);
         if (layout.Map.SegmentRanges.Where(range => range.StartInclusive < length)
             .Select((_, index) => layout.SegmentIds[index]).Any(reads.UnavailableIds.Contains)) return null;
+        reads.AdmitIdentityWork(length);
         using var reservation = reads.Budget.Reserve(length + 1024L);
         var prefix = new byte[length];
         var offset = 0;
-        string? activeId = null;
         await reads.FetchGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             for (var index = 0; offset < length; index++)
             {
-            activeId = layout.SegmentIds[index];
-            var response = await _usenetClient.DecodedBodyAsync(activeId, ct).ConfigureAwait(false);
-                await using var stream = response.Stream!;
-                await using var counted = new RepairCountingStream(stream, bytes => reads.ReadBytes(bytes));
+                var body = await ReadIdentityBodyCoreAsync(layout, index, reads, ct).ConfigureAwait(false);
+                if (body is null) return null;
                 var count = (int)Math.Min(layout.Map.SegmentRanges[index].Count, length - offset);
-                await counted.ReadExactlyAsync(prefix.AsMemory(offset, count), ct).ConfigureAwait(false);
+                body.AsSpan(0, count).CopyTo(prefix.AsSpan(offset));
                 offset += count;
             }
             return Convert.ToHexString(MD5.HashData(prefix));
-        }
-        catch (Exception exception) when (IsUnavailableArticle(exception))
-        {
-            if (activeId is not null) reads.NoteUnavailable(activeId, exception);
-            return null;
         }
         finally { reads.FetchGate.Release(); }
     }
@@ -286,35 +281,57 @@ public partial class Par2RepairService
     {
         var segmentIndices = layout.Map.SegmentIndicesForGlobalSlice(globalSlice).ToArray();
         if (segmentIndices.Any(index => reads.UnavailableIds.Contains(layout.SegmentIds[index]))) return null;
+        reads.AdmitIdentityWork(layout.Map.SliceSize);
         using var reservation = reads.Budget.Reserve(layout.Map.SliceSize + 1024L);
         var buffer = new byte[layout.Map.SliceSize];
         var slice = layout.Map.SliceFileRange(globalSlice);
-        string? activeId = null;
         await reads.FetchGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             foreach (var index in segmentIndices)
             {
                 var range = layout.Map.SegmentRanges[index];
-                using var bodyReservation = reads.Budget.Reserve(range.Count + 1024);
-                var body = new byte[checked((int)range.Count)];
-                activeId = layout.SegmentIds[index];
-                var response = await _usenetClient.DecodedBodyAsync(activeId, ct).ConfigureAwait(false);
-                await using var stream = response.Stream!;
-                await using var counted = new RepairCountingStream(stream, bytes => reads.ReadBytes(bytes));
-                await counted.ReadExactlyAsync(body, ct).ConfigureAwait(false);
+                var body = await ReadIdentityBodyCoreAsync(layout, index, reads, ct).ConfigureAwait(false);
+                if (body is null) return null;
                 var start = Math.Max(slice.StartInclusive, range.StartInclusive);
                 var end = Math.Min(slice.EndExclusive, range.EndExclusive);
                 body.AsSpan((int)(start - range.StartInclusive), (int)(end - start)).CopyTo(buffer.AsSpan((int)(start - slice.StartInclusive)));
             }
             return buffer;
         }
+        finally { reads.FetchGate.Release(); }
+    }
+
+    private async Task<byte[]?> ReadIdentityBodyCoreAsync(SourceLayout layout, int index, RepairReadContext reads, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var id = layout.SegmentIds[index];
+        if (reads.UnavailableIds.Contains(id)) return null;
+        var length = layout.Map.SegmentRanges[index].Count;
+        if (reads.IdentityBodyId == id && reads.IdentityBody?.LongLength == length) return reads.IdentityBody;
+        reads.ClearIdentityBody();
+        reads.AdmitIdentityWork(checked(length + 1), request: true);
+        reads.IdentityBodyReservation.TakeOwnership(() => reads.Budget.Reserve(length + 1024));
+        try
+        {
+            var body = new byte[checked((int)length)];
+            var response = await _usenetClient.DecodedBodyAsync(id, ct).ConfigureAwait(false);
+            await using var stream = response.Stream!;
+            await using var counted = new RepairCountingStream(stream, bytes => reads.ReadBytes(bytes));
+            await counted.ReadExactlyAsync(body, ct).ConfigureAwait(false);
+            var extra = new byte[1];
+            if (await counted.ReadAsync(extra, ct).ConfigureAwait(false) != 0)
+                throw new InvalidDataException("PAR2 identity article exceeds its validated volume range.");
+            reads.IdentityBodyId = id;
+            reads.IdentityBody = body;
+            return body;
+        }
         catch (Exception exception) when (IsUnavailableArticle(exception))
         {
-            if (activeId is not null) reads.NoteUnavailable(activeId, exception);
+            reads.ClearIdentityBody();
+            reads.NoteUnavailable(id, exception);
             return null;
         }
-        finally { reads.FetchGate.Release(); }
     }
 
     private static bool IsUnavailableArticle(Exception exception)

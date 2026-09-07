@@ -240,7 +240,7 @@ public partial class Par2RepairService : BackgroundService
         if (!_configManager.IsPar2RepairEnabled())
             return Par2RepairOutcome.NotRepaired;
 
-        while (true)
+        for (var attempt = 0; attempt < MaxAttempts; attempt++)
         {
             ct.ThrowIfCancellationRequested();
             var mine = new RepairFlight(missingSegmentIds);
@@ -260,6 +260,7 @@ public partial class Par2RepairService : BackgroundService
                 return Par2RepairOutcome.NotRepaired;
             }
         }
+        return Par2RepairOutcome.NotRepaired;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -734,12 +735,7 @@ public partial class Par2RepairService : BackgroundService
                 PublishAdmissionMetrics();
             }
             if (admissionUser)
-            {
-                lock (_admissionLifecycle)
-                {
-                    if (--_admissionUsers == 0 && _disposeRequested) _repairAdmission.Dispose();
-                }
-            }
+                ReleaseAdmissionUser();
             if (queueGuard) _queuedOrRunning.TryRemove(davItem.Id, out _);
             _repairFlights.TryRemove(new KeyValuePair<Guid, RepairFlight>(davItem.Id, flight));
             flight.Finished.TrySetResult();
@@ -752,6 +748,14 @@ public partial class Par2RepairService : BackgroundService
             {
                 Log.Debug(e, "Failed to requeue retained PAR2 segment IDs for {Path}", davItem.Path);
             }
+        }
+    }
+
+    private void ReleaseAdmissionUser()
+    {
+        lock (_admissionLifecycle)
+        {
+            if (--_admissionUsers == 0 && _disposeRequested) _repairAdmission.Dispose();
         }
     }
 
@@ -939,15 +943,14 @@ public partial class Par2RepairService : BackgroundService
 
                 var assembled = await accessor.FetchSliceBytesAsync(globalSlice, sliceMap.SliceSize, ct)
                     .ConfigureAwait(false);
-                if (assembled is not null && !Par2Reconstructor.VerifySliceChecksum(assembled, targetIfsc.Slices[local]))
+                var valid = assembled is not null && Par2Reconstructor.VerifySliceChecksum(assembled, targetIfsc.Slices[local]);
+                if (assembled is not null && !valid)
                 {
                     foreach (var segmentIndex in sliceMap.SegmentIndicesForGlobalSlice(globalSlice))
                         accessor.NoteCorrupt(segmentIndex);
                 }
                 AbsorbAccessorDiscoveries(accessor, sliceMap, unavailableSegments, unavailableSlices, ref expanded);
-                expanded |= (assembled is null ||
-                             !Par2Reconstructor.VerifySliceChecksum(assembled, targetIfsc.Slices[local]))
-                            && unavailableSlices.Add(globalSlice);
+                expanded |= !valid && unavailableSlices.Add(globalSlice);
                 if (unavailableSlices.Count > maxMissingSlices)
                     return true;
             }
@@ -1291,7 +1294,8 @@ public partial class Par2RepairService : BackgroundService
         if (existing is { State: Par2RepairJob.RepairJobState.Queued or Par2RepairJob.RepairJobState.Failed or Par2RepairJob.RepairJobState.Infeasible })
         {
             existing.Attempts++;
-            existing.MissingSegmentIds = segments;
+            existing.MissingSegmentIds = segments.Length == 0 ? segments
+                : existing.MissingSegmentIds.Concat(segments).Distinct(StringComparer.Ordinal).ToArray();
             existing.State = Par2RepairJob.RepairJobState.Queued;
             existing.CreatedAt = DateTimeOffset.UtcNow;
             return existing;

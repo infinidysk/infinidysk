@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 using NzbWebDAV.Par2Recovery.Packets;
+using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Par2Recovery;
 
@@ -49,68 +50,59 @@ public static class Par2RepairReader
         ValidateBodyLength(packetType, bodyLength, matchingSet ? options.ExpectedSliceSize : null);
         using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
         hasher.AppendData(headerBytes.AsSpan(32));
-        IDisposable? retained = null;
-        try
+        using var retained = new DisposableOwner<IDisposable>();
+        Par2Packet packet;
+        if (matchingSet && packetType == RecvSlic.PacketType && options.RetainRecoveryPayload)
         {
-            Par2Packet packet;
-            if (matchingSet && packetType == RecvSlic.PacketType && options.RetainRecoveryPayload)
-            {
-                retained = options.Budget.Reserve(bodyLength + 512L);
-                var exponent = new byte[4];
-                await stream.ReadExactlyAsync(exponent, ct).ConfigureAwait(false);
-                hasher.AppendData(exponent);
-                var payload = new byte[bodyLength - 4];
-                await ReadAndHashAsync(stream, payload, hasher, ct).ConfigureAwait(false);
-                packet = new RecvSlic(header, BinaryPrimitives.ReadUInt32LittleEndian(exponent), payload);
-            }
-            else if (matchingSet && packetType is MainPacket.PacketType or FileDesc.PacketType or IfscPacket.PacketType or UniFileN.PacketType)
-            {
-                retained = options.Budget.Reserve(EstimateMetadataBytes(packetType, bodyLength));
-                using var bodyReservation = options.Budget.Reserve(bodyLength + 32L);
-                var body = new byte[bodyLength];
-                await ReadAndHashAsync(stream, body, hasher, ct).ConfigureAwait(false);
-                VerifyHash(hasher, header);
-                packet = packetType switch
-                {
-                    MainPacket.PacketType => new MainPacket(header),
-                    FileDesc.PacketType => new FileDesc(header),
-                    IfscPacket.PacketType => new IfscPacket(header),
-                    _ => new UniFileN(header),
-                };
-                packet.ParseBodyBytes(body);
-                packet.MemoryReservation = retained;
-                retained = null;
-                return packet;
-            }
-            else
-            {
-                var scratch = ArrayPool<byte>.Shared.Rent(ScratchBytes);
-                try
-                {
-                    var remaining = bodyLength;
-                    while (remaining > 0)
-                    {
-                        var count = Math.Min(remaining, ScratchBytes);
-                        await ReadAndHashAsync(stream, scratch.AsMemory(0, count), hasher, ct).ConfigureAwait(false);
-                        remaining -= count;
-                    }
-                }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(scratch);
-                }
-                packet = packetType == RecvSlic.PacketType ? new RecvSlic(header) : new Par2Packet(header);
-            }
-
+            retained.TakeOwnership(() => options.Budget.Reserve(bodyLength + 512L));
+            var exponent = new byte[4];
+            await stream.ReadExactlyAsync(exponent, ct).ConfigureAwait(false);
+            hasher.AppendData(exponent);
+            var payload = new byte[bodyLength - 4];
+            await ReadAndHashAsync(stream, payload, hasher, ct).ConfigureAwait(false);
+            packet = new RecvSlic(header, BinaryPrimitives.ReadUInt32LittleEndian(exponent), payload);
+        }
+        else if (matchingSet && packetType is MainPacket.PacketType or FileDesc.PacketType or IfscPacket.PacketType or UniFileN.PacketType)
+        {
+            retained.TakeOwnership(() => options.Budget.Reserve(EstimateMetadataBytes(packetType, bodyLength)));
+            using var bodyReservation = options.Budget.Reserve(bodyLength + 32L);
+            var body = new byte[bodyLength];
+            await ReadAndHashAsync(stream, body, hasher, ct).ConfigureAwait(false);
             VerifyHash(hasher, header);
-            packet.MemoryReservation = retained;
-            retained = null;
+            packet = packetType switch
+            {
+                MainPacket.PacketType => new MainPacket(header),
+                FileDesc.PacketType => new FileDesc(header),
+                IfscPacket.PacketType => new IfscPacket(header),
+                _ => new UniFileN(header),
+            };
+            packet.ParseBodyBytes(body);
+            packet.MemoryReservation = retained.ReleaseOwnership();
             return packet;
         }
-        finally
+        else
         {
-            retained?.Dispose();
+            var scratch = ArrayPool<byte>.Shared.Rent(ScratchBytes);
+            try
+            {
+                var remaining = bodyLength;
+                while (remaining > 0)
+                {
+                    var count = Math.Min(remaining, ScratchBytes);
+                    await ReadAndHashAsync(stream, scratch.AsMemory(0, count), hasher, ct).ConfigureAwait(false);
+                    remaining -= count;
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(scratch);
+            }
+            packet = packetType == RecvSlic.PacketType ? new RecvSlic(header) : new Par2Packet(header);
         }
+
+        VerifyHash(hasher, header);
+        packet.MemoryReservation = retained.ReleaseOwnership();
+        return packet;
     }
 #pragma warning restore CA5351
 
@@ -134,7 +126,7 @@ public static class Par2RepairReader
 
     private static long EstimateMetadataBytes(string packetType, int length) => packetType switch
     {
-        MainPacket.PacketType => 512L + (length - 12L) / 16 * 128,
+        MainPacket.PacketType => 512L + (length - 12L) / 16 * 256,
         IfscPacket.PacketType => 512L + (length - 16L) / 20 * 128,
         _ => 512L + 8L * length,
     };

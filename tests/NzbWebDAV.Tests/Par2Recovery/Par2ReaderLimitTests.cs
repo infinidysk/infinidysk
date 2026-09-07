@@ -96,6 +96,33 @@ public sealed class Par2ReaderLimitTests
             rejected, new Par2RepairReader.ReadOptions(new Par2MemoryBudget(requirement - 1), true), CancellationToken.None));
     }
 
+    [Fact]
+    public async Task Main_MaximumIds_ReservesParseTimeCollectionsBeforeReadingBody()
+    {
+        var body = new byte[12 + 16 * MainPacket.MaxFileCount];
+        BinaryPrimitives.WriteUInt64LittleEndian(body, 4096);
+        BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(8), MainPacket.MaxFileCount);
+        for (var index = 0; index < MainPacket.MaxFileCount; index++)
+            BinaryPrimitives.WriteInt32LittleEndian(body.AsSpan(12 + 16 * index), index);
+        var bytes = Packet(MainPacket.PacketType, body);
+        var requirement = Par2RepairReader.ScratchBytes + 1024 + 512L + 256L * MainPacket.MaxFileCount + body.Length + 32;
+        var rejectedBudget = new Par2MemoryBudget(requirement - 1);
+        await using var rejected = new MemoryStream(bytes);
+        await Assert.ThrowsAsync<Par2BudgetExceededException>(() => Par2RepairReader.ReadVerifiedPacketAsync(
+            rejected, new Par2RepairReader.ReadOptions(rejectedBudget, false), CancellationToken.None));
+        Assert.Equal(64, rejected.Position);
+        Assert.Equal(0, rejectedBudget.ReservedBytes);
+
+        var acceptedBudget = new Par2MemoryBudget(requirement);
+        await using var accepted = new MemoryStream(bytes);
+        var packet = Assert.IsType<MainPacket>(await Par2RepairReader.ReadVerifiedPacketAsync(
+            accepted, new Par2RepairReader.ReadOptions(acceptedBudget, false), CancellationToken.None));
+        Assert.Equal((int)MainPacket.MaxFileCount, packet.FileIds.Count);
+        Assert.Equal(requirement, acceptedBudget.PeakBytes);
+        packet.ReleaseMemory();
+        Assert.Equal(0, acceptedBudget.ReservedBytes);
+    }
+
 #pragma warning disable CA5351 // PAR2 packet integrity uses MD5.
     internal static byte[] Packet(string type, byte[] body, byte[]? setId = null)
     {

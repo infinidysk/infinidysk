@@ -8,6 +8,7 @@ using NzbWebDAV.Par2Recovery.Packets;
 using NzbWebDAV.Par2Recovery.ReedSolomon;
 using NzbWebDAV.Services.Observability;
 using NzbWebDAV.Streams;
+using NzbWebDAV.Utils;
 using Serilog;
 using UsenetSharp.Models;
 
@@ -17,7 +18,15 @@ public partial class Par2RepairService
 {
     internal const int MaxPar2MagicCandidates = 64;
     internal const int MaxPar2MetadataCandidates = 128;
+    internal const int MaxPar2SourceComparisons = 100_000;
+    internal const long MaxPar2RecoveryScanBytes = 512L * 1024 * 1024;
+    internal const long MaxPar2IdentityBytes = 512L * 1024 * 1024;
+    internal const int MaxPar2IdentityRequests = 100_000;
     private const long MaxPar2MetadataScanBytes = 512L * 1024 * 1024;
+
+    internal long? RecoveryScanByteLimitForTests { get; set; }
+    internal long? IdentityByteLimitForTests { get; set; }
+    internal int? IdentityRequestLimitForTests { get; set; }
 
     private sealed class RepairReadContext(long memoryLimit, int concurrency, Action<long> onRead) : IDisposable
     {
@@ -33,11 +42,44 @@ public partial class Par2RepairService
         public HashSet<NzbFile> ExaminedFiles { get; } = new(ReferenceEqualityComparer.Instance);
         public Dictionary<string, MetadataCandidate> Sets { get; } = new(StringComparer.Ordinal);
         public List<RecvSlic> RecoveryPackets { get; } = [];
+        public long IdentityByteLimit { get; init; } = MaxPar2IdentityBytes;
+        public int IdentityRequestLimit { get; init; } = MaxPar2IdentityRequests;
+        public DisposableOwner<IDisposable> IdentityBodyReservation { get; } = new();
+        public string? IdentityBodyId { get; set; }
+        public byte[]? IdentityBody { get; set; }
+        private long IdentityWorkBytes { get; set; }
+        private int IdentityRequests { get; set; }
         public long BytesRead { get; private set; }
         public long MetadataBytesRead { get; private set; }
         public int CandidateCount { get; set; }
         public int MagicCount { get; set; }
+        private long SourceComparisons { get; set; }
         public string? RejectionReason { get; set; }
+
+        public void AdmitIdentityWork(long bytes, bool request = false)
+        {
+            if (bytes > IdentityByteLimit - IdentityWorkBytes)
+                throw new RepairInfeasibleException("PAR2 identity discovery exceeds its byte limit.");
+            if (request && IdentityRequests >= IdentityRequestLimit)
+                throw new RepairInfeasibleException("PAR2 identity discovery exceeds its request limit.");
+            IdentityWorkBytes += bytes;
+            if (request) IdentityRequests++;
+        }
+
+        public void ClearIdentityBody()
+        {
+            using var reservation = IdentityBodyReservation.ReleaseOwnership();
+            IdentityBodyId = null;
+            IdentityBody = null;
+        }
+
+        public void AdmitSourceComparisons(int sourceCount, int descriptorCount)
+        {
+            var comparisons = (long)Math.Max(1, sourceCount) * descriptorCount;
+            if (comparisons > MaxPar2SourceComparisons - SourceComparisons)
+                throw new RepairInfeasibleException("PAR2 source matching exceeds the 100,000-comparison limit.");
+            SourceComparisons += comparisons;
+        }
 
         public void NoteUnavailable(string id, Exception exception)
         {
@@ -62,6 +104,7 @@ public partial class Par2RepairService
         {
             foreach (var candidate in Sets.Values) candidate.Release();
             foreach (var packet in RecoveryPackets) packet.ReleaseMemory();
+            IdentityBodyReservation.Dispose();
             FetchGate.Dispose();
         }
     }
@@ -221,9 +264,8 @@ public partial class Par2RepairService
             if (releaseBytes > _configManager.GetPar2MaxReleaseGb() * 1024L * 1024 * 1024)
                 throw new RepairInfeasibleException($"Recovery set size {releaseBytes} bytes exceeds release cap.");
             var slices = 0;
-            foreach (var id in main.FileIds)
+            foreach (var key in main.FileIds.Select(Convert.ToHexString))
             {
-                var key = Convert.ToHexString(id);
                 if (!candidate.Descriptors.TryGetValue(key, out var descriptor)
                     || !candidate.Checksums.TryGetValue(key, out var checksum)) return null;
                 var length = checked((long)descriptor.FileLength);
@@ -247,10 +289,11 @@ public partial class Par2RepairService
         finally { reads.FetchGate.Release(); }
     }
 
-    private async Task<UsenetYencHeader?> ReadHeaderCoreAsync(string id, RepairReadContext reads, CancellationToken ct)
+    private async Task<UsenetYencHeader?> ReadHeaderCoreAsync(string id, RepairReadContext reads, CancellationToken ct, bool identity = false)
     {
         if (reads.UnavailableIds.Contains(id)) return null;
         if (reads.Headers.TryGetValue(id, out var cached)) return cached;
+        if (identity) reads.AdmitIdentityWork(0, request: true);
         reads.Budget.Charge(512 + 2L * id.Length);
         try
         {
@@ -295,6 +338,8 @@ public partial class Par2RepairService
         NzbDocument document, Par2SetContext set, int needed, RepairReadContext reads, CancellationToken ct)
     {
         var byExponent = new Dictionary<uint, RecvSlic>();
+        var scanLimit = RecoveryScanByteLimitForTests ?? MaxPar2RecoveryScanBytes;
+        long scannedBytes = 0;
         var candidates = reads.ParityFiles.OrderBy(file => file.Segments.Count)
             .ThenBy(file => file.Segments.FirstOrDefault()?.MessageId, StringComparer.Ordinal).ToList();
         foreach (var file in candidates)
@@ -329,9 +374,16 @@ public partial class Par2RepairService
                 var header = await ReadHeaderCoreAsync(file.Segments[0].MessageId, reads, ct).ConfigureAwait(false)
                     ?? await ReadHeaderCoreAsync(file.Segments[^1].MessageId, reads, ct).ConfigureAwait(false);
                 if (header is not { FileSize: > 0 }) return;
+                var remainingBytes = scanLimit - scannedBytes;
+                if (header.FileSize > remainingBytes)
+                    throw new RepairInfeasibleException("PAR2 recovery candidate exceeds the remaining recovery scan byte limit.");
                 await using var stream = new NzbFileStream(file.GetSegmentIds(), header.FileSize, _usenetClient, 0,
                     usePipelinedBodyRequests: false, readStartWarmupEnabled: false);
-                await using var counted = new RepairCountingStream(stream, bytes => reads.ReadBytes(bytes));
+                await using var counted = new RepairCountingStream(stream, bytes =>
+                {
+                    scannedBytes = checked(scannedBytes + bytes);
+                    reads.ReadBytes(bytes);
+                }, remainingBytes);
                 while (stream.Position < stream.Length && byExponent.Count < needed)
                 {
                     var packet = await Par2RepairReader.ReadVerifiedPacketAsync(counted,
@@ -369,8 +421,9 @@ public partial class Par2RepairService
         }
     }
 
-    private sealed class RepairCountingStream(Stream inner, Action<long> onRead) : Stream
+    private sealed class RepairCountingStream(Stream inner, Action<long> onRead, long maxReadBytes = long.MaxValue) : Stream
     {
+        private long _bytesRead;
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
@@ -378,16 +431,28 @@ public partial class Par2RepairService
         public override long Position { get => inner.Position; set => throw new NotSupportedException(); }
         public override int Read(byte[] buffer, int offset, int count)
         {
-            var read = inner.Read(buffer, offset, count);
+            var read = inner.Read(buffer, offset, LimitRead(count));
+            _bytesRead += read;
             onRead(read);
             return read;
         }
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            var read = await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            var read = await inner.ReadAsync(buffer[..LimitRead(buffer.Length)], cancellationToken).ConfigureAwait(false);
+            _bytesRead += read;
             onRead(read);
             return read;
         }
+
+        private int LimitRead(int count)
+        {
+            var remaining = maxReadBytes - _bytesRead;
+            if (count > 0 && remaining == 0)
+                throw new RepairInfeasibleException("PAR2 recovery scan exceeds its byte limit.");
+            return (int)Math.Min(count, remaining);
+        }
+
         public override void Flush() => throw new NotSupportedException();
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();

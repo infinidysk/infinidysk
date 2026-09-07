@@ -40,7 +40,7 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
     private int _catalogDegraded;
     private long _lastWriteWarningTicks;
 
-    private static readonly JsonSerializerOptions HeaderJsonOptions = new() { IncludeFields = true };
+    internal static readonly JsonSerializerOptions HeaderJsonOptions = new() { IncludeFields = true };
 
     public SegmentCacheNntpClient(
         INntpClient inner,

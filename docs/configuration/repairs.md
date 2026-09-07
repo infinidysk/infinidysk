@@ -57,9 +57,14 @@ health and playback requests; additional jobs wait without multiplying the memor
 
 The budget includes NZB/PAR2 metadata, source windows, reconstruction buffers, and staged
 patches. Discovery also limits metadata candidates to 128, metadata scanning to 512 MiB,
-and unnamed magic probes to 64 candidates with at most 64 bytes per probe. A recovery set
-must contain 1-32,768 input slices. An unsupported layout, ambiguous identity, exhausted
-limit, or insufficient parity produces a clear infeasible reason rather than guessed bytes.
+and unnamed magic probes to 64 candidates with at most 64 bytes per probe. Recovery scanning
+has a separate 512 MiB limit, including foreign packets. Source matching permits at most
+100,000 candidate/descriptor comparisons per job. Identity probing shares a 512 MiB work
+budget (article reads and bytes hashed) and 100,000-request limit across all candidates;
+recent article bytes are reused while proving adjacent slices. These limits do not restrict
+identity proofs to the first few slice positions. A recovery set must contain 1-32,768 input
+slices. An unsupported layout, ambiguous identity, exhausted limit, or insufficient parity
+produces a clear infeasible reason rather than guessed bytes.
 
 ## RAR and multipart repair [since 1.4.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.0){ .nzbdav-since }
 

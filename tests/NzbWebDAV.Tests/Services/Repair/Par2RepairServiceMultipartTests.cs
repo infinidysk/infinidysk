@@ -81,6 +81,62 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
         => Enumerable.Range(0, (length + 4095) / 4096).Select(index => Math.Min(4096, length - index * 4096)).ToArray();
 
     [Fact]
+    public async Task CompletedUncoveredFlight_CannotKeepJoinerRetryingIndefinitely()
+    {
+        var data = Data(4096 * 3, "bounded-flight");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length)),
+        ], [1], DavItem.ItemSubType.MultipartFile);
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+        var flightType = typeof(Par2RepairService).GetNestedType("RepairFlight", System.Reflection.BindingFlags.NonPublic)!;
+        var flight = Activator.CreateInstance(flightType, flags, null, new object?[] { Array.Empty<string>() }, null)!;
+        ((TaskCompletionSource<Par2RepairOutcome>)flightType.GetProperty("Completion")!.GetValue(flight)!).SetResult(Par2RepairOutcome.VerifiedClean);
+        ((TaskCompletionSource)flightType.GetProperty("Finished")!.GetValue(flight)!).SetResult();
+        var flights = (System.Collections.IDictionary)typeof(Par2RepairService).GetField("_repairFlights", flags)!.GetValue(release.Service)!;
+        flights.Add(release.Item.Id, flight);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            var result = await Task.Run(() => release.Service.TryPar2RepairAsync(release.Item,
+                [release.Files[0].Ids[0]], cancellation.Token), cancellation.Token);
+            Assert.Equal(Par2RepairOutcome.NotRepaired, result);
+            Assert.Equal(0, release.Fake.BodyRequestCount);
+        }
+        finally { flights.Clear(); }
+    }
+
+    [Theory]
+    [InlineData(Par2RepairJob.RepairJobState.Queued)]
+    [InlineData(Par2RepairJob.RepairJobState.Failed)]
+    [InlineData(Par2RepairJob.RepairJobState.Infeasible)]
+    public async Task ResumedTargetedJob_PreservesPreviouslyReportedArticles(Par2RepairJob.RepairJobState state)
+    {
+        var data = Data(4096 * 6, "resumed-ids");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length)),
+        ], [1, 2], DavItem.ItemSubType.MultipartFile);
+        var previousId = release.Files[0].Ids[4];
+        var currentId = release.Files[0].Ids[5];
+        await using (var context = new DavDatabaseContext())
+        {
+            context.Par2RepairJobs.Add(new Par2RepairJob
+            {
+                Id = Guid.NewGuid(), DavItemId = release.Item.Id, Path = release.Item.Path,
+                State = state, CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-1), Attempts = 1,
+                MissingSegmentIds = [previousId],
+            });
+            await context.SaveChangesAsync();
+        }
+
+        Assert.Equal(Par2RepairOutcome.Repaired, await release.Service.TryPar2RepairAsync(release.Item, [currentId], CancellationToken.None));
+        await AssertPatchAsync(release, 0, 4);
+        await AssertPatchAsync(release, 0, 5);
+        var job = await ReadJobAsync();
+        Assert.Equal(2, job.Attempts);
+        Assert.Equal(new[] { previousId, currentId }.Order(), job.MissingSegmentIds.Order());
+    }
+
+    [Fact]
     public async Task MultipartStream_ReportsGapWithoutWaitingAndReadsValidatedPatchAfterRepair()
     {
         var data = Data(4096 * 6, "stream-trigger");
@@ -156,9 +212,18 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
         Directory.CreateDirectory(Path.Join(cacheDirectory, hash[..2]));
         var bodyPath = Path.Join(cacheDirectory, hash[..2], hash);
         await File.WriteAllBytesAsync(bodyPath, bytes);
-        await File.WriteAllTextAsync(bodyPath + ".h", System.Text.Json.JsonSerializer.Serialize(header));
+        await File.WriteAllTextAsync(bodyPath + ".h", System.Text.Json.JsonSerializer.Serialize(header, SegmentCacheNntpClient.HeaderJsonOptions));
         using var cache = new SegmentCacheNntpClient(downloading, cacheDirectory, 1024);
         await cache.CatalogLoadTask;
+        var cachedResponse = await cache.DecodedBodyAsync(id, CancellationToken.None);
+        await using (var cachedStream = cachedResponse.Stream!)
+        {
+            var cachedHeader = await cachedStream.GetYencHeadersAsync();
+            Assert.NotNull(cachedHeader);
+            Assert.Equal(header.PartSize, cachedHeader.PartSize);
+            Assert.Equal(header.FileName, cachedHeader.FileName);
+        }
+        Assert.Equal(0, provider.BodyRequestCount);
         using var repaired = new RepairedSegmentNntpClient(cacheEnabled ? cache : downloading, patches);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var handle = await repaired.AcquireExclusiveConnectionAsync(id, cancellation.Token);
@@ -200,6 +265,128 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
             [release.Files[0].Ids[4]], CancellationToken.None));
         Assert.Contains("exceeds release cap", (await ReadJobAsync()).FailureReason, StringComparison.Ordinal);
         Assert.All(release.Fake.BodyRequestCounts.Keys, id => Assert.StartsWith("aaa-index-", id));
+    }
+
+    [Fact]
+    public async Task RecoveryScan_RejectsOversizedCandidateBeforeBodyRead()
+    {
+        var data = Data(4096 * 6, "oversized-recovery");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length), [4]),
+        ], [1], DavItem.ItemSubType.MultipartFile, recoveryFileSize: Par2RepairService.MaxPar2RecoveryScanBytes + 1);
+
+        Assert.Equal(Par2RepairOutcome.NotRepaired, await release.Service.TryPar2RepairAsync(release.Item,
+            [release.Files[0].Ids[4]], CancellationToken.None));
+
+        Assert.Contains("recovery scan byte limit", (await ReadJobAsync()).FailureReason, StringComparison.Ordinal);
+        var recoveryRead = Assert.Single(release.Fake.BodyRequestCounts, pair => pair.Key.StartsWith("zzz-volume-", StringComparison.Ordinal));
+        Assert.Equal(1, recoveryRead.Value);
+        Assert.Equal(0, release.Store.EntryCount);
+        Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionActive);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RecoveryScan_CountsForeignPacketsAcrossCandidates(bool fits)
+    {
+        var data = Data(4096 * 6, "recovery-budget");
+        var parity = Par2TestEncoder.EncodeSet([("volume.rar", data)], 4096, [1u]);
+        var foreign = Par2TestEncoder.EncodeSet([("foreign.bin", Data(4096, "foreign-recovery"))], 4096, [1u]);
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length), [4]),
+        ], [], DavItem.ItemSubType.MultipartFile, parity: parity,
+            additionalParity: [("foreign.vol00+01.par2", foreign.volumeBytes)]);
+        release.Service.RecoveryScanByteLimitForTests = foreign.volumeBytes.Length + parity.indexBytes.Length + parity.volumeBytes.Length - (fits ? 0 : 1);
+        var id = release.Files[0].Ids[4];
+
+        Assert.Equal(fits ? Par2RepairOutcome.Repaired : Par2RepairOutcome.NotRepaired,
+            await release.Service.TryPar2RepairAsync(release.Item, [id], CancellationToken.None));
+
+        var foreignReads = Assert.Single(release.Fake.BodyRequestCounts, pair => pair.Key.StartsWith("000-extra-", StringComparison.Ordinal));
+        Assert.Equal(2, foreignReads.Value);
+        if (fits) await AssertPatchAsync(release, 0, 4);
+        else
+        {
+            Assert.Contains("recovery scan byte limit", (await ReadJobAsync()).FailureReason, StringComparison.Ordinal);
+            Assert.Equal(0, release.Store.EntryCount);
+        }
+        Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionActive);
+    }
+
+    [Fact]
+    public async Task SourceComparisonBudget_RejectsCartesianScanBeforeIdentityReads()
+    {
+        var count = (int)Math.Sqrt(Par2RepairService.MaxPar2SourceComparisons) + 1;
+        var files = Enumerable.Range(0, count).Select(index => new Par2RepairTestReleaseBuilder.SourceFile(
+            $"source-{index}.bin", Data(4096, $"source-{index}"), [4096])).ToArray();
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync(files, []);
+
+        Assert.Equal(Par2RepairOutcome.NotRepaired, await release.Service.TryPar2RepairAsync(release.Item,
+            [release.ContentSegmentIds[0]], CancellationToken.None));
+
+        Assert.Contains("100,000-comparison limit", (await ReadJobAsync()).FailureReason, StringComparison.Ordinal);
+        Assert.All(release.Fake.BodyRequestCounts.Keys, id => Assert.StartsWith("aaa-index-", id));
+        Assert.Equal(0, release.Store.EntryCount);
+        Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionActive);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IdentityProbeBudget_IsSharedAcrossCandidatesAndProbeKinds(bool requestLimit)
+    {
+        var data = Data(4096 * 3, "identity-target");
+        var parity = Par2TestEncoder.EncodeSet([("protected.bin", Data(data.Length, "identity-protected"))], 4096, [1u]);
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("decoy.bin", Data(data.Length, "identity-decoy"), Sizes(data.Length)),
+            new("target.bin", data, Sizes(data.Length), [0]),
+        ], [], parity: parity);
+        if (requestLimit) release.Service.IdentityRequestLimitForTests = 11;
+        else release.Service.IdentityByteLimitForTests = 50_000;
+
+        Assert.Equal(Par2RepairOutcome.NotRepaired, await release.Service.TryPar2RepairAsync(release.Item,
+            [release.ContentSegmentIds[0]], CancellationToken.None));
+
+        Assert.Contains(requestLimit ? "identity discovery exceeds its request limit" : "identity discovery exceeds its byte limit",
+            (await ReadJobAsync()).FailureReason, StringComparison.Ordinal);
+        Assert.Equal(0, release.Store.EntryCount);
+        Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionActive);
+        Assert.Contains(release.Files[0].Ids[1], release.Fake.BodyRequestCounts.Keys);
+        Assert.Contains(release.Files[1].Ids[2], release.Fake.BodyRequestCounts.Keys);
+    }
+
+    [Fact]
+    public async Task IdentityProbes_ReuseAnArticleAcrossSliceProofs()
+    {
+        var data = Data(4096 * 8, "identity-reuse");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, [16384, 16384], [0]),
+        ], [1, 2, 3, 4], DavItem.ItemSubType.MultipartFile);
+
+        Assert.Equal(Par2RepairOutcome.Repaired, await release.Service.TryPar2RepairAsync(release.Item,
+            [release.Files[0].Ids[0]], CancellationToken.None));
+
+        Assert.Equal(5, release.Fake.BodyRequestCounts[release.Files[0].Ids[1]]);
+        await AssertPatchAsync(release, 0, 0);
+    }
+
+    [Fact]
+    public async Task IdentityProbes_AllowMatchingSlicesBeyondEarlyPositions()
+    {
+        var protectedData = Data(4096 * 72, "late-proof-original");
+        var postedData = Data(protectedData.Length, "late-proof-posted");
+        protectedData.AsSpan(4096 * 70, 4096).CopyTo(postedData.AsSpan(4096 * 70));
+        var parity = Par2TestEncoder.EncodeSet([("volume.rar", protectedData)], 4096, [1u]);
+        _config.UpdateValues([new ConfigItem { ConfigName = ConfigKeys.RepairPar2MaxMissingSlices, ConfigValue = "1" }]);
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", postedData, Sizes(postedData.Length), [0]),
+        ], [], DavItem.ItemSubType.MultipartFile, parity: parity);
+
+        Assert.Equal(Par2RepairOutcome.NotRepaired, await release.Service.TryPar2RepairAsync(release.Item,
+            [release.Files[0].Ids[0]], CancellationToken.None));
+        Assert.Contains("Missing slice count", (await ReadJobAsync()).FailureReason, StringComparison.Ordinal);
+        Assert.Contains(release.Files[0].Ids[70], release.Fake.BodyRequestCounts.Keys);
     }
 
     [Theory]

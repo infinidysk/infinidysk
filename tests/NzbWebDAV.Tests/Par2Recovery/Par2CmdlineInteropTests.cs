@@ -12,15 +12,15 @@ namespace NzbWebDAV.Tests.Par2Recovery;
 
 public sealed class Par2CmdlineInteropTests
 {
-    internal static string CorpusDirectory => Path.Combine(AppContext.BaseDirectory, "TestFixtures", "Par2Corpus");
+    internal static string CorpusDirectory => Path.Join(AppContext.BaseDirectory, "TestFixtures", "Par2Corpus");
 
     [Fact]
     public void CommittedCorpus_MatchesManifest()
     {
-        foreach (var line in File.ReadLines(Path.Combine(CorpusDirectory, "SHA256SUMS")))
+        foreach (var line in File.ReadLines(Path.Join(CorpusDirectory, "SHA256SUMS")))
         {
             var fields = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            var bytes = File.ReadAllBytes(Path.Combine(CorpusDirectory, fields[1]));
+            var bytes = File.ReadAllBytes(Path.Join(CorpusDirectory, fields[1]));
             Assert.Equal(fields[0].ToUpperInvariant(), Convert.ToHexString(SHA256.HashData(bytes)));
         }
     }
@@ -34,11 +34,10 @@ public sealed class Par2CmdlineInteropTests
         var corpus = await ReadSetAsync(prefix);
         Assert.Equal(sliceSize, corpus.Main.SliceSize);
         Assert.Equal(recoveryCount, corpus.Recovery.Count);
-        foreach (var fileId in corpus.Main.FileIds)
+        foreach (var key in corpus.Main.FileIds.Select(Convert.ToHexString))
         {
-            var key = Convert.ToHexString(fileId);
             var descriptor = corpus.Descriptors[key];
-            var bytes = File.ReadAllBytes(Path.Combine(CorpusDirectory, descriptor.FileName));
+            var bytes = File.ReadAllBytes(Path.Join(CorpusDirectory, descriptor.FileName));
             Assert.Equal((ulong)bytes.Length, descriptor.FileLength);
             Assert.Equal(MD5.HashData(bytes), descriptor.FileHash);
             Assert.Equal(MD5.HashData(bytes.AsSpan(0, Math.Min(bytes.Length, 16384))), descriptor.File16kHash);
@@ -75,7 +74,7 @@ public sealed class Par2CmdlineInteropTests
         foreach (var fileId in corpus.Main.FileIds)
         {
             var descriptor = corpus.Descriptors[Convert.ToHexString(fileId)];
-            var bytes = File.ReadAllBytes(Path.Combine(CorpusDirectory, descriptor.FileName));
+            var bytes = File.ReadAllBytes(Path.Join(CorpusDirectory, descriptor.FileName));
             if (descriptor.FileName == "alpha.bin" || crossFile && descriptor.FileName == "gamma.bin")
                 missing.Add(slices.Count);
             for (var index = 0; index < corpus.Checksums[Convert.ToHexString(fileId)].Slices.Count; index++)

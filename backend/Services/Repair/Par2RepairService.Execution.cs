@@ -1,5 +1,6 @@
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Par2Recovery;
 using NzbWebDAV.Par2Recovery.ReedSolomon;
@@ -23,7 +24,11 @@ public partial class Par2RepairService
 
         var maxMemoryBytes = _configManager.GetPar2MaxMemoryMb() * 1024L * 1024;
         var concurrency = _configManager.GetPar2FetchConcurrency();
-        using var reads = new RepairReadContext(maxMemoryBytes, concurrency, bytes => Interlocked.Add(ref _activeBytesRead, bytes));
+        using var reads = new RepairReadContext(maxMemoryBytes, concurrency, bytes => Interlocked.Add(ref _activeBytesRead, bytes))
+        {
+            IdentityByteLimit = IdentityByteLimitForTests ?? MaxPar2IdentityBytes,
+            IdentityRequestLimit = IdentityRequestLimitForTests ?? MaxPar2IdentityRequests,
+        };
         RepairPayload? payload = null;
         ResolvedSliceAccessor? accessor = null;
         List<SourceLayout>? layouts = null;
@@ -39,6 +44,7 @@ public partial class Par2RepairService
             payload = await LoadRepairPayloadAsync(item, reads, ct).ConfigureAwait(false);
             reads.UnavailableIds.UnionWith(job.MissingSegmentIds);
             var resolved = await ResolveRecoverySetAsync(document, payload, reads, ct).ConfigureAwait(false);
+            reads.ClearIdentityBody();
             var set = resolved.Set;
             layouts = resolved.Layouts;
             var sliceSize = checked((int)set.Main.SliceSize);
@@ -161,16 +167,23 @@ public partial class Par2RepairService
         }
         finally
         {
-            try
+            using (accessor)
             {
-                if (!ct.IsCancellationRequested && payload?.PlainFile is { } plain && accessor is not null
-                    && layouts?.SingleOrDefault(layout => layout.PayloadOwned) is { } target)
+                try
                 {
-                    accessor.UseLayout(target);
-                    await PersistDiscoveredDamageAsync(item, plain, accessor, ct).ConfigureAwait(false);
+                    if (!ct.IsCancellationRequested && payload?.PlainFile is { } plain && accessor is not null
+                        && layouts?.FirstOrDefault(layout => layout.PayloadOwned && layout.SegmentIds.SequenceEqual(plain.SegmentIds)) is { } target)
+                    {
+                        accessor.UseLayout(target);
+                        await PersistDiscoveredDamageAsync(item, plain, accessor, ct).ConfigureAwait(false);
+                    }
+                }
+                catch (Exception exception) when (exception is not OutOfMemoryException && !exception.IsCancellationException(ct))
+                {
+                    Log.Warning("PAR2 damage records could not be updated for {Path}. Reason: {Reason}", item.Path, exception.Message);
+                    Log.Debug(exception, "PAR2 damage-record persistence failure for {Path}", item.Path);
                 }
             }
-            finally { accessor?.Dispose(); }
         }
     }
 

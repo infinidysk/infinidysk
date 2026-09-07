@@ -6,6 +6,7 @@ using System.Text.Json;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Services.Observability;
+using NzbWebDAV.Utils;
 using Serilog;
 using UsenetSharp.Models;
 
@@ -26,7 +27,7 @@ public sealed class RepairPatchStore
     private long _hitCount;
     private long _evictionCount;
 
-    private static readonly JsonSerializerOptions HeaderJsonOptions = new() { IncludeFields = true };
+    internal static readonly JsonSerializerOptions HeaderJsonOptions = new() { IncludeFields = true };
 
     public RepairPatchStore(string cacheDir, long maxBytes)
         : this(cacheDir, maxBytes, enumerateCacheFiles: null)
@@ -55,6 +56,7 @@ public sealed class RepairPatchStore
     internal int EntryCount => _index.Count;
     internal long HitCount => Interlocked.Read(ref _hitCount);
     internal long EvictionCount => Interlocked.Read(ref _evictionCount);
+    internal Action? AfterReadValidationForTests { get; set; }
 
     public bool Contains(string segmentId)
         => IsCatalogReady && _index.ContainsKey(Hash(segmentId));
@@ -65,25 +67,32 @@ public sealed class RepairPatchStore
         if (!IsCatalogReady) return false;
 
         var hash = Hash(segmentId);
+        CacheEntry? entry;
         lock (_evictLock)
         {
-            if (!_index.TryGetValue(hash, out var entry)) return false;
-            if (!TryReadHeader(hash, entry.Size, out var header))
+            if (!_index.TryGetValue(hash, out entry)) return false;
+        }
+        var valid = TryReadHeader(hash, entry.Size, out var header);
+        AfterReadValidationForTests?.Invoke();
+        if (!valid)
+        {
+            DropIfCurrent(hash, entry);
+            return false;
+        }
+
+        try
+        {
+            using var owner = new DisposableOwner<FileStream>(() => new FileStream(BlobPath(hash), FileMode.Open, FileAccess.Read,
+                FileShare.Read | FileShare.Delete, bufferSize: 81920, useAsync: true));
+            var fileStream = owner.Value;
+            if (fileStream.Length != entry.Size)
             {
-                Drop(hash);
+                DropIfCurrent(hash, entry);
                 return false;
             }
-
-            FileStream? fileStream = null;
-            try
+            lock (_evictLock)
             {
-                fileStream = new FileStream(BlobPath(hash), FileMode.Open, FileAccess.Read,
-                    FileShare.Read | FileShare.Delete, bufferSize: 81920, useAsync: true);
-                if (fileStream.Length != entry.Size)
-                {
-                    Drop(hash);
-                    return false;
-                }
+                if (!IsCurrentEntry(hash, entry)) return false;
                 entry.LastAccessTicks = DateTime.UtcNow.Ticks;
                 Interlocked.Increment(ref _hitCount);
                 response = new UsenetDecodedBodyResponse
@@ -93,19 +102,15 @@ public sealed class RepairPatchStore
                     ResponseMessage = "222 - Article retrieved from repair patch store",
                     Stream = new CachedYencStream(header!, fileStream),
                 };
-                fileStream = null;
+                owner.ReleaseOwnership();
                 return true;
             }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-            {
-                Log.Debug(e, "Repair patch store: dropping unreadable patch for {SegmentId}", segmentId);
-                Drop(hash);
-                return false;
-            }
-            finally
-            {
-                fileStream?.Dispose();
-            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.Debug(e, "Repair patch store: dropping unreadable patch for {SegmentId}", segmentId);
+            DropIfCurrent(hash, entry);
+            return false;
         }
     }
 
@@ -118,15 +123,33 @@ public sealed class RepairPatchStore
     {
         if (!IsCatalogReady) return false;
         var hash = Hash(segmentId);
+        CacheEntry? entry;
         lock (_evictLock)
         {
-            if (!_index.TryGetValue(hash, out var entry)) return false;
-            if (!TryReadHeader(hash, entry.Size, out _))
+            if (!_index.TryGetValue(hash, out entry)) return false;
+        }
+        var valid = TryReadHeader(hash, entry.Size, out _);
+        AfterReadValidationForTests?.Invoke();
+        lock (_evictLock)
+        {
+            if (!IsCurrentEntry(hash, entry)) return false;
+            if (!valid)
             {
                 Drop(hash);
                 return false;
             }
             return expectedSize is null || entry.Size == expectedSize;
+        }
+    }
+
+    private bool IsCurrentEntry(string hash, CacheEntry snapshot)
+        => _index.TryGetValue(hash, out var current) && ReferenceEquals(current, snapshot);
+
+    private void DropIfCurrent(string hash, CacheEntry snapshot)
+    {
+        lock (_evictLock)
+        {
+            if (IsCurrentEntry(hash, snapshot)) Drop(hash);
         }
     }
 
@@ -341,6 +364,11 @@ public sealed class RepairPatchStore
                 continue;
             }
 
+            var name = Path.GetFileName(file);
+            var hash = name.EndsWith(".h", StringComparison.Ordinal) ? name[..^2] : name;
+            if (hash.Length != 64 || !hash.All(char.IsAsciiHexDigitUpper))
+                continue;
+
             if (file.EndsWith(".h", StringComparison.Ordinal))
             {
                 lock (_evictLock)
@@ -360,7 +388,7 @@ public sealed class RepairPatchStore
             {
                 info.Refresh();
                 if (!info.Exists) continue;
-                if (!TryReadHeader(Path.GetFileName(file), info.Length, out _))
+                if (!TryReadHeader(hash, info.Length, out _))
                 {
                     if (DateTime.UtcNow - info.LastWriteTimeUtc > TimeSpan.FromHours(1))
                     {
@@ -377,7 +405,7 @@ public sealed class RepairPatchStore
                 LastAccessTicks = info.LastWriteTimeUtc.Ticks,
             };
 
-            if (entries.TryAdd(Path.GetFileName(file), entry))
+            if (entries.TryAdd(hash, entry))
                 bytes = checked(bytes + info.Length);
         }
 

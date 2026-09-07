@@ -42,6 +42,93 @@ public sealed class RepairPatchStoreTests
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
 
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ConcurrentReplacement_DoesNotBlockValidationOrPublishMixedGenerations(bool bodyLookup, bool invalidOldHeader)
+    {
+        var dir = NewTempDir("validation-generation");
+        using var validated = new ManualResetEventSlim();
+        using var proceed = new ManualResetEventSlim();
+        Task<bool>? reader = null;
+        try
+        {
+            var store = new RepairPatchStore(dir, 100);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            store.CommitPatch("segment", [1, 2], Header(2));
+            if (invalidOldHeader)
+                await File.WriteAllTextAsync(Assert.Single(Directory.GetFiles(dir, "*.h", SearchOption.AllDirectories)), "{}");
+            store.AfterReadValidationForTests = () =>
+            {
+                validated.Set();
+                Assert.True(proceed.Wait(Timeout));
+            };
+            reader = Task.Run(() =>
+            {
+                if (!bodyLookup) return store.HasUsablePatch("segment");
+                var found = store.TryGet("segment", out var response);
+                using var stream = response?.Stream;
+                return found;
+            });
+            Assert.True(validated.Wait(Timeout));
+            await Task.Run(() => store.CommitPatch("segment", [7, 8, 9], Header(3))).WaitAsync(Timeout);
+            store.AfterReadValidationForTests = null;
+            proceed.Set();
+
+            Assert.False(await reader.WaitAsync(Timeout));
+            Assert.True(store.TryGet("segment", out var current));
+            await using var currentStream = current!.Stream!;
+            var header = await currentStream.GetYencHeadersAsync();
+            Assert.NotNull(header);
+            Assert.Equal(3, header.PartSize);
+            await using var output = new MemoryStream();
+            await currentStream.CopyToAsync(output);
+            Assert.Equal(new byte[] { 7, 8, 9 }, output.ToArray());
+            Assert.Equal(3, store.CurrentBytes);
+        }
+        finally
+        {
+            proceed.Set();
+            if (reader is not null) await reader.WaitAsync(Timeout);
+            DeleteDir(dir);
+        }
+    }
+
+    [Fact]
+    public async Task Catalog_IgnoresNoncanonicalNamesAndLoadsValidPatches()
+    {
+        var dir = NewTempDir("stray-files");
+        try
+        {
+            WriteBlob(dir, "valid@test", [1, 2, 3]);
+            string[] names = ["x", "notes.txt", new string('A', 63), new string('A', 65), new string('G', 64), new string('a', 64)];
+            foreach (var name in names)
+            {
+                var path = Path.Join(dir, name);
+                await File.WriteAllBytesAsync(path, [42]);
+                await File.WriteAllTextAsync(path + ".h", "{}");
+                File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddHours(-2));
+                File.SetLastWriteTimeUtc(path + ".h", DateTime.UtcNow.AddHours(-2));
+            }
+
+            var store = new RepairPatchStore(dir, 100);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None).WaitAsync(Timeout);
+
+            Assert.True(store.IsCatalogReady);
+            Assert.True(store.HasUsablePatch("valid@test"));
+            Assert.Equal(1, store.EntryCount);
+            Assert.Equal(3, store.CurrentBytes);
+            Assert.All(names, name =>
+            {
+                Assert.True(File.Exists(Path.Join(dir, name)));
+                Assert.True(File.Exists(Path.Join(dir, name + ".h")));
+            });
+        }
+        finally { DeleteDir(dir); }
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task BatchPublication_RetainsCompleteEntriesAndRespectsCapacity(bool failSecond)
@@ -574,7 +661,7 @@ public sealed class RepairPatchStoreTests
         var path = Path.Join(dir, hash[..2], hash);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllBytes(path, content);
-        File.WriteAllText(path + ".h", JsonSerializer.Serialize(Header(content.Length), new JsonSerializerOptions { IncludeFields = true }));
+        File.WriteAllText(path + ".h", JsonSerializer.Serialize(Header(content.Length), RepairPatchStore.HeaderJsonOptions));
         return path;
     }
 

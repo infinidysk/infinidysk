@@ -1,4 +1,5 @@
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Services.Repair;
 
@@ -116,36 +117,32 @@ public partial class Par2RepairService
             var length = checked((int)_layout.Map.SegmentRanges[index].Count);
             if (length > RetainedByteLimit - CachedBodyBytes)
                 throw new Par2MemoryCapExceededException("PAR2 source window exceeds the repair memory cap.");
-            IDisposable? reservation = _reads.Budget.Reserve(length + 128L);
+            using var reservation = new DisposableOwner<IDisposable>(() => _reads.Budget.Reserve(length + 128L));
+            await _reads.FetchGate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                await _reads.FetchGate.WaitAsync(ct).ConfigureAwait(false);
-                try
-                {
-                    var response = await _client.DecodedBodyAsync(_layout.SegmentIds[index], ct).ConfigureAwait(false);
-                    await using var stream = response.Stream!;
-                    await using var counted = new RepairCountingStream(stream, bytes => _reads.ReadBytes(bytes));
-                    var bytes = new byte[length];
-                    await counted.ReadExactlyAsync(bytes, ct).ConfigureAwait(false);
-                    var extra = new byte[1];
-                    if (await counted.ReadAsync(extra, ct).ConfigureAwait(false) != 0)
-                        throw new InvalidDataException("PAR2 source article exceeds its validated volume range.");
-                    _bodies[index] = (bytes, reservation);
-                    reservation = null;
-                    var retained = Interlocked.Add(ref _cachedBodyBytes, bytes.Length);
-                    Interlocked.Exchange(ref _peakCachedBodyBytes, Math.Max(PeakCachedBodyBytes, retained));
-                    return bytes;
-                }
-                catch (Exception exception) when (IsUnavailableArticle(exception))
-                {
-                    _reads.NoteUnavailable(_layout.SegmentIds[index], exception);
-                    if (_reads.MissingIds.Contains(_layout.SegmentIds[index])) NoteMissing(index);
-                    else NoteCorrupt(index);
-                    return null;
-                }
-                finally { _reads.FetchGate.Release(); }
+                var response = await _client.DecodedBodyAsync(_layout.SegmentIds[index], ct).ConfigureAwait(false);
+                await using var stream = response.Stream!;
+                await using var counted = new RepairCountingStream(stream, bytes => _reads.ReadBytes(bytes));
+                var bytes = new byte[length];
+                await counted.ReadExactlyAsync(bytes, ct).ConfigureAwait(false);
+                var extra = new byte[1];
+                if (await counted.ReadAsync(extra, ct).ConfigureAwait(false) != 0)
+                    throw new InvalidDataException("PAR2 source article exceeds its validated volume range.");
+                _bodies[index] = (bytes, reservation.Value);
+                reservation.ReleaseOwnership();
+                var retained = Interlocked.Add(ref _cachedBodyBytes, bytes.Length);
+                Interlocked.Exchange(ref _peakCachedBodyBytes, Math.Max(PeakCachedBodyBytes, retained));
+                return bytes;
             }
-            finally { reservation?.Dispose(); }
+            catch (Exception exception) when (IsUnavailableArticle(exception))
+            {
+                _reads.NoteUnavailable(_layout.SegmentIds[index], exception);
+                if (_reads.MissingIds.Contains(_layout.SegmentIds[index])) NoteMissing(index);
+                else NoteCorrupt(index);
+                return null;
+            }
+            finally { _reads.FetchGate.Release(); }
         }
 
         private void Evict(int index)
