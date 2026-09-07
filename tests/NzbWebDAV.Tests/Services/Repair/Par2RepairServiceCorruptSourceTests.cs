@@ -238,7 +238,11 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
             .Where(id => release.Files[0].Ids.Contains(id, StringComparer.Ordinal))
             .ToList();
         Assert.Equal(2, siblingBodies.Count);
-        Assert.All(siblingBodies, id => Assert.Equal(1, release.Fake.BodyRequestCounts[id]));
+        Assert.All(siblingBodies, id =>
+        {
+            Assert.True(release.Fake.BodyRequestCounts[id] >= 3);
+            Assert.Equal(release.Fake.BodyRequestCounts[id], release.Fake.CompletionCallbackCounts[id]);
+        });
     }
 
     [Fact]

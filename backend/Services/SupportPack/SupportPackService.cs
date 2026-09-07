@@ -921,6 +921,14 @@ public sealed class SupportPackService(
                 maxMemoryMb = configManager.GetPar2MaxMemoryMb(),
                 fetchConcurrency = configManager.GetPar2FetchConcurrency(),
                 failureCooldownHours = configManager.GetPar2FailureCooldownHours(),
+                admission = new
+                {
+                    limit = snapshot.AdmissionLimit,
+                    active = snapshot.AdmissionActive,
+                    waiters = snapshot.AdmissionWaiters,
+                    totalWaitSeconds = snapshot.TotalAdmissionWaitSeconds,
+                    latestWaitSeconds = snapshot.LatestAdmissionWaitSeconds,
+                },
                 patchStore = new
                 {
                     entries = snapshot.PatchStoreEntries,

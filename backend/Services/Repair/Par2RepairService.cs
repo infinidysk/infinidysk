@@ -32,7 +32,7 @@ public enum Par2RepairOutcome
     VerifiedClean = 2,
 }
 
-public class Par2RepairService : BackgroundService
+public partial class Par2RepairService : BackgroundService
 {
     private const int MaxQueueLength = 50;
     private const int MaxAttempts = 3;
@@ -49,6 +49,11 @@ public class Par2RepairService : BackgroundService
     private readonly Channel<ZeroFillEvent> _zeroFillQueue;
     private readonly ConcurrentDictionary<Guid, byte> _queuedOrRunning = new();
     private readonly ConcurrentDictionary<Guid, RepairFlight> _repairFlights = new();
+    private readonly SemaphoreSlim _repairAdmission = new(1, 1);
+    private int _admissionActive;
+    private int _admissionWaiters;
+    private long _totalAdmissionWaitTicks;
+    private long _latestAdmissionWaitTicks;
     private readonly ConcurrentDictionary<string, byte> _pendingZeroFillPaths = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ConcurrentQueue<(string Id, bool IsCorruption)>> _pendingSegmentIds =
         new(StringComparer.Ordinal);
@@ -61,7 +66,9 @@ public class Par2RepairService : BackgroundService
     private long _totalSegmentsCommitted;
     private string? _activeRepairPath;
     private string? _activeRepairPhase;
-    private SliceSegmentAccessor? _activeSource;
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2213:Disposable fields should be disposed",
+        Justification = "Non-owning diagnostic reference; ExecuteRepairJobAsync disposes its accessor in finally.")]
+    private ResolvedSliceAccessor? _activeSource;
     private long _activeBytesRead;
     private long _activeEstimatedWorkingSetBytes;
     private long _activeMemoryCapBytes;
@@ -185,7 +192,7 @@ public class Par2RepairService : BackgroundService
             return;
         }
 
-        var flight = new RepairFlight();
+        var flight = new RepairFlight(ids);
         if (!_repairFlights.TryAdd(davItem.Id, flight))
         {
             RetainSegmentIds(davItem.Id, davItem.Path, ids);
@@ -226,21 +233,25 @@ public class Par2RepairService : BackgroundService
         if (!_configManager.IsPar2RepairEnabled())
             return Par2RepairOutcome.NotRepaired;
 
-        var mine = new RepairFlight();
-        var flight = _repairFlights.GetOrAdd(davItem.Id, mine);
-        if (ReferenceEquals(flight, mine))
-            return await RunFlightAsync(flight, davItem, missingSegmentIds, queueGuard: false, ct)
-                .ConfigureAwait(false);
-
-        try
+        while (true)
         {
-            return await flight.Task.WaitAsync(ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            // The repair owner stopped; callers should follow their normal safe fallback
-            // rather than surfacing a cancellation that they did not request.
-            return Par2RepairOutcome.NotRepaired;
+            ct.ThrowIfCancellationRequested();
+            var mine = new RepairFlight(missingSegmentIds);
+            var flight = _repairFlights.GetOrAdd(davItem.Id, mine);
+            if (ReferenceEquals(flight, mine))
+                return await RunFlightAsync(flight, davItem, missingSegmentIds, queueGuard: false, ct).ConfigureAwait(false);
+            try
+            {
+                var result = await flight.Task.WaitAsync(ct).ConfigureAwait(false);
+                if (result == Par2RepairOutcome.NotRepaired || flight.Covers(missingSegmentIds)
+                    || missingSegmentIds is { Count: > 0 } && missingSegmentIds.All(_patchStore.HasUsablePatch))
+                    return result;
+                await flight.Finished.Task.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                return Par2RepairOutcome.NotRepaired;
+            }
         }
     }
 
@@ -427,6 +438,13 @@ public class Par2RepairService : BackgroundService
                 {
                     CancelFlight(item.DavItemId, item.Flight, stoppingToken);
                     throw;
+                }
+                catch (Exception exception) when (exception is MissingFilePayloadException or CorruptedBlobPayloadException)
+                {
+                    _queuedOrRunning.TryRemove(item.DavItemId, out _);
+                    CompleteFlight(item.DavItemId, item.Flight, Par2RepairOutcome.NotRepaired);
+                    Log.Warning("PAR2 background repair cannot read the payload for {Path}. Reason: {Reason}", item.Path, exception.Message);
+                    Log.Debug(exception, "PAR2 streaming payload failure for {Path}", item.Path);
                 }
                 catch (Exception e) when (e is not OutOfMemoryException)
                 {
@@ -647,8 +665,27 @@ public class Par2RepairService : BackgroundService
         bool queueGuard,
         CancellationToken ct)
     {
+        var admitted = false;
         try
         {
+            var wait = Stopwatch.StartNew();
+            Interlocked.Increment(ref _admissionWaiters);
+            PublishAdmissionMetrics();
+            try
+            {
+                await _repairAdmission.WaitAsync(ct).ConfigureAwait(false);
+                admitted = true;
+                Interlocked.Exchange(ref _admissionActive, 1);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _admissionWaiters);
+                wait.Stop();
+                Interlocked.Add(ref _totalAdmissionWaitTicks, wait.Elapsed.Ticks);
+                Interlocked.Exchange(ref _latestAdmissionWaitTicks, wait.Elapsed.Ticks);
+                PrometheusMetrics.Current?.ObservePar2AdmissionWait(wait.Elapsed);
+                PublishAdmissionMetrics();
+            }
             var result = await RunRepairAsync(davItem, missingSegmentIds, queueGuard, ct).ConfigureAwait(false);
             flight.Completion.TrySetResult(result);
             return result;
@@ -665,7 +702,15 @@ public class Par2RepairService : BackgroundService
         }
         finally
         {
+            if (admitted)
+            {
+                Interlocked.Exchange(ref _admissionActive, 0);
+                _repairAdmission.Release();
+                PublishAdmissionMetrics();
+            }
+            if (queueGuard) _queuedOrRunning.TryRemove(davItem.Id, out _);
             _repairFlights.TryRemove(new KeyValuePair<Guid, RepairFlight>(davItem.Id, flight));
+            flight.Finished.TrySetResult();
             try
             {
                 if (!ct.IsCancellationRequested)
@@ -685,6 +730,16 @@ public class Par2RepairService : BackgroundService
     {
         flight.Completion.TrySetResult(result);
         _repairFlights.TryRemove(new KeyValuePair<Guid, RepairFlight>(davItemId, flight));
+    }
+
+    private void PublishAdmissionMetrics() => PrometheusMetrics.Current?.SetPar2Admission(
+        Volatile.Read(ref _admissionActive), Volatile.Read(ref _admissionWaiters));
+
+    public override void Dispose()
+    {
+        base.Dispose();
+        _repairAdmission.Dispose();
+        GC.SuppressFinalize(this);
     }
 
     private void CancelFlight(Guid davItemId, RepairFlight flight, CancellationToken cancellationToken)
@@ -793,6 +848,13 @@ public class Par2RepairService : BackgroundService
             Log.Warning("PAR2 repair deferred after exhausting managed memory. Path: {Path}", davItem.Path);
             return Par2RepairOutcome.NotRepaired;
         }
+        catch (Exception exception) when (exception is MissingFilePayloadException or CorruptedBlobPayloadException)
+        {
+            await MarkJobFailureAsync(job, exception.Message, cooldown: false, ct).ConfigureAwait(false);
+            Interlocked.Increment(ref _totalFailed);
+            PrometheusMetrics.Current?.RecordPar2RepairJob("failed");
+            throw;
+        }
         catch (Exception e) when (e is not OperationCanceledException)
         {
             stopwatch.Stop();
@@ -811,337 +873,8 @@ public class Par2RepairService : BackgroundService
         }
     }
 
-    private async Task<RepairExecutionResult> ExecuteRepairJobAsync(
-        DavItem davItem,
-        Par2RepairJob job,
-        CancellationToken ct)
-    {
-        if (davItem.SubType != DavItem.ItemSubType.NzbFile)
-            return RepairExecutionResult.NotFeasible("PAR2 repair supports plain NZB files only.");
-
-        if (davItem.NzbBlobId is not Guid nzbBlobId)
-            return RepairExecutionResult.NotFeasible("NZB blob id is missing for this file.");
-
-        await using var nzbStream = BlobStore.ReadBlob(nzbBlobId);
-        if (nzbStream == null)
-            return RepairExecutionResult.NotFeasible("NZB blob is no longer available.");
-
-        NzbDocument nzbDocument;
-        try
-        {
-            nzbDocument = await NzbDocument.LoadAsync(nzbStream, ct).ConfigureAwait(false);
-        }
-        catch (Exception e) when (e is not OutOfMemoryException)
-        {
-            return RepairExecutionResult.NotFeasible($"Could not parse NZB blob: {e.Message}");
-        }
-
-        await using var dbContext = CreateContext();
-        var dbClient = new DavDatabaseClient(dbContext);
-        var nzbFile = await dbClient.GetDavNzbFileAsync(davItem, ct).ConfigureAwait(false);
-        if (nzbFile?.SegmentIds is not { Length: > 0 } segmentIds)
-            return RepairExecutionResult.NotFeasible("Streaming payload metadata is missing.");
-
-        var contentNzb = FindContentNzbFile(nzbDocument, davItem.Name);
-        if (contentNzb == null)
-            return RepairExecutionResult.NotFeasible("Could not locate the content file in the NZB.");
-
-        var par2Context = await DiscoverPar2SetAsync(nzbDocument, contentNzb, davItem.Name, ct)
-            .ConfigureAwait(false);
-        if (par2Context == null)
-            return RepairExecutionResult.NotFeasible("No matching PAR2 recovery set found in the NZB.");
-
-        var sliceSize = (int)par2Context.Main.SliceSize;
-        var targetKey = Convert.ToHexString(par2Context.Main.FileIds[par2Context.TargetFileIndex]);
-        var targetDesc = par2Context.FileDescsById[targetKey];
-        var targetIfsc = par2Context.IfscsByFileId[targetKey];
-        var fileLength = davItem.FileSize ?? (long)targetDesc.FileLength;
-        var globalSliceBase = GlobalSliceOffset(
-            par2Context.TargetFileIndex, par2Context.Main, par2Context.IfscsByFileId);
-
-        LongRange[] segmentRanges;
-        try
-        {
-            segmentRanges = BuildSegmentRanges(nzbFile, segmentIds.Length, fileLength);
-        }
-        catch (InvalidOperationException e)
-        {
-            return RepairExecutionResult.NotFeasible(e.Message);
-        }
-
-        if (!Par2FileSliceMap.TryCreate(
-                fileLength,
-                globalSliceBase,
-                sliceSize,
-                targetIfsc.Slices.Count,
-                segmentRanges,
-                out var sliceMap,
-                out var mapError)
-            || sliceMap is null)
-        {
-            return RepairExecutionResult.NotFeasible(mapError ?? "Could not map segments onto PAR2 slices.");
-        }
-
-        var requested = ResolveMissingSegments(job.MissingSegmentIds, segmentIds);
-        var persistedMissing = ValidIndices(nzbFile.MissingSegmentIndices, segmentIds.Length);
-        var persistedCorrupt = ValidIndices(nzbFile.CorruptSegmentIndices, segmentIds.Length);
-        var unavailableSegments = new HashSet<int>();
-        foreach (var item in requested)
-            unavailableSegments.Add(item.Index);
-        unavailableSegments.UnionWith(persistedMissing);
-        unavailableSegments.UnionWith(persistedCorrupt);
-
-        var verifyAll = job.MissingSegmentIds.Length == 0
-                        && persistedMissing.Count == 0
-                        && persistedCorrupt.Count == 0;
-
-        if (!verifyAll && unavailableSegments.Count == 0)
-            return RepairExecutionResult.NotFeasible("No missing or corrupt segments to repair.");
-
-        var unavailableSlices = new HashSet<int>();
-        try
-        {
-            foreach (var index in unavailableSegments)
-            {
-                foreach (var slice in sliceMap.GlobalSlicesForSegment(index))
-                    unavailableSlices.Add(slice);
-            }
-        }
-        catch (OverflowException)
-        {
-            return RepairExecutionResult.NotFeasible("Segment-to-slice mapping overflowed.");
-        }
-
-        if (!verifyAll && unavailableSlices.Count == 0)
-            return RepairExecutionResult.NotFeasible("Missing or corrupt segments do not map to PAR2 slices.");
-
-        var maxMissingSlices = _configManager.GetPar2MaxMissingSlices();
-        if (unavailableSlices.Count > maxMissingSlices)
-        {
-            Log.Warning(
-                "PAR2 repair targeting {Path} infeasible before discovery. " +
-                "Initial={Initial} Discovered={Discovered} Cap={Cap} BytesRead={BytesRead} Elapsed={Elapsed}",
-                davItem.Path, unavailableSlices.Count, 0, maxMissingSlices, 0L, TimeSpan.Zero);
-            return RepairExecutionResult.NotFeasible(
-                $"Missing slice count {unavailableSlices.Count} exceeds cap {maxMissingSlices}.");
-        }
-
-        var fetchConcurrency = _configManager.GetPar2FetchConcurrency();
-        using var fetchGate = new SemaphoreSlim(fetchConcurrency, fetchConcurrency);
-        var bytesRead = 0L;
-        var maxMemoryBytes = _configManager.GetPar2MaxMemoryMb() * 1024L * 1024L;
-        SetRepairPhase("discovery", maxMemoryBytes);
-        long discoverySourceCap;
-        try
-        {
-            // A pass holds one assembled slice while the source retains the segments that
-            // overlap it. Keep one further slice of headroom for the caller/reconstructor.
-            discoverySourceCap = checked(maxMemoryBytes - (2L * sliceSize));
-        }
-        catch (OverflowException)
-        {
-            return RepairExecutionResult.NotFeasible("PAR2 memory cap is too small for its slice size.");
-        }
-
-        if (discoverySourceCap <= 0)
-            return RepairExecutionResult.NotFeasible("PAR2 memory cap is too small for its slice size.");
-
-        var accessor = new SliceSegmentAccessor(
-            segmentIds,
-            sliceMap,
-            nzbDocument,
-            par2Context,
-            _usenetClient,
-            fetchGate,
-            unavailableSlices,
-            discoverySourceCap,
-            onBytesRead: n =>
-            {
-                bytesRead += n;
-                Interlocked.Add(ref _activeBytesRead, n);
-            });
-        _activeSource = accessor;
-        foreach (var index in persistedMissing)
-            accessor.NoteMissing(index);
-        foreach (var index in persistedCorrupt)
-            accessor.NoteCorrupt(index);
-
-        try
-        {
-            var initialUnavailableSlices = unavailableSlices.Count;
-            var discoveryWatch = Stopwatch.StartNew();
-            var exceededCap = await DiscoverUnavailableSourcesAsync(
-                    accessor, sliceMap, targetIfsc, unavailableSegments, unavailableSlices,
-                    maxMissingSlices, ct)
-                .ConfigureAwait(false);
-            discoveryWatch.Stop();
-
-            var discoveredMissing = accessor.MissingSegmentIndices.Except(persistedMissing).Except(requested.Select(x => x.Index)).Count();
-            var discoveredCorrupt = accessor.CorruptSegmentIndices.Except(persistedCorrupt).Except(requested.Select(x => x.Index)).Count();
-            Log.Information(
-                "PAR2 repair targeting {Path}: requested={Requested} persistedMissing={PersistedMissing} "
-                + "persistedCorrupt={PersistedCorrupt} discoveredMissing={DiscoveredMissing} "
-                + "discoveredCorrupt={DiscoveredCorrupt} slices={Slices}",
-                davItem.Path,
-                requested.Count,
-                persistedMissing.Count,
-                persistedCorrupt.Count,
-                discoveredMissing,
-                discoveredCorrupt,
-                unavailableSlices.Count);
-
-            if (exceededCap || unavailableSlices.Count > maxMissingSlices)
-            {
-                await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
-                Log.Warning(
-                    "PAR2 repair targeting {Path} infeasible after discovery. " +
-                    "Initial={Initial} Discovered={Discovered} Cap={Cap} BytesRead={BytesRead} Elapsed={Elapsed}",
-                    davItem.Path,
-                    initialUnavailableSlices,
-                    unavailableSlices.Count,
-                    maxMissingSlices,
-                    bytesRead,
-                    discoveryWatch.Elapsed);
-                return RepairExecutionResult.NotFeasible(
-                    $"Missing slice count {unavailableSlices.Count} exceeds cap {maxMissingSlices}.",
-                    bytesRead);
-            }
-
-            if (verifyAll && unavailableSlices.Count == 0)
-                return RepairExecutionResult.Verified(bytesRead);
-
-            var patchTargets = SegmentsOverlappingSlices(sliceMap, unavailableSlices, segmentIds);
-            var stagedPatchBytes = patchTargets.Sum(target => segmentRanges[target.Index].Count);
-            long workingSetBytes;
-            try
-            {
-                workingSetBytes = EstimateWorkingSetBytes(
-                    EstimateMaxSourceWindowBytes(sliceMap, par2Context, nzbDocument),
-                    unavailableSlices.Count,
-                    unavailableSlices.Count,
-                    stagedPatchBytes,
-                    sliceSize);
-            }
-            catch (OverflowException)
-            {
-                await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
-                return RepairExecutionResult.NotFeasible("PAR2 working-set estimate overflowed.", bytesRead);
-            }
-
-            if (workingSetBytes > maxMemoryBytes)
-            {
-                await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
-                return RepairExecutionResult.NotFeasible(
-                    $"PAR2 working set {workingSetBytes} bytes exceeds memory cap.",
-                    bytesRead);
-            }
-
-            Interlocked.Exchange(ref _activeEstimatedWorkingSetBytes, workingSetBytes);
-            var releaseBytesCap = _configManager.GetPar2MaxReleaseGb() * 1024L * 1024L * 1024L;
-            var releaseBytes = EstimateReleaseBytes(par2Context.Main, par2Context.FileDescsById);
-            if (releaseBytes > releaseBytesCap)
-            {
-                await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
-                return RepairExecutionResult.NotFeasible(
-                    $"Recovery set size {releaseBytes} bytes exceeds release cap.",
-                    bytesRead);
-            }
-
-            var missingSliceIndices = unavailableSlices.OrderBy(x => x).ToList();
-            SetRepairPhase("recovery-volumes", maxMemoryBytes);
-            accessor.SetRetainedByteLimit(checked(maxMemoryBytes - EstimateNonSourceWorkingSetBytes(
-                unavailableSlices.Count,
-                unavailableSlices.Count,
-                stagedPatchBytes,
-                sliceSize)));
-            var recoverySlices = await CollectRecoverySlicesAsync(
-                par2Context.VolumeFiles,
-                missingSliceIndices.Count,
-                par2Context.Main.SliceSize,
-                fetchGate,
-                ct,
-                onBytesRead: n => bytesRead += n).ConfigureAwait(false);
-            if (recoverySlices.Count < missingSliceIndices.Count)
-            {
-                await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
-                return RepairExecutionResult.NotFeasible(
-                    $"Need {missingSliceIndices.Count} recovery slices but only collected {recoverySlices.Count}.",
-                    bytesRead);
-            }
-
-            var reconstructor = new Par2Reconstructor();
-            SetRepairPhase("reconstruction", maxMemoryBytes);
-            accessor.BeginSequentialPass();
-            var reconstruction = await reconstructor.ReconstructAsync(
-                par2Context.Main,
-                par2Context.FileDescsById,
-                par2Context.IfscsByFileId,
-                missingSliceIndices,
-                recoverySlices,
-                (sliceIndex, size, token) => accessor.FetchSliceBytesAsync(sliceIndex, size, token),
-                ct).ConfigureAwait(false);
-
-            if (!reconstruction.Success)
-            {
-                PrometheusMetrics.Current?.RecordPar2ValidationFailure("slice");
-                await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
-                return RepairExecutionResult.Failed(
-                    reconstruction.FailureReason ?? "Reconstruction failed.",
-                    bytesRead);
-            }
-
-            if (patchTargets.Count == 0)
-            {
-                await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
-                return RepairExecutionResult.NotFeasible(
-                    "No missing or corrupt segments were confirmed during PAR2 repair.",
-                    bytesRead);
-            }
-
-            SetRepairPhase("assembling-patches", maxMemoryBytes);
-            accessor.BeginSequentialPass();
-            var commits = await ExtractSegmentPatchesAsync(
-                patchTargets,
-                sliceMap,
-                reconstruction.ReconstructedSlices,
-                accessor,
-                davItem.Name,
-                fileLength,
-                segmentIds.Length,
-                ct).ConfigureAwait(false);
-
-            SetRepairPhase("whole-file-verification", maxMemoryBytes);
-            accessor.BeginSequentialPass();
-            var md5Reason = await TryVerifyWholeFileMd5Async(
-                    targetDesc, sliceMap, reconstruction.ReconstructedSlices, accessor, ct)
-                .ConfigureAwait(false);
-            if (md5Reason is not null)
-            {
-                PrometheusMetrics.Current?.RecordPar2ValidationFailure("file");
-                await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
-                return RepairExecutionResult.Failed(md5Reason, bytesRead);
-            }
-
-            _patchStore.CommitPatches(
-                commits.Select(patch => (patch.SegmentId, patch.Bytes, patch.Header)).ToList());
-
-            SetRepairPhase("committing-patches", maxMemoryBytes);
-            await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
-            PrometheusMetrics.Current?.AddPar2RepairBytesRead(bytesRead);
-            PrometheusMetrics.Current?.AddPar2SlicesReconstructed(reconstruction.ReconstructedSlices.Count);
-            PrometheusMetrics.Current?.AddPar2SegmentsCommitted(commits.Count);
-            job.MissingSegmentIds = patchTargets.Select(x => x.SegmentId).ToArray();
-            return RepairExecutionResult.Succeeded(bytesRead, reconstruction.ReconstructedSlices.Count, commits.Count);
-        }
-        catch (Par2MemoryCapExceededException e)
-        {
-            await PersistDiscoveredDamageAsync(davItem, nzbFile, accessor, ct).ConfigureAwait(false);
-            return RepairExecutionResult.NotFeasible(e.Message, bytesRead);
-        }
-    }
-
     private static async Task<bool> DiscoverUnavailableSourcesAsync(
-        SliceSegmentAccessor accessor,
+        ResolvedSliceAccessor accessor,
         Par2FileSliceMap sliceMap,
         IfscPacket targetIfsc,
         HashSet<int> unavailableSegments,
@@ -1168,6 +901,11 @@ public class Par2RepairService : BackgroundService
 
                 var assembled = await accessor.FetchSliceBytesAsync(globalSlice, sliceMap.SliceSize, ct)
                     .ConfigureAwait(false);
+                if (assembled is not null && !Par2Reconstructor.VerifySliceChecksum(assembled, targetIfsc.Slices[local]))
+                {
+                    foreach (var segmentIndex in sliceMap.SegmentIndicesForGlobalSlice(globalSlice))
+                        accessor.NoteCorrupt(segmentIndex);
+                }
                 AbsorbAccessorDiscoveries(accessor, sliceMap, unavailableSegments, unavailableSlices, ref expanded);
                 expanded |= (assembled is null ||
                              !Par2Reconstructor.VerifySliceChecksum(assembled, targetIfsc.Slices[local]))
@@ -1181,7 +919,7 @@ public class Par2RepairService : BackgroundService
     }
 
     private static void AbsorbAccessorDiscoveries(
-        SliceSegmentAccessor accessor,
+        ResolvedSliceAccessor accessor,
         Par2FileSliceMap sliceMap,
         HashSet<int> unavailableSegments,
         HashSet<int> unavailableSlices,
@@ -1250,47 +988,6 @@ public class Par2RepairService : BackgroundService
         }
     }
 
-    private static long EstimateMaxSourceWindowBytes(
-        Par2FileSliceMap targetMap,
-        Par2SetContext par2,
-        NzbDocument nzbDocument)
-    {
-        var peak = targetMap.EstimateMaxOverlappingSegmentBytes();
-        for (var fileIndex = 0; fileIndex < par2.Main.FileIds.Count; fileIndex++)
-        {
-            if (fileIndex == par2.TargetFileIndex)
-                continue;
-
-            var key = Convert.ToHexString(par2.Main.FileIds[fileIndex]);
-            if (!par2.FileDescsById.TryGetValue(key, out var desc)
-                || !par2.IfscsByFileId.TryGetValue(key, out var ifsc))
-            {
-                continue;
-            }
-
-            var nzbFile = FindContentNzbFile(nzbDocument, desc.FileName);
-            var ranges = nzbFile?.GetSegmentByteRanges()
-                         ?? (nzbFile is null ? null : TryInferSegmentRanges(nzbFile, (long)desc.FileLength));
-            if (ranges is null
-                || !Par2FileSliceMap.TryCreate(
-                    (long)desc.FileLength,
-                    GlobalSliceOffset(fileIndex, par2.Main, par2.IfscsByFileId),
-                    (int)par2.Main.SliceSize,
-                    ifsc.Slices.Count,
-                    ranges,
-                    out var map,
-                    out _)
-                || map is null)
-            {
-                continue;
-            }
-
-            peak = Math.Max(peak, map.EstimateMaxOverlappingSegmentBytes());
-        }
-
-        return peak;
-    }
-
     private static HashSet<int> ValidIndices(int[]? indices, int segmentCount)
     {
         if (indices is not { Length: > 0 })
@@ -1301,7 +998,7 @@ public class Par2RepairService : BackgroundService
     private async Task PersistDiscoveredDamageAsync(
         DavItem davItem,
         DavNzbFile nzbFile,
-        SliceSegmentAccessor accessor,
+        ResolvedSliceAccessor accessor,
         CancellationToken ct)
     {
         var missing = accessor.MissingSegmentIndices.OrderBy(i => i).ToArray();
@@ -1350,7 +1047,7 @@ public class Par2RepairService : BackgroundService
         FileDesc desc,
         Par2FileSliceMap sliceMap,
         Dictionary<int, byte[]> reconstructedSlices,
-        SliceSegmentAccessor accessor,
+        ResolvedSliceAccessor accessor,
         CancellationToken ct)
     {
         if (desc.FileHash is not { Length: 16 })
@@ -1398,7 +1095,7 @@ public class Par2RepairService : BackgroundService
         IReadOnlyList<MissingSegment> missingSegments,
         Par2FileSliceMap sliceMap,
         Dictionary<int, byte[]> reconstructedSlices,
-        SliceSegmentAccessor accessor,
+        ResolvedSliceAccessor accessor,
         string fileName,
         long fileSize,
         int segmentCount,
@@ -1499,256 +1196,11 @@ public class Par2RepairService : BackgroundService
         throw new InvalidOperationException("Segment byte ranges are unavailable for PAR2 repair.");
     }
 
-    private static LongRange[]? TryInferSegmentRanges(NzbFile nzbFile, long fileLength)
-    {
-        var count = nzbFile.Segments.Count;
-        if (count == 0 || fileLength <= 0)
-            return null;
-
-        var ranges = new LongRange[count];
-        long start = 0;
-        for (var i = 0; i < count; i++)
-        {
-            var remaining = fileLength - start;
-            if (remaining <= 0)
-                return null;
-            var size = i == count - 1 ? remaining : nzbFile.Segments[i].Bytes;
-            if (size <= 0 || size > remaining)
-                return null;
-            ranges[i] = LongRange.FromStartAndSize(start, size);
-            start += size;
-        }
-
-        return start == fileLength ? ranges : null;
-    }
-
-    private static List<MissingSegment> ResolveMissingSegments(string[] requestedIds, string[] segmentIds)
-    {
-        var indexById = segmentIds
-            .Select((id, index) => (id, index))
-            .ToDictionary(x => x.id, x => x.index, StringComparer.Ordinal);
-
-        return requestedIds
-            .Where(indexById.ContainsKey)
-            .Select(id => new MissingSegment(id, indexById[id]))
-            .ToList();
-    }
-
-    private async Task<List<Par2Reconstructor.RecoverySlice>> CollectRecoverySlicesAsync(
-        IReadOnlyList<NzbFile> volumeFiles,
-        int needed,
-        ulong sliceSize,
-        SemaphoreSlim fetchGate,
-        CancellationToken ct,
-        Action<long>? onBytesRead = null)
-    {
-        var byExponent = new Dictionary<uint, byte[]>();
-        foreach (var volume in volumeFiles)
-        {
-            if (byExponent.Count >= needed) break;
-
-            await fetchGate.WaitAsync(ct).ConfigureAwait(false);
-            try
-            {
-                var segments = volume.GetSegmentIds();
-                var fileSize = await _usenetClient.GetFileSizeAsync(volume, ct).ConfigureAwait(false);
-                onBytesRead?.Invoke(fileSize);
-                await using var stream = _usenetClient.GetFileStream(segments, fileSize, articleBufferSize: 0);
-                while (stream.Position < stream.Length && byExponent.Count < needed)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    Par2Packet packet;
-                    try
-                    {
-                        packet = await Par2RepairReader.ReadVerifiedPacketAsync(stream, readRecvSlicPayload: true, ct)
-                            .ConfigureAwait(false);
-                    }
-                    catch (InvalidDataException e)
-                    {
-                        PrometheusMetrics.Current?.RecordPar2ValidationFailure("packet");
-                        Log.Debug(e, "Skipping invalid PAR2 packet while reading recovery volume {Subject}", volume.Subject);
-                        break;
-                    }
-
-                    if (packet is RecvSlic recvSlic && recvSlic.Payload.Length == (int)sliceSize
-                        && byExponent.TryAdd(recvSlic.Exponent, recvSlic.Payload)
-                        && byExponent.Count >= needed)
-                    {
-                        break;
-                    }
-                }
-            }
-            finally
-            {
-                fetchGate.Release();
-            }
-        }
-
-        return byExponent
-            .OrderBy(x => x.Key)
-            .Take(needed)
-            .Select(x => new Par2Reconstructor.RecoverySlice(x.Key, x.Value))
-            .ToList();
-    }
-
-    private async Task<Par2SetContext?> DiscoverPar2SetAsync(
-        NzbDocument nzbDocument,
-        NzbFile contentNzb,
-        string davItemName,
-        CancellationToken ct)
-    {
-        var candidates = nzbDocument.Files
-            .Where(IsPar2CandidateSubject)
-            .OrderBy(x => x.Segments.Count)
-            .ThenBy(x => x.Segments.FirstOrDefault()?.MessageId, StringComparer.Ordinal)
-            .ToList();
-
-        foreach (var candidate in candidates.Where(x => !Par2.ParVolume.IsMatch(x.GetSubjectFileName())))
-        {
-            var context = await TryParsePar2IndexAsync(candidate, contentNzb, davItemName, nzbDocument, ct)
-                .ConfigureAwait(false);
-            if (context != null) return context;
-        }
-
-        if (candidates.Count > 0)
-        {
-            return await TryParsePar2IndexAsync(candidates[0], contentNzb, davItemName, nzbDocument, ct)
-                .ConfigureAwait(false);
-        }
-
-        foreach (var candidate in candidates)
-        {
-            if (await HasPar2MagicAsync(candidate, ct).ConfigureAwait(false))
-            {
-                var context = await TryParsePar2IndexAsync(candidate, contentNzb, davItemName, nzbDocument, ct)
-                    .ConfigureAwait(false);
-                if (context != null) return context;
-            }
-        }
-
-        return null;
-    }
-
     private static bool IsPar2CandidateSubject(NzbFile file)
     {
         var name = file.GetSubjectFileName();
         return name.EndsWith(".par2", StringComparison.OrdinalIgnoreCase)
                || Par2.ParVolume.IsMatch(name);
-    }
-
-    private async Task<bool> HasPar2MagicAsync(NzbFile file, CancellationToken ct)
-    {
-        if (file.Segments.Count == 0) return false;
-        try
-        {
-            var response = await _usenetClient.DecodedBodyAsync(file.Segments[0].MessageId, ct)
-                .ConfigureAwait(false);
-            await using var stream = response.Stream!;
-            var buffer = new byte[64];
-            var read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false);
-            return read >= 8 && Par2.HasPar2MagicBytes(buffer);
-        }
-        catch (Exception e) when (e is not OperationCanceledException and not OutOfMemoryException)
-        {
-            Log.Debug(e, "PAR2 magic sniff failed for {Subject}", file.Subject);
-            return false;
-        }
-    }
-
-    private async Task<Par2SetContext?> TryParsePar2IndexAsync(
-        NzbFile indexFile,
-        NzbFile contentNzb,
-        string davItemName,
-        NzbDocument nzbDocument,
-        CancellationToken ct)
-    {
-        var segments = indexFile.GetSegmentIds();
-        if (segments.Length == 0) return null;
-
-        var fileSize = await _usenetClient.GetFileSizeAsync(indexFile, ct).ConfigureAwait(false);
-        await using var stream = _usenetClient.GetFileStream(segments, fileSize, articleBufferSize: 0);
-
-        var fileDescs = new Dictionary<string, FileDesc>(StringComparer.Ordinal);
-        MainPacket? main = null;
-        var ifscs = new Dictionary<string, IfscPacket>(StringComparer.Ordinal);
-
-        while (stream.Position < stream.Length)
-        {
-            Par2Packet packet;
-            try
-            {
-                packet = await Par2RepairReader.ReadVerifiedPacketAsync(stream, readRecvSlicPayload: false, ct)
-                    .ConfigureAwait(false);
-            }
-            catch (InvalidDataException)
-            {
-                PrometheusMetrics.Current?.RecordPar2ValidationFailure("packet");
-                break;
-            }
-
-            switch (packet)
-            {
-                case FileDesc fileDesc:
-                    fileDescs[Convert.ToHexString(fileDesc.FileID)] = fileDesc;
-                    break;
-                case MainPacket mainPacket:
-                    main = mainPacket;
-                    break;
-                case IfscPacket ifsc:
-                    ifscs[Convert.ToHexString(ifsc.FileId)] = ifsc;
-                    break;
-                case RecvSlic:
-                    goto done;
-            }
-        }
-
-    done:
-        if (main == null || fileDescs.Count == 0 || ifscs.Count == 0)
-            return null;
-
-        var targetDesc = fileDescs.Values.FirstOrDefault(desc =>
-            string.Equals(desc.FileName, davItemName, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(desc.FileName, contentNzb.GetSubjectFileName(), StringComparison.OrdinalIgnoreCase));
-        if (targetDesc == null) return null;
-
-        var targetKey = Convert.ToHexString(targetDesc.FileID);
-        if (!ifscs.ContainsKey(targetKey)) return null;
-
-        var targetFileIndex = -1;
-        for (var i = 0; i < main.FileIds.Count; i++)
-        {
-            if (Convert.ToHexString(main.FileIds[i]).Equals(targetKey, StringComparison.Ordinal))
-            {
-                targetFileIndex = i;
-                break;
-            }
-        }
-
-        if (targetFileIndex < 0) return null;
-
-        var volumeFiles = nzbDocument.Files
-            .Where(x => x != indexFile)
-            .Where(x => IsPar2CandidateSubject(x) || Par2.ParVolume.IsMatch(x.GetSubjectFileName()))
-            .ToList();
-
-        return new Par2SetContext(main, fileDescs, ifscs, targetFileIndex, volumeFiles);
-    }
-
-    private static NzbFile? FindContentNzbFile(NzbDocument document, string davItemName)
-    {
-        return document.Files.FirstOrDefault(f =>
-                   string.Equals(f.GetSubjectFileName(), davItemName, StringComparison.OrdinalIgnoreCase))
-               ?? document.Files.FirstOrDefault(f =>
-                   f.GetSubjectFileName().EndsWith(davItemName, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static long EstimateReleaseBytes(
-        MainPacket main,
-        Dictionary<string, FileDesc> fileDescs)
-    {
-        return main.FileIds
-            .Select(fileId => Convert.ToHexString(fileId))
-            .Sum(key => fileDescs.TryGetValue(key, out var desc) ? (long)desc.FileLength : 0L);
     }
 
     private async Task<bool> ShouldEnqueueAsync(Guid davItemId, CancellationToken ct)
@@ -1860,6 +1312,10 @@ public class Par2RepairService : BackgroundService
         var activePhase = _activeRepairPhase;
         return new Par2RepairDiagnosticSnapshot
         {
+            AdmissionActive = Volatile.Read(ref _admissionActive),
+            AdmissionWaiters = Volatile.Read(ref _admissionWaiters),
+            TotalAdmissionWaitSeconds = TimeSpan.FromTicks(Interlocked.Read(ref _totalAdmissionWaitTicks)).TotalSeconds,
+            LatestAdmissionWaitSeconds = TimeSpan.FromTicks(Interlocked.Read(ref _latestAdmissionWaitTicks)).TotalSeconds,
             PatchStoreEntries = _patchStore.EntryCount,
             PatchHitCount = _patchStore.HitCount,
             PatchEvictionCount = _patchStore.EvictionCount,
@@ -1941,6 +1397,11 @@ public class Par2RepairService : BackgroundService
 
     public sealed class Par2RepairDiagnosticSnapshot
     {
+        public int AdmissionLimit => 1;
+        public int AdmissionActive { get; init; }
+        public int AdmissionWaiters { get; init; }
+        public double TotalAdmissionWaitSeconds { get; init; }
+        public double LatestAdmissionWaitSeconds { get; init; }
         public int PatchStoreEntries { get; init; }
         public long PatchHitCount { get; init; }
         public long PatchEvictionCount { get; init; }
@@ -1965,12 +1426,17 @@ public class Par2RepairService : BackgroundService
         long PeakRetainedSourceBytes,
         long RetainedSourceLimitBytes);
 
-    private sealed class RepairFlight
+    private sealed class RepairFlight(IReadOnlyList<string>? requestedIds)
     {
+        private readonly HashSet<string> _requestedIds = requestedIds?.ToHashSet(StringComparer.Ordinal) ?? [];
+        public TaskCompletionSource Finished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<Par2RepairOutcome> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task<Par2RepairOutcome> Task => Completion.Task;
+
+        public bool Covers(IReadOnlyList<string>? ids) => ids is not { Count: > 0 }
+            ? _requestedIds.Count == 0 : ids.All(_requestedIds.Contains);
     }
 
     private void RetainSegmentIds(Guid davItemId, string path, IEnumerable<string> segmentIds)
@@ -2076,8 +1542,7 @@ public class Par2RepairService : BackgroundService
         MainPacket Main,
         Dictionary<string, FileDesc> FileDescsById,
         Dictionary<string, IfscPacket> IfscsByFileId,
-        int TargetFileIndex,
-        List<NzbFile> VolumeFiles);
+        string RecoverySetId);
 
     private sealed record RepairExecutionResult(
         bool Success,
@@ -2099,469 +1564,6 @@ public class Par2RepairService : BackgroundService
 
         public static RepairExecutionResult Failed(string reason, long bytesRead = 0)
             => new(false, false, false, reason, bytesRead, 0, 0);
-    }
-
-    private sealed class SliceSegmentAccessor
-    {
-        private readonly string[] _segmentIds;
-        private readonly Par2FileSliceMap _map;
-        private readonly NzbDocument _nzbDocument;
-        private readonly Par2SetContext _par2;
-        private readonly UsenetStreamingClient _client;
-        private readonly SemaphoreSlim _fetchGate;
-        private readonly HashSet<int> _targetSlices;
-        private readonly Action<long>? _onBytesRead;
-        private readonly Dictionary<int, byte[]> _segmentBodies = new();
-        private readonly Dictionary<int, SiblingLayout> _siblingLayouts = new();
-        private readonly Dictionary<(int FileIndex, int SegmentIndex), byte[]> _siblingSegmentBodies = new();
-        private int _activeSiblingFileIndex = -1;
-        private readonly HashSet<int> _missingSegmentIndices = new();
-        private readonly HashSet<int> _corruptSegmentIndices = new();
-        private long _cachedBodyBytes;
-        private long _peakCachedBodyBytes;
-        private long _retainedByteLimit;
-
-        public SliceSegmentAccessor(
-            string[] segmentIds,
-            Par2FileSliceMap map,
-            NzbDocument nzbDocument,
-            Par2SetContext par2,
-            UsenetStreamingClient client,
-            SemaphoreSlim fetchGate,
-            HashSet<int> targetSlices,
-            long retainedByteLimit,
-            Action<long>? onBytesRead)
-        {
-            _segmentIds = segmentIds;
-            _map = map;
-            _nzbDocument = nzbDocument;
-            _par2 = par2;
-            _client = client;
-            _fetchGate = fetchGate;
-            _targetSlices = targetSlices;
-            _retainedByteLimit = retainedByteLimit;
-            _onBytesRead = onBytesRead;
-        }
-
-        public IReadOnlyCollection<int> MissingSegmentIndices => _missingSegmentIndices;
-        public IReadOnlyCollection<int> CorruptSegmentIndices => _corruptSegmentIndices;
-        public long CachedBodyBytes => Interlocked.Read(ref _cachedBodyBytes);
-        public long PeakCachedBodyBytes => Interlocked.Read(ref _peakCachedBodyBytes);
-        public long RetainedByteLimit => Interlocked.Read(ref _retainedByteLimit);
-
-        public void NoteMissing(int segmentIndex) => _missingSegmentIndices.Add(segmentIndex);
-
-        public void NoteCorrupt(int segmentIndex) => _corruptSegmentIndices.Add(segmentIndex);
-
-        /// <summary>
-        /// Starts a sequential pass over source slices. Source bodies are deliberately
-        /// not shared across passes: retaining a target file from discovery through
-        /// reduction and MD5 verification was the unbounded-memory failure mode.
-        /// </summary>
-        public void BeginSequentialPass()
-        {
-            _segmentBodies.Clear();
-            _siblingSegmentBodies.Clear();
-            _activeSiblingFileIndex = -1;
-            Interlocked.Exchange(ref _cachedBodyBytes, 0);
-        }
-
-        public void SetRetainedByteLimit(long limit)
-        {
-            if (limit <= 0)
-                throw new InvalidOperationException("PAR2 repair has no memory available for source segments.");
-            Interlocked.Exchange(ref _retainedByteLimit, limit);
-            if (CachedBodyBytes > limit)
-                BeginSequentialPass();
-        }
-
-        public async Task<byte[]?> FetchSliceBytesAsync(int globalSliceIndex, int sliceSize, CancellationToken ct)
-        {
-            var local = globalSliceIndex - _map.GlobalSliceBase;
-            if ((uint)local >= (uint)_map.SliceCount)
-                return await FetchForeignSliceAsync(globalSliceIndex, sliceSize, ct).ConfigureAwait(false);
-
-            if (_targetSlices.Contains(globalSliceIndex))
-                return null;
-
-            var sliceRange = _map.SliceFileRange(globalSliceIndex);
-            ClearSiblingBodies();
-            EvictPassedTargetSegments(sliceRange.StartInclusive);
-            var buffer = new byte[sliceSize];
-            var copied = 0;
-            foreach (var segmentIndex in _map.SegmentIndicesForGlobalSlice(globalSliceIndex))
-            {
-                var body = await GetSegmentBodyAsync(segmentIndex, ct).ConfigureAwait(false);
-                if (body is null)
-                {
-                    if (sliceRange.EndExclusive < _map.FileLength)
-                        return null;
-                    break;
-                }
-
-                var segmentRange = _map.SegmentRanges[segmentIndex];
-                var intersectStart = Math.Max(sliceRange.StartInclusive, segmentRange.StartInclusive);
-                var intersectEnd = Math.Min(sliceRange.EndExclusive, segmentRange.EndExclusive);
-                if (intersectEnd <= intersectStart)
-                    continue;
-
-                var destOffset = (int)(intersectStart - sliceRange.StartInclusive);
-                var srcOffset = (int)(intersectStart - segmentRange.StartInclusive);
-                var count = (int)(intersectEnd - intersectStart);
-                if (srcOffset < 0 || srcOffset + count > body.Length)
-                    return null;
-                Buffer.BlockCopy(body, srcOffset, buffer, destOffset, count);
-                copied += count;
-            }
-
-            if (copied < sliceRange.Count && sliceRange.EndExclusive < _map.FileLength)
-                return null;
-            return buffer;
-        }
-
-        /// <summary>
-        /// Fetches a target segment only while assembling a final patch. Most patch
-        /// bytes come from reconstructed slices; this covers the untouched portion
-        /// of a segment that merely overlaps a bad slice. Callers reset the pass
-        /// after each patch so this never becomes a release-sized cache.
-        /// </summary>
-        public Task<byte[]?> GetSegmentBodyForPatchAsync(int segmentIndex, CancellationToken ct)
-        {
-            // A known-bad source segment is completely covered by its unavailable
-            // slices, so reconstructing it must never retry the broken article.
-            // A neighbouring healthy segment can overlap one repaired slice and
-            // still supply the untouched bytes around that slice.
-            if (_map.GlobalSlicesForSegment(segmentIndex).All(_targetSlices.Contains))
-                return Task.FromResult<byte[]?>(null);
-            return GetSegmentBodyAsync(segmentIndex, ct);
-        }
-
-        private async Task<byte[]?> GetSegmentBodyAsync(int segmentIndex, CancellationToken ct)
-        {
-            if (_missingSegmentIndices.Contains(segmentIndex) || _corruptSegmentIndices.Contains(segmentIndex))
-                return null;
-            if (_segmentBodies.TryGetValue(segmentIndex, out var cached))
-                return cached;
-
-            await _fetchGate.WaitAsync(ct).ConfigureAwait(false);
-            try
-            {
-                if (_segmentBodies.TryGetValue(segmentIndex, out cached))
-                    return cached;
-                if (_missingSegmentIndices.Contains(segmentIndex) || _corruptSegmentIndices.Contains(segmentIndex))
-                    return null;
-
-                var segmentId = _segmentIds[segmentIndex];
-                try
-                {
-                    EnsureRetainedCapacity(checked((int)_map.SegmentRanges[segmentIndex].Count));
-                    var response = await _client.DecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
-                    await using var stream = response.Stream!;
-                    var bytes = await ReadExpectedSegmentBodyAsync(
-                            stream, _map.SegmentRanges[segmentIndex].Count, ct)
-                        .ConfigureAwait(false);
-                    _onBytesRead?.Invoke(bytes.Length);
-                    _segmentBodies[segmentIndex] = bytes;
-                    AddRetainedBytes(bytes.Length);
-                    return bytes;
-                }
-                catch (Exception e) when (e is not OutOfMemoryException)
-                {
-                    if (e.IsCancellationException(ct))
-                        throw;
-
-                    if (e.TryGetCausingException<UsenetArticleNotFoundException>(out _))
-                    {
-                        _missingSegmentIndices.Add(segmentIndex);
-                        return null;
-                    }
-
-                    if (e.TryGetCausingException<UsenetCorruptArticleException>(out _))
-                    {
-                        _corruptSegmentIndices.Add(segmentIndex);
-                        return null;
-                    }
-
-                    if (e is InvalidDataException or EndOfStreamException)
-                    {
-                        _corruptSegmentIndices.Add(segmentIndex);
-                        return null;
-                    }
-
-                    throw;
-                }
-            }
-            finally
-            {
-                _fetchGate.Release();
-            }
-        }
-
-        private sealed record SiblingLayout(Par2FileSliceMap Map, string[] SegmentIds);
-
-        private async Task<byte[]?> FetchForeignSliceAsync(int globalSliceIndex, int sliceSize, CancellationToken ct)
-        {
-            var offset = 0;
-            for (var fileIndex = 0; fileIndex < _par2.Main.FileIds.Count; fileIndex++)
-            {
-                var key = Convert.ToHexString(_par2.Main.FileIds[fileIndex]);
-                if (!_par2.IfscsByFileId.TryGetValue(key, out var ifsc))
-                    return null;
-
-                var count = ifsc.Slices.Count;
-                if (globalSliceIndex >= offset + count)
-                {
-                    offset += count;
-                    continue;
-                }
-
-                if (fileIndex == _par2.TargetFileIndex)
-                    return null;
-
-                if (!TryGetSiblingLayout(fileIndex, out var layout) || layout is null)
-                    return null;
-
-                return await AssembleSiblingSliceAsync(fileIndex, layout, globalSliceIndex, sliceSize, ct)
-                    .ConfigureAwait(false);
-            }
-
-            return null;
-        }
-
-        private bool TryGetSiblingLayout(int fileIndex, out SiblingLayout? layout)
-        {
-            if (_siblingLayouts.TryGetValue(fileIndex, out layout))
-                return true;
-
-            layout = null;
-            var key = Convert.ToHexString(_par2.Main.FileIds[fileIndex]);
-            if (!_par2.FileDescsById.TryGetValue(key, out var desc)
-                || !_par2.IfscsByFileId.TryGetValue(key, out var ifsc))
-                return false;
-
-            var nzbFile = FindContentNzbFile(_nzbDocument, desc.FileName);
-            if (nzbFile is null || nzbFile.Segments.Count == 0)
-                return false;
-
-            var fileLength = (long)desc.FileLength;
-            var ranges = nzbFile.GetSegmentByteRanges()
-                         ?? Par2RepairService.TryInferSegmentRanges(nzbFile, fileLength);
-            if (ranges is null)
-                return false;
-
-            var globalBase = GlobalSliceOffset(fileIndex, _par2.Main, _par2.IfscsByFileId);
-            if (!Par2FileSliceMap.TryCreate(
-                    fileLength,
-                    globalBase,
-                    (int)_par2.Main.SliceSize,
-                    ifsc.Slices.Count,
-                    ranges,
-                    out var map,
-                    out _)
-                || map is null)
-                return false;
-
-            layout = new SiblingLayout(map, nzbFile.GetSegmentIds());
-            _siblingLayouts[fileIndex] = layout;
-            return true;
-        }
-
-        private async Task<byte[]?> AssembleSiblingSliceAsync(
-            int fileIndex,
-            SiblingLayout layout,
-            int globalSliceIndex,
-            int sliceSize,
-            CancellationToken ct)
-        {
-            NoteActiveSiblingFile(fileIndex);
-            var sliceRange = layout.Map.SliceFileRange(globalSliceIndex);
-            EvictPassedSiblingSegments(fileIndex, layout, sliceRange.StartInclusive);
-
-            var buffer = new byte[sliceSize];
-            var copied = 0;
-            foreach (var segmentIndex in layout.Map.SegmentIndicesForGlobalSlice(globalSliceIndex))
-            {
-                var body = await GetSiblingSegmentBodyAsync(fileIndex, layout, segmentIndex, ct)
-                    .ConfigureAwait(false);
-                if (body is null)
-                {
-                    if (sliceRange.EndExclusive < layout.Map.FileLength)
-                        return null;
-                    break;
-                }
-
-                var segmentRange = layout.Map.SegmentRanges[segmentIndex];
-                var intersectStart = Math.Max(sliceRange.StartInclusive, segmentRange.StartInclusive);
-                var intersectEnd = Math.Min(sliceRange.EndExclusive, segmentRange.EndExclusive);
-                if (intersectEnd <= intersectStart)
-                    continue;
-
-                var destOffset = (int)(intersectStart - sliceRange.StartInclusive);
-                var srcOffset = (int)(intersectStart - segmentRange.StartInclusive);
-                var count = (int)(intersectEnd - intersectStart);
-                if (srcOffset < 0 || srcOffset + count > body.Length)
-                    return null;
-                Buffer.BlockCopy(body, srcOffset, buffer, destOffset, count);
-                copied += count;
-            }
-
-            if (copied < sliceRange.Count && sliceRange.EndExclusive < layout.Map.FileLength)
-                return null;
-            return buffer;
-        }
-
-        private async Task<byte[]?> GetSiblingSegmentBodyAsync(
-            int fileIndex,
-            SiblingLayout layout,
-            int segmentIndex,
-            CancellationToken ct)
-        {
-            var cacheKey = (fileIndex, segmentIndex);
-            if (_siblingSegmentBodies.TryGetValue(cacheKey, out var cached))
-                return cached;
-
-            await _fetchGate.WaitAsync(ct).ConfigureAwait(false);
-            try
-            {
-                if (_siblingSegmentBodies.TryGetValue(cacheKey, out cached))
-                    return cached;
-
-                var segmentId = layout.SegmentIds[segmentIndex];
-                try
-                {
-                    EnsureRetainedCapacity(checked((int)layout.Map.SegmentRanges[segmentIndex].Count));
-                    var response = await _client.DecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
-                    await using var stream = response.Stream!;
-                    var bytes = await ReadExpectedSegmentBodyAsync(
-                            stream, layout.Map.SegmentRanges[segmentIndex].Count, ct)
-                        .ConfigureAwait(false);
-                    _onBytesRead?.Invoke(bytes.Length);
-                    _siblingSegmentBodies[cacheKey] = bytes;
-                    AddRetainedBytes(bytes.Length);
-                    return bytes;
-                }
-                catch (Exception e) when (e is not OutOfMemoryException)
-                {
-                    if (e.IsCancellationException(ct))
-                        throw;
-
-                    if (e.TryGetCausingException<UsenetArticleNotFoundException>(out _)
-                        || e.TryGetCausingException<UsenetCorruptArticleException>(out _))
-                        return null;
-
-                    if (e is InvalidDataException or EndOfStreamException)
-                        return null;
-
-                    throw;
-                }
-            }
-            finally
-            {
-                _fetchGate.Release();
-            }
-        }
-
-        private void NoteActiveSiblingFile(int fileIndex)
-        {
-            if (_activeSiblingFileIndex == fileIndex)
-                return;
-            ClearTargetBodies();
-            if (_activeSiblingFileIndex >= 0)
-                EvictSiblingFile(_activeSiblingFileIndex);
-            _activeSiblingFileIndex = fileIndex;
-        }
-
-        private void EvictPassedSiblingSegments(int fileIndex, SiblingLayout layout, long sliceStart)
-        {
-            for (var i = 0; i < layout.Map.SegmentRanges.Count; i++)
-            {
-                if (layout.Map.SegmentRanges[i].EndExclusive > sliceStart)
-                    continue;
-                EvictSiblingSegment(fileIndex, i);
-            }
-        }
-
-        private void EvictSiblingFile(int fileIndex)
-        {
-            foreach (var key in _siblingSegmentBodies.Keys.Where(key => key.FileIndex == fileIndex).ToList())
-                EvictSiblingSegment(key.FileIndex, key.SegmentIndex);
-        }
-
-        private void EvictSiblingSegment(int fileIndex, int segmentIndex)
-        {
-            if (_siblingSegmentBodies.Remove((fileIndex, segmentIndex), out var body))
-                AddRetainedBytes(-body.Length);
-        }
-
-        private void EvictPassedTargetSegments(long sliceStart)
-        {
-            foreach (var segmentIndex in _segmentBodies.Keys
-                         .Where(index => _map.SegmentRanges[index].EndExclusive <= sliceStart)
-                         .ToArray())
-            {
-                if (_segmentBodies.Remove(segmentIndex, out var body))
-                {
-                    AddRetainedBytes(-body.Length);
-                }
-            }
-        }
-
-        private void ClearTargetBodies()
-        {
-            foreach (var body in _segmentBodies.Values)
-                AddRetainedBytes(-body.Length);
-            _segmentBodies.Clear();
-        }
-
-        private void ClearSiblingBodies()
-        {
-            foreach (var body in _siblingSegmentBodies.Values)
-                AddRetainedBytes(-body.Length);
-            _siblingSegmentBodies.Clear();
-            _activeSiblingFileIndex = -1;
-        }
-
-        private void EnsureRetainedCapacity(int incomingBytes)
-        {
-            if (incomingBytes < 0 || incomingBytes > RetainedByteLimit - CachedBodyBytes)
-            {
-                throw new Par2MemoryCapExceededException(
-                    $"PAR2 source window needs {incomingBytes:N0} bytes with {CachedBodyBytes:N0} retained, "
-                    + $"exceeding the repair cap of {RetainedByteLimit:N0} bytes.");
-            }
-        }
-
-        private void AddRetainedBytes(long delta)
-        {
-            var current = Interlocked.Add(ref _cachedBodyBytes, delta);
-            if (delta <= 0)
-                return;
-
-            long peak;
-            while (current > (peak = Interlocked.Read(ref _peakCachedBodyBytes)))
-            {
-                if (Interlocked.CompareExchange(ref _peakCachedBodyBytes, current, peak) == peak)
-                    break;
-            }
-        }
-
-        private static async Task<byte[]> ReadExpectedSegmentBodyAsync(
-            Stream stream,
-            long expectedLength,
-            CancellationToken ct)
-        {
-            if (expectedLength < 0 || expectedLength > int.MaxValue)
-                throw new InvalidDataException("PAR2 source segment has an unsupported length.");
-
-            var bytes = GC.AllocateUninitializedArray<byte>((int)expectedLength);
-            await stream.ReadExactlyAsync(bytes, ct).ConfigureAwait(false);
-
-            var extra = new byte[1];
-            if (await stream.ReadAsync(extra, ct).ConfigureAwait(false) != 0)
-                throw new InvalidDataException("PAR2 source segment exceeded its recorded byte range.");
-
-            return bytes;
-        }
     }
 
     private sealed class Par2MemoryCapExceededException(string message) : InvalidOperationException(message);

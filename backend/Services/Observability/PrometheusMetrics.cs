@@ -45,6 +45,9 @@ public sealed class PrometheusMetrics
     private readonly Counter _seekCount;
     private readonly Histogram _seekLatency;
     private readonly Histogram _par2RepairDuration;
+    private readonly Gauge _par2RepairActive;
+    private readonly Gauge _par2AdmissionWaiters;
+    private readonly Histogram _par2AdmissionWait;
     private readonly Counter _par2RepairBytesRead;
     private readonly Counter _par2SlicesReconstructed;
     private readonly Counter _par2SegmentsCommitted;
@@ -157,6 +160,10 @@ public sealed class PrometheusMetrics
             "nzbdav_par2_repair_duration_seconds",
             "PAR2 background repair job duration.",
             new HistogramConfiguration { Buckets = Histogram.ExponentialBuckets(1, 2, 14) });
+        _par2RepairActive = metrics.CreateGauge("nzbdav_par2_repair_active", "Active admitted PAR2 repair jobs.");
+        _par2AdmissionWaiters = metrics.CreateGauge("nzbdav_par2_repair_admission_waiters", "PAR2 jobs waiting for process-wide admission.");
+        _par2AdmissionWait = metrics.CreateHistogram("nzbdav_par2_repair_admission_wait_seconds", "PAR2 admission wait duration.",
+            new HistogramConfiguration { Buckets = Histogram.ExponentialBuckets(0.01, 2, 18) });
         _par2RepairBytesRead = metrics.CreateCounter(
             "nzbdav_par2_repair_bytes_read_total",
             "NNTP bytes read during PAR2 repairs.");
@@ -304,6 +311,14 @@ public sealed class PrometheusMetrics
     }
 
     public void RecordPar2RepairJob(string state) => _par2RepairJobs.WithLabels(state).Inc();
+
+    public void SetPar2Admission(int active, int waiters)
+    {
+        _par2RepairActive.Set(active);
+        _par2AdmissionWaiters.Set(waiters);
+    }
+
+    public void ObservePar2AdmissionWait(TimeSpan duration) => _par2AdmissionWait.Observe(duration.TotalSeconds);
 
     public void ObservePar2RepairDuration(TimeSpan elapsed)
         => _par2RepairDuration.Observe(elapsed.TotalSeconds);
