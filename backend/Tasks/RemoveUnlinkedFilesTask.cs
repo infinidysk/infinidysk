@@ -227,7 +227,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
             var identified = await DryRunIdentifyUnlinkedFiles(startTime).ConfigureAwait(false);
             if (extremeUnlinkedRatio)
             {
-                previewFingerprint ??= await ComputePreviewFingerprint(startTime).ConfigureAwait(false);
+                previewFingerprint = await ComputePreviewFingerprint(startTime).ConfigureAwait(false);
                 IssuedPreviewToken = IssuePreviewApproval(previewFingerprint);
             }
             Complete($"Done. Identified {identified} unlinked files.");
