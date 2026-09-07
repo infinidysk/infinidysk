@@ -1234,82 +1234,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         }
         catch (MissingFilePayloadException e)
         {
-            // Local payload metadata is gone (commonly a database-only restore).
-            // This says nothing about the release's health, so surface it for
-            // operator action instead of deleting or blocklisting through Arr.
-            CompleteHealthProgress(davItem.Id);
-            var confirmations = await GetMissingPayloadConfirmationAsync(
-                dbClient.Ctx,
-                davItem.Id,
-                ct).ConfigureAwait(false);
-            var utcNow = _timeProvider.GetUtcNow();
-            var delay = GetMissingPayloadRecheckDelay(confirmations);
-            davItem.LastHealthCheck = utcNow;
-            davItem.NextHealthCheck = utcNow + delay;
-            Log.Warning(
-                "Health check cannot run for {Path}: {Reason} " +
-                "(confirmation {Count}/{Threshold}; next check in {Delay})",
-                davItem.Path,
-                e.Message,
-                confirmations,
-                MissingPayloadConfirmationsRequired,
-                delay);
-            Log.Debug(e, "Missing streaming payload stack for {Path}", davItem.Path);
-            var state = confirmations >= MissingPayloadConfirmationsRequired
-                ? "The payload has been missing for at least 3 consecutive checks; " +
-                  "this DavItem is orphaned and will be rechecked weekly."
-                : "The file will be rechecked daily.";
-            await RecordHealthResult(
-                dbClient, davItem,
-                HealthCheckResult.HealthResult.Unhealthy,
-                HealthCheckResult.RepairAction.ActionNeeded,
-                string.Join(" ", [
-                    MissingPayloadMessagePrefix,
-                    "The file's streaming data is missing from the server",
-                    "(often a database restore without the blobs/ folder).",
-                    "Remove and re-download the release, or restore from a backup that includes blobs.",
-                    state,
-                ]), ct).ConfigureAwait(false);
+            await HandleMissingPayloadAsync(davItem, dbClient, e, ct).ConfigureAwait(false);
         }
         catch (CorruptedBlobPayloadException e)
         {
-            // The local streaming metadata blob exists but failed to decode (truncated
-            // write, unclean shutdown). This is not evidence of a bad release, so surface
-            // it for operator action instead of deleting or blocklisting through Arr.
-            CompleteHealthProgress(davItem.Id);
-            var confirmations = await GetUnreadablePayloadConfirmationAsync(
-                dbClient.Ctx,
-                davItem.Id,
-                ct).ConfigureAwait(false);
-            var utcNow = _timeProvider.GetUtcNow();
-            var delay = GetMissingPayloadRecheckDelay(confirmations);
-            davItem.LastHealthCheck = utcNow;
-            davItem.NextHealthCheck = utcNow + delay;
-            Log.Warning(
-                "Health check cannot run for {Path}: {Reason} " +
-                "(confirmation {Count}/{Threshold}; next check in {Delay})",
-                davItem.Path,
-                e.Message,
-                confirmations,
-                MissingPayloadConfirmationsRequired,
-                delay);
-            Log.Debug(e, "Unreadable streaming metadata blob stack for {Path}", davItem.Path);
-            var state = confirmations >= MissingPayloadConfirmationsRequired
-                ? "The payload has been unreadable for at least 3 consecutive checks; " +
-                  "this DavItem is orphaned and will be rechecked weekly."
-                : "The file will be rechecked daily.";
-            await RecordHealthResult(
-                dbClient, davItem,
-                HealthCheckResult.HealthResult.Unhealthy,
-                HealthCheckResult.RepairAction.ActionNeeded,
-                string.Join(" ", [
-                    UnreadablePayloadMessagePrefix,
-                    "The file's local streaming metadata is present but unreadable",
-                    "(often a truncated write or unclean shutdown).",
-                    "Restore a backup of the blobs/ folder that matches the database,",
-                    "or remove and re-download the release.",
-                    state,
-                ]), ct).ConfigureAwait(false);
+            await HandleUnreadablePayloadAsync(davItem, dbClient, e, ct).ConfigureAwait(false);
         }
         catch (UsenetArticleNotFoundException e)
         {
@@ -1332,10 +1261,23 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             }
 
             // When no Arr replacement is available, PAR2 remains the only automatic recovery path.
-            var par2Outcome = ShouldAttemptPar2Repair()
-                ? await _par2RepairService.TryPar2RepairAsync(
-                    davItem, [e.SegmentId], ct).ConfigureAwait(false)
-                : Par2RepairOutcome.NotRepaired;
+            Par2RepairOutcome par2Outcome;
+            try
+            {
+                par2Outcome = ShouldAttemptPar2Repair()
+                    ? await _par2RepairService.TryPar2RepairAsync(davItem, [e.SegmentId], ct).ConfigureAwait(false)
+                    : Par2RepairOutcome.NotRepaired;
+            }
+            catch (MissingFilePayloadException exception)
+            {
+                await HandleMissingPayloadAsync(davItem, dbClient, exception, ct).ConfigureAwait(false);
+                return;
+            }
+            catch (CorruptedBlobPayloadException exception)
+            {
+                await HandleUnreadablePayloadAsync(davItem, dbClient, exception, ct).ConfigureAwait(false);
+                return;
+            }
             if (par2Outcome is not Par2RepairOutcome.NotRepaired)
             {
                 var utcNow = DateTimeOffset.UtcNow;
@@ -1394,6 +1336,57 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         {
             await DeferHealthCheck(davItem, dbClient, e, ct).ConfigureAwait(false);
         }
+    }
+
+    private async Task HandleMissingPayloadAsync(DavItem davItem, DavDatabaseClient dbClient,
+        MissingFilePayloadException exception, CancellationToken ct)
+    {
+        CompleteHealthProgress(davItem.Id);
+        var confirmations = await GetMissingPayloadConfirmationAsync(dbClient.Ctx, davItem.Id, ct).ConfigureAwait(false);
+        var utcNow = _timeProvider.GetUtcNow();
+        var delay = GetMissingPayloadRecheckDelay(confirmations);
+        davItem.LastHealthCheck = utcNow;
+        davItem.NextHealthCheck = utcNow + delay;
+        Log.Warning("Health check cannot run for {Path}: {Reason} (confirmation {Count}/{Threshold}; next check in {Delay})",
+            davItem.Path, exception.Message, confirmations, MissingPayloadConfirmationsRequired, delay);
+        Log.Debug(exception, "Missing streaming payload stack for {Path}", davItem.Path);
+        var state = confirmations >= MissingPayloadConfirmationsRequired
+            ? "The payload has been missing for at least 3 consecutive checks; this DavItem is orphaned and will be rechecked weekly."
+            : "The file will be rechecked daily.";
+        await RecordHealthResult(dbClient, davItem, HealthCheckResult.HealthResult.Unhealthy,
+            HealthCheckResult.RepairAction.ActionNeeded, string.Join(" ", [
+                MissingPayloadMessagePrefix,
+                "The file's streaming data is missing from the server",
+                "(often a database restore without the blobs/ folder).",
+                "Remove and re-download the release, or restore from a backup that includes blobs.",
+                state,
+            ]), ct).ConfigureAwait(false);
+    }
+
+    private async Task HandleUnreadablePayloadAsync(DavItem davItem, DavDatabaseClient dbClient,
+        CorruptedBlobPayloadException exception, CancellationToken ct)
+    {
+        CompleteHealthProgress(davItem.Id);
+        var confirmations = await GetUnreadablePayloadConfirmationAsync(dbClient.Ctx, davItem.Id, ct).ConfigureAwait(false);
+        var utcNow = _timeProvider.GetUtcNow();
+        var delay = GetMissingPayloadRecheckDelay(confirmations);
+        davItem.LastHealthCheck = utcNow;
+        davItem.NextHealthCheck = utcNow + delay;
+        Log.Warning("Health check cannot run for {Path}: {Reason} (confirmation {Count}/{Threshold}; next check in {Delay})",
+            davItem.Path, exception.Message, confirmations, MissingPayloadConfirmationsRequired, delay);
+        Log.Debug(exception, "Unreadable streaming metadata blob stack for {Path}", davItem.Path);
+        var state = confirmations >= MissingPayloadConfirmationsRequired
+            ? "The payload has been unreadable for at least 3 consecutive checks; this DavItem is orphaned and will be rechecked weekly."
+            : "The file will be rechecked daily.";
+        await RecordHealthResult(dbClient, davItem, HealthCheckResult.HealthResult.Unhealthy,
+            HealthCheckResult.RepairAction.ActionNeeded, string.Join(" ", [
+                UnreadablePayloadMessagePrefix,
+                "The file's local streaming metadata is present but unreadable",
+                "(often a truncated write or unclean shutdown).",
+                "Restore a backup of the blobs/ folder that matches the database,",
+                "or remove and re-download the release.",
+                state,
+            ]), ct).ConfigureAwait(false);
     }
 
     /// <summary>

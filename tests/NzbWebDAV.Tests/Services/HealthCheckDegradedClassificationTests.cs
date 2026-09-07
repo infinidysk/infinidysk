@@ -832,6 +832,115 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     private static string[] NewSegmentIds(int count) =>
         Enumerable.Range(0, count).Select(i => $"seg{i}-{Guid.NewGuid():N}@test").ToArray();
 
+    [Fact]
+    public async Task RestartedMultipartPatch_PassesHealthStatSweepWithoutRepair()
+    {
+        var ids = NewSegmentIds(3);
+        var blobId = Guid.NewGuid();
+        await BlobStore.WriteBlob(blobId, new DavMultipartFile
+        {
+            Metadata = new DavMultipartFile.Meta { FileParts = [new DavMultipartFile.FilePart { SegmentIds = ids }] },
+        });
+        var item = DavItem.New(Guid.NewGuid(), DavItem.ContentFolder, "restarted-patch.mkv", 12288,
+            DavItem.ItemType.UsenetFile, DavItem.ItemSubType.MultipartFile, DateTimeOffset.UtcNow.AddDays(-1), null, null, blobId);
+        _context.Items.Add(item);
+        await _context.SaveChangesAsync();
+        CommitPatch(ids[1], 4096);
+        var restarted = new RepairPatchStore(Path.Join(_configRoot, "patches"), 1024 * 1024);
+        await restarted.EnsureCatalogLoadedAsync(CancellationToken.None);
+        var provider = NewFakeClient(ids, missing: [1]);
+        var (service, par2) = await NewServiceAsync(new RepairedSegmentNntpClient(provider, restarted), par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, 2, CancellationToken.None);
+
+        Assert.Equal(HealthCheckResult.HealthResult.Healthy, Assert.Single(GetHealthRows(item.Id)).Result);
+        Assert.Empty(par2.Requests);
+        Assert.DoesNotContain(ids[1], provider.StatRequestOrder);
+        Assert.Equal(0, restarted.HitCount);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Par2PayloadRace_RoutineAndUrgentAreActionNeededWithoutCooldown(bool urgent, bool corrupt)
+    {
+        _configManager.UpdateValues([new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" }]);
+        var ids = NewSegmentIds(3);
+        var blobId = Guid.NewGuid();
+        var nzbId = Guid.NewGuid();
+        await BlobStore.WriteBlob(blobId, new DavMultipartFile
+        {
+            Metadata = new DavMultipartFile.Meta
+            {
+                FileParts = [new DavMultipartFile.FilePart { SegmentIds = ids }],
+            },
+        });
+        await using (var nzb = new MemoryStream("<nzb />"u8.ToArray()))
+            await BlobStore.WriteBlob(nzbId, nzb);
+        var item = DavItem.New(Guid.NewGuid(), DavItem.ContentFolder, "payload-race.mkv", 12288,
+            DavItem.ItemType.UsenetFile, DavItem.ItemSubType.MultipartFile, DateTimeOffset.UtcNow.AddDays(-1),
+            null, null, blobId, nzbId);
+        if (urgent)
+        {
+            item.NextHealthCheck = DateTimeOffset.UnixEpoch;
+            _failureTracker.RecordAttributedFailure(item.Id, ids[1]);
+        }
+        _context.Items.Add(item);
+        await _context.SaveChangesAsync();
+        await _usenet.ReplaceUnderlyingClientForTestsAsync(NewFakeClient(ids, missing: [1]));
+        using var par2 = new Par2RepairService(_configManager, _usenet, _patchStore, new PayloadRaceContextFactory(_options));
+        using var service = new HealthCheckService(_configManager, _usenet, new WebsocketManager(), new BenchmarkGate(),
+            _failureTracker, _queueManager, par2, _patchStore, new ArrReplacementSearchBudget(), _healthCheckConnectionGate);
+        var previous = BlobStore.Current;
+        var raced = new PayloadRaceBlobStore(previous, blobId, corrupt);
+        BlobStore.Use(raced);
+        IReadOnlyList<LogEvent> events;
+        try
+        {
+            events = await CaptureLogsAsync(() => service.PerformHealthCheck(item, _dbClient, 2, CancellationToken.None));
+        }
+        finally { BlobStore.Use(previous); }
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+        Assert.StartsWith(corrupt ? HealthCheckService.UnreadablePayloadMessagePrefix : HealthCheckService.MissingPayloadMessagePrefix, row.Message);
+        Assert.True(ReloadItem(item.Id).NextHealthCheck > DateTimeOffset.UtcNow.AddHours(23));
+        Assert.Equal(0, raced.DeleteCount);
+        Assert.Equal(2, raced.PayloadReads);
+        var job = await _context.Par2RepairJobs.AsNoTracking().SingleAsync();
+        Assert.Equal(Par2RepairJob.RepairJobState.Failed, job.State);
+        Assert.Null(job.NextAttemptAt);
+        Assert.All(events.Where(entry => entry.Level >= LogEventLevel.Warning), entry => Assert.Null(entry.Exception));
+        Assert.DoesNotContain(events, entry => entry.Level >= LogEventLevel.Error);
+    }
+
+    private sealed class PayloadRaceContextFactory(DbContextOptions<DavDatabaseContext> options) : IDbContextFactory<DavDatabaseContext>
+    {
+        public DavDatabaseContext CreateDbContext() => new(options);
+    }
+
+    private sealed class PayloadRaceBlobStore(IBlobStore inner, Guid payloadId, bool corrupt) : IBlobStore
+    {
+        public int PayloadReads { get; private set; }
+        public int DeleteCount { get; private set; }
+        public Task WriteBlob(Guid id, Stream stream, CancellationToken cancellationToken = default)
+            => inner.WriteBlob(id, stream, cancellationToken);
+        public Task WriteBlob<T>(Guid id, T blob, CancellationToken cancellationToken = default)
+            => inner.WriteBlob(id, blob, cancellationToken);
+        public Stream? ReadBlob(Guid id) => inner.ReadBlob(id);
+        public Task<T?> ReadBlob<T>(Guid id)
+        {
+            if (id != payloadId || ++PayloadReads == 1) return inner.ReadBlob<T>(id);
+            return corrupt
+                ? Task.FromException<T?>(new CorruptedBlobPayloadException(id, "/config/blobs/raced", typeof(T), new InvalidDataException("truncated payload")))
+                : Task.FromResult<T?>(default);
+        }
+        public bool Exists(Guid id) => inner.Exists(id);
+        public bool Delete(Guid id) { DeleteCount++; return inner.Delete(id); }
+    }
+
     private static FakeNntpClient NewFakeClient(string[] segments, int[] missing, int[]? corrupt = null)
     {
         var corruptSet = new HashSet<int>(corrupt ?? []);

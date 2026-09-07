@@ -30,6 +30,7 @@ public partial class Par2RepairService
         public HashSet<string> CorruptIds { get; } = new(StringComparer.Ordinal);
         public Dictionary<NzbFile, LongRange[]> VolumeRanges { get; } = new(ReferenceEqualityComparer.Instance);
         public HashSet<NzbFile> ParityFiles { get; } = new(ReferenceEqualityComparer.Instance);
+        public HashSet<NzbFile> ExaminedFiles { get; } = new(ReferenceEqualityComparer.Instance);
         public Dictionary<string, MetadataCandidate> Sets { get; } = new(StringComparer.Ordinal);
         public List<RecvSlic> RecoveryPackets { get; } = [];
         public long BytesRead { get; private set; }
@@ -65,8 +66,10 @@ public partial class Par2RepairService
         }
     }
 
-    private sealed class MetadataCandidate(string setId)
+    private sealed class MetadataCandidate(string setId, Par2MemoryBudget budget)
     {
+        private readonly Dictionary<string, byte[]> _packetHashes = new(StringComparer.Ordinal);
+        private bool _retired;
         public string SetId { get; } = setId;
         public MainPacket? Main { get; private set; }
         public Dictionary<string, FileDesc> Descriptors { get; } = new(StringComparer.Ordinal);
@@ -75,6 +78,24 @@ public partial class Par2RepairService
 
         public bool Add(Par2Packet packet)
         {
+            var identity = packet switch
+            {
+                MainPacket => "main",
+                FileDesc descriptor => "desc:" + Convert.ToHexString(descriptor.FileID),
+                IfscPacket checksum => "ifsc:" + Convert.ToHexString(checksum.FileId),
+                _ => null,
+            };
+            if (identity is null) { packet.ReleaseMemory(); return false; }
+            if (_packetHashes.TryGetValue(identity, out var previousHash))
+            {
+                packet.ReleaseMemory();
+                if (!previousHash.AsSpan().SequenceEqual(packet.Header.PacketHash))
+                    throw new InvalidDataException("Conflicting critical packets share a PAR2 recovery set and packet identity.");
+                return false;
+            }
+            budget.Charge(256L + identity.Length * 2L);
+            _packetHashes.Add(identity, packet.Header.PacketHash);
+            if (_retired) { packet.ReleaseMemory(); return false; }
             var accepted = packet switch
             {
                 MainPacket main => AddMain(main),
@@ -112,6 +133,15 @@ public partial class Par2RepairService
             Main?.ReleaseMemory();
             foreach (var packet in Descriptors.Values) packet.ReleaseMemory();
             foreach (var packet in Checksums.Values) packet.ReleaseMemory();
+            Main = null;
+            Descriptors.Clear();
+            Checksums.Clear();
+        }
+
+        public void Retire()
+        {
+            _retired = true;
+            Release();
         }
     }
 
@@ -125,11 +155,12 @@ public partial class Par2RepairService
         reads.ParityFiles.UnionWith(named);
         foreach (var file in named)
         {
+            reads.ExaminedFiles.Add(file);
             var context = await ParseMetadataCandidateAsync(file, reads, ct).ConfigureAwait(false);
             if (context is not null) yield return context;
         }
 
-        foreach (var file in document.Files.Where(file => !reads.ParityFiles.Contains(file))
+        foreach (var file in document.Files.Where(file => !reads.ExaminedFiles.Contains(file))
                      .OrderBy(file => file.Segments.Count)
                      .ThenBy(file => file.Segments.FirstOrDefault()?.MessageId, StringComparer.Ordinal))
         {
@@ -137,6 +168,7 @@ public partial class Par2RepairService
             if (reads.MagicCount >= MaxPar2MagicCandidates)
                 throw new RepairInfeasibleException($"PAR2 magic search exhausted its {MaxPar2MagicCandidates}-candidate limit.");
             reads.MagicCount++;
+            reads.ExaminedFiles.Add(file);
             if (!await SniffPar2MagicAsync(file, reads, ct).ConfigureAwait(false)) continue;
             reads.ParityFiles.Add(file);
             var context = await ParseMetadataCandidateAsync(file, reads, ct).ConfigureAwait(false);
@@ -176,7 +208,7 @@ public partial class Par2RepairService
                     if (!reads.Sets.TryGetValue(setId, out candidate))
                     {
                         reads.Budget.Charge(1024);
-                        candidate = new MetadataCandidate(setId);
+                        candidate = new MetadataCandidate(setId, reads.Budget);
                         reads.Sets.Add(setId, candidate);
                     }
                     if (candidate.Invalid) { packet.ReleaseMemory(); return null; }
@@ -184,7 +216,10 @@ public partial class Par2RepairService
                 candidate.Add(packet);
             }
             if (candidate is null || candidate.Main is not { } main) return null;
-            long releaseBytes = 0;
+            var releaseBytes = main.FileIds.Select(id => Convert.ToHexString(id))
+                .Where(candidate.Descriptors.ContainsKey).Sum(key => checked((long)candidate.Descriptors[key].FileLength));
+            if (releaseBytes > _configManager.GetPar2MaxReleaseGb() * 1024L * 1024 * 1024)
+                throw new RepairInfeasibleException($"Recovery set size {releaseBytes} bytes exceeds release cap.");
             var slices = 0;
             foreach (var id in main.FileIds)
             {
@@ -195,21 +230,15 @@ public partial class Par2RepairService
                 var expected = length / (long)main.SliceSize + (length % (long)main.SliceSize == 0 ? 0 : 1);
                 if (expected != checksum.Slices.Count)
                     throw new InvalidDataException($"Slice checksums do not cover volume '{descriptor.FileName}'.");
-                releaseBytes = checked(releaseBytes + length);
                 slices = checked(slices + checksum.Slices.Count);
             }
             if (slices is <= 0 or > Gf16Field.MaxInputSlices)
                 throw new InvalidDataException("PAR2 recovery set must contain 1 to 32,768 input slices.");
-            if (releaseBytes > _configManager.GetPar2MaxReleaseGb() * 1024L * 1024 * 1024)
-            {
-                reads.RejectionReason = $"Recovery set size {releaseBytes} bytes exceeds release cap.";
-                return null;
-            }
             return new Par2SetContext(main, candidate.Descriptors, candidate.Checksums, candidate.SetId);
         }
         catch (Exception exception) when (exception is InvalidDataException or EndOfStreamException or UsenetArticleNotFoundException or UsenetCorruptArticleException)
         {
-            if (candidate is not null) candidate.Invalid = true;
+            if (candidate is not null) { candidate.Invalid = true; candidate.Retire(); }
             reads.RejectionReason = exception.Message;
             PrometheusMetrics.Current?.RecordPar2ValidationFailure("packet");
             Log.Warning("PAR2 metadata candidate rejected. Reason: {Reason}", exception.Message);
@@ -270,15 +299,17 @@ public partial class Par2RepairService
             .ThenBy(file => file.Segments.FirstOrDefault()?.MessageId, StringComparer.Ordinal).ToList();
         foreach (var file in candidates)
         {
+            reads.ExaminedFiles.Add(file);
             await ReadRecoveryAsync(file).ConfigureAwait(false);
             if (byExponent.Count >= needed) return Result();
         }
-        foreach (var file in document.Files.Where(file => !reads.ParityFiles.Contains(file))
+        foreach (var file in document.Files.Where(file => !reads.ExaminedFiles.Contains(file))
                      .OrderBy(file => file.Segments.Count)
                      .ThenBy(file => file.Segments.FirstOrDefault()?.MessageId, StringComparer.Ordinal))
         {
             if (++reads.MagicCount > MaxPar2MagicCandidates)
                 throw new RepairInfeasibleException("PAR2 recovery search exhausted its 64-candidate magic limit.");
+            reads.ExaminedFiles.Add(file);
             if (!await SniffPar2MagicAsync(file, reads, ct).ConfigureAwait(false)) continue;
             reads.ParityFiles.Add(file);
             await ReadRecoveryAsync(file).ConfigureAwait(false);
@@ -301,7 +332,7 @@ public partial class Par2RepairService
                 await using var stream = new NzbFileStream(file.GetSegmentIds(), header.FileSize, _usenetClient, 0,
                     usePipelinedBodyRequests: false, readStartWarmupEnabled: false);
                 await using var counted = new RepairCountingStream(stream, bytes => reads.ReadBytes(bytes));
-                while (stream.Position < stream.Length)
+                while (stream.Position < stream.Length && byExponent.Count < needed)
                 {
                     var packet = await Par2RepairReader.ReadVerifiedPacketAsync(counted,
                         new Par2RepairReader.ReadOptions(reads.Budget, true, set.RecoverySetId, (int)set.Main.SliceSize), ct).ConfigureAwait(false);
@@ -363,6 +394,6 @@ public partial class Par2RepairService
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
-    private sealed record NzbFileObservation(long? Length, string? First16KHash);
+    private sealed record NzbFileObservation(long? Length, string? First16KHash, bool PrefixAttempted = false);
     private sealed class RepairInfeasibleException(string message) : Exception(message);
 }

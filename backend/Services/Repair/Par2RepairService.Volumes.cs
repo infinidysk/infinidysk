@@ -133,6 +133,7 @@ public partial class Par2RepairService
             coveredOwners.UnionWith(usedFiles.Where(requestedOwners.Contains));
             if (complete && requestedOwners.IsSubsetOf(usedFiles))
                 return (set, layouts);
+            reads.Sets[set.RecoverySetId].Retire();
         }
 
         if (requestedOwners.Count > 1 && requestedOwners.IsSubsetOf(coveredOwners))
@@ -165,10 +166,10 @@ public partial class Par2RepairService
             return null;
         var layout = new SourceLayout(fileIndex, file, descriptor, checksums, map, ids, ids.Any(payload.SegmentIds.Contains));
 
-        if (observation.First16KHash is null)
+        if (!observation.PrefixAttempted)
         {
             var prefix = await ReadVolumePrefixHashAsync(layout, reads, ct).ConfigureAwait(false);
-            observation = observation with { First16KHash = prefix };
+            observation = observation with { First16KHash = prefix, PrefixAttempted = true };
             reads.Observations[file] = observation;
         }
         if (observation.First16KHash == Convert.ToHexString(descriptor.File16kHash)) return layout;
@@ -224,8 +225,9 @@ public partial class Par2RepairService
         {
             for (var index = 0; index < evidence.Length; index++)
             {
-                if (evidence[index] is not null) continue;
-                var header = await ReadHeaderCoreAsync(file.Segments[index].MessageId, reads, ct).ConfigureAwait(false);
+                var id = file.Segments[index].MessageId;
+                if (evidence[index] is not null && !reads.Headers.ContainsKey(id)) continue;
+                var header = await ReadHeaderCoreAsync(id, reads, ct).ConfigureAwait(false);
                 if (header is null) continue;
                 if (header.FileSize != length || header.TotalParts != evidence.Length || header.PartNumber != index + 1
                     || header.PartOffset < 0 || header.PartSize <= 0)

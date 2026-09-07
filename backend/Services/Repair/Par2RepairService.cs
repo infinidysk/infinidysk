@@ -50,6 +50,9 @@ public partial class Par2RepairService : BackgroundService
     private readonly ConcurrentDictionary<Guid, byte> _queuedOrRunning = new();
     private readonly ConcurrentDictionary<Guid, RepairFlight> _repairFlights = new();
     private readonly SemaphoreSlim _repairAdmission = new(1, 1);
+    private readonly Lock _admissionLifecycle = new();
+    private int _admissionUsers;
+    private bool _disposeRequested;
     private int _admissionActive;
     private int _admissionWaiters;
     private long _totalAdmissionWaitTicks;
@@ -115,6 +118,7 @@ public partial class Par2RepairService : BackgroundService
         _dbContextFactory?.CreateDbContext() ?? new DavDatabaseContext();
 
     internal Action? OnWorkersStarting { get; set; }
+    internal Func<CancellationToken, Task>? BeforePatchPublicationForTests { get; set; }
 
     internal int PendingZeroFillCount => _pendingZeroFillPaths.Count;
 
@@ -130,7 +134,10 @@ public partial class Par2RepairService : BackgroundService
     {
         _queuedOrRunning.TryRemove(davItemId, out _);
         if (_repairFlights.TryRemove(davItemId, out var flight))
+        {
             flight.Completion.TrySetResult(Par2RepairOutcome.NotRepaired);
+            flight.Finished.TrySetResult();
+        }
     }
 
     internal Task RequeueRetainedForTestsAsync(Guid davItemId, CancellationToken ct) =>
@@ -209,7 +216,7 @@ public partial class Par2RepairService : BackgroundService
         {
             RetainSegmentIds(davItem.Id, davItem.Path, ids);
             _queuedOrRunning.TryRemove(davItem.Id, out _);
-            _repairFlights.TryRemove(new KeyValuePair<Guid, RepairFlight>(davItem.Id, flight));
+            CompleteFlight(davItem.Id, flight, Par2RepairOutcome.NotRepaired);
             Log.Warning(
                 "PAR2 repair queue full ({Capacity}); dropping repair request for {Path}",
                 MaxQueueLength, davItem.Path);
@@ -562,6 +569,17 @@ public partial class Par2RepairService : BackgroundService
             return;
         }
 
+        if (davItem.SubType is DavItem.ItemSubType.RarFile or DavItem.ItemSubType.MultipartFile)
+        {
+            if (!_configManager.IsPar2RepairEnabled()) return;
+            var multipartIds = reports.Where(report => !report.Item2 || _configManager.IsCorruptionTrackingEnabled())
+                .Select(report => report.Item1).Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.Ordinal).ToArray();
+            if (multipartIds.Length > 0)
+                await EnqueueAsync(davItem, multipartIds, ct).ConfigureAwait(false);
+            return;
+        }
+
         var nzbFile = await dbClient.GetDavNzbFileAsync(davItem, ct).ConfigureAwait(false);
         if (nzbFile is null)
         {
@@ -666,8 +684,15 @@ public partial class Par2RepairService : BackgroundService
         CancellationToken ct)
     {
         var admitted = false;
+        var admissionUser = false;
         try
         {
+            lock (_admissionLifecycle)
+            {
+                ObjectDisposedException.ThrowIf(_disposeRequested, this);
+                _admissionUsers++;
+                admissionUser = true;
+            }
             var wait = Stopwatch.StartNew();
             Interlocked.Increment(ref _admissionWaiters);
             PublishAdmissionMetrics();
@@ -686,7 +711,7 @@ public partial class Par2RepairService : BackgroundService
                 PrometheusMetrics.Current?.ObservePar2AdmissionWait(wait.Elapsed);
                 PublishAdmissionMetrics();
             }
-            var result = await RunRepairAsync(davItem, missingSegmentIds, queueGuard, ct).ConfigureAwait(false);
+            var result = await RunRepairAsync(davItem, missingSegmentIds, flight, ct).ConfigureAwait(false);
             flight.Completion.TrySetResult(result);
             return result;
         }
@@ -707,6 +732,13 @@ public partial class Par2RepairService : BackgroundService
                 Interlocked.Exchange(ref _admissionActive, 0);
                 _repairAdmission.Release();
                 PublishAdmissionMetrics();
+            }
+            if (admissionUser)
+            {
+                lock (_admissionLifecycle)
+                {
+                    if (--_admissionUsers == 0 && _disposeRequested) _repairAdmission.Dispose();
+                }
             }
             if (queueGuard) _queuedOrRunning.TryRemove(davItem.Id, out _);
             _repairFlights.TryRemove(new KeyValuePair<Guid, RepairFlight>(davItem.Id, flight));
@@ -730,6 +762,7 @@ public partial class Par2RepairService : BackgroundService
     {
         flight.Completion.TrySetResult(result);
         _repairFlights.TryRemove(new KeyValuePair<Guid, RepairFlight>(davItemId, flight));
+        flight.Finished.TrySetResult();
     }
 
     private void PublishAdmissionMetrics() => PrometheusMetrics.Current?.SetPar2Admission(
@@ -738,7 +771,11 @@ public partial class Par2RepairService : BackgroundService
     public override void Dispose()
     {
         base.Dispose();
-        _repairAdmission.Dispose();
+        lock (_admissionLifecycle)
+        {
+            if (!_disposeRequested && _admissionUsers == 0) _repairAdmission.Dispose();
+            _disposeRequested = true;
+        }
         GC.SuppressFinalize(this);
     }
 
@@ -746,19 +783,17 @@ public partial class Par2RepairService : BackgroundService
     {
         flight.Completion.TrySetCanceled(cancellationToken);
         _repairFlights.TryRemove(new KeyValuePair<Guid, RepairFlight>(davItemId, flight));
+        flight.Finished.TrySetResult();
     }
 
     private async Task<Par2RepairOutcome> RunRepairAsync(
         DavItem davItem,
         IReadOnlyList<string>? missingSegmentIds,
-        bool queueGuard,
+        RepairFlight flight,
         CancellationToken ct)
     {
         if (!_configManager.IsPar2RepairEnabled())
-        {
-            if (queueGuard) _queuedOrRunning.TryRemove(davItem.Id, out _);
             return Par2RepairOutcome.NotRepaired;
-        }
 
         Par2RepairJob? job = null;
         var stopwatch = Stopwatch.StartNew();
@@ -766,10 +801,7 @@ public partial class Par2RepairService : BackgroundService
         {
             job = await CreateOrResumeJobAsync(davItem, missingSegmentIds, ct).ConfigureAwait(false);
             if (job == null)
-            {
-                if (queueGuard) _queuedOrRunning.TryRemove(davItem.Id, out _);
                 return Par2RepairOutcome.NotRepaired;
-            }
 
             job.State = Par2RepairJob.RepairJobState.Running;
             job.StartedAt = DateTimeOffset.UtcNow;
@@ -792,7 +824,9 @@ public partial class Par2RepairService : BackgroundService
                 job.BytesRead = result.BytesRead;
                 job.SlicesReconstructed = result.SlicesReconstructed;
                 job.FailureReason = null;
+                job.NextAttemptAt = null;
                 await PersistJobAsync(job, ct).ConfigureAwait(false);
+                flight.SetCoverage(job.MissingSegmentIds, result.VerifiedClean && missingSegmentIds is not { Count: > 0 });
                 PrometheusMetrics.Current?.RecordPar2RepairJob("succeeded");
                 PrometheusMetrics.Current?.ObservePar2RepairDuration(stopwatch.Elapsed);
                 PrometheusMetrics.Current?.SetPar2PatchStoreBytes(_patchStore.CurrentBytes);
@@ -855,6 +889,11 @@ public partial class Par2RepairService : BackgroundService
             PrometheusMetrics.Current?.RecordPar2RepairJob("failed");
             throw;
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await MarkJobFailureAsync(job, "PAR2 repair canceled before completion.", cooldown: false, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
         catch (Exception e) when (e is not OperationCanceledException)
         {
             stopwatch.Stop();
@@ -869,7 +908,6 @@ public partial class Par2RepairService : BackgroundService
         finally
         {
             EndRepairDiagnostics();
-            if (queueGuard) _queuedOrRunning.TryRemove(davItem.Id, out _);
         }
     }
 
@@ -1240,13 +1278,15 @@ public partial class Par2RepairService : BackgroundService
         if (existing is { State: Par2RepairJob.RepairJobState.Running })
             return null;
 
+        if (existing?.NextAttemptAt > DateTimeOffset.UtcNow)
+            return null;
+
         if (existing is { Attempts: >= MaxAttempts }
+            and { NextAttemptAt: not null }
             and ({ State: Par2RepairJob.RepairJobState.Failed } or { State: Par2RepairJob.RepairJobState.Infeasible }))
             return null;
 
-        var segments = missingSegmentIds?.ToArray()
-                       ?? existing?.MissingSegmentIds
-                       ?? Array.Empty<string>();
+        var segments = missingSegmentIds?.ToArray() ?? [];
 
         if (existing is { State: Par2RepairJob.RepairJobState.Queued or Par2RepairJob.RepairJobState.Failed or Par2RepairJob.RepairJobState.Infeasible })
         {
@@ -1428,15 +1468,23 @@ public partial class Par2RepairService : BackgroundService
 
     private sealed class RepairFlight(IReadOnlyList<string>? requestedIds)
     {
-        private readonly HashSet<string> _requestedIds = requestedIds?.ToHashSet(StringComparer.Ordinal) ?? [];
+        private HashSet<string> _coveredIds = new(StringComparer.Ordinal);
+        private bool _verifiedAll;
+        private readonly bool _requestedVerification = requestedIds is not { Count: > 0 };
         public TaskCompletionSource Finished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<Par2RepairOutcome> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task<Par2RepairOutcome> Task => Completion.Task;
 
+        public void SetCoverage(IEnumerable<string> ids, bool verifiedAll)
+        {
+            _coveredIds = ids.ToHashSet(StringComparer.Ordinal);
+            _verifiedAll = _requestedVerification && verifiedAll;
+        }
+
         public bool Covers(IReadOnlyList<string>? ids) => ids is not { Count: > 0 }
-            ? _requestedIds.Count == 0 : ids.All(_requestedIds.Contains);
+            ? _verifiedAll : ids.All(_coveredIds.Contains);
     }
 
     private void RetainSegmentIds(Guid davItemId, string path, IEnumerable<string> segmentIds)

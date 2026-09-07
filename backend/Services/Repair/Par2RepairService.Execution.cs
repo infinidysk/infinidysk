@@ -82,7 +82,11 @@ public partial class Par2RepairService
             }
             Log.Information("PAR2 source discovery completed for {Path}: Volumes={Volumes} MissingSlices={MissingSlices} BytesRead={BytesRead}",
                 item.Path, layouts.Count, unavailableSlices.Count, reads.BytesRead);
-            if (unavailableSlices.Count == 0) return RepairExecutionResult.Verified(reads.BytesRead);
+            if (unavailableSlices.Count == 0)
+            {
+                job.MissingSegmentIds = payload.SegmentIds.ToArray();
+                return RepairExecutionResult.Verified(reads.BytesRead);
+            }
 
             var targets = layouts.Where(layout => layout.PayloadOwned)
                 .Select(layout => new RepairTarget(layout, SegmentsOverlappingSlices(layout.Map, unavailableSlices, layout.SegmentIds)
@@ -136,6 +140,8 @@ public partial class Par2RepairService
                 return RepairExecutionResult.Failed(failure, reads.BytesRead);
             }
 
+            if (BeforePatchPublicationForTests is { } beforePublication)
+                await beforePublication(ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
             SetRepairPhase("committing-patches", maxMemoryBytes);
             _patchStore.CommitPatches(patches.Select(patch => (patch.SegmentId, patch.Bytes, patch.Header)).ToList());

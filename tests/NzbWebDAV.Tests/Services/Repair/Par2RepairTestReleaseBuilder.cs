@@ -25,7 +25,8 @@ internal sealed class Par2RepairTestReleaseBuilder(ConfigManager config, string 
         bool trustedRanges = true, bool pendingParts = false,
         Func<int, int, byte[], Stream>? streamFactory = null,
         (byte[] Index, byte[] Recovery)? parity = null,
-        bool obfuscatedParity = false)
+        bool obfuscatedParity = false,
+        IReadOnlyList<(string Name, byte[] Bytes)>? additionalParity = null)
     {
         var token = Guid.NewGuid().ToString("N")[..8];
         var hashOverrides = files.Where(file => file.FileHashOverride is not null)
@@ -63,6 +64,8 @@ internal sealed class Par2RepairTestReleaseBuilder(ConfigManager config, string 
 
         AddParity("aaa-index-" + token + "@test", obfuscatedParity ? "unknown-index" : "release.par2", indexBytes);
         AddParity("zzz-volume-" + token + "@test", obfuscatedParity ? "unknown-recovery" : "release.vol00+08.par2", recoveryBytes);
+        foreach (var (entry, index) in (additionalParity ?? []).Select((entry, index) => (entry, index)))
+            AddParity($"000-extra-{index}-{token}@test", entry.Name, entry.Bytes);
         var fake = new FakeNntpClient(payloads, useCachedYencStreams: true, yencHeaders: headers,
             decodedStreamFactory: (id, bytes) => sourcePositions.TryGetValue(id, out var position) && streamFactory is not null
                 ? streamFactory(position.File, position.Segment, bytes) : new MemoryStream(bytes, writable: false));

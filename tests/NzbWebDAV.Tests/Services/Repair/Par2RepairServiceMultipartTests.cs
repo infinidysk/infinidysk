@@ -1,12 +1,16 @@
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
+using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Models;
 using NzbWebDAV.Par2Recovery;
 using NzbWebDAV.Services.Repair;
+using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Database;
+using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Tests.Par2Recovery;
 
 namespace NzbWebDAV.Tests.Services.Repair;
@@ -75,6 +79,385 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
 
     private static int[] Sizes(int length)
         => Enumerable.Range(0, (length + 4095) / 4096).Select(index => Math.Min(4096, length - index * 4096)).ToArray();
+
+    [Fact]
+    public async Task MultipartStream_ReportsGapWithoutWaitingAndReadsValidatedPatchAfterRepair()
+    {
+        var data = Data(4096 * 6, "stream-trigger");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length), [4]),
+        ], [1], DavItem.ItemSubType.MultipartFile);
+        var payload = await BlobStore.ReadBlob<DavMultipartFile>(release.Item.FileBlobId!.Value);
+        Assert.NotNull(payload);
+        var previousSink = Par2RepairTriggerSink.Current;
+        var previousReports = Par2RepairTriggerSink.TestReports;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        release.Service.BeforePatchPublicationForTests = token => { entered.TrySetResult(); return proceed.Task.WaitAsync(token); };
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var repaired = new RepairedSegmentNntpClient(release.Fake, release.Store);
+        var workers = release.Service.RunWorkersAsync(cancellation.Token);
+        Par2RepairTriggerSink.Current = new Par2RepairTriggerSink(release.Service);
+        Par2RepairTriggerSink.TestReports = [];
+        try
+        {
+            await using (var stream = new DavMultipartFileStream(payload, repaired, 0, null, false, release.Item.Path))
+            await using (var output = new MemoryStream())
+            {
+                await stream.CopyToAsync(output, cancellation.Token);
+                var fallback = data.ToArray();
+                fallback.AsSpan(4096 * 4, 4096).Clear();
+                Assert.Equal(fallback, output.ToArray());
+            }
+            await entered.Task.WaitAsync(cancellation.Token);
+            Assert.Contains(Par2RepairTriggerSink.TestReports, report => report.Path == release.Item.Path && report.SegmentId == release.Files[0].Ids[4]);
+            Assert.False(release.Store.HasUsablePatch(release.Files[0].Ids[4]));
+            proceed.TrySetResult();
+            await WaitForSuccessfulJobAsync(cancellation.Token);
+            await using var restored = new DavMultipartFileStream(payload, repaired, 0, null, false, release.Item.Path);
+            await using var complete = new MemoryStream();
+            await restored.CopyToAsync(complete, cancellation.Token);
+            Assert.Equal(data, complete.ToArray());
+        }
+        finally
+        {
+            proceed.TrySetResult();
+            await cancellation.CancelAsync();
+            try { await workers; }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+            Par2RepairTriggerSink.Current = previousSink;
+            Par2RepairTriggerSink.TestReports = previousReports;
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EvictedPatchAndCache_FallbackRetainsDownloadAdmission(bool cacheEnabled)
+    {
+        _config.UpdateValues([
+            new ConfigItem { ConfigName = ConfigKeys.UsenetMaxDownloadConnections, ConfigValue = "1" },
+            new ConfigItem { ConfigName = ConfigKeys.UsenetMaxQueueConnections, ConfigValue = "1" },
+        ]);
+        var id = "admitted-local@test";
+        byte[] bytes = [1, 2, 3, 4];
+        var header = new UsenetSharp.Models.UsenetYencHeader
+        {
+            FileName = "volume.rar", FileSize = bytes.Length, PartSize = bytes.Length,
+            PartNumber = 1, TotalParts = 1, PartOffset = 0, LineLength = 128,
+        };
+        var patches = new RepairPatchStore(Path.Join(_root, "admission-patches"), 1024);
+        await patches.EnsureCatalogLoadedAsync(CancellationToken.None);
+        patches.CommitPatch(id, bytes, header);
+        using var provider = new FakeNntpClient(new Dictionary<string, byte[]> { [id] = bytes }, useCachedYencStreams: true);
+        using var downloading = new DownloadingNntpClient(provider, _config);
+        var cacheDirectory = Path.Join(_root, "admission-cache");
+        var hash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(id)));
+        Directory.CreateDirectory(Path.Join(cacheDirectory, hash[..2]));
+        var bodyPath = Path.Join(cacheDirectory, hash[..2], hash);
+        await File.WriteAllBytesAsync(bodyPath, bytes);
+        await File.WriteAllTextAsync(bodyPath + ".h", System.Text.Json.JsonSerializer.Serialize(header));
+        using var cache = new SegmentCacheNntpClient(downloading, cacheDirectory, 1024);
+        await cache.CatalogLoadTask;
+        using var repaired = new RepairedSegmentNntpClient(cacheEnabled ? cache : downloading, patches);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var handle = await repaired.AcquireExclusiveConnectionAsync(id, cancellation.Token);
+        Assert.NotNull(handle.OnConnectionReadyAgain);
+        Assert.Equal(0, provider.BodyRequestCount);
+        var other = repaired.AcquireExclusiveConnectionAsync("second@test", cancellation.Token);
+        Assert.False(other.IsCompleted);
+        patches.CommitPatch("replacement@test", new byte[1024], new UsenetSharp.Models.UsenetYencHeader
+        {
+            FileName = "replacement.rar", FileSize = 1024, PartSize = 1024,
+            PartNumber = 1, TotalParts = 1, PartOffset = 0, LineLength = 128,
+        });
+        Assert.False(patches.Contains(id));
+        File.Delete(bodyPath);
+        File.Delete(bodyPath + ".h");
+        var response = await repaired.DecodedBodyAsync(id, handle, cancellation.Token);
+        await using var stream = response.Stream!;
+        await using var output = new MemoryStream();
+        await stream.CopyToAsync(output, cancellation.Token);
+        Assert.Equal(bytes, output.ToArray());
+        Assert.Equal(1, provider.BodyRequestCount);
+        Assert.Equal(1, provider.CompletionCallbackCount);
+        var next = await other;
+        next.OnConnectionReadyAgain!(UsenetSharp.Models.ArticleBodyResult.Cancelled, "test-release");
+    }
+
+    [Fact]
+    public async Task OversizedRelease_IsRejectedBeforeContentOrRecoveryReads()
+    {
+        _config.UpdateValues([new ConfigItem { ConfigName = ConfigKeys.RepairPar2MaxReleaseGb, ConfigValue = "1" }]);
+        var data = Data(4096 * 6, "oversized-metadata");
+        var parity = Par2TestEncoder.EncodeSet([("volume.rar", data)], 4096, [1u]);
+        RewritePacket(parity.indexBytes, "PAR 2.0\0FileDesc"u8, body =>
+            BinaryPrimitives.WriteUInt64LittleEndian(body.AsSpan(48), 2UL * 1024 * 1024 * 1024));
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length), [4]),
+        ], [], DavItem.ItemSubType.MultipartFile, parity: parity);
+        Assert.Equal(Par2RepairOutcome.NotRepaired, await release.Service.TryPar2RepairAsync(release.Item,
+            [release.Files[0].Ids[4]], CancellationToken.None));
+        Assert.Contains("exceeds release cap", (await ReadJobAsync()).FailureReason, StringComparison.Ordinal);
+        Assert.All(release.Fake.BodyRequestCounts.Keys, id => Assert.StartsWith("aaa-index-", id));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MetadataSearch_StopsAtNamedAndMagicCandidateLimits(bool named)
+    {
+        var count = named ? Par2RepairService.MaxPar2MetadataCandidates : Par2RepairService.MaxPar2MagicCandidates;
+        var extras = Enumerable.Range(0, count + 1)
+            .Select(index => (Name: named ? $"candidate-{index}.par2" : $"candidate-{index}", Bytes: new byte[64])).ToArray();
+        var data = Data(4096 * 3, "bounded-search");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length), [0]),
+        ], [], DavItem.ItemSubType.MultipartFile, parity: ([], []), obfuscatedParity: !named, additionalParity: extras);
+        Assert.Equal(Par2RepairOutcome.NotRepaired, await release.Service.TryPar2RepairAsync(release.Item,
+            [release.Files[0].Ids[0]], CancellationToken.None));
+        Assert.Contains($"{count}-candidate limit", (await ReadJobAsync()).FailureReason, StringComparison.Ordinal);
+        Assert.Equal(count, release.Fake.BodyRequestCounts.Keys.Count(id => id.StartsWith("000-extra-", StringComparison.Ordinal)));
+    }
+
+    private static void RewritePacket(byte[] packets, ReadOnlySpan<byte> packetType, Action<byte[]> rewriteBody)
+    {
+        for (var offset = 0; offset < packets.Length;)
+        {
+            var length = checked((int)BinaryPrimitives.ReadUInt64LittleEndian(packets.AsSpan(offset + 8)));
+            if (packets.AsSpan(offset + 48, 16).SequenceEqual(packetType))
+            {
+                var body = packets.AsSpan(offset + 64, length - 64).ToArray();
+                rewriteBody(body);
+                body.CopyTo(packets, offset + 64);
+#pragma warning disable CA5351
+                MD5.HashData(packets.AsSpan(offset + 32, length - 32)).CopyTo(packets.AsSpan(offset + 16, 16));
+#pragma warning restore CA5351
+                return;
+            }
+            offset += length;
+        }
+        throw new InvalidDataException("Expected fixture packet is missing.");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IndependentSets_FilterBeforeExponentDedupAndRejectCrossSetRequests(bool crossSet)
+    {
+        var first = Data(4096 * 6, "independent-first");
+        var second = Data(4096 * 7, "independent-second");
+        var main = Par2TestEncoder.EncodeSet([("first.rar", first)], 4096, [0u]);
+        var foreign = Par2TestEncoder.EncodeSet([("second.rar", second)], 4096, [0u]);
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("first.rar", first, Sizes(first.Length), [4]),
+            new("second.rar", second, Sizes(second.Length), crossSet ? [5] : []),
+        ], [], DavItem.ItemSubType.MultipartFile, parity: main,
+            additionalParity: [("foreign.par2", foreign.indexBytes), ("foreign.vol00+01.par2", foreign.volumeBytes)]);
+        var ids = crossSet ? new[] { release.Files[0].Ids[4], release.Files[1].Ids[5] } : [release.Files[0].Ids[4]];
+        var result = await release.Service.TryPar2RepairAsync(release.Item, ids, CancellationToken.None);
+        Assert.Equal(crossSet ? Par2RepairOutcome.NotRepaired : Par2RepairOutcome.Repaired, result);
+        if (crossSet)
+        {
+            Assert.All(ids, id => Assert.False(release.Store.HasUsablePatch(id)));
+            Assert.Contains("cross-set repair is not supported", (await ReadJobAsync()).FailureReason, StringComparison.Ordinal);
+        }
+        else await AssertPatchAsync(release, 0, 4);
+    }
+
+    [Fact]
+    public async Task ConflictingCriticalMetadata_IsRejectedBeforePublication()
+    {
+        var data = Data(4096 * 6, "critical-conflict");
+        var good = Par2TestEncoder.EncodeSet([("volume.rar", data)], 4096, [1u]);
+        var conflicting = good.indexBytes.ToArray();
+        for (var offset = 0; offset < conflicting.Length;)
+        {
+            var length = checked((int)BinaryPrimitives.ReadUInt64LittleEndian(conflicting.AsSpan(offset + 8)));
+            if (conflicting.AsSpan(offset + 48, 16).SequenceEqual("PAR 2.0\0FileDesc"u8))
+            {
+                conflicting[offset + 80] ^= 0xFF;
+#pragma warning disable CA5351
+                MD5.HashData(conflicting.AsSpan(offset + 32, length - 32)).CopyTo(conflicting.AsSpan(offset + 16, 16));
+#pragma warning restore CA5351
+                break;
+            }
+            offset += length;
+        }
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length), [4]),
+        ], [], DavItem.ItemSubType.MultipartFile, parity: (good.indexBytes.Concat(conflicting).ToArray(), good.volumeBytes));
+        var id = release.Files[0].Ids[4];
+        Assert.Equal(Par2RepairOutcome.NotRepaired, await release.Service.TryPar2RepairAsync(release.Item, [id], CancellationToken.None));
+        Assert.False(release.Store.HasUsablePatch(id));
+        Assert.Contains("Conflicting critical", (await ReadJobAsync()).FailureReason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Admission_CanceledWaiterLeavesNoJobAndCanRetry()
+    {
+        var data = Data(4096 * 6, "admission");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length), [4]),
+        ], [1], DavItem.ItemSubType.MultipartFile);
+        var other = DavItem.New(Guid.NewGuid(), DavItem.ContentFolder, "other-mounted.mkv", release.Item.FileSize,
+            DavItem.ItemType.UsenetFile, DavItem.ItemSubType.MultipartFile, release.Item.ReleaseDate, null, null,
+            release.Item.FileBlobId, release.Item.NzbBlobId);
+        await using (var context = new DavDatabaseContext())
+        {
+            context.Items.Add(other);
+            await context.SaveChangesAsync();
+        }
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        release.Service.BeforePatchPublicationForTests = token => { entered.TrySetResult(); return proceed.Task.WaitAsync(token); };
+        using var ownerCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ids = new[] { release.Files[0].Ids[4] };
+        var owner = release.Service.TryPar2RepairAsync(release.Item, ids, ownerCancellation.Token);
+        try
+        {
+            await entered.Task.WaitAsync(ownerCancellation.Token);
+            using var waiterCancellation = new CancellationTokenSource();
+            var waiter = release.Service.TryPar2RepairAsync(other, ids, waiterCancellation.Token);
+            var sameItem = release.Service.TryPar2RepairAsync(release.Item, ids, ownerCancellation.Token);
+            var snapshot = release.Service.GetDiagnosticSnapshot();
+            Assert.Equal(1, snapshot.AdmissionActive);
+            Assert.Equal(1, snapshot.AdmissionWaiters);
+            Assert.False(sameItem.IsCompleted);
+            await waiterCancellation.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiter);
+            Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionWaiters);
+            await using (var context = new DavDatabaseContext())
+                Assert.False(await context.Par2RepairJobs.AnyAsync(job => job.DavItemId == other.Id));
+            proceed.TrySetResult();
+            Assert.Equal(Par2RepairOutcome.Repaired, await owner);
+            Assert.Equal(Par2RepairOutcome.Repaired, await sameItem);
+            Assert.Equal(Par2RepairOutcome.Repaired, await release.Service.TryPar2RepairAsync(other, ids, ownerCancellation.Token));
+            Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionActive);
+        }
+        finally
+        {
+            proceed.TrySetResult();
+            await ownerCancellation.CancelAsync();
+            try { await owner; }
+            catch (OperationCanceledException) when (ownerCancellation.IsCancellationRequested) { }
+        }
+    }
+
+    [Fact]
+    public async Task LateDifferentVolumeRequest_RunsFollowUpBeforeReturningSuccess()
+    {
+        var first = Data(4096 * 6, "late-first");
+        var second = Data(4096 * 7, "late-second");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("first.rar", first, Sizes(first.Length), [4]),
+            new("second.rar", second, Sizes(second.Length)),
+        ], [1, 2], DavItem.ItemSubType.MultipartFile);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var publications = 0;
+        release.Service.BeforePatchPublicationForTests = token =>
+        {
+            if (Interlocked.Increment(ref publications) != 1) return Task.CompletedTask;
+            entered.TrySetResult();
+            return proceed.Task.WaitAsync(token);
+        };
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var owner = release.Service.TryPar2RepairAsync(release.Item, [release.Files[0].Ids[4]], cancellation.Token);
+        try
+        {
+            await entered.Task.WaitAsync(cancellation.Token);
+            var lateId = release.Files[1].Ids[5];
+            var late = release.Service.TryPar2RepairAsync(release.Item, [lateId], cancellation.Token);
+            Assert.False(late.IsCompleted);
+            Assert.False(release.Store.HasUsablePatch(lateId));
+            Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionWaiters);
+            proceed.TrySetResult();
+            Assert.Equal(Par2RepairOutcome.Repaired, await owner);
+            Assert.Equal(Par2RepairOutcome.Repaired, await late);
+            await AssertPatchAsync(release, 1, 5);
+            await using var context = new DavDatabaseContext();
+            Assert.Equal(2, await context.Par2RepairJobs.CountAsync(job => job.State == Par2RepairJob.RepairJobState.Succeeded));
+        }
+        finally
+        {
+            proceed.TrySetResult();
+            await cancellation.CancelAsync();
+            try { await owner; }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        }
+    }
+
+    [Fact]
+    public async Task CancellationBeforePublication_LeavesNoPatchOrRunningJob()
+    {
+        var data = Data(4096 * 6, "cancel-publication");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length), [4]),
+        ], [1], DavItem.ItemSubType.MultipartFile);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        release.Service.BeforePatchPublicationForTests = async _ => await cancellation.CancelAsync();
+        var id = release.Files[0].Ids[4];
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => release.Service.TryPar2RepairAsync(release.Item, [id], cancellation.Token));
+        Assert.False(release.Store.HasUsablePatch(id));
+        var job = await ReadJobAsync();
+        Assert.Equal(Par2RepairJob.RepairJobState.Failed, job.State);
+        Assert.Null(job.NextAttemptAt);
+        Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionActive);
+    }
+
+    [Theory]
+    [InlineData(DavItem.ItemSubType.MultipartFile)]
+    [InlineData(DavItem.ItemSubType.RarFile)]
+    public async Task PublicPlaybackReport_ReachesWorkerAndServesOfflineAfterRestart(DavItem.ItemSubType subtype)
+    {
+        var data = Data(4096 * 6, "public-trigger");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length), [4]),
+        ], [1], subtype);
+        var id = release.Files[0].Ids[4];
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var workers = release.Service.RunWorkersAsync(cancellation.Token);
+        try
+        {
+            release.Service.ReportZeroFill(release.Item.Path, id);
+            release.Service.ReportZeroFill(release.Item.Path, id);
+            await WaitForSuccessfulJobAsync(cancellation.Token);
+            await AssertPatchAsync(release, 0, 4);
+
+            var reloaded = new RepairPatchStore(release.PatchDirectory, release.Store.MaxBytes);
+            await reloaded.EnsureCatalogLoadedAsync(cancellation.Token);
+            using var offline = new FakeNntpClient(new Dictionary<string, byte[]>());
+            using var repaired = new RepairedSegmentNntpClient(offline, reloaded);
+            Assert.True((await repaired.StatAsync(id, cancellation.Token)).ArticleExists);
+            var response = await repaired.DecodedBodyAsync(id, cancellation.Token);
+            await using var stream = response.Stream!;
+            await using var output = new MemoryStream();
+            await stream.CopyToAsync(output, cancellation.Token);
+            Assert.Equal(data.AsSpan(4096 * 4, 4096).ToArray(), output.ToArray());
+            Assert.Equal(0, offline.BodyRequestCount);
+            Assert.Empty(offline.StatRequestOrder);
+        }
+        finally
+        {
+            await cancellation.CancelAsync();
+            try { await workers; }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        }
+    }
+
+    private static async Task WaitForSuccessfulJobAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(10));
+        while (true)
+        {
+            await using var context = new DavDatabaseContext();
+            var jobs = await context.Par2RepairJobs.AsNoTracking().ToListAsync(ct);
+            Assert.DoesNotContain(jobs, job => job.State is Par2RepairJob.RepairJobState.Failed or Par2RepairJob.RepairJobState.Infeasible);
+            if (jobs.Any(job => job.State == Par2RepairJob.RepairJobState.Succeeded)) return;
+            await timer.WaitForNextTickAsync(ct);
+        }
+    }
 
     [Theory]
     [InlineData(true, false)]
