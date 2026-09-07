@@ -23,6 +23,9 @@ namespace NzbWebDAV.Par2Recovery.Packets
 
         protected override void ParseBody(byte[] body)
         {
+            if (!_readPayload)
+                return;
+
             if (body.Length < 4)
                 throw new InvalidDataException("RecvSlic body too short for exponent.");
 
