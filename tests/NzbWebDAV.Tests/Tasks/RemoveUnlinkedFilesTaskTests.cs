@@ -705,7 +705,7 @@ public class RemoveUnlinkedFilesTaskTests
             await SeedRootsAsync(ctx);
             await SeedLinkedItemsAsync(ctx, libraryDir, 5);
 
-            await SeedOrphanItemsAsync(ctx, 46, "orphan");
+            await SeedOrphanItemsAsync(ctx, 106, "orphan");
 
             var config = new ConfigManager();
             config.UpdateValues(
@@ -721,7 +721,7 @@ public class RemoveUnlinkedFilesTaskTests
                 createContext: () => harness.CreateContext());
 
             Assert.True(await unapprovedCleanup.Execute());
-            Assert.Equal(51, await ctx.Items.CountAsync(x => x.Type == DavItem.ItemType.UsenetFile));
+            Assert.Equal(111, await ctx.Items.CountAsync(x => x.Type == DavItem.ItemType.UsenetFile));
             await BaseTask.ResetRunningTaskForTestsAsync();
 
             var dryRun = new RemoveUnlinkedFilesTask(
@@ -756,7 +756,7 @@ public class RemoveUnlinkedFilesTaskTests
                 previewToken: dryRun.IssuedPreviewToken);
 
             Assert.True(await staleCleanup.Execute());
-            Assert.Equal(52, await ctx.Items.CountAsync(x => x.Type == DavItem.ItemType.UsenetFile));
+            Assert.Equal(112, await ctx.Items.CountAsync(x => x.Type == DavItem.ItemType.UsenetFile));
             await BaseTask.ResetRunningTaskForTestsAsync();
 
             var refreshedDryRun = new RemoveUnlinkedFilesTask(
@@ -780,7 +780,7 @@ public class RemoveUnlinkedFilesTaskTests
             Assert.Equal(5, await ctx.Items.CountAsync(x => x.Type == DavItem.ItemType.UsenetFile));
             await BaseTask.ResetRunningTaskForTestsAsync();
 
-            await SeedOrphanItemsAsync(ctx, 46, "replay");
+            await SeedOrphanItemsAsync(ctx, 106, "replay");
             var replay = new RemoveUnlinkedFilesTask(
                 config,
                 websocket,
@@ -789,7 +789,7 @@ public class RemoveUnlinkedFilesTaskTests
                 previewToken: refreshedDryRun.IssuedPreviewToken);
 
             Assert.True(await replay.Execute());
-            Assert.Equal(51, await ctx.Items.CountAsync(x => x.Type == DavItem.ItemType.UsenetFile));
+            Assert.Equal(111, await ctx.Items.CountAsync(x => x.Type == DavItem.ItemType.UsenetFile));
             var replayProgress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
             Assert.NotNull(replayProgress);
             Assert.Contains("missing or was replaced", replayProgress, StringComparison.Ordinal);
@@ -846,6 +846,76 @@ public class RemoveUnlinkedFilesTaskTests
             var progress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
             Assert.NotNull(progress);
             Assert.Contains("approval expired", progress, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await BaseTask.ResetRunningTaskForTestsAsync();
+            RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
+            try { Directory.Delete(libraryDir, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task Execute_RejectsCandidateAddedAfterDryRunSnapshot()
+    {
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        var libraryDir = Path.Join(Path.GetTempPath(), $"nzbdav-lib-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(libraryDir);
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var ctx = harness.Context;
+            await SeedRootsAsync(ctx);
+            await SeedLinkedItemsAsync(ctx, libraryDir, 5);
+            await SeedOrphanItemsAsync(ctx, 46, "reviewed");
+
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+            ]);
+
+            const string latePath = "/content/late-after-audit.mkv";
+            var websocket = new WebsocketManager();
+            var dryRun = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: true,
+                createContext: () => harness.CreateContext(),
+                beforePreviewApproval: async () =>
+                {
+                    var lateId = Guid.NewGuid();
+                    ctx.Items.Add(DavItem.New(
+                        lateId,
+                        DavItem.ContentFolder,
+                        "late-after-audit.mkv",
+                        10,
+                        DavItem.ItemType.UsenetFile,
+                        DavItem.ItemSubType.NzbFile,
+                        null,
+                        null,
+                        null,
+                        null));
+                    await ctx.SaveChangesAsync();
+                });
+
+            Assert.True(await dryRun.Execute());
+            Assert.NotNull(dryRun.IssuedPreviewToken);
+            Assert.DoesNotContain(latePath, RemoveUnlinkedFilesTask.GetAuditReport(), StringComparison.Ordinal);
+            await BaseTask.ResetRunningTaskForTestsAsync();
+
+            var cleanup = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: false,
+                createContext: () => harness.CreateContext(),
+                previewToken: dryRun.IssuedPreviewToken);
+
+            Assert.True(await cleanup.Execute());
+            Assert.Equal(52, await ctx.Items.CountAsync(x => x.Type == DavItem.ItemType.UsenetFile));
+            var progress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
+            Assert.NotNull(progress);
+            Assert.Contains("state changed", progress, StringComparison.Ordinal);
         }
         finally
         {
