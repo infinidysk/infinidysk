@@ -15,7 +15,7 @@ namespace NzbWebDAV.Database.MetricsMigrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.Metrics.ArrImportEvent", b =>
                 {
@@ -181,9 +181,6 @@ namespace NzbWebDAV.Database.MetricsMigrations
                     b.Property<long>("BytesFetched")
                         .HasColumnType("INTEGER");
 
-                    b.Property<long>("ClientArticles")
-                        .HasColumnType("INTEGER");
-
                     b.Property<long>("Errors")
                         .HasColumnType("INTEGER");
 
@@ -217,9 +214,6 @@ namespace NzbWebDAV.Database.MetricsMigrations
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("BytesFetched")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("ClientArticles")
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("Errors")
@@ -258,9 +252,6 @@ namespace NzbWebDAV.Database.MetricsMigrations
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("BytesFetched")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("ClientArticles")
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("Errors")
@@ -366,9 +357,6 @@ namespace NzbWebDAV.Database.MetricsMigrations
                     b.Property<int>("Status")
                         .HasColumnType("INTEGER");
 
-                    b.Property<int>("Workload")
-                        .HasColumnType("INTEGER");
-
                     b.HasKey("Id");
 
                     b.HasIndex("At");
@@ -393,9 +381,6 @@ namespace NzbWebDAV.Database.MetricsMigrations
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("BytesServed")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("ClientArticles")
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("Errors")

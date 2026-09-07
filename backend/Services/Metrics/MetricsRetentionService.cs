@@ -123,7 +123,6 @@ public class MetricsRetentionService(ConfigManager configManager) : BackgroundSe
                     Provider = g.Key,
                     BytesFetched = g.Sum(x => x.BytesFetched),
                     Articles = g.Sum(x => x.Articles),
-                    ClientArticles = g.Sum(x => x.ClientArticles),
                     Misses = g.Sum(x => x.Misses),
                     Errors = g.Sum(x => x.Errors),
                     Retries = g.Sum(x => x.Retries),
@@ -152,7 +151,6 @@ public class MetricsRetentionService(ConfigManager configManager) : BackgroundSe
 
                     total.BytesFetched += fold.BytesFetched;
                     total.Articles += fold.Articles;
-                    total.ClientArticles += fold.ClientArticles;
                     total.Misses += fold.Misses;
                     total.Errors += fold.Errors;
                     total.Retries += fold.Retries;

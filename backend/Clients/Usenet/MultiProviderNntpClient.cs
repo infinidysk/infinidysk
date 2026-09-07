@@ -561,7 +561,6 @@ public class MultiProviderNntpClient(
         BatchCallbackCoordinator coordinator,
         CancellationToken cancellationToken)
     {
-        var fetchWorkload = DownloadWorkloadClassifier.ClassifyForMetrics(cancellationToken);
         var admissionSignaled = false;
         void SignalAdmission()
         {
@@ -599,7 +598,7 @@ public class MultiProviderNntpClient(
                 walk.NoteException(e);
                 var reason = ClassifyAndRecordFailure(
                     primaryProvider.MetricsKey, e, primaryStopwatch.ElapsedMilliseconds, 0,
-                    fetchWorkload, primaryTraceRange, NntpOperation.PipelinedBody, segmentId);
+                    primaryTraceRange, NntpOperation.PipelinedBody, segmentId);
                 (priorMisses ??= []).Add((primaryProvider.MetricsKey, reason));
                 lastException = ExceptionDispatchInfo.Capture(e);
             }
@@ -609,7 +608,7 @@ public class MultiProviderNntpClient(
                 primaryStopwatch.Stop();
                 _usageTracker.RecordSuccess(primaryProvider.MetricsKey);
                 RecordFetch(primaryProvider.MetricsKey, SegmentFetch.FetchStatus.Ok,
-                    primaryStopwatch.ElapsedMilliseconds, 0, fetchWorkload, primaryTraceRange);
+                    primaryStopwatch.ElapsedMilliseconds, 0, primaryTraceRange);
                 return WrapProviderResponse(response, primaryProvider.MetricsKey);
             }
 
@@ -621,7 +620,7 @@ public class MultiProviderNntpClient(
                 walk.CurrentDefinitiveMisses++;
                 primaryStopwatch.Stop();
                 RecordFetch(primaryProvider.MetricsKey, SegmentFetch.FetchStatus.Missing,
-                    primaryStopwatch.ElapsedMilliseconds, 0, fetchWorkload, primaryTraceRange);
+                    primaryStopwatch.ElapsedMilliseconds, 0, primaryTraceRange);
                 (priorMisses ??= []).Add((primaryProvider.MetricsKey, SegmentFetch.FetchStatus.Missing));
             }
             else if (response != null)
@@ -722,7 +721,7 @@ public class MultiProviderNntpClient(
                             RecordSuccessfulFetch(
                                 provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
                                 stopwatch.ElapsedMilliseconds, priorMisses?.Count ?? 0,
-                                fetchWorkload, traceRange, priorMisses);
+                                traceRange, priorMisses);
                             response = WrapProviderResponse(response, provider.MetricsKey);
                             gateOwnedByTransfer = true;
                             deferredCallback.Activate((result, failureReason) =>
@@ -740,8 +739,7 @@ public class MultiProviderNntpClient(
                         else
                         {
                             RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Missing,
-                                stopwatch.ElapsedMilliseconds, priorMisses?.Count ?? 0,
-                                fetchWorkload, traceRange);
+                                stopwatch.ElapsedMilliseconds, priorMisses?.Count ?? 0, traceRange);
                             (priorMisses ??= []).Add((provider.MetricsKey, SegmentFetch.FetchStatus.Missing));
                             if (UsenetArticleAvailability.IsDefinitiveMissing(response))
                             {
@@ -770,7 +768,7 @@ public class MultiProviderNntpClient(
                         MarkCachedMissingOnThrownMiss(e, segmentId, provider, missingGroups);
                         var reason = ClassifyAndRecordFailure(
                             provider.MetricsKey, e, stopwatch.ElapsedMilliseconds,
-                            priorMisses?.Count ?? 0, fetchWorkload, traceRange,
+                            priorMisses?.Count ?? 0, traceRange,
                             NntpOperation.PipelinedBody, segmentId);
                         (priorMisses ??= []).Add((provider.MetricsKey, reason));
                         deferredCallback.Discard();
@@ -966,7 +964,6 @@ public class MultiProviderNntpClient(
         CancellationToken cancellationToken)
         where T : UsenetResponse
     {
-        var fetchWorkload = DownloadWorkloadClassifier.ClassifyForMetrics(cancellationToken);
         var attribution = AttributionContext.Value;
         if (attribution != null) attribution.Host = null;
         ExceptionDispatchInfo? lastException = null;
@@ -1019,7 +1016,7 @@ public class MultiProviderNntpClient(
                     _usageTracker.RecordSuccess(provider.MetricsKey);
                     RecordSuccessfulFetch(
                         provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
-                        stopwatch.ElapsedMilliseconds, attemptIndex, fetchWorkload, traceRange, priorMisses);
+                        stopwatch.ElapsedMilliseconds, attemptIndex, traceRange, priorMisses);
                     result = WrapProviderResponse(result, provider.MetricsKey);
                     deferredCallback.Activate(onConnectionReadyAgain ?? ((_, _) => { }));
                     return result;
@@ -1030,7 +1027,7 @@ public class MultiProviderNntpClient(
                 {
                     walk.CurrentDefinitiveMisses++;
                     RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Missing,
-                        stopwatch.ElapsedMilliseconds, attemptIndex, fetchWorkload, traceRange);
+                        stopwatch.ElapsedMilliseconds, attemptIndex, traceRange);
                     (priorMisses ??= []).Add((provider.MetricsKey, SegmentFetch.FetchStatus.Missing));
                     lastNoArticleResult = result;
                     lastOutcomeWasException = false;
@@ -1042,7 +1039,7 @@ public class MultiProviderNntpClient(
 
                 walk.UnexpectedResponses++;
                 RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Missing,
-                    stopwatch.ElapsedMilliseconds, attemptIndex, fetchWorkload, traceRange);
+                    stopwatch.ElapsedMilliseconds, attemptIndex, traceRange);
                 ArticleBodyCompletion.InvokeContained(
                     onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
                 return result;
@@ -1062,7 +1059,7 @@ public class MultiProviderNntpClient(
                 MarkCachedMissingOnThrownMiss(e, segmentId, provider, missingGroups);
                 var reason = ClassifyAndRecordFailure(
                     provider.MetricsKey, e, stopwatch.ElapsedMilliseconds, attemptIndex,
-                    fetchWorkload, traceRange, operation, segmentId);
+                    traceRange, operation, segmentId);
                 (priorMisses ??= []).Add((provider.MetricsKey, reason));
                 deferredCallback.Discard();
                 lastException = ExceptionDispatchInfo.Capture(e);
@@ -1101,7 +1098,6 @@ public class MultiProviderNntpClient(
         CancellationToken cancellationToken
     ) where T : UsenetResponse
     {
-        var fetchWorkload = DownloadWorkloadClassifier.ClassifyForMetrics(cancellationToken);
         var attribution = AttributionContext.Value;
         if (attribution != null) attribution.Host = null;
         ExceptionDispatchInfo? lastException = null;
@@ -1164,7 +1160,7 @@ public class MultiProviderNntpClient(
                 {
                     walk.CurrentDefinitiveMisses++;
                     RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Missing,
-                        stopwatch.ElapsedMilliseconds, attemptIndex, fetchWorkload, traceRange);
+                        stopwatch.ElapsedMilliseconds, attemptIndex, traceRange);
                     (priorMisses ??= new()).Add((provider.MetricsKey, SegmentFetch.FetchStatus.Missing));
                     lastNoArticleResult = result;
                     lastOutcomeWasException = false;
@@ -1187,7 +1183,7 @@ public class MultiProviderNntpClient(
                     _usageTracker.RecordSuccess(provider.MetricsKey);
                     RecordSuccessfulFetch(
                         provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
-                        stopwatch.ElapsedMilliseconds, attemptIndex, fetchWorkload, traceRange, priorMisses);
+                        stopwatch.ElapsedMilliseconds, attemptIndex, traceRange, priorMisses);
                     result = WrapProviderResponse(result, provider.MetricsKey);
                 }
                 else if (result is UsenetDecodedBodyResponse or UsenetDecodedArticleResponse)
@@ -1195,7 +1191,7 @@ public class MultiProviderNntpClient(
                     // BODY/ARTICLE response with an unexpected (non-success, non-430) response type.
                     walk.UnexpectedResponses++;
                     RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Missing,
-                        stopwatch.ElapsedMilliseconds, attemptIndex, fetchWorkload, traceRange);
+                        stopwatch.ElapsedMilliseconds, attemptIndex, traceRange);
                 }
                 // STAT/HEAD/DATE successes: intentionally no SegmentFetch row (not a segment transfer;
                 // matches StatsPipelinedAsync which records nothing).
@@ -1214,7 +1210,7 @@ public class MultiProviderNntpClient(
                 MarkCachedMissingOnThrownMiss(e, articleId, provider, missingGroups);
                 var reason = ClassifyAndRecordFailure(
                     provider.MetricsKey, e, stopwatch.ElapsedMilliseconds, attemptIndex,
-                    fetchWorkload, traceRange, operation, articleId);
+                    traceRange, operation, articleId);
                 (priorMisses ??= new()).Add((provider.MetricsKey, reason));
                 lastException = ExceptionDispatchInfo.Capture(e);
                 lastOutcomeWasException = ClassifyException(e) != SegmentFetch.FetchStatus.Missing;
@@ -1366,7 +1362,6 @@ public class MultiProviderNntpClient(
         SegmentFetch.FetchStatus status,
         long durationMs,
         int retries,
-        SegmentFetch.FetchWorkload workload,
         StreamTraceRangeContext? traceRange,
         bool enqueue = true)
     {
@@ -1384,7 +1379,6 @@ public class MultiProviderNntpClient(
             At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             Provider = metricsKey,
             ReadSessionId = ReadSessionScope.Value,
-            Workload = workload,
             Bytes = 0, // bytes flow lazily through CountingYencStream → ProviderBytesTracker
             DurationMs = (int)Math.Min(int.MaxValue, durationMs),
             Status = status,
@@ -1404,12 +1398,11 @@ public class MultiProviderNntpClient(
         SegmentFetch.FetchStatus status,
         long durationMs,
         int retries,
-        SegmentFetch.FetchWorkload workload,
         StreamTraceRangeContext? traceRange,
         List<(string Host, SegmentFetch.FetchStatus Reason)>? priorMisses)
     {
         var fetch = RecordFetch(
-            metricsKey, status, durationMs, retries, workload, traceRange, enqueue: false);
+            metricsKey, status, durationMs, retries, traceRange, enqueue: false);
         if (priorMisses is not { Count: > 0 })
         {
             metricsWriter?.RecordFetch(fetch);
@@ -1429,11 +1422,10 @@ public class MultiProviderNntpClient(
     /// </summary>
     private SegmentFetch.FetchStatus ClassifyAndRecordFailure(
         string metricsKey, Exception exception, long durationMs, int retries,
-        SegmentFetch.FetchWorkload workload, StreamTraceRangeContext? traceRange,
-        NntpOperation operation, SegmentId? segmentId)
+        StreamTraceRangeContext? traceRange, NntpOperation operation, SegmentId? segmentId)
     {
         var status = ClassifyException(exception);
-        RecordFetch(metricsKey, status, durationMs, retries, workload, traceRange);
+        RecordFetch(metricsKey, status, durationMs, retries, traceRange);
         if (status == SegmentFetch.FetchStatus.Other)
         {
             exception.TryGetCausingException<ArgumentException>(out var argumentException);

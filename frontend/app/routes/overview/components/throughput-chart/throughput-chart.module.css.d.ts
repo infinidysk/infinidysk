@@ -3,8 +3,7 @@ declare const styles: {
   readonly chartArea: string;
   readonly svg: string;
   readonly gridline: string;
-  readonly lineApp: string;
-  readonly lineClient: string;
+  readonly lineArticles: string;
   readonly lineErrors: string;
   readonly crosshair: string;
   readonly hoverTooltip: string;
