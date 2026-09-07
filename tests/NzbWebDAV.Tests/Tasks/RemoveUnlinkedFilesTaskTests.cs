@@ -693,6 +693,117 @@ public class RemoveUnlinkedFilesTaskTests
     }
 
     [Fact]
+    public async Task Execute_AllowsExtremeOrphanRatioAfterReviewedDryRun()
+    {
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        var libraryDir = Path.Join(Path.GetTempPath(), $"nzbdav-lib-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(libraryDir);
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var ctx = harness.Context;
+            await SeedRootsAsync(ctx);
+            await SeedLinkedItemsAsync(ctx, libraryDir, 5);
+
+            for (var i = 0; i < 46; i++)
+            {
+                var id = Guid.NewGuid();
+                ctx.Items.Add(DavItem.New(
+                    id,
+                    DavItem.ContentFolder,
+                    $"orphan-{i}.mkv",
+                    10,
+                    DavItem.ItemType.UsenetFile,
+                    DavItem.ItemSubType.NzbFile,
+                    null,
+                    null,
+                    null,
+                    null));
+            }
+
+            await ctx.SaveChangesAsync();
+
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+            ]);
+
+            var websocket = new WebsocketManager();
+            var unapprovedCleanup = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: false,
+                createContext: () => harness.CreateContext());
+
+            Assert.True(await unapprovedCleanup.Execute());
+            Assert.Equal(51, await ctx.Items.CountAsync(x => x.Type == DavItem.ItemType.UsenetFile));
+            await BaseTask.ResetRunningTaskForTestsAsync();
+
+            var dryRun = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: true,
+                createContext: () => harness.CreateContext());
+
+            Assert.True(await dryRun.Execute());
+            Assert.NotNull(dryRun.IssuedPreviewToken);
+            await BaseTask.ResetRunningTaskForTestsAsync();
+
+            var changedId = Guid.NewGuid();
+            ctx.Items.Add(DavItem.New(
+                changedId,
+                DavItem.ContentFolder,
+                "changed-after-preview.mkv",
+                10,
+                DavItem.ItemType.UsenetFile,
+                DavItem.ItemSubType.NzbFile,
+                null,
+                null,
+                null,
+                null));
+            await ctx.SaveChangesAsync();
+
+            var staleCleanup = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: false,
+                createContext: () => harness.CreateContext(),
+                previewToken: dryRun.IssuedPreviewToken);
+
+            Assert.True(await staleCleanup.Execute());
+            Assert.Equal(52, await ctx.Items.CountAsync(x => x.Type == DavItem.ItemType.UsenetFile));
+            await BaseTask.ResetRunningTaskForTestsAsync();
+
+            var refreshedDryRun = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: true,
+                createContext: () => harness.CreateContext());
+
+            Assert.True(await refreshedDryRun.Execute());
+            Assert.NotNull(refreshedDryRun.IssuedPreviewToken);
+            await BaseTask.ResetRunningTaskForTestsAsync();
+
+            var cleanup = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: false,
+                createContext: () => harness.CreateContext(),
+                previewToken: refreshedDryRun.IssuedPreviewToken);
+
+            Assert.True(await cleanup.Execute());
+            Assert.Equal(5, await ctx.Items.CountAsync(x => x.Type == DavItem.ItemType.UsenetFile));
+        }
+        finally
+        {
+            await BaseTask.ResetRunningTaskForTestsAsync();
+            RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
+            try { Directory.Delete(libraryDir, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
+    [Fact]
     public async Task InsertLinkedIdBatchAsync_InsertsAllIds()
     {
         await using var harness = await TempDb.CreateAsync();

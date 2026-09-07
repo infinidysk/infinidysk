@@ -1,6 +1,7 @@
 import { Button } from "~/components/ui/button";
 import { Alert } from "~/components/ui/feedback";
 import { Icon } from "~/components/ui/icon";
+import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { useCallback, useEffect, useState } from "react";
 import { useWebsocketTopic } from "~/utils/shared-websocket";
 import { withUrlBase } from "~/utils/url-base";
@@ -17,6 +18,8 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
   // Replayed non-terminal ctp state must not look like an active run until the user clicks.
   const [runStarted, setRunStarted] = useState<boolean>(false);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [previewToken, setPreviewToken] = useState<string | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
   const progressMessage = progress?.replace("Dry Run - ", "");
 
   // derived variables
@@ -40,39 +43,54 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
     if (isFinished) setRunStarted(false);
   }, [isFinished]);
 
-  const startTask = useCallback(async (url: string) => {
-    setStatusError(null);
-    // Clear any stale terminal message so isFinished doesn't mask the new run
-    // until its first progress message arrives.
-    setProgress(null);
-    setRunStarted(true);
-    setIsFetching(true);
-    try {
-      const response = await fetch(url);
-      if (response.status === 409) {
-        setStatusError("Task already running.");
+  const startTask = useCallback(
+    async (url: string, dryRun: boolean) => {
+      setShowConfirm(false);
+      setStatusError(null);
+      // Clear any stale terminal message so isFinished doesn't mask the new run
+      // until its first progress message arrives.
+      setProgress(null);
+      setRunStarted(true);
+      setIsFetching(true);
+      if (dryRun) setPreviewToken(null);
+      try {
+        const response = await fetch(url, {
+          ...(!dryRun && previewToken
+            ? { headers: { "X-InfiniDysk-Cleanup-Preview": previewToken } }
+            : {}),
+        });
+        const body = (await response.json().catch(() => null)) as {
+          error?: string;
+          previewToken?: string;
+        } | null;
+        if (!response.ok) {
+          setStatusError(body?.error || `Request failed (${response.status}).`);
+          setRunStarted(false);
+          return;
+        }
+        setPreviewToken(dryRun ? (body?.previewToken ?? null) : null);
+      } catch {
+        setPreviewToken(null);
+        setStatusError("Request failed.");
         setRunStarted(false);
-        return;
+      } finally {
+        setIsFetching(false);
       }
-      if (!response.ok) {
-        setStatusError(`Request failed (${response.status}).`);
-        setRunStarted(false);
-      }
-    } catch {
-      setStatusError("Request failed.");
-      setRunStarted(false);
-    } finally {
-      setIsFetching(false);
-    }
-  }, []);
+    },
+    [previewToken],
+  );
 
   // events
   const onRun = useCallback(async () => {
-    await startTask("/api/remove-unlinked-files");
-  }, [startTask]);
+    if (previewToken) {
+      setShowConfirm(true);
+      return;
+    }
+    await startTask("/api/remove-unlinked-files", false);
+  }, [previewToken, startTask]);
 
   const onDryRun = useCallback(async () => {
-    await startTask("/api/remove-unlinked-files/dry-run");
+    await startTask("/api/remove-unlinked-files/dry-run", true);
   }, [startTask]);
 
   return (
@@ -150,6 +168,12 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
               )}
             </div>
           </div>
+          {previewToken && (
+            <p className="mt-3 border-t border-base-content/10 pt-2.5 text-xs text-base-content/50">
+              High-volume cleanup is unlocked for 15 minutes. The approval is invalidated if the
+              orphan or library-link snapshot changes.
+            </p>
+          )}
           <p className="mt-3 border-t border-base-content/10 pt-2.5 text-xs text-base-content/50">
             Dry Run previews the files that would be removed without changing anything. Library
             Directory must be the parent of your Radarr/Sonarr root folders containing imported
@@ -169,6 +193,19 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
           </p>
         </div>
       </div>
+
+      <ConfirmModal
+        show={showConfirm}
+        title="Remove reviewed orphaned files?"
+        message="The files listed in the dry-run audit will be permanently removed from WebDAV."
+        checkboxMessage="I reviewed the dry-run audit and have a current /config backup"
+        requireCheckbox
+        errorMessage="Pause Arr imports while cleanup runs. Any candidate or library-link change will cancel this approval."
+        cancelText="Cancel"
+        confirmText="Remove orphaned files"
+        onCancel={() => setShowConfirm(false)}
+        onConfirm={() => void startTask("/api/remove-unlinked-files", false)}
+      />
     </>
   );
 }

@@ -1,5 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Data.Common;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
@@ -19,11 +21,15 @@ namespace NzbWebDAV.Tasks;
 public class RemoveUnlinkedFilesTask : BaseTask
 {
     private static readonly TimeSpan DefaultProgressHeartbeatInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan PreviewLifetime = TimeSpan.FromMinutes(15);
+    private static readonly object PreviewLock = new();
     private static List<string> _allRemovedPaths = [];
+    private static PreviewApproval? _previewApproval;
     private readonly ConfigManager _configManager;
     private readonly WebsocketManager _websocketManager;
     private readonly bool _isDryRun;
     private readonly Func<DavDatabaseContext>? _createContext;
+    private readonly string? _previewToken;
     private readonly TimeSpan _progressHeartbeatInterval;
     private readonly Action<string>? _progressObserver;
     private ProgressHeartbeat? _progressHeartbeat;
@@ -58,8 +64,9 @@ public class RemoveUnlinkedFilesTask : BaseTask
     public RemoveUnlinkedFilesTask(
         ConfigManager configManager,
         WebsocketManager websocketManager,
-        bool isDryRun)
-        : this(configManager, websocketManager, isDryRun, null)
+        bool isDryRun,
+        string? previewToken = null)
+        : this(configManager, websocketManager, isDryRun, null, previewToken)
     {
     }
 
@@ -68,6 +75,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         WebsocketManager websocketManager,
         bool isDryRun,
         Func<DavDatabaseContext>? createContext,
+        string? previewToken = null,
         TimeSpan? progressHeartbeatInterval = null,
         Action<string>? progressObserver = null)
     {
@@ -75,9 +83,12 @@ public class RemoveUnlinkedFilesTask : BaseTask
         _websocketManager = websocketManager;
         _isDryRun = isDryRun;
         _createContext = createContext;
+        _previewToken = previewToken;
         _progressHeartbeatInterval = progressHeartbeatInterval ?? DefaultProgressHeartbeatInterval;
         _progressObserver = progressObserver;
     }
+
+    public string? IssuedPreviewToken { get; private set; }
 
     private DavDatabaseContext CreateContext() => DavDatabaseContexts.Create(_createContext);
 
@@ -187,6 +198,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         // so 90% leaves wide headroom while still catching a broken scan.
         var deletableItems = await CountDeletableItems(startTime).ConfigureAwait(false);
         var extremeUnlinkedRatio = deletableItems > 0 && unlinkedItems > deletableItems * 0.9;
+        string? previewFingerprint = null;
         if (extremeUnlinkedRatio)
         {
             var percent = 100.0 * unlinkedItems / deletableItems;
@@ -197,23 +209,33 @@ public class RemoveUnlinkedFilesTask : BaseTask
 
             if (!_isDryRun)
             {
-                _allRemovedPaths.Clear();
-                Complete($"Aborted: {detail} Cancelling to prevent accidental bulk deletion. " +
-                         "Run a dry-run to inspect if this is genuinely expected.");
-                return;
+                previewFingerprint = await ComputePreviewFingerprint(startTime).ConfigureAwait(false);
+                if (!TryValidatePreviewApproval(previewFingerprint, out var previewError))
+                {
+                    _allRemovedPaths.Clear();
+                    Complete($"Aborted: {detail} {previewError}");
+                    return;
+                }
             }
 
-            UpdatePhase($"Warning: {detail} A non-dry-run would abort.");
+            UpdatePhase($"Warning: {detail} Review the audit before cleanup.");
         }
 
         if (_isDryRun)
         {
             StartPhase("Identifying unlinked files...");
             var identified = await DryRunIdentifyUnlinkedFiles(startTime).ConfigureAwait(false);
+            if (extremeUnlinkedRatio)
+            {
+                previewFingerprint ??= await ComputePreviewFingerprint(startTime).ConfigureAwait(false);
+                IssuedPreviewToken = IssuePreviewApproval(previewFingerprint);
+            }
             Complete($"Done. Identified {identified} unlinked files.");
         }
         else
         {
+            if (extremeUnlinkedRatio)
+                ConsumePreviewApproval(_previewToken);
             var removed = await RemoveUnlinkedItems(startTime, unlinkedItems).ConfigureAwait(false);
             await RemoveEmptyDirectories(startTime).ConfigureAwait(false);
             Complete($"Done. Removed {removed} unlinked files.");
@@ -483,6 +505,110 @@ public class RemoveUnlinkedFilesTask : BaseTask
             .ConfigureAwait(false);
 
         return count;
+    }
+
+    private async Task<string> ComputePreviewFingerprint(DateTime createdBefore)
+    {
+        await using var dbContext = CreateContext();
+        var usenetFileType = (int)DavItem.ItemType.UsenetFile;
+        var candidates = await dbContext.Database
+            .SqlQuery<UnlinkedFileInfo>(
+                $"""
+                 SELECT CAST("Id" AS TEXT) AS "Id", "Type", "Path", "Name",
+                        "GeneratedStrmOutputRoot", "GeneratedStrmPath", "GeneratedStrmTarget"
+                 FROM "DavItems"
+                 WHERE "Type" = {usenetFileType}
+                   AND "HistoryItemId" IS NULL
+                   AND "CreatedAt" < {CreateWallClockParameter(dbContext, createdBefore)}
+                   AND NOT EXISTS (
+                       SELECT 1 FROM TMP_LINKED_FILES t
+                       WHERE t.Id = "DavItems"."Id"
+                   )
+                 ORDER BY CAST("Id" AS TEXT)
+                 """)
+            .ToListAsync()
+            .ConfigureAwait(false);
+
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        void Append(string? value)
+        {
+            hash.AppendData(Encoding.UTF8.GetBytes(value ?? "<null>"));
+            hash.AppendData([0]);
+        }
+
+        Append(_configManager.GetLibraryDir());
+        Append(_configManager.GetRcloneMountDir());
+        foreach (var item in candidates)
+        {
+            Append(item.Id);
+            Append(item.Path);
+            Append(item.Name);
+            Append(item.GeneratedStrmOutputRoot);
+            Append(item.GeneratedStrmPath);
+            Append(item.GeneratedStrmTarget);
+        }
+
+        return Convert.ToHexString(hash.GetHashAndReset());
+    }
+
+    private static string IssuePreviewApproval(string fingerprint)
+    {
+        var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        lock (PreviewLock)
+        {
+            _previewApproval = new PreviewApproval(
+                token,
+                fingerprint,
+                DateTimeOffset.UtcNow + PreviewLifetime);
+        }
+
+        return token;
+    }
+
+    private bool TryValidatePreviewApproval(string fingerprint, out string reason)
+    {
+        if (string.IsNullOrWhiteSpace(_previewToken))
+        {
+            reason = "Run and review a fresh dry run before cleanup.";
+            return false;
+        }
+
+        lock (PreviewLock)
+        {
+            if (_previewApproval is null
+                || !string.Equals(_previewApproval.Token, _previewToken, StringComparison.Ordinal))
+            {
+                reason = "The dry-run approval is missing or was replaced; run the dry run again.";
+                return false;
+            }
+
+            if (_previewApproval.ExpiresAt <= DateTimeOffset.UtcNow)
+            {
+                reason = "The dry-run approval expired; run the dry run again.";
+                return false;
+            }
+
+            if (!string.Equals(_previewApproval.Fingerprint, fingerprint, StringComparison.Ordinal))
+            {
+                reason = "The orphan or library-link state changed after the dry run; review a new dry run.";
+                return false;
+            }
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private static void ConsumePreviewApproval(string? previewToken)
+    {
+        if (string.IsNullOrWhiteSpace(previewToken))
+            return;
+
+        lock (PreviewLock)
+        {
+            if (string.Equals(_previewApproval?.Token, previewToken, StringComparison.Ordinal))
+                _previewApproval = null;
+        }
     }
 
     private async Task<int> RemoveUnlinkedItems(DateTime createdBefore, int totalCount)
@@ -832,5 +958,15 @@ public class RemoveUnlinkedFilesTask : BaseTask
         }
     }
 
-    internal static void ClearAuditPathsForTests() => _allRemovedPaths = [];
+    internal static void ClearAuditPathsForTests()
+    {
+        _allRemovedPaths = [];
+        lock (PreviewLock)
+            _previewApproval = null;
+    }
+
+    private sealed record PreviewApproval(
+        string Token,
+        string Fingerprint,
+        DateTimeOffset ExpiresAt);
 }
