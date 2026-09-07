@@ -14,7 +14,8 @@ internal sealed class FakeNntpClient(
     bool useCachedYencStreams = false,
     IReadOnlyDictionary<string, LongRange>? segmentRanges = null,
     Func<string, byte[], Stream>? decodedStreamFactory = null,
-    IReadOnlyDictionary<string, byte[]>? localSegments = null) : NntpClient
+    IReadOnlyDictionary<string, byte[]>? localSegments = null,
+    IReadOnlyDictionary<string, UsenetYencHeader>? yencHeaders = null) : NntpClient
 {
     // Copied at construction so tests can add/restore articles via Serve() without
     // mutating the caller's dictionary.
@@ -218,7 +219,7 @@ internal sealed class FakeNntpClient(
 
         YencStream stream = useCachedYencStreams
             ? new CachedYencStream(
-                new UsenetYencHeader
+                yencHeaders is not null && yencHeaders.TryGetValue(key, out var exactHeader) ? exactHeader : new UsenetYencHeader
                 {
                     FileName = "fake.bin",
                     FileSize = segmentRanges is { Count: > 0 }
