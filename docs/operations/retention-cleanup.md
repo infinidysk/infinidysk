@@ -47,7 +47,7 @@ Back up `/config` and pause Arr imports before running cleanup. Restore the miss
 
 **Library Directory** must be the organized library root that contains your Arr-imported symlinks or STRMs (the parent of your Radarr/Sonarr root folders). It must be visible inside the InfiniDysk container. Do not point it at the rclone mount (`rclone.mount-dir`) or at `/completed-symlinks` — that folder is InfiniDysk's virtual view of current History rows, so scanning it cannot protect files after history is cleared. Remove Orphaned Files aborts (dry run included) when Library Directory is the mount or a path inside it.
 
-If more than 90% of eligible WebDAV files appear unlinked, a normal run is blocked until you run and review a fresh dry run. That approval lasts 15 minutes and is rejected if the orphan candidates, library links, or configured paths change.
+If more than 90% of eligible WebDAV files appear unlinked, a normal run is blocked until you run and review a fresh dry run. That approval lasts 15 minutes, is bound to the orphan candidates, library links, configured paths, and recorded generated-sidecar state, and is consumed after one cleanup attempt.
 
 History entries disappearing after an Arr import are client-initiated cleanup, not InfiniDysk deleting the mount: the Arr's **Remove Completed** setting, InfiniDysk **Automatic Queue Management** rules that call the Arr with `removeFromClient=true`, or a WebDAV DELETE of a release folder under `/completed-symlinks`. Mounted files stay streamable; only the History row is removed.
 

@@ -197,10 +197,17 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
       <ConfirmModal
         show={showConfirm}
         title="Remove reviewed orphaned files?"
-        message="The files listed in the dry-run audit will be permanently removed from WebDAV."
+        message={
+          <>
+            <p>The files listed in the dry-run audit will be permanently removed from WebDAV.</p>
+            <p className="mt-2 text-warning">
+              Pause Arr imports while cleanup runs. Any candidate or library-link change will cancel
+              this approval.
+            </p>
+          </>
+        }
         checkboxMessage="I reviewed the dry-run audit and have a current /config backup"
         requireCheckbox
-        errorMessage="Pause Arr imports while cleanup runs. Any candidate or library-link change will cancel this approval."
         cancelText="Cancel"
         confirmText="Remove orphaned files"
         onCancel={() => setShowConfirm(false)}

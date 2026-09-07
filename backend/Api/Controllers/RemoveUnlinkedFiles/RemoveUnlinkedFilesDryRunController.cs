@@ -17,6 +17,7 @@ public class RemoveUnlinkedFilesDryRunController(
     {
         var task = new RemoveUnlinkedFilesTask(configManager, websocketManager, isDryRun: true);
         var executed = await task.Execute().ConfigureAwait(false);
+        Response.Headers.CacheControl = "no-store";
         if (!executed)
             return Conflict(new RemoveUnlinkedFilesTaskResponse
             {

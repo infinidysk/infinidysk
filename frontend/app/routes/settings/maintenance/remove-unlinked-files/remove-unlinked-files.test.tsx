@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /* global HTMLDialogElement */
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -60,11 +60,11 @@ describe("RemoveUnlinkedFiles", () => {
       .mockResolvedValueOnce(jsonResponse({ status: true }));
     const user = userEvent.setup();
     render(createElement(RemoveUnlinkedFiles, { savedConfig }));
-    websocketTopicMocks.onOpen?.();
+    act(() => websocketTopicMocks.onOpen?.());
 
     await user.click(screen.getByRole("button", { name: "Dry Run" }));
     await screen.findByText(/High-volume cleanup is unlocked/);
-    websocketTopicMocks.setProgress?.("Dry Run - Done. Identified 1730 unlinked files.");
+    act(() => websocketTopicMocks.setProgress?.("Dry Run - Done. Identified 1730 unlinked files."));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Run Task" })).toHaveProperty("disabled", false);
     });

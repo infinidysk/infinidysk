@@ -21,7 +21,7 @@ namespace NzbWebDAV.Tasks;
 public class RemoveUnlinkedFilesTask : BaseTask
 {
     private static readonly TimeSpan DefaultProgressHeartbeatInterval = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan PreviewLifetime = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan DefaultPreviewLifetime = TimeSpan.FromMinutes(15);
     private static readonly object PreviewLock = new();
     private static List<string> _allRemovedPaths = [];
     private static PreviewApproval? _previewApproval;
@@ -30,6 +30,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
     private readonly bool _isDryRun;
     private readonly Func<DavDatabaseContext>? _createContext;
     private readonly string? _previewToken;
+    private readonly TimeSpan _previewLifetime;
     private readonly TimeSpan _progressHeartbeatInterval;
     private readonly Action<string>? _progressObserver;
     private ProgressHeartbeat? _progressHeartbeat;
@@ -76,6 +77,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         bool isDryRun,
         Func<DavDatabaseContext>? createContext,
         string? previewToken = null,
+        TimeSpan? previewLifetime = null,
         TimeSpan? progressHeartbeatInterval = null,
         Action<string>? progressObserver = null)
     {
@@ -84,6 +86,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         _isDryRun = isDryRun;
         _createContext = createContext;
         _previewToken = previewToken;
+        _previewLifetime = previewLifetime ?? DefaultPreviewLifetime;
         _progressHeartbeatInterval = progressHeartbeatInterval ?? DefaultProgressHeartbeatInterval;
         _progressObserver = progressObserver;
     }
@@ -511,24 +514,6 @@ public class RemoveUnlinkedFilesTask : BaseTask
     {
         await using var dbContext = CreateContext();
         var usenetFileType = (int)DavItem.ItemType.UsenetFile;
-        var candidates = await dbContext.Database
-            .SqlQuery<UnlinkedFileInfo>(
-                $"""
-                 SELECT CAST("Id" AS TEXT) AS "Id", "Type", "Path", "Name",
-                        "GeneratedStrmOutputRoot", "GeneratedStrmPath", "GeneratedStrmTarget"
-                 FROM "DavItems"
-                 WHERE "Type" = {usenetFileType}
-                   AND "HistoryItemId" IS NULL
-                   AND "CreatedAt" < {CreateWallClockParameter(dbContext, createdBefore)}
-                   AND NOT EXISTS (
-                       SELECT 1 FROM TMP_LINKED_FILES t
-                       WHERE t.Id = "DavItems"."Id"
-                   )
-                 ORDER BY CAST("Id" AS TEXT)
-                 """)
-            .ToListAsync()
-            .ConfigureAwait(false);
-
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         void Append(string? value)
         {
@@ -538,20 +523,49 @@ public class RemoveUnlinkedFilesTask : BaseTask
 
         Append(_configManager.GetLibraryDir());
         Append(_configManager.GetRcloneMountDir());
-        foreach (var item in candidates)
+        var lastId = string.Empty;
+        while (true)
         {
-            Append(item.Id);
-            Append(item.Path);
-            Append(item.Name);
-            Append(item.GeneratedStrmOutputRoot);
-            Append(item.GeneratedStrmPath);
-            Append(item.GeneratedStrmTarget);
+            var candidates = await dbContext.Database
+                .SqlQuery<UnlinkedFileInfo>(
+                    $"""
+                     SELECT CAST("Id" AS TEXT) AS "Id", "Type", "Path", "Name",
+                            "GeneratedStrmOutputRoot", "GeneratedStrmPath", "GeneratedStrmTarget"
+                     FROM "DavItems"
+                     WHERE "Type" = {usenetFileType}
+                       AND "HistoryItemId" IS NULL
+                       AND "CreatedAt" < {CreateWallClockParameter(dbContext, createdBefore)}
+                       AND CAST("Id" AS TEXT) > {lastId}
+                       AND NOT EXISTS (
+                           SELECT 1 FROM TMP_LINKED_FILES t
+                           WHERE t.Id = "DavItems"."Id"
+                       )
+                     ORDER BY CAST("Id" AS TEXT)
+                     LIMIT 100
+                     """)
+                .ToListAsync()
+                .ConfigureAwait(false);
+
+            if (candidates.Count == 0)
+                break;
+
+            foreach (var item in candidates)
+            {
+                Append(item.Id);
+                Append(item.Path);
+                Append(item.Name);
+                Append(item.GeneratedStrmOutputRoot);
+                Append(item.GeneratedStrmPath);
+                Append(item.GeneratedStrmTarget);
+            }
+
+            lastId = candidates[^1].Id;
         }
 
         return Convert.ToHexString(hash.GetHashAndReset());
     }
 
-    private static string IssuePreviewApproval(string fingerprint)
+    private string IssuePreviewApproval(string fingerprint)
     {
         var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         lock (PreviewLock)
@@ -559,7 +573,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
             _previewApproval = new PreviewApproval(
                 token,
                 fingerprint,
-                DateTimeOffset.UtcNow + PreviewLifetime);
+                DateTimeOffset.UtcNow + _previewLifetime);
         }
 
         return token;
@@ -576,7 +590,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         lock (PreviewLock)
         {
             if (_previewApproval is null
-                || !string.Equals(_previewApproval.Token, _previewToken, StringComparison.Ordinal))
+                || !_previewApproval.Token.FixedTimeEquals(_previewToken))
             {
                 reason = "The dry-run approval is missing or was replaced; run the dry run again.";
                 return false;
@@ -606,7 +620,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
 
         lock (PreviewLock)
         {
-            if (string.Equals(_previewApproval?.Token, previewToken, StringComparison.Ordinal))
+            if (_previewApproval?.Token.FixedTimeEquals(previewToken) == true)
                 _previewApproval = null;
         }
     }
