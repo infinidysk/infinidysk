@@ -387,7 +387,10 @@ public sealed class SegmentCacheNntpClient : WrappingNntpClient
         {
             var header = JsonSerializer.Deserialize<UsenetYencHeader>(
                 File.ReadAllText(blobPath + ".h"), HeaderJsonOptions);
-            if (header == null || header.PartSize != entry.Size || !IsCoherentHeader(header))
+            if (header == null
+                || header.PartSize != entry.Size
+                || !IsCoherentHeader(header)
+                || !YencFileValidationContext.MatchesExpectedFile(header))
             {
                 RecordReadFailureAndDrop(hash);
                 return CacheLookupResult.ReadFailure;

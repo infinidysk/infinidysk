@@ -586,6 +586,8 @@ public class MultiProviderNntpClient(
             try
             {
                 response = await primaryResponse.ConfigureAwait(false);
+                await RejectMismatchedYencFileAsync(
+                    segmentId, response, cancellationToken).ConfigureAwait(false);
             }
             catch (NntpClientRetiredException)
             {
@@ -594,6 +596,7 @@ public class MultiProviderNntpClient(
             }
             catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
             {
+                response = null;
                 primaryStopwatch.Stop();
                 walk.Attempts++;
                 walk.NoteException(e);
@@ -714,6 +717,8 @@ public class MultiProviderNntpClient(
                         walk.Attempts++;
                         response = await provider.DecodedBodyAsync(
                             segmentId, deferredCallback.Invoke, cancellationToken).ConfigureAwait(false);
+                        await RejectMismatchedYencFileAsync(
+                            segmentId, response, cancellationToken).ConfigureAwait(false);
                         stopwatch.Stop();
                         var responseType = response.ResponseType;
                         if (responseType == UsenetResponseType.ArticleRetrievedBodyFollows)
@@ -1012,6 +1017,8 @@ public class MultiProviderNntpClient(
                 walk.Attempts++;
                 var result = await task(provider, deferredCallback.Invoke)
                     .ConfigureAwait(false);
+                await RejectMismatchedYencFileAsync(
+                    segmentId, result, cancellationToken).ConfigureAwait(false);
                 stopwatch.Stop();
                 if (result.ResponseType == successResponseType)
                 {
@@ -1155,6 +1162,8 @@ public class MultiProviderNntpClient(
             {
                 walk.Attempts++;
                 var result = await task.Invoke(provider).ConfigureAwait(false);
+                await RejectMismatchedYencFileAsync(
+                    articleId, result, cancellationToken).ConfigureAwait(false);
                 stopwatch.Stop();
 
                 // if no article with that message-id is found, try again with the next provider.
@@ -1240,6 +1249,33 @@ public class MultiProviderNntpClient(
         throw new InvalidOperationException("There are no usenet providers configured.");
     }
 
+    private static async Task RejectMismatchedYencFileAsync(
+        SegmentId? requestedId,
+        UsenetResponse response,
+        CancellationToken cancellationToken)
+    {
+        if (requestedId is not { } segmentId
+            || YencFileValidationContext.CurrentExpectedTotalParts is not { } expectedTotalParts
+            || response is not UsenetDecodedBodyResponse
+            {
+                ResponseType: UsenetResponseType.ArticleRetrievedBodyFollows,
+                Stream: { } bodyStream,
+            })
+            return;
+
+        var header = await bodyStream.GetYencHeadersAsync(cancellationToken).ConfigureAwait(false);
+        if (header is null || YencFileValidationContext.MatchesExpectedFile(header))
+            return;
+
+        await bodyStream.DisposeAsync().ConfigureAwait(false);
+
+        throw new UsenetMismatchedArticleException(
+            segmentId,
+            header.PartNumber,
+            header.TotalParts,
+            expectedTotalParts);
+    }
+
     private bool IsCachedMissing(SegmentId segmentId, MultiConnectionNntpClient provider)
     {
         if (articleMissCache == null) return false;
@@ -1266,6 +1302,8 @@ public class MultiProviderNntpClient(
     {
         if (segmentId is not { } id) return;
         if (ClassifyException(exception) != SegmentFetch.FetchStatus.Missing) return;
+        if (exception.TryGetCausingException<UsenetMismatchedArticleException>(out _))
+            return;
         var group = NormalizeStorageGroup(provider.StorageGroup);
         if (group.Length > 0) missingGroups.Add(group);
         MarkCachedMissing(id, provider);

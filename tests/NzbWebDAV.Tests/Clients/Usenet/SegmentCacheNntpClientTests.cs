@@ -15,6 +15,51 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 public sealed class SegmentCacheNntpClientTests
 {
     [Fact]
+    public async Task DecodedBodyAsync_CachedHeaderFromDifferentPost_RefetchesFromProvider()
+    {
+        var cacheDir = NewCacheDir();
+        const string segmentId = "segment-1";
+        byte[] staleContent = "old"u8.ToArray();
+        byte[] liveContent = "new"u8.ToArray();
+
+        try
+        {
+            WriteCacheEntry(cacheDir, segmentId, staleContent, totalParts: 931);
+            var inner = new FakeNntpClient(
+                new Dictionary<string, byte[]> { [segmentId] = liveContent },
+                useCachedYencStreams: true,
+                yencHeaders: new Dictionary<string, UsenetYencHeader>
+                {
+                    [segmentId] = new()
+                    {
+                        FileName = "fake.bin",
+                        FileSize = liveContent.Length,
+                        LineLength = 128,
+                        PartNumber = 1,
+                        PartOffset = 0,
+                        PartSize = liveContent.Length,
+                        TotalParts = 3,
+                    },
+                });
+            using var client = new SegmentCacheNntpClient(
+                inner, cacheDir, maxBytes: 1024 * 1024);
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+            using var validation = YencFileValidationContext.Begin(expectedTotalParts: 3);
+
+            var response = await client.DecodedBodyAsync(segmentId, CancellationToken.None);
+            await using var output = new MemoryStream();
+            await response.Stream!.CopyToAsync(output);
+
+            Assert.Equal(liveContent, output.ToArray());
+            Assert.Equal(1, inner.BodyRequestCount);
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
     public async Task CatalogHydration_DoesNotBlockConstruction_AndServesEntriesAfterLoad()
     {
         var cacheDir = Path.Join(
@@ -1572,7 +1617,11 @@ public sealed class SegmentCacheNntpClientTests
         return Path.Join(cacheDir, hash[..2], hash);
     }
 
-    private static void WriteCacheEntry(string cacheDir, string segmentId, byte[] content)
+    private static void WriteCacheEntry(
+        string cacheDir,
+        string segmentId,
+        byte[] content,
+        int totalParts = 1)
     {
         var hash = SegmentHash(segmentId);
         var directory = Path.Join(cacheDir, hash[..2]);
@@ -1587,7 +1636,7 @@ public sealed class SegmentCacheNntpClientTests
             PartNumber = 1,
             PartOffset = 0,
             PartSize = content.Length,
-            TotalParts = 1,
+            TotalParts = totalParts,
         };
         File.WriteAllText(
             Path.Join(directory, hash) + ".h",
