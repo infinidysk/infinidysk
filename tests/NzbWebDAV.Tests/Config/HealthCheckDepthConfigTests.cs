@@ -6,12 +6,14 @@ namespace NzbWebDAV.Tests.Config;
 public class HealthCheckDepthConfigTests
 {
     [Theory]
+    [InlineData("quick", HealthCheckDepth.Quick)]
     [InlineData("standard", ConfigManager.DefaultHealthCheckDepth)]
     [InlineData("enhanced", HealthCheckDepth.Enhanced)]
     [InlineData("deep", HealthCheckDepth.Deep)]
     [InlineData("complete", HealthCheckDepth.Complete)]
     // Validation accepts any casing, so the getter has to resolve it the same way
     // rather than falling through to the default and quietly under-checking.
+    [InlineData("Quick", HealthCheckDepth.Quick)]
     [InlineData("Deep", HealthCheckDepth.Deep)]
     [InlineData("COMPLETE", HealthCheckDepth.Complete)]
     [InlineData("nonsense", ConfigManager.DefaultHealthCheckDepth)]
@@ -31,6 +33,8 @@ public class HealthCheckDepthConfigTests
     }
 
     [Theory]
+    [InlineData("quick")]
+    [InlineData("Quick")]
     [InlineData("Deep")]
     [InlineData("COMPLETE")]
     [InlineData("standard")]

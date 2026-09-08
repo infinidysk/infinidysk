@@ -122,6 +122,13 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     // Files at or below this many segments are checked in full, before any aging taper.
     public const int SampleFloor = 8000;
 
+    // HealthCheckDepth.Quick's stride budget: the file is probed with this many evenly
+    // spaced segments plus a short head and tail run (SampleSegmentsIndexed), regardless
+    // of size and bypassing the sample floor and size/age curve — roughly two dozen STATs
+    // per file. Whole-posting loss (takedown or retention) removes every article, so a
+    // probe this shape reliably tells an intact posting from a gone one for a fast first pass.
+    public const int QuickSampleTarget = 16;
+
     /// <summary>
     /// Operator-forced full recheck sentinel for <see cref="DavItem.NextHealthCheck"/>, written by
     /// the reset-health-check-queue endpoint. Like the UnixEpoch urgent sentinel it overrides the
@@ -2108,13 +2115,16 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     }
 
     /// <summary>
-    /// How many segments to STAT for one file. Files up to the floor are checked in full,
-    /// larger ones are sampled based on their size, and an optional age scales the result
-    /// down from there. <see cref="HealthCheckDepth.Complete"/> skips all of it.
+    /// How many segments to STAT for one file. <see cref="HealthCheckDepth.Quick"/> uses a
+    /// small fixed width (<see cref="QuickSampleTarget"/>) regardless of size. Otherwise
+    /// files up to the floor are checked in full, larger ones are sampled based on their
+    /// size, and an optional age scales the result down from there.
+    /// <see cref="HealthCheckDepth.Complete"/> skips all of it.
     /// </summary>
     public static int SampleTarget(int segmentCount, HealthCheckDepth depth, TimeSpan? age = null)
     {
         if (depth == HealthCheckDepth.Complete) return segmentCount;
+        if (depth == HealthCheckDepth.Quick) return Math.Min(segmentCount, QuickSampleTarget);
         var multiplier = CurveMultiplier(depth);
         var curve = Math.Max(SampleFloor, multiplier * Math.Sqrt((double)SampleFloor * segmentCount));
         return (int)Math.Min(segmentCount, curve * AgeWeight(age));
@@ -2144,8 +2154,10 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     }
 
     /// <summary>
-    /// Returns a stratified sample of <paramref name="segments"/>: first 100, last 100, and
-    /// evenly spaced middle segments, sized by <see cref="SampleTarget"/>.
+    /// Returns a stratified sample of <paramref name="segments"/>: a head run, a tail run,
+    /// and evenly spaced middle segments, sized by <see cref="SampleTarget"/>. The head and
+    /// tail runs are each up to a quarter of the target (capped at 100), so a narrow
+    /// <see cref="HealthCheckDepth.Quick"/> target still leaves room for stride coverage.
     /// </summary>
     public static List<string> SampleSegments(
         List<string> segments,
@@ -2167,14 +2179,17 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         var target = SampleTarget(count, depth, age);
         if (count <= target) return new SegmentIndexView(segments);
 
-        const int headCount = 100;
-        const int tailCount = 100;
+        // Head/tail each take up to a quarter of the target so a narrow Quick target
+        // (QuickSampleTarget) keeps budget for evenly spaced middle probes. For the
+        // curve-based depths the target is at least the sample floor, so this clamps
+        // to 100 and head/tail coverage is unchanged.
+        var edgeCount = Math.Clamp(target / 4, 1, 100);
         var indexes = new HashSet<int>();
 
-        for (var i = 0; i < Math.Min(headCount, count); i++)
+        for (var i = 0; i < Math.Min(edgeCount, count); i++)
             indexes.Add(i);
 
-        for (var i = Math.Max(0, count - tailCount); i < count; i++)
+        for (var i = Math.Max(0, count - edgeCount); i < count; i++)
             indexes.Add(i);
 
         var carry = 0L;

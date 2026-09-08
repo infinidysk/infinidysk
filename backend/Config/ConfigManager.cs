@@ -579,7 +579,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                     break;
 
                 case ConfigKeys.RepairHealthcheckDepth:
-                    RequireOneOf(item.ConfigName, value, "standard", "enhanced", "deep", "complete");
+                    RequireOneOf(item.ConfigName, value, "quick", "standard", "enhanced", "deep", "complete");
                     break;
 
                 case ConfigKeys.ApiArticleExistenceCheckMode:
@@ -2281,6 +2281,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairHealthcheckDepth));
         return configured?.ToLowerInvariant() switch
         {
+            "quick" => HealthCheckDepth.Quick,
             "enhanced" => HealthCheckDepth.Enhanced,
             "deep" => HealthCheckDepth.Deep,
             "complete" => HealthCheckDepth.Complete,

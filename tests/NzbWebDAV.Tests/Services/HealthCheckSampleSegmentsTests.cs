@@ -45,6 +45,55 @@ public class HealthCheckSampleSegmentsTests
         Assert.Same(segments, HealthCheckService.SampleSegments(segments, HealthCheckDepth.Complete));
     }
 
+    [Theory]
+    [InlineData(24)]
+    [InlineData(1_000)]
+    [InlineData(HealthCheckService.SampleFloor)]
+    [InlineData(200_000)]
+    public void SampleTarget_QuickIsAFixedWidthRegardlessOfSize(int count)
+    {
+        var target = HealthCheckService.SampleTarget(count, HealthCheckDepth.Quick);
+
+        Assert.Equal(Math.Min(count, HealthCheckService.QuickSampleTarget), target);
+    }
+
+    [Fact]
+    public void SampleSegments_QuickChecksTinyFilesInFull()
+    {
+        var segments = Segments(HealthCheckService.QuickSampleTarget);
+
+        Assert.Same(segments, HealthCheckService.SampleSegments(segments, HealthCheckDepth.Quick));
+    }
+
+    [Theory]
+    [InlineData(50_000)]
+    [InlineData(200_000)]
+    public void SampleSegments_QuickIsASmallFixedWidthProbeThatSpansTheWholeFile(int count)
+    {
+        var segments = Segments(count);
+
+        var sampled = HealthCheckService.SampleSegments(segments, HealthCheckDepth.Quick);
+        var indices = sampled.Select(s => int.Parse(s["seg-".Length..])).ToList();
+
+        // stride budget + a short head/tail run; a few dozen STATs no matter the size.
+        Assert.InRange(sampled.Count, HealthCheckService.QuickSampleTarget / 2, HealthCheckService.QuickSampleTarget * 3);
+        Assert.Equal($"seg-0", sampled[0]);
+        Assert.Equal($"seg-{count - 1}", sampled[^1]);
+        Assert.Equal(indices, indices.OrderBy(i => i).ToList());
+        Assert.True(indices.Max() - indices.Min() > count / 2, "Quick sample must span the file, not just the edges");
+    }
+
+    [Fact]
+    public void SampleSegments_QuickIsFarLighterThanStandardForALargeFile()
+    {
+        var segments = Segments(200_000);
+
+        var quick = HealthCheckService.SampleSegments(segments, HealthCheckDepth.Quick).Count;
+        var standard = HealthCheckService.SampleSegments(segments, Standard).Count;
+
+        Assert.True(quick * 20 < standard, $"expected Quick ({quick}) to be far lighter than Standard ({standard})");
+    }
+
     [Fact]
     public void SampleSegments_StratifiesLargeFilesAndPreservesOrder()
     {
