@@ -143,6 +143,7 @@ public abstract class NntpClient : INntpClient
     public virtual async Task<long> GetFileSizeAsync(NzbFile file, CancellationToken ct)
     {
         if (file.Segments.Count == 0) return 0;
+        using var yencFileValidation = YencFileValidationContext.Begin(file.Segments.Count);
         var headers = await GetYencHeadersAsync(file.Segments[^1].MessageId, ct).ConfigureAwait(false);
         file.Segments[^1].ByteRange = LongRange.FromStartAndSize(headers.PartOffset, headers.PartSize);
         return headers.PartOffset + headers.PartSize;

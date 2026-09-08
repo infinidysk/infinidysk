@@ -16,7 +16,7 @@ internal sealed class YencFileValidationContext : IDisposable
 
     public static bool MatchesExpectedFile(UsenetYencHeader header) =>
         CurrentExpectedTotalParts is not { } expectedTotalParts
-        || header.TotalParts <= 0
+        || (expectedTotalParts == 1 && header.TotalParts == 0)
         || header.TotalParts == expectedTotalParts;
 
     public static IDisposable Begin(int expectedTotalParts) =>

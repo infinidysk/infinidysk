@@ -1255,13 +1255,24 @@ public class MultiProviderNntpClient(
         CancellationToken cancellationToken)
     {
         if (requestedId is not { } segmentId
-            || YencFileValidationContext.CurrentExpectedTotalParts is not { } expectedTotalParts
-            || response is not UsenetDecodedBodyResponse
+            || YencFileValidationContext.CurrentExpectedTotalParts is not { } expectedTotalParts)
+            return;
+
+        var bodyStream = response switch
+        {
+            UsenetDecodedBodyResponse
             {
                 ResponseType: UsenetResponseType.ArticleRetrievedBodyFollows,
-                Stream: { } bodyStream,
-            })
-            return;
+                Stream: { } stream,
+            } => stream,
+            UsenetDecodedArticleResponse
+            {
+                ResponseType: UsenetResponseType.ArticleRetrievedHeadAndBodyFollow,
+                Stream: { } stream,
+            } => stream,
+            _ => null,
+        };
+        if (bodyStream is null) return;
 
         var header = await bodyStream.GetYencHeadersAsync(cancellationToken).ConfigureAwait(false);
         if (header is null || YencFileValidationContext.MatchesExpectedFile(header))

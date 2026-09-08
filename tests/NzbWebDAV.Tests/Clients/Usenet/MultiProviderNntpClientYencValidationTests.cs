@@ -3,14 +3,33 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Models;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
+using NzbWebDAV.Tests.TestUtils;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
 
+[Collection(nameof(GlobalLoggerCollection))]
 public sealed class MultiProviderNntpClientYencValidationTests
 {
+    [Theory]
+    [InlineData(1, 0, true)]
+    [InlineData(3, 0, false)]
+    [InlineData(3, 3, true)]
+    [InlineData(3, 931, false)]
+    public void MatchesExpectedFile_ValidatesTotalParts(
+        int expectedTotalParts,
+        int actualTotalParts,
+        bool expected)
+    {
+        using var validation = YencFileValidationContext.Begin(expectedTotalParts);
+        var header = CreateHeader(partNumber: 1, totalParts: actualTotalParts);
+
+        Assert.Equal(expected, YencFileValidationContext.MatchesExpectedFile(header));
+    }
+
     [Fact]
     public async Task GetYencHeadersAsync_MismatchedTotalParts_UsesBackupProvider()
     {
@@ -34,6 +53,85 @@ public sealed class MultiProviderNntpClientYencValidationTests
         Assert.Equal(3, header.TotalParts);
         Assert.Equal(1, wrongPost.BodyRequestCount);
         Assert.Equal(1, correctPost.BodyRequestCount);
+    }
+
+    [Fact]
+    public async Task GetYencHeadersAsync_MultipartHeaderWithoutTotal_UsesBackupProvider()
+    {
+        var segments = new Dictionary<string, byte[]> { ["segment"] = [1, 2, 3] };
+        var wrongPost = CreateClient(segments, partNumber: 1, totalParts: 0);
+        var correctPost = CreateClient(segments, partNumber: 1, totalParts: 3);
+        using var client = CreateProviderClient(wrongPost, correctPost);
+        using var validation = YencFileValidationContext.Begin(expectedTotalParts: 3);
+
+        var header = await client.GetYencHeadersAsync("segment", CancellationToken.None);
+
+        Assert.Equal(3, header.TotalParts);
+        Assert.Equal(1, wrongPost.BodyRequestCount);
+        Assert.Equal(1, correctPost.BodyRequestCount);
+    }
+
+    [Fact]
+    public async Task GetFileSizeAsync_MismatchedLastSegment_UsesBackupProvider()
+    {
+        var segments = new Dictionary<string, byte[]>
+        {
+            ["first"] = [1, 2, 3],
+            ["second"] = [4, 5, 6],
+            ["third"] = [7, 8, 9],
+        };
+        var wrongPost = CreateClient(
+            segments,
+            partNumber: 557,
+            totalParts: 931,
+            segmentId: "third",
+            partOffset: 187_525_120);
+        var correctPost = CreateClient(
+            segments,
+            partNumber: 3,
+            totalParts: 3,
+            segmentId: "third",
+            partOffset: 6);
+        using var client = CreateProviderClient(wrongPost, correctPost);
+        var file = new NzbFile { Subject = "fake.bin" };
+        foreach (var (segmentId, index) in segments.Keys.Select((id, index) => (id, index)))
+        {
+            file.Segments.Add(new NzbSegment
+            {
+                Bytes = 3,
+                MessageId = segmentId,
+                Number = index + 1,
+            });
+        }
+
+        var fileSize = await client.GetFileSizeAsync(file, CancellationToken.None);
+
+        Assert.Equal(9, fileSize);
+        Assert.Equal(new LongRange(6, 9), file.Segments[^1].ByteRange);
+        Assert.Equal(1, wrongPost.BodyRequestCounts["third"]);
+        Assert.Equal(1, correctPost.BodyRequestCounts["third"]);
+    }
+
+    [Fact]
+    public async Task DecodedArticleAsync_MismatchedTotalParts_UsesBackupProvider()
+    {
+        var innerSegments = new Dictionary<string, byte[]> { ["segment"] = [1, 2, 3] };
+        using var wrongInner = new FakeNntpClient(innerSegments, useCachedYencStreams: true);
+        using var correctInner = new FakeNntpClient(innerSegments, useCachedYencStreams: true);
+        using var wrongPost = new ArticleNntpClient(
+            wrongInner, CreateHeader(partNumber: 557, totalParts: 931));
+        using var correctPost = new ArticleNntpClient(
+            correctInner, CreateHeader(partNumber: 1, totalParts: 3));
+        using var client = CreateProviderClient(wrongPost, correctPost);
+        using var validation = YencFileValidationContext.Begin(expectedTotalParts: 3);
+
+        var response = await client.DecodedArticleAsync("segment", CancellationToken.None);
+        await using var responseStream = response.Stream;
+        var header = await responseStream.GetYencHeadersAsync();
+
+        Assert.Equal(3, header!.TotalParts);
+        Assert.Equal(1, wrongPost.ArticleRequestCount);
+        Assert.Equal(1, correctPost.ArticleRequestCount);
     }
 
     [Fact]
@@ -195,7 +293,8 @@ public sealed class MultiProviderNntpClientYencValidationTests
         IReadOnlyDictionary<string, byte[]> segments,
         int partNumber,
         int totalParts,
-        string segmentId = "segment") =>
+        string segmentId = "segment",
+        long partOffset = 0) =>
         new(
             segments,
             useCachedYencStreams: true,
@@ -208,10 +307,54 @@ public sealed class MultiProviderNntpClientYencValidationTests
                     LineLength = 128,
                     PartNumber = partNumber,
                     TotalParts = totalParts,
-                    PartOffset = 0,
+                    PartOffset = partOffset,
                     PartSize = 3,
                 },
             });
+
+    private static UsenetYencHeader CreateHeader(int partNumber, int totalParts) =>
+        new()
+        {
+            FileName = "fake.bin",
+            FileSize = 9,
+            LineLength = 128,
+            PartNumber = partNumber,
+            TotalParts = totalParts,
+            PartOffset = 0,
+            PartSize = 3,
+        };
+
+    private sealed class ArticleNntpClient(
+        INntpClient inner,
+        UsenetYencHeader header) : WrappingNntpClient(inner)
+    {
+        public int ArticleRequestCount { get; private set; }
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId,
+            CancellationToken cancellationToken) =>
+            DecodedArticleAsync(segmentId, null, cancellationToken);
+
+        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+            SegmentId segmentId,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ArticleRequestCount++;
+            onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+            return Task.FromResult(new UsenetDecodedArticleResponse
+            {
+                SegmentId = segmentId.ToString(),
+                ResponseCode = (int)UsenetResponseType.ArticleRetrievedHeadAndBodyFollow,
+                ResponseMessage = "220 fake article",
+                ArticleHeaders = new UsenetArticleHeader { Headers = [] },
+                Stream = new CachedYencStream(
+                    header,
+                    new MemoryStream([1, 2, 3], writable: false)),
+            });
+        }
+    }
 
     private static MultiProviderNntpClient CreateProviderClient(
         INntpClient wrongPost,
