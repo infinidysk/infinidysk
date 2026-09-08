@@ -1274,7 +1274,17 @@ public class MultiProviderNntpClient(
         };
         if (bodyStream is null) return;
 
-        var header = await bodyStream.GetYencHeadersAsync(cancellationToken).ConfigureAwait(false);
+        UsenetYencHeader? header;
+        try
+        {
+            header = await bodyStream.GetYencHeadersAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await bodyStream.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+
         if (header is null || YencFileValidationContext.MatchesExpectedFile(header))
             return;
 

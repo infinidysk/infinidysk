@@ -8,6 +8,7 @@ using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Tests.TestUtils;
 using UsenetSharp.Models;
+using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
 
@@ -130,6 +131,27 @@ public sealed class MultiProviderNntpClientYencValidationTests
         var header = await responseStream.GetYencHeadersAsync();
 
         Assert.Equal(3, header!.TotalParts);
+        Assert.Equal(1, wrongPost.ArticleRequestCount);
+        Assert.Equal(1, correctPost.ArticleRequestCount);
+    }
+
+    [Fact]
+    public async Task DecodedArticleAsync_HeaderInspectionFails_DisposesStreamAndUsesBackupProvider()
+    {
+        var innerSegments = new Dictionary<string, byte[]> { ["segment"] = [1, 2, 3] };
+        using var wrongInner = new FakeNntpClient(innerSegments, useCachedYencStreams: true);
+        using var correctInner = new FakeNntpClient(innerSegments, useCachedYencStreams: true);
+        var failingStream = new ThrowingHeaderYencStream();
+        using var wrongPost = new ArticleNntpClient(wrongInner, failingStream);
+        using var correctPost = new ArticleNntpClient(
+            correctInner, CreateHeader(partNumber: 1, totalParts: 3));
+        using var client = CreateProviderClient(wrongPost, correctPost);
+        using var validation = YencFileValidationContext.Begin(expectedTotalParts: 3);
+
+        var response = await client.DecodedArticleAsync("segment", CancellationToken.None);
+        await using var responseStream = response.Stream;
+
+        Assert.True(failingStream.IsDisposed);
         Assert.Equal(1, wrongPost.ArticleRequestCount);
         Assert.Equal(1, correctPost.ArticleRequestCount);
     }
@@ -326,8 +348,15 @@ public sealed class MultiProviderNntpClientYencValidationTests
 
     private sealed class ArticleNntpClient(
         INntpClient inner,
-        UsenetYencHeader header) : WrappingNntpClient(inner)
+        YencStream stream) : WrappingNntpClient(inner)
     {
+        public ArticleNntpClient(INntpClient inner, UsenetYencHeader header)
+            : this(inner, new CachedYencStream(
+                header,
+                new MemoryStream([1, 2, 3], writable: false)))
+        {
+        }
+
         public int ArticleRequestCount { get; private set; }
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
@@ -349,10 +378,23 @@ public sealed class MultiProviderNntpClientYencValidationTests
                 ResponseCode = (int)UsenetResponseType.ArticleRetrievedHeadAndBodyFollow,
                 ResponseMessage = "220 fake article",
                 ArticleHeaders = new UsenetArticleHeader { Headers = [] },
-                Stream = new CachedYencStream(
-                    header,
-                    new MemoryStream([1, 2, 3], writable: false)),
+                Stream = stream,
             });
+        }
+    }
+
+    private sealed class ThrowingHeaderYencStream() : YencStream(Stream.Null)
+    {
+        public bool IsDisposed { get; private set; }
+
+        public override ValueTask<UsenetYencHeader?> GetYencHeadersAsync(
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<UsenetYencHeader?>(new InvalidDataException("Malformed yEnc header"));
+
+        protected override void Dispose(bool disposing)
+        {
+            IsDisposed = disposing;
+            base.Dispose(disposing);
         }
     }
 
