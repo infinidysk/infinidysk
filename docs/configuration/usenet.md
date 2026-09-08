@@ -78,7 +78,9 @@ admitted after at most eight consecutive transfer grants so health and control w
     the busy-pool keep-alive safeguards below apply in both scheduling modes.
 
 Auto-tune finds the transfer-throughput knee and applies its recommendation only to **Transfer
-Connections**. It never rewrites or probes above **Provider Connection Limit**. Releases before
+Connections**. It progressively adds connection levels, including above 50 when configured, and
+stops after throughput reaches a stable knee, the provider refuses more connections, or the data
+budget is exhausted. It never rewrites or probes above **Provider Connection Limit**. Releases before
 1.3.0 could sweep above the saved connection count; raise Provider Connection Limit first if you
 want Auto-tune to test a higher count. When the result says speed was still climbing at the ceiling,
 the provider may benefit from a higher limit if the account permits it. If the provider later

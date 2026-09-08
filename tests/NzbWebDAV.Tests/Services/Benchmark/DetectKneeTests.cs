@@ -121,27 +121,6 @@ public class DetectKneeTests
     }
 
     [Fact]
-    public void DetectKnee_StillClimbingAtHardCeilingDoesNotMisstateConfiguredLimit()
-    {
-        var sweep = Sweep((1, 10), (10, 20), (25, 40), (50, 80));
-        var warnings = new List<string>();
-
-        UsenetBenchmarkService.DetectKnee(
-            sweep,
-            providerCap: null,
-            warnings,
-            out var stillClimbing,
-            configuredProviderLimit: 51,
-            benchmarkConnectionCeiling: 50);
-
-        Assert.True(stillClimbing);
-        var warning = Assert.Single(warnings);
-        Assert.Contains("benchmark ceiling (50)", warning, StringComparison.Ordinal);
-        Assert.Contains("configured Provider Connection Limit (51)", warning, StringComparison.Ordinal);
-        Assert.DoesNotContain("Raise that limit", warning, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void DetectKnee_StillClimbingFalseOnPlateau()
     {
         var sweep = Sweep((1, 10), (2, 20), (4, 35), (8, 40), (16, 41));
@@ -231,6 +210,60 @@ public class DetectKneeTests
 
         Assert.Contains(7, levels);
         Assert.All(levels, level => Assert.InRange(level, 1, 7));
+    }
+
+    [Theory]
+    [InlineData(BenchmarkIntensity.Quick)]
+    [InlineData(BenchmarkIntensity.Thorough)]
+    public void BuildLevels_ProgressesBeyondFiftyToConfiguredProviderLimit(
+        BenchmarkIntensity intensity)
+    {
+        var levels = UsenetBenchmarkService.BuildLevels(
+            configuredProviderLimit: 100,
+            BenchmarkProfile.For(intensity));
+
+        Assert.Contains(levels, level => level > 50 && level < 100);
+        Assert.Equal(100, levels[^1]);
+        Assert.All(levels, level => Assert.InRange(level, 1, 100));
+    }
+
+    [Theory]
+    [InlineData(BenchmarkIntensity.Quick)]
+    [InlineData(BenchmarkIntensity.Thorough)]
+    public void BuildLevels_StopsAtConfiguredLimitBelowFifty(BenchmarkIntensity intensity)
+    {
+        var levels = UsenetBenchmarkService.BuildLevels(
+            configuredProviderLimit: 40,
+            BenchmarkProfile.For(intensity));
+
+        Assert.Equal(40, levels[^1]);
+        Assert.DoesNotContain(levels, level => level > 40);
+    }
+
+    [Fact]
+    public void BoundBenchmarkConnections_AllowsConfiguredLimitAboveFifty()
+    {
+        Assert.Equal(
+            100,
+            UsenetBenchmarkService.BoundBenchmarkConnections(
+                requestedConnections: 100,
+                configuredProviderLimit: 100));
+    }
+
+    [Fact]
+    public void HasStableKnee_StopsAfterTwoLevelsWithoutMaterialImprovement()
+    {
+        var sweep = Sweep((8, 100), (16, 105), (24, 107));
+
+        Assert.True(UsenetBenchmarkService.HasStableKnee(sweep));
+    }
+
+    [Fact]
+    public void HasStableKnee_ContinuesWhileThroughputIsMateriallyImproving()
+    {
+        var sweep = Sweep((8, 100), (16, 105), (24, 115));
+
+        Assert.False(UsenetBenchmarkService.HasStableKnee(sweep));
     }
 
     private static List<BenchmarkSweepPoint> Sweep(params (int Connections, double MegaBytesPerSec)[] points) =>
