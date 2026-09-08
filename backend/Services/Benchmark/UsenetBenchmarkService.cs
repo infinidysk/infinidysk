@@ -773,14 +773,13 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
         if (sweep.Count < 3) return false;
 
         const double materialImprovement = 0.08;
-        var bestBeforeRecentLevels = sweep
-            .Take(sweep.Count - 2)
-            .Max(point => point.MegaBytesPerSec);
-        if (bestBeforeRecentLevels <= 0) return false;
+        var preceding = sweep[^3].MegaBytesPerSec;
+        var penultimate = sweep[^2].MegaBytesPerSec;
+        var latest = sweep[^1].MegaBytesPerSec;
+        if (preceding <= 0 || penultimate <= 0) return false;
 
-        return sweep
-            .Skip(sweep.Count - 2)
-            .All(point => point.MegaBytesPerSec <= bestBeforeRecentLevels * (1 + materialImprovement));
+        return penultimate <= preceding * (1 + materialImprovement)
+            && latest <= penultimate * (1 + materialImprovement);
     }
 
     internal static int? DetectKnee(

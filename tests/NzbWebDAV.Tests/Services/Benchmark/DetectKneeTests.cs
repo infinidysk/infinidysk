@@ -266,6 +266,14 @@ public class DetectKneeTests
         Assert.False(UsenetBenchmarkService.HasStableKnee(sweep));
     }
 
+    [Fact]
+    public void HasStableKnee_ContinuesAfterMaterialRecovery()
+    {
+        var sweep = Sweep((8, 100), (16, 50), (24, 107));
+
+        Assert.False(UsenetBenchmarkService.HasStableKnee(sweep));
+    }
+
     private static List<BenchmarkSweepPoint> Sweep(params (int Connections, double MegaBytesPerSec)[] points) =>
         points.Select(point => new BenchmarkSweepPoint
         {
