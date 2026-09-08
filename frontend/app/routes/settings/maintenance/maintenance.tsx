@@ -12,6 +12,7 @@ import { MigrateDatabaseFilesToBlobstore } from "./migrate-database-files-to-blo
 import { ResetHealthCheckStats } from "./reset-health-check-stats/reset-health-check-stats";
 import { ResetHealthCheckQueue } from "./reset-health-check-queue/reset-health-check-queue";
 import { ResetOverviewStats } from "./reset-overview-stats/reset-overview-stats";
+import { ClearRcloneCache } from "./clear-rclone-cache/clear-rclone-cache";
 
 type MaintenanceProps = {
   savedConfig: Record<string, string>;
@@ -346,6 +347,9 @@ export function Maintenance({ savedConfig, config, setNewConfig }: MaintenancePr
           </MaintenanceTaskDetails>
           <MaintenanceTaskDetails title="Reset Health-Check Statistics">
             <ResetHealthCheckStats />
+          </MaintenanceTaskDetails>
+          <MaintenanceTaskDetails title="Clear Rclone Cache">
+            <ClearRcloneCache />
           </MaintenanceTaskDetails>
           <MaintenanceTaskDetails title="Reset Overview Statistics">
             <ResetOverviewStats />

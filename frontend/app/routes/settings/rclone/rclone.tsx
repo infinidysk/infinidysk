@@ -12,6 +12,7 @@ import {
   useRef,
 } from "react";
 import { withUrlBase } from "~/utils/url-base";
+import { BuiltinMountSettings, isBuiltinMountSettingsUpdated } from "./builtin-mount";
 
 function formatTimeAgo(isoDate: string): string {
   const seconds = Math.floor((Date.now() - new Date(isoDate).getTime()) / 1000);
@@ -117,9 +118,11 @@ export function RcloneSettings({ config, setNewConfig }: RcloneSettingsProps) {
   return (
     <SettingsPage>
       <SettingsIntro>
-        Connect InfiniDysk to an rclone Remote Control server so mounted directory caches can be
-        refreshed automatically when files change.
+        Mount the InfiniDysk WebDAV tree as a folder, either with rclone running inside InfiniDysk
+        or with your own rclone container.
       </SettingsIntro>
+
+      <BuiltinMountSettings config={config} setNewConfig={setNewConfig} />
 
       <div className="flex flex-col gap-4">
         <SettingsCard
@@ -298,6 +301,7 @@ export function isRcloneSettingsUpdated(
     config["rclone.rc-enabled"] !== newConfig["rclone.rc-enabled"] ||
     config["rclone.host"] !== newConfig["rclone.host"] ||
     config["rclone.user"] !== newConfig["rclone.user"] ||
-    config["rclone.pass"] !== newConfig["rclone.pass"]
+    config["rclone.pass"] !== newConfig["rclone.pass"] ||
+    isBuiltinMountSettingsUpdated(config, newConfig)
   );
 }

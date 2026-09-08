@@ -75,8 +75,30 @@ describe("setup wizard controls", () => {
     expect(screen.getByText("Step 3 of 6")).toBeTruthy();
   });
 
-  it("shows rclone sidecar configuration expanded by default", () => {
+  it("offers to run rclone inside InfiniDysk by default", () => {
+    // The built-in daemon needs no second container, so it is the path a new
+    // install starts on, and none of the sidecar wiring applies to it.
     const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"]);
+    render(
+      <ManagedEnvProvider value={{}}>
+        <PlaybackStep draft={draft} updateDraft={vi.fn()} />
+      </ManagedEnvProvider>,
+    );
+
+    expect(screen.getByRole("radio", { name: /run rclone inside infinidysk/i })).toHaveProperty(
+      "checked",
+      true,
+    );
+    expect(screen.queryByText("Rclone sidecar configuration")).toBeNull();
+    expect(screen.queryByLabelText(/rclone rc host/i)).toBeNull();
+  });
+
+  it("shows rclone sidecar configuration expanded when the operator brings their own", () => {
+    const draft = createInitialDraft(
+      { ...SETUP_DEFAULT_CONFIG, "rclone.builtin.enabled": "false" },
+      {},
+      ["manual"],
+    );
     render(
       <ManagedEnvProvider value={{}}>
         <PlaybackStep draft={draft} updateDraft={vi.fn()} />

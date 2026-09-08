@@ -1122,8 +1122,8 @@ public class DavDatabaseContext : DbContext
         List<DavItem> addedOrRemovedDavItems,
         CancellationToken cancellationToken = default)
     {
-        var rclone = RcloneClient.Current;
-        if (rclone is not { IsRemoteControlEnabled: true, Host: not null }) return;
+        var rclone = VfsInvalidationTarget();
+        if (rclone is null) return;
         if (addedOrRemovedDavItems.Count == 0) return;
         var vfsForgetPaths = GetRcloneVfsForgetDirectories(addedOrRemovedDavItems);
         if (vfsForgetPaths.Count == 0) return;
@@ -1132,10 +1132,26 @@ public class DavDatabaseContext : DbContext
 
     public static async Task RcloneVfsForget(List<string> paths, CancellationToken cancellationToken = default)
     {
-        var rclone = RcloneClient.Current;
-        if (rclone is not { IsRemoteControlEnabled: true, Host: not null }) return;
+        var rclone = VfsInvalidationTarget();
+        if (rclone is null) return;
         if (paths.Count == 0) return;
         await ForgetVfsPathsQuietly(rclone, paths, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The rclone whose directory cache has to be dropped, or null when there is
+    /// none to talk to.
+    ///
+    /// The built-in daemon comes first: an installation that has moved to it
+    /// usually has the external remote control switched off, and it is the
+    /// daemon serving the mount that media servers actually read through.
+    /// </summary>
+    private static RcloneClient? VfsInvalidationTarget()
+    {
+        if (RcloneClient.Builtin is { Host: not null } builtin) return builtin;
+
+        var external = RcloneClient.Current;
+        return external is { IsRemoteControlEnabled: true, Host: not null } ? external : null;
     }
 
     private static async Task ForgetVfsPathsQuietly(

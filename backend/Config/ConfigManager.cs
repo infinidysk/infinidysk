@@ -10,6 +10,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Models;
+using NzbWebDAV.Services;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using Serilog;
@@ -35,6 +36,10 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 
     // Depth a background health check uses when none is configured.
     public const HealthCheckDepth DefaultHealthCheckDepth = HealthCheckDepth.Standard;
+
+    // rclone's own default RC port. Bound to loopback inside the container, so it
+    // does not collide with an external rclone the user may already run.
+    public const int DefaultRcloneBuiltinRcPort = 5572;
 
     private readonly Dictionary<string, string> _config = new();
     private readonly Dictionary<(string Name, Type Type), object?> _deserializedConfig = new();
@@ -384,7 +389,8 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     public static void ValidateConfigItems(IEnumerable<ConfigItem> configItems, bool rejectUnknownJsonProperties = false)
     {
         var jsonOptions = rejectUnknownJsonProperties ? RejectUnknownPropertiesJsonOptions : null;
-        foreach (var item in configItems)
+        var batch = configItems as IReadOnlyCollection<ConfigItem> ?? configItems.ToList();
+        foreach (var item in batch)
         {
             var value = StringUtil.EmptyToNull(item.ConfigValue);
             if (value == null) continue;
@@ -566,6 +572,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                 case ConfigKeys.RepairPar2PreferredOverArr:
                 case ConfigKeys.RepairHealthcheckAging:
                 case ConfigKeys.RepairAutoRemoveUnlinkedOnly:
+                case ConfigKeys.RcloneBuiltinEnabled:
                 case ConfigKeys.RcloneRcEnabled:
                 case ConfigKeys.DbIsStartupVacuumEnabled:
                 case ConfigKeys.MaintenanceRemoveOrphanedScheduleEnabled:
@@ -598,6 +605,23 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 
                 case ConfigKeys.ArrInstances:
                     RequireJson<ArrConfig>(item.ConfigName, value, jsonOptions);
+                    break;
+
+                case ConfigKeys.RcloneBuiltinMounts:
+                    RequireJson<List<RcloneMountConfig>>(item.ConfigName, value, jsonOptions);
+                    RequireValidRcloneMounts(item.ConfigName, value, jsonOptions);
+                    break;
+
+                case ConfigKeys.RcloneBuiltinRcPort:
+                    RequireLongInRange(item.ConfigName, value, 1, 65535);
+                    break;
+
+                case ConfigKeys.RcloneBuiltinCacheDir:
+                    RequireRcloneCacheDir(item.ConfigName, value);
+                    break;
+
+                case ConfigKeys.RcloneBuiltinCacheSizeLimit:
+                    RequireRcloneCacheSizeLimit(item.ConfigName, value);
                     break;
 
                 case ConfigKeys.IndexersInstances:
@@ -701,6 +725,94 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                     $"Config value for '{label}' must be a whole number from 1 through {ExternalMetadataResponseLimits.HardMaxResponseBytes}.");
             }
         }
+
+        // The mount list is rejected as a whole: a mount that cannot be applied is
+        // better refused at save time than silently skipped once the daemon runs.
+        void RequireValidRcloneMounts(string key, string value, JsonSerializerOptions? options)
+        {
+            var mounts = JsonSerializer.Deserialize<List<RcloneMountConfig>>(value, options) ?? [];
+            var errors = RcloneMountConfig.Validate(mounts, DavDatabaseContext.ConfigPath);
+            if (errors.Count > 0)
+                throw new ArgumentException($"Config value for '{key}' is invalid. {string.Join(" ", errors)}");
+
+            if (BatchCacheDir() is { } cacheDir && Path.IsPathRooted(cacheDir))
+                RequireCacheDirOutsideMounts(ConfigKeys.RcloneBuiltinCacheDir, cacheDir, mounts);
+        }
+
+        // The cache directory is a daemon process argument, so an unusable value is
+        // only discovered when rclone fails to start. It also must not sit under a
+        // mount point: a VFS cache inside the filesystem it is caching recurses.
+        // Below the floor rclone evicts faster than it can read ahead, which
+        // stutters instead of caching. Empty never reaches here, and that is how
+        // the operator asks for the automatic size back.
+        void RequireRcloneCacheSizeLimit(string key, string value)
+        {
+            if (!long.TryParse(value, out var bytes) || bytes < RcloneCacheBudget.FloorBytes)
+            {
+                throw new ArgumentException(
+                    $"Config value for '{key}' must be a whole number of bytes, at least " +
+                    $"{RcloneCacheBudget.FloorBytes / (1024 * 1024)} MB. Leave it empty to size the " +
+                    "cache automatically from the free space on its volume.");
+            }
+        }
+
+        void RequireRcloneCacheDir(string key, string value)
+        {
+            if (!Path.IsPathRooted(value))
+                throw new ArgumentException($"Config value for '{key}' must be an absolute path.");
+
+            RequireCacheDirOutsideMounts(key, value, BatchMounts());
+        }
+
+        // Checked from both sides, because the settings page can save either the
+        // cache directory or the mount list on its own.
+        void RequireCacheDirOutsideMounts(string key, string cacheDirValue, List<RcloneMountConfig> mounts)
+        {
+            var cacheDir = Path.TrimEndingDirectorySeparator(Path.GetFullPath(cacheDirValue));
+            foreach (var mount in mounts.Where(m => m.Enabled && Path.IsPathRooted(m.MountPoint)))
+            {
+                var mountPoint = Path.TrimEndingDirectorySeparator(Path.GetFullPath(mount.MountPoint));
+                if (cacheDir != mountPoint &&
+                    !cacheDir.StartsWith(mountPoint + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                throw new ArgumentException(
+                    $"Config value for '{key}' is invalid. The rclone cache directory '{cacheDirValue}' is " +
+                    $"inside the mount point '{mount.MountPoint}', so rclone would cache the filesystem into " +
+                    "itself. Choose a directory outside every mount.");
+            }
+        }
+
+        List<RcloneMountConfig> BatchMounts()
+        {
+            var mountsValue = batch
+                .Where(i => i.ConfigName == ConfigKeys.RcloneBuiltinMounts)
+                .Select(i => StringUtil.EmptyToNull(i.ConfigValue))
+                .FirstOrDefault(v => v is not null);
+
+            if (mountsValue is null) return [];
+
+            try
+            {
+                return JsonSerializer.Deserialize<List<RcloneMountConfig>>(mountsValue, jsonOptions) ?? [];
+            }
+            catch (JsonException)
+            {
+                // The mount list is validated in its own case, which reports the
+                // parse failure properly. Whether that case runs before or after
+                // this one depends on the order the settings page sends items in,
+                // so a malformed value must not escape from here as a raw
+                // JsonException.
+                return [];
+            }
+        }
+
+        string? BatchCacheDir() => batch
+            .Where(i => i.ConfigName == ConfigKeys.RcloneBuiltinCacheDir)
+            .Select(i => StringUtil.EmptyToNull(i.ConfigValue))
+            .FirstOrDefault(v => v is not null);
 
         void RequireHttpUrl(string key, string value)
         {
@@ -2416,6 +2528,99 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     public string? GetRcloneHost()
     {
         return GetConfigValue(ConfigKeys.RcloneHost);
+    }
+
+    /// <summary>
+    /// Whether InfiniDysk runs its own rclone daemon and manages mounts itself.
+    /// Off by default: an existing install keeps pointing at its external rclone.
+    /// </summary>
+    public bool IsRcloneBuiltinEnabled()
+    {
+        var configValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RcloneBuiltinEnabled));
+        return configValue != null && bool.Parse(configValue);
+    }
+
+    /// <summary>
+    /// The configured built-in mounts. Unparseable JSON yields an empty list
+    /// rather than throwing, so a bad value disables mounting instead of taking
+    /// the whole config reader down; validation rejects it at save time.
+    /// </summary>
+    public IReadOnlyList<RcloneMountConfig> GetRcloneBuiltinMounts()
+    {
+        try
+        {
+            return GetConfigValue<List<RcloneMountConfig>>(ConfigKeys.RcloneBuiltinMounts) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>Loopback port the built-in rclone daemon listens on for RC calls.</summary>
+    /// <remarks>
+    /// Save-time validation rejects out-of-range ports, but a value can also reach
+    /// the database from an older release or a hand-edited row, and binding to
+    /// port 0 or 70000 fails in a way that looks like a broken daemon rather than
+    /// a bad setting. An unusable value falls back to the default.
+    /// </remarks>
+    public int GetRcloneBuiltinRcPort()
+    {
+        var configValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RcloneBuiltinRcPort));
+        return configValue != null && int.TryParse(configValue, out var port) && port is >= 1 and <= 65535
+            ? port
+            : DefaultRcloneBuiltinRcPort;
+    }
+
+    /// <summary>
+    /// Directory for the rclone VFS cache. Defaults under the config path so a
+    /// single volume is enough, but it is configurable because a full VFS cache
+    /// can be large and often belongs on a different disk.
+    /// </summary>
+    public string GetRcloneBuiltinCacheDir()
+    {
+        return StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RcloneBuiltinCacheDir))
+               ?? Path.Join(DavDatabaseContext.ConfigPath, "rclone", "cache");
+    }
+
+    /// <summary>
+    /// Every directory an rclone mount of the WebDAV tree may occupy: the symlink
+    /// root the Arr apps resolve through, plus each built-in mount point.
+    /// </summary>
+    /// <remarks>
+    /// Maintenance tasks refuse to treat a mount as the organized library, and
+    /// with built-in mode the symlink root is no longer the only candidate.
+    /// Disabled mounts count: their mount point can still be occupied by a mount
+    /// a previous run left behind.
+    /// </remarks>
+    public IReadOnlyList<string> GetAllRcloneMountDirs()
+    {
+        var dirs = new List<string> { GetRcloneMountDir() };
+        dirs.AddRange(GetRcloneBuiltinMounts().Select(mount => mount.MountPoint));
+
+        return dirs
+            .Where(dir => !string.IsNullOrWhiteSpace(dir))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Ceiling for the VFS cache across every built-in mount, or null to size it
+    /// automatically from the free space on the cache volume.
+    /// </summary>
+    /// <remarks>
+    /// An unusable value reads as "automatic" rather than failing the mount: a
+    /// number saved by an earlier release, or edited in the database by hand,
+    /// should not take the library offline.
+    /// </remarks>
+    public long? GetRcloneBuiltinCacheSizeLimit()
+    {
+        var configValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RcloneBuiltinCacheSizeLimit));
+        return configValue != null
+               && long.TryParse(configValue, out var bytes)
+               && bytes >= RcloneCacheBudget.FloorBytes
+            ? bytes
+            : null;
     }
 
     public string? GetRcloneUser()

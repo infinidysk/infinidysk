@@ -160,7 +160,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
     {
         if (IsLibraryDirInsideRcloneMount(
                 _configManager.GetLibraryDir(),
-                _configManager.GetRcloneMountDir(),
+                _configManager.GetAllRcloneMountDirs(),
                 out var libraryDir,
                 out var mountDir))
         {
@@ -1073,6 +1073,33 @@ public class RemoveUnlinkedFilesTask : BaseTask
     /// history rows, so they cannot protect files after history is cleared. Scanning them as
     /// the organized library produces a circular, misleading orphan report.
     /// </summary>
+    /// <inheritdoc cref="IsLibraryDirInsideRcloneMount(string?, string?, out string, out string)" />
+    /// <param name="mountDirs">
+    /// Every path a mount of the WebDAV tree may occupy. Built-in mode can mount
+    /// somewhere other than the symlink root, and a library directory inside any
+    /// of them is the same mistake.
+    /// </param>
+    internal static bool IsLibraryDirInsideRcloneMount(
+        string? libraryDir,
+        IEnumerable<string?> mountDirs,
+        out string normalizedLibraryDir,
+        out string normalizedMountDir)
+    {
+        normalizedLibraryDir = NormalizeConfiguredPath(libraryDir);
+        normalizedMountDir = string.Empty;
+
+        foreach (var mountDir in mountDirs)
+        {
+            if (IsLibraryDirInsideRcloneMount(libraryDir, mountDir, out _, out var matched))
+            {
+                normalizedMountDir = matched;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     internal static bool IsLibraryDirInsideRcloneMount(
         string? libraryDir,
         string? mountDir,

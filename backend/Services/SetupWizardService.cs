@@ -20,6 +20,13 @@ public sealed class SetupWizardService(
         ConfigKeys.ApiImportStrategy,
         ConfigKeys.UsenetSegmentCacheEnabled,
         ConfigKeys.RcloneMountDir,
+
+        // The guided setup offers the built-in mount as the symlink path that
+        // needs no second container. Only the choice and the mount list: the
+        // rest of its tuning belongs in Settings.
+        ConfigKeys.RcloneBuiltinEnabled,
+        ConfigKeys.RcloneBuiltinMounts,
+
         ConfigKeys.RcloneRcEnabled,
         ConfigKeys.RcloneHost,
         ConfigKeys.RcloneUser,

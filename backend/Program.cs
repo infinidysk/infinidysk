@@ -262,6 +262,9 @@ public sealed partial class Program
                 .AddSingleton<IConfigChangeSource>(configManager)
                 .AddSingleton<IBlobStore, FileBlobStore>()
                 .AddSingleton<IRcloneClient>(_ => RcloneClient.Current!)
+                // Dormant unless rclone.builtin.enabled is on.
+                .AddSingleton<IRcloneProcessLauncher, RcloneProcessLauncher>()
+                .AddSingleton<RcloneDaemonService>()
                 .AddSingleton<IWebsocketPublisher>(websocketManager)
                 .AddSingleton(_ =>
                 {
@@ -449,6 +452,13 @@ public sealed partial class Program
                 .AddSingleton<ListSourceEnumerator>()
                 .AddSingleton<EpisodeEnumerator>()
                 .AddHostedService<WatchtowerService>()
+                // Registered last on purpose. Hosted services stop in reverse
+                // registration order on one shared HostOptions.ShutdownTimeout,
+                // so being last here means stopping first, and the mounts are
+                // released while there is still budget left to release them.
+                // Starting last suits it too: the mounts point at this process's
+                // own WebDAV server, which is listening by then.
+                .AddHostedService(sp => sp.GetRequiredService<RcloneDaemonService>())
                 .AddDbContextFactory<DavDatabaseContext>(options =>
                     DavDatabaseContext.ConfigureOptions(options))
                 .AddScoped(sp =>

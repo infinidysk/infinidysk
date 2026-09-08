@@ -131,6 +131,13 @@ public static class ConfigKeys
     public const string RcloneRcEnabled = "rclone.rc-enabled";
     public const string RcloneUser = "rclone.user";
 
+    // rclone — built-in mount
+    public const string RcloneBuiltinCacheDir = "rclone.builtin.cache-dir";
+    public const string RcloneBuiltinCacheSizeLimit = "rclone.builtin.cache-size-limit";
+    public const string RcloneBuiltinEnabled = "rclone.builtin.enabled";
+    public const string RcloneBuiltinMounts = "rclone.builtin.mounts";
+    public const string RcloneBuiltinRcPort = "rclone.builtin.rc-port";
+
     // general / db / maintenance
     public const string GeneralBaseUrl = "general.base-url";
     public const string DbIsStartupVacuumEnabled = "db.is-startup-vacuum-enabled";

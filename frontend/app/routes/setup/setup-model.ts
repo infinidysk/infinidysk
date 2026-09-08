@@ -11,6 +11,8 @@ export const SETUP_CONFIG_KEYS = [
   "api.key",
   "usenet.segment-cache.enabled",
   "rclone.mount-dir",
+  "rclone.builtin.enabled",
+  "rclone.builtin.mounts",
   "rclone.rc-enabled",
   "rclone.host",
   "rclone.user",
@@ -30,6 +32,10 @@ export const SETUP_DEFAULT_CONFIG: Record<string, string> = {
   "api.key": "",
   "usenet.segment-cache.enabled": "false",
   "rclone.mount-dir": "/mnt/nzbdav",
+  // Running rclone ourselves needs no second container, so it is what a new
+  // symlink install gets unless the operator chooses their own.
+  "rclone.builtin.enabled": "true",
+  "rclone.builtin.mounts": "",
   "rclone.rc-enabled": "false",
   "rclone.host": "",
   "rclone.user": "",
@@ -94,11 +100,31 @@ export function applyStrategy(
   if (!("usenet.segment-cache.enabled" in managedEnv)) {
     next["usenet.segment-cache.enabled"] = strategy === "strm" ? "true" : "false";
   }
-  // The wizard always proposes RC notifications for symlinks; the user must opt out explicitly.
-  if (strategy === "symlinks" && !("rclone.rc-enabled" in managedEnv)) {
+  // Nothing to mount when playback is URL-shaped.
+  if (strategy === "strm" && !("rclone.builtin.enabled" in managedEnv)) {
+    next["rclone.builtin.enabled"] = "false";
+  }
+
+  // RC notifications address a separate rclone container. Proposing them while
+  // InfiniDysk runs rclone itself would ask for a host that does not exist, so
+  // they are only offered on the sidecar path — where the user must still opt
+  // out explicitly.
+  const usesBuiltin = next["rclone.builtin.enabled"] === "true";
+  if (strategy === "symlinks" && !usesBuiltin && !("rclone.rc-enabled" in managedEnv)) {
     next["rclone.rc-enabled"] = "true";
   }
   return next;
+}
+
+/**
+ * The mount list for a built-in setup: one mount covering the directory that
+ * symlink imports resolve through. Anything more belongs in Settings, where the
+ * whole list is editable.
+ */
+export function builtinMountsFor(mountDir: string): string {
+  return JSON.stringify([
+    { Id: "library", MountPoint: mountDir.trim(), RemotePath: "/", Enabled: true },
+  ]);
 }
 
 export function parseArrConfig(value: string | undefined): ArrConfig {
@@ -143,9 +169,19 @@ export function completionSetupConfig(
 ): Record<string, string> {
   const config = changedSetupConfig(baseline, draft.config, managedEnv);
   const strategy = normalizeStrategy(draft.config["api.import-strategy"]);
+  const usesBuiltin = draft.config["rclone.builtin.enabled"] === "true";
   const requiredKeys = [
     ...(strategy === "symlinks"
-      ? ["rclone.mount-dir", "rclone.rc-enabled", "rclone.host", "rclone.user", "rclone.pass"]
+      ? usesBuiltin
+        ? ["rclone.mount-dir", "rclone.builtin.enabled", "rclone.builtin.mounts"]
+        : [
+            "rclone.mount-dir",
+            "rclone.builtin.enabled",
+            "rclone.rc-enabled",
+            "rclone.host",
+            "rclone.user",
+            "rclone.pass",
+          ]
       : ["api.completed-downloads-dir", "general.base-url"]),
     "backup.schedule-enabled",
     "backup.schedule-time",
@@ -157,6 +193,12 @@ export function completionSetupConfig(
   for (const key of requiredKeys) {
     if (key in managedEnv) continue;
     config[key] = draft.config[key] ?? "";
+  }
+
+  // Derived rather than edited: the wizard offers one mount, at the directory
+  // the rest of setup already asked for.
+  if (strategy === "symlinks" && usesBuiltin && !("rclone.builtin.mounts" in managedEnv)) {
+    config["rclone.builtin.mounts"] = builtinMountsFor(draft.config["rclone.mount-dir"] ?? "");
   }
   return config;
 }
@@ -172,15 +214,23 @@ export function validateSetupStep(
   const errors: string[] = [];
 
   if (step === 1 && strategy === "symlinks") {
+    const usesBuiltin = draft.config["rclone.builtin.enabled"] === "true";
+
     if (!draft.config["rclone.mount-dir"]?.trim()) {
       errors.push("Enter the rclone mount directory.");
     }
-    if (draft.config["rclone.rc-enabled"] === "true") {
-      const host = draft.config["rclone.host"]?.trim() ?? "";
-      if (!isHttpUrl(host)) errors.push("Enter a valid http(s) rclone RC host.");
-    }
-    if (!draft.vfsReadAheadConfirmed) {
-      errors.push("Confirm that the rclone sidecar has VFS read-ahead enabled.");
+
+    // The RC host and the read-ahead confirmation both describe a separate
+    // rclone container. With the built-in daemon there is nothing to point at
+    // and no flags for the operator to check.
+    if (!usesBuiltin) {
+      if (draft.config["rclone.rc-enabled"] === "true") {
+        const host = draft.config["rclone.host"]?.trim() ?? "";
+        if (!isHttpUrl(host)) errors.push("Enter a valid http(s) rclone RC host.");
+      }
+      if (!draft.vfsReadAheadConfirmed) {
+        errors.push("Confirm that the rclone sidecar has VFS read-ahead enabled.");
+      }
     }
     if (
       "usenet.segment-cache.enabled" in managedEnv &&

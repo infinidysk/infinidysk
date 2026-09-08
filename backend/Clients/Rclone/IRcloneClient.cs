@@ -21,6 +21,21 @@ public interface IRcloneClient
     Task<VfsStatsResponse> GetVfsStats(
         string? fs = null,
         CancellationToken cancellationToken = default);
+    Task<ListMountsResponse> ListMounts(CancellationToken cancellationToken = default);
+    Task<MountResponse> MountFs(
+        string fs,
+        string mountPoint,
+        IReadOnlyDictionary<string, object?>? mountOpt,
+        IReadOnlyDictionary<string, object?>? vfsOpt,
+        CancellationToken cancellationToken = default);
+    Task<RcloneResponse> UnmountFs(string mountPoint, CancellationToken cancellationToken = default);
+    Task<RcloneResponse> UnmountAll(CancellationToken cancellationToken = default);
+    Task<RcloneResponse> CreateRemote(
+        string name,
+        string type,
+        IReadOnlyDictionary<string, string> parameters,
+        CancellationToken cancellationToken = default);
+    Task<ListRemotesResponse> ListRemotes(CancellationToken cancellationToken = default);
     Task<CoreVersionResponse> GetVersion(CancellationToken cancellationToken = default);
     Task<RcloneResponse> NoOp(CancellationToken cancellationToken = default);
     Task<bool> IsAvailable(CancellationToken cancellationToken = default);

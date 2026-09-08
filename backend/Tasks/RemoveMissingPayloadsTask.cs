@@ -134,7 +134,7 @@ public sealed class RemoveMissingPayloadsTask : BaseTask
 
         if (RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(
                 libraryDir,
-                _configManager.GetRcloneMountDir(),
+                _configManager.GetAllRcloneMountDirs(),
                 out var normalizedLibraryDir,
                 out var normalizedMountDir))
         {

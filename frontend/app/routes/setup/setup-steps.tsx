@@ -169,6 +169,7 @@ function SymlinkPlaybackStep({
   const [testWarning, setTestWarning] = useState(false);
   const [copied, setCopied] = useState(false);
   const config = draft.config;
+  const usesBuiltin = config["rclone.builtin.enabled"] === "true";
   const rcEnabled = config["rclone.rc-enabled"] === "true";
   const rcloneHost = config["rclone.host"];
   const rcloneUser = config["rclone.user"];
@@ -176,7 +177,6 @@ function SymlinkPlaybackStep({
   const sidecarFlags = `--allow-other
 --poll-interval=0
 --dir-cache-time=1w
---allow-non-empty
 --vfs-cache-mode=full
 --buffer-size=0
 --vfs-read-ahead=512M
@@ -253,6 +253,51 @@ function SymlinkPlaybackStep({
         <span>Segment Cache will be disabled when you apply this Symlinks setup.</span>
       </Alert>
 
+      <ManagedSetting configKey="rclone.builtin.enabled">
+        <Field className="gap-3">
+          <legend className="fieldset-legend">Where rclone runs</legend>
+          <RadioJoinFilter
+            name="setup-rclone-source"
+            aria-label="Where rclone runs"
+            value={usesBuiltin ? "builtin" : "sidecar"}
+            prominent
+            options={
+              [
+                {
+                  id: "builtin",
+                  label: "Run rclone inside InfiniDysk",
+                  description: "No second container to run or configure.",
+                  icon: "hard_drive",
+                },
+                {
+                  id: "sidecar",
+                  label: "Use my own rclone container",
+                  description: "Keep an existing rclone sidecar.",
+                  icon: "dns",
+                },
+              ] as const
+            }
+            onChange={(value) =>
+              updateConfig(updateDraft, "rclone.builtin.enabled", String(value === "builtin"))
+            }
+          />
+        </Field>
+      </ManagedSetting>
+
+      {usesBuiltin && (
+        <Alert variant="info" className="alert-soft items-start text-sm">
+          <Icon name="info" className="!text-[20px]" />
+          <div>
+            <p className="font-semibold">One more step after setup</p>
+            <p className="mt-1 text-xs leading-relaxed opacity-80">
+              InfiniDysk mounts the folder below once you enter your WebDAV password in Settings,
+              Rclone Server. It is not stored anywhere it could be read back, so rclone has to be
+              given it directly.
+            </p>
+          </div>
+        </Alert>
+      )}
+
       <ManagedSetting configKey="rclone.mount-dir">
         <Field>
           <Label htmlFor="setup-rclone-mount">Rclone mount directory</Label>
@@ -269,143 +314,157 @@ function SymlinkPlaybackStep({
         </Field>
       </ManagedSetting>
 
-      <details
-        open
-        className="collapse collapse-arrow border border-base-content/10 bg-base-200/40"
-      >
-        <summary className="collapse-title text-sm font-semibold">
-          Rclone sidecar configuration
-        </summary>
-        <div className="collapse-content space-y-3">
-          <p className="text-xs leading-relaxed text-base-content/65">
-            Add these flags to the mount command. Adjust the 50 GiB limit to fit the storage
-            available to the sidecar.
-          </p>
-          <div className="mockup-code text-xs">
-            {sidecarFlags.split("\n").map((line) => (
-              <pre key={line} data-prefix="">
-                <code>{line}</code>
-              </pre>
-            ))}
-          </div>
-          <Tooltip content={copied ? "Copied" : "Copy rclone flags"}>
-            <Button
-              variant="ghost"
-              size="small"
-              onClick={() => {
-                void navigator.clipboard.writeText(sidecarFlags).then(() => setCopied(true));
-              }}
-            >
-              <Icon name="content_copy" className="!text-[18px]" />
-              Copy flags
-            </Button>
-          </Tooltip>
-          <Alert variant="warning" className="alert-soft items-start text-xs">
-            <Icon name="security" className="!text-[18px]" />
-            <span>
-              <code>--rc-no-auth</code> is suitable only on an isolated trusted container network.
-              For authentication, replace it with <code>--rc-user</code> and <code>--rc-pass</code>,
-              then enter the same values below. A separate sidecar must bind <code>:5572</code>; use{" "}
-              <code>127.0.0.1:5572</code> only when rclone and InfiniDysk share one network
-              namespace.
-            </span>
-          </Alert>
-        </div>
-      </details>
-
-      <ManagedSetting configKey="rclone.rc-enabled">
-        <Toggle
-          id="setup-rclone-rc-enabled"
-          checked={rcEnabled}
-          onChange={(event) =>
-            updateConfig(updateDraft, "rclone.rc-enabled", String(event.target.checked))
-          }
-          label={<span>Enable rclone RC notifications</span>}
-        />
-      </ManagedSetting>
-
-      <fieldset className="fieldset grid grid-cols-1 gap-4 lg:grid-cols-2" disabled={!rcEnabled}>
-        <legend className="fieldset-legend lg:col-span-2">RC server connection</legend>
-        <ManagedSetting configKey="rclone.host" className="lg:col-span-2">
-          <Field>
-            <Label htmlFor="setup-rclone-host">Rclone RC host</Label>
-            <div className="join w-full">
-              <Input
-                id="setup-rclone-host"
-                className="join-item validator min-w-0 flex-1"
-                type="url"
-                required={rcEnabled}
-                placeholder="http://nzbdav_rclone:5572"
-                value={config["rclone.host"] ?? ""}
-                onChange={(event) => updateConfig(updateDraft, "rclone.host", event.target.value)}
-              />
-              <Button
-                className="join-item shrink-0"
-                onClick={() => void testConnection()}
-                disabled={!rcEnabled || testState === "testing" || !config["rclone.host"]?.trim()}
-              >
-                {testState === "testing" ? (
-                  <Spinner size="sm" />
-                ) : (
-                  <Icon name="cable" className="!text-[18px]" />
-                )}
-                Test
-              </Button>
+      {!usesBuiltin && (
+        <>
+          <details
+            open
+            className="collapse collapse-arrow border border-base-content/10 bg-base-200/40"
+          >
+            <summary className="collapse-title text-sm font-semibold">
+              Rclone sidecar configuration
+            </summary>
+            <div className="collapse-content space-y-3">
+              <p className="text-xs leading-relaxed text-base-content/65">
+                Add these flags to the mount command. Adjust the 50 GiB limit to fit the storage
+                available to the sidecar.
+              </p>
+              <div className="mockup-code text-xs">
+                {sidecarFlags.split("\n").map((line) => (
+                  <pre key={line} data-prefix="">
+                    <code>{line}</code>
+                  </pre>
+                ))}
+              </div>
+              <Tooltip content={copied ? "Copied" : "Copy rclone flags"}>
+                <Button
+                  variant="ghost"
+                  size="small"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(sidecarFlags).then(() => setCopied(true));
+                  }}
+                >
+                  <Icon name="content_copy" className="!text-[18px]" />
+                  Copy flags
+                </Button>
+              </Tooltip>
+              <Alert variant="warning" className="alert-soft items-start text-xs">
+                <Icon name="security" className="!text-[18px]" />
+                <span>
+                  <code>--rc-no-auth</code> is suitable only on an isolated trusted container
+                  network. For authentication, replace it with <code>--rc-user</code> and{" "}
+                  <code>--rc-pass</code>, then enter the same values below. A separate sidecar must
+                  bind <code>:5572</code>; use <code>127.0.0.1:5572</code> only when rclone and
+                  InfiniDysk share one network namespace.
+                </span>
+              </Alert>
             </div>
-            <p className="validator-hint">
-              Enter an absolute URL using the rclone service name. Loopback only works in a shared
-              network namespace.
-            </p>
-          </Field>
-        </ManagedSetting>
-        <ManagedSetting configKey="rclone.user">
-          <Field>
-            <Label htmlFor="setup-rclone-user">Username (optional)</Label>
-            <Input
-              id="setup-rclone-user"
-              className="w-full"
-              autoComplete="username"
-              value={config["rclone.user"] ?? ""}
-              onChange={(event) => updateConfig(updateDraft, "rclone.user", event.target.value)}
-            />
-          </Field>
-        </ManagedSetting>
-        <ManagedSetting configKey="rclone.pass">
-          <Field>
-            <Label htmlFor="setup-rclone-pass">Password (optional)</Label>
-            <Input
-              id="setup-rclone-pass"
-              className="w-full"
-              type="password"
-              autoComplete="current-password"
-              value={config["rclone.pass"] ?? ""}
-              onChange={(event) => updateConfig(updateDraft, "rclone.pass", event.target.value)}
-            />
-          </Field>
-        </ManagedSetting>
-      </fieldset>
+          </details>
 
-      {testState !== "idle" && testState !== "testing" && (
-        <Alert
-          variant={testState === "error" ? "danger" : testWarning ? "warning" : "success"}
-          className="alert-soft text-sm"
-        >
-          <span
-            className={`status ${testState === "error" ? "status-error" : testWarning ? "status-warning" : "status-success"}`}
-            aria-hidden="true"
+          <ManagedSetting configKey="rclone.rc-enabled">
+            <Toggle
+              id="setup-rclone-rc-enabled"
+              checked={rcEnabled}
+              onChange={(event) =>
+                updateConfig(updateDraft, "rclone.rc-enabled", String(event.target.checked))
+              }
+              label={<span>Enable rclone RC notifications</span>}
+            />
+          </ManagedSetting>
+
+          <fieldset
+            className="fieldset grid grid-cols-1 gap-4 lg:grid-cols-2"
+            disabled={!rcEnabled}
+          >
+            <legend className="fieldset-legend lg:col-span-2">RC server connection</legend>
+            <ManagedSetting configKey="rclone.host" className="lg:col-span-2">
+              <Field>
+                <Label htmlFor="setup-rclone-host">Rclone RC host</Label>
+                <div className="join w-full">
+                  <Input
+                    id="setup-rclone-host"
+                    className="join-item validator min-w-0 flex-1"
+                    type="url"
+                    required={rcEnabled}
+                    placeholder="http://nzbdav_rclone:5572"
+                    value={config["rclone.host"] ?? ""}
+                    onChange={(event) =>
+                      updateConfig(updateDraft, "rclone.host", event.target.value)
+                    }
+                  />
+                  <Button
+                    className="join-item shrink-0"
+                    onClick={() => void testConnection()}
+                    disabled={
+                      !rcEnabled || testState === "testing" || !config["rclone.host"]?.trim()
+                    }
+                  >
+                    {testState === "testing" ? (
+                      <Spinner size="sm" />
+                    ) : (
+                      <Icon name="cable" className="!text-[18px]" />
+                    )}
+                    Test
+                  </Button>
+                </div>
+                <p className="validator-hint">
+                  Enter an absolute URL using the rclone service name. Loopback only works in a
+                  shared network namespace.
+                </p>
+              </Field>
+            </ManagedSetting>
+            <ManagedSetting configKey="rclone.user">
+              <Field>
+                <Label htmlFor="setup-rclone-user">Username (optional)</Label>
+                <Input
+                  id="setup-rclone-user"
+                  className="w-full"
+                  autoComplete="username"
+                  value={config["rclone.user"] ?? ""}
+                  onChange={(event) => updateConfig(updateDraft, "rclone.user", event.target.value)}
+                />
+              </Field>
+            </ManagedSetting>
+            <ManagedSetting configKey="rclone.pass">
+              <Field>
+                <Label htmlFor="setup-rclone-pass">Password (optional)</Label>
+                <Input
+                  id="setup-rclone-pass"
+                  className="w-full"
+                  type="password"
+                  autoComplete="current-password"
+                  value={config["rclone.pass"] ?? ""}
+                  onChange={(event) => updateConfig(updateDraft, "rclone.pass", event.target.value)}
+                />
+              </Field>
+            </ManagedSetting>
+          </fieldset>
+
+          {testState !== "idle" && testState !== "testing" && (
+            <Alert
+              variant={testState === "error" ? "danger" : testWarning ? "warning" : "success"}
+              className="alert-soft text-sm"
+            >
+              <span
+                className={`status ${testState === "error" ? "status-error" : testWarning ? "status-warning" : "status-success"}`}
+                aria-hidden="true"
+              />
+              <span>{testMessage}</span>
+            </Alert>
+          )}
+
+          <Check
+            id="setup-vfs-confirmed"
+            checked={draft.vfsReadAheadConfirmed}
+            onChange={(event) =>
+              updateDraft((current) => ({
+                ...current,
+                vfsReadAheadConfirmed: event.target.checked,
+              }))
+            }
+            label="I verified that this mount has VFS read-ahead enabled."
           />
-          <span>{testMessage}</span>
-        </Alert>
+        </>
       )}
-
-      <Check
-        id="setup-vfs-confirmed"
-        checked={draft.vfsReadAheadConfirmed}
-        onChange={(event) =>
-          updateDraft((current) => ({ ...current, vfsReadAheadConfirmed: event.target.checked }))
-        }
-        label="I verified that this mount has VFS read-ahead enabled."
-      />
     </StepSection>
   );
 }
