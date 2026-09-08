@@ -5,50 +5,77 @@ namespace NzbWebDAV.Tests.Services.Benchmark;
 public class BenchmarkSegmentPoolTests
 {
     [Fact]
-    public void Next_ReturnsIdsInRoundRobinOrder()
+    public void TryNext_ReturnsIdsInRoundRobinOrder()
     {
         var pool = new BenchmarkSegmentPool(["a", "b", "c"]);
 
-        var actual = Enumerable.Range(0, 4).Select(_ => pool.Next()).ToList();
+        var actual = Enumerable.Range(0, 4).Select(_ => Next(pool)).ToList();
 
         Assert.Equal(["a", "b", "c", "a"], actual);
     }
 
     [Fact]
-    public void MarkDead_SkipsIdOnSubsequentCalls()
+    public void MarkDead_AdvancesLogicalSegmentToFallback()
     {
-        var pool = new BenchmarkSegmentPool(["a", "b", "c"]);
-        pool.MarkDead("b");
+        var pool = new BenchmarkSegmentPool(
+        [
+            new BenchmarkSegment("a", ["a-fallback"]),
+            new BenchmarkSegment("b", []),
+        ]);
 
-        var actual = Enumerable.Range(0, 4).Select(_ => pool.Next()).ToList();
+        pool.MarkDead("a");
 
-        Assert.DoesNotContain("b", actual);
-        Assert.Equal(["a", "c", "a", "c"], actual);
+        Assert.Equal("a-fallback", Next(pool));
+        Assert.Equal("b", Next(pool));
+        Assert.Equal(0, pool.DeadCount);
     }
 
     [Fact]
-    public void WrappedAround_BecomesTrueAfterCountIsExceeded()
+    public void TryNext_WhenAllCandidatesAreDead_ReturnsFalse()
     {
-        var pool = new BenchmarkSegmentPool(["a", "b", "c"]);
+        var pool = new BenchmarkSegmentPool(
+        [
+            new BenchmarkSegment("a", ["a-fallback"]),
+            new BenchmarkSegment("b", []),
+        ]);
+        pool.MarkDead("a");
+        pool.MarkDead("a-fallback");
+        pool.MarkDead("b");
 
-        pool.Next();
-        pool.Next();
-        pool.Next();
+        Assert.False(pool.TryNext(out _));
+        Assert.True(pool.Exhausted);
+        Assert.Equal(2, pool.DeadCount);
+    }
+
+    [Fact]
+    public void WrappedAround_TracksSuccessfulReuseRatherThanSelections()
+    {
+        var pool = new BenchmarkSegmentPool(["a"]);
+
+        Assert.Equal("a", Next(pool));
+        Assert.Equal("a", Next(pool));
         Assert.False(pool.WrappedAround);
 
-        pool.Next();
+        pool.MarkRetrieved("a");
+        Assert.False(pool.WrappedAround);
+        pool.MarkRetrieved("a");
         Assert.True(pool.WrappedAround);
     }
 
     [Fact]
-    public void Next_WhenAllIdsAreDead_StillReturnsAValue()
+    public void WrappedAround_TreatsFallbackAsSameLogicalSegment()
     {
-        var pool = new BenchmarkSegmentPool(["a", "b"]);
-        pool.MarkDead("a");
-        pool.MarkDead("b");
+        var pool = new BenchmarkSegmentPool([new BenchmarkSegment("a", ["a-fallback"])]);
 
-        var value = pool.Next();
+        pool.MarkRetrieved("a");
+        pool.MarkRetrieved("a-fallback");
 
-        Assert.Contains(value, new[] { "a", "b" });
+        Assert.True(pool.WrappedAround);
+    }
+
+    private static string Next(BenchmarkSegmentPool pool)
+    {
+        Assert.True(pool.TryNext(out var id));
+        return id;
     }
 }

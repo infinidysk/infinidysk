@@ -5,6 +5,32 @@ namespace NzbWebDAV.Tests.Services.Benchmark;
 public class BenchmarkMathTests
 {
     [Fact]
+    public void NormalizeUnavailableCorpusResult_ClearsThroughputClaims()
+    {
+        var pool = new BenchmarkSegmentPool(["missing"]);
+        pool.MarkDead("missing");
+        var result = new BenchmarkResult
+        {
+            ThroughputTested = true,
+            RecommendedConnections = 8,
+            Pipelining = new BenchmarkPipelining(),
+            WrappedPool = true,
+            Warnings = ["The test re-downloaded some articles more than once."],
+        };
+
+        UsenetBenchmarkService.NormalizeUnavailableCorpusResult(result, pool);
+
+        Assert.False(result.ThroughputTested);
+        Assert.Null(result.RecommendedConnections);
+        Assert.Null(result.Pipelining);
+        Assert.False(result.WrappedPool);
+        Assert.Contains(result.Warnings, warning =>
+            warning.Contains("provider-retrievable", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.Warnings, warning =>
+            warning.Contains("re-downloaded", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ComputeSteadyRate_UsesMedianOfBuckets()
     {
         var buckets = new List<(long Bytes, double Seconds)>

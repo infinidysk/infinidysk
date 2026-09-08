@@ -242,6 +242,9 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
                 Report("sweep", $"{have} conn → {sample.MegaBytesPerSec:0.0} MB/s",
                     ProgressPercent(15, 75, i + 1, levels.Count), result, have);
 
+                if (pool.Exhausted)
+                    break;
+
                 if (have < level)
                 {
                     providerCap = have;
@@ -310,7 +313,9 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
             }
 
             // 4) Pipelining — compare off vs. a few depths at a moderate concurrency.
-            if (result.Sweep.Count > 0 && Remaining() > MinUsefulBytes(lastMegaBytesPerSec, profile))
+            if (!pool.Exhausted
+                && result.Sweep.Count > 0
+                && Remaining() > MinUsefulBytes(lastMegaBytesPerSec, profile))
             {
                 var pipeConns = Math.Min(result.RecommendedConnections ?? 1, profile.PipelineTestConnections);
                 if (providerCap.HasValue) pipeConns = Math.Min(pipeConns, providerCap.Value);
@@ -343,6 +348,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
                 $"{pool.DeadCount} test articles were no longer available on the provider, which can bias speeds low. " +
                 "Downloading something recent refreshes the test pool.");
 
+        NormalizeUnavailableCorpusResult(result, pool);
         result.Confidence = ComputeConfidence(result);
         StampElapsed();
         Report("done", "Done.", 100, result, null, includeResult: true);
@@ -389,7 +395,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
         addData(baseline.Bytes);
         last = baseline.MegaBytesPerSec;
         result.BaselineMegaBytesPerSec = Math.Round(baseline.MegaBytesPerSec, 2);
-        if (baseline.OpenedConnections == 0) return result;
+        if (baseline.OpenedConnections == 0 || pool.Exhausted) return result;
 
         var bestMegaBytesPerSec = baseline.MegaBytesPerSec;
         var bestDepth = 0;
@@ -409,6 +415,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
             addData(sample.Bytes);
             last = Math.Max(last, sample.MegaBytesPerSec);
             result.Tested.Add(new BenchmarkPipeliningPoint { Depth = depth, MegaBytesPerSec = Math.Round(sample.MegaBytesPerSec, 2) });
+            if (pool.Exhausted) break;
             if (sample.MegaBytesPerSec > bestMegaBytesPerSec) { bestMegaBytesPerSec = sample.MegaBytesPerSec; bestDepth = depth; }
         }
 
@@ -536,12 +543,13 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
                        && !hardCt.IsCancellationRequested
                        && Interlocked.Read(ref counter.Value) < targetBytes)
                 {
-                    var id = pool.Next();
+                    if (!pool.TryNext(out var id)) break;
                     try
                     {
                         var response = await conn.DecodedBodyAsync(id, hardCt).ConfigureAwait(false);
                         // Drain with hardCt only — soft-stop never cancels mid-BODY.
                         await DrainAsync(response.Stream!, buffer, counter, hardCt).ConfigureAwait(false);
+                        pool.MarkRetrieved(id);
                     }
                     catch (UsenetArticleNotFoundException)
                     {
@@ -556,12 +564,20 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
                        && Interlocked.Read(ref counter.Value) < targetBytes)
                 {
                     var batch = pool.NextBatch(depth * 4);
+                    if (batch.Count == 0) break;
                     // Finish the whole batch once started so pipelined responses stay in sync.
                     await foreach (var r in conn.DecodedBodiesPipelinedAsync(batch, depth, hardCt)
                                        .WithCancellation(hardCt).ConfigureAwait(false))
                     {
                         if (r is { Found: true, Stream: not null })
+                        {
                             await DrainAsync(r.Stream, buffer, counter, hardCt).ConfigureAwait(false);
+                            pool.MarkRetrieved(r.SegmentId);
+                        }
+                        else if (r.DefinitivelyMissing)
+                        {
+                            pool.MarkDead(r.SegmentId);
+                        }
                         if (hardCt.IsCancellationRequested)
                             break;
                     }
@@ -699,6 +715,24 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
         }
 
         return providerLimit;
+    }
+
+    internal static void NormalizeUnavailableCorpusResult(
+        BenchmarkResult result,
+        BenchmarkSegmentPool pool)
+    {
+        if (result.DataUsedBytes > 0) return;
+
+        result.ThroughputTested = false;
+        result.RecommendedConnections = null;
+        result.Pipelining = null;
+        result.WrappedPool = false;
+        result.Warnings.RemoveAll(warning => warning.Contains("re-downloaded", StringComparison.Ordinal));
+        result.Warnings.Add(
+            pool.Exhausted
+                ? "The speed test could not find any provider-retrievable articles in the benchmark corpus. " +
+                  "Download something recent and try again."
+                : "The speed test did not receive any article data, so throughput could not be measured.");
     }
 
     internal static string ComputeConfidence(BenchmarkResult result)

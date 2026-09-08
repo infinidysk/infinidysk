@@ -24,10 +24,10 @@ public sealed class BenchmarkCorpusProvider(DavDatabaseClient db)
     private const int MaxQueueNzbsToScan = 10;
     private static readonly TimeSpan RecentHealthWindow = TimeSpan.FromDays(30);
 
-    public async Task<List<string>> GetSegmentPoolAsync(int maxSegments, CancellationToken ct)
+    internal async Task<List<BenchmarkSegment>> GetSegmentPoolAsync(int maxSegments, CancellationToken ct)
     {
-        var pool = new List<string>(Math.Min(maxSegments, 4096));
-        var seen = new HashSet<string>();
+        var pool = new List<BenchmarkSegment>(Math.Min(maxSegments, 4096));
+        var seen = new HashSet<string>(StringComparer.Ordinal);
 
         try
         {
@@ -50,7 +50,7 @@ public sealed class BenchmarkCorpusProvider(DavDatabaseClient db)
 
     // Primary source: segment ids persisted for previously-downloaded files.
     private async Task CollectFromCompletedFilesAsync(
-        List<string> pool, HashSet<string> seen, int maxSegments, CancellationToken ct)
+        List<BenchmarkSegment> pool, HashSet<string> seen, int maxSegments, CancellationToken ct)
     {
         var recentNzbItems = await db.Ctx.Items
             .Where(x => x.Type == DavItem.ItemType.UsenetFile && x.SubType == DavItem.ItemSubType.NzbFile)
@@ -58,13 +58,15 @@ public sealed class BenchmarkCorpusProvider(DavDatabaseClient db)
             .Take(MaxNzbFilesToConsider)
             .ToListAsync(ct).ConfigureAwait(false);
 
+        var sources = new List<IReadOnlyList<BenchmarkSegment>>();
         foreach (var item in RankCompletedCandidates(recentNzbItems, DateTimeOffset.UtcNow))
         {
-            if (pool.Count >= maxSegments) return;
             var nzbFile = await db.GetDavNzbFileAsync(item, ct).ConfigureAwait(false);
             if (nzbFile?.SegmentIds is { Length: > 0 } ids)
-                AddIds(pool, seen, ids, maxSegments);
+            sources.Add(BuildSegments(ids, nzbFile.SegmentFallbackIds));
         }
+
+        AddSegmentsRoundRobin(pool, seen, sources, maxSegments);
     }
 
     /// <summary>
@@ -85,46 +87,69 @@ public sealed class BenchmarkCorpusProvider(DavDatabaseClient db)
 
     // Fallback source: parse the raw nzb xml of items still sitting in the queue.
     private async Task CollectFromQueuedNzbsAsync(
-        List<string> pool, HashSet<string> seen, int maxSegments, CancellationToken ct)
+        List<BenchmarkSegment> pool, HashSet<string> seen, int maxSegments, CancellationToken ct)
     {
         var queuedNzbs = await db.Ctx.QueueNzbContents
             .Take(MaxQueueNzbsToScan)
             .ToListAsync(ct).ConfigureAwait(false);
 
+        var sources = new List<IReadOnlyList<BenchmarkSegment>>();
         foreach (var queued in queuedNzbs)
         {
-            if (pool.Count >= maxSegments) return;
             if (string.IsNullOrWhiteSpace(queued.NzbContents)) continue;
             try
             {
                 using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(queued.NzbContents));
                 var doc = await NzbDocument.LoadAsync(stream, ct).ConfigureAwait(false);
                 foreach (var file in doc.Files)
-                {
-                    AddIds(pool, seen, file.GetSegmentIds(), maxSegments);
-                    if (pool.Count >= maxSegments) return;
-                }
+                    sources.Add(BuildSegments(file.GetSegmentIds(), file.GetSegmentFallbackIds()));
             }
             catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
             {
                 Log.Debug(e, "Skipping unparseable queued nzb during benchmark corpus build.");
             }
         }
+
+        AddSegmentsRoundRobin(pool, seen, sources, maxSegments);
     }
 
-    private static void AddIds(List<string> pool, HashSet<string> seen, IEnumerable<string> ids, int maxSegments)
+    internal static void AddSegmentsRoundRobin(
+        List<BenchmarkSegment> pool,
+        HashSet<string> seen,
+        IReadOnlyList<IReadOnlyList<BenchmarkSegment>> sources,
+        int maxSegments)
     {
-        foreach (var id in ids)
+        for (var index = 0; pool.Count < maxSegments; index++)
         {
-            if (pool.Count >= maxSegments) return;
-            if (string.IsNullOrWhiteSpace(id)) continue;
-            if (seen.Add(id)) pool.Add(id);
+            var anySourceHadSegment = false;
+            foreach (var source in sources)
+            {
+                if (index >= source.Count) continue;
+                anySourceHadSegment = true;
+
+                var segment = source[index];
+                if (string.IsNullOrWhiteSpace(segment.PrimaryId) || !seen.Add(segment.PrimaryId)) continue;
+
+                var fallbacks = segment.FallbackIds
+                    .Where(id => !string.IsNullOrWhiteSpace(id) && seen.Add(id))
+                    .ToArray();
+                pool.Add(new BenchmarkSegment(segment.PrimaryId, fallbacks));
+                if (pool.Count >= maxSegments) return;
+            }
+
+            if (!anySourceHadSegment) return;
         }
     }
 
+    private static List<BenchmarkSegment> BuildSegments(string[] ids, string[][]? fallbacks) =>
+        ids.Select((id, index) => new BenchmarkSegment(
+                id,
+                fallbacks is not null && index < fallbacks.Length ? fallbacks[index] : []))
+            .ToList();
+
     // Shuffle so sequential nzb ordering doesn't bias which segments land in the
     // smaller windows, and so retries don't keep hammering the same first article.
-    private static void Shuffle(List<string> list)
+    private static void Shuffle(List<BenchmarkSegment> list)
     {
         for (var i = list.Count - 1; i > 0; i--)
         {
