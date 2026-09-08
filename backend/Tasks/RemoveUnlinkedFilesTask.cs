@@ -617,8 +617,10 @@ public class RemoveUnlinkedFilesTask : BaseTask
             var candidates = await dbContext.Database
                 .SqlQuery<UnlinkedFileInfo>(
                     $"""
-                     SELECT Id, Type, Path, Name,
-                            GeneratedStrmOutputRoot, GeneratedStrmPath, GeneratedStrmTarget
+                     SELECT Id AS "Id", Type AS "Type", Path AS "Path", Name AS "Name",
+                            GeneratedStrmOutputRoot AS "GeneratedStrmOutputRoot",
+                            GeneratedStrmPath AS "GeneratedStrmPath",
+                            GeneratedStrmTarget AS "GeneratedStrmTarget"
                      FROM TMP_APPROVED_UNLINKED_FILES
                      WHERE Id > {lastId}
                      ORDER BY Id
@@ -753,8 +755,10 @@ public class RemoveUnlinkedFilesTask : BaseTask
                 ? await dbContext.Database
                     .SqlQuery<UnlinkedFileInfo>(
                         $"""
-                         SELECT a.Id, a.Type, a.Path, a.Name,
-                                a.GeneratedStrmOutputRoot, a.GeneratedStrmPath, a.GeneratedStrmTarget
+                         SELECT a.Id AS "Id", a.Type AS "Type", a.Path AS "Path", a.Name AS "Name",
+                                a.GeneratedStrmOutputRoot AS "GeneratedStrmOutputRoot",
+                                a.GeneratedStrmPath AS "GeneratedStrmPath",
+                                a.GeneratedStrmTarget AS "GeneratedStrmTarget"
                          FROM TMP_APPROVED_UNLINKED_FILES a
                          INNER JOIN "DavItems" i ON CAST(i."Id" AS TEXT) = a.Id
                          WHERE i."Type" = {usenetFileType}
