@@ -724,6 +724,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
         if (result.DataUsedBytes > 0) return;
 
         result.ThroughputTested = false;
+        result.Sweep.Clear();
         result.RecommendedConnections = null;
         result.Pipelining = null;
         result.WrappedPool = false;

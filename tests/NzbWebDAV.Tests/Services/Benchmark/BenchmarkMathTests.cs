@@ -15,12 +15,14 @@ public class BenchmarkMathTests
             RecommendedConnections = 8,
             Pipelining = new BenchmarkPipelining(),
             WrappedPool = true,
+            Sweep = [new BenchmarkSweepPoint { Connections = 1, MegaBytesPerSec = 0 }],
             Warnings = ["The test re-downloaded some articles more than once."],
         };
 
         UsenetBenchmarkService.NormalizeUnavailableCorpusResult(result, pool);
 
         Assert.False(result.ThroughputTested);
+        Assert.Empty(result.Sweep);
         Assert.Null(result.RecommendedConnections);
         Assert.Null(result.Pipelining);
         Assert.False(result.WrappedPool);

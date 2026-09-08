@@ -27,15 +27,15 @@ public sealed class BenchmarkCorpusProvider(DavDatabaseClient db)
     internal async Task<List<BenchmarkSegment>> GetSegmentPoolAsync(int maxSegments, CancellationToken ct)
     {
         var pool = new List<BenchmarkSegment>(Math.Min(maxSegments, 4096));
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var ownersById = new Dictionary<string, int>(StringComparer.Ordinal);
 
         try
         {
-            await CollectFromCompletedFilesAsync(pool, seen, maxSegments, ct).ConfigureAwait(false);
+            await CollectFromCompletedFilesAsync(pool, ownersById, maxSegments, ct).ConfigureAwait(false);
 
             // Only crack open queued nzbs if completed downloads didn't give us much.
             if (pool.Count < maxSegments / 4)
-                await CollectFromQueuedNzbsAsync(pool, seen, maxSegments, ct).ConfigureAwait(false);
+                await CollectFromQueuedNzbsAsync(pool, ownersById, maxSegments, ct).ConfigureAwait(false);
         }
         catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
         {
@@ -50,7 +50,7 @@ public sealed class BenchmarkCorpusProvider(DavDatabaseClient db)
 
     // Primary source: segment ids persisted for previously-downloaded files.
     private async Task CollectFromCompletedFilesAsync(
-        List<BenchmarkSegment> pool, HashSet<string> seen, int maxSegments, CancellationToken ct)
+        List<BenchmarkSegment> pool, Dictionary<string, int> ownersById, int maxSegments, CancellationToken ct)
     {
         var recentNzbItems = await db.Ctx.Items
             .Where(x => x.Type == DavItem.ItemType.UsenetFile && x.SubType == DavItem.ItemSubType.NzbFile)
@@ -66,7 +66,7 @@ public sealed class BenchmarkCorpusProvider(DavDatabaseClient db)
             sources.Add(BuildSegments(ids, nzbFile.SegmentFallbackIds));
         }
 
-        AddSegmentsRoundRobin(pool, seen, sources, maxSegments);
+        AddSegmentsRoundRobin(pool, ownersById, sources, maxSegments);
     }
 
     /// <summary>
@@ -87,7 +87,7 @@ public sealed class BenchmarkCorpusProvider(DavDatabaseClient db)
 
     // Fallback source: parse the raw nzb xml of items still sitting in the queue.
     private async Task CollectFromQueuedNzbsAsync(
-        List<BenchmarkSegment> pool, HashSet<string> seen, int maxSegments, CancellationToken ct)
+        List<BenchmarkSegment> pool, Dictionary<string, int> ownersById, int maxSegments, CancellationToken ct)
     {
         var queuedNzbs = await db.Ctx.QueueNzbContents
             .Take(MaxQueueNzbsToScan)
@@ -110,35 +110,65 @@ public sealed class BenchmarkCorpusProvider(DavDatabaseClient db)
             }
         }
 
-        AddSegmentsRoundRobin(pool, seen, sources, maxSegments);
+        AddSegmentsRoundRobin(pool, ownersById, sources, maxSegments);
     }
 
     internal static void AddSegmentsRoundRobin(
         List<BenchmarkSegment> pool,
-        HashSet<string> seen,
+        Dictionary<string, int> ownersById,
         IReadOnlyList<IReadOnlyList<BenchmarkSegment>> sources,
         int maxSegments)
     {
         for (var index = 0; pool.Count < maxSegments; index++)
         {
-            var anySourceHadSegment = false;
-            foreach (var source in sources)
-            {
-                if (index >= source.Count) continue;
-                anySourceHadSegment = true;
+            var eligibleSources = sources.Where(source => index < source.Count).ToList();
+            if (eligibleSources.Count == 0) return;
 
+            foreach (var source in eligibleSources)
+            {
                 var segment = source[index];
-                if (string.IsNullOrWhiteSpace(segment.PrimaryId) || !seen.Add(segment.PrimaryId)) continue;
+                if (string.IsNullOrWhiteSpace(segment.PrimaryId)) continue;
+
+                if (ownersById.TryGetValue(segment.PrimaryId, out var ownerIndex))
+                {
+                    MergeFallbacks(pool, ownersById, ownerIndex, segment.FallbackIds);
+                    continue;
+                }
 
                 var fallbacks = segment.FallbackIds
-                    .Where(id => !string.IsNullOrWhiteSpace(id) && seen.Add(id))
+                    .Where(id => !string.IsNullOrWhiteSpace(id)
+                                 && !StringComparer.Ordinal.Equals(id, segment.PrimaryId)
+                                 && !ownersById.ContainsKey(id))
+                    .Distinct(StringComparer.Ordinal)
                     .ToArray();
+                var newIndex = pool.Count;
                 pool.Add(new BenchmarkSegment(segment.PrimaryId, fallbacks));
+                ownersById.Add(segment.PrimaryId, newIndex);
+                foreach (var fallback in fallbacks)
+                    ownersById.Add(fallback, newIndex);
                 if (pool.Count >= maxSegments) return;
             }
-
-            if (!anySourceHadSegment) return;
         }
+    }
+
+    private static void MergeFallbacks(
+        List<BenchmarkSegment> pool,
+        Dictionary<string, int> ownersById,
+        int ownerIndex,
+        IEnumerable<string> fallbackIds)
+    {
+        var additions = fallbackIds
+            .Where(id => !string.IsNullOrWhiteSpace(id) && !ownersById.ContainsKey(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (additions.Length == 0) return;
+
+        var existing = pool[ownerIndex];
+        pool[ownerIndex] = new BenchmarkSegment(
+            existing.PrimaryId,
+            [.. existing.FallbackIds, .. additions]);
+        foreach (var fallback in additions)
+            ownersById.Add(fallback, ownerIndex);
     }
 
     private static List<BenchmarkSegment> BuildSegments(string[] ids, string[][]? fallbacks) =>
