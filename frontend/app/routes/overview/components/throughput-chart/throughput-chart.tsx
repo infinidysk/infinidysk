@@ -345,7 +345,7 @@ export function ThroughputChart({
                 Client reads · {formatNumber(safeTotalClientArticles)}
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <span className="inline-block w-2.5 border-t-2 border-dashed border-info" />
+                <span className="inline-block w-2.5 border-t-2 border-info" />
                 App reads · {formatNumber(totalAppArticles)}
               </span>
               {maxNetworkRate > 0 && (

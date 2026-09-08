@@ -55,6 +55,14 @@ describe("ThroughputChart", () => {
     expect(markup).toContain('data-series="client-articles"');
   });
 
+  it("uses a solid blue swatch for app reads in the legend", () => {
+    const markup = renderMarkup([point(3, 1)]);
+
+    expect(markup).toContain("App reads · 2");
+    expect(markup).toContain("border-t-2 border-info");
+    expect(markup).not.toContain("border-dashed");
+  });
+
   it("labels the y-axis with the error-dominant coordinate scale", () => {
     const markup = renderMarkup([point(2, 2, 10)], 10);
 
