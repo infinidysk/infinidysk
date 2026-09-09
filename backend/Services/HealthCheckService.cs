@@ -45,6 +45,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     private static readonly TimeSpan MissingPayloadConfirmedRecheck = TimeSpan.FromDays(7);
     private static readonly TimeSpan HealthCheckProgressTimeout = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// How long an item waits before another repair attempt after PAR2 reported that a
+    /// different repair owned the single-repair slot.
+    /// </summary>
+    internal static readonly TimeSpan Par2AdmissionDeferral = TimeSpan.FromMinutes(15);
+
     // Repeated remove-and-blocklist repairs for the same library path in a short window indicate
     // a replacement loop (Arr keeps re-grabbing a release repair keeps rejecting, issue #732).
     // After the limit is hit, further repairs at that path are deferred instead of deleting again.
@@ -1279,6 +1285,13 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 await HandleUnreadablePayloadAsync(davItem, dbClient, exception, ct).ConfigureAwait(false);
                 return;
             }
+
+            if (par2Outcome is Par2RepairOutcome.Deferred)
+            {
+                await DeferRepairUntilOwnerAvailable(davItem, dbClient, ct).ConfigureAwait(false);
+                return;
+            }
+
             if (par2Outcome is not Par2RepairOutcome.NotRepaired)
             {
                 var utcNow = DateTimeOffset.UtcNow;
@@ -1427,6 +1440,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             ? await _par2RepairService.TryPar2RepairAsync(
                 davItem, holeSegmentIds, ct).ConfigureAwait(false)
             : Par2RepairOutcome.NotRepaired;
+        if (par2Outcome is Par2RepairOutcome.Deferred)
+        {
+            await DeferRepairUntilOwnerAvailable(davItem, dbClient, ct).ConfigureAwait(false);
+            return;
+        }
+
         if (par2Outcome is not Par2RepairOutcome.NotRepaired)
         {
             var utcNow = DateTimeOffset.UtcNow;
@@ -2961,6 +2980,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 failureSnapshot.HasTargetableSegmentIds ? failureSnapshot.SegmentIds : null,
                 ct).ConfigureAwait(false)
             : Par2RepairOutcome.NotRepaired;
+        if (par2Outcome is Par2RepairOutcome.Deferred)
+        {
+            await DeferRepairUntilOwnerAvailable(davItem, dbClient, ct).ConfigureAwait(false);
+            return;
+        }
+
         if (par2Outcome is not Par2RepairOutcome.NotRepaired)
         {
             var utcNow = DateTimeOffset.UtcNow;
@@ -3431,6 +3456,37 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         }
     }
 
+
+    /// <summary>
+    /// Holds an item for a later repair attempt when PAR2 reported
+    /// <see cref="Par2RepairOutcome.Deferred"/>: another repair owned the single-repair slot,
+    /// so nothing was learned about this file. Falling through to *Arr replacement here would
+    /// remove and re-grab a download that parity may still be able to fix.
+    /// </summary>
+    private async Task DeferRepairUntilOwnerAvailable(
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        CancellationToken ct)
+    {
+        var now = _timeProvider.GetUtcNow();
+        davItem.HealthRepairPending = true;
+        davItem.LastHealthCheck = now;
+        // Keep the UnixEpoch urgent sentinel, exactly as the schedule deferral does.
+        davItem.NextHealthCheck = NextHealthCheckAfterScheduleDeferral(
+            davItem.NextHealthCheck, now + Par2AdmissionDeferral);
+        Log.Information(
+            "Repair deferred for {Path}: another repair is already running. Retrying after {Delay}.",
+            davItem.Path,
+            Par2AdmissionDeferral);
+        await RecordHealthResult(
+            dbClient,
+            davItem,
+            HealthCheckResult.HealthResult.Unhealthy,
+            HealthCheckResult.RepairAction.ActionNeeded,
+            "Repair deferred because another repair is already running. "
+            + $"This file is queued for another attempt in {Par2AdmissionDeferral.TotalMinutes:0} minutes.",
+            ct).ConfigureAwait(false);
+    }
 
     private async Task DeferRepairUntilWindow(
         DavItem davItem,

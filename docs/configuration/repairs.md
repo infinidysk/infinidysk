@@ -53,7 +53,14 @@ Repair checks PAR2 packet hashes and source-slice checksums, reconstructs unavai
 and verifies every affected volume's whole-file MD5 before publishing any segment patches.
 Only validated posted bytes are stored. Sources and parity are read through Usenet without
 downloading or extracting a whole release to disk. One repair owner runs at a time across
-health and playback requests; additional jobs wait without multiplying the memory budget.
+health and playback requests; queued jobs wait without multiplying the memory budget.
+
+A health check or playback report that finds damage while another repair already owns that
+slot waits only briefly, then defers the file for another attempt in 15 minutes and releases
+its health-check worker. Deferred files keep their place in the repair queue and are never
+sent to *Arr replacement on that basis, because a busy repair slot says nothing about whether
+parity can fix the file. Without this, a single unrepairable release could hold every
+health-check worker and stop the library scan entirely.
 
 The budget includes NZB/PAR2 metadata, source windows, reconstruction buffers, and staged
 patches. Discovery also limits metadata candidates to 128, metadata scanning to 512 MiB,

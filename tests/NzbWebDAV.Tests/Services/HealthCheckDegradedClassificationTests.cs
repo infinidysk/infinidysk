@@ -543,6 +543,31 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DeferredPar2_HoldsItemForRetryInsteadOfReplacement()
+    {
+        var segments = NewSegmentIds(HealthCheckService.SampleFloor + 1000);
+        var sizes = Enumerable.Repeat(100L, segments.Length).ToArray();
+        var (item, oldBlobId) = await AddVideoFileAsync("movie.mkv", segments, sizes);
+        var fake = NewFakeClient(segments, missing: [50]);
+        var (service, par2) = await NewServiceAsync(fake, Par2RepairOutcome.Deferred);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        // A busy repair owner is not evidence that the file is unrepairable, so the item
+        // is held for another repair attempt rather than handed to the replacement path.
+        var reloaded = ReloadItem(item.Id);
+        Assert.True(reloaded.HealthRepairPending);
+        Assert.NotNull(reloaded.NextHealthCheck);
+        Assert.True(reloaded.NextHealthCheck > DateTimeOffset.UtcNow);
+        Assert.Equal(oldBlobId, reloaded.FileBlobId);
+        Assert.Equal([segments[50]], Assert.Single(par2.Requests));
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+        Assert.Contains("another repair", row.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task ToleranceDisabled_UsesLegacyPath()
     {
         _configManager.UpdateValues(

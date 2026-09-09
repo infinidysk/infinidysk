@@ -30,12 +30,33 @@ public enum Par2RepairOutcome
     NotRepaired = 0,
     Repaired = 1,
     VerifiedClean = 2,
+
+    /// <summary>
+    /// Another repair held the single-owner slot for longer than
+    /// <see cref="Par2RepairService.AdmissionWaitTimeout"/>. Nothing was learned about the
+    /// file, so callers must retry later instead of treating it as unrepairable.
+    /// </summary>
+    Deferred = 3,
 }
 
 public partial class Par2RepairService : BackgroundService
 {
     private const int MaxQueueLength = 50;
     private const int MaxAttempts = 3;
+
+    /// <summary>
+    /// How long an inline caller (a health-check worker or a playback report) waits for the
+    /// single repair owner before giving up with <see cref="Par2RepairOutcome.Deferred"/>.
+    /// Waiting longer would hold a health-check worker slot hostage to an unrelated repair,
+    /// which makes <c>repair.healthcheck-workers</c> stop meaning "files checked at once"
+    /// (issue: one dead release froze the whole library scan). Background queue items are
+    /// not inline callers and still wait indefinitely.
+    /// <para>
+    /// Settable for tests so coverage does not wait on the real timeout. Tests that override
+    /// it must restore the original value in a finally block.
+    /// </para>
+    /// </summary>
+    internal static TimeSpan AdmissionWaitTimeout { get; set; } = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan CatalogWarningInterval = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan CatalogMaxRetryDelay = TimeSpan.FromMinutes(1);
 
@@ -119,6 +140,31 @@ public partial class Par2RepairService : BackgroundService
 
     internal Action? OnWorkersStarting { get; set; }
     internal Func<CancellationToken, Task>? BeforePatchPublicationForTests { get; set; }
+
+    /// <summary>
+    /// Takes the single-repair slot the way a running repair does, so tests can observe how
+    /// inline callers behave while a repair is already in flight. Dispose to release it.
+    /// </summary>
+    internal async Task<IDisposable> HoldAdmissionForTestsAsync(CancellationToken ct)
+    {
+        await _repairAdmission.WaitAsync(ct).ConfigureAwait(false);
+        Interlocked.Exchange(ref _admissionActive, 1);
+        PublishAdmissionMetrics();
+        return new AdmissionHold(this);
+    }
+
+    private sealed class AdmissionHold(Par2RepairService owner) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+            Interlocked.Exchange(ref owner._admissionActive, 0);
+            owner._repairAdmission.Release();
+            owner.PublishAdmissionMetrics();
+        }
+    }
 
     internal int PendingZeroFillCount => _pendingZeroFillPaths.Count;
 
@@ -246,10 +292,16 @@ public partial class Par2RepairService : BackgroundService
             var mine = new RepairFlight(missingSegmentIds);
             var flight = _repairFlights.GetOrAdd(davItem.Id, mine);
             if (ReferenceEquals(flight, mine))
-                return await RunFlightAsync(flight, davItem, missingSegmentIds, queueGuard: false, ct).ConfigureAwait(false);
+                return await RunFlightAsync(
+                        flight, davItem, missingSegmentIds,
+                        queueGuard: false, AdmissionWaitTimeout, ct)
+                    .ConfigureAwait(false);
             try
             {
                 var result = await flight.Task.WaitAsync(ct).ConfigureAwait(false);
+                // The in-flight repair never started, so retrying here would only queue behind
+                // the same owner. Hand the deferral straight back to the caller.
+                if (result == Par2RepairOutcome.Deferred) return result;
                 if (result == Par2RepairOutcome.NotRepaired || flight.Covers(missingSegmentIds)
                     || missingSegmentIds is { Count: > 0 } && missingSegmentIds.All(_patchStore.HasUsablePatch))
                     return result;
@@ -673,15 +725,24 @@ public partial class Par2RepairService : BackgroundService
             return;
         }
 
-        await RunFlightAsync(item.Flight, davItem, item.MissingSegmentIds, queueGuard: true, ct)
+        await RunFlightAsync(
+                item.Flight, davItem, item.MissingSegmentIds,
+                queueGuard: true, admissionTimeout: null, ct)
             .ConfigureAwait(false);
     }
 
+    /// <param name="admissionTimeout">
+    /// How long to wait for the single repair owner, or <c>null</c> to wait indefinitely.
+    /// Inline callers pass a bounded timeout so they never hold a health-check worker slot
+    /// behind an unrelated repair; the background queue passes <c>null</c> so queued jobs
+    /// are never silently dropped.
+    /// </param>
     private async Task<Par2RepairOutcome> RunFlightAsync(
         RepairFlight flight,
         DavItem davItem,
         IReadOnlyList<string>? missingSegmentIds,
         bool queueGuard,
+        TimeSpan? admissionTimeout,
         CancellationToken ct)
     {
         var admitted = false;
@@ -699,9 +760,17 @@ public partial class Par2RepairService : BackgroundService
             PublishAdmissionMetrics();
             try
             {
-                await _repairAdmission.WaitAsync(ct).ConfigureAwait(false);
-                admitted = true;
-                Interlocked.Exchange(ref _admissionActive, 1);
+                if (admissionTimeout is { } timeout)
+                {
+                    admitted = await _repairAdmission.WaitAsync(timeout, ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    await _repairAdmission.WaitAsync(ct).ConfigureAwait(false);
+                    admitted = true;
+                }
+
+                if (admitted) Interlocked.Exchange(ref _admissionActive, 1);
             }
             finally
             {
@@ -712,6 +781,15 @@ public partial class Par2RepairService : BackgroundService
                 PrometheusMetrics.Current?.ObservePar2AdmissionWait(wait.Elapsed);
                 PublishAdmissionMetrics();
             }
+            if (!admitted)
+            {
+                Log.Debug(
+                    "PAR2 repair deferred for {Path}: another repair held the single-owner slot for {Timeout}.",
+                    davItem.Path, admissionTimeout);
+                flight.Completion.TrySetResult(Par2RepairOutcome.Deferred);
+                return Par2RepairOutcome.Deferred;
+            }
+
             var result = await RunRepairAsync(davItem, missingSegmentIds, flight, ct).ConfigureAwait(false);
             flight.Completion.TrySetResult(result);
             return result;
