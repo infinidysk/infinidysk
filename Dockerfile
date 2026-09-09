@@ -32,11 +32,24 @@ FROM alpine:${ALPINE_VERSION} AS rapidyenc-musl
 RUN apk add --no-cache build-base cmake ninja
 WORKDIR /src
 COPY ./libs/rapidyenc/ ./
-RUN cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build build --config Release --target rapidyenc_shared \
+# Build into a directory outside the copied sources: a host-built librapidyenc.so
+# that rode in with the context would otherwise be a candidate for the glob
+# below, and `find` does not promise which match comes first.
+#
+# The linkage check is the load-bearing part. Alpine ships gcompat, so a
+# glibc-linked native still loads here and only fails later, at the first call
+# into a glibc-only symbol such as __memcpy_chk — a SIGSEGV in the middle of
+# article decoding, far from anything that looks like a packaging problem.
+RUN cmake -B /build -S /src -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /build --config Release --target rapidyenc_shared \
     && mkdir -p /out \
-    && lib_path="$(find build -name 'librapidyenc.so' -type f | head -n 1)" \
+    && lib_path="$(find /build -name 'librapidyenc.so' -type f | head -n 1)" \
     && test -n "$lib_path" \
+    && if readelf -dW "$lib_path" | grep -q 'Shared library: \[libc\.so\.6\]'; then \
+        echo "ERROR: $lib_path is linked against glibc; expected a musl build." >&2; \
+        readelf -dW "$lib_path" | grep NEEDED >&2; \
+        exit 1; \
+    fi \
     && cp "$lib_path" /out/librapidyenc.so
 
 # -------- Stage 2b: Build backend --------
@@ -44,14 +57,25 @@ FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS backe
 
 WORKDIR /src
 
-# Accept build-time architecture as ARG (e.g., x64 or arm64)
+# Docker sets TARGETARCH to amd64/arm64; .NET runtime identifiers spell the
+# same architectures x64/arm64. Concatenating the Docker spelling produced
+# "linux-musl-amd64", which no package publishes assets for, so RID-specific
+# asset selection had nothing to match on and the publish output carried a
+# runtimes/ directory named after a RID that does not exist. Resolve the real
+# RID once and use it everywhere below, and reject an arch we cannot map
+# rather than inventing another name that silently matches nothing.
 ARG TARGETARCH
+RUN case "${TARGETARCH}" in \
+        amd64|x64) echo linux-musl-x64 > /rid ;; \
+        arm64|aarch64) echo linux-musl-arm64 > /rid ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac
 COPY ./Directory.Build.props ./Directory.Packages.props ./nuget.config ./.editorconfig ./
 COPY ./backend/NzbWebDAV.csproj ./backend/
 COPY ./libs/SharpCompress/SharpCompress.csproj ./libs/SharpCompress/
 COPY ./libs/UsenetSharp/UsenetSharp.csproj ./libs/UsenetSharp/
 COPY ./libs/RapidYencSharp/RapidYencSharp.csproj ./libs/RapidYencSharp/
-RUN dotnet restore backend/NzbWebDAV.csproj -r linux-musl-${TARGETARCH}
+RUN dotnet restore backend/NzbWebDAV.csproj -r "$(cat /rid)"
 
 # Keep library compilation independent from backend-only source changes.
 COPY ./libs/SharpCompress ./libs/SharpCompress
@@ -59,21 +83,25 @@ COPY ./libs/UsenetSharp ./libs/UsenetSharp
 COPY ./libs/RapidYencSharp ./libs/RapidYencSharp
 COPY ./libs/SharpCompress.snk ./libs/SharpCompress.snk
 
-# Place the musl native where RapidYencSharp copies runtimes into the publish output.
-RUN mkdir -p libs/RapidYencSharp/runtimes/linux-musl-${TARGETARCH}/native
-COPY --from=rapidyenc-musl /out/librapidyenc.so \
-    libs/RapidYencSharp/runtimes/linux-musl-${TARGETARCH}/native/librapidyenc.so
+# Place the musl native where RapidYencSharp copies runtimes into the publish
+# output. The directory has to exist and be non-empty before the build runs:
+# RapidYencSharp's EnsureRapidYencNative target fires when the
+# runtimes/linux-musl-*/native glob is empty and would otherwise fetch a
+# published asset over the network.
+COPY --from=rapidyenc-musl /out/librapidyenc.so /native/librapidyenc.so
+RUN mkdir -p "libs/RapidYencSharp/runtimes/$(cat /rid)/native" \
+    && cp /native/librapidyenc.so "libs/RapidYencSharp/runtimes/$(cat /rid)/native/librapidyenc.so"
 
-RUN dotnet build libs/SharpCompress/SharpCompress.csproj -c Release -r linux-musl-${TARGETARCH} --no-restore \
+RUN dotnet build libs/SharpCompress/SharpCompress.csproj -c Release -r "$(cat /rid)" --no-restore \
         -p:RunAnalyzers=false -p:EnforceCodeStyleInBuild=false \
-    && dotnet build libs/UsenetSharp/UsenetSharp.csproj -c Release -r linux-musl-${TARGETARCH} --no-restore \
+    && dotnet build libs/UsenetSharp/UsenetSharp.csproj -c Release -r "$(cat /rid)" --no-restore \
         -p:RunAnalyzers=false -p:EnforceCodeStyleInBuild=false
 
 COPY ./backend ./backend
 
-RUN dotnet publish backend/NzbWebDAV.csproj -c Release -r linux-musl-${TARGETARCH} -o ./backend/publish --no-restore \
+RUN dotnet publish backend/NzbWebDAV.csproj -c Release -r "$(cat /rid)" -o ./backend/publish --no-restore \
         -p:RunAnalyzers=false -p:EnforceCodeStyleInBuild=false \
-    && cp libs/RapidYencSharp/runtimes/linux-musl-${TARGETARCH}/native/librapidyenc.so ./backend/publish/
+    && cp /native/librapidyenc.so ./backend/publish/librapidyenc.so
 
 # -------- Stage 3: Combined runtime image --------
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine
