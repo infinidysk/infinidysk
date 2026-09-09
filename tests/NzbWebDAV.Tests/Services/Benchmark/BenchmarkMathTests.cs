@@ -15,8 +15,8 @@ public class BenchmarkMathTests
             RecommendedConnections = 8,
             Pipelining = new BenchmarkPipelining(),
             WrappedPool = true,
+            StillClimbing = true,
             Sweep = [new BenchmarkSweepPoint { Connections = 1, MegaBytesPerSec = 0 }],
-            Warnings = ["The test re-downloaded some articles more than once."],
         };
 
         UsenetBenchmarkService.NormalizeUnavailableCorpusResult(result, pool);
@@ -26,10 +26,41 @@ public class BenchmarkMathTests
         Assert.Null(result.RecommendedConnections);
         Assert.Null(result.Pipelining);
         Assert.False(result.WrappedPool);
+        Assert.False(result.StillClimbing);
         Assert.Contains(result.Warnings, warning =>
             warning.Contains("provider-retrievable", StringComparison.Ordinal));
-        Assert.DoesNotContain(result.Warnings, warning =>
-            warning.Contains("re-downloaded", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void NormalizeUnavailableCorpusResult_KeepsResultsWhenDataMoved()
+    {
+        var pool = new BenchmarkSegmentPool(["retrieved"]);
+        var result = new BenchmarkResult
+        {
+            ThroughputTested = true,
+            DataUsedBytes = 1,
+            RecommendedConnections = 8,
+            Sweep = [new BenchmarkSweepPoint { Connections = 1, MegaBytesPerSec = 40 }],
+        };
+
+        UsenetBenchmarkService.NormalizeUnavailableCorpusResult(result, pool);
+
+        Assert.True(result.ThroughputTested);
+        Assert.Equal(8, result.RecommendedConnections);
+        Assert.Single(result.Sweep);
+    }
+
+    [Fact]
+    public void NormalizeUnavailableCorpusResult_ReportsNoDataWhenPoolIsNotExhausted()
+    {
+        var pool = new BenchmarkSegmentPool(["available"]);
+        var result = new BenchmarkResult { ThroughputTested = true };
+
+        UsenetBenchmarkService.NormalizeUnavailableCorpusResult(result, pool);
+
+        Assert.False(result.ThroughputTested);
+        Assert.Contains(result.Warnings, warning =>
+            warning.Contains("did not receive any article data", StringComparison.Ordinal));
     }
 
     [Fact]

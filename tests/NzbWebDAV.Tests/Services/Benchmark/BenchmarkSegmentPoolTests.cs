@@ -48,6 +48,50 @@ public class BenchmarkSegmentPoolTests
     }
 
     [Fact]
+    public void NextBatch_StopsAtExhaustionInsteadOfPaddingDeadIds()
+    {
+        var pool = new BenchmarkSegmentPool(
+        [
+            new BenchmarkSegment("a", ["a-fallback"]),
+            new BenchmarkSegment("b", []),
+        ]);
+        pool.MarkDead("b");
+
+        var batch = pool.NextBatch(8);
+
+        Assert.NotEmpty(batch);
+        Assert.DoesNotContain("b", batch);
+
+        pool.MarkDead("a");
+        pool.MarkDead("a-fallback");
+
+        Assert.Empty(pool.NextBatch(8));
+    }
+
+    [Fact]
+    public void Constructor_DuplicateCandidateIdsUseLastLogicalSegment()
+    {
+        var pool = new BenchmarkSegmentPool(
+        [
+            new BenchmarkSegment("first", ["shared"]),
+            new BenchmarkSegment("second", ["shared"]),
+        ]);
+
+        pool.MarkRetrieved("shared");
+        pool.MarkRetrieved("second");
+
+        Assert.True(pool.WrappedAround);
+    }
+
+    [Fact]
+    public void StringConstructor_DuplicateIdsDoNotThrow()
+    {
+        var pool = new BenchmarkSegmentPool(["duplicate", "duplicate"]);
+
+        Assert.Equal("duplicate", Next(pool));
+    }
+
+    [Fact]
     public void WrappedAround_TracksSuccessfulReuseRatherThanSelections()
     {
         var pool = new BenchmarkSegmentPool(["a"]);

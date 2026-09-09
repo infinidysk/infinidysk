@@ -174,7 +174,7 @@ public sealed class BenchmarkCorpusProvider(DavDatabaseClient db)
     private static List<BenchmarkSegment> BuildSegments(string[] ids, string[][]? fallbacks) =>
         ids.Select((id, index) => new BenchmarkSegment(
                 id,
-                fallbacks is not null && index < fallbacks.Length ? fallbacks[index] : []))
+                fallbacks is not null && index < fallbacks.Length ? fallbacks[index] ?? [] : []))
             .ToList();
 
     // Shuffle so sequential nzb ordering doesn't bias which segments land in the

@@ -16,9 +16,7 @@ internal sealed class BenchmarkSegmentPool(IReadOnlyList<BenchmarkSegment> segme
 {
     private readonly ConcurrentDictionary<string, byte> _dead = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, int> _retrievals = new(StringComparer.Ordinal);
-    private readonly IReadOnlyDictionary<string, string> _logicalSegmentIds = segments
-        .SelectMany(segment => segment.CandidateIds.Select(id => (id, segment.PrimaryId)))
-        .ToDictionary(pair => pair.id, pair => pair.PrimaryId, StringComparer.Ordinal);
+    private readonly IReadOnlyDictionary<string, string> _logicalSegmentIds = BuildLogicalSegmentIds(segments);
     private long _cursor = -1;
 
     public BenchmarkSegmentPool(IReadOnlyList<string> ids)
@@ -63,5 +61,15 @@ internal sealed class BenchmarkSegmentPool(IReadOnlyList<BenchmarkSegment> segme
         for (var i = 0; i < count && TryNext(out var id); i++)
             batch.Add(id);
         return batch;
+    }
+
+    private static Dictionary<string, string> BuildLogicalSegmentIds(
+        IReadOnlyList<BenchmarkSegment> source)
+    {
+        var logicalSegmentIds = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var segment in source)
+        foreach (var id in segment.CandidateIds)
+            logicalSegmentIds[id] = segment.PrimaryId;
+        return logicalSegmentIds;
     }
 }

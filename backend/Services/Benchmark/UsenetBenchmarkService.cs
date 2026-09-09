@@ -328,7 +328,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
                     ladder, pool, profile, profile.PipelineDepths, Remaining,
                     bytes => result.DataUsedBytes += bytes, result.Warnings, ct).ConfigureAwait(false);
             }
-            else if (result.Sweep.Count > 0)
+            else if (!pool.Exhausted && result.Sweep.Count > 0)
             {
                 result.Warnings.Add(
                     "Skipped the pipelining test — not enough data budget left after the connection sweep. " +
@@ -336,14 +336,14 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
             }
         }
 
-        if (pool.WrappedAround)
+        if (result.DataUsedBytes > 0 && pool.WrappedAround)
         {
             result.WrappedPool = true;
             result.Warnings.Add(
                 "The test re-downloaded some articles more than once, so provider caching may make speeds read high. " +
                 "A larger library of completed downloads gives the test more unique data.");
         }
-        if (pool.DeadCount > 0 && pool.DeadCount * 10 > pool.Count)
+        if (result.DataUsedBytes > 0 && pool.DeadCount > 0 && pool.DeadCount * 10 > pool.Count)
             result.Warnings.Add(
                 $"{pool.DeadCount} test articles were no longer available on the provider, which can bias speeds low. " +
                 "Downloading something recent refreshes the test pool.");
@@ -415,8 +415,8 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
             addData(sample.Bytes);
             last = Math.Max(last, sample.MegaBytesPerSec);
             result.Tested.Add(new BenchmarkPipeliningPoint { Depth = depth, MegaBytesPerSec = Math.Round(sample.MegaBytesPerSec, 2) });
-            if (pool.Exhausted) break;
             if (sample.MegaBytesPerSec > bestMegaBytesPerSec) { bestMegaBytesPerSec = sample.MegaBytesPerSec; bestDepth = depth; }
+            if (pool.Exhausted) break;
         }
 
         // Only recommend turning it on if it's a clear (>10%) win over the baseline.
@@ -728,7 +728,7 @@ public sealed class UsenetBenchmarkService(WebsocketManager websocketManager, Be
         result.RecommendedConnections = null;
         result.Pipelining = null;
         result.WrappedPool = false;
-        result.Warnings.RemoveAll(warning => warning.Contains("re-downloaded", StringComparison.Ordinal));
+        result.StillClimbing = false;
         result.Warnings.Add(
             pool.Exhausted
                 ? "The speed test could not find any provider-retrievable articles in the benchmark corpus. " +
