@@ -5,6 +5,65 @@ namespace NzbWebDAV.Tests.Services.Benchmark;
 public class BenchmarkMathTests
 {
     [Fact]
+    public void NormalizeUnavailableCorpusResult_ClearsThroughputClaims()
+    {
+        var pool = new BenchmarkSegmentPool(["missing"]);
+        pool.MarkDead("missing");
+        var result = new BenchmarkResult
+        {
+            ThroughputTested = true,
+            RecommendedConnections = 8,
+            Pipelining = new BenchmarkPipelining(),
+            WrappedPool = true,
+            StillClimbing = true,
+            Sweep = [new BenchmarkSweepPoint { Connections = 1, MegaBytesPerSec = 0 }],
+        };
+
+        UsenetBenchmarkService.NormalizeUnavailableCorpusResult(result, pool);
+
+        Assert.False(result.ThroughputTested);
+        Assert.Empty(result.Sweep);
+        Assert.Null(result.RecommendedConnections);
+        Assert.Null(result.Pipelining);
+        Assert.False(result.WrappedPool);
+        Assert.False(result.StillClimbing);
+        Assert.Contains(result.Warnings, warning =>
+            warning.Contains("provider-retrievable", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void NormalizeUnavailableCorpusResult_KeepsResultsWhenDataMoved()
+    {
+        var pool = new BenchmarkSegmentPool(["retrieved"]);
+        var result = new BenchmarkResult
+        {
+            ThroughputTested = true,
+            DataUsedBytes = 1,
+            RecommendedConnections = 8,
+            Sweep = [new BenchmarkSweepPoint { Connections = 1, MegaBytesPerSec = 40 }],
+        };
+
+        UsenetBenchmarkService.NormalizeUnavailableCorpusResult(result, pool);
+
+        Assert.True(result.ThroughputTested);
+        Assert.Equal(8, result.RecommendedConnections);
+        Assert.Single(result.Sweep);
+    }
+
+    [Fact]
+    public void NormalizeUnavailableCorpusResult_ReportsNoDataWhenPoolIsNotExhausted()
+    {
+        var pool = new BenchmarkSegmentPool(["available"]);
+        var result = new BenchmarkResult { ThroughputTested = true };
+
+        UsenetBenchmarkService.NormalizeUnavailableCorpusResult(result, pool);
+
+        Assert.False(result.ThroughputTested);
+        Assert.Contains(result.Warnings, warning =>
+            warning.Contains("did not receive any article data", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ComputeSteadyRate_UsesMedianOfBuckets()
     {
         var buckets = new List<(long Bytes, double Seconds)>

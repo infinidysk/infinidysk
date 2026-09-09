@@ -38,6 +38,75 @@ public class BenchmarkCorpusProviderTests
         Assert.Equal(20, ranked[^1].FileSize);
     }
 
+    [Fact]
+    public void AddSegmentsRoundRobin_DiversifiesSourcesAndPreservesFallbacks()
+    {
+        var pool = new List<BenchmarkSegment>();
+        var ownersById = new Dictionary<string, int>(StringComparer.Ordinal);
+        IReadOnlyList<IReadOnlyList<BenchmarkSegment>> sources =
+        [
+            [new("a1", ["a1-fallback"]), new("a2", [])],
+            [new("b1", []), new("b2", [])],
+        ];
+
+        BenchmarkCorpusProvider.AddSegmentsRoundRobin(pool, ownersById, sources, 3);
+
+        Assert.Equal(["a1", "b1", "a2"], pool.Select(segment => segment.PrimaryId));
+        Assert.Equal(["a1-fallback"], pool[0].FallbackIds);
+    }
+
+    [Fact]
+    public void AddSegmentsRoundRobin_DeduplicatesPrimaryAndFallbackIds()
+    {
+        var pool = new List<BenchmarkSegment>();
+        var ownersById = new Dictionary<string, int>(StringComparer.Ordinal);
+        IReadOnlyList<IReadOnlyList<BenchmarkSegment>> sources =
+        [
+            [new("shared", ["fallback", "shared"])],
+            [new("shared", []), new("unique", ["fallback"])],
+        ];
+
+        BenchmarkCorpusProvider.AddSegmentsRoundRobin(pool, ownersById, sources, 10);
+
+        Assert.Equal(["shared", "unique"], pool.Select(segment => segment.PrimaryId));
+        Assert.Equal(["fallback"], pool[0].FallbackIds);
+        Assert.Empty(pool[1].FallbackIds);
+    }
+
+    [Fact]
+    public void AddSegmentsRoundRobin_MergesFallbacksFromDuplicatePrimary()
+    {
+        var pool = new List<BenchmarkSegment>();
+        var ownersById = new Dictionary<string, int>(StringComparer.Ordinal);
+        IReadOnlyList<IReadOnlyList<BenchmarkSegment>> sources =
+        [
+            [new("primary", ["fallback-a"])],
+            [new("primary", ["fallback-b"])],
+        ];
+
+        BenchmarkCorpusProvider.AddSegmentsRoundRobin(pool, ownersById, sources, 10);
+
+        var segment = Assert.Single(pool);
+        Assert.Equal(["fallback-a", "fallback-b"], segment.FallbackIds);
+    }
+
+    [Fact]
+    public void AddSegmentsRoundRobin_MergesWhenPrimaryWasPreviouslyFallback()
+    {
+        var pool = new List<BenchmarkSegment>();
+        var ownersById = new Dictionary<string, int>(StringComparer.Ordinal);
+        IReadOnlyList<IReadOnlyList<BenchmarkSegment>> sources =
+        [
+            [new("primary", ["shared"])],
+            [new("shared", ["additional"])],
+        ];
+
+        BenchmarkCorpusProvider.AddSegmentsRoundRobin(pool, ownersById, sources, 10);
+
+        var segment = Assert.Single(pool);
+        Assert.Equal(["shared", "additional"], segment.FallbackIds);
+    }
+
     private static DavItem Item(string name, long fileSize, DateTime createdAt, DateTimeOffset? lastHealth)
     {
         var id = Guid.NewGuid();
