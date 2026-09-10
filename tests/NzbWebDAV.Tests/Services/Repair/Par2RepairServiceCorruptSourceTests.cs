@@ -281,7 +281,7 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task BackgroundRepair_UrgentCallJoinsFlight_AndCanceledJoinerDoesNotCancelOwner()
+    public async Task BackgroundRepair_InlineJoinersDeferWithoutDisturbingOwner()
     {
         var fileData = PatternBytes(SliceSize * 3, 0x78);
         var sourceReadStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -304,23 +304,23 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
             await sourceReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
             using var canceledJoinerCts = new CancellationTokenSource();
-            var canceledJoiner = release.Service.TryPar2RepairAsync(
+            await canceledJoinerCts.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                release.Service.TryPar2RepairAsync(
                 release.Item,
                 [release.ContentSegmentIds[0]],
-                canceledJoinerCts.Token);
-            canceledJoinerCts.Cancel();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceledJoiner);
+                canceledJoinerCts.Token));
 
             var successfulJoiner = release.Service.TryPar2RepairAsync(
                 release.Item,
                 [release.ContentSegmentIds[0]],
                 CancellationToken.None);
-            Assert.False(successfulJoiner.IsCompleted);
+            Assert.Equal(Par2RepairOutcome.DeferredBusy, await successfulJoiner);
 
             allowSourceRead.TrySetResult(true);
-            Assert.Equal(
-                Par2RepairOutcome.Repaired,
-                await successfulJoiner.WaitAsync(TimeSpan.FromSeconds(10)));
+            using var ownerTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (release.Service.GetDiagnosticSnapshot().TotalSucceeded == 0)
+                await Task.Delay(25, ownerTimeout.Token);
             Assert.True(release.Store.Contains(release.ContentSegmentIds[0]));
             Assert.Equal(1, release.Service.GetDiagnosticSnapshot().TotalSucceeded);
 
