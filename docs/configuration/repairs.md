@@ -226,10 +226,12 @@ break that cycle:
 
 - **Fail re-grabs before import.** Releases rejected by repair are remembered: when repair removes
   a broken download and marks it failed, the release's article ids are recorded (as are articles
-  found definitively missing while downloading or streaming). A re-grabbed NZB containing any of
-  them fails within milliseconds while still in the download queue. *Arr sees a failed download
-  before import, blocklists the release, and moves on to a different one. The memory is in-process
-  and resets on restart; a loop that survives a restart is stopped again after one extra cycle.
+  found definitively missing while downloading or streaming). Successful **Remove, Blocklist** and
+  **Remove, Blocklist, Search** [queue-rule actions](arrs.md) record
+  the same in-process evidence. A re-grabbed NZB containing any remembered article fails while
+  still in the download queue, before import or Usenet article requests. The bounded memory resets
+  on restart and entries can be evicted; a loop that survives a restart is stopped again after one
+  extra cycle.
 - **Per-file repair rate limit.** After repair has removed 3 downloads for the same library file
   (the same episode or movie file path — not the whole series or folder) within 6 hours, further
   repairs for that file are deferred for a day and surfaced as **Action needed** in the health

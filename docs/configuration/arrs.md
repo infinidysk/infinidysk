@@ -75,6 +75,20 @@ path problem) that led to the action.
 
 Disabling an instance opts it out of stuck-queue actions, Arr-linked repairs, and health polling. Use **Arr Health** off when you still want queue rules without Overview polling.
 
+## Blocklisted re-grab protection [since 1.4.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.0){ .nzbdav-since }
+
+When a queue rule successfully applies **Remove, Blocklist** or **Remove, Blocklist, Search**,
+InfiniDysk remembers a bounded sample of article IDs from the removed download. A later NZB
+containing any remembered article is failed in the download queue before import or Usenet article
+requests, even when another indexer supplied it under a different release name. Plain **Remove**
+does not mark an upload as rejected.
+
+This memory is process-local and bounded. It is lost on restart, entries can be evicted, and
+provider configuration changes can clear it. Protection also requires the completed download's
+local history and stored NZB to still exist. A replacement that starts importing before Arr's
+delete request returns can pass the check; later re-grabs are protected after Arr confirms the
+blocklist action succeeded.
+
 ## Arr Health on the Overview dashboard [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }
 
 When at least one Radarr or Sonarr instance is configured **and enabled**, Overview shows a compact **Arr Health** section: instance reachability, imports in the selected dashboard window, median/P95 handoff latency (InfiniDysk download completed → Arr `DownloadFolderImported`), queue depth, and items waiting unusually long for import.
