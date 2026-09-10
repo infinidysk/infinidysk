@@ -57,6 +57,53 @@ public class ArchiveSetGroupingTests
         Assert.Equal(2, descriptors.Count);
     }
 
+    [Fact]
+    public void Resolve_RepeatedPartSetsStartNewSetAtPartOne()
+    {
+        var descriptors = ArchiveSetGrouping.Resolve([
+            Info("Episode.part01.rar"),
+            Info("Episode.part02.rar"),
+            Info("Episode.part01.rar"),
+            Info("Episode.part02.rar"),
+        ], new ArchiveSetIdAllocator());
+
+        Assert.Equal(2, descriptors.Count);
+        Assert.All(descriptors, descriptor => Assert.Equal(2, descriptor.FileInfos.Count));
+    }
+
+    [Fact]
+    public void Resolve_ClassicVolumesMatchWhenContinuationPrecedesFirst()
+    {
+        var descriptors = ArchiveSetGrouping.Resolve([
+            Info("Episode.r00"),
+            Info("Episode.rar"),
+        ], new ArchiveSetIdAllocator());
+
+        Assert.Single(descriptors);
+        Assert.Equal(2, descriptors[0].FileInfos.Count);
+    }
+
+    [Fact]
+    public void Resolve_StandaloneBeforeMultipartSevenZipRemainSeparate()
+    {
+        AssertStandaloneAndMultipartSevenZipRemainSeparate(["A.7z", "A.7z.001", "A.7z.002"]);
+    }
+
+    [Fact]
+    public void Resolve_MultipartBeforeStandaloneSevenZipRemainSeparate()
+    {
+        AssertStandaloneAndMultipartSevenZipRemainSeparate(["A.7z.001", "A.7z.002", "A.7z"]);
+    }
+
+    private static void AssertStandaloneAndMultipartSevenZipRemainSeparate(string[] filenames)
+    {
+        var descriptors = ArchiveSetGrouping.Resolve(filenames.Select(Info).ToList(), new ArchiveSetIdAllocator());
+
+        Assert.Equal(2, descriptors.Count);
+        Assert.Contains(descriptors, descriptor => descriptor.FileInfos.Count == 1);
+        Assert.Contains(descriptors, descriptor => descriptor.FileInfos.Count == 2);
+    }
+
     private static GetFileInfosStep.FileInfo Info(string filename) =>
         new()
         {

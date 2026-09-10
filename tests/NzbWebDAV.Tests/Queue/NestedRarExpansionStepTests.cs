@@ -20,7 +20,8 @@ public class NestedRarExpansionStepTests
             LongRange.FromStartAndSize(40, 30),
             [first, second],
             pathWithinArchive: "movie.mkv",
-            archiveName: "inner",
+                    archiveName: "inner",
+                    archiveSetId: "set:child",
             partNumber: new RarProcessor.PartNumber { PartNumberFromHeader = -1, PartNumberFromFilename = -1 },
             aesParams: null,
             fileUncompressedSize: 30,
@@ -32,6 +33,7 @@ public class NestedRarExpansionStepTests
         Assert.Equal(LongRange.FromStartAndSize(0, 20), mapped[1].ByteRangeWithinPart);
         Assert.Equal(second.PartNumber, mapped[1].PartNumber);
         Assert.All(mapped, segment => Assert.Equal("movie.mkv", segment.PathWithinArchive));
+        Assert.All(mapped, segment => Assert.Equal("set:child", segment.ArchiveSetId));
     }
 
     [Fact]

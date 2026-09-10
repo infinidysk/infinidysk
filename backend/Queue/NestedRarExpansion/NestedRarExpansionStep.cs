@@ -81,11 +81,12 @@ public static class NestedRarExpansionStep
         int maxDepth = DefaultMaxDepth)
     {
         var current = segments;
+        var childArchiveSetIds = new ArchiveSetIdAllocator();
         for (var depth = 0; depth < maxDepth; depth++)
         {
             var nestedGroups = current
-                .GroupBy(segment => segment.PathWithinArchive, StringComparer.Ordinal)
-                .Where(group => FilenameUtil.IsRarFile(Path.GetFileName(group.Key)))
+            .GroupBy(segment => (segment.ArchiveSetId, segment.PathWithinArchive))
+                .Where(group => FilenameUtil.IsRarFile(Path.GetFileName(group.Key.PathWithinArchive)))
                 .ToList();
             if (nestedGroups.Count == 0)
                 break;
@@ -93,17 +94,21 @@ public static class NestedRarExpansionStep
             var next = new List<RarProcessor.StoredFileSegment>(current.Count);
             var expandedAny = false;
 
-            foreach (var group in current.GroupBy(segment => segment.PathWithinArchive, StringComparer.Ordinal))
+            foreach (var group in current.GroupBy(segment => (segment.ArchiveSetId, segment.PathWithinArchive)))
             {
                 var members = group.ToList();
-                if (!FilenameUtil.IsRarFile(Path.GetFileName(group.Key)))
+                if (!FilenameUtil.IsRarFile(Path.GetFileName(group.Key.PathWithinArchive)))
                 {
                     next.AddRange(members);
                     continue;
                 }
 
                 var expanded = await TryExpandGroupAsync(
-                    members, openComposedStream, password, ct).ConfigureAwait(false);
+                    members,
+                    childArchiveSetIds.Allocate(),
+                    openComposedStream,
+                    password,
+                    ct).ConfigureAwait(false);
                 if (expanded is null)
                 {
                     next.AddRange(members);
@@ -124,6 +129,7 @@ public static class NestedRarExpansionStep
 
     private static async Task<List<RarProcessor.StoredFileSegment>?> TryExpandGroupAsync(
         List<RarProcessor.StoredFileSegment> members,
+        string childArchiveSetId,
         Func<RarProcessor.StoredFileSegment[], CancellationToken, Task<Stream>> openComposedStream,
         string? password,
         CancellationToken ct)
@@ -223,6 +229,7 @@ public static class NestedRarExpansionStep
                     sorted,
                     innerPath,
                     archiveName,
+                    childArchiveSetId,
                     partNumber,
                     header.GetAesParams(password),
                     header.UncompressedSize,

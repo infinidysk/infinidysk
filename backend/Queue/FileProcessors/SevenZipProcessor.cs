@@ -188,7 +188,7 @@ public class SevenZipProcessor : BaseProcessor
         }
 
         if (volumes.Any(x => !x.Volume!.Value.IsMultipart ||
-                             !string.Equals(x.Volume.Value.BaseName, first.BaseName, StringComparison.OrdinalIgnoreCase)))
+                             !string.Equals(x.Volume!.Value.BaseName, first.BaseName, StringComparison.OrdinalIgnoreCase)))
             throw new NonRetryableDownloadException("7z archive volumes do not belong to one multipart set.");
 
         var ordered = volumes

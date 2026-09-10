@@ -36,10 +36,11 @@ internal static class ArchiveSetGrouping
                     rarGroups.Add(key, candidates);
                 }
 
-                var descriptor = volume.Value.Scheme == FilenameUtil.RarVolumeScheme.Classic &&
+                var descriptor = volume.Value.Scheme == FilenameUtil.RarVolumeScheme.Part &&
                                  volume.Value.Ordinal == 0
                     ? null
-                    : candidates.LastOrDefault();
+                    : candidates.FirstOrDefault(candidate => candidate.FileInfos.All(existing =>
+                        FilenameUtil.GetRarVolumeName(existing.FileName)?.Ordinal != volume.Value.Ordinal));
                 if (descriptor is null)
                 {
                     descriptor = new ArchiveSetDescriptor(allocator.Allocate(), [], false);
@@ -61,7 +62,13 @@ internal static class ArchiveSetGrouping
                 continue;
             }
 
-              var sevenZipKey = (sevenZip.Value.BaseName.ToLowerInvariant(), sevenZip.Value.IsMultipart ? 1 : descriptors.Count);
+                                if (!sevenZip.Value.IsMultipart)
+                                {
+                                        descriptors.Add(new ArchiveSetDescriptor(allocator.Allocate(), [fileInfo], true));
+                                        continue;
+                                }
+
+                                var sevenZipKey = (sevenZip.Value.BaseName.ToLowerInvariant(), (int?)1);
             if (!sevenZipGroups.TryGetValue(sevenZipKey, out var sevenZipDescriptor))
             {
                 sevenZipDescriptor = new ArchiveSetDescriptor(allocator.Allocate(), [], true);
