@@ -466,6 +466,34 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PartialSample_NonDefinitiveFallback_DefersWithoutRepair()
+    {
+        var segments = NewSegmentIds(HealthCheckService.SampleFloor + 1000);
+        var sizes = Enumerable.Repeat(100L, segments.Length).ToArray();
+        var fallbackIds = Enumerable.Range(0, segments.Length)
+            .Select(_ => Array.Empty<string>())
+            .ToArray();
+        fallbackIds[50] = ["inconclusive-fallback@test"];
+        var (item, oldBlobId) = await AddVideoFileAsync(
+            "movie.mkv",
+            segments,
+            sizes,
+            fallbackIds: fallbackIds);
+        var fake = NewFakeClient(segments, missing: [50]);
+        var client = new NonDefinitiveStatNntpClient(fake, "inconclusive-fallback@test");
+        var (service, par2) = await NewServiceAsync(client, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+        Assert.Empty(par2.Requests);
+        Assert.Equal(oldBlobId, ReloadItem(item.Id).FileBlobId);
+        HealthCheckService.CheckCachedMissingSegmentIds([segments[50]]);
+    }
+
+    [Fact]
     public async Task ToleranceDisabled_UsesLegacyPath()
     {
         _configManager.UpdateValues(
@@ -1204,6 +1232,26 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
                         ["Date"] = DateTimeOffset.UtcNow.AddDays(-1).ToString("R"),
                     },
                 },
+            });
+        }
+    }
+
+    private sealed class NonDefinitiveStatNntpClient(
+        INntpClient inner,
+        string inconclusiveId) : WrappingNntpClient(inner)
+    {
+        public override Task<UsenetStatResponse> StatAsync(
+            SegmentId segmentId,
+            CancellationToken cancellationToken)
+        {
+            if (!string.Equals(segmentId, inconclusiveId, StringComparison.Ordinal))
+                return base.StatAsync(segmentId, cancellationToken);
+
+            return Task.FromResult(new UsenetStatResponse
+            {
+                ResponseCode = 400,
+                ResponseMessage = "400 service temporarily unavailable",
+                ArticleExists = false,
             });
         }
     }

@@ -1612,7 +1612,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     await childCts.CancelAsync().ConfigureAwait(false);
                     throw;
                 }
-                catch (Exception e)
+                catch (Exception e) when (e.IsCancellationException())
+                {
+                    await childCts.CancelAsync().ConfigureAwait(false);
+                    throw;
+                }
+                catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
                 {
                     return new HealthHoleCheckOutcome(index, false, ExceptionDispatchInfo.Capture(e));
                 }
@@ -1680,7 +1685,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     await childCts.CancelAsync().ConfigureAwait(false);
                     throw;
                 }
-                catch (Exception e)
+                catch (Exception e) when (e.IsCancellationException())
+                {
+                    await childCts.CancelAsync().ConfigureAwait(false);
+                    throw;
+                }
+                catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
                 {
                     return new HealthSegmentCheckOutcome(false, ExceptionDispatchInfo.Capture(e));
                 }
@@ -2223,8 +2233,13 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 if (!UsenetArticleAvailability.IsDefinitiveMissing(response))
                     return response;
             }
-            catch (UsenetArticleNotFoundException)
+            catch (UsenetArticleNotFoundException e)
             {
+                Log.Debug(
+                    e,
+                    "Health-check HEAD candidate {CandidateId} missing while probing primary {PrimaryId}",
+                    candidateId,
+                    primaryId);
             }
         }
 
@@ -2247,8 +2262,13 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 if (response.Stream is { } stream)
                     await stream.DisposeAsync().ConfigureAwait(false);
             }
-            catch (UsenetArticleNotFoundException)
+            catch (UsenetArticleNotFoundException e)
             {
+                Log.Debug(
+                    e,
+                    "Health-check BODY candidate {CandidateId} missing while probing primary {PrimaryId}",
+                    candidateId,
+                    primaryId);
             }
         }
 
