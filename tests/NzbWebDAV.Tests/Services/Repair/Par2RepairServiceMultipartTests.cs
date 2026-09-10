@@ -105,6 +105,65 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
         finally { flights.Clear(); }
     }
 
+    [Fact]
+    public async Task CompletedDeferredFlight_PropagatesDeferredToJoinerWithoutRetrying()
+    {
+        var data = Data(4096 * 3, "deferred-flight");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length)),
+        ], [1], DavItem.ItemSubType.MultipartFile);
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+        var flightType = typeof(Par2RepairService).GetNestedType("RepairFlight", System.Reflection.BindingFlags.NonPublic)!;
+        var flight = Activator.CreateInstance(flightType, flags, null, new object?[] { Array.Empty<string>() }, null)!;
+        ((TaskCompletionSource<Par2RepairOutcome>)flightType.GetProperty("Completion")!.GetValue(flight)!).SetResult(Par2RepairOutcome.DeferredBusy);
+        var flights = (System.Collections.IDictionary)typeof(Par2RepairService).GetField("_repairFlights", flags)!.GetValue(release.Service)!;
+        flights.Add(release.Item.Id, flight);
+        try
+        {
+            var result = await release.Service.TryPar2RepairAsync(release.Item, [release.Files[0].Ids[0]], CancellationToken.None);
+            Assert.Equal(Par2RepairOutcome.DeferredBusy, result);
+            Assert.Equal(0, release.Fake.BodyRequestCount);
+            Assert.Same(flight, flights[release.Item.Id]);
+        }
+        finally { flights.Clear(); }
+    }
+
+    [Fact]
+    public async Task HoldAdmission_DefersInlineCallersUntilReleased()
+    {
+        var data = Data(4096 * 6, "hold-admission");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length), [4]),
+        ], [1], DavItem.ItemSubType.MultipartFile);
+        var id = release.Files[0].Ids[4];
+        var hold = await release.Service.HoldAdmissionForTestsAsync(CancellationToken.None);
+        try
+        {
+            Assert.False(release.Service.CanAcceptInlineRepair);
+            Assert.Equal(1, release.Service.GetDiagnosticSnapshot().AdmissionActive);
+            Assert.Equal(Par2RepairOutcome.DeferredBusy, await release.Service.TryPar2RepairAsync(release.Item, [id], CancellationToken.None));
+            Assert.Equal(0, release.Fake.BodyRequestCount);
+            await using (var context = new DavDatabaseContext())
+                Assert.False(await context.Par2RepairJobs.AnyAsync());
+        }
+        finally { await hold.DisposeAsync(); }
+
+        Assert.True(release.Service.CanAcceptInlineRepair);
+        Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionActive);
+        Assert.Equal(Par2RepairOutcome.Repaired, await release.Service.TryPar2RepairAsync(release.Item, [id], CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task HoldAdmission_SurvivesServiceDisposalWhileHeld()
+    {
+        var service = new Par2RepairService(_config, null!, new RepairPatchStore(Path.Join(_root, "hold-patches"), 1024 * 1024));
+        var hold = await service.HoldAdmissionForTestsAsync(CancellationToken.None);
+        service.Dispose();
+        await hold.DisposeAsync();
+        await hold.DisposeAsync();
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => service.HoldAdmissionForTestsAsync(CancellationToken.None));
+    }
+
     [Theory]
     [InlineData(Par2RepairJob.RepairJobState.Queued)]
     [InlineData(Par2RepairJob.RepairJobState.Failed)]

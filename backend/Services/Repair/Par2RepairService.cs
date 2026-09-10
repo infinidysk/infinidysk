@@ -259,6 +259,8 @@ public partial class Par2RepairService : BackgroundService
             try
             {
                 var result = await flight.Task.WaitAsync(ct).ConfigureAwait(false);
+                if (result == Par2RepairOutcome.DeferredBusy)
+                    return result;
                 if (result == Par2RepairOutcome.NotRepaired || flight.Covers(missingSegmentIds)
                     || missingSegmentIds is { Count: > 0 } && missingSegmentIds.All(_patchStore.HasUsablePatch))
                     return result;
@@ -784,6 +786,49 @@ public partial class Par2RepairService : BackgroundService
         lock (_admissionLifecycle)
         {
             if (--_admissionUsers == 0 && _disposeRequested) _repairAdmission.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Holds the single repair permit without a repairable fixture. Registers as an
+    /// admission user so disposing the service while held cannot destroy the semaphore
+    /// before the returned hold releases it.
+    /// </summary>
+    internal async Task<IAsyncDisposable> HoldAdmissionForTestsAsync(CancellationToken ct)
+    {
+        lock (_admissionLifecycle)
+        {
+            ObjectDisposedException.ThrowIf(_disposeRequested, this);
+            _admissionUsers++;
+        }
+        try
+        {
+            await _repairAdmission.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            ReleaseAdmissionUser();
+            throw;
+        }
+        Interlocked.Exchange(ref _admissionActive, 1);
+        PublishAdmissionMetrics();
+        return new AdmissionHold(this);
+    }
+
+    private sealed class AdmissionHold(Par2RepairService service) : IAsyncDisposable
+    {
+        private int _released;
+
+        public ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _released, 1) == 0)
+            {
+                Interlocked.Exchange(ref service._admissionActive, 0);
+                service._repairAdmission.Release();
+                service.PublishAdmissionMetrics();
+                service.ReleaseAdmissionUser();
+            }
+            return ValueTask.CompletedTask;
         }
     }
 
