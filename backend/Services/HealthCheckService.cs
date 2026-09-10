@@ -1459,6 +1459,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             ? await _par2RepairService.TryPar2RepairAsync(
                 davItem, holeSegmentIds, ct).ConfigureAwait(false)
             : Par2RepairOutcome.NotRepaired;
+        if (par2Outcome == Par2RepairOutcome.DeferredBusy)
+        {
+            await DeferPar2RepairAsync(davItem, dbClient, par2Outcome, ct).ConfigureAwait(false);
+            return;
+        }
         if (par2Outcome is Par2RepairOutcome.Repaired or Par2RepairOutcome.VerifiedClean)
         {
             var utcNow = DateTimeOffset.UtcNow;
@@ -2993,11 +2998,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 failureSnapshot.HasTargetableSegmentIds ? failureSnapshot.SegmentIds : null,
                 ct).ConfigureAwait(false)
             : Par2RepairOutcome.NotRepaired;
-        if (par2Outcome == Par2RepairOutcome.DeferredBusy)
-        {
-            await DeferPar2RepairAsync(davItem, dbClient, par2Outcome, ct).ConfigureAwait(false);
-            return;
-        }
         if (par2Outcome == Par2RepairOutcome.DeferredBusy)
         {
             await DeferPar2RepairAsync(davItem, dbClient, par2Outcome, ct).ConfigureAwait(false);
