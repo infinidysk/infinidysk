@@ -109,29 +109,33 @@ describe("setup model", () => {
     expect(draft.config["rclone.builtin.enabled"]).toBe("true");
   });
 
-  it("turns the built-in mount off for a STRM library", () => {
-    // STRM playback opens URLs directly, so there is nothing to mount.
-    const strm = applyStrategy(SETUP_DEFAULT_CONFIG, "strm", {});
+  it("writes no built-in mount settings for a STRM library", () => {
+    // STRM playback opens URLs directly, so there is nothing to mount and the
+    // wizard has no business changing that setting in either direction.
+    const draft = createInitialDraft(
+      { ...SETUP_DEFAULT_CONFIG, "api.import-strategy": "strm" },
+      {},
+      ["manual"],
+    );
 
-    expect(strm["rclone.builtin.enabled"]).toBe("false");
+    const config = completionSetupConfig(SETUP_DEFAULT_CONFIG, draft, {});
+
+    expect("rclone.builtin.enabled" in config).toBe(false);
+    expect("rclone.builtin.mounts" in config).toBe(false);
   });
 
-  it("restores the built-in mount when symlinks are chosen again after STRM", () => {
-    // A detour through STRM used to leave built-in mode off, quietly putting the
-    // operator on the sidecar path with its flags and RC host they never asked
-    // for.
-    const strm = applyStrategy(SETUP_DEFAULT_CONFIG, "strm", {});
-    expect(strm["rclone.builtin.enabled"]).toBe("false");
+  it("survives a symlinks to STRM and back round trip", () => {
+    // A detour through STRM must not silently move the operator between the
+    // built-in mount and their own rclone container, in either direction.
+    const builtin = SETUP_DEFAULT_CONFIG;
+    expect(
+      applyStrategy(applyStrategy(builtin, "strm", {}), "symlinks", {})["rclone.builtin.enabled"],
+    ).toBe("true");
 
-    expect(applyStrategy(strm, "symlinks", {}, "strm")["rclone.builtin.enabled"]).toBe("true");
-  });
-
-  it("leaves a stored sidecar choice alone when no strategy change happened", () => {
-    // Without a transition there is nothing to undo, so an installation that
-    // deliberately runs its own rclone keeps that setting.
     const sidecar = { ...SETUP_DEFAULT_CONFIG, "rclone.builtin.enabled": "false" };
-
-    expect(applyStrategy(sidecar, "symlinks", {})["rclone.builtin.enabled"]).toBe("false");
+    expect(
+      applyStrategy(applyStrategy(sidecar, "strm", {}), "symlinks", {})["rclone.builtin.enabled"],
+    ).toBe("false");
   });
 
   it("does not propose RC notifications when InfiniDysk runs rclone itself", () => {

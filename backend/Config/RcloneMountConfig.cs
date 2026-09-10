@@ -118,9 +118,18 @@ public class RcloneMountConfig
         var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var seenMountPoints = new Dictionary<string, string>(StringComparer.Ordinal);
 
+        // Materialized once: the checks below walk the list more than once, and
+        // the caller may hand us a lazy sequence.
+        var configured = mounts as IReadOnlyCollection<RcloneMountConfig> ?? mounts.ToList();
+
         // Disabled mounts are not applied, so a half-finished one must not block
-        // the mounts that are enabled.
-        foreach (var mount in mounts.Where(mount => mount.Enabled))
+        // the mounts that are enabled. A null entry reaches here from a
+        // hand-edited "[null]" in the stored JSON, and is reported rather than
+        // thrown on.
+        if (configured.Any(mount => mount is null))
+            errors.Add("The mount list contains an empty entry. Remove it and save again.");
+
+        foreach (var mount in configured.Where(mount => mount is not null && mount.Enabled))
         {
             var label = string.IsNullOrWhiteSpace(mount.Id) ? "<unnamed mount>" : mount.Id;
 

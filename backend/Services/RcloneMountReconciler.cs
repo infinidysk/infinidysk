@@ -77,6 +77,40 @@ public sealed class RcloneMountReconciler(
             .Where(m => m.Enabled)
             .ToDictionary(m => m.MountPoint, m => m, StringComparer.Ordinal);
 
+        // Whether anything will need mounting, decided before a single mount is
+        // touched: if the remote turns out to be unusable we must not have taken
+        // the library down on the way to finding that out.
+        var needsMount = wanted.Values.Any(mount =>
+            !livePoints.TryGetValue(mount.MountPoint, out var liveFs)
+            || !string.Equals(NormalizeFs(liveFs), NormalizeFs(BuildFs(mount)), StringComparison.Ordinal));
+
+        if (needsMount)
+        {
+            var required = await client.ListRemotes(cancellationToken).ConfigureAwait(false);
+            if (!required.Success)
+            {
+                // Same reasoning as the mount listing above: a question we could
+                // not ask is not an answer. Nothing has been unmounted yet, so
+                // the report is accurate.
+                errors.Add(
+                    $"Could not read the built-in rclone's remotes: {required.Error ?? "unknown error"}. " +
+                    "No mounts were changed.");
+                return new RcloneReconcileResult(mounted, unmounted, errors);
+            }
+
+            if (!(required.Remotes?.Contains(RemoteName, StringComparer.Ordinal) ?? false))
+            {
+                // The WebDAV password is never stored in plaintext, so the remote
+                // can only be created from a password the user supplies once.
+                // Until then, mounting would produce authentication failures that
+                // look like a broken mount rather than missing setup.
+                errors.Add(
+                    $"The '{RemoteName}' rclone remote does not exist yet. Provide the WebDAV password " +
+                    "for the built-in mount before mounting.");
+                return new RcloneReconcileResult(mounted, unmounted, errors);
+            }
+        }
+
         // Remove first, so a mount whose remote path changed frees its mount point
         // before the replacement is attempted.
         foreach (var (mountPoint, liveFs) in livePoints)
@@ -100,30 +134,6 @@ public sealed class RcloneMountReconciler(
         var toMount = wanted.Values.Where(m => !livePoints.ContainsKey(m.MountPoint)).ToList();
         if (toMount.Count == 0)
             return new RcloneReconcileResult(mounted, unmounted, errors);
-
-        var remotes = await client.ListRemotes(cancellationToken).ConfigureAwait(false);
-        if (!remotes.Success)
-        {
-            // Same reasoning as the mount listing above: a question we could not
-            // ask is not an answer. Reporting the remote as missing here would
-            // send the operator to re-enter a password that is already correct.
-            errors.Add(
-                $"Could not read the built-in rclone's remotes: {remotes.Error ?? "unknown error"}. " +
-                "No mounts were changed.");
-            return new RcloneReconcileResult(mounted, unmounted, errors);
-        }
-
-        if (!(remotes.Remotes?.Contains(RemoteName, StringComparer.Ordinal) ?? false))
-        {
-            // The WebDAV password is never stored in plaintext, so the remote can
-            // only be created from a password the user supplies once. Until then,
-            // mounting would produce authentication failures that look like a
-            // broken mount rather than missing setup.
-            errors.Add(
-                $"The '{RemoteName}' rclone remote does not exist yet. Provide the WebDAV password " +
-                "for the built-in mount before mounting.");
-            return new RcloneReconcileResult(mounted, unmounted, errors);
-        }
 
         foreach (var config in toMount)
         {

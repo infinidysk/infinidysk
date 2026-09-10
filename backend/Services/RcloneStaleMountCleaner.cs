@@ -209,7 +209,18 @@ public sealed class RcloneStaleMountCleaner
         return attempt.GetAwaiter().GetResult();
     }
 
-    private static bool CanEnumerate(string mountPoint)
+    /// <summary>
+    /// The errno a FUSE mount whose daemon has gone reports for every access.
+    /// </summary>
+    /// <remarks>
+    /// Observed directly against rclone v1.75.1: mounting, killing the daemon,
+    /// then enumerating gives <c>IOException</c> with <c>HResult</c> 107 and the
+    /// message "Socket not connected". .NET puts the raw errno in HResult on
+    /// Unix, and ENOTCONN is 107 on Linux.
+    /// </remarks>
+    private const int NotConnectedErrno = 107;
+
+    internal static bool CanEnumerate(string mountPoint)
     {
         try
         {
@@ -219,9 +230,18 @@ public sealed class RcloneStaleMountCleaner
             entries.MoveNext();
             return true;
         }
+        catch (IOException e) when (e.HResult == NotConnectedErrno)
+        {
+            // The one failure that actually proves the daemon is gone.
+            return false;
+        }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            return false;
+            // Anything else -- a permission error, a transient I/O fault -- says
+            // nothing about whether something is still serving this path. Calling
+            // it stale here would unmount a live library.
+            Log.Debug(e, "Could not read {MountPoint}; treating it as live.", mountPoint);
+            return true;
         }
     }
 

@@ -105,8 +105,7 @@ RUN mkdir /config \
 # rclone for the built-in mount feature, plus the FUSE setting that lets the
 # non-root runtime user pass --allow-other so other containers and host users
 # can read the mount. Mounting still requires the container to be started with
-# --device /dev/fuse and --cap-add SYS_ADMIN. The backend does not use rclone
-# yet; the built-in mount service arrives in a later commit on this branch.
+# --device /dev/fuse and --cap-add SYS_ADMIN.
 COPY --from=rclone-fetch /out/rclone /usr/local/bin/rclone
 RUN touch /etc/fuse.conf \
     && if [ -s /etc/fuse.conf ] && [ "$(tail -c1 /etc/fuse.conf | wc -l)" -eq 0 ]; then \

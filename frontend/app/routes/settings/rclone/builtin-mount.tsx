@@ -90,6 +90,20 @@ volumes:
   - /mnt:/mnt:rshared`;
 
 /** Turns a failed request into something an operator can act on. */
+/**
+ * Reads a JSON body, treating a non-2xx response as a failure.
+ *
+ * Without this a 500 was cast straight to the success shape, so an error body
+ * arrived on screen as an apply that worked.
+ */
+async function readJson<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return (await response.json()) as T;
+}
+
 function describeFailure(action: string, error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);
   return `Could not ${action}: ${detail}. Check that InfiniDysk is still running and try again.`;
@@ -130,7 +144,7 @@ export function BuiltinMountSettings({ config, setNewConfig }: BuiltinMountSetti
   const refreshStatus = useCallback(async () => {
     try {
       const response = await fetch(withUrlBase("/api/rclone-mounts/status"));
-      setStatus((await response.json()) as StatusResponse);
+      setStatus(await readJson<StatusResponse>(response));
     } catch {
       setStatus(null);
     }
@@ -148,7 +162,7 @@ export function BuiltinMountSettings({ config, setNewConfig }: BuiltinMountSetti
     setApplyResult(null);
     try {
       const response = await fetch(withUrlBase("/api/rclone-mounts/apply"), { method: "POST" });
-      setApplyResult((await response.json()) as ApplyResponse);
+      setApplyResult(await readJson<ApplyResponse>(response));
       await refreshStatus();
     } catch (error) {
       setApplyResult({ errors: [describeFailure("apply the mounts", error)] });
@@ -165,7 +179,7 @@ export function BuiltinMountSettings({ config, setNewConfig }: BuiltinMountSetti
           withUrlBase(`/api/rclone-mounts/remount?id=${encodeURIComponent(id)}`),
           { method: "POST" },
         );
-        setApplyResult((await response.json()) as ApplyResponse);
+        setApplyResult(await readJson<ApplyResponse>(response));
         await refreshStatus();
       } catch (error) {
         setApplyResult({ errors: [describeFailure(`remount '${id}'`, error)] });
@@ -184,7 +198,7 @@ export function BuiltinMountSettings({ config, setNewConfig }: BuiltinMountSetti
         method: "POST",
         body,
       });
-      setImportResult((await response.json()) as ImportResponse);
+      setImportResult(await readJson<ImportResponse>(response));
     } catch (error) {
       setImportResult({ warnings: [describeFailure("read the rclone settings", error)] });
     } finally {
@@ -202,7 +216,7 @@ export function BuiltinMountSettings({ config, setNewConfig }: BuiltinMountSetti
         method: "POST",
         body,
       });
-      const result = (await response.json()) as ApplyResponse;
+      const result = await readJson<ApplyResponse>(response);
       setCredentialResult(result);
       if ((result.errors ?? []).length === 0) setWebdavPassword("");
       await refreshStatus();
@@ -216,7 +230,7 @@ export function BuiltinMountSettings({ config, setNewConfig }: BuiltinMountSetti
   const loadLogs = useCallback(async () => {
     try {
       const response = await fetch(withUrlBase("/api/rclone-mounts/logs"));
-      const body = (await response.json()) as { lines?: string[] };
+      const body = await readJson<{ lines?: string[] }>(response);
       setLogLines(body.lines ?? []);
     } catch (error) {
       setLogLines([describeFailure("read the rclone log", error)]);

@@ -343,6 +343,29 @@ public class RcloneMountReconcilerTests
     }
 
     [Fact]
+    public async Task ReconcileAsync_UnmountsNothing_WhenTheRemoteListingFails()
+    {
+        // The mount below has a changed remote path, so reconciling would unmount
+        // it before remounting. If the remote cannot be read the remount is not
+        // going to happen, and taking the library down on the way to finding that
+        // out leaves the operator worse off than doing nothing.
+        var client = new FakeRcloneClient
+        {
+            Live = [new RcloneMountPoint { Fs = "infinidysk:/old", MountPoint = "/mnt/remote/infinidysk" }],
+            ListRemotesSucceeds = false,
+        };
+        var reconciler = new RcloneMountReconciler(client);
+        var mount = Mount();
+        mount.RemotePath = "/new";
+
+        var result = await reconciler.ReconcileAsync([mount], CancellationToken.None);
+
+        Assert.Empty(client.Unmounted);
+        Assert.Empty(client.Mounted);
+        Assert.Contains(result.Errors, e => e.Contains("No mounts were changed", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void DescribeMountFailure_ExplainsAMountPointSomethingElseHolds()
     {
         // rclone refuses to mount over a live mount point. A FUSE mount outlives
@@ -397,8 +420,12 @@ public class RcloneMountReconcilerTests
             return Task.FromResult(new RcloneResponse { Success = true });
         }
 
+        public bool ListRemotesSucceeds { get; init; } = true;
+
         public Task<ListRemotesResponse> ListRemotes(CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ListRemotesResponse { Success = true, Remotes = Remotes });
+            Task.FromResult(ListRemotesSucceeds
+                ? new ListRemotesResponse { Success = true, Remotes = Remotes }
+                : new ListRemotesResponse { Success = false, Error = "connection refused" });
 
         public bool ListMountsSucceeds { get; init; } = true;
 

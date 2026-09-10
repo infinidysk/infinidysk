@@ -180,4 +180,15 @@ public class RcloneMountConfigTests
 
         Assert.Empty(RcloneMountConfig.Validate(mounts, "/config"));
     }
+
+    [Fact]
+    public void Validate_ReportsAnEmptyEntryRatherThanThrowing()
+    {
+        // "[null]" reaches here from a hand-edited config value. It has to come
+        // back as a validation message, not a NullReferenceException out of the
+        // save endpoint.
+        var errors = RcloneMountConfig.Validate([null!], "/config");
+
+        Assert.Contains(errors, e => e.Contains("empty entry", StringComparison.OrdinalIgnoreCase));
+    }
 }

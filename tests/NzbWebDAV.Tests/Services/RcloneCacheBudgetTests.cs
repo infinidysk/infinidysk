@@ -59,11 +59,28 @@ public class RcloneCacheBudgetTests
     }
 
     [Fact]
-    public void Resolve_NeverGoesBelowAUsableFloor()
+    public void Resolve_NeverPromisesMoreThanAVolumeSharedWithTheDatabasesCanSpare()
     {
+        // 1 GB free and a 5 GB reserve leaves nothing for a cache. Handing back
+        // the usable floor would promise 256 MB the disk does not have, which is
+        // the starvation this reserve exists to prevent.
         var resolved = RcloneCacheBudget.Resolve(1 * Gib, sharesDatabaseVolume: true, configuredBytes: null);
 
-        Assert.Equal(RcloneCacheBudget.FloorBytes, resolved);
+        Assert.Equal(RcloneCacheBudget.MinimumBytes, resolved);
+        Assert.True(resolved > 0, "zero would tell rclone the cache is unlimited");
+    }
+
+    [Fact]
+    public void Resolve_KeepsTheUsableFloor_WhenTheVolumeCanActuallySpareIt()
+    {
+        // 12 GB free against a 5 GB reserve leaves 7 GB, so half of free space
+        // wins and the floor never comes into it.
+        var resolved = RcloneCacheBudget.Resolve(12 * Gib, sharesDatabaseVolume: true, configuredBytes: null);
+
+        Assert.True(
+            resolved >= RcloneCacheBudget.FloorBytes,
+            $"expected at least the floor, got {resolved}");
+        Assert.True(resolved <= 7 * Gib, $"expected the reserve to be kept, got {resolved}");
     }
 
     [Fact]
@@ -82,7 +99,8 @@ public class RcloneCacheBudgetTests
         // must not be handed the 20 GB default.
         var full = RcloneCacheBudget.Resolve(0, sharesDatabaseVolume: false, configuredBytes: null);
 
-        Assert.Equal(RcloneCacheBudget.FloorBytes, full);
+        Assert.Equal(RcloneCacheBudget.MinimumBytes, full);
+        Assert.True(full > 0, "zero would tell rclone the cache is unlimited");
         Assert.NotEqual(RcloneCacheBudget.Resolve(null, false, null), full);
     }
 

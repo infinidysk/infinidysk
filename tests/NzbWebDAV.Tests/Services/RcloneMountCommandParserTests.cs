@@ -163,4 +163,51 @@ public class RcloneMountCommandParserTests
         Assert.True(RcloneMountCommandParser.TryParseDuration(value, out var duration));
         Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), duration);
     }
+
+    [Fact]
+    public void Parse_KeepsAQuotedPathTogether()
+    {
+        // Media libraries live in paths with spaces, and splitting on whitespace
+        // silently truncated the mount point at the first one.
+        var result = RcloneMountCommandParser.Parse(
+            "rclone mount nzbdav: \"/mnt/media files/nzbdav\" --vfs-cache-mode full");
+
+        Assert.True(result.Success);
+        Assert.Equal("/mnt/media files/nzbdav", result.Mount!.MountPoint);
+    }
+
+    [Fact]
+    public void Parse_KeepsASinglequotedPathTogether()
+    {
+        var result = RcloneMountCommandParser.Parse(
+            "rclone mount nzbdav: '/mnt/media files/nzbdav'");
+
+        Assert.True(result.Success);
+        Assert.Equal("/mnt/media files/nzbdav", result.Mount!.MountPoint);
+    }
+
+    [Fact]
+    public void Parse_StillReadsACommandWrappedOverLines()
+    {
+        // Compose files and docs wrap exactly this way.
+        var result = RcloneMountCommandParser.Parse(
+            "rclone mount nzbdav: /mnt/nzbdav \\\n  --vfs-cache-mode full \\\n  --links");
+
+        Assert.True(result.Success);
+        Assert.Equal("/mnt/nzbdav", result.Mount!.MountPoint);
+        Assert.True(result.Mount.Links);
+    }
+
+    [Fact]
+    public void Parse_SurvivesADurationTooLargeToRepresent()
+    {
+        // TimeSpan.FromDays throws on a number this size. A pasted command is
+        // operator input, so it has to come back as an unreadable value the
+        // parser skips, not as an exception out of the endpoint.
+        var result = RcloneMountCommandParser.Parse(
+            "rclone mount nzbdav: /mnt/nzbdav --dir-cache-time 99999999999999d");
+
+        Assert.True(result.Success);
+        Assert.Equal(new RcloneMountConfig { Id = "x", MountPoint = "/x" }.DirCacheTime, result.Mount!.DirCacheTime);
+    }
 }

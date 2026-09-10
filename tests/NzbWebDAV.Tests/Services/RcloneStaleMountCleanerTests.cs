@@ -188,6 +188,54 @@ public class RcloneStaleMountCleanerTests
     }
 
     [Fact]
+    public void CanEnumerate_ReportsADirectoryItCannotReadAsStillAlive()
+    {
+        // Only a disconnected endpoint proves the daemon is gone. A permission
+        // error says nothing about whether something is serving the path, and
+        // calling it stale here would unmount a live library.
+        if (!OperatingSystem.IsLinux()) return;
+
+        var denied = Path.Join(Path.GetTempPath(), $"rclone-denied-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(denied);
+        try
+        {
+            File.SetUnixFileMode(denied, UnixFileMode.None);
+
+            // root reads it regardless, which leaves nothing to assert.
+            if (CanRead(denied)) return;
+
+            Assert.True(RcloneStaleMountCleaner.CanEnumerate(denied));
+        }
+        finally
+        {
+            File.SetUnixFileMode(
+                denied,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            Directory.Delete(denied, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CanEnumerate_ReportsAReadableDirectoryAsAlive()
+    {
+        Assert.True(RcloneStaleMountCleaner.CanEnumerate(Path.GetTempPath()));
+    }
+
+    private static bool CanRead(string path)
+    {
+        try
+        {
+            using var entries = Directory.EnumerateFileSystemEntries(path).GetEnumerator();
+            entries.MoveNext();
+            return true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    [Fact]
     public void ParseMountInfo_ReadsTheMountPointAndFilesystemType()
     {
         // Real lines: the optional fields before " - " vary in number, which is

@@ -22,6 +22,13 @@ public sealed class RcloneCacheBudget
     /// <summary>Smallest cache worth handing to rclone; below this, streaming stutters.</summary>
     internal const long FloorBytes = 256L * 1024 * 1024;
 
+    /// <summary>
+    /// Floor of last resort, for a volume too full to spare even
+    /// <see cref="FloorBytes"/>. Playback will stutter, but rclone is given a
+    /// real limit rather than the unlimited one it infers from zero.
+    /// </summary>
+    internal const long MinimumBytes = 16L * 1024 * 1024;
+
     /// <summary>Space kept free on the filesystem holding the databases.</summary>
     internal const long DatabaseHeadroomBytes = 5L * 1024 * 1024 * 1024;
 
@@ -83,7 +90,15 @@ public sealed class RcloneCacheBudget
         if (sharesDatabaseVolume)
             budget = Math.Min(budget, free - DatabaseHeadroomBytes);
 
-        return Math.Clamp(budget, FloorBytes, DefaultCapBytes);
+        // Below the floor the volume cannot spare a cache worth having. Clamping
+        // up to the floor anyway would hand rclone a ceiling the disk cannot
+        // honour -- which on a shared volume is how the databases get starved --
+        // and zero is not an option, because rclone reads that as unlimited. Give
+        // the smallest real limit instead; the caller warns whenever the result
+        // lands this low.
+        if (budget < FloorBytes) return Math.Max(MinimumBytes, Math.Min(budget, FloorBytes));
+
+        return Math.Min(budget, DefaultCapBytes);
     }
 
     /// <summary>

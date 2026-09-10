@@ -119,12 +119,7 @@ export function LibraryTypeStep({
             onChange={(value) =>
               updateDraft((current) => ({
                 ...current,
-                config: applyStrategy(
-                  current.config,
-                  value,
-                  managedEnv,
-                  normalizeStrategy(current.config["api.import-strategy"]),
-                ),
+                config: applyStrategy(current.config, value, managedEnv),
                 vfsReadAheadConfirmed: value === "strm" ? false : current.vfsReadAheadConfirmed,
               }))
             }

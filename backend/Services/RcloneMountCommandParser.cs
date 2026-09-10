@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using NzbWebDAV.Config;
 
 namespace NzbWebDAV.Services;
@@ -33,7 +34,6 @@ public sealed record RcloneMountCommandResult(
 /// </summary>
 public static class RcloneMountCommandParser
 {
-    private static readonly char[] Separators = [' ', '\t', '\n', '\r', '\\'];
 
     /// <summary>Flags this parser understands that take a value.</summary>
     private static readonly HashSet<string> ValuedFlags = new(StringComparer.Ordinal)
@@ -52,11 +52,86 @@ public static class RcloneMountCommandParser
         "--links",
     };
 
+    /// <summary>
+    /// Splits a pasted command the way a shell would: on whitespace, except
+    /// inside quotes.
+    /// </summary>
+    /// <remarks>
+    /// Media libraries live in paths like <c>/mnt/media files</c>, and splitting
+    /// those on whitespace produced a mount point silently truncated at the
+    /// space. Quotes group, a backslash escapes the next character outside single
+    /// quotes, and neither survives into the token.
+    /// </remarks>
+    internal static List<string> Tokenize(string commandLine)
+    {
+        var tokens = new List<string>();
+        var current = new StringBuilder();
+        var quote = '\0';
+        var started = false;
+
+        for (var i = 0; i < commandLine.Length; i++)
+        {
+            var c = commandLine[i];
+
+            if (quote == '\0' && c == '\\' && i + 1 < commandLine.Length)
+            {
+                var next = commandLine[i + 1];
+
+                // A shell line continuation. Commands are pasted from compose
+                // files and docs wrapped exactly this way, so the backslash and
+                // its newline both disappear rather than joining two tokens.
+                if (next is '\n' or '\r')
+                {
+                    i++;
+                    if (next == '\r' && i + 1 < commandLine.Length && commandLine[i + 1] == '\n') i++;
+                    if (started) tokens.Add(current.ToString());
+                    current.Clear();
+                    started = false;
+                    continue;
+                }
+
+                current.Append(next);
+                i++;
+                started = true;
+                continue;
+            }
+
+            if (quote == '\0' && (c == '"' || c == '\''))
+            {
+                quote = c;
+                started = true;
+                continue;
+            }
+
+            if (quote != '\0' && c == quote)
+            {
+                quote = '\0';
+                continue;
+            }
+
+            if (quote == '\0' && char.IsWhiteSpace(c))
+            {
+                if (started) tokens.Add(current.ToString());
+                current.Clear();
+                started = false;
+                continue;
+            }
+
+            current.Append(c);
+            started = true;
+        }
+
+        // An unterminated quote keeps what it collected rather than dropping it:
+        // the operator sees a wrong-looking mount point in the preview instead of
+        // a silently missing flag.
+        if (started) tokens.Add(current.ToString());
+
+        return tokens;
+    }
+
     public static RcloneMountCommandResult Parse(string commandLine)
     {
-        var tokens = (commandLine ?? string.Empty)
-            .Split(Separators, StringSplitOptions.RemoveEmptyEntries)
-            .ToList();
+        var tokens = Tokenize(commandLine ?? string.Empty);
 
         var mountIndex = tokens.FindIndex(t => t.Equals("mount", StringComparison.OrdinalIgnoreCase));
         if (mountIndex < 0)
@@ -254,14 +329,24 @@ public static class RcloneMountCommandParser
             if (!double.TryParse(magnitude, NumberStyles.Float, CultureInfo.InvariantCulture, out var amount))
                 return false;
 
-            var unit = char.ToLowerInvariant(character) switch
+            TimeSpan unit;
+            try
             {
-                's' => TimeSpan.FromSeconds(amount),
-                'm' => TimeSpan.FromMinutes(amount),
-                'h' => TimeSpan.FromHours(amount),
-                'd' => TimeSpan.FromDays(amount),
-                _ => TimeSpan.MinValue,
-            };
+                unit = char.ToLowerInvariant(character) switch
+                {
+                    's' => TimeSpan.FromSeconds(amount),
+                    'm' => TimeSpan.FromMinutes(amount),
+                    'h' => TimeSpan.FromHours(amount),
+                    'd' => TimeSpan.FromDays(amount),
+                    _ => TimeSpan.MinValue,
+                };
+            }
+            catch (Exception e) when (e is OverflowException or ArgumentException)
+            {
+                // "9999999999d" and friends. A pasted command is operator input,
+                // so an unusable number is a parse failure, not a 500.
+                return false;
+            }
 
             if (unit == TimeSpan.MinValue) return false;
 

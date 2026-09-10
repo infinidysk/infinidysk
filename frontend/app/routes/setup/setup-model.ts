@@ -92,7 +92,6 @@ export function applyStrategy(
   config: Record<string, string>,
   strategy: SetupWizardStrategy,
   managedEnv: ManagedEnvMap,
-  previousStrategy?: SetupWizardStrategy,
 ): Record<string, string> {
   const next = { ...config };
   if (!("api.import-strategy" in managedEnv)) {
@@ -101,22 +100,6 @@ export function applyStrategy(
   if (!("usenet.segment-cache.enabled" in managedEnv)) {
     next["usenet.segment-cache.enabled"] = strategy === "strm" ? "true" : "false";
   }
-  // Nothing to mount when playback is URL-shaped.
-  if (strategy === "strm" && !("rclone.builtin.enabled" in managedEnv)) {
-    next["rclone.builtin.enabled"] = "false";
-  }
-
-  // Coming back the other way has to undo that, or a detour through STRM leaves
-  // the operator silently on the sidecar path they never chose. Only on the
-  // transition: an existing installation's stored choice is left alone.
-  if (
-    strategy === "symlinks" &&
-    previousStrategy === "strm" &&
-    !("rclone.builtin.enabled" in managedEnv)
-  ) {
-    next["rclone.builtin.enabled"] = "true";
-  }
-
   // RC notifications address a separate rclone container. Proposing them while
   // InfiniDysk runs rclone itself would ask for a host that does not exist, so
   // they are only offered on the sidecar path — where the user must still opt
@@ -211,6 +194,15 @@ export function completionSetupConfig(
   // the rest of setup already asked for.
   if (strategy === "symlinks" && usesBuiltin && !("rclone.builtin.mounts" in managedEnv)) {
     config["rclone.builtin.mounts"] = builtinMountsFor(draft.config["rclone.mount-dir"] ?? "");
+  }
+
+  // A STRM library has nothing to mount, so the wizard says nothing about the
+  // built-in mount either way. Writing it would clobber a deliberate choice the
+  // operator made elsewhere, and a detour through STRM would silently move them
+  // onto the sidecar path.
+  if (strategy === "strm") {
+    delete config["rclone.builtin.enabled"];
+    delete config["rclone.builtin.mounts"];
   }
   return config;
 }
