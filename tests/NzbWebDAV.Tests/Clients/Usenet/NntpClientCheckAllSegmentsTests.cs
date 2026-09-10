@@ -231,6 +231,24 @@ public class NntpClientCheckAllSegmentsTests
     }
 
     [Fact]
+    public async Task CollectMissingSegmentsPipelinedAsync_ThrownNotFoundIsCollectedInInputOrder()
+    {
+        var client = new TrackingPipelinedStatClient(
+            pipelinedExists: [false, false, false],
+            recheckCodes: [430, 223],
+            throwNotFoundId: "b@example");
+
+        var missing = await client.CollectMissingSegmentsPipelinedAsync(
+            ["a@example", "b@example", "c@example"],
+            8,
+            2,
+            progress: null,
+            CancellationToken.None);
+
+        Assert.Equal(["a@example", "b@example"], missing);
+    }
+
+    [Fact]
     public async Task CollectMissingSegmentsPipelinedAsync_NonDefinitiveRecheckThrows()
     {
         var client = new TrackingPipelinedStatClient(
@@ -478,7 +496,8 @@ public class NntpClientCheckAllSegmentsTests
         bool[]? pipelinedExists,
         int[] recheckCodes,
         Exception? sweepException = null,
-        int throwAfterYieldCount = 0) : NntpClient
+        int throwAfterYieldCount = 0,
+        string? throwNotFoundId = null) : NntpClient
     {
         private int _recheckIndex;
 
@@ -547,6 +566,8 @@ public class NntpClientCheckAllSegmentsTests
             SegmentId segmentId, CancellationToken cancellationToken)
         {
             RecheckedSegmentIds.Add(segmentId);
+            if (string.Equals(segmentId, throwNotFoundId, StringComparison.Ordinal))
+                throw new UsenetArticleNotFoundException(segmentId);
             var code = recheckCodes[_recheckIndex++];
             return Task.FromResult(new UsenetStatResponse
             {

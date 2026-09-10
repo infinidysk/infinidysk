@@ -791,10 +791,18 @@ public abstract class NntpClient : INntpClient
         CancellationToken cancellationToken)
     {
         var tasks = segmentIds
-            .Select(async (segmentId, index) => (
-                Index: index,
-                SegmentId: segmentId,
-                Result: await StatAsync(segmentId, cancellationToken).ConfigureAwait(false)))
+            .Select(async (segmentId, index) =>
+            {
+                try
+                {
+                    var response = await StatAsync(segmentId, cancellationToken).ConfigureAwait(false);
+                    return (Index: index, SegmentId: segmentId, Result: (UsenetStatResponse?)response);
+                }
+                catch (UsenetArticleNotFoundException)
+                {
+                    return (Index: index, SegmentId: segmentId, Result: (UsenetStatResponse?)null);
+                }
+            })
             .WithConcurrencyAsync(concurrency, cancellationToken);
 
         var processed = 0;
@@ -802,6 +810,11 @@ public abstract class NntpClient : INntpClient
         await foreach (var task in tasks.ConfigureAwait(false))
         {
             progress?.Report(++processed);
+            if (task.Result is null)
+            {
+                missing.Add((task.Index, task.SegmentId));
+                continue;
+            }
             if (task.Result.ResponseType == UsenetResponseType.ArticleExists) continue;
             if (UsenetArticleAvailability.IsDefinitiveMissing(task.Result))
             {

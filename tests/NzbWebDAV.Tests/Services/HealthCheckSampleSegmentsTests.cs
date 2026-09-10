@@ -88,6 +88,39 @@ public class HealthCheckSampleSegmentsTests
     }
 
     [Fact]
+    public void ConcatenatedSegmentView_PreservesFallbackRowsAcrossPartBoundaries()
+    {
+        var segments = new HealthCheckService.ConcatenatedSegmentView(
+        [
+            new HealthCheckService.HealthSegmentPart(
+                ["first", "second"],
+                [["first-alt"], null!]),
+            new HealthCheckService.HealthSegmentPart([], [["ignored-alt"]]),
+            new HealthCheckService.HealthSegmentPart(
+                ["third", "fourth"],
+                [["third-alt"], ["fourth-alt"], ["excess-alt"]]),
+        ]);
+
+        Assert.Equal(["first-alt"], segments.FallbackIdsAt(0));
+        Assert.Empty(segments.FallbackIdsAt(1));
+        Assert.Equal(["third-alt"], segments.FallbackIdsAt(2));
+        Assert.Equal(["fourth-alt"], segments.FallbackIdsAt(3));
+    }
+
+    [Fact]
+    public void ConcatenatedSegmentView_ShortFallbackRowsDoNotShiftLaterParts()
+    {
+        var segments = new HealthCheckService.ConcatenatedSegmentView(
+        [
+            new HealthCheckService.HealthSegmentPart(["first", "second"], [["first-alt"]]),
+            new HealthCheckService.HealthSegmentPart(["third"], [["third-alt"]]),
+        ]);
+
+        Assert.Empty(segments.FallbackIdsAt(1));
+        Assert.Equal(["third-alt"], segments.FallbackIdsAt(2));
+    }
+
+    [Fact]
     public void SampleSegments_CoverageTapersInsteadOfSteppingDown()
     {
         double Coverage(int count) =>
