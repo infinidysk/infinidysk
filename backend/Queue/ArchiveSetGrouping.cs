@@ -29,18 +29,20 @@ internal static class ArchiveSetGrouping
                     continue;
                 }
 
-                var key = (volume.Value.BaseName.ToLowerInvariant(), volume.Value.Scheme);
+                var volumeValue = volume.Value;
+                var volumeOrdinal = volumeValue.Ordinal;
+                var key = (volumeValue.BaseName.ToLowerInvariant(), volumeValue.Scheme);
                 if (!rarGroups.TryGetValue(key, out var candidates))
                 {
                     candidates = [];
                     rarGroups.Add(key, candidates);
                 }
 
-                var descriptor = volume.Value.Scheme == FilenameUtil.RarVolumeScheme.Part &&
-                                 volume.Value.Ordinal == 0
+                var descriptor = volumeValue.Scheme == FilenameUtil.RarVolumeScheme.Part &&
+                                 volumeOrdinal == 0
                     ? null
                     : candidates.FirstOrDefault(candidate => candidate.FileInfos.All(existing =>
-                        FilenameUtil.GetRarVolumeName(existing.FileName)?.Ordinal != volume.Value.Ordinal));
+                        FilenameUtil.GetRarVolumeName(existing.FileName)?.Ordinal != volumeOrdinal));
                 if (descriptor is null)
                 {
                     descriptor = new ArchiveSetDescriptor(allocator.Allocate(), [], false);
@@ -62,25 +64,26 @@ internal static class ArchiveSetGrouping
                 continue;
             }
 
-                                if (!sevenZip.Value.IsMultipart)
-                                {
-                                        descriptors.Add(new ArchiveSetDescriptor(allocator.Allocate(), [fileInfo], true));
-                                        continue;
-                                }
+            var sevenZipValue = sevenZip.Value;
+            if (!sevenZipValue.IsMultipart)
+            {
+                descriptors.Add(new ArchiveSetDescriptor(allocator.Allocate(), [fileInfo], true));
+                continue;
+            }
 
-                                var sevenZipKey = sevenZip.Value.BaseName;
-                                if (!sevenZipGroups.TryGetValue(sevenZipKey, out var sevenZipCandidates))
-                                {
-                                    sevenZipCandidates = [];
-                                    sevenZipGroups.Add(sevenZipKey, sevenZipCandidates);
-                                }
+            var sevenZipKey = sevenZipValue.BaseName;
+            if (!sevenZipGroups.TryGetValue(sevenZipKey, out var sevenZipCandidates))
+            {
+                sevenZipCandidates = [];
+                sevenZipGroups.Add(sevenZipKey, sevenZipCandidates);
+            }
 
-                                var sevenZipDescriptor = sevenZipCandidates.FirstOrDefault(candidate => candidate.FileInfos.All(existing =>
-                                    FilenameUtil.GetSevenZipVolumeName(existing.FileName)?.Ordinal != sevenZip.Value.Ordinal));
-                                if (sevenZipDescriptor is null)
+            var sevenZipDescriptor = sevenZipCandidates.FirstOrDefault(candidate => candidate.FileInfos.All(existing =>
+                FilenameUtil.GetSevenZipVolumeName(existing.FileName)?.Ordinal != sevenZipValue.Ordinal));
+            if (sevenZipDescriptor is null)
             {
                 sevenZipDescriptor = new ArchiveSetDescriptor(allocator.Allocate(), [], true);
-                                    sevenZipCandidates.Add(sevenZipDescriptor);
+                sevenZipCandidates.Add(sevenZipDescriptor);
                 descriptors.Add(sevenZipDescriptor);
             }
 
