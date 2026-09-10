@@ -64,6 +64,7 @@ public static class NestedRarRangeMapper
             results.Add(new RarProcessor.StoredFileSegment
             {
                 NzbFile = layout.Outer.NzbFile,
+                ArchiveSetId = layout.Outer.ArchiveSetId,
                 PartSize = layout.Outer.PartSize,
                 ArchiveName = archiveName,
                 PartNumber = mappedPartNumber,

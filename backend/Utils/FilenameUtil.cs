@@ -1,4 +1,5 @@
-﻿using System.Text.RegularExpressions;
+﻿using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace NzbWebDAV.Utils;
 
@@ -101,12 +102,88 @@ public static partial class FilenameUtil
     {
         if (string.IsNullOrEmpty(filename)) return null;
         var partMatch = Regex.Match(filename, @"\.part(\d+)\.rar$", RegexOptions.IgnoreCase);
-        if (partMatch.Success) return int.Parse(partMatch.Groups[1].Value);
+        if (partMatch.Success && int.TryParse(
+                partMatch.Groups[1].Value,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var partOrdinal))
+            return partOrdinal;
         var rMatch = Regex.Match(filename, @"\.r(\d+)$", RegexOptions.IgnoreCase);
-        if (rMatch.Success) return int.Parse(rMatch.Groups[1].Value) + 100_000;
+        if (rMatch.Success && int.TryParse(
+                rMatch.Groups[1].Value,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var rOrdinal) && rOrdinal <= int.MaxValue - 100_000)
+            return rOrdinal + 100_000;
         if (filename.EndsWith(".rar", StringComparison.OrdinalIgnoreCase)) return -1;
         return null;
     }
+
+    [GeneratedRegex(@"\A(?<base>.+)\.part(?<ordinal>[0-9]+)\.rar\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex RarPartVolumeRegex { get; }
+
+    [GeneratedRegex(@"\A(?<base>.+)\.r(?<ordinal>[0-9]+)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex RarClassicVolumeRegex { get; }
+
+    [GeneratedRegex(@"\A(?<base>.+)\.rar\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex RarSingleVolumeRegex { get; }
+
+    [GeneratedRegex(@"\A(?<base>.+)\.7z(?:\.(?<ordinal>[0-9]+))?\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex SevenZipVolumeRegex { get; }
+
+    public enum RarVolumeScheme
+    {
+        Part,
+        Classic,
+    }
+
+    public readonly record struct RarVolumeName(string BaseName, RarVolumeScheme Scheme, int Ordinal);
+
+    public readonly record struct SevenZipVolumeName(string BaseName, int? Ordinal)
+    {
+        public bool IsMultipart => Ordinal.HasValue;
+    }
+
+    public static RarVolumeName? GetRarVolumeName(string? filename)
+    {
+        if (string.IsNullOrEmpty(filename)) return null;
+
+        var partMatch = RarPartVolumeRegex.Match(filename);
+        if (partMatch.Success && TryParsePositiveOrdinal(partMatch.Groups["ordinal"].Value, out var partOrdinal))
+            return new RarVolumeName(partMatch.Groups["base"].Value, RarVolumeScheme.Part, partOrdinal - 1);
+
+        var classicMatch = RarClassicVolumeRegex.Match(filename);
+        if (classicMatch.Success && TryParseOrdinal(classicMatch.Groups["ordinal"].Value, out var classicOrdinal))
+            return new RarVolumeName(classicMatch.Groups["base"].Value, RarVolumeScheme.Classic, classicOrdinal + 1);
+
+        var singleMatch = RarSingleVolumeRegex.Match(filename);
+        return singleMatch.Success
+            ? new RarVolumeName(singleMatch.Groups["base"].Value, RarVolumeScheme.Classic, 0)
+            : null;
+    }
+
+    public static SevenZipVolumeName? GetSevenZipVolumeName(string? filename)
+    {
+        if (string.IsNullOrEmpty(filename)) return null;
+
+        var match = SevenZipVolumeRegex.Match(filename);
+        if (!match.Success || !match.Groups["ordinal"].Success)
+            return match.Success ? new SevenZipVolumeName(match.Groups["base"].Value, null) : null;
+
+        return int.TryParse(
+            match.Groups["ordinal"].Value,
+            NumberStyles.None,
+            CultureInfo.InvariantCulture,
+            out var ordinal) && ordinal > 0
+            ? new SevenZipVolumeName(match.Groups["base"].Value, ordinal)
+            : null;
+    }
+
+    private static bool TryParseOrdinal(string value, out int ordinal) =>
+        int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out ordinal);
+
+    private static bool TryParsePositiveOrdinal(string value, out int ordinal) =>
+        TryParseOrdinal(value, out ordinal) && ordinal > 0;
 
     public static bool Is7zFile(string? filename)
     {

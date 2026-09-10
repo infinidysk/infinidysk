@@ -21,7 +21,8 @@ public class SevenZipAggregator(
             .SelectMany(x => x.SevenZipFiles)
             .ToList();
 
-        ProcessSevenZipFile(sevenZipFiles);
+        foreach (var archiveSet in sevenZipFiles.GroupBy(x => x.ArchiveSetId, StringComparer.Ordinal))
+            ProcessSevenZipFile(archiveSet.ToList());
     }
 
     private void ProcessSevenZipFile(List<SevenZipProcessor.SevenZipFile> sevenZipFiles)

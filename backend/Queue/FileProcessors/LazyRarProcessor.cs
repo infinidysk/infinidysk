@@ -20,9 +20,18 @@ public class LazyRarProcessor(
     List<GetFileInfosStep.FileInfo> fileInfos,
     INntpClient usenetClient,
     string? password,
+    string archiveSetId,
     CancellationToken ct
 ) : BaseProcessor
 {
+    public LazyRarProcessor(
+        List<GetFileInfosStep.FileInfo> fileInfos,
+        INntpClient usenetClient,
+        string? password,
+        CancellationToken ct)
+        : this(fileInfos, usenetClient, password, "set:legacy", ct)
+    {
+    }
     // Conservative upper bound for the RAR continuation header at the start
     // of trailing volumes. Real values are typically 30-70 bytes. Wrong
     // estimates only affect seek targeting before resolution; the lazy
@@ -266,6 +275,7 @@ public class LazyRarProcessor(
 
         return new Result
         {
+            ArchiveSetId = archiveSetId,
             PathInArchive = pathInArchive,
             TotalFileSize = totalFileSize,
             Password = password,
@@ -500,6 +510,7 @@ public class LazyRarProcessor(
 
     public new class Result : BaseProcessor.Result
     {
+        public required string ArchiveSetId { get; init; }
         public required string PathInArchive { get; init; }
         public required long TotalFileSize { get; init; }
         public required string? Password { get; init; }

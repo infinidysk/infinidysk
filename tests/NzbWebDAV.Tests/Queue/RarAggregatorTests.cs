@@ -108,6 +108,19 @@ public class RarAggregatorTests
     }
 
     [Fact]
+    public void GroupArchiveMembers_KeepsIndependentSetsWithSameInnerPathApart()
+    {
+        var first = SegmentNullable(0, 1, 0, 5, archiveSetId: "set:one");
+        var second = SegmentNullable(0, 1, 0, 5, archiveSetId: "set:two");
+
+        var groups = RarAggregator.GroupArchiveMembers([first, second]);
+
+        Assert.Equal(2, groups.Count);
+        Assert.All(groups, group => Assert.Equal("movie.mkv", group.Key.PathWithinArchive));
+        Assert.NotEqual(groups[0].Key.ArchiveSetId, groups[1].Key.ArchiveSetId);
+    }
+
+    [Fact]
     public void ValidateVolumes_RejectsMissingData()
     {
         var segment = Segment(headerPart: 0, filenamePart: 1, start: 0, length: 10);
@@ -183,11 +196,13 @@ public class RarAggregatorTests
         RarProcessor.StoredFileSegment segment,
         long fileUncompressedSize,
         bool unknown,
-        AesParams? aes = null)
+        AesParams? aes = null,
+        string? archiveSetId = "set:test")
     {
         return new RarProcessor.StoredFileSegment
         {
             NzbFile = segment.NzbFile,
+            ArchiveSetId = archiveSetId,
             PartSize = segment.PartSize,
             ArchiveName = segment.ArchiveName,
             PartNumber = segment.PartNumber,
@@ -206,7 +221,8 @@ public class RarAggregatorTests
 
     private static RarProcessor.StoredFileSegment SegmentNullable(
         int? headerPart, int? filenamePart, long start, long length,
-        string messageId = "shared@example.com")
+        string messageId = "shared@example.com",
+        string? archiveSetId = "set:test")
     {
         return new RarProcessor.StoredFileSegment
         {
@@ -218,6 +234,7 @@ public class RarAggregatorTests
                     new NzbSegment { MessageId = messageId, Bytes = length }
                 },
             },
+            ArchiveSetId = archiveSetId,
             PartSize = length,
             ArchiveName = "archive",
             PartNumber = new RarProcessor.PartNumber
