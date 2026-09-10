@@ -131,37 +131,42 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
             throw new InvalidOperationException(
                 $"Failed to delete movie file {mediaFile.FileId} from radarr instance `{Host}`.");
 
-        await MarkHistoryFailed(historyId.Value, ct).ConfigureAwait(false);
+        return await CompleteRepairAfterMediaRemovalAsync(
+            mediaFile,
+            historyId.Value,
+            async token =>
+            {
+                if (shouldRequestSearch is not null && !shouldRequestSearch([$"movie:{movieId}"]))
+                {
+                    Log.Warning(
+                        "Radarr repair on {Host}: automatic replacement-search limit reached for movie {MovieId}; " +
+                        "the file was removed and its download blocklisted without starting another search.",
+                        Host,
+                        movieId);
+                    return ArrRepairOutcome.RemoveAndBlocklistSucceededSearchWithheld;
+                }
 
-        if (shouldRequestSearch is not null && !shouldRequestSearch([$"movie:{movieId}"]))
-        {
-            Log.Warning(
-                "Radarr repair on {Host}: automatic replacement-search limit reached for movie {MovieId}; " +
-                "the file was removed and its download blocklisted without starting another search.",
-                Host,
-                movieId);
-            return ArrRepairOutcome.RemoveAndBlocklistSucceededSearchWithheld;
-        }
+                try
+                {
+                    await ExecuteWithTransientRetryAsync(
+                        commandToken => CommandAsync(
+                            new { name = "MoviesSearch", movieIds = new[] { movieId } },
+                            commandToken),
+                        token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    Log.Warning(
+                        ex,
+                        "Radarr repair on {Host}: failed to request MoviesSearch for movie {MovieId}",
+                        Host,
+                        movieId);
+                }
 
-        try
-        {
-            await ExecuteWithTransientRetryAsync(
-                token => CommandAsync(
-                    new { name = "MoviesSearch", movieIds = new[] { movieId } },
-                    token),
-                ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            Log.Warning(
-                ex,
-                "Radarr repair on {Host}: failed to request MoviesSearch for movie {MovieId}",
-                Host,
-                movieId);
-        }
-
-        return ArrRepairOutcome.RemoveAndBlocklistSucceeded;
+                return ArrRepairOutcome.RemoveAndBlocklistSucceeded;
+            },
+            ct).ConfigureAwait(false);
     }
 
     public override Task<ArrHistory> GetMediaImportHistoryAsync(

@@ -3,6 +3,8 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
+using NzbWebDAV.Clients.RadarrSonarr;
+using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
@@ -407,6 +409,52 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Contains("No enabled Radarr/Sonarr instances are configured", row.Message);
         Assert.Equal(1, _context.Items.AsNoTracking().Count(x => x.Id == item.Id));
         Assert.True(File.Exists(libraryPath));
+    }
+
+    [Fact]
+    public async Task PartialArrRepair_DuringCancellation_PersistsActionNeededAndRetainsLocalItem()
+    {
+        var segments = NewSegmentIds(3);
+        var sizes = Enumerable.Repeat(10_000L, segments.Length).ToArray();
+        var (item, _) = await AddVideoFileAsync("partial-arr-repair.mkv", segments, sizes);
+        item.ArrDownloadId = Guid.Parse("13640000-0000-0000-0000-000000000002");
+        item.NextHealthCheck = DateTimeOffset.UnixEpoch;
+        item.HealthRepairPending = true;
+        await _context.SaveChangesAsync();
+
+        var libraryPath = Path.Join(_configRoot, "library", "partial-arr-repair.strm");
+        await File.WriteAllTextAsync(
+            libraryPath,
+            $"http://localhost:3000/view/.ids/{item.Id}.mkv");
+        var fake = NewFakeClient(segments, missing: [0]);
+        var (service, _) = await NewServiceAsync(fake, par2Outcome: false);
+        using var cancellation = new CancellationTokenSource();
+        var arrClient = new PartialRepairArrClient(cancellation, libraryPath);
+        service.CreateRepairArrClientsOverride = () => [arrClient];
+        service.CreateDbContextOverride = () => new DavDatabaseContext(_options);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, cancellation.Token);
+
+        _context.ChangeTracker.Clear();
+        var persisted = ReloadItem(item.Id);
+        Assert.False(persisted.HealthRepairPending);
+        Assert.True(persisted.NextHealthCheck > DateTimeOffset.UtcNow.AddHours(23));
+        Assert.False(File.Exists(libraryPath));
+        Assert.True(BlobStore.Exists(persisted.FileBlobId!.Value));
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+        Assert.Contains("accepted removal of the media file", row.Message, StringComparison.Ordinal);
+        Assert.Contains("WebDAV item was retained", row.Message, StringComparison.Ordinal);
+        Assert.Equal(1, arrClient.RemoveCalls);
+
+        var selected = await service.SelectNextHealthCheckIdsAsync(
+            [],
+            allowChecks: true,
+            allowRepairs: true,
+            maximumCount: 10,
+            CancellationToken.None);
+        Assert.DoesNotContain(item.Id, selected);
     }
 
     [Fact]
@@ -1290,6 +1338,35 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         public bool Exists(Guid id) => false;
 
         public bool Delete(Guid id) => throw new NotSupportedException();
+    }
+
+    private sealed class PartialRepairArrClient(
+        CancellationTokenSource cancellation,
+        string externallyRemovedPath)
+        : ArrClient("http://radarr.test", "test-key")
+    {
+        public int RemoveCalls { get; private set; }
+
+        public override Task<List<ArrRootFolder>> GetRootFolders(CancellationToken ct = default) =>
+            Task.FromResult(new List<ArrRootFolder> { new() { Path = "/" } });
+
+        public override Task<ArrMediaFileMatch?> FindMediaFileAsync(
+            string symlinkOrStrmPath,
+            CancellationToken ct = default) =>
+            Task.FromResult<ArrMediaFileMatch?>(
+                new ArrMediaFileMatch(ArrMediaKind.Movie, FileId: 201, MediaIds: [301]));
+
+        public override Task<ArrRepairOutcome> RemoveAndBlocklist(
+            ArrMediaFileMatch mediaFile,
+            Guid downloadId,
+            Func<IReadOnlyList<string>, bool>? shouldRequestSearch = null,
+            CancellationToken ct = default)
+        {
+            RemoveCalls++;
+            File.Delete(externallyRemovedPath);
+            cancellation.Cancel();
+            return Task.FromResult(ArrRepairOutcome.MediaRemovedBlocklistUnconfirmed);
+        }
     }
 
     private async Task<(HealthCheckService Service, ScriptedPar2RepairService Par2)> NewServiceAsync(

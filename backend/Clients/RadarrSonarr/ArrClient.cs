@@ -148,6 +148,93 @@ public class ArrClient(string host, string apiKey)
         _ = await Post<object>($"/history/failed/{historyId}", new { }, ct).ConfigureAwait(false);
     }
 
+    protected async Task<ArrRepairOutcome> CompleteRepairAfterMediaRemovalAsync(
+        ArrMediaFileMatch mediaFile,
+        int historyId,
+        Func<CancellationToken, Task<ArrRepairOutcome>> finishSearch,
+        CancellationToken ct)
+    {
+        try
+        {
+            await MarkHistoryFailed(historyId, ct).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            LogPostDeleteRepairFailure(
+                exception,
+                mediaFile,
+                ArrRepairOutcome.MediaRemovedBlocklistUnconfirmed,
+                ct);
+            return ArrRepairOutcome.MediaRemovedBlocklistUnconfirmed;
+        }
+
+        try
+        {
+            return await finishSearch(ct).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            LogPostDeleteRepairFailure(
+                exception,
+                mediaFile,
+                ArrRepairOutcome.MediaRemovedBlocklistConfirmedSearchUnconfirmed,
+                ct);
+            return ArrRepairOutcome.MediaRemovedBlocklistConfirmedSearchUnconfirmed;
+        }
+    }
+
+    private void LogPostDeleteRepairFailure(
+        Exception exception,
+        ArrMediaFileMatch mediaFile,
+        ArrRepairOutcome outcome,
+        CancellationToken ct)
+    {
+        var reason = GetPostDeleteFailureReason(exception, ct);
+        var instance = Uri.TryCreate(Host, UriKind.Absolute, out var uri)
+            ? uri.GetComponents(UriComponents.SchemeAndServer, UriFormat.SafeUnescaped)
+            : "configured Arr instance";
+        var clientKind = GetType().Name;
+
+        if (reason == "unexpected post-delete failure")
+        {
+            Log.Error(
+                exception,
+                "Unexpected {ClientKind} repair failure after accepted media deletion on {Instance} for {MediaKind} file {MediaFileId}; outcome {Outcome}",
+                clientKind,
+                instance,
+                mediaFile.Kind,
+                mediaFile.FileId,
+                outcome);
+            return;
+        }
+
+        Log.Warning(
+            "{ClientKind} repair incomplete after accepted media deletion on {Instance} for {MediaKind} file {MediaFileId}; outcome {Outcome}. Reason: {Reason}",
+            clientKind,
+            instance,
+            mediaFile.Kind,
+            mediaFile.FileId,
+            outcome,
+            reason);
+        Log.Debug(exception, "Known Arr post-delete repair failure stack");
+    }
+
+    private static string GetPostDeleteFailureReason(
+        Exception exception,
+        CancellationToken ct) => exception switch
+    {
+        OperationCanceledException when ct.IsCancellationRequested =>
+            "repair cancellation requested",
+        OperationCanceledException => "request timed out or was cancelled",
+        HttpRequestException { StatusCode: { } statusCode } =>
+            $"HTTP {(int)statusCode}",
+        HttpRequestException => "HTTP transport failure",
+        JsonException => "unusable JSON response",
+        InvalidDataException => "unusable response data",
+        IOException => "response I/O failure",
+        _ => "unexpected post-delete failure",
+    };
+
     /// <summary>
     /// Retries transient Arr API failures for repair search notifications.
     /// Delete/blocklist steps rely on <see cref="NzbWebDAV.Services.HealthCheckService.DecideArrLinkedRepairAsync"/> fail-safe instead.

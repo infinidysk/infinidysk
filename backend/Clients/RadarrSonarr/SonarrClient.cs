@@ -154,45 +154,52 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
             throw new InvalidOperationException(
                 $"Failed to delete episode file {mediaFile.FileId} from sonarr instance `{Host}`.");
 
-        await MarkHistoryFailed(historyId.Value, ct).ConfigureAwait(false);
+        return await CompleteRepairAfterMediaRemovalAsync(
+            mediaFile,
+            historyId.Value,
+            async token =>
+            {
+                try
+                {
+                    if (episodeIds.Count == 0)
+                    {
+                        Log.Warning(
+                            "Sonarr repair on {Host}: no episodes linked to episode file {EpisodeFileId}; skipping EpisodeSearch",
+                            Host,
+                            mediaFile.FileId);
+                    }
+                    else if (shouldRequestSearch is not null &&
+                             !shouldRequestSearch(episodeIds.Select(id => $"episode:{id}").ToArray()))
+                    {
+                        Log.Warning(
+                            "Sonarr repair on {Host}: automatic replacement-search limit reached for episode file {EpisodeFileId}; " +
+                            "the file was removed and its download blocklisted without another search.",
+                            Host,
+                            mediaFile.FileId);
+                        return ArrRepairOutcome.RemoveAndBlocklistSucceededSearchWithheld;
+                    }
+                    else
+                    {
+                        await ExecuteWithTransientRetryAsync(
+                            commandToken => CommandAsync(
+                                new { name = "EpisodeSearch", episodeIds },
+                                commandToken),
+                            token).ConfigureAwait(false);
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    Log.Warning(
+                        ex,
+                        "Sonarr repair on {Host}: failed to request EpisodeSearch for episode file {EpisodeFileId}",
+                        Host,
+                        mediaFile.FileId);
+                }
 
-        try
-        {
-            if (episodeIds.Count == 0)
-            {
-                Log.Warning(
-                    "Sonarr repair on {Host}: no episodes linked to episode file {EpisodeFileId}; skipping EpisodeSearch",
-                    Host,
-                    mediaFile.FileId);
-            }
-            else if (shouldRequestSearch is not null &&
-                     !shouldRequestSearch(episodeIds.Select(id => $"episode:{id}").ToArray()))
-            {
-                Log.Warning(
-                    "Sonarr repair on {Host}: automatic replacement-search limit reached for episode file {EpisodeFileId}; " +
-                    "the file was removed and its download blocklisted without starting another search.",
-                    Host,
-                    mediaFile.FileId);
-                return ArrRepairOutcome.RemoveAndBlocklistSucceededSearchWithheld;
-            }
-            else
-            {
-                await ExecuteWithTransientRetryAsync(
-                    token => CommandAsync(new { name = "EpisodeSearch", episodeIds }, token),
-                    ct).ConfigureAwait(false);
-            }
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            Log.Warning(
-                ex,
-                "Sonarr repair on {Host}: failed to request EpisodeSearch for episode file {EpisodeFileId}",
-                Host,
-                mediaFile.FileId);
-        }
-
-        return ArrRepairOutcome.RemoveAndBlocklistSucceeded;
+                return ArrRepairOutcome.RemoveAndBlocklistSucceeded;
+            },
+            ct).ConfigureAwait(false);
     }
 
     public override Task<ArrHistory> GetMediaImportHistoryAsync(

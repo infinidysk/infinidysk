@@ -178,6 +178,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     { get; set; }
     internal Func<Guid, CancellationToken, Task>? ProcessCandidateOverride { get; set; }
     internal Func<bool>? HasActiveQueueItemsOverride { get; set; }
+    internal Func<ArrClient[]>? CreateRepairArrClientsOverride { get; set; }
     internal IReadOnlyCollection<Guid> InProgressHealthCheckIds => _inProgress.Keys.ToArray();
 
     public HealthCheckService
@@ -2572,6 +2573,10 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         /// replacement search was withheld by the per-media search budget.
         /// </summary>
         RemoveAndBlocklistSucceededSearchWithheld,
+        /// <summary>Arr accepted media removal, but failed-download/blocklist completion is unconfirmed.</summary>
+        MediaRemovedBlocklistUnconfirmed,
+        /// <summary>Arr confirmed blocklisting, but replacement-search completion is unconfirmed.</summary>
+        MediaRemovedBlocklistConfirmedSearchUnconfirmed,
         /// <summary>
         /// At least one Arr instance was unreachable/unusable and no instance completed repair —
         /// leave the DavItem in place.
@@ -2832,6 +2837,22 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             {
                 return new ArrLinkedRepairResult(
                     ArrLinkedRepairDecision.RemoveAndBlocklistSucceededSearchWithheld,
+                    persistedRecovery,
+                    recoveryHost);
+            }
+
+            if (repairOutcome == ArrRepairOutcome.MediaRemovedBlocklistUnconfirmed)
+            {
+                return new ArrLinkedRepairResult(
+                    ArrLinkedRepairDecision.MediaRemovedBlocklistUnconfirmed,
+                    persistedRecovery,
+                    recoveryHost);
+            }
+
+            if (repairOutcome == ArrRepairOutcome.MediaRemovedBlocklistConfirmedSearchUnconfirmed)
+            {
+                return new ArrLinkedRepairResult(
+                    ArrLinkedRepairDecision.MediaRemovedBlocklistConfirmedSearchUnconfirmed,
                     persistedRecovery,
                     recoveryHost);
             }
@@ -3148,7 +3169,8 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             // new filename), so replacement searches are additionally budgeted by the Arr
             // media identity, which stays stable across re-grabs of the same movie/episode.
             var arrConfig = _configManager.GetArrConfig();
-            var arrClients = arrConfig.GetArrClients().ToArray();
+            var arrClients = CreateRepairArrClientsOverride?.Invoke()
+                ?? arrConfig.GetArrClients().ToArray();
             if (arrClients.Length == 0)
             {
                 var utcNow = DateTimeOffset.UtcNow;
@@ -3190,6 +3212,29 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             }
 
             var arrDecision = arrResult.Decision;
+
+            if (arrDecision is ArrLinkedRepairDecision.MediaRemovedBlocklistUnconfirmed
+                or ArrLinkedRepairDecision.MediaRemovedBlocklistConfirmedSearchUnconfirmed)
+            {
+                await RecordIncompleteArrRepairAsync(
+                    davItem,
+                    dbClient,
+                    linkedPath,
+                    arrDecision).ConfigureAwait(false);
+                if (!ct.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await SeedRejectedReleaseSegmentsAsync(davItem, dbClient, ct).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // The incomplete repair state is already persisted; seeding is optional.
+                    }
+                }
+
+                return;
+            }
 
             if (arrDecision is ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded
                 or ArrLinkedRepairDecision.RemoveAndBlocklistSucceededSearchWithheld)
@@ -3337,6 +3382,52 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 HealthCheckResult.HealthResult.Unhealthy,
                 HealthCheckResult.RepairAction.ActionNeeded,
                 $"Error performing file repair: {e.Message}", ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task RecordIncompleteArrRepairAsync(
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        string linkedPath,
+        ArrLinkedRepairDecision decision)
+    {
+        var message = decision switch
+        {
+            ArrLinkedRepairDecision.MediaRemovedBlocklistUnconfirmed =>
+                "Arr accepted removal of the media file, but the original download's failed/blocklist " +
+                "state could not be confirmed. InfiniDysk did not request a replacement search. " +
+                "The WebDAV item was retained. Review the item and failed-download/blocklist history " +
+                "in Radarr/Sonarr before retrying repair.",
+            ArrLinkedRepairDecision.MediaRemovedBlocklistConfirmedSearchUnconfirmed =>
+                "Arr accepted removal of the media file and confirmed the failed-download/blocklist " +
+                "request, but InfiniDysk could not confirm completion of its replacement-search step. " +
+                "The WebDAV item was retained. Review the item and existing searches in Radarr/Sonarr " +
+                "before retrying repair.",
+            _ => throw new ArgumentOutOfRangeException(nameof(decision), decision, null),
+        };
+        var now = _timeProvider.GetUtcNow();
+        davItem.LastHealthCheck = now;
+        davItem.NextHealthCheck = now + TimeSpan.FromDays(1);
+        davItem.HealthRepairPending = false;
+        RecordRepairRemoval(linkedPath, now);
+
+        try
+        {
+            await RecordHealthResult(
+                dbClient,
+                davItem,
+                HealthCheckResult.HealthResult.Unhealthy,
+                HealthCheckResult.RepairAction.ActionNeeded,
+                message,
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            Log.Error(
+                exception,
+                "Incomplete Arr repair state for DavItem {DavItemId} could not be persisted; stage {RepairStage}",
+                davItem.Id,
+                decision);
         }
     }
 

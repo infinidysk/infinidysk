@@ -650,6 +650,85 @@ public class RadarrSonarrClientTests
         Assert.Equal(TimeSpan.FromSeconds(30), ArrClient.RequestTimeout);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Repair_MediaRemovedBlocklistUnconfirmed_DoesNotSearch(bool sonarr)
+    {
+        var downloadId = Guid.Parse("13640000-0000-0000-0000-000000000001");
+        var mediaFile = new ArrMediaFileMatch(
+            sonarr ? ArrMediaKind.Episode : ArrMediaKind.Movie,
+            FileId: 201,
+            MediaIds: new[] { 301 });
+        var historyRequest =
+            $"GET /api/v3/history?downloadId={downloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending";
+        var deleteRequest = sonarr
+            ? "DELETE /api/v3/episodefile/201"
+            : "DELETE /api/v3/moviefile/201";
+        var handler = CreateHandler(
+            (historyRequest, JsonResponse("""{"records":[{"id":401}]}""")),
+            (deleteRequest, Status(HttpStatusCode.NoContent)),
+            ("POST /api/v3/history/failed/401", Status(HttpStatusCode.ServiceUnavailable)));
+        using var httpClient = new HttpClient(handler);
+        ArrClient client = sonarr
+            ? new TestSonarrClient(httpClient)
+            : new TestRadarrClient(httpClient);
+        var searchBudgetCalls = 0;
+
+        var outcome = await client.RemoveAndBlocklist(
+            mediaFile,
+            downloadId,
+            _ =>
+            {
+                searchBudgetCalls++;
+                return true;
+            });
+
+        Assert.Equal(ArrRepairOutcome.MediaRemovedBlocklistUnconfirmed, outcome);
+        Assert.Equal(new[] { historyRequest, deleteRequest, "POST /api/v3/history/failed/401" }, handler.Requests);
+        Assert.Equal(1, handler.Requests.Count(request => request.StartsWith("DELETE ", StringComparison.Ordinal)));
+        Assert.Equal(1, handler.Requests.Count(request =>
+            request.StartsWith("POST /api/v3/history/failed/", StringComparison.Ordinal)));
+        Assert.DoesNotContain(handler.Requests, request =>
+            request.StartsWith("POST /api/v3/command", StringComparison.Ordinal));
+        Assert.Equal(0, searchBudgetCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Repair_BlocklistConfirmedThenCancelled_PreservesConfirmedStage(bool sonarr)
+    {
+        var downloadId = Guid.Parse("13640000-0000-0000-0000-000000000003");
+        var mediaFile = new ArrMediaFileMatch(
+            sonarr ? ArrMediaKind.Episode : ArrMediaKind.Movie,
+            FileId: 202,
+            MediaIds: [302]);
+        var historyRequest =
+            $"GET /api/v3/history?downloadId={downloadId:D}&eventType=1&page=1&pageSize=1&sortKey=date&sortDirection=descending";
+        var deleteRequest = sonarr
+            ? "DELETE /api/v3/episodefile/202"
+            : "DELETE /api/v3/moviefile/202";
+        var handler = CreateHandler(
+            (historyRequest, JsonResponse("""{"records":[{"id":402}]}""")),
+            (deleteRequest, Status(HttpStatusCode.NoContent)),
+            ("POST /api/v3/history/failed/402", JsonResponse("{}")));
+        using var httpClient = new HttpClient(handler);
+        ArrClient client = sonarr
+            ? new TestSonarrClient(httpClient)
+            : new TestRadarrClient(httpClient);
+
+        var outcome = await client.RemoveAndBlocklist(
+            mediaFile,
+            downloadId,
+            _ => throw new OperationCanceledException("cancelled after blocklist"));
+
+        Assert.Equal(ArrRepairOutcome.MediaRemovedBlocklistConfirmedSearchUnconfirmed, outcome);
+        Assert.Equal([historyRequest, deleteRequest, "POST /api/v3/history/failed/402"], handler.Requests);
+        Assert.DoesNotContain(handler.Requests, request =>
+            request.StartsWith("POST /api/v3/command", StringComparison.Ordinal));
+    }
+
     private static HttpResponseMessage Status(HttpStatusCode code) => new(code);
 
     private static HttpResponseMessage JsonResponse(string json) =>
