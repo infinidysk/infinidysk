@@ -1,8 +1,13 @@
-﻿using Microsoft.Extensions.Hosting;
+﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Config;
+using NzbWebDAV.Database;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models.Nzb;
+using NzbWebDAV.Services.Diagnostics;
 using Serilog;
 
 namespace NzbWebDAV.Services;
@@ -16,17 +21,26 @@ namespace NzbWebDAV.Services;
 /// </summary>
 public class ArrMonitoringService : BackgroundService
 {
+    private const long RejectedReleaseMaxXmlCharacters = 8L * 1024 * 1024;
+    private const int RejectedReleaseMaxSegments = 250_000;
+    private static readonly TimeSpan RejectedReleaseCaptureTimeout = TimeSpan.FromSeconds(2);
     private readonly ConfigManager _configManager;
     private readonly ArrReplacementSearchBudget _replacementSearchBudget;
+    private readonly IDbContextFactory<DavDatabaseContext> _dbContextFactory;
+    private readonly IBlobStore _blobStore;
     private readonly ArrInstanceBackoff _backoff;
 
     public ArrMonitoringService(
         ConfigManager configManager,
         ArrReplacementSearchBudget replacementSearchBudget,
+        IDbContextFactory<DavDatabaseContext> dbContextFactory,
+        IBlobStore blobStore,
         ArrInstanceBackoff? backoff = null)
     {
         _configManager = configManager;
         _replacementSearchBudget = replacementSearchBudget;
+        _dbContextFactory = dbContextFactory;
+        _blobStore = blobStore;
         _backoff = backoff ?? new ArrInstanceBackoff();
     }
 
@@ -66,6 +80,7 @@ public class ArrMonitoringService : BackgroundService
         // the buffer support packs are built from, so detail goes to Debug and the pass
         // reports one Warning per release and action.
         var resolutions = new List<(string? Title, ArrConfig.QueueAction Action, string Reason, string IdentitySource)>();
+        var seededDownloadIds = new HashSet<Guid>();
 
         // Skip a host that is timing out or refusing connections until its backoff elapses.
         if (_backoff.IsInBackoff(client.Host))
@@ -88,7 +103,8 @@ public class ArrMonitoringService : BackgroundService
             var stuckRecords = GetActionableStuckRecords(queue, arrConfig.QueueRules);
             foreach (var record in stuckRecords)
             {
-                var resolution = await HandleStuckQueueItem(record, arrConfig, client, timeout.Token)
+                var resolution = await HandleStuckQueueItem(
+                    record, arrConfig, client, seededDownloadIds, timeout.Token)
                     .ConfigureAwait(false);
                 if (resolution is null) continue;
                 resolutions.Add(resolution.Value);
@@ -135,9 +151,13 @@ public class ArrMonitoringService : BackgroundService
             .ToList();
     }
 
-    private async Task<(string? Title, ArrConfig.QueueAction Action, string Reason, string IdentitySource)?>
+    internal async Task<(string? Title, ArrConfig.QueueAction Action, string Reason, string IdentitySource)?>
         HandleStuckQueueItem(
-        ArrQueueRecord item, ArrConfig arrConfig, ArrClient client, CancellationToken ct)
+        ArrQueueRecord item,
+        ArrConfig arrConfig,
+        ArrClient client,
+        ISet<Guid>? seededDownloadIds,
+        CancellationToken ct)
     {
         // since there may be multiple status messages, multiple actions may apply.
         // in such case, always perform the strongest action.
@@ -154,6 +174,13 @@ public class ArrMonitoringService : BackgroundService
             item.GetMatchingStatusMessages(matchingRules.Where(x => x.Action == action).Select(x => x.Message)),
             matchingRules.Where(x => x.Action == action).Select(x => x.Message));
         var (mediaKey, identitySource) = GetMediaKey(client, item);
+        var shouldCapture = action is ArrConfig.QueueAction.RemoveAndBlocklist
+            or ArrConfig.QueueAction.RemoveAndBlocklistAndSearch;
+        var rejectedRelease = shouldCapture
+            ? await CaptureRejectedReleaseSegmentsAsync(item, client.Host, seededDownloadIds, ct)
+                .ConfigureAwait(false)
+            : null;
+        ct.ThrowIfCancellationRequested();
 
         var requestedAction = action;
         action = ApplyReplacementSearchBudget(
@@ -188,6 +215,22 @@ public class ArrMonitoringService : BackgroundService
             return null;
         }
 
+        if (rejectedRelease is not null)
+        {
+            try
+            {
+                HealthCheckService.AddMissingSegmentIds(rejectedRelease.Value.SegmentIds);
+                seededDownloadIds?.Add(rejectedRelease.Value.DownloadId);
+                Log.Debug(
+                    "Recorded {SegmentCount} article IDs from blocklisted Arr download {DownloadId}",
+                    rejectedRelease.Value.SegmentIds.Length,
+                    rejectedRelease.Value.DownloadId);
+            }
+            catch (OutOfMemoryException exception)
+            {
+                OomDiagnostics.LogHeapStateOnOom(exception, "Arr queue rejected-release cache seeding");
+            }
+        }
         Log.Debug(
             "Resolved stuck queue record {QueueRecordId} ({QueueItemTitle}) from {Host} with action {Action}. " +
             "Reason: {Reason}. Media identity source: {IdentitySource}",
@@ -195,6 +238,152 @@ public class ArrMonitoringService : BackgroundService
         return (item.Title, action, reason, identitySource);
     }
 
+    private async Task<(Guid DownloadId, string[] SegmentIds)?> CaptureRejectedReleaseSegmentsAsync(
+        ArrQueueRecord item,
+        string host,
+        ISet<Guid>? seededDownloadIds,
+        CancellationToken ct)
+    {
+        if (!Guid.TryParse(item.DownloadId, out var downloadId) || downloadId == Guid.Empty)
+        {
+            Log.Warning(
+                "Could not record fail-fast evidence before blocklisting Arr queue record {QueueRecordId} from {Host}. " +
+                "Reason: download ID is missing or invalid",
+                item.Id,
+                host);
+            return null;
+        }
+        if (seededDownloadIds?.Contains(downloadId) is true)
+            return null;
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(RejectedReleaseCaptureTimeout);
+        try
+        {
+            var blobId = await FindCompletedNzbBlobIdAsync(downloadId, timeout.Token).ConfigureAwait(false);
+            if (blobId is null)
+            {
+                Log.Warning(
+                    "Could not record fail-fast evidence before blocklisting Arr queue record {QueueRecordId} from {Host}. " +
+                    "Reason: no completed local history entry with an NZB blob matches download {DownloadId}",
+                    item.Id,
+                    host,
+                    downloadId);
+                return null;
+            }
+
+            await using var nzbStream = _blobStore.ReadBlob(blobId.Value);
+            if (nzbStream is null)
+            {
+                Log.Warning(
+                    "Could not record fail-fast evidence before blocklisting Arr queue record {QueueRecordId} from {Host}. " +
+                    "Reason: stored NZB blob {BlobId} is unavailable",
+                    item.Id,
+                    host,
+                    blobId);
+                return null;
+            }
+
+            var document = await LoadRejectedReleaseAsync(nzbStream, timeout.Token).ConfigureAwait(false);
+            var segments = SelectRejectedReleaseSeedSegments(
+                document, HealthCheckService.RejectedReleaseSeedSegments);
+            return segments.Length > 0 ? (downloadId, segments) : null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            Log.Warning(
+                "Could not record fail-fast evidence before blocklisting Arr queue record {QueueRecordId} from {Host}. " +
+                "Reason: local NZB capture exceeded {TimeoutSeconds} seconds",
+                item.Id,
+                host,
+                RejectedReleaseCaptureTimeout.TotalSeconds);
+            return null;
+        }
+        catch (OutOfMemoryException exception)
+        {
+            OomDiagnostics.LogHeapStateOnOom(exception, "Arr queue rejected-release capture");
+            return null;
+        }
+        catch (InvalidDataException exception)
+        {
+            Log.Warning(
+                "Could not record fail-fast evidence before blocklisting Arr queue record {QueueRecordId} from {Host}. " +
+                "Reason: stored NZB is unavailable for bounded parsing ({Reason})",
+                item.Id,
+                host,
+                exception.Message);
+            Log.Debug(exception, "Arr queue rejected-release NZB parsing failure stack");
+            return null;
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            exception.LogWarningKnownOrStack(
+                "Could not record fail-fast evidence before blocklisting Arr queue record {QueueRecordId} from {Host}.",
+                item.Id,
+                host);
+            return null;
+        }
+    }
+    private async Task<Guid?> FindCompletedNzbBlobIdAsync(Guid downloadId, CancellationToken ct)
+    {
+        await using var context = await _dbContextFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        return await context.HistoryItems
+            .AsNoTracking()
+            .Where(item => item.Id == downloadId
+                && item.DownloadStatus == HistoryItem.DownloadStatusOption.Completed
+                && item.NzbBlobId != null)
+            .Select(item => item.NzbBlobId)
+            .SingleOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+    }
+    private static Task<NzbDocument> LoadRejectedReleaseAsync(Stream nzbStream, CancellationToken ct)
+    {
+        var options = new NzbReadOptions(
+            RejectedReleaseMaxXmlCharacters,
+            charge: static _ => { },
+            reserve: static _ => NoReservation.Instance)
+        {
+            MaxSegments = RejectedReleaseMaxSegments,
+        };
+        return NzbDocument.LoadAsync(nzbStream, options, ct);
+    }
+    internal static string[] SelectRejectedReleaseSeedSegments(NzbDocument document, int maximum)
+    {
+        if (maximum <= 0) return [];
+        var files = document.Files.Where(file => file.Segments.Count > 0).ToList();
+        var result = new List<string>(Math.Min(maximum, files.Sum(file => file.Segments.Count)));
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        void TryAdd(string segmentId)
+        {
+            if (result.Count < maximum && seen.Add(segmentId))
+                result.Add(segmentId);
+        }
+
+        foreach (var file in files)
+        {
+            if (result.Count >= maximum) break;
+            TryAdd(file.Segments[0].MessageId);
+        }
+        foreach (var file in files)
+        {
+            foreach (var segment in file.Segments.Skip(1))
+            {
+                if (result.Count >= maximum) return result.ToArray();
+                TryAdd(segment.MessageId);
+            }
+        }
+        return result.ToArray();
+    }
+    private sealed class NoReservation : IDisposable
+    {
+        public static readonly NoReservation Instance = new();
+        public void Dispose() { }
+    }
     internal static ArrConfig.QueueAction ApplyReplacementSearchBudget(
         ArrConfig.QueueAction requestedAction,
         string mediaKey,
