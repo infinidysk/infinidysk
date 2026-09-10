@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using System.Diagnostics;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
@@ -24,6 +25,7 @@ public class ArrMonitoringService : BackgroundService
     private const long RejectedReleaseMaxXmlCharacters = 8L * 1024 * 1024;
     private const int RejectedReleaseMaxSegments = 250_000;
     private static readonly TimeSpan RejectedReleaseCaptureTimeout = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan RejectedReleasePassCaptureBudget = TimeSpan.FromSeconds(2);
     private readonly ConfigManager _configManager;
     private readonly ArrReplacementSearchBudget _replacementSearchBudget;
     private readonly IDbContextFactory<DavDatabaseContext> _dbContextFactory;
@@ -81,6 +83,7 @@ public class ArrMonitoringService : BackgroundService
         // reports one Warning per release and action.
         var resolutions = new List<(string? Title, ArrConfig.QueueAction Action, string Reason, string IdentitySource)>();
         var rejectedReleaseCaptures = new Dictionary<Guid, string[]?>();
+        var captureBudget = new RejectedReleaseCaptureBudget(RejectedReleasePassCaptureBudget);
 
         // Skip a host that is timing out or refusing connections until its backoff elapses.
         if (_backoff.IsInBackoff(client.Host))
@@ -104,7 +107,7 @@ public class ArrMonitoringService : BackgroundService
             foreach (var record in stuckRecords)
             {
                 var resolution = await HandleStuckQueueItem(
-                    record, arrConfig, client, rejectedReleaseCaptures, timeout.Token)
+                        record, arrConfig, client, rejectedReleaseCaptures, timeout.Token, captureBudget)
                     .ConfigureAwait(false);
                 if (resolution is null) continue;
                 resolutions.Add(resolution.Value);
@@ -157,7 +160,8 @@ public class ArrMonitoringService : BackgroundService
         ArrConfig arrConfig,
         ArrClient client,
         IDictionary<Guid, string[]?>? rejectedReleaseCaptures,
-        CancellationToken ct)
+        CancellationToken ct,
+        RejectedReleaseCaptureBudget? captureBudget = null)
     {
         // since there may be multiple status messages, multiple actions may apply.
         // in such case, always perform the strongest action.
@@ -177,7 +181,8 @@ public class ArrMonitoringService : BackgroundService
         var shouldCapture = action is ArrConfig.QueueAction.RemoveAndBlocklist
             or ArrConfig.QueueAction.RemoveAndBlocklistAndSearch;
         var rejectedRelease = shouldCapture
-            ? await CaptureRejectedReleaseSegmentsAsync(item, client.Host, rejectedReleaseCaptures, ct)
+            ? await CaptureRejectedReleaseSegmentsAsync(
+                    item, client.Host, rejectedReleaseCaptures, captureBudget, ct)
                 .ConfigureAwait(false)
             : null;
         ct.ThrowIfCancellationRequested();
@@ -243,6 +248,7 @@ public class ArrMonitoringService : BackgroundService
         ArrQueueRecord item,
         string host,
         IDictionary<Guid, string[]?>? rejectedReleaseCaptures,
+        RejectedReleaseCaptureBudget? captureBudget,
         CancellationToken ct)
     {
         if (!Guid.TryParse(item.DownloadId, out var downloadId) || downloadId == Guid.Empty)
@@ -257,11 +263,42 @@ public class ArrMonitoringService : BackgroundService
         if (rejectedReleaseCaptures?.TryGetValue(downloadId, out var cachedSegments) is true)
             return cachedSegments is { Length: > 0 } ? (downloadId, cachedSegments) : null;
 
-        var segments = await CaptureRejectedReleaseSegmentsCoreAsync(item, host, downloadId, ct)
-            .ConfigureAwait(false);
+        if (captureBudget is not null && !captureBudget.TryStart())
+        {
+            rejectedReleaseCaptures?[downloadId] = null;
+            Log.Debug(
+                "Skipped fail-fast evidence capture for Arr download {DownloadId}; monitoring pass capture budget spent",
+                downloadId);
+            return null;
+        }
+
+        var started = Stopwatch.GetTimestamp();
+        string[]? segments;
+        try
+        {
+            segments = await CaptureRejectedReleaseSegmentsCoreAsync(item, host, downloadId, ct)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            captureBudget?.Consume(Stopwatch.GetElapsedTime(started));
+        }
         if (rejectedReleaseCaptures is not null)
             rejectedReleaseCaptures[downloadId] = segments;
         return segments is { Length: > 0 } ? (downloadId, segments) : null;
+    }
+
+    internal sealed class RejectedReleaseCaptureBudget(TimeSpan limit)
+    {
+        private readonly long _limitTicks = limit.Ticks;
+        private long _consumedTicks;
+
+        public bool TryStart() => Volatile.Read(ref _consumedTicks) < _limitTicks;
+
+        public void Consume(TimeSpan elapsed)
+        {
+            Interlocked.Add(ref _consumedTicks, Math.Max(0, elapsed.Ticks));
+        }
     }
     private async Task<string[]?> CaptureRejectedReleaseSegmentsCoreAsync(
         ArrQueueRecord item,

@@ -356,6 +356,17 @@ public sealed class ArrMonitoringRejectedReleaseTests
     }
 
     [Fact]
+    public void CaptureBudget_StopsNewWorkAfterCumulativeLimit()
+    {
+        var budget = new ArrMonitoringService.RejectedReleaseCaptureBudget(TimeSpan.FromMilliseconds(1));
+
+        Assert.True(budget.TryStart());
+        budget.Consume(TimeSpan.FromMilliseconds(2));
+
+        Assert.False(budget.TryStart());
+    }
+
+    [Fact]
     public async Task SuccessfulBlocklist_StopsRegrabBeforeAnyNntpRequest()
     {
         var fixture = await Fixture.CreateAsync(

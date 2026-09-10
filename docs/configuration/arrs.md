@@ -83,7 +83,9 @@ containing any remembered article is failed in the download queue before import 
 requests, even when another indexer supplied it under a different release name. Plain **Remove**
 does not mark an upload as rejected.
 
-This memory is process-local and bounded. It is lost on restart, entries can be evicted, and
+This memory is process-local and bounded. Evidence capture is also limited to two seconds per
+monitoring pass so queue actions are not delayed by local evidence collection. It is lost on
+restart, entries can be evicted, and
 provider configuration changes can clear it. Protection also requires the completed download's
 local history and stored NZB to still exist. A replacement that starts importing before Arr's
 delete request returns can pass the check; later re-grabs are protected after Arr confirms the
