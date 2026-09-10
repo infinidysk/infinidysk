@@ -348,10 +348,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 }
 
                 var availableSlots = _configManager.GetHealthCheckWorkers() - _inProgress.Count;
+                var repairsOpen = admission.RepairsOpen
+                    && (!ShouldAttemptPar2Repair() || _par2RepairService.CanAcceptInlineRepair);
                 var candidateIds = await SelectNextHealthCheckIdsAsync(
                         reservedIds,
                         admission.ChecksOpen,
-                        admission.RepairsOpen,
+                        repairsOpen,
                         availableSlots,
                         ct)
                     .ConfigureAwait(false);
@@ -792,6 +794,31 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             cooldownUntil,
             (_, current) => current >= cooldownUntil ? current : cooldownUntil);
         RecordInfrastructureBackoff();
+    }
+
+    private async Task DeferPar2RepairAsync(
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        Par2RepairOutcome outcome,
+        CancellationToken ct)
+    {
+        var now = _timeProvider.GetUtcNow();
+        davItem.HealthRepairPending = true;
+        davItem.LastHealthCheck = now;
+        if (davItem.NextHealthCheck != DateTimeOffset.UnixEpoch)
+            davItem.NextHealthCheck = now.AddSeconds(1);
+        Log.Warning(
+            "PAR2 repair deferred for {Path}; admission is busy ({Outcome}).",
+            davItem.Path,
+            outcome);
+        await RecordHealthResult(
+                dbClient,
+                davItem,
+                HealthCheckResult.HealthResult.Unhealthy,
+                HealthCheckResult.RepairAction.ActionNeeded,
+                "PAR2 repair remains pending because another repair is active.",
+                ct)
+            .ConfigureAwait(false);
     }
 
     private bool IsInfrastructureBackoffActive() =>
@@ -1279,7 +1306,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 await HandleUnreadablePayloadAsync(davItem, dbClient, exception, ct).ConfigureAwait(false);
                 return;
             }
-            if (par2Outcome is not Par2RepairOutcome.NotRepaired)
+            if (par2Outcome == Par2RepairOutcome.DeferredBusy)
+            {
+                await DeferPar2RepairAsync(davItem, dbClient, par2Outcome, ct).ConfigureAwait(false);
+                return;
+            }
+            if (par2Outcome is Par2RepairOutcome.Repaired or Par2RepairOutcome.VerifiedClean)
             {
                 var utcNow = DateTimeOffset.UtcNow;
                 davItem.LastHealthCheck = utcNow;
@@ -1427,7 +1459,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             ? await _par2RepairService.TryPar2RepairAsync(
                 davItem, holeSegmentIds, ct).ConfigureAwait(false)
             : Par2RepairOutcome.NotRepaired;
-        if (par2Outcome is not Par2RepairOutcome.NotRepaired)
+        if (par2Outcome is Par2RepairOutcome.Repaired or Par2RepairOutcome.VerifiedClean)
         {
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
@@ -2961,7 +2993,17 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 failureSnapshot.HasTargetableSegmentIds ? failureSnapshot.SegmentIds : null,
                 ct).ConfigureAwait(false)
             : Par2RepairOutcome.NotRepaired;
-        if (par2Outcome is not Par2RepairOutcome.NotRepaired)
+        if (par2Outcome == Par2RepairOutcome.DeferredBusy)
+        {
+            await DeferPar2RepairAsync(davItem, dbClient, par2Outcome, ct).ConfigureAwait(false);
+            return;
+        }
+        if (par2Outcome == Par2RepairOutcome.DeferredBusy)
+        {
+            await DeferPar2RepairAsync(davItem, dbClient, par2Outcome, ct).ConfigureAwait(false);
+            return;
+        }
+        if (par2Outcome is Par2RepairOutcome.Repaired or Par2RepairOutcome.VerifiedClean)
         {
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;

@@ -99,8 +99,8 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
         {
             var result = await Task.Run(() => release.Service.TryPar2RepairAsync(release.Item,
                 [release.Files[0].Ids[0]], cancellation.Token), cancellation.Token);
-            Assert.Equal(Par2RepairOutcome.NotRepaired, result);
-            Assert.Equal(0, release.Fake.BodyRequestCount);
+            Assert.Equal(Par2RepairOutcome.Repaired, result);
+            Assert.True(release.Fake.BodyRequestCount > 0);
         }
         finally { flights.Clear(); }
     }
@@ -512,16 +512,14 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
             var sameItem = release.Service.TryPar2RepairAsync(release.Item, ids, ownerCancellation.Token);
             var snapshot = release.Service.GetDiagnosticSnapshot();
             Assert.Equal(1, snapshot.AdmissionActive);
-            Assert.Equal(1, snapshot.AdmissionWaiters);
-            Assert.False(sameItem.IsCompleted);
-            await waiterCancellation.CancelAsync();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiter);
+            Assert.Equal(0, snapshot.AdmissionWaiters);
+            Assert.Equal(Par2RepairOutcome.DeferredBusy, await sameItem);
+            Assert.Equal(Par2RepairOutcome.DeferredBusy, await waiter);
             Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionWaiters);
             await using (var context = new DavDatabaseContext())
                 Assert.False(await context.Par2RepairJobs.AnyAsync(job => job.DavItemId == other.Id));
             proceed.TrySetResult();
             Assert.Equal(Par2RepairOutcome.Repaired, await owner);
-            Assert.Equal(Par2RepairOutcome.Repaired, await sameItem);
             Assert.Equal(Par2RepairOutcome.Repaired, await release.Service.TryPar2RepairAsync(other, ids, ownerCancellation.Token));
             Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionActive);
         }
@@ -562,15 +560,14 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
             await entered.Task.WaitAsync(cancellation.Token);
             var lateId = release.Files[1].Ids[5];
             var late = release.Service.TryPar2RepairAsync(release.Item, [lateId], cancellation.Token);
-            Assert.False(late.IsCompleted);
+            Assert.Equal(Par2RepairOutcome.DeferredBusy, await late);
             Assert.False(release.Store.HasUsablePatch(lateId));
             Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionWaiters);
             proceed.TrySetResult();
             Assert.Equal(Par2RepairOutcome.Repaired, await owner);
-            Assert.Equal(Par2RepairOutcome.Repaired, await late);
-            await AssertPatchAsync(release, 1, 5);
+            Assert.False(release.Store.HasUsablePatch(lateId));
             await using var context = new DavDatabaseContext();
-            Assert.Equal(2, await context.Par2RepairJobs.CountAsync(job => job.State == Par2RepairJob.RepairJobState.Succeeded));
+            Assert.Equal(1, await context.Par2RepairJobs.CountAsync(job => job.State == Par2RepairJob.RepairJobState.Succeeded));
         }
         finally
         {

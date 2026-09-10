@@ -30,10 +30,17 @@ public enum Par2RepairOutcome
     NotRepaired = 0,
     Repaired = 1,
     VerifiedClean = 2,
+    DeferredBusy = 3,
 }
 
 public partial class Par2RepairService : BackgroundService
 {
+    private enum RepairAdmissionMode
+    {
+        InlineTryOnce,
+        QueuedWait,
+    }
+
     private const int MaxQueueLength = 50;
     private const int MaxAttempts = 3;
     private static readonly TimeSpan CatalogWarningInterval = TimeSpan.FromMinutes(1);
@@ -246,21 +253,26 @@ public partial class Par2RepairService : BackgroundService
             var mine = new RepairFlight(missingSegmentIds);
             var flight = _repairFlights.GetOrAdd(davItem.Id, mine);
             if (ReferenceEquals(flight, mine))
-                return await RunFlightAsync(flight, davItem, missingSegmentIds, queueGuard: false, ct).ConfigureAwait(false);
+                return await RunFlightAsync(flight, davItem, missingSegmentIds, queueGuard: false, RepairAdmissionMode.InlineTryOnce, ct).ConfigureAwait(false);
+            if (!flight.Task.IsCompleted)
+                return Par2RepairOutcome.DeferredBusy;
             try
             {
                 var result = await flight.Task.WaitAsync(ct).ConfigureAwait(false);
                 if (result == Par2RepairOutcome.NotRepaired || flight.Covers(missingSegmentIds)
                     || missingSegmentIds is { Count: > 0 } && missingSegmentIds.All(_patchStore.HasUsablePatch))
                     return result;
-                await flight.Finished.Task.WaitAsync(ct).ConfigureAwait(false);
+                if (!flight.Finished.Task.IsCompleted)
+                    return Par2RepairOutcome.DeferredBusy;
+                _repairFlights.TryRemove(new KeyValuePair<Guid, RepairFlight>(davItem.Id, flight));
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                return Par2RepairOutcome.NotRepaired;
+                return Par2RepairOutcome.DeferredBusy;
             }
         }
-        return Par2RepairOutcome.NotRepaired;
+        Log.Warning("PAR2 repair for {DavItemId} deferred after repeated flight contention.", davItem.Id);
+        return Par2RepairOutcome.DeferredBusy;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -673,7 +685,7 @@ public partial class Par2RepairService : BackgroundService
             return;
         }
 
-        await RunFlightAsync(item.Flight, davItem, item.MissingSegmentIds, queueGuard: true, ct)
+        await RunFlightAsync(item.Flight, davItem, item.MissingSegmentIds, queueGuard: true, RepairAdmissionMode.QueuedWait, ct)
             .ConfigureAwait(false);
     }
 
@@ -682,6 +694,7 @@ public partial class Par2RepairService : BackgroundService
         DavItem davItem,
         IReadOnlyList<string>? missingSegmentIds,
         bool queueGuard,
+        RepairAdmissionMode admissionMode,
         CancellationToken ct)
     {
         var admitted = false;
@@ -694,24 +707,40 @@ public partial class Par2RepairService : BackgroundService
                 _admissionUsers++;
                 admissionUser = true;
             }
-            var wait = Stopwatch.StartNew();
-            Interlocked.Increment(ref _admissionWaiters);
-            PublishAdmissionMetrics();
-            try
+            if (admissionMode == RepairAdmissionMode.InlineTryOnce)
             {
-                await _repairAdmission.WaitAsync(ct).ConfigureAwait(false);
-                admitted = true;
-                Interlocked.Exchange(ref _admissionActive, 1);
+                ct.ThrowIfCancellationRequested();
+                admitted = await _repairAdmission.WaitAsync(0, ct).ConfigureAwait(false);
+                if (!admitted)
+                {
+                    flight.Completion.TrySetResult(Par2RepairOutcome.DeferredBusy);
+                    return Par2RepairOutcome.DeferredBusy;
+                }
             }
-            finally
+            else
             {
-                Interlocked.Decrement(ref _admissionWaiters);
-                wait.Stop();
-                Interlocked.Add(ref _totalAdmissionWaitTicks, wait.Elapsed.Ticks);
-                Interlocked.Exchange(ref _latestAdmissionWaitTicks, wait.Elapsed.Ticks);
-                PrometheusMetrics.Current?.ObservePar2AdmissionWait(wait.Elapsed);
+                var wait = Stopwatch.StartNew();
+                Interlocked.Increment(ref _admissionWaiters);
                 PublishAdmissionMetrics();
+                try
+                {
+                    await _repairAdmission.WaitAsync(ct).ConfigureAwait(false);
+                    admitted = true;
+                    Interlocked.Exchange(ref _admissionActive, 1);
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _admissionWaiters);
+                    wait.Stop();
+                    Interlocked.Add(ref _totalAdmissionWaitTicks, wait.Elapsed.Ticks);
+                    Interlocked.Exchange(ref _latestAdmissionWaitTicks, wait.Elapsed.Ticks);
+                    PrometheusMetrics.Current?.ObservePar2AdmissionWait(wait.Elapsed);
+                    PublishAdmissionMetrics();
+                }
             }
+
+            Interlocked.Exchange(ref _admissionActive, 1);
+            PublishAdmissionMetrics();
             var result = await RunRepairAsync(davItem, missingSegmentIds, flight, ct).ConfigureAwait(false);
             flight.Completion.TrySetResult(result);
             return result;
@@ -1384,6 +1413,11 @@ public partial class Par2RepairService : BackgroundService
                     source?.RetainedByteLimit ?? 0),
         };
     }
+
+    internal bool CanAcceptInlineRepair =>
+        !_disposeRequested
+        && Volatile.Read(ref _admissionActive) == 0
+        && Volatile.Read(ref _admissionWaiters) == 0;
 
     private void BeginRepairDiagnostics(string path)
     {
