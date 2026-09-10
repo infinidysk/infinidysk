@@ -295,7 +295,9 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
                 field => field,
                 _ => (IOpenApiSchema)new OpenApiSchema { Type = JsonSchemaType.String }),
             additionalProperties: false,
-            requiredProperties: route == "api/setup-wizard/complete" ? fields : null);
+            requiredProperties: route is "api/setup-wizard/complete" or "api/rclone-mounts/webdav-credentials"
+                ? fields
+                : null);
     }
 
     private static OpenApiRequestBody FormBody(

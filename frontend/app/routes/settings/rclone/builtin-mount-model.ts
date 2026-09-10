@@ -232,6 +232,7 @@ type ServerMountRow = {
   links?: boolean;
   readAheadBytes?: number | null;
   vfsCacheMaxAgeSeconds?: number;
+  dirCacheTimeSeconds?: number;
 };
 
 type MountSignatureInput = {

@@ -56,11 +56,13 @@ public class RcloneDaemonOptionsTests
     {
         // Anything else in the container can read argv through /proc, so the RC
         // credentials must not appear there.
-        var arguments = Options().ToArguments();
+        // Joined first: the list holds some flags as one "--flag=value" element,
+        // so comparing elements would miss "--rc-user=infinidysk" entirely.
+        var commandLine = string.Join(' ', Options().ToArguments());
 
-        Assert.DoesNotContain("--rc-user", arguments);
-        Assert.DoesNotContain("--rc-pass", arguments);
-        Assert.DoesNotContain("s3cret", arguments);
+        Assert.DoesNotContain("--rc-user", commandLine, StringComparison.Ordinal);
+        Assert.DoesNotContain("--rc-pass", commandLine, StringComparison.Ordinal);
+        Assert.DoesNotContain("s3cret", commandLine, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -44,6 +44,17 @@ public class ClearRcloneCacheController(
                 // mount is up. Releasing the mounts first means the files being
                 // deleted are not the ones it is still serving from.
                 var unmount = await client.UnmountAll(token).ConfigureAwait(false);
+                if (!unmount.Success)
+                {
+                    // The mounts are still up and rclone still holds the cache
+                    // files open. Deleting them now would pull the ground out
+                    // from under a running mount.
+                    return (
+                        Unmount: unmount,
+                        Purge: new RcloneCachePurgeResult(0, null),
+                        Remounted: new RcloneReconcileResult([], [], []));
+                }
+
                 var purge = RcloneCachePurger.Purge(cacheDir);
                 var remounted = await RcloneMountReconciler
                     .ForBuiltinDaemon(client, configManager)

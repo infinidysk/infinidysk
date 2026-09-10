@@ -78,15 +78,16 @@ public sealed class RcloneDaemonShutdownTests : IDisposable
     [Fact]
     public void UnmountBudget_FitsInsideTheHostsShutdownWindow()
     {
-        // Program.cs configures HostOptions.ShutdownTimeout to 5 seconds. The
-        // unmount and the process stop that follows it both have to complete
-        // inside that, or the mount is left behind — which is the bug this path
-        // exists to prevent.
+        // Read from Program rather than repeated here: the unmount and the
+        // process stop that follows it both have to complete inside the host's
+        // budget, or the mount is left behind, and a copied number would stop
+        // noticing if that budget ever changed.
         var total = RcloneDaemonService.UnmountTimeout + RcloneProcessLauncher.GracefulShutdownTimeout;
 
         Assert.True(
-            total < TimeSpan.FromSeconds(5),
-            $"unmount plus process stop is {total.TotalSeconds}s, which does not fit the host's 5s budget");
+            total < Program.ShutdownTimeout,
+            $"unmount plus process stop is {total.TotalSeconds}s, which does not fit the host's "
+            + $"{Program.ShutdownTimeout.TotalSeconds}s budget");
     }
 
     private static RcloneDaemonService Service(FakeLauncher launcher)

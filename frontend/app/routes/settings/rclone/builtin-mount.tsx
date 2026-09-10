@@ -851,6 +851,7 @@ export function isBuiltinMountSettingsUpdated(
     config["rclone.builtin.enabled"] !== newConfig["rclone.builtin.enabled"] ||
     config["rclone.builtin.mounts"] !== newConfig["rclone.builtin.mounts"] ||
     config["rclone.builtin.rc-port"] !== newConfig["rclone.builtin.rc-port"] ||
-    config["rclone.builtin.cache-dir"] !== newConfig["rclone.builtin.cache-dir"]
+    config["rclone.builtin.cache-dir"] !== newConfig["rclone.builtin.cache-dir"] ||
+    config["rclone.builtin.cache-size-limit"] !== newConfig["rclone.builtin.cache-size-limit"]
   );
 }

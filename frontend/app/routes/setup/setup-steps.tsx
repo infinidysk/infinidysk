@@ -119,7 +119,12 @@ export function LibraryTypeStep({
             onChange={(value) =>
               updateDraft((current) => ({
                 ...current,
-                config: applyStrategy(current.config, value, managedEnv),
+                config: applyStrategy(
+                  current.config,
+                  value,
+                  managedEnv,
+                  normalizeStrategy(current.config["api.import-strategy"]),
+                ),
                 vfsReadAheadConfirmed: value === "strm" ? false : current.vfsReadAheadConfirmed,
               }))
             }
@@ -1181,6 +1186,8 @@ function settingLabel(key: string): string {
     "api.import-strategy": "Import strategy",
     "usenet.segment-cache.enabled": "Segment Cache",
     "rclone.mount-dir": "Rclone mount directory",
+    "rclone.builtin.enabled": "Run rclone inside InfiniDysk",
+    "rclone.builtin.mounts": "Built-in mount",
     "rclone.rc-enabled": "RC notifications",
     "rclone.host": "Rclone RC host",
     "rclone.user": "Rclone RC user",

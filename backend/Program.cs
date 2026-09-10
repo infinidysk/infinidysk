@@ -48,6 +48,15 @@ namespace NzbWebDAV;
 
 public sealed partial class Program
 {
+    /// <summary>
+    /// How long the host gives every hosted service, together, to stop.
+    ///
+    /// Shared with the tests that size work against it: the built-in rclone
+    /// daemon has to release its mounts inside this budget, and a mount that
+    /// survives shutdown blocks the next start.
+    /// </summary>
+    internal static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(5);
+
     static async Task Main(string[] args)
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance); var (minThreads, maxThreads) = ThreadPoolUtil.ResolveLimits(
@@ -227,7 +236,7 @@ public sealed partial class Program
             builder.Host.UseSerilog();
             builder.Services.Configure<HostOptions>(options =>
             {
-                options.ShutdownTimeout = TimeSpan.FromSeconds(5);
+                options.ShutdownTimeout = ShutdownTimeout;
                 options.BackgroundServiceExceptionBehavior =
                     BackgroundServiceExceptionBehavior.StopHost;
             });

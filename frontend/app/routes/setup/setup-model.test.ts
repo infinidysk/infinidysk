@@ -116,6 +116,24 @@ describe("setup model", () => {
     expect(strm["rclone.builtin.enabled"]).toBe("false");
   });
 
+  it("restores the built-in mount when symlinks are chosen again after STRM", () => {
+    // A detour through STRM used to leave built-in mode off, quietly putting the
+    // operator on the sidecar path with its flags and RC host they never asked
+    // for.
+    const strm = applyStrategy(SETUP_DEFAULT_CONFIG, "strm", {});
+    expect(strm["rclone.builtin.enabled"]).toBe("false");
+
+    expect(applyStrategy(strm, "symlinks", {}, "strm")["rclone.builtin.enabled"]).toBe("true");
+  });
+
+  it("leaves a stored sidecar choice alone when no strategy change happened", () => {
+    // Without a transition there is nothing to undo, so an installation that
+    // deliberately runs its own rclone keeps that setting.
+    const sidecar = { ...SETUP_DEFAULT_CONFIG, "rclone.builtin.enabled": "false" };
+
+    expect(applyStrategy(sidecar, "symlinks", {})["rclone.builtin.enabled"]).toBe("false");
+  });
+
   it("does not propose RC notifications when InfiniDysk runs rclone itself", () => {
     // Those settings address a separate rclone container. Switching them on for
     // the built-in daemon would ask for a host that does not exist.

@@ -271,6 +271,9 @@ public class RcloneBuiltinConfigTests
     [InlineData(ConfigKeys.RcloneBuiltinMounts, "NZBDAV_CONFIG__RCLONE__BUILTIN__MOUNTS")]
     [InlineData(ConfigKeys.RcloneBuiltinRcPort, "NZBDAV_CONFIG__RCLONE__BUILTIN__RC_PORT")]
     [InlineData(ConfigKeys.RcloneBuiltinCacheDir, "NZBDAV_CONFIG__RCLONE__BUILTIN__CACHE_DIR")]
+    [InlineData(
+        ConfigKeys.RcloneBuiltinCacheSizeLimit,
+        "NZBDAV_CONFIG__RCLONE__BUILTIN__CACHE_SIZE_LIMIT")]
     public void BuiltinKeys_AreReachableFromTheHeadlessEnvironmentNamespace(string configKey, string expected)
     {
         Assert.Equal(expected, ConfigEnvMapping.ToEnvironmentVariableName(configKey));

@@ -318,7 +318,7 @@ export function Maintenance({ savedConfig, config, setNewConfig }: MaintenancePr
               Run repair, migration, and destructive cleanup tools on demand.
             </p>
           </div>
-          <span className="badge badge-ghost badge-sm shrink-0">9 tools</span>
+          <span className="badge badge-ghost badge-sm shrink-0">11 tools</span>
         </div>
         <div className="space-y-3">
           <MaintenanceTaskDetails title="Clean Missing Payloads">

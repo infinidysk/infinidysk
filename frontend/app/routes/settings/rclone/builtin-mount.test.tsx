@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement, useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BuiltinMountSettings } from "./builtin-mount";
+import { BuiltinMountSettings, isBuiltinMountSettingsUpdated } from "./builtin-mount";
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -410,6 +410,19 @@ describe("BuiltinMountSettings", () => {
     await waitFor(() =>
       expect(saved["rclone.builtin.mounts"]).toContain('"DirCacheTime":"01:00:00"'),
     );
+  });
+
+  it("treats an edited cache size limit as an unsaved change", () => {
+    // Save is enabled from this comparison. A setting missing from it looks
+    // saved the moment it is typed, and the value is silently dropped.
+    const saved = { "rclone.builtin.enabled": "true" };
+
+    expect(
+      isBuiltinMountSettingsUpdated(saved, {
+        ...saved,
+        "rclone.builtin.cache-size-limit": String(8 * 1024 ** 3),
+      }),
+    ).toBe(true);
   });
 
   it("shows the cache directory and size limit without opening anything first", async () => {

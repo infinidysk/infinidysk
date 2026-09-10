@@ -134,6 +134,7 @@ const defaultConfig = {
   "rclone.builtin.mounts": "",
   "rclone.builtin.rc-port": "",
   "rclone.builtin.cache-dir": "",
+  "rclone.builtin.cache-size-limit": "",
   "media.library-dir": "",
   "arr.instances": '{"RadarrInstances":[],"SonarrInstances":[],"QueueRules":[]}',
   "arr.health-enabled": "true",

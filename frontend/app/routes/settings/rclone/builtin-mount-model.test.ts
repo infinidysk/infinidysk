@@ -326,12 +326,18 @@ describe("mountsMatchServer", () => {
   it("matches when those fields agree across the wire formats", () => {
     // The status endpoint reports seconds; the form holds a TimeSpan string.
     const mounts = parseMounts(
-      '[{"Id":"library","MountPoint":"/mnt/remote","VfsCacheMaxAge":"06:00:00","ReadAheadBytes":536870912,"Links":false}]',
+      '[{"Id":"library","MountPoint":"/mnt/remote","VfsCacheMaxAge":"06:00:00","DirCacheTime":"01:00:00","ReadAheadBytes":536870912,"Links":false}]',
     );
 
     expect(
       mountsMatchServer(mounts, [
-        { ...saved, vfsCacheMaxAgeSeconds: 21600, readAheadBytes: 536870912, links: false },
+        {
+          ...saved,
+          vfsCacheMaxAgeSeconds: 21600,
+          dirCacheTimeSeconds: 3600,
+          readAheadBytes: 536870912,
+          links: false,
+        },
       ]),
     ).toBe(true);
   });

@@ -92,6 +92,7 @@ export function applyStrategy(
   config: Record<string, string>,
   strategy: SetupWizardStrategy,
   managedEnv: ManagedEnvMap,
+  previousStrategy?: SetupWizardStrategy,
 ): Record<string, string> {
   const next = { ...config };
   if (!("api.import-strategy" in managedEnv)) {
@@ -103,6 +104,17 @@ export function applyStrategy(
   // Nothing to mount when playback is URL-shaped.
   if (strategy === "strm" && !("rclone.builtin.enabled" in managedEnv)) {
     next["rclone.builtin.enabled"] = "false";
+  }
+
+  // Coming back the other way has to undo that, or a detour through STRM leaves
+  // the operator silently on the sidecar path they never chose. Only on the
+  // transition: an existing installation's stored choice is left alone.
+  if (
+    strategy === "symlinks" &&
+    previousStrategy === "strm" &&
+    !("rclone.builtin.enabled" in managedEnv)
+  ) {
+    next["rclone.builtin.enabled"] = "true";
   }
 
   // RC notifications address a separate rclone container. Proposing them while
