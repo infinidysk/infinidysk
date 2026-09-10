@@ -109,16 +109,29 @@ public class ArchiveSetGroupingTests
         Assert.All(descriptors, descriptor => Assert.Equal(2, descriptor.FileInfos.Count));
     }
 
+    [Fact]
+    public void Resolve_AmbiguousMultipartSevenZipVolumeDoesNotMergeSets()
+    {
+        var descriptors = ArchiveSetGrouping.Resolve([
+            Info("A.7z.001", "first-001"),
+            Info("A.7z.001", "second-001"),
+            Info("A.7z.002", "ambiguous-002"),
+        ], new ArchiveSetIdAllocator());
+
+        Assert.Equal(3, descriptors.Count);
+        Assert.All(descriptors, descriptor => Assert.Single(descriptor.FileInfos));
+    }
+
     private static void AssertStandaloneAndMultipartSevenZipRemainSeparate(string[] filenames)
     {
-        var descriptors = ArchiveSetGrouping.Resolve(filenames.Select(Info).ToList(), new ArchiveSetIdAllocator());
+        var descriptors = ArchiveSetGrouping.Resolve(filenames.Select(filename => Info(filename)).ToList(), new ArchiveSetIdAllocator());
 
         Assert.Equal(2, descriptors.Count);
         Assert.Contains(descriptors, descriptor => descriptor.FileInfos.Count == 1);
         Assert.Contains(descriptors, descriptor => descriptor.FileInfos.Count == 2);
     }
 
-    private static GetFileInfosStep.FileInfo Info(string filename) =>
+    private static GetFileInfosStep.FileInfo Info(string filename, string? messageId = null) =>
         new()
         {
             NzbFile = new NzbFile
@@ -126,7 +139,7 @@ public class ArchiveSetGroupingTests
                 Subject = filename,
                 Segments =
                 {
-                    new NzbSegment { MessageId = $"{filename}@example.com", Bytes = 1024 }
+                    new NzbSegment { MessageId = messageId ?? $"{filename}@example.com", Bytes = 1024 }
                 },
             },
             FileName = filename,

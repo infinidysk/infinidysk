@@ -41,7 +41,7 @@ internal static class ArchiveSetGrouping
                 var descriptor = volumeValue.Scheme == FilenameUtil.RarVolumeScheme.Part &&
                                  volumeOrdinal == 0
                     ? null
-                    : candidates.FirstOrDefault(candidate => candidate.FileInfos.All(existing =>
+                    : GetUniqueCandidate(candidates, candidate => candidate.FileInfos.All(existing =>
                         FilenameUtil.GetRarVolumeName(existing.FileName)?.Ordinal != volumeOrdinal));
                 if (descriptor is null)
                 {
@@ -78,7 +78,7 @@ internal static class ArchiveSetGrouping
                 sevenZipGroups.Add(sevenZipKey, sevenZipCandidates);
             }
 
-            var sevenZipDescriptor = sevenZipCandidates.FirstOrDefault(candidate => candidate.FileInfos.All(existing =>
+            var sevenZipDescriptor = GetUniqueCandidate(sevenZipCandidates, candidate => candidate.FileInfos.All(existing =>
                 FilenameUtil.GetSevenZipVolumeName(existing.FileName)?.Ordinal != sevenZipValue.Ordinal));
             if (sevenZipDescriptor is null)
             {
@@ -91,5 +91,13 @@ internal static class ArchiveSetGrouping
         }
 
         return descriptors;
+    }
+
+    private static ArchiveSetDescriptor? GetUniqueCandidate(
+        IEnumerable<ArchiveSetDescriptor> candidates,
+        Func<ArchiveSetDescriptor, bool> predicate)
+    {
+        var eligible = candidates.Where(predicate).Take(2).ToList();
+        return eligible.Count == 1 ? eligible[0] : null;
     }
 }
