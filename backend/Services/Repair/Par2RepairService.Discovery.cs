@@ -306,6 +306,7 @@ public partial class Par2RepairService
         catch (Exception exception) when (exception is UsenetArticleNotFoundException or UsenetCorruptArticleException or InvalidDataException or EndOfStreamException)
         {
             reads.Headers[id] = null;
+            reads.NoteUnavailable(id, exception);
             return null;
         }
     }
@@ -313,10 +314,12 @@ public partial class Par2RepairService
     private async Task<bool> SniffPar2MagicAsync(NzbFile file, RepairReadContext reads, CancellationToken ct)
     {
         if (file.Segments.Count == 0) return false;
+        var id = file.Segments[0].MessageId;
+        if (reads.UnavailableIds.Contains(id)) return false;
         await reads.FetchGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var response = await _usenetClient.DecodedBodyAsync(file.Segments[0].MessageId, ct).ConfigureAwait(false);
+            var response = await _usenetClient.DecodedBodyAsync(id, ct).ConfigureAwait(false);
             await using var stream = response.Stream!;
             var buffer = new byte[64];
             var count = 0;
@@ -330,7 +333,10 @@ public partial class Par2RepairService
             return buffer.AsSpan(0, 8).SequenceEqual("PAR2\0PKT"u8);
         }
         catch (Exception exception) when (exception is UsenetArticleNotFoundException or UsenetCorruptArticleException or InvalidDataException or EndOfStreamException)
-        { return false; }
+        {
+            reads.NoteUnavailable(id, exception);
+            return false;
+        }
         finally { reads.FetchGate.Release(); }
     }
 
