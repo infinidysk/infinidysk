@@ -81,12 +81,12 @@ public sealed class ArrMonitoringRejectedReleaseTests
         };
 
         await service.HandleStuckQueueItem(
-            item, config, client, new HashSet<Guid>(), CancellationToken.None);
+            item, config, client, new Dictionary<Guid, string[]?>(), CancellationToken.None);
 
         Assert.Throws<UsenetArticleNotFoundException>(() =>
             HealthCheckService.CheckCachedMissingSegmentIds([segmentId]));
         HealthCheckService.CheckCachedMissingSegmentIds([$"{Guid.NewGuid():N}@test"]);
-                Assert.Equal([blobId], blobStore.ReadIds);
+        Assert.Equal([blobId], blobStore.ReadIds);
     }
 
     [Fact]
@@ -104,14 +104,15 @@ public sealed class ArrMonitoringRejectedReleaseTests
                 fixture.Item,
                 fixture.Config,
                 fixture.Client,
-                new HashSet<Guid>(),
+                new Dictionary<Guid, string[]?>(),
                 CancellationToken.None);
             await fixture.Handler.RequestReceived.Task;
 
             Assert.Equal([fixture.BlobId], fixture.BlobStore.ReadIds);
             HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]);
 
-            response.SetResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+            using var completionResponse = new HttpResponseMessage(HttpStatusCode.NoContent);
+            response.SetResult(completionResponse);
             await handling;
 
             Assert.Throws<UsenetArticleNotFoundException>(() =>
@@ -121,217 +122,305 @@ public sealed class ArrMonitoringRejectedReleaseTests
         }
     }
 
-            [Theory]
-            [InlineData(HttpStatusCode.BadRequest)]
-            [InlineData(HttpStatusCode.NotFound)]
-            [InlineData(HttpStatusCode.InternalServerError)]
-            public async Task UnsuccessfulBlocklist_DoesNotSeedRejectedReleaseSegments(HttpStatusCode statusCode)
-            {
-                var fixture = await Fixture.CreateAsync(statusCode, ArrConfig.QueueAction.RemoveAndBlocklist);
-                await using (fixture)
-                {
-                    await fixture.Service.HandleStuckQueueItem(
-                        fixture.Item,
-                        fixture.Config,
-                        fixture.Client,
-                        new HashSet<Guid>(),
-                        CancellationToken.None);
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task UnsuccessfulBlocklist_DoesNotSeedRejectedReleaseSegments(HttpStatusCode statusCode)
+    {
+        var fixture = await Fixture.CreateAsync(statusCode, ArrConfig.QueueAction.RemoveAndBlocklist);
+        await using (fixture)
+        {
+            await fixture.Service.HandleStuckQueueItem(
+                fixture.Item,
+                fixture.Config,
+                fixture.Client,
+                new Dictionary<Guid, string[]?>(),
+                CancellationToken.None);
 
-                    HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]);
-                    Assert.Equal([fixture.BlobId], fixture.BlobStore.ReadIds);
-                }
-            }
+            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]);
+            Assert.Equal([fixture.BlobId], fixture.BlobStore.ReadIds);
+        }
+    }
 
-            [Fact]
-            public async Task PlainRemoval_DoesNotReadBlobOrSeedSegments()
-            {
-                var fixture = await Fixture.CreateAsync(HttpStatusCode.OK, ArrConfig.QueueAction.Remove);
-                await using (fixture)
-                {
-                    await fixture.Service.HandleStuckQueueItem(
-                        fixture.Item,
-                        fixture.Config,
-                        fixture.Client,
-                        new HashSet<Guid>(),
-                        CancellationToken.None);
+    [Fact]
+    public async Task PlainRemoval_DoesNotReadBlobOrSeedSegments()
+    {
+        var fixture = await Fixture.CreateAsync(HttpStatusCode.OK, ArrConfig.QueueAction.Remove);
+        await using (fixture)
+        {
+            await fixture.Service.HandleStuckQueueItem(
+                fixture.Item,
+                fixture.Config,
+                fixture.Client,
+                new Dictionary<Guid, string[]?>(),
+                CancellationToken.None);
 
-                    HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]);
-                    Assert.Empty(fixture.BlobStore.ReadIds);
-                    Assert.Contains("blocklist=false", fixture.Handler.RequestUri!.Query, StringComparison.Ordinal);
-                }
-            }
+            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]);
+            Assert.Empty(fixture.BlobStore.ReadIds);
+            Assert.Contains("blocklist=false", fixture.Handler.RequestUri!.Query, StringComparison.Ordinal);
+        }
+    }
 
-            [Fact]
-            public void SelectRejectedReleaseSeedSegments_CoversEachFileBeforeRemainingSegments()
-            {
-                var document = new NzbDocument();
-                var first = new NzbFile { Subject = "first.mkv" };
-                first.Segments.AddRange(
-                [
-                    new NzbSegment { Bytes = 1, MessageId = "first-1" },
+    [Fact]
+    public void SelectRejectedReleaseSeedSegments_CoversEachFileBeforeRemainingSegments()
+    {
+        var document = new NzbDocument();
+        var first = new NzbFile { Subject = "first.mkv" };
+        first.Segments.AddRange(
+        [
+            new NzbSegment { Bytes = 1, MessageId = "first-1" },
                     new NzbSegment { Bytes = 1, MessageId = "first-2" },
                 ]);
-                var second = new NzbFile { Subject = "second.par2" };
-                second.Segments.AddRange(
-                [
-                    new NzbSegment { Bytes = 1, MessageId = "second-1" },
+        var second = new NzbFile { Subject = "second.par2" };
+        second.Segments.AddRange(
+        [
+            new NzbSegment { Bytes = 1, MessageId = "second-1" },
                     new NzbSegment { Bytes = 1, MessageId = "second-2", FallbackMessageIds = ["fallback"] },
                 ]);
-                document.Files.AddRange([first, second]);
+        document.Files.AddRange([first, second]);
 
-                var selected = ArrMonitoringService.SelectRejectedReleaseSeedSegments(document, 3);
+        var selected = ArrMonitoringService.SelectRejectedReleaseSeedSegments(document, 3);
 
-                Assert.Equal(["first-1", "second-1", "first-2"], selected);
-                Assert.DoesNotContain("fallback", selected);
-            }
+        Assert.Equal(["first-1", "second-1", "first-2"], selected);
+        Assert.DoesNotContain("fallback", selected);
+    }
 
-            [Fact]
-            public void SelectRejectedReleaseSeedSegments_IsBoundedAndCoversEveryFile()
-            {
-                var document = new NzbDocument();
-                for (var fileIndex = 0; fileIndex < HealthCheckService.RejectedReleaseSeedSegments; fileIndex++)
-                {
-                    var file = new NzbFile { Subject = $"file-{fileIndex}.bin" };
-                    file.Segments.AddRange(
-                    [
-                        new NzbSegment { Bytes = 1, MessageId = $"file-{fileIndex}-first" },
+    [Fact]
+    public void SelectRejectedReleaseSeedSegments_IsBoundedAndCoversEveryFile()
+    {
+        var document = new NzbDocument();
+        for (var fileIndex = 0; fileIndex < HealthCheckService.RejectedReleaseSeedSegments; fileIndex++)
+        {
+            var file = new NzbFile { Subject = $"file-{fileIndex}.bin" };
+            file.Segments.AddRange(
+            [
+                new NzbSegment { Bytes = 1, MessageId = $"file-{fileIndex}-first" },
                         new NzbSegment { Bytes = 1, MessageId = $"file-{fileIndex}-second" },
                     ]);
-                    document.Files.Add(file);
-                }
+            document.Files.Add(file);
+        }
 
-                var selected = ArrMonitoringService.SelectRejectedReleaseSeedSegments(
-                    document,
-                    HealthCheckService.RejectedReleaseSeedSegments);
+        var selected = ArrMonitoringService.SelectRejectedReleaseSeedSegments(
+            document,
+            HealthCheckService.RejectedReleaseSeedSegments);
 
-                Assert.Equal(HealthCheckService.RejectedReleaseSeedSegments, selected.Length);
-                Assert.Equal(
-                    Enumerable.Range(0, HealthCheckService.RejectedReleaseSeedSegments)
-                        .Select(index => $"file-{index}-first"),
-                    selected);
-            }
+        Assert.Equal(HealthCheckService.RejectedReleaseSeedSegments, selected.Length);
+        Assert.Equal(
+            Enumerable.Range(0, HealthCheckService.RejectedReleaseSeedSegments)
+                .Select(index => $"file-{index}-first"),
+            selected);
+    }
 
-            [Theory]
-            [InlineData(EvidenceFailure.MissingBlob)]
-            [InlineData(EvidenceFailure.MalformedNzb)]
-            [InlineData(EvidenceFailure.FailedHistory)]
-            [InlineData(EvidenceFailure.InvalidDownloadId)]
-            public async Task UnavailableEvidence_DoesNotPreventConfiguredBlocklist(EvidenceFailure failure)
+    [Theory]
+    [InlineData(EvidenceFailure.MissingBlob)]
+    [InlineData(EvidenceFailure.MalformedNzb)]
+    [InlineData(EvidenceFailure.FailedHistory)]
+    [InlineData(EvidenceFailure.InvalidDownloadId)]
+    public async Task UnavailableEvidence_DoesNotPreventConfiguredBlocklist(EvidenceFailure failure)
+    {
+        var fixture = await Fixture.CreateAsync(
+            HttpStatusCode.NoContent,
+            ArrConfig.QueueAction.RemoveAndBlocklist,
+            failure: failure);
+        await using (fixture)
+        {
+            var resolution = await fixture.Service.HandleStuckQueueItem(
+                fixture.Item,
+                fixture.Config,
+                fixture.Client,
+                new Dictionary<Guid, string[]?>(),
+                CancellationToken.None);
+
+            Assert.NotNull(resolution);
+            Assert.NotNull(fixture.Handler.RequestUri);
+            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]);
+            if (failure == EvidenceFailure.InvalidDownloadId)
+                Assert.Empty(fixture.BlobStore.ReadIds);
+        }
+    }
+
+    [Fact]
+    public async Task RepeatedDownloadInOnePass_CapturesOnceButDeletesEveryRecord()
+    {
+        var fixture = await Fixture.CreateAsync(
+            HttpStatusCode.NoContent,
+            ArrConfig.QueueAction.RemoveAndBlocklist);
+        await using (fixture)
+        {
+            var rejectedReleaseCaptures = new Dictionary<Guid, string[]?>();
+            await fixture.Service.HandleStuckQueueItem(
+                fixture.Item,
+                fixture.Config,
+                fixture.Client,
+                rejectedReleaseCaptures,
+                CancellationToken.None);
+            await fixture.Service.HandleStuckQueueItem(
+                fixture.Item,
+                fixture.Config,
+                fixture.Client,
+                rejectedReleaseCaptures,
+                CancellationToken.None);
+
+            Assert.Equal([fixture.BlobId], fixture.BlobStore.ReadIds);
+            Assert.Equal(2, fixture.Handler.RequestCount);
+        }
+    }
+
+    [Fact]
+    public async Task RepeatedUnavailableEvidenceInOnePass_CapturesOnceButDeletesEveryRecord()
+    {
+        var fixture = await Fixture.CreateAsync(
+            HttpStatusCode.NoContent,
+            ArrConfig.QueueAction.RemoveAndBlocklist,
+            failure: EvidenceFailure.MalformedNzb);
+        await using (fixture)
+        {
+            var rejectedReleaseCaptures = new Dictionary<Guid, string[]?>();
+            await fixture.Service.HandleStuckQueueItem(
+                fixture.Item,
+                fixture.Config,
+                fixture.Client,
+                rejectedReleaseCaptures,
+                CancellationToken.None);
+            await fixture.Service.HandleStuckQueueItem(
+                fixture.Item,
+                fixture.Config,
+                fixture.Client,
+                rejectedReleaseCaptures,
+                CancellationToken.None);
+
+            Assert.Equal([fixture.BlobId], fixture.BlobStore.ReadIds);
+            Assert.Equal(2, fixture.Handler.RequestCount);
+            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]);
+        }
+    }
+
+    [Fact]
+    public async Task RepeatedCaptureTimeoutInOnePass_AttemptsCaptureOnceButDeletesEveryRecord()
+    {
+        var fixture = await Fixture.CreateAsync(
+            HttpStatusCode.NoContent,
+            ArrConfig.QueueAction.RemoveAndBlocklist,
+            failure: EvidenceFailure.CaptureTimeout);
+        await using (fixture)
+        {
+            var rejectedReleaseCaptures = new Dictionary<Guid, string[]?>();
+            await fixture.Service.HandleStuckQueueItem(
+                fixture.Item,
+                fixture.Config,
+                fixture.Client,
+                rejectedReleaseCaptures,
+                CancellationToken.None);
+            await fixture.Service.HandleStuckQueueItem(
+                fixture.Item,
+                fixture.Config,
+                fixture.Client,
+                rejectedReleaseCaptures,
+                CancellationToken.None);
+
+            Assert.Equal(1, fixture.DbContextFactory.AsyncCreateCount);
+            Assert.Equal(2, fixture.Handler.RequestCount);
+            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]);
+        }
+    }
+
+    [Fact]
+    public async Task FailedDelete_RetainsCapturedEvidenceForLaterSuccessfulRecord()
+    {
+        var fixture = await Fixture.CreateAsync(
+            HttpStatusCode.BadRequest,
+            ArrConfig.QueueAction.RemoveAndBlocklist);
+        await using (fixture)
+        {
+            var rejectedReleaseCaptures = new Dictionary<Guid, string[]?>();
+            await fixture.Service.HandleStuckQueueItem(
+                fixture.Item,
+                fixture.Config,
+                fixture.Client,
+                rejectedReleaseCaptures,
+                CancellationToken.None);
+            fixture.Handler.StatusCode = HttpStatusCode.NoContent;
+            await fixture.Service.HandleStuckQueueItem(
+                fixture.Item,
+                fixture.Config,
+                fixture.Client,
+                rejectedReleaseCaptures,
+                CancellationToken.None);
+
+            Assert.Equal([fixture.BlobId], fixture.BlobStore.ReadIds);
+            Assert.Equal(2, fixture.Handler.RequestCount);
+            Assert.Throws<UsenetArticleNotFoundException>(() =>
+                HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]));
+        }
+    }
+
+    [Fact]
+    public async Task SuccessfulBlocklist_StopsRegrabBeforeAnyNntpRequest()
+    {
+        var fixture = await Fixture.CreateAsync(
+            HttpStatusCode.NoContent,
+            ArrConfig.QueueAction.RemoveAndBlocklistAndSearch);
+        await using (fixture)
+        {
+            await fixture.Service.HandleStuckQueueItem(
+                fixture.Item,
+                fixture.Config,
+                fixture.Client,
+                new Dictionary<Guid, string[]?>(),
+                CancellationToken.None);
+
+            var queueItem = new QueueItem
             {
-                var fixture = await Fixture.CreateAsync(
-                    HttpStatusCode.NoContent,
-                    ArrConfig.QueueAction.RemoveAndBlocklist,
-                    failure: failure);
-                await using (fixture)
-                {
-                    var resolution = await fixture.Service.HandleStuckQueueItem(
-                        fixture.Item,
-                        fixture.Config,
-                        fixture.Client,
-                        new HashSet<Guid>(),
-                        CancellationToken.None);
+                Id = Guid.NewGuid(),
+                CreatedAt = DateTime.UtcNow,
+                SortOrder = QueueItem.SortOrderStride,
+                FileName = "Synthetic.Regrab.nzb",
+                JobName = "Synthetic.Regrab",
+                NzbFileSize = 512,
+                TotalSegmentBytes = 128,
+                Category = "movies",
+                Priority = QueueItem.PriorityOption.Normal,
+                PostProcessing = QueueItem.PostProcessingOption.None,
+            };
+            await using var context = new DavDatabaseContext(fixture.Options);
+            context.QueueItems.Add(queueItem);
+            await context.SaveChangesAsync();
+            var dbClient = new DavDatabaseClient(context);
+            var nntpClient = new FakeNntpClient(new Dictionary<string, byte[]>());
+            var configManager = new ConfigManager();
+            using var healthCheckConnectionGate = new HealthCheckConnectionGate(configManager);
+            await using var nzbStream = new MemoryStream(
+                Encoding.UTF8.GetBytes(CreateNzb(fixture.SegmentId)),
+                writable: false);
+            var processor = new QueueItemProcessor(
+                queueItem,
+                nzbStream,
+                dbClient,
+                nntpClient,
+                configManager,
+                new WebsocketManager(),
+                new Progress<int>(),
+                healthCheckConnectionGate,
+                CancellationToken.None);
 
-                    Assert.NotNull(resolution);
-                    Assert.NotNull(fixture.Handler.RequestUri);
-                    HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]);
-                    if (failure == EvidenceFailure.InvalidDownloadId)
-                        Assert.Empty(fixture.BlobStore.ReadIds);
-                }
-            }
+            await processor.ProcessAsync();
 
-            [Fact]
-            public async Task RepeatedDownloadInOnePass_CapturesOnceButDeletesEveryRecord()
-            {
-                var fixture = await Fixture.CreateAsync(
-                    HttpStatusCode.NoContent,
-                    ArrConfig.QueueAction.RemoveAndBlocklist);
-                await using (fixture)
-                {
-                    var seededDownloadIds = new HashSet<Guid>();
-                    await fixture.Service.HandleStuckQueueItem(
-                        fixture.Item,
-                        fixture.Config,
-                        fixture.Client,
-                        seededDownloadIds,
-                        CancellationToken.None);
-                    await fixture.Service.HandleStuckQueueItem(
-                        fixture.Item,
-                        fixture.Config,
-                        fixture.Client,
-                        seededDownloadIds,
-                        CancellationToken.None);
+            context.ChangeTracker.Clear();
+            Assert.DoesNotContain(await context.QueueItems.AsNoTracking().ToListAsync(), x => x.Id == queueItem.Id);
+            var failed = await context.HistoryItems.AsNoTracking().SingleAsync(x => x.Id == queueItem.Id);
+            Assert.Equal(HistoryItem.DownloadStatusOption.Failed, failed.DownloadStatus);
+            Assert.Contains(fixture.SegmentId, failed.FailMessage, StringComparison.Ordinal);
+            Assert.Equal(0, nntpClient.BodyRequestCount);
+            Assert.Equal(0, nntpClient.BatchRequestCount);
+            Assert.Equal(0, nntpClient.HeaderProbeCount);
+            Assert.Empty(nntpClient.StatRequestCounts);
+            Assert.Contains("blocklist=true", fixture.Handler.RequestUri!.Query, StringComparison.Ordinal);
+            Assert.Contains("skipRedownload=false", fixture.Handler.RequestUri.Query, StringComparison.Ordinal);
+        }
+    }
 
-                    Assert.Equal([fixture.BlobId], fixture.BlobStore.ReadIds);
-                    Assert.Equal(2, fixture.Handler.RequestCount);
-                }
-            }
-
-            [Fact]
-            public async Task SuccessfulBlocklist_StopsRegrabBeforeAnyNntpRequest()
-            {
-                var fixture = await Fixture.CreateAsync(
-                    HttpStatusCode.NoContent,
-                    ArrConfig.QueueAction.RemoveAndBlocklistAndSearch);
-                await using (fixture)
-                {
-                    await fixture.Service.HandleStuckQueueItem(
-                        fixture.Item,
-                        fixture.Config,
-                        fixture.Client,
-                        new HashSet<Guid>(),
-                        CancellationToken.None);
-
-                    var queueItem = new QueueItem
-                    {
-                        Id = Guid.NewGuid(),
-                        CreatedAt = DateTime.UtcNow,
-                        SortOrder = QueueItem.SortOrderStride,
-                        FileName = "Synthetic.Regrab.nzb",
-                        JobName = "Synthetic.Regrab",
-                        NzbFileSize = 512,
-                        TotalSegmentBytes = 128,
-                        Category = "movies",
-                        Priority = QueueItem.PriorityOption.Normal,
-                        PostProcessing = QueueItem.PostProcessingOption.None,
-                    };
-                    await using var context = new DavDatabaseContext(fixture.Options);
-                    context.QueueItems.Add(queueItem);
-                    await context.SaveChangesAsync();
-                    var dbClient = new DavDatabaseClient(context);
-                    var nntpClient = new FakeNntpClient(new Dictionary<string, byte[]>());
-                    var configManager = new ConfigManager();
-                    using var healthCheckConnectionGate = new HealthCheckConnectionGate(configManager);
-                    await using var nzbStream = new MemoryStream(
-                        Encoding.UTF8.GetBytes(CreateNzb(fixture.SegmentId)),
-                        writable: false);
-                    var processor = new QueueItemProcessor(
-                        queueItem,
-                        nzbStream,
-                        dbClient,
-                        nntpClient,
-                        configManager,
-                        new WebsocketManager(),
-                        new Progress<int>(),
-                        healthCheckConnectionGate,
-                        CancellationToken.None);
-
-                    await processor.ProcessAsync();
-
-                    context.ChangeTracker.Clear();
-                    Assert.DoesNotContain(await context.QueueItems.AsNoTracking().ToListAsync(), x => x.Id == queueItem.Id);
-                    var failed = await context.HistoryItems.AsNoTracking().SingleAsync(x => x.Id == queueItem.Id);
-                    Assert.Equal(HistoryItem.DownloadStatusOption.Failed, failed.DownloadStatus);
-                    Assert.Contains(fixture.SegmentId, failed.FailMessage, StringComparison.Ordinal);
-                    Assert.Equal(0, nntpClient.BodyRequestCount);
-                    Assert.Equal(0, nntpClient.BatchRequestCount);
-                    Assert.Equal(0, nntpClient.HeaderProbeCount);
-                    Assert.Empty(nntpClient.StatRequestCounts);
-                    Assert.Contains("blocklist=true", fixture.Handler.RequestUri!.Query, StringComparison.Ordinal);
-                    Assert.Contains("skipRedownload=false", fixture.Handler.RequestUri.Query, StringComparison.Ordinal);
-                }
-            }
-
-        private static string CreateNzb(string segmentId) => $$"""
+    private static string CreateNzb(string segmentId) => $$"""
                 <?xml version="1.0" encoding="utf-8"?>
                 <nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
                     <file subject="Synthetic.Release.mkv">
@@ -350,6 +439,7 @@ public sealed class ArrMonitoringRejectedReleaseTests
         HttpStatusCode statusCode,
         TaskCompletionSource<HttpResponseMessage>? response = null) : HttpMessageHandler
     {
+        public HttpStatusCode StatusCode { get; set; } = statusCode;
         public Uri? RequestUri { get; private set; }
         public int RequestCount { get; private set; }
         public TaskCompletionSource RequestReceived { get; } =
@@ -364,15 +454,28 @@ public sealed class ArrMonitoringRejectedReleaseTests
             RequestCount++;
             RequestReceived.TrySetResult();
             return response is null
-                ? new HttpResponseMessage(statusCode)
+                ? new HttpResponseMessage(StatusCode)
                 : await response.Task.WaitAsync(cancellationToken);
         }
     }
 
-    private sealed class TestDbContextFactory(DbContextOptions<DavDatabaseContext> options)
+    private sealed class TestDbContextFactory(
+        DbContextOptions<DavDatabaseContext> options,
+        bool timeOut = false)
         : IDbContextFactory<DavDatabaseContext>
     {
+        public int AsyncCreateCount { get; private set; }
+
         public DavDatabaseContext CreateDbContext() => new(options);
+
+        public async Task<DavDatabaseContext> CreateDbContextAsync(
+            CancellationToken cancellationToken = default)
+        {
+            AsyncCreateCount++;
+            if (timeOut)
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new DavDatabaseContext(options);
+        }
     }
 
     private sealed class MemoryBlobStore(Dictionary<Guid, byte[]> blobs) : IBlobStore
@@ -408,6 +511,7 @@ public sealed class ArrMonitoringRejectedReleaseTests
             Guid blobId,
             string segmentId,
             MemoryBlobStore blobStore,
+            TestDbContextFactory dbContextFactory,
             DeleteHandler handler,
             TestArrClient client,
             ArrMonitoringService service,
@@ -420,6 +524,7 @@ public sealed class ArrMonitoringRejectedReleaseTests
             BlobId = blobId;
             SegmentId = segmentId;
             BlobStore = blobStore;
+            DbContextFactory = dbContextFactory;
             Handler = handler;
             Client = client;
             Service = service;
@@ -431,6 +536,7 @@ public sealed class ArrMonitoringRejectedReleaseTests
         public DbContextOptions<DavDatabaseContext> Options { get; }
         public string SegmentId { get; }
         public MemoryBlobStore BlobStore { get; }
+        public TestDbContextFactory DbContextFactory { get; }
         public DeleteHandler Handler { get; }
         public TestArrClient Client { get; }
         public ArrMonitoringService Service { get; }
@@ -480,10 +586,13 @@ public sealed class ArrMonitoringRejectedReleaseTests
             var handler = new DeleteHandler(statusCode, response);
             var httpClient = new HttpClient(handler);
             var client = new TestArrClient(httpClient);
+            var dbContextFactory = new TestDbContextFactory(
+                options,
+                timeOut: failure == EvidenceFailure.CaptureTimeout);
             var service = new ArrMonitoringService(
                 new ConfigManager(),
                 new ArrReplacementSearchBudget(),
-                new TestDbContextFactory(options),
+                dbContextFactory,
                 blobStore);
             var item = new ArrQueueRecord
             {
@@ -512,6 +621,7 @@ public sealed class ArrMonitoringRejectedReleaseTests
                 blobId,
                 segmentId,
                 blobStore,
+                dbContextFactory,
                 handler,
                 client,
                 service,
@@ -533,5 +643,6 @@ public sealed class ArrMonitoringRejectedReleaseTests
         MalformedNzb,
         FailedHistory,
         InvalidDownloadId,
+        CaptureTimeout,
     }
 }

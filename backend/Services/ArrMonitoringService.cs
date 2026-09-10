@@ -80,7 +80,7 @@ public class ArrMonitoringService : BackgroundService
         // the buffer support packs are built from, so detail goes to Debug and the pass
         // reports one Warning per release and action.
         var resolutions = new List<(string? Title, ArrConfig.QueueAction Action, string Reason, string IdentitySource)>();
-        var seededDownloadIds = new HashSet<Guid>();
+        var rejectedReleaseCaptures = new Dictionary<Guid, string[]?>();
 
         // Skip a host that is timing out or refusing connections until its backoff elapses.
         if (_backoff.IsInBackoff(client.Host))
@@ -104,7 +104,7 @@ public class ArrMonitoringService : BackgroundService
             foreach (var record in stuckRecords)
             {
                 var resolution = await HandleStuckQueueItem(
-                    record, arrConfig, client, seededDownloadIds, timeout.Token)
+                    record, arrConfig, client, rejectedReleaseCaptures, timeout.Token)
                     .ConfigureAwait(false);
                 if (resolution is null) continue;
                 resolutions.Add(resolution.Value);
@@ -156,7 +156,7 @@ public class ArrMonitoringService : BackgroundService
         ArrQueueRecord item,
         ArrConfig arrConfig,
         ArrClient client,
-        ISet<Guid>? seededDownloadIds,
+        IDictionary<Guid, string[]?>? rejectedReleaseCaptures,
         CancellationToken ct)
     {
         // since there may be multiple status messages, multiple actions may apply.
@@ -177,7 +177,7 @@ public class ArrMonitoringService : BackgroundService
         var shouldCapture = action is ArrConfig.QueueAction.RemoveAndBlocklist
             or ArrConfig.QueueAction.RemoveAndBlocklistAndSearch;
         var rejectedRelease = shouldCapture
-            ? await CaptureRejectedReleaseSegmentsAsync(item, client.Host, seededDownloadIds, ct)
+            ? await CaptureRejectedReleaseSegmentsAsync(item, client.Host, rejectedReleaseCaptures, ct)
                 .ConfigureAwait(false)
             : null;
         ct.ThrowIfCancellationRequested();
@@ -220,7 +220,8 @@ public class ArrMonitoringService : BackgroundService
             try
             {
                 HealthCheckService.AddMissingSegmentIds(rejectedRelease.Value.SegmentIds);
-                seededDownloadIds?.Add(rejectedRelease.Value.DownloadId);
+                if (rejectedReleaseCaptures is not null)
+                    rejectedReleaseCaptures[rejectedRelease.Value.DownloadId] = [];
                 Log.Debug(
                     "Recorded {SegmentCount} article IDs from blocklisted Arr download {DownloadId}",
                     rejectedRelease.Value.SegmentIds.Length,
@@ -241,7 +242,7 @@ public class ArrMonitoringService : BackgroundService
     private async Task<(Guid DownloadId, string[] SegmentIds)?> CaptureRejectedReleaseSegmentsAsync(
         ArrQueueRecord item,
         string host,
-        ISet<Guid>? seededDownloadIds,
+        IDictionary<Guid, string[]?>? rejectedReleaseCaptures,
         CancellationToken ct)
     {
         if (!Guid.TryParse(item.DownloadId, out var downloadId) || downloadId == Guid.Empty)
@@ -253,8 +254,21 @@ public class ArrMonitoringService : BackgroundService
                 host);
             return null;
         }
-        if (seededDownloadIds?.Contains(downloadId) is true)
-            return null;
+        if (rejectedReleaseCaptures?.TryGetValue(downloadId, out var cachedSegments) is true)
+            return cachedSegments is { Length: > 0 } ? (downloadId, cachedSegments) : null;
+
+        var segments = await CaptureRejectedReleaseSegmentsCoreAsync(item, host, downloadId, ct)
+            .ConfigureAwait(false);
+        if (rejectedReleaseCaptures is not null)
+            rejectedReleaseCaptures[downloadId] = segments;
+        return segments is { Length: > 0 } ? (downloadId, segments) : null;
+    }
+    private async Task<string[]?> CaptureRejectedReleaseSegmentsCoreAsync(
+        ArrQueueRecord item,
+        string host,
+        Guid downloadId,
+        CancellationToken ct)
+    {
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(RejectedReleaseCaptureTimeout);
@@ -287,7 +301,7 @@ public class ArrMonitoringService : BackgroundService
             var document = await LoadRejectedReleaseAsync(nzbStream, timeout.Token).ConfigureAwait(false);
             var segments = SelectRejectedReleaseSeedSegments(
                 document, HealthCheckService.RejectedReleaseSeedSegments);
-            return segments.Length > 0 ? (downloadId, segments) : null;
+            return segments.Length > 0 ? segments : null;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
