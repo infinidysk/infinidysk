@@ -651,7 +651,11 @@ public class RemoveUnlinkedFilesTask : BaseTask
     private void AppendPreviewFingerprintHeader(IncrementalHash hash)
     {
         AppendPreviewFingerprintValue(hash, _configManager.GetLibraryDir());
-        AppendPreviewFingerprintValue(hash, _configManager.GetRcloneMountDir());
+
+        // Every mount the abort check considers, so an approved preview stops
+        // being valid when the mount layout changes underneath it.
+        foreach (var mountDir in _configManager.GetAllRcloneMountDirs())
+            AppendPreviewFingerprintValue(hash, mountDir);
     }
 
     private static void AppendPreviewFingerprintItem(IncrementalHash hash, UnlinkedFileInfo item)

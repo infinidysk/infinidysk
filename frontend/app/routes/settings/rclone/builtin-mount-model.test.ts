@@ -321,6 +321,13 @@ describe("mountsMatchServer", () => {
         [saved],
       ),
     ).toBe(false);
+    // An import is the only way this one changes, and it must not read as saved.
+    expect(
+      mountsMatchServer(
+        base.map((m) => ({ ...m, VfsCacheMaxSizeBytes: 21474836480 })),
+        [saved],
+      ),
+    ).toBe(false);
   });
 
   it("matches when those fields agree across the wire formats", () => {

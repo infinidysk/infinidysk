@@ -44,7 +44,17 @@ public static class RcloneCachePurger
         long freed = 0;
         try
         {
-            foreach (var file in Directory.EnumerateFiles(full, "*", SearchOption.AllDirectories))
+            // Reparse points are skipped rather than followed: a symlink inside
+            // the cache would otherwise have whatever it points at counted here,
+            // and a link loop would walk forever.
+            var walk = new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                AttributesToSkip = FileAttributes.ReparsePoint,
+                IgnoreInaccessible = true,
+            };
+
+            foreach (var file in Directory.EnumerateFiles(full, "*", walk))
             {
                 try
                 {

@@ -144,6 +144,9 @@ public class RcloneMountConfig
             if (mount.ReadAheadBytes is < 0)
                 errors.Add($"Mount '{label}': the read-ahead size cannot be negative.");
 
+            if (mount.DirCacheTime < TimeSpan.Zero)
+                errors.Add($"Mount '{label}': the folder listing cache cannot be negative.");
+
             if (mount.VfsCacheMaxAge < TimeSpan.Zero)
                 errors.Add($"Mount '{label}': the cache age limit cannot be negative.");
 

@@ -2549,7 +2549,13 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     {
         try
         {
-            return GetConfigValue<List<RcloneMountConfig>>(ConfigKeys.RcloneBuiltinMounts) ?? [];
+            // "[null]" in a hand-edited value deserializes to a list with a null
+            // in it. Callers walk this list without expecting that, so it is
+            // dropped here rather than in each of them; the validator reports the
+            // malformed entry separately.
+            return (GetConfigValue<List<RcloneMountConfig>>(ConfigKeys.RcloneBuiltinMounts) ?? [])
+                .Where(mount => mount is not null)
+                .ToList();
         }
         catch (JsonException)
         {

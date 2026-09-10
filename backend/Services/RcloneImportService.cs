@@ -44,7 +44,25 @@ public sealed class RcloneImportService
             return new RcloneImportPreview(false, [], warnings);
         }
 
-        var mountPoints = (live.MountPoints ?? []).Where(m => m.MountPoint is not null).ToList();
+        // Both halves are needed: the mount point to reproduce, and the fs to ask
+        // rclone about. A record missing either cannot be translated, and is
+        // reported rather than dropped in silence.
+        var usable = new List<Clients.Rclone.Models.RcloneMountPoint>();
+        foreach (var candidate in live.MountPoints ?? [])
+        {
+            if (candidate.MountPoint is not null && candidate.Fs is not null)
+            {
+                usable.Add(candidate);
+                continue;
+            }
+
+            warnings.Add(
+                "The external rclone reported a mount without "
+                + (candidate.MountPoint is null ? "a mount point" : "a remote")
+                + ", so it was skipped.");
+        }
+
+        var mountPoints = usable;
         if (mountPoints.Count == 0)
         {
             warnings.Add(

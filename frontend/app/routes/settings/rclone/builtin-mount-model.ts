@@ -233,6 +233,7 @@ type ServerMountRow = {
   readAheadBytes?: number | null;
   vfsCacheMaxAgeSeconds?: number;
   dirCacheTimeSeconds?: number;
+  vfsCacheMaxSizeBytes?: number | null;
 };
 
 type MountSignatureInput = {
@@ -245,6 +246,7 @@ type MountSignatureInput = {
   readAheadBytes: number | null;
   cacheAgeHours: number;
   dirCacheHours: number;
+  cacheMaxSizeBytes: number | null;
 };
 
 // Every field the tab can edit has to appear here, or editing it would leave
@@ -260,6 +262,7 @@ const mountSignature = (m: MountSignatureInput) =>
     m.readAheadBytes ?? "default",
     m.cacheAgeHours,
     m.dirCacheHours,
+    m.cacheMaxSizeBytes ?? "auto",
   ].join("|");
 
 /**
@@ -290,6 +293,7 @@ export function mountsMatchServer(
         readAheadBytes: mount.ReadAheadBytes ?? null,
         cacheAgeHours: timeSpanToHours(mount.VfsCacheMaxAge, DEFAULT_CACHE_AGE_HOURS),
         dirCacheHours: timeSpanToHours(mount.DirCacheTime, DEFAULT_DIR_CACHE_HOURS),
+        cacheMaxSizeBytes: mount.VfsCacheMaxSizeBytes ?? null,
       }),
     )
     .sort();
@@ -314,6 +318,7 @@ export function mountsMatchServer(
           row.dirCacheTimeSeconds === undefined
             ? DEFAULT_DIR_CACHE_HOURS
             : Math.round(row.dirCacheTimeSeconds / 3600),
+        cacheMaxSizeBytes: row.vfsCacheMaxSizeBytes ?? null,
       }),
     )
     .sort();

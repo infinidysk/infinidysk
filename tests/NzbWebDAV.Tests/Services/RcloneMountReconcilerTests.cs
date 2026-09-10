@@ -366,6 +366,59 @@ public class RcloneMountReconcilerTests
     }
 
     [Fact]
+    public async Task ReconcileAsync_RemountsWhenTheLiveTuningNoLongerMatches()
+    {
+        // rclone applies VFS options at mount time. Without this the operator
+        // changes the cache mode, the save succeeds, the pass reports success,
+        // and the mount carries on exactly as before.
+        var client = new FakeRcloneClient
+        {
+            Remotes = ["infinidysk"],
+            Live = [new RcloneMountPoint { Fs = "infinidysk:/", MountPoint = "/mnt/remote" }],
+            LiveOptions = new VfsOptions
+            {
+                CacheMode = "writes",
+                Links = true,
+                DirCacheTime = TimeSpan.FromDays(7).Ticks * 100,
+                CacheMaxAge = TimeSpan.FromDays(7).Ticks * 100,
+                ReadAhead = 536_870_912,
+            },
+        };
+        var reconciler = new RcloneMountReconciler(client);
+
+        // Configured as full; the mount is running as writes.
+        var result = await reconciler.ReconcileAsync([Mount()], CancellationToken.None);
+
+        Assert.Contains("/mnt/remote", client.Unmounted);
+        Assert.Contains("/mnt/remote", result.Mounted);
+    }
+
+    [Fact]
+    public async Task ReconcileAsync_LeavesAMountAloneWhenItsTuningStillMatches()
+    {
+        // The other half: an unchanged mount must not be torn down every pass.
+        var client = new FakeRcloneClient
+        {
+            Remotes = ["infinidysk"],
+            Live = [new RcloneMountPoint { Fs = "infinidysk:/", MountPoint = "/mnt/remote" }],
+            LiveOptions = new VfsOptions
+            {
+                CacheMode = "full",
+                Links = true,
+                DirCacheTime = TimeSpan.FromDays(7).Ticks * 100,
+                CacheMaxAge = TimeSpan.FromDays(7).Ticks * 100,
+                ReadAhead = 536_870_912,
+            },
+        };
+        var reconciler = new RcloneMountReconciler(client);
+
+        var result = await reconciler.ReconcileAsync([Mount()], CancellationToken.None);
+
+        Assert.Empty(client.Unmounted);
+        Assert.Empty(result.Mounted);
+    }
+
+    [Fact]
     public void DescribeMountFailure_ExplainsAMountPointSomethingElseHolds()
     {
         // rclone refuses to mount over a live mount point. A FUSE mount outlives
@@ -477,8 +530,11 @@ public class RcloneMountReconcilerTests
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new VfsForgetResponse { Success = true });
 
+        /// <summary>What the running mount reports, when a test cares.</summary>
+        public VfsOptions? LiveOptions { get; init; }
+
         public Task<VfsStatsResponse> GetVfsStats(string? fs = null, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new VfsStatsResponse { Success = true });
+            Task.FromResult(new VfsStatsResponse { Success = true, Options = LiveOptions });
 
         public Task<CoreVersionResponse> GetVersion(CancellationToken cancellationToken = default) =>
             Task.FromResult(new CoreVersionResponse { Success = true });

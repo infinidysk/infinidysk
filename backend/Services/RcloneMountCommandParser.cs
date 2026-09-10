@@ -350,7 +350,16 @@ public static class RcloneMountCommandParser
 
             if (unit == TimeSpan.MinValue) return false;
 
-            total += unit;
+            try
+            {
+                // Each part can be representable while the sum is not.
+                total += unit;
+            }
+            catch (OverflowException)
+            {
+                return false;
+            }
+
             magnitude = string.Empty;
             sawUnit = true;
         }

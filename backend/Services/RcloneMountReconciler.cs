@@ -77,11 +77,25 @@ public sealed class RcloneMountReconciler(
             .Where(m => m.Enabled)
             .ToDictionary(m => m.MountPoint, m => m, StringComparer.Ordinal);
 
+        // Mounts whose live tuning no longer matches what is configured. rclone
+        // applies VFS options at mount time, so a changed cache mode or read
+        // ahead only takes effect on a remount -- without this the settings save,
+        // the pass reports success, and the mount keeps running as it was.
+        var restale = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var mount in wanted.Values)
+        {
+            if (!livePoints.TryGetValue(mount.MountPoint, out var liveFs)) continue;
+            if (!string.Equals(NormalizeFs(liveFs), NormalizeFs(BuildFs(mount)), StringComparison.Ordinal)) continue;
+            if (!await LiveTuningMatchesAsync(mount, cancellationToken).ConfigureAwait(false))
+                restale.Add(mount.MountPoint);
+        }
+
         // Whether anything will need mounting, decided before a single mount is
         // touched: if the remote turns out to be unusable we must not have taken
         // the library down on the way to finding that out.
         var needsMount = wanted.Values.Any(mount =>
             !livePoints.TryGetValue(mount.MountPoint, out var liveFs)
+            || restale.Contains(mount.MountPoint)
             || !string.Equals(NormalizeFs(liveFs), NormalizeFs(BuildFs(mount)), StringComparison.Ordinal));
 
         if (needsMount)
@@ -116,7 +130,8 @@ public sealed class RcloneMountReconciler(
         foreach (var (mountPoint, liveFs) in livePoints)
         {
             var keep = wanted.TryGetValue(mountPoint, out var config)
-                       && string.Equals(NormalizeFs(liveFs), NormalizeFs(BuildFs(config)), StringComparison.Ordinal);
+                       && string.Equals(NormalizeFs(liveFs), NormalizeFs(BuildFs(config)), StringComparison.Ordinal)
+                       && !restale.Contains(mountPoint);
             if (keep) continue;
 
             var response = await client.UnmountFs(mountPoint, cancellationToken).ConfigureAwait(false);
@@ -207,6 +222,48 @@ public sealed class RcloneMountReconciler(
         var path = string.IsNullOrWhiteSpace(config.RemotePath) ? "/" : config.RemotePath;
         if (!path.StartsWith('/')) path = "/" + path;
         return $"{RemoteName}:{path}";
+    }
+
+    /// <summary>Nanoseconds in one <see cref="TimeSpan"/> tick.</summary>
+    private const long NanosecondsPerTick = 100;
+
+    /// <summary>
+    /// Whether the running mount is using the tuning this configuration asks for.
+    ///
+    /// rclone reads its VFS options once, at mount time, so a change only lands
+    /// on a remount. <c>mount/listmounts</c> reports nothing but the remote and
+    /// the mount point, so the options come from <c>vfs/stats</c> instead.
+    /// </summary>
+    /// <remarks>
+    /// An unreadable answer counts as a match. Remounting on a question we could
+    /// not get an answer to would interrupt playback for nothing.
+    ///
+    /// The automatic cache ceiling is deliberately not compared: it is derived
+    /// from free space, so it moves on its own and every pass would find a
+    /// difference and remount. Only a ceiling somebody set is checked.
+    /// </remarks>
+    private async Task<bool> LiveTuningMatchesAsync(RcloneMountConfig config, CancellationToken cancellationToken)
+    {
+        var stats = await client.GetVfsStats(BuildFs(config), cancellationToken).ConfigureAwait(false);
+        if (!stats.Success || stats.Options is not { } live) return true;
+
+        if (!string.Equals(
+                live.CacheMode,
+                config.VfsCacheMode.ToString().ToLowerInvariant(),
+                StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (live.Links != config.Links) return false;
+        if (live.DirCacheTime != config.DirCacheTime.Ticks * NanosecondsPerTick) return false;
+        if (live.CacheMaxAge != config.VfsCacheMaxAge.Ticks * NanosecondsPerTick) return false;
+        if (live.ReadAhead != (config.ReadAheadBytes ?? 0)) return false;
+
+        var explicitCeiling = cacheSizeLimitBytes ?? config.VfsCacheMaxSizeBytes;
+        if (explicitCeiling is { } ceiling && live.CacheMaxSize != ceiling) return false;
+
+        return true;
     }
 
     private static Dictionary<string, object?> BuildMountOptions(RcloneMountConfig config) => new()
