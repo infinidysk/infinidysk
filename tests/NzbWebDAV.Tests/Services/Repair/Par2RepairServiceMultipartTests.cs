@@ -484,7 +484,7 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Admission_CanceledWaiterLeavesNoJobAndCanRetry()
+    public async Task InlineContentionDefersWithoutCreatingJob()
     {
         var data = Data(4096 * 6, "admission");
         await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([

@@ -726,7 +726,6 @@ public partial class Par2RepairService : BackgroundService
                 {
                     await _repairAdmission.WaitAsync(ct).ConfigureAwait(false);
                     admitted = true;
-                    Interlocked.Exchange(ref _admissionActive, 1);
                 }
                 finally
                 {

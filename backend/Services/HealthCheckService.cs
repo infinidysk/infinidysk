@@ -808,7 +808,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         if (davItem.NextHealthCheck != DateTimeOffset.UnixEpoch)
             davItem.NextHealthCheck = now.AddSeconds(1);
         Log.Warning(
-            "PAR2 repair deferred for {Path}; admission is busy ({Outcome}).",
+            "PAR2 repair deferred for {Path} because repair capacity is contended ({Outcome}).",
             davItem.Path,
             outcome);
         await RecordHealthResult(
@@ -816,7 +816,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 davItem,
                 HealthCheckResult.HealthResult.Unhealthy,
                 HealthCheckResult.RepairAction.ActionNeeded,
-                "PAR2 repair remains pending because another repair is active.",
+                "PAR2 repair remains pending because repair capacity is contended.",
                 ct)
             .ConfigureAwait(false);
     }
