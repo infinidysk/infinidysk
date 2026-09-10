@@ -490,6 +490,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
         Assert.Empty(par2.Requests);
         Assert.Equal(oldBlobId, ReloadItem(item.Id).FileBlobId);
+        Assert.Equal(1, client.InconclusiveRequestCount);
         HealthCheckService.CheckCachedMissingSegmentIds([segments[50]]);
     }
 
@@ -1240,6 +1241,8 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         INntpClient inner,
         string inconclusiveId) : WrappingNntpClient(inner)
     {
+        public int InconclusiveRequestCount { get; private set; }
+
         public override Task<UsenetStatResponse> StatAsync(
             SegmentId segmentId,
             CancellationToken cancellationToken)
@@ -1247,6 +1250,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             if (!string.Equals(segmentId, inconclusiveId, StringComparison.Ordinal))
                 return base.StatAsync(segmentId, cancellationToken);
 
+            InconclusiveRequestCount++;
             return Task.FromResult(new UsenetStatResponse
             {
                 ResponseCode = 400,
