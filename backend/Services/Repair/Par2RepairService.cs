@@ -997,36 +997,32 @@ public partial class Par2RepairService : BackgroundService
         int maxMissingSlices,
         CancellationToken ct)
     {
-        var expanded = true;
-        while (expanded)
+        ct.ThrowIfCancellationRequested();
+        accessor.BeginSequentialPass();
+        AbsorbAccessorDiscoveries(accessor, sliceMap, unavailableSegments, unavailableSlices);
+        if (unavailableSlices.Count > maxMissingSlices)
+            return true;
+
+        for (var local = 0; local < sliceMap.SliceCount; local++)
         {
             ct.ThrowIfCancellationRequested();
-            expanded = false;
-            accessor.BeginSequentialPass();
-            AbsorbAccessorDiscoveries(accessor, sliceMap, unavailableSegments, unavailableSlices, ref expanded);
+            var globalSlice = checked(sliceMap.GlobalSliceBase + local);
+            if (unavailableSlices.Contains(globalSlice))
+                continue;
+
+            var assembled = await accessor.FetchSliceBytesAsync(globalSlice, sliceMap.SliceSize, ct)
+                .ConfigureAwait(false);
+            var valid = assembled is not null && Par2Reconstructor.VerifySliceChecksum(assembled, targetIfsc.Slices[local]);
+            if (assembled is not null && !valid)
+            {
+                foreach (var segmentIndex in sliceMap.SegmentIndicesForGlobalSlice(globalSlice))
+                    accessor.NoteCorrupt(segmentIndex);
+            }
+            AbsorbAccessorDiscoveries(accessor, sliceMap, unavailableSegments, unavailableSlices);
+            if (!valid)
+                unavailableSlices.Add(globalSlice);
             if (unavailableSlices.Count > maxMissingSlices)
                 return true;
-
-            for (var local = 0; local < sliceMap.SliceCount; local++)
-            {
-                ct.ThrowIfCancellationRequested();
-                var globalSlice = checked(sliceMap.GlobalSliceBase + local);
-                if (unavailableSlices.Contains(globalSlice))
-                    continue;
-
-                var assembled = await accessor.FetchSliceBytesAsync(globalSlice, sliceMap.SliceSize, ct)
-                    .ConfigureAwait(false);
-                var valid = assembled is not null && Par2Reconstructor.VerifySliceChecksum(assembled, targetIfsc.Slices[local]);
-                if (assembled is not null && !valid)
-                {
-                    foreach (var segmentIndex in sliceMap.SegmentIndicesForGlobalSlice(globalSlice))
-                        accessor.NoteCorrupt(segmentIndex);
-                }
-                AbsorbAccessorDiscoveries(accessor, sliceMap, unavailableSegments, unavailableSlices, ref expanded);
-                expanded |= !valid && unavailableSlices.Add(globalSlice);
-                if (unavailableSlices.Count > maxMissingSlices)
-                    return true;
-            }
         }
 
         return false;
@@ -1036,15 +1032,13 @@ public partial class Par2RepairService : BackgroundService
         ResolvedSliceAccessor accessor,
         Par2FileSliceMap sliceMap,
         HashSet<int> unavailableSegments,
-        HashSet<int> unavailableSlices,
-        ref bool expanded)
+        HashSet<int> unavailableSlices)
     {
         foreach (var index in accessor.MissingSegmentIndices
                      .Concat(accessor.CorruptSegmentIndices)
                      .Where(unavailableSegments.Add))
         {
-            foreach (var slice in sliceMap.GlobalSlicesForSegment(index).Where(unavailableSlices.Add))
-                expanded = true;
+            unavailableSlices.UnionWith(sliceMap.GlobalSlicesForSegment(index));
         }
     }
 
