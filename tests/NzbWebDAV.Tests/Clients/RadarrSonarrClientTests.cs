@@ -729,6 +729,30 @@ public class RadarrSonarrClientTests
             request.StartsWith("POST /api/v3/command", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task CompleteRepair_CancelledAfterBlocklist_DoesNotEnterSearchCallback()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var handler = new CancellingResponseHandler(cancellation);
+        using var httpClient = new HttpClient(handler);
+        var client = new TestArrClient(httpClient);
+        var searchCallbackCalls = 0;
+
+        var outcome = await client.CompleteRepairForTestAsync(
+            new ArrMediaFileMatch(ArrMediaKind.Movie, FileId: 203, MediaIds: [303]),
+            historyId: 403,
+            _ =>
+            {
+                searchCallbackCalls++;
+                return Task.FromResult(ArrRepairOutcome.RemoveAndBlocklistSucceededSearchWithheld);
+            },
+            cancellation.Token);
+
+        Assert.Equal(ArrRepairOutcome.MediaRemovedBlocklistConfirmedSearchUnconfirmed, outcome);
+        Assert.Equal(0, searchCallbackCalls);
+        Assert.Equal(["POST /api/v3/history/failed/403"], handler.Requests);
+    }
+
     private static HttpResponseMessage Status(HttpStatusCode code) => new(code);
 
     private static HttpResponseMessage JsonResponse(string json) =>
@@ -802,6 +826,40 @@ public class RadarrSonarrClientTests
         }
 
         protected override HttpClient Client => _client;
+
+        public Task<ArrRepairOutcome> CompleteRepairForTestAsync(
+            ArrMediaFileMatch mediaFile,
+            int historyId,
+            Func<CancellationToken, Task<ArrRepairOutcome>> finishSearch,
+            CancellationToken ct) =>
+            CompleteRepairAfterMediaRemovalAsync(mediaFile, historyId, finishSearch, ct);
+    }
+
+    private sealed class CancellingResponseHandler(CancellationTokenSource cancellation)
+        : HttpMessageHandler
+    {
+        public List<string> Requests { get; } = [];
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Requests.Add($"{request.Method} {request.RequestUri!.PathAndQuery}");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new CancellingContent(cancellation),
+            });
+        }
+    }
+
+    private sealed class CancellingContent(CancellationTokenSource cancellation)
+        : StringContent("{}", Encoding.UTF8, "application/json")
+    {
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing) cancellation.Cancel();
+        }
     }
 
     private sealed class ResponseQueueHandler(

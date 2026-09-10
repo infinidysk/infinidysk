@@ -170,6 +170,7 @@ public class ArrClient(string host, string apiKey)
 
         try
         {
+            ct.ThrowIfCancellationRequested();
             return await finishSearch(ct).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
