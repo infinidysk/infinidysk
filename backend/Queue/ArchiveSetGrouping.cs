@@ -16,7 +16,7 @@ internal static class ArchiveSetGrouping
     {
         var descriptors = new List<ArchiveSetDescriptor>();
         var rarGroups = new Dictionary<(string BaseName, FilenameUtil.RarVolumeScheme Scheme), List<ArchiveSetDescriptor>>();
-        var sevenZipGroups = new Dictionary<(string BaseName, int? Ordinal), ArchiveSetDescriptor>();
+        var sevenZipGroups = new Dictionary<string, List<ArchiveSetDescriptor>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var fileInfo in fileInfos)
         {
@@ -68,11 +68,19 @@ internal static class ArchiveSetGrouping
                                         continue;
                                 }
 
-                                var sevenZipKey = (sevenZip.Value.BaseName.ToLowerInvariant(), (int?)1);
-            if (!sevenZipGroups.TryGetValue(sevenZipKey, out var sevenZipDescriptor))
+                                var sevenZipKey = sevenZip.Value.BaseName;
+                                if (!sevenZipGroups.TryGetValue(sevenZipKey, out var sevenZipCandidates))
+                                {
+                                    sevenZipCandidates = [];
+                                    sevenZipGroups.Add(sevenZipKey, sevenZipCandidates);
+                                }
+
+                                var sevenZipDescriptor = sevenZipCandidates.FirstOrDefault(candidate => candidate.FileInfos.All(existing =>
+                                    FilenameUtil.GetSevenZipVolumeName(existing.FileName)?.Ordinal != sevenZip.Value.Ordinal));
+                                if (sevenZipDescriptor is null)
             {
                 sevenZipDescriptor = new ArchiveSetDescriptor(allocator.Allocate(), [], true);
-                sevenZipGroups.Add(sevenZipKey, sevenZipDescriptor);
+                                    sevenZipCandidates.Add(sevenZipDescriptor);
                 descriptors.Add(sevenZipDescriptor);
             }
 

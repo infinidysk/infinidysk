@@ -95,6 +95,20 @@ public class ArchiveSetGroupingTests
         AssertStandaloneAndMultipartSevenZipRemainSeparate(["A.7z.001", "A.7z.002", "A.7z"]);
     }
 
+    [Fact]
+    public void Resolve_RepeatedMultipartSevenZipSetsRemainSeparate()
+    {
+        var descriptors = ArchiveSetGrouping.Resolve([
+            Info("A.7z.001"),
+            Info("A.7z.002"),
+            Info("A.7z.001"),
+            Info("A.7z.002"),
+        ], new ArchiveSetIdAllocator());
+
+        Assert.Equal(2, descriptors.Count);
+        Assert.All(descriptors, descriptor => Assert.Equal(2, descriptor.FileInfos.Count));
+    }
+
     private static void AssertStandaloneAndMultipartSevenZipRemainSeparate(string[] filenames)
     {
         var descriptors = ArchiveSetGrouping.Resolve(filenames.Select(Info).ToList(), new ArchiveSetIdAllocator());

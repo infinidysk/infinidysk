@@ -62,6 +62,8 @@ public class NestedRarExpansionStepTests
         var movie = Assert.Single(expanded, segment => segment.PathWithinArchive == "movie.mkv");
         Assert.Equal(moviePayload.Length, movie.FileUncompressedSize);
         Assert.Equal(moviePayload.Length, movie.ByteRangeWithinPart.Count);
+        Assert.StartsWith("nested:", movie.ArchiveSetId);
+        Assert.NotEqual(nested.ArchiveSetId, movie.ArchiveSetId);
     }
 
     [Fact]

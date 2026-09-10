@@ -81,7 +81,7 @@ public static class NestedRarExpansionStep
         int maxDepth = DefaultMaxDepth)
     {
         var current = segments;
-        var childArchiveSetIds = new ArchiveSetIdAllocator();
+        var childArchiveSetIds = new ArchiveSetIdAllocator("nested");
         for (var depth = 0; depth < maxDepth; depth++)
         {
             var nestedGroups = current
