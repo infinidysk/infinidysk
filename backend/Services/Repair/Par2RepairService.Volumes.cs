@@ -199,7 +199,6 @@ public partial class Par2RepairService
         foreach (var window in indices.Chunk(concurrency))
         {
             ct.ThrowIfCancellationRequested();
-            var probes = new HeaderProbeResult[window.Length];
             var tasks = new Task<HeaderProbeResult>[window.Length];
             for (var offset = 0; offset < window.Length; offset++)
             {
@@ -207,28 +206,24 @@ public partial class Par2RepairService
                 var id = file.Segments[index].MessageId;
                 if (reads.UnavailableIds.Contains(id))
                 {
-                    tasks[offset] = Task.FromResult(new HeaderProbeResult(index, id, null, false, true));
+                    tasks[offset] = Task.FromResult(new HeaderProbeResult(id, null));
                     continue;
                 }
                 if (reads.Headers.TryGetValue(id, out var cachedHeader))
                 {
-                    tasks[offset] = Task.FromResult(new HeaderProbeResult(index, id, cachedHeader, false, cachedHeader is null));
+                    tasks[offset] = Task.FromResult(new HeaderProbeResult(id, cachedHeader));
                     continue;
                 }
                 reads.AdmitIdentityWork(0, request: true);
                 reads.Budget.Charge(512 + 2L * id.Length);
-                tasks[offset] = FetchHeaderObservationAsync(index, id, reads, ct);
+                tasks[offset] = FetchHeaderObservationAsync(id, reads, ct);
             }
-            probes = await Task.WhenAll(tasks).ConfigureAwait(false);
+            var probes = await Task.WhenAll(tasks).ConfigureAwait(false);
 
             foreach (var probe in probes)
             {
                 if (probe.Header is not null)
                     reads.Headers[probe.Id] = probe.Header;
-                else if (probe.IsUnavailable)
-                    reads.NoteUnavailable(probe.Id, probe.IsMissing
-                        ? new UsenetArticleNotFoundException(probe.Id)
-                        : new InvalidDataException("PAR2 identity header probe failed."));
                 if (probe.Header is not { FileSize: > 0 }) continue;
                 var observation = new NzbFileObservation(probe.Header.FileSize, null);
                 reads.Observations[file] = observation;
@@ -240,23 +235,24 @@ public partial class Par2RepairService
         return unavailable;
     }
 
-    private async Task<HeaderProbeResult> FetchHeaderObservationAsync(int index, string id, RepairReadContext reads, CancellationToken ct)
+    private async Task<HeaderProbeResult> FetchHeaderObservationAsync(string id, RepairReadContext reads, CancellationToken ct)
     {
         await reads.FetchGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             var response = await _usenetClient.DecodedBodyAsync(id, ct).ConfigureAwait(false);
             await using var stream = response.Stream!;
-            return new HeaderProbeResult(index, id, await stream.GetYencHeadersAsync(ct).ConfigureAwait(false), false, false);
+            return new HeaderProbeResult(id, await stream.GetYencHeadersAsync(ct).ConfigureAwait(false));
         }
         catch (Exception exception) when (exception is UsenetArticleNotFoundException or UsenetCorruptArticleException or InvalidDataException or EndOfStreamException)
         {
-            return new HeaderProbeResult(index, id, null, exception is UsenetArticleNotFoundException, true);
+            reads.NoteUnavailable(id, exception);
+            return new HeaderProbeResult(id, null);
         }
         finally { reads.FetchGate.Release(); }
     }
 
-    private sealed record HeaderProbeResult(int Index, string Id, UsenetYencHeader? Header, bool IsMissing, bool IsUnavailable);
+    private sealed record HeaderProbeResult(string Id, UsenetYencHeader? Header);
 
     private async Task<LongRange[]> ResolveVolumeRangesAsync(NzbFile file, RepairPayload payload, long length,
         RepairReadContext reads, CancellationToken ct)
