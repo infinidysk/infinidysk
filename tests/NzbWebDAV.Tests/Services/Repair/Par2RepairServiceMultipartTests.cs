@@ -595,7 +595,7 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task LateDifferentVolumeRequest_RunsFollowUpBeforeReturningSuccess()
+    public async Task LateDifferentVolumeRequest_DefersWithoutRunningFollowUp()
     {
         var first = Data(4096 * 6, "late-first");
         var second = Data(4096 * 7, "late-second");
