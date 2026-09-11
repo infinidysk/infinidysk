@@ -770,4 +770,53 @@ public class RcloneDaemonServiceTests
         {
         }
     }
+
+    [Fact]
+    public async Task ReconcileAsync_LooksAtTheMountsAgain_OnceTheRecheckIntervalPasses()
+    {
+        // Watching the process is not supervising its mounts. A mount can go away
+        // while rcd stays alive, and with the configuration unchanged nothing
+        // would ever look again.
+        var now = DateTimeOffset.UnixEpoch;
+        var reconciled = new List<IRcloneClient>();
+        var launcher = new FakeRcloneProcessLauncher();
+        var service = Service(
+            Config(enabled: true, Mounts("/mnt/remote/infinidysk")),
+            launcher,
+            reconciled: reconciled,
+            utcNow: () => now);
+
+        await service.ReconcileAsync(CancellationToken.None);
+        await service.ReconcileAsync(CancellationToken.None);
+        Assert.Single(reconciled);
+
+        now += service.MountRecheckInterval + TimeSpan.FromSeconds(1);
+        await service.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(2, reconciled.Count);
+    }
+
+    [Fact]
+    public async Task InvalidateAppliedMounts_MakesTheNextPassReconcileAgain()
+    {
+        // Remount and clear-cache take the mounts down and put them back outside
+        // the supervisor. When the replacement fails there, the supervisor still
+        // remembers a successful pass over an unchanged configuration -- and the
+        // library stays down until somebody clicks again.
+        var reconciled = new List<IRcloneClient>();
+        var launcher = new FakeRcloneProcessLauncher();
+        var service = Service(
+            Config(enabled: true, Mounts("/mnt/remote/infinidysk")),
+            launcher,
+            reconciled: reconciled);
+
+        await service.ReconcileAsync(CancellationToken.None);
+        await service.ReconcileAsync(CancellationToken.None);
+        Assert.Single(reconciled);
+
+        service.InvalidateAppliedMounts();
+        await service.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(2, reconciled.Count);
+    }
 }

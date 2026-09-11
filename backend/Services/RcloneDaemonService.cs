@@ -74,6 +74,7 @@ public sealed class RcloneDaemonService(
     private bool _lastMountPassFailed;
     private int _consecutiveMountFailures;
     private DateTimeOffset _nextMountAttempt = DateTimeOffset.MinValue;
+    private DateTimeOffset _nextMountRecheck = DateTimeOffset.MinValue;
     private bool _needsStaleSweep = true;
 
     /// <summary>
@@ -108,6 +109,18 @@ public sealed class RcloneDaemonService(
 
     /// <summary>How often the supervisor re-checks the daemon.</summary>
     internal TimeSpan PollInterval { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// How long an unchanged mount list is trusted before the daemon is asked
+    /// what it is actually serving.
+    ///
+    /// Watching the process is not the same as supervising its mounts: a mount
+    /// can go away while rcd stays alive -- unmounted by hand, dropped by the
+    /// kernel, or never replaced after a failed manual remount -- and with the
+    /// configuration unchanged nothing would ever look again. Long enough that a
+    /// healthy install is not listing mounts every few seconds.
+    /// </summary>
+    internal TimeSpan MountRecheckInterval { get; init; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
     /// How many times a freshly launched daemon is probed before the mount pass
@@ -266,6 +279,7 @@ public sealed class RcloneDaemonService(
                 _lastMountPassFailed = false;
                 _consecutiveMountFailures = 0;
                 _nextMountAttempt = DateTimeOffset.MinValue;
+                _nextMountRecheck = DateTimeOffset.MinValue;
             }
 
             return;
@@ -520,6 +534,28 @@ public sealed class RcloneDaemonService(
     }
 
     /// <summary>
+    /// Forgets what the last mount pass applied, so the next supervisor pass
+    /// reconciles from what the daemon is actually serving.
+    ///
+    /// Remount and clear-cache run their own reconcile outside the supervisor.
+    /// When one of those takes the mounts down and the replacement fails, the
+    /// supervisor still remembers a successful pass over an unchanged
+    /// configuration and would never look again -- leaving the library down until
+    /// somebody clicks again, edits a setting, or restarts the daemon.
+    /// </summary>
+    public void InvalidateAppliedMounts()
+    {
+        lock (_gate)
+        {
+            _appliedMountSignature = null;
+            _lastMountPassFailed = false;
+            _consecutiveMountFailures = 0;
+            _nextMountAttempt = DateTimeOffset.MinValue;
+            _nextMountRecheck = DateTimeOffset.MinValue;
+        }
+    }
+
+    /// <summary>
     /// Applies the configured mounts. Skipped while nothing has changed, so a
     /// healthy daemon is not asked to list its mounts every poll interval.
     /// </summary>
@@ -540,7 +576,8 @@ public sealed class RcloneDaemonService(
             // editing the settings is how an operator fixes a failing mount.
             if (unchanged && _lastMountPassFailed && UtcNow() < _nextMountAttempt) return;
 
-            if (!daemonJustStarted && unchanged && !_lastMountPassFailed) return;
+            if (!daemonJustStarted && unchanged && !_lastMountPassFailed && UtcNow() < _nextMountRecheck)
+                return;
 
             // Nothing configured and nothing applied yet: no reason to talk to the
             // daemon at all.
@@ -560,6 +597,7 @@ public sealed class RcloneDaemonService(
         {
             _appliedMountSignature = signature;
             _lastMountPassFailed = failed;
+            _nextMountRecheck = UtcNow() + MountRecheckInterval;
 
             if (failed)
             {
@@ -672,6 +710,7 @@ public sealed class RcloneDaemonService(
         _builtinClient?.Dispose();
         _builtinClient = null;
         _appliedMountSignature = null;
+        _nextMountRecheck = DateTimeOffset.MinValue;
 
         // The next start gets a fresh look at the mount table: this stop may be
         // the one that leaves a mount behind.

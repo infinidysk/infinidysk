@@ -65,6 +65,12 @@ public class ClearRcloneCacheController(
             },
             SigtermUtil.GetCancellationToken()).ConfigureAwait(false);
 
+        // The supervisor did not run this pass, so its record of what it applied
+        // no longer describes the daemon. Clearing it lets the next pass
+        // reconcile from what is actually mounted, which is what recovers a
+        // replacement mount that failed here.
+        daemonService.InvalidateAppliedMounts();
+
         var errors = new List<string>();
         if (!outcome.Unmount.Success)
         {
