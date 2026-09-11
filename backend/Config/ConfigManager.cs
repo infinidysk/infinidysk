@@ -212,6 +212,14 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         }
     }
 
+    /// <summary>
+    /// The value a key currently resolves to, with no default applied. Exposed
+    /// for validation that spans two settings: a config update has to be checked
+    /// against the configuration it would produce, not only against the keys the
+    /// request happens to carry.
+    /// </summary>
+    public string? GetSavedConfigValue(string configName) => GetConfigValue(configName);
+
     private string? GetConfigValue(string configName)
     {
         lock (_config)
@@ -386,7 +394,17 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     /// set, structured JSON values also reject unknown or miscased properties instead of silently
     /// dropping them.
     /// </summary>
-    public static void ValidateConfigItems(IEnumerable<ConfigItem> configItems, bool rejectUnknownJsonProperties = false)
+    /// <param name="savedValue">
+    /// Reads what is already persisted for a key, for the few checks that span
+    /// two settings. A request carrying only one of them has to be validated
+    /// against the configuration it would produce, not against itself. Null
+    /// where no saved configuration is available, such as validating an
+    /// environment overlay before anything is loaded.
+    /// </param>
+    public static void ValidateConfigItems(
+        IEnumerable<ConfigItem> configItems,
+        bool rejectUnknownJsonProperties = false,
+        Func<string, string?>? savedValue = null)
     {
         var jsonOptions = rejectUnknownJsonProperties ? RejectUnknownPropertiesJsonOptions : null;
         var batch = configItems as IReadOnlyCollection<ConfigItem> ?? configItems.ToList();
@@ -735,7 +753,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
             if (errors.Count > 0)
                 throw new ArgumentException($"Config value for '{key}' is invalid. {string.Join(" ", errors)}");
 
-            if (BatchCacheDir() is { } cacheDir && Path.IsPathRooted(cacheDir))
+            if (EffectiveCacheDir() is { } cacheDir && Path.IsPathRooted(cacheDir))
                 RequireCacheDirOutsideMounts(ConfigKeys.RcloneBuiltinCacheDir, cacheDir, mounts);
         }
 
@@ -761,7 +779,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
             if (!Path.IsPathRooted(value))
                 throw new ArgumentException($"Config value for '{key}' must be an absolute path.");
 
-            RequireCacheDirOutsideMounts(key, value, BatchMounts());
+            RequireCacheDirOutsideMounts(key, value, EffectiveMounts());
         }
 
         // Checked from both sides, because the settings page can save either the
@@ -808,6 +826,35 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                 return [];
             }
         }
+
+        // Both sides of the check fall back to what is already saved. A settings
+        // page that sends only one of the two keys would otherwise be validated
+        // against an empty other side, so whether a cache directory inside a
+        // mount is refused depended on the shape of the request rather than on
+        // the configuration it produces.
+        List<RcloneMountConfig> EffectiveMounts()
+        {
+            var staged = BatchMounts();
+            if (staged.Count > 0) return staged;
+
+            var saved = StringUtil.EmptyToNull(savedValue?.Invoke(ConfigKeys.RcloneBuiltinMounts));
+            if (saved is null) return [];
+
+            try
+            {
+                return JsonSerializer.Deserialize<List<RcloneMountConfig>>(saved, jsonOptions) ?? [];
+            }
+            catch (JsonException)
+            {
+                // Already-saved JSON that no longer parses is not this request's
+                // fault, and refusing the request would leave no way to correct
+                // it from the settings page.
+                return [];
+            }
+        }
+
+        string? EffectiveCacheDir() =>
+            BatchCacheDir() ?? StringUtil.EmptyToNull(savedValue?.Invoke(ConfigKeys.RcloneBuiltinCacheDir));
 
         string? BatchCacheDir() => batch
             .Where(i => i.ConfigName == ConfigKeys.RcloneBuiltinCacheDir)

@@ -278,4 +278,77 @@ public class RcloneBuiltinConfigTests
     {
         Assert.Equal(expected, ConfigEnvMapping.ToEnvironmentVariableName(configKey));
     }
+
+    [Fact]
+    public void ValidateConfigItems_RefusesACacheDirectoryInsideAnAlreadySavedMount()
+    {
+        // The settings page can save the cache directory on its own. Validating
+        // only the keys in the request let a cache directory inside a mount
+        // through -- rclone caching the filesystem into itself -- purely because
+        // the mount list was not part of that request.
+        var saved = new Dictionary<string, string>
+        {
+            [ConfigKeys.RcloneBuiltinMounts] =
+                """[{"Id":"library","MountPoint":"/mnt/remote/infinidysk"}]""",
+        };
+
+        var items = new[]
+        {
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.RcloneBuiltinCacheDir,
+                ConfigValue = "/mnt/remote/infinidysk/cache",
+            },
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            ConfigManager.ValidateConfigItems(items, savedValue: key => saved.GetValueOrDefault(key)));
+
+        Assert.Contains("inside the mount point", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateConfigItems_RefusesAMountThatWouldSwallowTheSavedCacheDirectory()
+    {
+        // The same check from the other side: saving only the mount list.
+        var saved = new Dictionary<string, string>
+        {
+            [ConfigKeys.RcloneBuiltinCacheDir] = "/mnt/remote/infinidysk/cache",
+        };
+
+        var items = new[]
+        {
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.RcloneBuiltinMounts,
+                ConfigValue = """[{"Id":"library","MountPoint":"/mnt/remote/infinidysk"}]""",
+            },
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            ConfigManager.ValidateConfigItems(items, savedValue: key => saved.GetValueOrDefault(key)));
+
+        Assert.Contains("inside the mount point", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateConfigItems_AcceptsACacheDirectoryOutsideTheSavedMounts()
+    {
+        var saved = new Dictionary<string, string>
+        {
+            [ConfigKeys.RcloneBuiltinMounts] =
+                """[{"Id":"library","MountPoint":"/mnt/remote/infinidysk"}]""",
+        };
+
+        var items = new[]
+        {
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.RcloneBuiltinCacheDir,
+                ConfigValue = "/config/rclone/cache",
+            },
+        };
+
+        ConfigManager.ValidateConfigItems(items, savedValue: key => saved.GetValueOrDefault(key));
+    }
 }
