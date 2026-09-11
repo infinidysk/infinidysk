@@ -104,12 +104,20 @@ public class SetRcloneWebdavCredentialsController(
         daemonService.InvalidateAppliedMounts();
 
         var errors = new List<string>(result.Reconciled.Errors);
-        if (!result.Released.Success && result.Reconciled.Errors.Count > 0)
+
+        // Reported whenever the release fails, not only when the reconcile also
+        // complains. A mount that could not be released is still serving through
+        // the backend that authenticated with the old password, and the
+        // reconciler keeps a mount whose point and remote still match -- so the
+        // pass reports success while the thing the operator came here to fix is
+        // untouched. Silence would be the worst of the three outcomes.
+        if (!result.Released.Success)
         {
             errors.Insert(
                 0,
                 "Could not release the existing mounts before reconnecting: " +
-                $"{result.Released.Error ?? "unknown error"}.");
+                $"{result.Released.Error ?? "unknown error"}. Any mount still up is " +
+                "using the previous password; remount it to pick up the new one.");
         }
 
         return Ok(new RcloneMountsApplyResponse
