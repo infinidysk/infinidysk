@@ -8,19 +8,56 @@ namespace NzbWebDAV.Services;
 public sealed record RcloneCachePurgeResult(long FreedBytes, string? Error);
 
 /// <summary>
-/// Empties rclone's VFS cache directory.
+/// Empties rclone's VFS cache.
 ///
 /// Lowering the cache ceiling does not reclaim what is already written, and
 /// rclone only evicts on its own schedule, so an operator who needs the space
 /// back had no option but deleting files inside the container by hand.
 ///
-/// The directory itself is kept: rclone expects it to exist, and recreating it
-/// would lose whatever ownership and permissions the container set up.
+/// Only rclone's own subtrees go. The cache directory is an operator-set path
+/// that can point anywhere -- the config directory, a media root -- so deleting
+/// every child of it would delete databases and libraries along with the cache.
+/// The directory itself is kept too: rclone expects it to exist, and recreating
+/// it would lose whatever ownership and permissions the container set up.
 /// </summary>
 public static class RcloneCachePurger
 {
     /// <summary>
-    /// Deletes everything inside <paramref name="cacheDir"/>.
+    /// The directories rclone creates under its cache directory, and the only
+    /// ones this will delete.
+    /// </summary>
+    /// <remarks>
+    /// Observed against rclone v1.75.1: a <c>full</c> cache-mode mount with
+    /// <c>--cache-dir</c> creates <c>vfs/&lt;remote&gt;</c> and
+    /// <c>vfsMeta/&lt;remote&gt;</c> and nothing else.
+    /// </remarks>
+    private static readonly string[] OwnedSubdirectories = ["vfs", "vfsMeta"];
+
+    /// <summary>
+    /// Whether a path is a directory rclone could have created, rather than a
+    /// link standing where one should be.
+    /// </summary>
+    /// <remarks>
+    /// A link named <c>vfs</c> is not rclone's cache, so it is left alone: both
+    /// the walk that sizes the purge and the delete would otherwise reach
+    /// through it into whatever it points at.
+    /// </remarks>
+    private static bool IsRealDirectory(string path)
+    {
+        try
+        {
+            var info = new DirectoryInfo(path);
+            return info.Exists && !info.Attributes.HasFlag(FileAttributes.ReparsePoint);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Deletes rclone's own cached data under <paramref name="cacheDir"/>,
+    /// leaving anything else in that directory alone.
     /// </summary>
     /// <remarks>
     /// Callers must stop the mounts first: rclone holds open handles into this
@@ -41,6 +78,18 @@ public static class RcloneCachePurger
 
         if (!Directory.Exists(full)) return new RcloneCachePurgeResult(0, null);
 
+        // Only rclone's own subtrees are removed, never every child of the
+        // configured directory. A cache directory pointed somewhere shared -- the
+        // config directory, a media root -- would otherwise make this delete
+        // databases, backups and libraries. Nothing outside these two can be
+        // rclone's VFS data, so nothing outside them is ours to delete.
+        var owned = OwnedSubdirectories
+            .Select(name => Path.Join(full, name))
+            .Where(IsRealDirectory)
+            .ToList();
+
+        if (owned.Count == 0) return new RcloneCachePurgeResult(0, null);
+
         long freed = 0;
         try
         {
@@ -54,24 +103,23 @@ public static class RcloneCachePurger
                 IgnoreInaccessible = true,
             };
 
-            foreach (var file in Directory.EnumerateFiles(full, "*", walk))
+            foreach (var root in owned)
             {
-                try
+                foreach (var file in Directory.EnumerateFiles(root, "*", walk))
                 {
-                    freed += new FileInfo(file).Length;
+                    try
+                    {
+                        freed += new FileInfo(file).Length;
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                    {
+                        // Sizing is only for the report; a file that vanished
+                        // between the walk and the stat is not a failure.
+                    }
                 }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-                {
-                    // Sizing is only for the report; a file that vanished between
-                    // the walk and the stat is not a failure.
-                }
+
+                Directory.Delete(root, recursive: true);
             }
-
-            foreach (var directory in Directory.EnumerateDirectories(full))
-                Directory.Delete(directory, recursive: true);
-
-            foreach (var file in Directory.EnumerateFiles(full))
-                File.Delete(file);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
