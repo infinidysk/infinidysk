@@ -121,7 +121,11 @@ describe("BuiltinMountSettings", () => {
     expect(screen.getByText("Connect and mount")).toBeTruthy();
   });
 
-  it("does not ask for a password once the remote exists", async () => {
+  it("offers to reconnect once the remote exists", async () => {
+    // Rclone authenticated when the mount was made and keeps using what it had,
+    // so a rotated WebDAV password needs entering again. Hiding the form once a
+    // remote exists left no way to do that: the remote and the mount table both
+    // look healthy while every read fails.
     respondWith({
       status: true,
       enabled: true,
@@ -134,6 +138,8 @@ describe("BuiltinMountSettings", () => {
 
     await waitFor(() => expect(screen.getByText("Mounts")).toBeTruthy());
     expect(screen.queryByText("Connect to your library")).toBeNull();
+    expect(screen.getByText("Reconnect to your library")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reconnect and remount" })).toBeTruthy();
   });
 
   it("reports a configured mount that is not mounted yet", async () => {

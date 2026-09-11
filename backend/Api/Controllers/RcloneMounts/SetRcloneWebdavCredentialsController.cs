@@ -80,18 +80,44 @@ public class SetRcloneWebdavCredentialsController(
         // not to save a credential. Through the mount gate so it cannot
         // interleave with the supervisor's own pass.
         var result = await daemonService.WithMountGateAsync(
-                token => RcloneMountReconciler
-                    .ForBuiltinDaemon(client, configManager)
-                    .ReconcileAsync(configManager.GetRcloneBuiltinMounts(), token),
+                async token =>
+                {
+                    // Rewriting the remote does not reach a backend that is
+                    // already mounted: it authenticated when it was created and
+                    // keeps using what it authenticated with. This endpoint is
+                    // how an operator recovers from a rotated WebDAV password,
+                    // so the mounts have to be rebuilt, not kept.
+                    var released = await client.UnmountAll(token).ConfigureAwait(false);
+
+                    var reconciled = await RcloneMountReconciler
+                        .ForBuiltinDaemon(client, configManager)
+                        .ReconcileAsync(configManager.GetRcloneBuiltinMounts(), token)
+                        .ConfigureAwait(false);
+
+                    return (Released: released, Reconciled: reconciled);
+                },
                 SigtermUtil.GetCancellationToken())
             .ConfigureAwait(false);
+
+        // The supervisor did not run this pass, so its record of what it applied
+        // no longer describes the daemon.
+        daemonService.InvalidateAppliedMounts();
+
+        var errors = new List<string>(result.Reconciled.Errors);
+        if (!result.Released.Success && result.Reconciled.Errors.Count > 0)
+        {
+            errors.Insert(
+                0,
+                "Could not release the existing mounts before reconnecting: " +
+                $"{result.Released.Error ?? "unknown error"}.");
+        }
 
         return Ok(new RcloneMountsApplyResponse
         {
             Status = true,
-            Mounted = [.. result.Mounted],
-            Unmounted = [.. result.Unmounted],
-            Errors = [.. result.Errors],
+            Mounted = [.. result.Reconciled.Mounted],
+            Unmounted = [.. result.Reconciled.Unmounted],
+            Errors = [.. errors],
         });
     }
 }

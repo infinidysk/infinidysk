@@ -237,6 +237,7 @@ export function BuiltinMountSettings({ config, setNewConfig }: BuiltinMountSetti
     }
   }, []);
 
+  const remoteConfigured = status?.remoteConfigured === true;
   const symlinkMountDir = status?.symlinkMountDir ?? undefined;
   const symlinkRootCovered = coversSymlinkRoot(mounts, symlinkMountDir);
   const externalRcloneConfigured = Boolean(config["rclone.host"]?.trim());
@@ -369,15 +370,24 @@ export function BuiltinMountSettings({ config, setNewConfig }: BuiltinMountSetti
         </SettingsCard>
       )}
 
-      {enabled && status?.running && status.remoteConfigured === false && (
+      {enabled && status?.running && (
         <SettingsCard
           icon="key"
-          title="Connect to your library"
-          description="InfiniDysk needs its own WebDAV password once, to let rclone read the library."
+          title={remoteConfigured ? "Reconnect to your library" : "Connect to your library"}
+          description={
+            remoteConfigured
+              ? "Enter the WebDAV password again whenever you change it, so rclone can keep reading the library."
+              : "InfiniDysk needs its own WebDAV password once, to let rclone read the library."
+          }
         >
           <p className="mb-3 text-sm leading-relaxed text-base-content/70">
             This is the password under Settings, WebDAV. It is stored only in rclone&apos;s own
             configuration, and InfiniDysk never shows it again.
+            {remoteConfigured
+              ? " Rclone authenticated when the mount was made and keeps using what it had, so a" +
+                " changed password needs this to be entered again -- the mounts look healthy until" +
+                " they are."
+              : ""}
           </p>
           <div className="flex flex-wrap items-end gap-2">
             <label className="min-w-0 flex-1 space-y-1">
@@ -394,7 +404,13 @@ export function BuiltinMountSettings({ config, setNewConfig }: BuiltinMountSetti
               onClick={() => void saveWebdavPassword()}
               disabled={!webdavPassword.trim() || busy === "saving-password"}
             >
-              {busy === "saving-password" ? <Spinner /> : "Connect and mount"}
+              {busy === "saving-password" ? (
+                <Spinner />
+              ) : remoteConfigured ? (
+                "Reconnect and remount"
+              ) : (
+                "Connect and mount"
+              )}
             </Button>
           </div>
           {credentialResult &&
