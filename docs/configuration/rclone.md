@@ -7,7 +7,7 @@ InfiniDysk's WebDAV tree has to appear as a folder on your host before Sonarr, R
 | **Built-in** [since 1.4.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.0){ .nzbdav-since } | InfiniDysk, inside its own container | You want one container, and settings and credentials managed in one place |
 | **External** | Your own rclone container | You already run a tuned rclone, or you want mounting independent of InfiniDysk |
 
-Both are configured under **Settings → Rclone**. Built-in mode is off by default, so an existing installation keeps working exactly as it did.
+Both are configured under **Settings → Rclone**. A new installation is offered built-in mode during setup and starts there unless you choose your own container. An existing installation stays on external mode until you turn built-in on yourself, so it keeps working exactly as it did.
 
 !!! tip "Headless ENV"
 
