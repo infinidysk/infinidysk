@@ -137,4 +137,35 @@ public class RcloneCacheBudgetTests
 
         Assert.Equal(1, samples);
     }
+
+    [Fact]
+    public void Resolve_DoesNotHandOutTheFullCap_WhenFreeSpaceIsUnknownOnTheDatabaseVolume()
+    {
+        // The headroom exists because filling the cache on this volume starves
+        // the databases. With no measurement saying the space is there, granting
+        // the documented 20 GB is the one case the headroom cannot cover.
+        var resolved = RcloneCacheBudget.Resolve(null, sharesDatabaseVolume: true, configuredBytes: null);
+
+        Assert.Equal(RcloneCacheBudget.FloorBytes, resolved);
+        Assert.True(resolved < RcloneCacheBudget.DefaultCapBytes);
+    }
+
+    [Fact]
+    public void Resolve_StillUsesTheDocumentedDefault_WhenFreeSpaceIsUnknownElsewhere()
+    {
+        // No database at risk on that volume, so the unreadable reading stays a
+        // reason to use the documented default rather than rclone's unlimited.
+        Assert.Equal(
+            RcloneCacheBudget.DefaultCapBytes,
+            RcloneCacheBudget.Resolve(null, sharesDatabaseVolume: false, configuredBytes: null));
+    }
+
+    [Fact]
+    public void Resolve_StillHonoursAnExplicitLimit_WhenFreeSpaceIsUnknownOnTheDatabaseVolume()
+    {
+        // An operator who set a number knows their disk better than this does.
+        Assert.Equal(
+            42L * 1024 * 1024 * 1024,
+            RcloneCacheBudget.Resolve(null, sharesDatabaseVolume: true, 42L * 1024 * 1024 * 1024));
+    }
 }

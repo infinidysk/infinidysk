@@ -79,8 +79,12 @@ public sealed class RcloneCacheBudget
         if (freeBytes is not { } free)
         {
             // Free space could not be read. The documented default is still a far
-            // better answer than rclone's unlimited one.
-            return DefaultCapBytes;
+            // better answer than rclone's unlimited one -- but not on the volume
+            // the databases live on, where handing out the full cap is exactly
+            // what the headroom exists to prevent and there is no measurement to
+            // say the space is there. The floor is the smallest real limit, and
+            // the caller warns whenever the result lands this low.
+            return sharesDatabaseVolume ? FloorBytes : DefaultCapBytes;
         }
 
         // Half of free space leaves room for everything else on the volume, and
