@@ -165,6 +165,7 @@ public class RcloneStaleMountCleanerTests
         try
         {
             var responsive = RcloneStaleMountCleaner.IsResponsiveWithin(
+                "/data/never-answers",
                 () =>
                 {
                     blocked.Wait();
@@ -183,8 +184,59 @@ public class RcloneStaleMountCleanerTests
     [Fact]
     public void IsResponsiveWithin_ReportsWhatAProbeThatAnswersSaid()
     {
-        Assert.False(RcloneStaleMountCleaner.IsResponsiveWithin(() => false, TimeSpan.FromSeconds(5)));
-        Assert.True(RcloneStaleMountCleaner.IsResponsiveWithin(() => true, TimeSpan.FromSeconds(5)));
+        Assert.False(
+            RcloneStaleMountCleaner.IsResponsiveWithin("/data/says-no", () => false, TimeSpan.FromSeconds(5)));
+        Assert.True(
+            RcloneStaleMountCleaner.IsResponsiveWithin("/data/says-yes", () => true, TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public void IsResponsiveWithin_DoesNotStartASecondProbe_WhileTheFirstIsStillBlocked()
+    {
+        // A wedged mount's probe never returns, and sweeps repeat -- a daemon
+        // that exits asks for one, and a crash loop asks on every restart. A new
+        // thread per sweep, each blocked forever on the same path, accumulates
+        // for as long as the mount stays wedged.
+        using var blocked = new ManualResetEventSlim(false);
+        var started = 0;
+        Func<bool> probe = () =>
+        {
+            Interlocked.Increment(ref started);
+            blocked.Wait();
+            return false;
+        };
+
+        try
+        {
+            var budget = TimeSpan.FromMilliseconds(100);
+            Assert.True(RcloneStaleMountCleaner.IsResponsiveWithin("/data/wedged", probe, budget));
+            Assert.True(RcloneStaleMountCleaner.IsResponsiveWithin("/data/wedged", probe, budget));
+            Assert.True(RcloneStaleMountCleaner.IsResponsiveWithin("/data/wedged", probe, budget));
+
+            Assert.Equal(1, Volatile.Read(ref started));
+        }
+        finally
+        {
+            blocked.Set();
+        }
+    }
+
+    [Fact]
+    public void IsResponsiveWithin_AsksAgain_OnceAProbeHasAnswered()
+    {
+        // The mount may come back, so a verdict that arrived is not cached.
+        var started = 0;
+        Func<bool> probe = () =>
+        {
+            Interlocked.Increment(ref started);
+            return true;
+        };
+
+        var budget = TimeSpan.FromSeconds(5);
+        RcloneStaleMountCleaner.IsResponsiveWithin("/data/answers", probe, budget);
+        RcloneStaleMountCleaner.IsResponsiveWithin("/data/answers", probe, budget);
+
+        Assert.Equal(2, Volatile.Read(ref started));
     }
 
     [Fact]

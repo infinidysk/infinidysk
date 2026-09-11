@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Serilog;
 
@@ -182,7 +183,20 @@ public sealed class RcloneStaleMountCleaner
     /// from a mount that is still serving files.
     /// </summary>
     private static bool DefaultIsResponsive(string mountPoint) =>
-        IsResponsiveWithin(() => CanEnumerate(mountPoint), ResponsivenessTimeout);
+        IsResponsiveWithin(mountPoint, () => CanEnumerate(mountPoint), ResponsivenessTimeout);
+
+    /// <summary>
+    /// The probe still running for a mount point, when one overran its budget.
+    /// </summary>
+    /// <remarks>
+    /// A wedged mount's probe never returns, and sweeps repeat -- a daemon that
+    /// exits keeps asking for one, and a crash loop asks on every restart. Each
+    /// sweep would start another thread that blocks forever on the same path.
+    /// Keeping the outstanding one means a wedged mount costs a single thread
+    /// however many times it is swept, and the entry is dropped once the probe
+    /// finally answers so a later sweep can ask again.
+    /// </remarks>
+    private static readonly ConcurrentDictionary<string, Task<bool>> OutstandingProbes = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Runs a responsiveness probe under a deadline, reporting an unanswered
@@ -195,14 +209,19 @@ public sealed class RcloneStaleMountCleaner
     /// the mount is dead would detach something that may still be serving files.
     /// Leaving it alone is the recoverable choice of the two.
     /// </summary>
-    internal static bool IsResponsiveWithin(Func<bool> probe, TimeSpan budget)
+    internal static bool IsResponsiveWithin(string mountPoint, Func<bool> probe, TimeSpan budget)
     {
         // The probe runs on its own thread because a blocked FUSE read cannot be
         // cancelled; when it overruns, that thread stays blocked until the mount
-        // is dealt with by hand. One leaked thread per sweep, and sweeps only
-        // happen while the daemon is down.
-        var attempt = Task.Run(probe);
+        // is dealt with by hand. One outstanding probe per mount point, reused by
+        // every later sweep, so a wedged mount cannot accumulate threads.
+        var attempt = OutstandingProbes.GetOrAdd(mountPoint, _ => Task.Run(probe));
+
         if (!attempt.Wait(budget)) return true;
+
+        // Answered, so the next sweep starts a fresh read rather than reusing
+        // this verdict.
+        OutstandingProbes.TryRemove(new KeyValuePair<string, Task<bool>>(mountPoint, attempt));
 
         // GetResult rather than Result so an unexpected failure surfaces
         // unwrapped, exactly as it did when the probe ran inline.
