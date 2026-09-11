@@ -216,7 +216,14 @@ public partial class Par2RepairService
                 }
                 reads.AdmitIdentityWork(0, request: true);
                 reads.Budget.Charge(512 + 2L * id.Length);
-                tasks[offset] = FetchHeaderObservationAsync(id, reads, ct);
+            }
+
+            for (var offset = 0; offset < window.Length; offset++)
+            {
+                var index = window[offset];
+                var id = file.Segments[index].MessageId;
+                if (tasks[offset] is null)
+                    tasks[offset] = FetchHeaderObservationAsync(id, reads, ct);
             }
             var probes = await Task.WhenAll(tasks).ConfigureAwait(false);
 
@@ -224,6 +231,10 @@ public partial class Par2RepairService
             {
                 if (probe.Header is not null)
                     reads.Headers[probe.Id] = probe.Header;
+                else if (probe.IsUnavailable)
+                    reads.NoteUnavailable(probe.Id, probe.IsMissing
+                        ? new UsenetArticleNotFoundException(probe.Id)
+                        : new InvalidDataException("PAR2 identity header probe failed."));
                 if (probe.Header is not { FileSize: > 0 }) continue;
                 var observation = new NzbFileObservation(probe.Header.FileSize, null);
                 reads.Observations[file] = observation;
@@ -246,13 +257,16 @@ public partial class Par2RepairService
         }
         catch (Exception exception) when (exception is UsenetArticleNotFoundException or UsenetCorruptArticleException or InvalidDataException or EndOfStreamException)
         {
-            reads.NoteUnavailable(id, exception);
-            return new HeaderProbeResult(id, null);
+            return new HeaderProbeResult(id, null, true, exception is UsenetArticleNotFoundException);
         }
         finally { reads.FetchGate.Release(); }
     }
 
-    private sealed record HeaderProbeResult(string Id, UsenetYencHeader? Header);
+    private sealed record HeaderProbeResult(
+        string Id,
+        UsenetYencHeader? Header,
+        bool IsUnavailable = false,
+        bool IsMissing = false);
 
     private async Task<LongRange[]> ResolveVolumeRangesAsync(NzbFile file, RepairPayload payload, long length,
         RepairReadContext reads, CancellationToken ct)
