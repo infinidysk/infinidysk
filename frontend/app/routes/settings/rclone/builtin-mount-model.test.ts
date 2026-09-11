@@ -193,12 +193,29 @@ describe("parseMounts entry filtering", () => {
 });
 
 describe("coversSymlinkRoot", () => {
-  // A mount higher up the tree serves everything beneath it, so warning about
-  // this setup told the operator their working library was broken.
-  it("counts a parent mount as covering the symlink root", () => {
+  // Imports point at `<mount-dir>/.ids/...`, and `.ids` is a child of the remote
+  // root. Mounting the root at /mnt puts it at /mnt/.ids, so /mnt/remote is not
+  // served by a mount at /mnt however much it contains it.
+  it("does not count a parent mount as covering the symlink root", () => {
     const mounts = parseMounts('[{"Id":"library","MountPoint":"/mnt/remote"}]');
 
-    expect(coversSymlinkRoot(mounts, "/mnt/remote/infinidysk")).toBe(true);
+    expect(coversSymlinkRoot(mounts, "/mnt/remote/infinidysk")).toBe(false);
+  });
+
+  // The same failure from the other direction: a subtree mounted at the right
+  // directory exposes that subtree's children there, not the root's.
+  it("does not count a subtree mounted at the symlink root", () => {
+    const mounts = parseMounts(
+      '[{"Id":"library","MountPoint":"/mnt/remote","RemotePath":"/content"}]',
+    );
+
+    expect(coversSymlinkRoot(mounts, "/mnt/remote")).toBe(false);
+  });
+
+  it("is satisfied by the remote root mounted at the symlink root", () => {
+    const mounts = parseMounts('[{"Id":"library","MountPoint":"/mnt/remote","RemotePath":"/"}]');
+
+    expect(coversSymlinkRoot(mounts, "/mnt/remote")).toBe(true);
   });
 
   it("does not count a sibling directory as covering it", () => {

@@ -124,14 +124,22 @@ export function newMount(index: number, symlinkMountDir: string | undefined): Bu
 
 const trimTrailingSlash = (path: string) => (path.length > 1 ? path.replace(/\/+$/, "") : path);
 
+/** Whether a mount serves the remote's root rather than a subtree of it. */
+const isRootRemote = (remotePath: string | undefined) =>
+  trimTrailingSlash((remotePath ?? "/").trim() || "/") === "/";
+
 /**
- * Whether an enabled mount covers the directory symlink imports resolve through.
- * False means imported files will not play, however healthy the mounts look, so
- * it is worth saying out loud rather than leaving to be discovered at playback.
+ * Whether an enabled mount puts the WebDAV root at the directory symlink imports
+ * resolve through. False means imported files will not play, however healthy the
+ * mounts look, so it is worth saying out loud rather than leaving to be
+ * discovered at playback.
  *
- * A mount higher up the tree covers everything beneath it, so `/mnt/remote`
- * covers `/mnt/remote/infinidysk`. Comparing for equality alone warned about
- * setups that work.
+ * Containing the directory is not the same as covering it. An import points at
+ * `<mount-dir>/.ids/...`, and `.ids` is a child of the *remote* root: mounting
+ * the root at `/mnt` leaves it at `/mnt/.ids`, so a mount-dir of `/mnt/library`
+ * resolves to nothing. Mounting a subtree such as `/content` at the mount-dir
+ * fails the same way, from the other direction. Only the remote root, at exactly
+ * the configured directory, actually serves those paths.
  */
 export function coversSymlinkRoot(
   mounts: BuiltinMount[],
@@ -141,15 +149,12 @@ export function coversSymlinkRoot(
   if (!root) return true;
 
   const normalizedRoot = trimTrailingSlash(root);
-  return mounts.some((mount) => {
-    if (!mount.Enabled) return false;
-    const mountPoint = trimTrailingSlash(mount.MountPoint ?? "");
-    if (!mountPoint) return false;
-    return (
-      mountPoint === normalizedRoot ||
-      normalizedRoot.startsWith(mountPoint === "/" ? "/" : `${mountPoint}/`)
-    );
-  });
+  return mounts.some(
+    (mount) =>
+      mount.Enabled &&
+      isRootRemote(mount.RemotePath) &&
+      trimTrailingSlash((mount.MountPoint ?? "").trim()) === normalizedRoot,
+  );
 }
 
 /**
