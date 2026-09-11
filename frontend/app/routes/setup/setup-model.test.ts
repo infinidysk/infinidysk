@@ -165,6 +165,50 @@ describe("setup model", () => {
     ]);
   });
 
+  it("keeps the mounts a configured install already has when setup is re-run", () => {
+    // Setup is re-runnable, and an operator who opens it again has usually built
+    // their mount list in Settings. Replacing it with the wizard's single derived
+    // mount deletes shares and tuning the wizard never asked about.
+    const existing = JSON.stringify([
+      { Id: "library", MountPoint: "/data/nzbdav", RemotePath: "/", Enabled: true, ReadAheadBytes: 1024 },
+      { Id: "extra", MountPoint: "/data/extra", RemotePath: "/content", Enabled: true },
+    ]);
+    const baseline = {
+      ...SETUP_DEFAULT_CONFIG,
+      "rclone.mount-dir": "/data/nzbdav",
+      "rclone.builtin.mounts": existing,
+    };
+    const draft = createInitialDraft(baseline, {}, ["manual"]);
+
+    const config = completionSetupConfig(baseline, draft, {});
+
+    expect(JSON.parse(config["rclone.builtin.mounts"] ?? "[]")).toEqual(JSON.parse(existing));
+  });
+
+  it("repoints the first mount when setup moves the mount directory", () => {
+    // The wizard still owns one promise: something enabled has to serve the
+    // directory imports resolve through. Repointing beats adding a second mount
+    // for the same library.
+    const existing = JSON.stringify([
+      { Id: "library", MountPoint: "/data/old", RemotePath: "/", Enabled: true, ReadAheadBytes: 1024 },
+      { Id: "extra", MountPoint: "/data/extra", RemotePath: "/content", Enabled: true },
+    ]);
+    const baseline = {
+      ...SETUP_DEFAULT_CONFIG,
+      "rclone.mount-dir": "/data/old",
+      "rclone.builtin.mounts": existing,
+    };
+    const draft = createInitialDraft(baseline, {}, ["manual"]);
+    draft.config["rclone.mount-dir"] = "/data/new";
+
+    const config = completionSetupConfig(baseline, draft, {});
+
+    expect(JSON.parse(config["rclone.builtin.mounts"] ?? "[]")).toEqual([
+      { Id: "library", MountPoint: "/data/new", RemotePath: "/", Enabled: true, ReadAheadBytes: 1024 },
+      { Id: "extra", MountPoint: "/data/extra", RemotePath: "/content", Enabled: true },
+    ]);
+  });
+
   it("asks only for the mount directory when InfiniDysk runs rclone itself", () => {
     // No sidecar means no RC host to reach and no flags for the operator to
     // confirm; asking for either would be asking about a container that is not
