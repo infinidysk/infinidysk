@@ -136,18 +136,33 @@ if ! gpg --batch --with-colons --fingerprint "$RCLONE_KEY_FINGERPRINT" >/dev/nul
     exit 1
 fi
 
-# SHA256SUMS is a clearsigned message; this proves the checksums below came from
-# rclone rather than from whoever served the file.
-if ! gpg --batch --status-fd 1 --verify "$workdir/SHA256SUMS" 2>/dev/null \
-    | grep -q "^\[GNUPG:\] VALIDSIG .*$RCLONE_KEY_FINGERPRINT"; then
+# SHA256SUMS is a clearsigned message. Decrypting rather than verifying in place
+# is the point: it writes out only the bytes the signature actually covers.
+# Verifying the file and then reading the file back is not the same thing --
+# anything appended after the signature block verifies fine and is still there to
+# be read, so a checksum could be selected from text rclone never signed.
+if ! gpg --batch --yes --status-fd 3 --output "$workdir/SHA256SUMS.verified" \
+    --decrypt "$workdir/SHA256SUMS" 3>"$workdir/gpg-status" 2>/dev/null; then
     echo "install-rclone: the signature on SHA256SUMS for $version could not be verified" >&2
     echo "install-rclone: against $RCLONE_KEY_FINGERPRINT." >&2
     exit 1
 fi
 
-expected="$(awk -v asset="$asset" '$2 == asset { print $1 }' "$workdir/SHA256SUMS")"
+if ! grep -q "^\[GNUPG:\] VALIDSIG .*$RCLONE_KEY_FINGERPRINT" "$workdir/gpg-status"; then
+    echo "install-rclone: SHA256SUMS for $version is not signed by $RCLONE_KEY_FINGERPRINT." >&2
+    exit 1
+fi
+
+# Only the authenticated cleartext is searched from here on.
+expected="$(awk -v asset="$asset" '$2 == asset { print $1 }' "$workdir/SHA256SUMS.verified")"
 if [ -z "$expected" ]; then
-    echo "install-rclone: $asset is not listed in the SHA256SUMS for $version." >&2
+    echo "install-rclone: $asset is not listed in the signed SHA256SUMS for $version." >&2
+    exit 1
+fi
+
+# More than one entry for the same asset means the list is not one we can act on.
+if [ "$(printf '%s\n' "$expected" | wc -l)" -ne 1 ]; then
+    echo "install-rclone: the signed SHA256SUMS for $version lists $asset more than once." >&2
     exit 1
 fi
 

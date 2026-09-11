@@ -237,6 +237,43 @@ else
     pass "unsigned SHA256SUMS rejected"
 fi
 
+# --- a checksum appended after the signature block is refused ---
+# The signature stays valid and the signer is right: only the appended line is
+# unsigned. Verifying the file and then reading the file back would select it.
+make_release v1.75.1 amd64
+asset="rclone-v1.75.1-linux-amd64.zip"
+printf '%s  rclone-v1.75.1-osx-amd64.zip\n' \
+    "2222222222222222222222222222222222222222222222222222222222222222" \
+    > "$FIXTURES/v1.75.1_SHA256SUMS"
+sign_sums "$FIXTURES/v1.75.1_SHA256SUMS"
+printf '%s  %s\n' \
+    "$(sha256sum "$FIXTURES/v1.75.1_$asset" | cut -d' ' -f1)" "$asset" \
+    >> "$FIXTURES/v1.75.1_SHA256SUMS"
+dest="$WORKDIR/dest-appended"
+if TARGETARCH=amd64 DEST="$dest" sh "$INSTALL" >"$WORKDIR/appended.out" 2>&1; then
+    fail "a checksum appended after the signature should fail"
+else
+    [ ! -e "$dest/rclone" ] || fail "an appended checksum must not install a binary"
+    pass "checksum appended after the signature rejected"
+fi
+
+# --- a duplicate entry in the signed list is refused ---
+make_release v1.75.1 amd64
+asset="rclone-v1.75.1-linux-amd64.zip"
+sum=$(sha256sum "$FIXTURES/v1.75.1_$asset" | cut -d' ' -f1)
+{
+    printf '%s  %s\n' "$sum" "$asset"
+    printf '%s  %s\n' "3333333333333333333333333333333333333333333333333333333333333333" "$asset"
+} > "$FIXTURES/v1.75.1_SHA256SUMS"
+sign_sums "$FIXTURES/v1.75.1_SHA256SUMS"
+dest="$WORKDIR/dest-dupe"
+if TARGETARCH=amd64 DEST="$dest" sh "$INSTALL" >"$WORKDIR/dupe.out" 2>&1; then
+    fail "a duplicated asset entry should fail"
+else
+    [ ! -e "$dest/rclone" ] || fail "a duplicated asset entry must not install a binary"
+    pass "duplicated asset entry rejected"
+fi
+
 # --- a SHA256SUMS signed by the wrong key is refused ---
 make_release v1.75.1 amd64
 OTHER_HOME="$WORKDIR/other-gnupg"
