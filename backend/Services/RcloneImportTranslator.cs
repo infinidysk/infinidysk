@@ -47,7 +47,7 @@ public static class RcloneImportTranslator
         if (ToTimeSpan(options.DirCacheTime) is { } dirCacheTime) mount.DirCacheTime = dirCacheTime;
         if (ToTimeSpan(options.CacheMaxAge) is { } cacheMaxAge) mount.VfsCacheMaxAge = cacheMaxAge;
 
-        mount.VfsCacheMaxSizeBytes = ToOptionalBytes(options.CacheMaxSize);
+        mount.VfsCacheMaxSizeBytes = ToOptionalCeiling(options.CacheMaxSize);
         mount.ReadAheadBytes = ToOptionalBytes(options.ReadAhead);
 
         return mount;
@@ -79,9 +79,22 @@ public static class RcloneImportTranslator
             ? parsed
             : RcloneVfsCacheMode.Full;
 
+    // Zero is a setting, not an absence: --dir-cache-time=0 asks rclone to cache
+    // nothing, and importing that as "unset" silently replaces it with the
+    // seven-day default -- the opposite of what the mount being imported does.
+    // Only a negative value means rclone had nothing to report.
     private static TimeSpan? ToTimeSpan(long nanoseconds) =>
-        nanoseconds > 0 ? TimeSpan.FromTicks(nanoseconds / NanosecondsPerTick) : null;
+        nanoseconds >= 0 ? TimeSpan.FromTicks(nanoseconds / NanosecondsPerTick) : null;
 
+    // Same distinction for sizes, where rclone spells "no limit" as -1: zero
+    // read-ahead is read-ahead switched off, and must survive the import.
     private static long? ToOptionalBytes(long bytes) =>
+        bytes >= 0 && bytes != NoLimit ? bytes : null;
+
+    // The cache ceiling is the exception. Nothing downstream can act on a
+    // zero-byte cache -- the budget and the status endpoint both read zero as
+    // "no ceiling set" -- so storing it would record a limit that is never
+    // applied. Recorded as unset instead, which is what it behaves as.
+    private static long? ToOptionalCeiling(long bytes) =>
         bytes > 0 && bytes != NoLimit ? bytes : null;
 }

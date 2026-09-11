@@ -114,4 +114,52 @@ public class RcloneImportTranslatorTests
         Assert.Equal(RcloneVfsCacheMode.Full, mount.VfsCacheMode);
         Assert.Equal("/mnt/remote/nzbdav", mount.MountPoint);
     }
+
+    [Fact]
+    public void Translate_KeepsCachingSwitchedOff_WhenTheLiveMountHasItOff()
+    {
+        // --dir-cache-time=0 --vfs-cache-max-age=0 is how an operator turns
+        // caching off. Importing those as "unset" replaces them with the
+        // seven-day defaults, which is the opposite of the mount being imported.
+        var mount = RcloneImportTranslator.Translate(
+            new RcloneMountPoint { MountPoint = "/mnt/remote", Fs = "nzbdav:" },
+            new VfsOptions { CacheMode = "full", DirCacheTime = 0, CacheMaxAge = 0 });
+
+        Assert.Equal(TimeSpan.Zero, mount.DirCacheTime);
+        Assert.Equal(TimeSpan.Zero, mount.VfsCacheMaxAge);
+    }
+
+    [Fact]
+    public void Translate_KeepsReadAheadSwitchedOff_WhenTheLiveMountHasItOff()
+    {
+        var mount = RcloneImportTranslator.Translate(
+            new RcloneMountPoint { MountPoint = "/mnt/remote", Fs = "nzbdav:" },
+            new VfsOptions { CacheMode = "full", ReadAhead = 0 });
+
+        Assert.Equal(0, mount.ReadAheadBytes);
+    }
+
+    [Fact]
+    public void Translate_TreatsRcloneNoLimitAsUnset()
+    {
+        var mount = RcloneImportTranslator.Translate(
+            new RcloneMountPoint { MountPoint = "/mnt/remote", Fs = "nzbdav:" },
+            new VfsOptions { CacheMode = "full", CacheMaxSize = -1, DirCacheTime = -1 });
+
+        Assert.Null(mount.VfsCacheMaxSizeBytes);
+        Assert.Equal(TimeSpan.FromDays(7), mount.DirCacheTime);
+    }
+
+    [Fact]
+    public void Translate_RecordsAZeroCacheCeilingAsUnset()
+    {
+        // Nothing downstream can apply a zero-byte cache: the budget and the
+        // status endpoint both read zero as "no ceiling set". Storing it would
+        // record a limit that never takes effect.
+        var mount = RcloneImportTranslator.Translate(
+            new RcloneMountPoint { MountPoint = "/mnt/remote", Fs = "nzbdav:" },
+            new VfsOptions { CacheMode = "full", CacheMaxSize = 0 });
+
+        Assert.Null(mount.VfsCacheMaxSizeBytes);
+    }
 }

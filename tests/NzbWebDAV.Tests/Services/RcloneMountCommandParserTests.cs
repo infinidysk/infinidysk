@@ -210,4 +210,38 @@ public class RcloneMountCommandParserTests
         Assert.True(result.Success);
         Assert.Equal(new RcloneMountConfig { Id = "x", MountPoint = "/x" }.DirCacheTime, result.Mount!.DirCacheTime);
     }
+
+    [Fact]
+    public void Parse_HonoursAnExplicitlyDisabledBooleanFlag()
+    {
+        // "--links=false" is how these are switched off on a command line.
+        // Reading the flag name alone imported them as on.
+        var result = RcloneMountCommandParser.Parse(
+            "rclone mount nzbdav:/ /mnt/remote --allow-other=false --links=false");
+
+        Assert.True(result.Success, result.Error);
+        Assert.False(result.Mount!.AllowOther);
+        Assert.False(result.Mount.Links);
+    }
+
+    [Fact]
+    public void Parse_StillReadsABareBooleanFlagAsOn()
+    {
+        var result = RcloneMountCommandParser.Parse(
+            "rclone mount nzbdav:/ /mnt/remote --allow-other --links");
+
+        Assert.True(result.Success, result.Error);
+        Assert.True(result.Mount!.AllowOther);
+        Assert.True(result.Mount.Links);
+    }
+
+    [Fact]
+    public void Parse_ReportsABooleanFlagWithAValueItCannotRead()
+    {
+        var result = RcloneMountCommandParser.Parse(
+            "rclone mount nzbdav:/ /mnt/remote --links=perhaps");
+
+        Assert.True(result.Success, result.Error);
+        Assert.Contains("--links=perhaps", result.UnsupportedFlags);
+    }
 }

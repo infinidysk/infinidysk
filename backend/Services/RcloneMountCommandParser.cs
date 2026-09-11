@@ -169,8 +169,18 @@ public static class RcloneMountCommandParser
 
             if (BooleanFlags.Contains(name))
             {
-                if (name == "--allow-other") allowOther = true;
-                if (name == "--links") links = true;
+                // "--links=false" is how these are turned off on a command line.
+                // Reading the flag name alone imported them as on, which is the
+                // opposite of what the command being imported does.
+                var on = true;
+                if (inlineValue is not null && !bool.TryParse(inlineValue, out on))
+                {
+                    unsupported.Add(token);
+                    continue;
+                }
+
+                if (name == "--allow-other") allowOther = on;
+                if (name == "--links") links = on;
                 continue;
             }
 
