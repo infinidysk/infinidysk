@@ -10,10 +10,9 @@ namespace NzbWebDAV.Tests.Clients;
 
 /// <summary>
 /// Deleting or renaming an item tells rclone to drop the directory from its VFS
-/// cache. With the built-in mount that has to reach the daemon InfiniDysk runs
-/// itself; an installation that switched to built-in mode usually has the
-/// external remote control switched off, so aiming at the external client alone
-/// leaves the mount showing files that are gone.
+/// cache. That has to reach every rclone serving the tree: the daemon InfiniDysk
+/// runs itself, and an external sidecar that is still mounted. Aiming at one
+/// alone leaves the other showing files that are gone.
 /// </summary>
 [Collection(nameof(RcloneClientCollection))]
 public sealed class RcloneVfsForgetTargetTests : IDisposable
@@ -39,10 +38,12 @@ public sealed class RcloneVfsForgetTargetTests : IDisposable
     }
 
     [Fact]
-    public async Task RcloneVfsForget_PrefersTheBuiltinDaemon_OverAConfiguredExternalRclone()
+    public async Task RcloneVfsForget_ReachesBothRclones_WhileAMigrationIsUnderWay()
     {
-        // Both can be reachable during a migration. The daemon serving the mount
-        // people are actually reading through is the one whose cache matters.
+        // Both can be reachable during a migration, and starting the daemon does
+        // not unmount the sidecar. Telling only one leaves the other showing
+        // files that are gone -- for a week, with polling off -- and this is
+        // reachable throughout the documented enable-and-import workflow.
         var config = new ConfigManager();
         config.UpdateValues(
         [
@@ -55,7 +56,7 @@ public sealed class RcloneVfsForgetTargetTests : IDisposable
         await DavDatabaseContext.RcloneVfsForget(["/content"], CancellationToken.None);
 
         Assert.Contains("http://127.0.0.1:5572/vfs/forget", _handler.Urls);
-        Assert.DoesNotContain("http://rclone.test/vfs/forget", _handler.Urls);
+        Assert.Contains("http://rclone.test/vfs/forget", _handler.Urls);
     }
 
     [Fact]

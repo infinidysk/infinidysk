@@ -527,6 +527,7 @@ public class RcloneMountReconcilerTests
 
         public Task<VfsForgetResponse> ForgetVfsPaths(
             IEnumerable<string> paths,
+            string? fs = null,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new VfsForgetResponse { Success = true });
 

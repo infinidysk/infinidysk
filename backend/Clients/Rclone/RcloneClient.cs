@@ -160,6 +160,7 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
     /// <param name="fs">Optional VFS name if multiple VFS instances exist</param>
     public async Task<VfsForgetResponse> ForgetVfsPaths(
         IEnumerable<string> paths,
+        string? fs = null,
         CancellationToken cancellationToken = default)
     {
         var pathList = paths.ToList();
@@ -167,6 +168,10 @@ public sealed class RcloneClient : IRcloneClient, IDisposable
             return new VfsForgetResponse { Success = true, Forgotten = new List<string>() };
 
         var request = new Dictionary<string, object?>();
+
+        // rclone refuses an unqualified vfs/forget once more than one VFS is
+        // active, and retrying the same ambiguous request cannot fix it.
+        if (!string.IsNullOrWhiteSpace(fs)) request["fs"] = fs;
 
         // Add paths using numbered keys: dir, dir2, dir3, etc.
         for (int i = 0; i < pathList.Count; i++)

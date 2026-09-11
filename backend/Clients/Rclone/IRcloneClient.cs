@@ -17,6 +17,7 @@ public interface IRcloneClient
         CancellationToken cancellationToken = default);
     Task<VfsForgetResponse> ForgetVfsPaths(
         IEnumerable<string> paths,
+        string? fs = null,
         CancellationToken cancellationToken = default);
     Task<VfsStatsResponse> GetVfsStats(
         string? fs = null,
