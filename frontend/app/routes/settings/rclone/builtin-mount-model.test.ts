@@ -23,6 +23,9 @@ const mount = (overrides: Partial<BuiltinMount> = {}): BuiltinMount => ({
   VfsCacheMode: "full",
   AllowOther: true,
   Links: true,
+  // Mirrors RcloneMountConfig's own default, which the backend fills in for a
+  // stored mount that leaves the field out.
+  ReadAheadBytes: 512 * 1024 * 1024,
   ...overrides,
 });
 
@@ -275,12 +278,35 @@ describe("mountsMatchServer", () => {
     vfsCacheMode: "full",
     configured: true,
     enabled: true,
+    // What the status endpoint actually reports for a mount that never set it:
+    // the backend's own default, not an absent field.
+    readAheadBytes: 512 * 1024 * 1024,
   };
 
   it("matches when the edited mounts equal what the backend saved", () => {
     const mounts = parseMounts('[{"Id":"library","MountPoint":"/mnt/remote"}]');
 
     expect(mountsMatchServer(mounts, [saved])).toBe(true);
+  });
+
+  // The wizard writes a minimal mount with no read-ahead. Reading that absence
+  // as "no read-ahead" while the backend reports its 512 MiB default made an
+  // untouched mount look edited, disabling Apply behind a "save first" warning
+  // the operator could do nothing about.
+  it("matches a wizard-written mount against the default the backend fills in", () => {
+    const mounts = parseMounts(
+      '[{"Id":"library","MountPoint":"/mnt/remote","RemotePath":"/","Enabled":true}]',
+    );
+
+    expect(mountsMatchServer(mounts, [saved])).toBe(true);
+  });
+
+  it("still spots read-ahead explicitly turned off", () => {
+    const mounts = parseMounts(
+      '[{"Id":"library","MountPoint":"/mnt/remote","ReadAheadBytes":null}]',
+    );
+
+    expect(mountsMatchServer(mounts, [saved])).toBe(false);
   });
 
   it("spots an edited field", () => {
@@ -316,7 +342,7 @@ describe("mountsMatchServer", () => {
 
     expect(
       mountsMatchServer(
-        base.map((m) => ({ ...m, ReadAheadBytes: 536870912 })),
+        base.map((m) => ({ ...m, ReadAheadBytes: 1024 * 1024 * 1024 })),
         [saved],
       ),
     ).toBe(false);

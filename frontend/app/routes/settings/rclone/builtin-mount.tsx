@@ -325,6 +325,12 @@ export function BuiltinMountSettings({ config, setNewConfig }: BuiltinMountSetti
                       // value that cannot be read is left for the operator to
                       // correct rather than silently discarded.
                       const typed = e.target.value.trim();
+
+                      // Same rounding trap as read ahead: the box shows a
+                      // rounded size, so re-parsing unchanged text produces a
+                      // different byte count. Unchanged text is not an edit.
+                      if (typed === cacheSizeLimitText) return;
+
                       const bytes = typed === "" ? null : parseSize(typed);
                       if (typed !== "" && bytes === null) return;
                       setNewConfig({
@@ -551,16 +557,17 @@ export function BuiltinMountSettings({ config, setNewConfig }: BuiltinMountSetti
                           key={mount.ReadAheadBytes ?? "unset"}
                           className="w-full"
                           placeholder="rclone default"
-                          defaultValue={
-                            mount.ReadAheadBytes ? formatBytes(mount.ReadAheadBytes) : ""
-                          }
+                          defaultValue={readAheadDisplay(mount.ReadAheadBytes)}
                           onBlur={(e) => {
-                            // The field shows a rounded size, so re-parsing it
-                            // unchanged can differ from the imported byte count.
-                            // Only write when the operator actually changed it.
+                            // Compared as text, not as bytes. The field shows a
+                            // rounded size, so an imported 12,345,678 bytes
+                            // displays as "12 MB" and parses back as 12,582,912 --
+                            // and comparing those two numbers made merely
+                            // focusing and leaving the field retune the mount.
+                            if (e.target.value.trim() === readAheadDisplay(mount.ReadAheadBytes))
+                              return;
+
                             const parsed = parseSize(e.target.value);
-                            const current = mount.ReadAheadBytes ?? null;
-                            if (parsed === current) return;
                             writeMounts(upsertMount(mounts, { ...mount, ReadAheadBytes: parsed }));
                           }}
                         />
@@ -860,6 +867,15 @@ export function BuiltinMountSettings({ config, setNewConfig }: BuiltinMountSetti
       )}
     </div>
   );
+}
+
+/**
+ * What the read-ahead box shows for a stored byte count. Shared by the value and
+ * the blur comparison so "did the operator type something?" is answered by the
+ * text on screen rather than by a round trip through rounded formatting.
+ */
+function readAheadDisplay(bytes: number | null | undefined): string {
+  return bytes ? formatBytes(bytes) : "";
 }
 
 /** Seconds from the status API back into the `[d.]hh:mm:ss` form config stores. */

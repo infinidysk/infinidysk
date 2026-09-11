@@ -36,12 +36,19 @@ export type MountState = {
   variant: "success" | "warning" | "neutral";
 };
 
+/**
+ * What the backend fills in for a field a stored mount leaves out. These have to
+ * agree with RcloneMountConfig's own defaults: the status endpoint reports the
+ * effective value, so a default only known on one side makes an unedited mount
+ * read as changed and disables Apply behind a "save first" warning.
+ */
 const MOUNT_DEFAULTS = {
   RemotePath: "/",
   Enabled: true,
   VfsCacheMode: "full",
   AllowOther: true,
   Links: true,
+  ReadAheadBytes: 512 * 1024 * 1024,
 } as const;
 
 /**
