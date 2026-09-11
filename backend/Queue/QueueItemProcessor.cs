@@ -579,35 +579,54 @@ public class QueueItemProcessor(
         // continuation-header prefixes are validated before the rar group is
         // skipped in step 2b. On ineligibility — multi-file, compressed,
         // solid, or header-parse failure — fall through to the eager pipeline.
-        LazyRarProcessor.Result? lazyRarResult = null;
-        var rarFiles = fileInfos.Where(x => GetGroupName(x) == "rar").ToList();
-        if (configManager.IsLazyRarParsingEnabled() && rarFiles.Count > 0)
+        var archiveSetAllocator = new ArchiveSetIdAllocator();
+        var archiveSets = ArchiveSetGrouping.Resolve(fileInfos, archiveSetAllocator);
+        var lazyRarResults = new List<LazyRarProcessor.Result>();
+        var lazyRarSetIds = new HashSet<string>(StringComparer.Ordinal);
+        var rarSets = archiveSets
+            .Where(x => !x.IsSevenZip)
+            .Where(x => x.FileInfos.All(fileInfo => FilenameUtil.GetRarVolumeName(fileInfo.FileName) is not null))
+            .ToList();
+        if (configManager.IsLazyRarParsingEnabled() && rarSets.Count > 0)
         {
-            var lazyProc = new LazyRarProcessor(rarFiles, usenetClient, archivePassword, ct);
             IProgress<int> lazyRarProgress = progress
                 .Offset(55)
                 .Scale(5, 100);
-            lazyRarResult = await RunStageAsync("lazy-rar", async () =>
+            await RunStageAsync("lazy-rar", async () =>
             {
-                var result = await lazyProc.ProcessAsync().ConfigureAwait(false);
+                foreach (var archiveSet in rarSets)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var result = await new LazyRarProcessor(
+                        archiveSet.FileInfos,
+                        usenetClient,
+                        archivePassword,
+                        archiveSet.ArchiveSetId,
+                        ct).ProcessAsync().ConfigureAwait(false) as LazyRarProcessor.Result;
+                    if (result is not null &&
+                        !FilenameUtil.IsRarFile(Path.GetFileName(result.PathInArchive)))
+                    {
+                        lazyRarResults.Add(result);
+                        lazyRarSetIds.Add(archiveSet.ArchiveSetId);
+                    }
+                }
+
                 lazyRarProgress.Report(100);
-                return result;
-            }).ConfigureAwait(false) as LazyRarProcessor.Result;
-            // Nested archives need the full eager pass + NestedRarExpansionStep.
-            if (lazyRarResult is not null &&
-                FilenameUtil.IsRarFile(Path.GetFileName(lazyRarResult.PathInArchive)))
-            {
-                lazyRarResult = null;
-            }
+                return (BaseProcessor.Result?)null;
+            }).ConfigureAwait(false);
         }
         var msRar = stepTimer.ElapsedMilliseconds;
         stepTimer.Restart();
 
         // step 2b -- per-file processing for everything else (and for the
         // rar group when lazy mounting was skipped or unsupported).
-        var skipRarGroup = lazyRarResult is not null;
         using var processorCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(ct);
-        var fileProcessors = GetFileProcessors(fileInfos, archivePassword, skipRarGroup, processorCts.Token).ToList();
+        var fileProcessors = GetFileProcessors(
+            fileInfos,
+            archiveSets,
+            lazyRarSetIds,
+            archivePassword,
+            processorCts.Token).ToList();
         var part2Progress = progress
             .Offset(60)
             .Scale(40, 100)
@@ -623,7 +642,7 @@ public class QueueItemProcessor(
                 .Where(x => x is not null)
                 .Select(x => x!)
                 .ToList();
-            if (lazyRarResult is not null) results.Add(lazyRarResult);
+            results.AddRange(lazyRarResults);
             return await NestedRarExpansionStep.ExpandAsync(
                 results, usenetClient, archivePassword, ct).ConfigureAwait(false);
         }).ConfigureAwait(false);
@@ -771,26 +790,43 @@ public class QueueItemProcessor(
     private IEnumerable<BaseProcessor> GetFileProcessors
     (
         List<GetFileInfosStep.FileInfo> fileInfos,
+        List<ArchiveSetDescriptor> archiveSets,
+        HashSet<string> lazyRarSetIds,
         string? archivePassword,
-        bool skipRarGroup,
         CancellationToken rarProcessorCt
     )
     {
-        var groups = GroupFilesForProcessing(fileInfos);
+        foreach (var archiveSet in archiveSets)
+        {
+            if (archiveSet.IsSevenZip)
+            {
+                yield return new SevenZipProcessor(
+                    archiveSet.FileInfos,
+                    usenetClient,
+                    configManager,
+                    archivePassword,
+                    archiveSet.ArchiveSetId,
+                    ct);
+            }
+            else if (!lazyRarSetIds.Contains(archiveSet.ArchiveSetId))
+            {
+                foreach (var fileInfo in archiveSet.FileInfos)
+                    yield return new RarProcessor(
+                        fileInfo,
+                        usenetClient,
+                        archivePassword,
+                        archiveSet.ArchiveSetId,
+                        rarProcessorCt);
+            }
+        }
+
+        var groups = GroupFilesForProcessing(
+            fileInfos.Where(x => !x.IsRar && !FilenameUtil.IsRarFile(x.FileName) && !FilenameUtil.Is7zFile(x.FileName))
+                .ToList());
 
         foreach (var group in groups)
         {
-            if (group.Key == "7z")
-                yield return new SevenZipProcessor(group.ToList(), usenetClient, configManager, archivePassword, ct);
-
-            else if (group.Key == "rar")
-            {
-                if (skipRarGroup) continue;
-                foreach (var fileInfo in group)
-                    yield return new RarProcessor(fileInfo, usenetClient, archivePassword, rarProcessorCt);
-            }
-
-            else if (group.Key.StartsWith("split-video:", StringComparison.Ordinal))
+            if (group.Key.StartsWith("split-video:", StringComparison.Ordinal))
                 yield return new MultipartMkvProcessor(group.ToList(), usenetClient, ct);
 
             else if (group.Key == "other")

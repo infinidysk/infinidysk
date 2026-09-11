@@ -3,6 +3,8 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
+using NzbWebDAV.Clients.RadarrSonarr;
+using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
@@ -125,6 +127,35 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         var admission = Assert.IsType<HealthCheckAdmissionContext>(headClient.AdmissionContext);
         Assert.Same(_healthCheckConnectionGate, admission.Gate);
         Assert.Equal(HealthCheckAdmissionPriority.Background, admission.Priority);
+    }
+
+    [Fact]
+    public async Task MissingReleaseDate_PrimaryHeadMissing_UsesLiveFallback()
+    {
+        var segments = NewSegmentIds(3);
+        var fallbackIds = new string[segments.Length][];
+        for (var index = 0; index < fallbackIds.Length; index++)
+            fallbackIds[index] = [];
+        fallbackIds[0] = ["alt-head@test"];
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv",
+            segments,
+            [10_000, 10_000, 10_000],
+            fallbackIds: fallbackIds);
+        item.ReleaseDate = null;
+        await _context.SaveChangesAsync();
+        var headClient = new FallbackHeadNntpClient(
+            NewFakeClient(segments, missing: []),
+            segments[0],
+            "alt-head@test");
+        var (service, par2) = await NewServiceAsync(headClient, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        Assert.Equal(HealthCheckResult.HealthResult.Healthy, Assert.Single(GetHealthRows(item.Id)).Result);
+        Assert.NotNull(ReloadItem(item.Id).ReleaseDate);
+        Assert.Equal([segments[0], "alt-head@test"], headClient.Requests);
+        Assert.Empty(par2.Requests);
     }
 
     public async Task DisposeAsync()
@@ -381,6 +412,52 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PartialArrRepair_DuringCancellation_PersistsActionNeededAndRetainsLocalItem()
+    {
+        var segments = NewSegmentIds(3);
+        var sizes = Enumerable.Repeat(10_000L, segments.Length).ToArray();
+        var (item, _) = await AddVideoFileAsync("partial-arr-repair.mkv", segments, sizes);
+        item.ArrDownloadId = Guid.Parse("13640000-0000-0000-0000-000000000002");
+        item.NextHealthCheck = DateTimeOffset.UnixEpoch;
+        item.HealthRepairPending = true;
+        await _context.SaveChangesAsync();
+
+        var libraryPath = Path.Join(_configRoot, "library", "partial-arr-repair.strm");
+        await File.WriteAllTextAsync(
+            libraryPath,
+            $"http://localhost:3000/view/.ids/{item.Id}.mkv");
+        var fake = NewFakeClient(segments, missing: [0]);
+        var (service, _) = await NewServiceAsync(fake, par2Outcome: false);
+        using var cancellation = new CancellationTokenSource();
+        var arrClient = new PartialRepairArrClient(cancellation, libraryPath);
+        service.CreateRepairArrClientsOverride = () => [arrClient];
+        service.CreateDbContextOverride = () => new DavDatabaseContext(_options);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, cancellation.Token);
+
+        _context.ChangeTracker.Clear();
+        var persisted = ReloadItem(item.Id);
+        Assert.False(persisted.HealthRepairPending);
+        Assert.True(persisted.NextHealthCheck > DateTimeOffset.UtcNow.AddHours(23));
+        Assert.False(File.Exists(libraryPath));
+        Assert.True(BlobStore.Exists(persisted.FileBlobId!.Value));
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+        Assert.Contains("accepted removal of the media file", row.Message, StringComparison.Ordinal);
+        Assert.Contains("WebDAV item was retained", row.Message, StringComparison.Ordinal);
+        Assert.Equal(1, arrClient.RemoveCalls);
+
+        var selected = await service.SelectNextHealthCheckIdsAsync(
+            [],
+            allowChecks: true,
+            allowRepairs: true,
+            maximumCount: 10,
+            CancellationToken.None);
+        Assert.DoesNotContain(item.Id, selected);
+    }
+
+    [Fact]
     public async Task PartialSample_UsesLegacyAbortOnFirstMissPath()
     {
         var segments = NewSegmentIds(HealthCheckService.SampleFloor + 1000);
@@ -400,6 +477,69 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal(oldBlobId, ReloadItem(item.Id).FileBlobId);
         Assert.Throws<UsenetArticleNotFoundException>(
             () => HealthCheckService.CheckCachedMissingSegmentIds([segments[50]]));
+    }
+
+    [Fact]
+    public async Task PartialSample_PrimaryMissingWithLiveFallback_IsHealthy()
+    {
+        var segments = NewSegmentIds(HealthCheckService.SampleFloor + 1000);
+        var sizes = Enumerable.Repeat(100L, segments.Length).ToArray();
+        var sampled = HealthCheckService.SampleSegments(segments.ToList());
+        var sampledId = sampled.First(id => Array.IndexOf(segments, id) != sampled.IndexOf(id));
+        var sourceIndex = Array.IndexOf(segments, sampledId);
+        var fallbackIds = Enumerable.Range(0, segments.Length)
+            .Select(_ => Array.Empty<string>())
+            .ToArray();
+        fallbackIds[sourceIndex] = ["alt-sampled@test"];
+        var (item, oldBlobId) = await AddVideoFileAsync(
+            "movie.mkv",
+            segments,
+            sizes,
+            fallbackIds: fallbackIds);
+        var fake = NewFakeClient(segments, missing: [sourceIndex]);
+        fake.Serve("alt-sampled@test", new byte[100]);
+        _failureTracker.RecordFailure(item.Id);
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Healthy, row.Result);
+        Assert.Equal(HealthCheckResult.RepairAction.None, row.RepairStatus);
+        Assert.Empty(par2.Requests);
+        Assert.Equal(oldBlobId, ReloadItem(item.Id).FileBlobId);
+        Assert.Equal(0, _failureTracker.GetFailureCount(item.Id));
+        Assert.True(fake.StatRequestCounts.ContainsKey("alt-sampled@test"));
+        HealthCheckService.CheckCachedMissingSegmentIds([sampledId]);
+    }
+
+    [Fact]
+    public async Task PartialSample_NonDefinitiveFallback_DefersWithoutRepair()
+    {
+        var segments = NewSegmentIds(HealthCheckService.SampleFloor + 1000);
+        var sizes = Enumerable.Repeat(100L, segments.Length).ToArray();
+        var fallbackIds = Enumerable.Range(0, segments.Length)
+            .Select(_ => Array.Empty<string>())
+            .ToArray();
+        fallbackIds[50] = ["inconclusive-fallback@test"];
+        var (item, oldBlobId) = await AddVideoFileAsync(
+            "movie.mkv",
+            segments,
+            sizes,
+            fallbackIds: fallbackIds);
+        var fake = NewFakeClient(segments, missing: [50]);
+        var client = new NonDefinitiveStatNntpClient(fake, "inconclusive-fallback@test");
+        var (service, par2) = await NewServiceAsync(client, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+        Assert.Empty(par2.Requests);
+        Assert.Equal(oldBlobId, ReloadItem(item.Id).FileBlobId);
+        Assert.Equal(1, client.InconclusiveRequestCount);
+        HealthCheckService.CheckCachedMissingSegmentIds([segments[50]]);
     }
 
     [Fact]
@@ -484,6 +624,33 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal(0L, blob.CriticalHeadEndExclusive);
         Assert.Throws<UsenetArticleNotFoundException>(
             () => HealthCheckService.CheckCachedMissingSegmentIds([segments[5]]));
+    }
+
+    [Fact]
+    public async Task Mp4LayoutProbe_PrimaryHeadMissing_UsesLiveFallback()
+    {
+        var segments = NewSegmentIds(6);
+        var sizes = new long[] { 10_000, 10_000, 10_000, 10_000, 50, 10_000 };
+        var fallbackIds = new string[segments.Length][];
+        for (var index = 0; index < fallbackIds.Length; index++)
+            fallbackIds[index] = [];
+        fallbackIds[0] = ["alt-head@test"];
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mp4",
+            segments,
+            sizes,
+            fallbackIds: fallbackIds);
+        var fake = NewFakeClient(segments, missing: [0, 4]);
+        fake.Serve("alt-head@test", Mp4Head(Box("ftyp", 16), Box("moov", 24)));
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Degraded, row.Result);
+        Assert.Equal(1, fake.BodyRequestCounts.GetValueOrDefault(segments[0]));
+        Assert.Equal(1, fake.BodyRequestCounts.GetValueOrDefault("alt-head@test"));
+        Assert.Equal([segments[4]], Assert.Single(par2.Requests));
     }
 
     [Fact]
@@ -833,6 +1000,103 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Enumerable.Range(0, count).Select(i => $"seg{i}-{Guid.NewGuid():N}@test").ToArray();
 
     [Fact]
+    public async Task RarPayload_NonFirstPartPrimaryMissingWithLiveFallback_IsHealthy()
+    {
+        var ids = NewSegmentIds(4);
+        var fallbackId = $"rar-alt-{Guid.NewGuid():N}@test";
+        var blobId = Guid.NewGuid();
+        await BlobStore.WriteBlob(blobId, new DavRarFile
+        {
+            RarParts =
+            [
+                new DavRarFile.RarPart
+                {
+                    SegmentIds = ids[..2],
+                    SegmentFallbackIds = [["unused-alt@test"]],
+                },
+                new DavRarFile.RarPart
+                {
+                    SegmentIds = ids[2..],
+                    SegmentFallbackIds = [[], [fallbackId]],
+                },
+            ],
+        });
+        var item = DavItem.New(
+            Guid.NewGuid(),
+            DavItem.ContentFolder,
+            "archive-rar.mkv",
+            4096,
+            DavItem.ItemType.UsenetFile,
+            DavItem.ItemSubType.RarFile,
+            DateTimeOffset.UtcNow.AddDays(-1),
+            null,
+            null,
+            blobId);
+        _context.Items.Add(item);
+        await _context.SaveChangesAsync();
+        var fake = NewFakeClient(ids, missing: [3]);
+        fake.Serve(fallbackId, new byte[128]);
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, 2, CancellationToken.None);
+
+        Assert.Equal(HealthCheckResult.HealthResult.Healthy, Assert.Single(GetHealthRows(item.Id)).Result);
+        Assert.Equal(1, fake.StatRequestCounts.GetValueOrDefault(fallbackId));
+        Assert.Empty(par2.Requests);
+        HealthCheckService.CheckCachedMissingSegmentIds([ids[3]]);
+    }
+
+    [Fact]
+    public async Task MultipartPayload_NonFirstPartPrimaryMissingWithLiveFallback_IsHealthy()
+    {
+        var ids = NewSegmentIds(4);
+        var fallbackId = $"multipart-alt-{Guid.NewGuid():N}@test";
+        var blobId = Guid.NewGuid();
+        await BlobStore.WriteBlob(blobId, new DavMultipartFile
+        {
+            Metadata = new DavMultipartFile.Meta
+            {
+                FileParts =
+                [
+                    new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = ids[..2],
+                        SegmentFallbackIds = [["unused-alt@test"]],
+                    },
+                    new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = ids[2..],
+                        SegmentFallbackIds = [[], [fallbackId]],
+                    },
+                ],
+            },
+        });
+        var item = DavItem.New(
+            Guid.NewGuid(),
+            DavItem.ContentFolder,
+            "archive-multipart.mkv",
+            4096,
+            DavItem.ItemType.UsenetFile,
+            DavItem.ItemSubType.MultipartFile,
+            DateTimeOffset.UtcNow.AddDays(-1),
+            null,
+            null,
+            blobId);
+        _context.Items.Add(item);
+        await _context.SaveChangesAsync();
+        var fake = NewFakeClient(ids, missing: [3]);
+        fake.Serve(fallbackId, new byte[128]);
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, 2, CancellationToken.None);
+
+        Assert.Equal(HealthCheckResult.HealthResult.Healthy, Assert.Single(GetHealthRows(item.Id)).Result);
+        Assert.Equal(1, fake.StatRequestCounts.GetValueOrDefault(fallbackId));
+        Assert.Empty(par2.Requests);
+        HealthCheckService.CheckCachedMissingSegmentIds([ids[3]]);
+    }
+
+    [Fact]
     public async Task RestartedMultipartPatch_PassesHealthStatSweepWithoutRepair()
     {
         var ids = NewSegmentIds(3);
@@ -987,6 +1251,63 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         }
     }
 
+    private sealed class FallbackHeadNntpClient(
+        INntpClient inner,
+        string missingPrimaryId,
+        string fallbackId) : WrappingNntpClient(inner)
+    {
+        public List<string> Requests { get; } = [];
+
+        public override Task<UsenetHeadResponse> HeadAsync(
+            SegmentId segmentId,
+            CancellationToken cancellationToken)
+        {
+            var id = segmentId.ToString();
+            Requests.Add(id);
+            if (string.Equals(id, missingPrimaryId, StringComparison.Ordinal))
+                throw new UsenetArticleNotFoundException(id);
+            if (!string.Equals(id, fallbackId, StringComparison.Ordinal))
+                throw new InvalidOperationException($"Unexpected HEAD request for {id}");
+
+            return Task.FromResult(new UsenetHeadResponse
+            {
+                SegmentId = id,
+                ResponseCode = (int)UsenetResponseType.ArticleRetrievedHeadFollows,
+                ResponseMessage = "221 article headers follow",
+                ArticleHeaders = new UsenetArticleHeader
+                {
+                    Headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["Date"] = DateTimeOffset.UtcNow.AddDays(-1).ToString("R"),
+                    },
+                },
+            });
+        }
+    }
+
+    private sealed class NonDefinitiveStatNntpClient(
+        INntpClient inner,
+        string inconclusiveId) : WrappingNntpClient(inner)
+    {
+        public int InconclusiveRequestCount { get; private set; }
+
+        public override Task<UsenetStatResponse> StatAsync(
+            SegmentId segmentId,
+            CancellationToken cancellationToken)
+        {
+            if (!string.Equals(segmentId, inconclusiveId, StringComparison.Ordinal))
+                return base.StatAsync(segmentId, cancellationToken);
+
+            InconclusiveRequestCount++;
+            return Task.FromResult(new UsenetStatResponse
+            {
+                ResponseCode = 400,
+                ResponseMessage = "400 service temporarily unavailable",
+                ArticleExists = false,
+            });
+        }
+    }
+
     private sealed class ThrowingReadStream(string segmentId) : MemoryStream
     {
         private UsenetCorruptArticleException CreateException() =>
@@ -1017,6 +1338,35 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         public bool Exists(Guid id) => false;
 
         public bool Delete(Guid id) => throw new NotSupportedException();
+    }
+
+    private sealed class PartialRepairArrClient(
+        CancellationTokenSource cancellation,
+        string externallyRemovedPath)
+        : ArrClient("http://radarr.test", "test-key")
+    {
+        public int RemoveCalls { get; private set; }
+
+        public override Task<List<ArrRootFolder>> GetRootFolders(CancellationToken ct = default) =>
+            Task.FromResult(new List<ArrRootFolder> { new() { Path = "/" } });
+
+        public override Task<ArrMediaFileMatch?> FindMediaFileAsync(
+            string symlinkOrStrmPath,
+            CancellationToken ct = default) =>
+            Task.FromResult<ArrMediaFileMatch?>(
+                new ArrMediaFileMatch(ArrMediaKind.Movie, FileId: 201, MediaIds: [301]));
+
+        public override Task<ArrRepairOutcome> RemoveAndBlocklist(
+            ArrMediaFileMatch mediaFile,
+            Guid downloadId,
+            Func<IReadOnlyList<string>, bool>? shouldRequestSearch = null,
+            CancellationToken ct = default)
+        {
+            RemoveCalls++;
+            File.Delete(externallyRemovedPath);
+            cancellation.Cancel();
+            return Task.FromResult(ArrRepairOutcome.MediaRemovedBlocklistUnconfirmed);
+        }
     }
 
     private async Task<(HealthCheckService Service, ScriptedPar2RepairService Par2)> NewServiceAsync(

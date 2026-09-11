@@ -15,6 +15,7 @@ public static class NestedRarRangeMapper
         RarProcessor.StoredFileSegment[] sortedOuterSegments,
         string pathWithinArchive,
         string archiveName,
+        string archiveSetId,
         RarProcessor.PartNumber partNumber,
         AesParams? aesParams,
         long fileUncompressedSize,
@@ -64,6 +65,7 @@ public static class NestedRarRangeMapper
             results.Add(new RarProcessor.StoredFileSegment
             {
                 NzbFile = layout.Outer.NzbFile,
+                  ArchiveSetId = archiveSetId,
                 PartSize = layout.Outer.PartSize,
                 ArchiveName = archiveName,
                 PartNumber = mappedPartNumber,

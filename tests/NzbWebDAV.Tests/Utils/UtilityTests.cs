@@ -73,6 +73,54 @@ public class UtilityTests
     }
 
     [Theory]
+    [InlineData("Episode.part01.rar", "Episode", FilenameUtil.RarVolumeScheme.Part, 0)]
+    [InlineData("Episode.PART2.RAR", "Episode", FilenameUtil.RarVolumeScheme.Part, 1)]
+    [InlineData("Episode.r07", "Episode", FilenameUtil.RarVolumeScheme.Classic, 8)]
+    [InlineData("Episode.rar", "Episode", FilenameUtil.RarVolumeScheme.Classic, 0)]
+    public void GetRarVolumeName_PreservesSchemeAndZeroBasedOrdinal(
+        string filename,
+        string expectedBaseName,
+        FilenameUtil.RarVolumeScheme expectedScheme,
+        int expectedOrdinal)
+    {
+        var volume = FilenameUtil.GetRarVolumeName(filename);
+
+        Assert.Equal(new FilenameUtil.RarVolumeName(expectedBaseName, expectedScheme, expectedOrdinal), volume);
+    }
+
+    [Fact]
+    public void GetRarVolumeName_DoesNotCollideAcrossSchemes()
+    {
+        var partVolume = FilenameUtil.GetRarVolumeName("Episode.part100007.rar");
+        var classicVolume = FilenameUtil.GetRarVolumeName("Episode.r07");
+
+        Assert.NotEqual(partVolume, classicVolume);
+    }
+
+    [Theory]
+    [InlineData("Episode.7z", "Episode", null)]
+    [InlineData("Episode.7z.001", "Episode", 1)]
+    [InlineData("episode.7Z.010", "episode", 10)]
+    public void GetSevenZipVolumeName_SplitsBaseAndOrdinal(string filename, string expectedBaseName, int? expectedOrdinal)
+    {
+        var volume = FilenameUtil.GetSevenZipVolumeName(filename);
+
+        Assert.Equal(new FilenameUtil.SevenZipVolumeName(expectedBaseName, expectedOrdinal), volume);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(".7z")]
+    [InlineData("Episode.7z.000")]
+    [InlineData("Episode.7z.999999999999")]
+    [InlineData("Episode.７z.001")]
+    [InlineData("Episode.7z.001\n")]
+    public void GetSevenZipVolumeName_RejectsMalformedNames(string filename)
+    {
+        Assert.Null(FilenameUtil.GetSevenZipVolumeName(filename));
+    }
+
+    [Theory]
     [InlineData("Movie {{secret}}.nzb", "Movie", "secret")]
     [InlineData("Movie password=secret.nzb", "Movie", "secret")]
     [InlineData("Movie.nzb", "Movie", null)]

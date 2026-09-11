@@ -33,7 +33,7 @@ internal static class PlannedImportOutputs
         var rarGroups = processorResults
             .OfType<RarProcessor.Result>()
             .SelectMany(x => x.StoredFileSegments)
-            .GroupBy(x => x.PathWithinArchive)
+                        .GroupBy(x => (x.ArchiveSetId, x.PathWithinArchive))
             .ToList();
         foreach (var group in rarGroups)
         {
@@ -43,10 +43,10 @@ internal static class PlannedImportOutputs
                 .FirstOrDefault(x => x is not null);
             yield return (
                 ImportableVideoNamer.Normalize(
-                    PathSanitizer.SanitizeComponent(Path.GetFileName(group.Key)),
+                                        PathSanitizer.SanitizeComponent(Path.GetFileName(group.Key.PathWithinArchive)),
                     sniffedVideoExtension,
                     mountName,
-                    allowBaseRename: rarGroups.Count == 1),
+                      allowBaseRename: rarGroups.Count == 1),
                 RarAggregator.ResolvePublishedFileSize(parts));
         }
 
@@ -63,18 +63,21 @@ internal static class PlannedImportOutputs
 
         foreach (var result in processorResults.OfType<SevenZipProcessor.Result>())
         {
-            var sevenZipFiles = result.SevenZipFiles;
-            foreach (var sevenZipFile in sevenZipFiles)
+            foreach (var sevenZipGroup in result.SevenZipFiles.GroupBy(x => x.ArchiveSetId, StringComparer.Ordinal))
             {
-                var meta = sevenZipFile.DavMultipartFileMeta;
-                yield return (
-                    ImportableVideoNamer.Normalize(
-                        PathSanitizer.SanitizeComponent(Path.GetFileName(sevenZipFile.PathWithinArchive)),
-                        sevenZipFile.SniffedVideoExtension,
-                        mountName,
-                        allowBaseRename: sevenZipFiles.Count == 1),
-                    meta.AesParams?.DecodedSize
-                        ?? meta.FileParts.Sum(x => x.FilePartByteRange.Count));
+                var sevenZipFiles = sevenZipGroup.ToList();
+                foreach (var sevenZipFile in sevenZipFiles)
+                {
+                    var meta = sevenZipFile.DavMultipartFileMeta;
+                    yield return (
+                        ImportableVideoNamer.Normalize(
+                            PathSanitizer.SanitizeComponent(Path.GetFileName(sevenZipFile.PathWithinArchive)),
+                            sevenZipFile.SniffedVideoExtension,
+                            mountName,
+                            allowBaseRename: sevenZipFiles.Count == 1),
+                        meta.AesParams?.DecodedSize
+                            ?? meta.FileParts.Sum(x => x.FilePartByteRange.Count));
+                }
             }
         }
 

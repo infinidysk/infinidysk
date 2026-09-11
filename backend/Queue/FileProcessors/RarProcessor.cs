@@ -14,9 +14,18 @@ public class RarProcessor(
     GetFileInfosStep.FileInfo fileInfo,
     INntpClient usenetClient,
     string? password,
+    string? archiveSetId,
     CancellationToken ct
 ) : BaseProcessor
 {
+    public RarProcessor(
+        GetFileInfosStep.FileInfo fileInfo,
+        INntpClient usenetClient,
+        string? password,
+        CancellationToken ct)
+        : this(fileInfo, usenetClient, password, null, ct)
+    {
+    }
     public override async Task<BaseProcessor.Result?> ProcessAsync()
     {
         await using var stream = await GetNzbFileStream().ConfigureAwait(false);
@@ -37,6 +46,7 @@ public class RarProcessor(
                 .Select(x => new StoredFileSegment()
                 {
                     NzbFile = fileInfo.NzbFile,
+                    ArchiveSetId = archiveSetId,
                     PartSize = ResolvePartSize(
                         stream.Length,
                         x.DataStartPosition,
@@ -132,6 +142,7 @@ public class RarProcessor(
     public class StoredFileSegment
     {
         public required NzbFile NzbFile { get; init; }
+        public string? ArchiveSetId { get; init; }
         public required long PartSize { get; init; }
         public required string ArchiveName { get; init; }
         public required PartNumber PartNumber { get; init; }

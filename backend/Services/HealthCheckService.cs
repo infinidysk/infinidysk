@@ -178,6 +178,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     { get; set; }
     internal Func<Guid, CancellationToken, Task>? ProcessCandidateOverride { get; set; }
     internal Func<bool>? HasActiveQueueItemsOverride { get; set; }
+    internal Func<ArrClient[]>? CreateRepairArrClientsOverride { get; set; }
     internal IReadOnlyCollection<Guid> InProgressHealthCheckIds => _inProgress.Keys.ToArray();
 
     public HealthCheckService
@@ -347,10 +348,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 }
 
                 var availableSlots = _configManager.GetHealthCheckWorkers() - _inProgress.Count;
+                var repairsOpen = admission.RepairsOpen
+                    && (!ShouldAttemptPar2Repair() || _par2RepairService.CanAcceptInlineRepair);
                 var candidateIds = await SelectNextHealthCheckIdsAsync(
                         reservedIds,
                         admission.ChecksOpen,
-                        admission.RepairsOpen,
+                        repairsOpen,
                         availableSlots,
                         ct)
                     .ConfigureAwait(false);
@@ -793,6 +796,31 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         RecordInfrastructureBackoff();
     }
 
+    private async Task DeferPar2RepairAsync(
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        Par2RepairOutcome outcome,
+        CancellationToken ct)
+    {
+        var now = _timeProvider.GetUtcNow();
+        davItem.HealthRepairPending = true;
+        davItem.LastHealthCheck = now;
+        if (davItem.NextHealthCheck != DateTimeOffset.UnixEpoch)
+            davItem.NextHealthCheck = now.AddSeconds(1);
+        Log.Warning(
+            "PAR2 repair deferred for {Path} because repair capacity is contended ({Outcome}).",
+            davItem.Path,
+            outcome);
+        await RecordHealthResult(
+                dbClient,
+                davItem,
+                HealthCheckResult.HealthResult.Unhealthy,
+                HealthCheckResult.RepairAction.ActionNeeded,
+                "PAR2 repair remains pending because repair capacity is contended.",
+                ct)
+            .ConfigureAwait(false);
+    }
+
     private bool IsInfrastructureBackoffActive() =>
         _timeProvider.GetUtcNow().UtcTicks
         < Interlocked.Read(ref _infrastructureBackoffUntilUtcTicks);
@@ -1145,8 +1173,8 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 var progress = progressHook.ToPercentage(statSegments.Count);
                 if (!canClassify)
                 {
-                    await ArticleExistenceChecker.CheckAsync(
-                        _usenetClient, statSegments, concurrency, progress, statCts.Token).ConfigureAwait(false);
+                    await CheckLogicalSegmentsAsync(
+                        statSegments, payload.Segments, concurrency, progress, statCts).ConfigureAwait(false);
                 }
                 else
                 {
@@ -1158,7 +1186,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                             statSegments, depth: 0, concurrency, progress, statCts.Token)
                         .ConfigureAwait(false);
                     confirmedHoles = await ConfirmHolesThroughFallbacksAsync(
-                            missingIds, statSegments, nzbFile!, concurrency, statCts)
+                            missingIds, statSegments, payload.Segments, concurrency, statCts)
                         .ConfigureAwait(false);
                 }
             }
@@ -1278,7 +1306,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 await HandleUnreadablePayloadAsync(davItem, dbClient, exception, ct).ConfigureAwait(false);
                 return;
             }
-            if (par2Outcome is not Par2RepairOutcome.NotRepaired)
+            if (par2Outcome == Par2RepairOutcome.DeferredBusy)
+            {
+                await DeferPar2RepairAsync(davItem, dbClient, par2Outcome, ct).ConfigureAwait(false);
+                return;
+            }
+            if (par2Outcome is Par2RepairOutcome.Repaired or Par2RepairOutcome.VerifiedClean)
             {
                 var utcNow = DateTimeOffset.UtcNow;
                 davItem.LastHealthCheck = utcNow;
@@ -1400,7 +1433,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         DavItem davItem,
         DavDatabaseClient dbClient,
         DavNzbFile nzbFile,
-        IReadOnlyList<string> segments,
+        ConcatenatedSegmentView segments,
         LongRange[] segmentRanges,
         List<int> missingIndices,
         List<int> corruptIndices,
@@ -1426,7 +1459,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             ? await _par2RepairService.TryPar2RepairAsync(
                 davItem, holeSegmentIds, ct).ConfigureAwait(false)
             : Par2RepairOutcome.NotRepaired;
-        if (par2Outcome is not Par2RepairOutcome.NotRepaired)
+        if (par2Outcome == Par2RepairOutcome.DeferredBusy)
+        {
+            await DeferPar2RepairAsync(davItem, dbClient, par2Outcome, ct).ConfigureAwait(false);
+            return;
+        }
+        if (par2Outcome is Par2RepairOutcome.Repaired or Par2RepairOutcome.VerifiedClean)
         {
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
@@ -1529,7 +1567,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         ResolveContainerClassAsync(
             DavItem davItem,
             DavNzbFile nzbFile,
-            IReadOnlyList<string> segments,
+            ConcatenatedSegmentView segments,
             List<int> holeIndices,
             CancellationToken ct)
     {
@@ -1551,7 +1589,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             new HealthCheckAdmissionContext(
                 _healthCheckConnectionGate,
                 HealthCheckAdmissionPriority.Background));
-        var response = await _usenetClient.DecodedBodyAsync(segments[0], ct).ConfigureAwait(false);
+        var response = await GetDecodedBodyWithFallbackAsync(segments, 0, ct).ConfigureAwait(false);
         if (response.Stream is not { } headStream)
             throw new UsenetUnexpectedResponseException(segments[0], response.ResponseMessage);
         await using (headStream)
@@ -1580,7 +1618,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     private async Task<List<int>> ConfirmHolesThroughFallbacksAsync(
         IReadOnlyList<string> primaryMissIds,
         SegmentIndexView statSegments,
-        DavNzbFile nzbFile,
+        ConcatenatedSegmentView segments,
         int concurrency,
         ContextualCancellationTokenSource statCts)
     {
@@ -1594,42 +1632,195 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 missingIndices.Add(statSegments.SourceIndexAt(index));
         }
 
+        using var childCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(statCts.Token);
         var checks = missingIndices
-            .Select(async index => (
-                Index: index,
-                IsHole: await IsConfirmedHoleAsync(index, nzbFile, statCts.Token).ConfigureAwait(false)))
-            .WithConcurrencyAsync(concurrency, statCts.Token);
+            .Select(async index =>
+            {
+                try
+                {
+                    var isHole = await IsConfirmedHoleAsync(
+                        index,
+                        segments,
+                        () => RefreshHealthCheckWatchdog(statCts),
+                        childCts.Token).ConfigureAwait(false);
+                    return new HealthHoleCheckOutcome(index, isHole, null);
+                }
+                catch (OutOfMemoryException)
+                {
+                    await childCts.CancelAsync().ConfigureAwait(false);
+                    throw;
+                }
+                catch (Exception e) when (e.IsCancellationException())
+                {
+                    await childCts.CancelAsync().ConfigureAwait(false);
+                    throw;
+                }
+                catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
+                {
+                    return new HealthHoleCheckOutcome(index, false, ExceptionDispatchInfo.Capture(e));
+                }
+            })
+            .WithConcurrencyAsync(concurrency, childCts.Token);
 
         var holes = new List<int>();
-        await foreach (var (index, isHole) in checks.ConfigureAwait(false))
+        await foreach (var outcome in checks.ConfigureAwait(false))
         {
-            // keep the no-progress watchdog armed while fallback STATs are in flight
-            statCts.CancelAfter(HealthCheckProgressTimeout);
-            if (isHole) holes.Add(index);
+            try
+            {
+                statCts.Token.ThrowIfCancellationRequested();
+                if (outcome.Failure is { } failure)
+                {
+                    await childCts.CancelAsync().ConfigureAwait(false);
+                    failure.Throw();
+                }
+
+                RefreshHealthCheckWatchdog(statCts);
+                if (outcome.IsHole) holes.Add(outcome.Index);
+            }
+            catch
+            {
+                await childCts.CancelAsync().ConfigureAwait(false);
+                throw;
+            }
         }
 
         holes.Sort();
         return holes;
     }
 
-    private async Task<bool> IsConfirmedHoleAsync(int segmentIndex, DavNzbFile nzbFile, CancellationToken ct)
+    private async Task CheckLogicalSegmentsAsync(
+        SegmentIndexView statSegments,
+        ConcatenatedSegmentView segments,
+        int concurrency,
+        IProgress<int>? progress,
+        ContextualCancellationTokenSource statCts)
     {
-        if (nzbFile.SegmentFallbackIds is not { } fallbackIds ||
-            segmentIndex >= fallbackIds.Length ||
-            fallbackIds[segmentIndex] is not { Length: > 0 } alternates)
+        using var childCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(statCts.Token);
+        var outcomes = Enumerable.Range(0, statSegments.Count)
+            .Select(async sampleIndex =>
+            {
+                var primaryId = statSegments[sampleIndex];
+                var sourceIndex = statSegments.SourceIndexAt(sampleIndex);
+                try
+                {
+                    if (await StatCandidateExistsAsync(
+                            primaryId,
+                            () => RefreshHealthCheckWatchdog(statCts),
+                            childCts.Token).ConfigureAwait(false) ||
+                        !await IsConfirmedHoleAsync(
+                            sourceIndex,
+                            segments,
+                            () => RefreshHealthCheckWatchdog(statCts),
+                            childCts.Token).ConfigureAwait(false))
+                        return new HealthSegmentCheckOutcome(true, null);
+
+                    return new HealthSegmentCheckOutcome(
+                        true,
+                        ExceptionDispatchInfo.Capture(new UsenetArticleNotFoundException(primaryId)));
+                }
+                catch (OutOfMemoryException)
+                {
+                    await childCts.CancelAsync().ConfigureAwait(false);
+                    throw;
+                }
+                catch (Exception e) when (e.IsCancellationException())
+                {
+                    await childCts.CancelAsync().ConfigureAwait(false);
+                    throw;
+                }
+                catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
+                {
+                    return new HealthSegmentCheckOutcome(false, ExceptionDispatchInfo.Capture(e));
+                }
+            })
+            .WithConcurrencyAsync(concurrency, childCts.Token);
+
+        var processed = 0;
+        await foreach (var outcome in outcomes.ConfigureAwait(false))
+        {
+            try
+            {
+                statCts.Token.ThrowIfCancellationRequested();
+                if (outcome.Conclusive)
+                    progress?.Report(++processed);
+                if (outcome.Failure is { } failure)
+                {
+                    await childCts.CancelAsync().ConfigureAwait(false);
+                    failure.Throw();
+                }
+            }
+            catch
+            {
+                await childCts.CancelAsync().ConfigureAwait(false);
+                throw;
+            }
+        }
+    }
+
+    private async Task<bool> StatCandidateExistsAsync(
+        string candidateId,
+        Action onProbeCompleted,
+        CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        UsenetStatResponse response;
+        try
+        {
+            response = await _usenetClient.StatAsync(candidateId, ct).ConfigureAwait(false);
+        }
+        catch (UsenetArticleNotFoundException)
+        {
+            return false;
+        }
+        finally
+        {
+            onProbeCompleted();
+        }
+
+        if (response.ResponseType == UsenetResponseType.ArticleExists)
             return true;
+        if (UsenetArticleAvailability.IsDefinitiveMissing(response))
+            return false;
+        throw new UsenetUnexpectedResponseException(candidateId, response.ResponseMessage);
+    }
+
+    private async Task<bool> IsConfirmedHoleAsync(
+        int segmentIndex,
+        ConcatenatedSegmentView segments,
+        Action onProbeCompleted,
+        CancellationToken ct)
+    {
+        var alternates = segments.FallbackIdsAt(segmentIndex);
 
         foreach (var fallbackId in alternates)
         {
-            var response = await _usenetClient.StatAsync(fallbackId, ct).ConfigureAwait(false);
-            if (response.ResponseType == UsenetResponseType.ArticleExists)
+            if (await StatCandidateExistsAsync(fallbackId, onProbeCompleted, ct).ConfigureAwait(false))
                 return false;
-            if (!UsenetArticleAvailability.IsDefinitiveMissing(response))
-                throw new UsenetUnexpectedResponseException(fallbackId, response.ResponseMessage);
         }
 
         return true;
     }
+
+    private static void RefreshHealthCheckWatchdog(ContextualCancellationTokenSource statCts)
+    {
+        try
+        {
+            statCts.CancelAfter(HealthCheckProgressTimeout);
+        }
+        catch (ObjectDisposedException)
+        {
+            // A completed probe can race health-check teardown.
+        }
+    }
+
+    private readonly record struct HealthSegmentCheckOutcome(
+        bool Conclusive,
+        ExceptionDispatchInfo? Failure);
+
+    private readonly record struct HealthHoleCheckOutcome(
+        int Index,
+        bool IsHole,
+        ExceptionDispatchInfo? Failure);
 
     /// <summary>
     /// Persists the degraded-damage record by writing a NEW blob and swapping
@@ -2055,15 +2246,80 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             : new SegmentIndexView(sampledSegments.Source, filteredIndexes.ToArray());
     }
 
-    private async Task UpdateReleaseDate(DavItem davItem, IReadOnlyList<string> segments, CancellationToken ct)
+    private async Task UpdateReleaseDate(DavItem davItem, ConcatenatedSegmentView segments, CancellationToken ct)
     {
         var firstSegmentId = segments.Count == 0 ? null : StringUtil.EmptyToNull(segments[0]);
         if (firstSegmentId == null) return;
-        var articleHeadersResponse = await _usenetClient.HeadAsync(firstSegmentId, ct).ConfigureAwait(false);
+        var articleHeadersResponse = await HeadWithFallbackAsync(segments, 0, ct).ConfigureAwait(false);
         if (articleHeadersResponse.ArticleHeaders is not { } articleHeaders)
             throw new UsenetUnexpectedResponseException(
                 firstSegmentId, articleHeadersResponse.ResponseMessage);
         davItem.ReleaseDate = articleHeaders.Date;
+    }
+
+    private async Task<UsenetHeadResponse> HeadWithFallbackAsync(
+        ConcatenatedSegmentView segments,
+        int sourceIndex,
+        CancellationToken ct)
+    {
+        var primaryId = segments[sourceIndex];
+        foreach (var candidateId in EnumerateSegmentCandidates(segments, sourceIndex))
+        {
+            try
+            {
+                var response = await _usenetClient.HeadAsync(candidateId, ct).ConfigureAwait(false);
+                if (!UsenetArticleAvailability.IsDefinitiveMissing(response))
+                    return response;
+            }
+            catch (UsenetArticleNotFoundException e)
+            {
+                Log.Debug(
+                    e,
+                    "Health-check HEAD candidate {CandidateId} missing while probing primary {PrimaryId}",
+                    candidateId,
+                    primaryId);
+            }
+        }
+
+        throw new UsenetArticleNotFoundException(primaryId);
+    }
+
+    private async Task<UsenetDecodedBodyResponse> GetDecodedBodyWithFallbackAsync(
+        ConcatenatedSegmentView segments,
+        int sourceIndex,
+        CancellationToken ct)
+    {
+        var primaryId = segments[sourceIndex];
+        foreach (var candidateId in EnumerateSegmentCandidates(segments, sourceIndex))
+        {
+            try
+            {
+                var response = await _usenetClient.DecodedBodyAsync(candidateId, ct).ConfigureAwait(false);
+                if (!UsenetArticleAvailability.IsDefinitiveMissing(response))
+                    return response;
+                if (response.Stream is { } stream)
+                    await stream.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (UsenetArticleNotFoundException e)
+            {
+                Log.Debug(
+                    e,
+                    "Health-check BODY candidate {CandidateId} missing while probing primary {PrimaryId}",
+                    candidateId,
+                    primaryId);
+            }
+        }
+
+        throw new UsenetArticleNotFoundException(primaryId);
+    }
+
+    private static IEnumerable<string> EnumerateSegmentCandidates(
+        ConcatenatedSegmentView segments,
+        int sourceIndex)
+    {
+        yield return segments[sourceIndex];
+        foreach (var fallbackId in segments.FallbackIdsAt(sourceIndex))
+            yield return fallbackId;
     }
 
     private static async Task EnsurePayloadExistsAsync(
@@ -2094,7 +2350,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             var nzbFile = await dbClient.GetDavNzbFileAsync(davItem, ct).ConfigureAwait(false);
             return nzbFile is null
                 ? throw new MissingFilePayloadException(davItem, DavItem.ItemSubType.NzbFile)
-                : new HealthCheckPayload(nzbFile.SegmentIds, nzbFile);
+                : new HealthCheckPayload(
+                    new ConcatenatedSegmentView(
+                    [
+                        new HealthSegmentPart(nzbFile.SegmentIds, nzbFile.SegmentFallbackIds),
+                    ]),
+                    nzbFile);
         }
 
         if (davItem.SubType == DavItem.ItemSubType.RarFile)
@@ -2103,7 +2364,10 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             return rarFile is null
                 ? throw new MissingFilePayloadException(davItem, DavItem.ItemSubType.RarFile)
                 : new HealthCheckPayload(
-                    new ConcatenatedSegmentView(rarFile.RarParts.Select(part => part.SegmentIds).ToArray()),
+                    new ConcatenatedSegmentView(
+                        rarFile.RarParts
+                            .Select(part => new HealthSegmentPart(part.SegmentIds, part.SegmentFallbackIds))
+                            .ToArray()),
                     null);
         }
 
@@ -2113,15 +2377,18 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             return multipartFile is null
                 ? throw new MissingFilePayloadException(davItem, DavItem.ItemSubType.MultipartFile)
                 : new HealthCheckPayload(
-                    new ConcatenatedSegmentView(multipartFile.Metadata.FileParts.Select(part => part.SegmentIds).ToArray()),
+                    new ConcatenatedSegmentView(
+                        multipartFile.Metadata.FileParts
+                            .Select(part => new HealthSegmentPart(part.SegmentIds, part.SegmentFallbackIds))
+                            .ToArray()),
                     null);
         }
 
-        return new HealthCheckPayload(Array.Empty<string>(), null);
+        return new HealthCheckPayload(new ConcatenatedSegmentView(Array.Empty<HealthSegmentPart>()), null);
     }
 
     private readonly record struct HealthCheckPayload(
-        IReadOnlyList<string> Segments,
+        ConcatenatedSegmentView Segments,
         DavNzbFile? NzbFile);
 
     /// <summary>
@@ -2161,19 +2428,28 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     /// Presents archive parts as one indexable sequence without copying every Message-ID
     /// into a temporary flattened list.
     /// </summary>
+    internal readonly record struct HealthSegmentPart(
+        string[] SegmentIds,
+        string[][]? SegmentFallbackIds);
+
     internal sealed class ConcatenatedSegmentView : IReadOnlyList<string>
     {
-        private readonly string[][] _parts;
+        private readonly HealthSegmentPart[] _parts;
         private readonly int[] _partEnds;
 
         public ConcatenatedSegmentView(string[][] parts)
+            : this(parts.Select(part => new HealthSegmentPart(part, null)).ToArray())
         {
-            _parts = parts.Where(part => part.Length > 0).ToArray();
+        }
+
+        public ConcatenatedSegmentView(HealthSegmentPart[] parts)
+        {
+            _parts = parts.Where(part => part.SegmentIds.Length > 0).ToArray();
             _partEnds = new int[_parts.Length];
             var count = 0;
             for (var index = 0; index < _parts.Length; index++)
             {
-                count = checked(count + _parts[index].Length);
+                count = checked(count + _parts[index].SegmentIds.Length);
                 _partEnds[index] = count;
             }
         }
@@ -2184,24 +2460,39 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         {
             get
             {
-                if ((uint)index >= (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));
-                var partIndex = Array.BinarySearch(_partEnds, index + 1);
-                if (partIndex < 0) partIndex = ~partIndex;
-                var partStart = partIndex == 0 ? 0 : _partEnds[partIndex - 1];
-                return _parts[partIndex][index - partStart];
+                var (part, localIndex) = Locate(index);
+                return part.SegmentIds[localIndex];
             }
+        }
+
+        public IReadOnlyList<string> FallbackIdsAt(int index)
+        {
+            var (part, localIndex) = Locate(index);
+            var rows = part.SegmentFallbackIds;
+            return rows is not null && localIndex < rows.Length
+                ? rows[localIndex] ?? Array.Empty<string>()
+                : Array.Empty<string>();
         }
 
         public IEnumerator<string> GetEnumerator()
         {
             foreach (var part in _parts)
             {
-                foreach (var segmentId in part)
+                foreach (var segmentId in part.SegmentIds)
                     yield return segmentId;
             }
         }
 
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+
+        private (HealthSegmentPart Part, int LocalIndex) Locate(int index)
+        {
+            if ((uint)index >= (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));
+            var partIndex = Array.BinarySearch(_partEnds, index + 1);
+            if (partIndex < 0) partIndex = ~partIndex;
+            var partStart = partIndex == 0 ? 0 : _partEnds[partIndex - 1];
+            return (_parts[partIndex], index - partStart);
+        }
     }
 
     /// <summary>
@@ -2319,6 +2610,10 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         /// replacement search was withheld by the per-media search budget.
         /// </summary>
         RemoveAndBlocklistSucceededSearchWithheld,
+        /// <summary>Arr accepted media removal, but failed-download/blocklist completion is unconfirmed.</summary>
+        MediaRemovedBlocklistUnconfirmed,
+        /// <summary>Arr confirmed blocklisting, but replacement-search completion is unconfirmed.</summary>
+        MediaRemovedBlocklistConfirmedSearchUnconfirmed,
         /// <summary>
         /// At least one Arr instance was unreachable/unusable and no instance completed repair —
         /// leave the DavItem in place.
@@ -2583,6 +2878,22 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     recoveryHost);
             }
 
+            if (repairOutcome == ArrRepairOutcome.MediaRemovedBlocklistUnconfirmed)
+            {
+                return new ArrLinkedRepairResult(
+                    ArrLinkedRepairDecision.MediaRemovedBlocklistUnconfirmed,
+                    persistedRecovery,
+                    recoveryHost);
+            }
+
+            if (repairOutcome == ArrRepairOutcome.MediaRemovedBlocklistConfirmedSearchUnconfirmed)
+            {
+                return new ArrLinkedRepairResult(
+                    ArrLinkedRepairDecision.MediaRemovedBlocklistConfirmedSearchUnconfirmed,
+                    persistedRecovery,
+                    recoveryHost);
+            }
+
             if (repairOutcome == ArrRepairOutcome.DownloadHistoryNotFound)
             {
                 sawMissingDownloadHistory = true;
@@ -2687,7 +2998,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 failureSnapshot.HasTargetableSegmentIds ? failureSnapshot.SegmentIds : null,
                 ct).ConfigureAwait(false)
             : Par2RepairOutcome.NotRepaired;
-        if (par2Outcome is not Par2RepairOutcome.NotRepaired)
+        if (par2Outcome == Par2RepairOutcome.DeferredBusy)
+        {
+            await DeferPar2RepairAsync(davItem, dbClient, par2Outcome, ct).ConfigureAwait(false);
+            return;
+        }
+        if (par2Outcome is Par2RepairOutcome.Repaired or Par2RepairOutcome.VerifiedClean)
         {
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
@@ -2895,7 +3211,8 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             // new filename), so replacement searches are additionally budgeted by the Arr
             // media identity, which stays stable across re-grabs of the same movie/episode.
             var arrConfig = _configManager.GetArrConfig();
-            var arrClients = arrConfig.GetArrClients().ToArray();
+            var arrClients = CreateRepairArrClientsOverride?.Invoke()
+                ?? arrConfig.GetArrClients().ToArray();
             if (arrClients.Length == 0)
             {
                 var utcNow = DateTimeOffset.UtcNow;
@@ -2937,6 +3254,29 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             }
 
             var arrDecision = arrResult.Decision;
+
+            if (arrDecision is ArrLinkedRepairDecision.MediaRemovedBlocklistUnconfirmed
+                or ArrLinkedRepairDecision.MediaRemovedBlocklistConfirmedSearchUnconfirmed)
+            {
+                await RecordIncompleteArrRepairAsync(
+                    davItem,
+                    dbClient,
+                    linkedPath,
+                    arrDecision).ConfigureAwait(false);
+                if (!ct.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await SeedRejectedReleaseSegmentsAsync(davItem, dbClient, ct).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // The incomplete repair state is already persisted; seeding is optional.
+                    }
+                }
+
+                return;
+            }
 
             if (arrDecision is ArrLinkedRepairDecision.RemoveAndBlocklistSucceeded
                 or ArrLinkedRepairDecision.RemoveAndBlocklistSucceededSearchWithheld)
@@ -3084,6 +3424,52 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 HealthCheckResult.HealthResult.Unhealthy,
                 HealthCheckResult.RepairAction.ActionNeeded,
                 $"Error performing file repair: {e.Message}", ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task RecordIncompleteArrRepairAsync(
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        string linkedPath,
+        ArrLinkedRepairDecision decision)
+    {
+        var message = decision switch
+        {
+            ArrLinkedRepairDecision.MediaRemovedBlocklistUnconfirmed =>
+                "Arr accepted removal of the media file, but the original download's failed/blocklist " +
+                "state could not be confirmed. InfiniDysk did not request a replacement search. " +
+                "The WebDAV item was retained. Review the item and failed-download/blocklist history " +
+                "in Radarr/Sonarr before retrying repair.",
+            ArrLinkedRepairDecision.MediaRemovedBlocklistConfirmedSearchUnconfirmed =>
+                "Arr accepted removal of the media file and confirmed the failed-download/blocklist " +
+                "request, but InfiniDysk could not confirm completion of its replacement-search step. " +
+                "The WebDAV item was retained. Review the item and existing searches in Radarr/Sonarr " +
+                "before retrying repair.",
+            _ => throw new ArgumentOutOfRangeException(nameof(decision), decision, null),
+        };
+        var now = _timeProvider.GetUtcNow();
+        davItem.LastHealthCheck = now;
+        davItem.NextHealthCheck = now + TimeSpan.FromDays(1);
+        davItem.HealthRepairPending = false;
+        RecordRepairRemoval(linkedPath, now);
+
+        try
+        {
+            await RecordHealthResult(
+                dbClient,
+                davItem,
+                HealthCheckResult.HealthResult.Unhealthy,
+                HealthCheckResult.RepairAction.ActionNeeded,
+                message,
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            Log.Error(
+                exception,
+                "Incomplete Arr repair state for DavItem {DavItemId} could not be persisted; stage {RepairStage}",
+                davItem.Id,
+                decision);
         }
     }
 
@@ -3250,7 +3636,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             ? segments
             : segments.Take(RejectedReleaseSeedSegments).ToList();
 
-    private static IEnumerable<string> EnumerateRejectedReleaseSeedSegments(IReadOnlyList<string> segments)
+    private static IEnumerable<string> EnumerateRejectedReleaseSeedSegments(ConcatenatedSegmentView segments)
     {
         for (var index = 0; index < Math.Min(segments.Count, RejectedReleaseSeedSegments); index++)
             yield return segments[index];

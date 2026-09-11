@@ -7,6 +7,7 @@ using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Par2Recovery.Packets;
 using NzbWebDAV.Par2Recovery.ReedSolomon;
+using UsenetSharp.Models;
 
 namespace NzbWebDAV.Services.Repair;
 
@@ -191,23 +192,81 @@ public partial class Par2RepairService
     {
         if (reads.Observations.TryGetValue(file, out var cached)) return cached;
         reads.Budget.Charge(256);
-        await reads.FetchGate.WaitAsync(ct).ConfigureAwait(false);
-        try
+        var indices = Enumerable.Range(0, file.Segments.Count)
+            .OrderBy(index => index == 0 ? 0 : index == file.Segments.Count - 1 ? 1 : 2)
+            .ToArray();
+        var concurrency = Math.Max(1, Math.Min(reads.FetchGate.CurrentCount, indices.Length));
+        foreach (var window in indices.Chunk(concurrency))
         {
-            foreach (var index in Enumerable.Range(0, file.Segments.Count).OrderBy(index => index == 0 ? 0 : index == file.Segments.Count - 1 ? 1 : 2))
+            ct.ThrowIfCancellationRequested();
+            var tasks = new Task<HeaderProbeResult>[window.Length];
+            for (var offset = 0; offset < window.Length; offset++)
             {
-                var header = await ReadHeaderCoreAsync(file.Segments[index].MessageId, reads, ct, identity: true).ConfigureAwait(false);
-                if (header is not { FileSize: > 0 }) continue;
-                var observation = new NzbFileObservation(header.FileSize, null);
+                var index = window[offset];
+                var id = file.Segments[index].MessageId;
+                if (reads.UnavailableIds.Contains(id))
+                {
+                    tasks[offset] = Task.FromResult(new HeaderProbeResult(id, null));
+                    continue;
+                }
+                if (reads.Headers.TryGetValue(id, out var cachedHeader))
+                {
+                    tasks[offset] = Task.FromResult(new HeaderProbeResult(id, cachedHeader));
+                    continue;
+                }
+                reads.AdmitIdentityWork(0, request: true);
+                reads.Budget.Charge(512 + 2L * id.Length);
+            }
+
+            for (var offset = 0; offset < window.Length; offset++)
+            {
+                var index = window[offset];
+                var id = file.Segments[index].MessageId;
+                if (tasks[offset] is null)
+                    tasks[offset] = FetchHeaderObservationAsync(id, reads, ct);
+            }
+            var probes = await Task.WhenAll(tasks).ConfigureAwait(false);
+
+            foreach (var probe in probes)
+            {
+                if (probe.Header is not null)
+                    reads.Headers[probe.Id] = probe.Header;
+                else if (probe.IsUnavailable)
+                    reads.NoteUnavailable(probe.Id, probe.IsMissing
+                        ? new UsenetArticleNotFoundException(probe.Id)
+                        : new InvalidDataException("PAR2 identity header probe failed."));
+                if (probe.Header is not { FileSize: > 0 }) continue;
+                var observation = new NzbFileObservation(probe.Header.FileSize, null);
                 reads.Observations[file] = observation;
                 return observation;
             }
-            var unavailable = new NzbFileObservation(null, null);
-            reads.Observations[file] = unavailable;
-            return unavailable;
+        }
+        var unavailable = new NzbFileObservation(null, null);
+        reads.Observations[file] = unavailable;
+        return unavailable;
+    }
+
+    private async Task<HeaderProbeResult> FetchHeaderObservationAsync(string id, RepairReadContext reads, CancellationToken ct)
+    {
+        await reads.FetchGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var response = await _usenetClient.DecodedBodyAsync(id, ct).ConfigureAwait(false);
+            await using var stream = response.Stream!;
+            return new HeaderProbeResult(id, await stream.GetYencHeadersAsync(ct).ConfigureAwait(false));
+        }
+        catch (Exception exception) when (exception is UsenetArticleNotFoundException or UsenetCorruptArticleException or InvalidDataException or EndOfStreamException)
+        {
+            return new HeaderProbeResult(id, null, true, exception is UsenetArticleNotFoundException);
         }
         finally { reads.FetchGate.Release(); }
     }
+
+    private sealed record HeaderProbeResult(
+        string Id,
+        UsenetYencHeader? Header,
+        bool IsUnavailable = false,
+        bool IsMissing = false);
 
     private async Task<LongRange[]> ResolveVolumeRangesAsync(NzbFile file, RepairPayload payload, long length,
         RepairReadContext reads, CancellationToken ct)

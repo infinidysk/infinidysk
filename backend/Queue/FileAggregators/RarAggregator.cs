@@ -74,35 +74,47 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
         dbClient.Ctx.AddBlob(davMultipartFile);
     }
 
+    internal readonly record struct RarMemberKey(string ArchiveSetId, string PathWithinArchive);
+
+    internal static List<IGrouping<RarMemberKey, RarProcessor.StoredFileSegment>> GroupArchiveMembers(
+        IEnumerable<RarProcessor.StoredFileSegment> segments)
+    {
+        return segments
+            .Select(segment => segment.ArchiveSetId is not null
+                ? segment
+                : throw new InvalidDataException("RAR archive-set membership was not resolved."))
+            .GroupBy(
+                segment => new RarMemberKey(segment.ArchiveSetId!, segment.PathWithinArchive))
+            .ToList();
+    }
+
+    internal static RarProcessor.StoredFileSegment[] PrepareMember(
+        List<RarProcessor.StoredFileSegment> members)
+    {
+        var sorted = SortByPartNumber(members);
+        ValidateVolumes(sorted.ToList());
+        return sorted;
+    }
+
     private void ProcessArchive(List<RarProcessor.StoredFileSegment> fileSegments)
     {
-        var archiveFiles = new Dictionary<string, List<RarProcessor.StoredFileSegment>>();
-        foreach (var fileSegment in fileSegments)
-        {
-            if (!archiveFiles.ContainsKey(fileSegment.PathWithinArchive))
-                archiveFiles.Add(fileSegment.PathWithinArchive, []);
-
-            archiveFiles[fileSegment.PathWithinArchive].Add(fileSegment);
-        }
+        var archiveFiles = GroupArchiveMembers(fileSegments);
 
         foreach (var archiveFile in archiveFiles)
         {
-            // Ensure we have all volumes necessary for this file.
-            ValidateVolumes(archiveFile.Value);
-
             // Initialize dav-item fields
-            var pathWithinArchive = archiveFile.Key;
-            var fileParts = SortByPartNumber(archiveFile.Value);
+            var pathWithinArchive = archiveFile.Key.PathWithinArchive;
+            var fileParts = PrepareMember(archiveFile.ToList());
             var (fileSize, aesParams) = ResolvePublishedSizeAndAes(fileParts);
             var parentDirectory = EnsureParentDirectory(pathWithinArchive);
-            var sniffedVideoExtension = archiveFile.Value
+                        var sniffedVideoExtension = archiveFile
                 .Select(x => x.SniffedVideoExtension)
                 .FirstOrDefault(x => x is not null);
             var name = ImportableVideoNamer.Normalize(
                 SanitizeDavName(Path.GetFileName(pathWithinArchive)),
                 sniffedVideoExtension,
                 mountDirectory.Name,
-                allowBaseRename: archiveFiles.Count == 1);
+                                allowBaseRename: archiveFiles.Count == 1);
 
             var davMultipartFile = new DavMultipartFile()
             {

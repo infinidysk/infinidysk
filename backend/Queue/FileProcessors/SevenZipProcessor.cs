@@ -1,5 +1,4 @@
-﻿using System.Text.RegularExpressions;
-using NzbWebDAV.Clients.Usenet;
+﻿using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
@@ -26,6 +25,7 @@ public class SevenZipProcessor : BaseProcessor
         INntpClient usenetClient,
         ConfigManager configManager,
         string? archivePassword,
+        string archiveSetId,
         CancellationToken ct
     )
     {
@@ -33,8 +33,11 @@ public class SevenZipProcessor : BaseProcessor
         _usenetClient = usenetClient;
         _configManager = configManager;
         _archivePassword = archivePassword;
+        ArchiveSetId = archiveSetId;
         _ct = ct;
     }
+
+    private string ArchiveSetId { get; }
 
     public override async Task<BaseProcessor.Result?> ProcessAsync(IProgress<int> progress)
     {
@@ -65,6 +68,7 @@ public class SevenZipProcessor : BaseProcessor
             {
                 SevenZipFiles = sevenZipEntries.Select(x => new SevenZipFile()
                 {
+                    ArchiveSetId = ArchiveSetId,
                     PathWithinArchive = x.PathWithinArchive,
                     DavMultipartFileMeta = GetDavMultipartFileMeta(x, multipartFile),
                     ReleaseDate = _fileInfos.First().ReleaseDate,
@@ -83,8 +87,9 @@ public class SevenZipProcessor : BaseProcessor
 
     private async Task<MultipartFile> GetMultipartFile(IProgress<int> progress)
     {
-        var fileInfos = await PopulateMissingFileSizes(_fileInfos, progress).ConfigureAwait(false);
-        var sortedFileInfos = fileInfos.OrderBy(f => GetPartNumber(f.FileName)).ToList();
+        var sortedFileInfos = OrderVolumes(_fileInfos);
+        var populatedFileInfos = await PopulateMissingFileSizes(sortedFileInfos, progress).ConfigureAwait(false);
+        sortedFileInfos = OrderVolumes(populatedFileInfos);
         var fileParts = new List<MultipartFile.FilePart>();
         long startInclusive = 0;
         foreach (var fileInfo in sortedFileInfos)
@@ -97,7 +102,17 @@ public class SevenZipProcessor : BaseProcessor
             // persists this part's segment byte ranges.
             await nzbFile.ProbeSecondSegmentRangeAsync(_usenetClient, fileSize, _ct)
                 .ConfigureAwait(false);
-            var endExclusive = startInclusive + fileSize;
+            long endExclusive;
+            try
+            {
+                endExclusive = checked(startInclusive + fileSize);
+            }
+            catch (OverflowException exception)
+            {
+                throw new NonRetryableDownloadException(
+                    "7z archive volume sizes exceed the supported range.",
+                    exception);
+            }
             fileParts.Add(new MultipartFile.FilePart()
             {
                 NzbFile = fileInfo.NzbFile,
@@ -152,10 +167,40 @@ public class SevenZipProcessor : BaseProcessor
         };
     }
 
-    private static int GetPartNumber(string filename)
+    internal static List<GetFileInfosStep.FileInfo> OrderVolumes(
+        IReadOnlyList<GetFileInfosStep.FileInfo> fileInfos)
     {
-        var match = Regex.Match(filename, @"\.7z(\.(\d+))?$", RegexOptions.IgnoreCase);
-        return string.IsNullOrEmpty(match.Groups[2].Value) ? -1 : int.Parse(match.Groups[2].Value);
+        if (fileInfos.Count == 0)
+            throw new NonRetryableDownloadException("7z archive set has no volumes.");
+
+        var volumes = fileInfos
+            .Select(fileInfo => (Info: fileInfo, Volume: FilenameUtil.GetSevenZipVolumeName(fileInfo.FileName)))
+            .ToList();
+        if (volumes.Any(x => x.Volume is null))
+            throw new NonRetryableDownloadException("7z archive set contains an invalid volume name.");
+
+        var first = volumes[0].Volume!.Value;
+        if (!first.IsMultipart)
+        {
+            if (volumes.Count != 1)
+                throw new NonRetryableDownloadException("Standalone 7z archives cannot be concatenated.");
+            return [volumes[0].Info];
+        }
+
+        if (volumes.Any(x => !x.Volume!.Value.IsMultipart ||
+                             !string.Equals(x.Volume!.Value.BaseName, first.BaseName, StringComparison.OrdinalIgnoreCase)))
+            throw new NonRetryableDownloadException("7z archive volumes do not belong to one multipart set.");
+
+        var ordered = volumes
+            .OrderBy(x => x.Volume!.Value.Ordinal)
+            .ToList();
+        for (var index = 0; index < ordered.Count; index++)
+        {
+            if (ordered[index].Volume!.Value.Ordinal != index + 1)
+                throw new NonRetryableDownloadException("7z archive volumes have a gap or are missing the first volume.");
+        }
+
+        return ordered.Select(x => x.Info).ToList();
     }
 
     private DavMultipartFile.Meta GetDavMultipartFileMeta
@@ -220,6 +265,7 @@ public class SevenZipProcessor : BaseProcessor
 
     public class SevenZipFile
     {
+        public required string ArchiveSetId { get; init; }
         public required string PathWithinArchive { get; init; }
         public required DavMultipartFile.Meta DavMultipartFileMeta { get; init; }
         public required DateTimeOffset ReleaseDate { get; init; }

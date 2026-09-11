@@ -134,6 +134,47 @@ public class ArrLinkedRepairDecisionTests
             result.Decision);
     }
 
+    [Theory]
+    [InlineData(ArrRepairOutcome.MediaRemovedBlocklistUnconfirmed)]
+    [InlineData(ArrRepairOutcome.MediaRemovedBlocklistConfirmedSearchUnconfirmed)]
+    public async Task PartialRepair_ReturnsImmediatelyWithoutConsultingAnotherInstance(
+        ArrRepairOutcome outcome)
+    {
+        var firstClient = new ScriptedArrClient(
+            host: "http://unreachable",
+            rootFolders: () => throw new HttpRequestException("connection refused"),
+            removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not mutate"));
+        var partialClient = new ScriptedArrClient(
+            host: "http://partial",
+            rootFolders: () => Task.FromResult(new List<ArrRootFolder>
+            {
+                new() { Path = "/media/movies" },
+            }),
+            removeAndBlocklist: (_, _) => Task.FromResult(outcome));
+        var laterCalls = 0;
+        var laterClient = new ScriptedArrClient(
+            host: "http://later",
+            rootFolders: () =>
+            {
+                laterCalls++;
+                return Task.FromResult(new List<ArrRootFolder>());
+            },
+            removeAndBlocklist: (_, _) => throw new InvalidOperationException("should not mutate"));
+
+        var result = await HealthCheckService.DecideArrLinkedRepairAsync(
+            [firstClient, partialClient, laterClient],
+            LibraryPath,
+            DownloadId,
+            CancellationToken.None);
+
+        var expected = outcome == ArrRepairOutcome.MediaRemovedBlocklistUnconfirmed
+            ? HealthCheckService.ArrLinkedRepairDecision.MediaRemovedBlocklistUnconfirmed
+            : HealthCheckService.ArrLinkedRepairDecision.MediaRemovedBlocklistConfirmedSearchUnconfirmed;
+        Assert.Equal(expected, result.Decision);
+        Assert.Equal(0, laterCalls);
+        Assert.Empty(laterClient.BlocklistDownloadIds);
+    }
+
     [Fact]
     public async Task MissingDownloadIdentity_DefersWithoutCallingArrRepair()
     {

@@ -7,3 +7,5 @@ backend/publish
 frontend/build
 frontend/dist-node
 tests/
+libs/rapidyenc/build
+libs/RapidYencSharp/runtimes

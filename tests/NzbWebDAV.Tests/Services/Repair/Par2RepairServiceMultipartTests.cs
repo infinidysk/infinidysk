@@ -99,10 +99,69 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
         {
             var result = await Task.Run(() => release.Service.TryPar2RepairAsync(release.Item,
                 [release.Files[0].Ids[0]], cancellation.Token), cancellation.Token);
-            Assert.Equal(Par2RepairOutcome.NotRepaired, result);
-            Assert.Equal(0, release.Fake.BodyRequestCount);
+            Assert.Equal(Par2RepairOutcome.Repaired, result);
+            Assert.True(release.Fake.BodyRequestCount > 0);
         }
         finally { flights.Clear(); }
+    }
+
+    [Fact]
+    public async Task CompletedDeferredFlight_PropagatesDeferredToJoinerWithoutRetrying()
+    {
+        var data = Data(4096 * 3, "deferred-flight");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length)),
+        ], [1], DavItem.ItemSubType.MultipartFile);
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+        var flightType = typeof(Par2RepairService).GetNestedType("RepairFlight", System.Reflection.BindingFlags.NonPublic)!;
+        var flight = Activator.CreateInstance(flightType, flags, null, new object?[] { Array.Empty<string>() }, null)!;
+        ((TaskCompletionSource<Par2RepairOutcome>)flightType.GetProperty("Completion")!.GetValue(flight)!).SetResult(Par2RepairOutcome.DeferredBusy);
+        var flights = (System.Collections.IDictionary)typeof(Par2RepairService).GetField("_repairFlights", flags)!.GetValue(release.Service)!;
+        flights.Add(release.Item.Id, flight);
+        try
+        {
+            var result = await release.Service.TryPar2RepairAsync(release.Item, [release.Files[0].Ids[0]], CancellationToken.None);
+            Assert.Equal(Par2RepairOutcome.DeferredBusy, result);
+            Assert.Equal(0, release.Fake.BodyRequestCount);
+            Assert.Same(flight, flights[release.Item.Id]);
+        }
+        finally { flights.Clear(); }
+    }
+
+    [Fact]
+    public async Task HoldAdmission_DefersInlineCallersUntilReleased()
+    {
+        var data = Data(4096 * 6, "hold-admission");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length), [4]),
+        ], [1], DavItem.ItemSubType.MultipartFile);
+        var id = release.Files[0].Ids[4];
+        var hold = await release.Service.HoldAdmissionForTestsAsync(CancellationToken.None);
+        try
+        {
+            Assert.False(release.Service.CanAcceptInlineRepair);
+            Assert.Equal(1, release.Service.GetDiagnosticSnapshot().AdmissionActive);
+            Assert.Equal(Par2RepairOutcome.DeferredBusy, await release.Service.TryPar2RepairAsync(release.Item, [id], CancellationToken.None));
+            Assert.Equal(0, release.Fake.BodyRequestCount);
+            await using (var context = new DavDatabaseContext())
+                Assert.False(await context.Par2RepairJobs.AnyAsync());
+        }
+        finally { await hold.DisposeAsync(); }
+
+        Assert.True(release.Service.CanAcceptInlineRepair);
+        Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionActive);
+        Assert.Equal(Par2RepairOutcome.Repaired, await release.Service.TryPar2RepairAsync(release.Item, [id], CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task HoldAdmission_SurvivesServiceDisposalWhileHeld()
+    {
+        var service = new Par2RepairService(_config, null!, new RepairPatchStore(Path.Join(_root, "hold-patches"), 1024 * 1024));
+        var hold = await service.HoldAdmissionForTestsAsync(CancellationToken.None);
+        service.Dispose();
+        await hold.DisposeAsync();
+        await hold.DisposeAsync();
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => service.HoldAdmissionForTestsAsync(CancellationToken.None));
     }
 
     [Theory]
@@ -484,7 +543,7 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Admission_CanceledWaiterLeavesNoJobAndCanRetry()
+    public async Task InlineContentionDefersWithoutCreatingJob()
     {
         var data = Data(4096 * 6, "admission");
         await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
@@ -512,16 +571,14 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
             var sameItem = release.Service.TryPar2RepairAsync(release.Item, ids, ownerCancellation.Token);
             var snapshot = release.Service.GetDiagnosticSnapshot();
             Assert.Equal(1, snapshot.AdmissionActive);
-            Assert.Equal(1, snapshot.AdmissionWaiters);
-            Assert.False(sameItem.IsCompleted);
-            await waiterCancellation.CancelAsync();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiter);
+            Assert.Equal(0, snapshot.AdmissionWaiters);
+            Assert.Equal(Par2RepairOutcome.DeferredBusy, await sameItem);
+            Assert.Equal(Par2RepairOutcome.DeferredBusy, await waiter);
             Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionWaiters);
             await using (var context = new DavDatabaseContext())
                 Assert.False(await context.Par2RepairJobs.AnyAsync(job => job.DavItemId == other.Id));
             proceed.TrySetResult();
             Assert.Equal(Par2RepairOutcome.Repaired, await owner);
-            Assert.Equal(Par2RepairOutcome.Repaired, await sameItem);
             Assert.Equal(Par2RepairOutcome.Repaired, await release.Service.TryPar2RepairAsync(other, ids, ownerCancellation.Token));
             Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionActive);
         }
@@ -538,7 +595,7 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task LateDifferentVolumeRequest_RunsFollowUpBeforeReturningSuccess()
+    public async Task LateDifferentVolumeRequest_DefersWithoutRunningFollowUp()
     {
         var first = Data(4096 * 6, "late-first");
         var second = Data(4096 * 7, "late-second");
@@ -562,15 +619,14 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
             await entered.Task.WaitAsync(cancellation.Token);
             var lateId = release.Files[1].Ids[5];
             var late = release.Service.TryPar2RepairAsync(release.Item, [lateId], cancellation.Token);
-            Assert.False(late.IsCompleted);
+            Assert.Equal(Par2RepairOutcome.DeferredBusy, await late);
             Assert.False(release.Store.HasUsablePatch(lateId));
             Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionWaiters);
             proceed.TrySetResult();
             Assert.Equal(Par2RepairOutcome.Repaired, await owner);
-            Assert.Equal(Par2RepairOutcome.Repaired, await late);
-            await AssertPatchAsync(release, 1, 5);
+            Assert.False(release.Store.HasUsablePatch(lateId));
             await using var context = new DavDatabaseContext();
-            Assert.Equal(2, await context.Par2RepairJobs.CountAsync(job => job.State == Par2RepairJob.RepairJobState.Succeeded));
+            Assert.Equal(1, await context.Par2RepairJobs.CountAsync(job => job.State == Par2RepairJob.RepairJobState.Succeeded));
         }
         finally
         {
