@@ -68,7 +68,7 @@ public static class RcloneVfsInvalidator
     {
         try
         {
-            var roots = await ActiveRootsAsync(client, cancellationToken).ConfigureAwait(false);
+            var (roots, mountCount) = await ActiveRootsAsync(client, cancellationToken).ConfigureAwait(false);
 
             // One VFS, or a mount list we could not read: send the request
             // unqualified, which is what rclone documents for a single VFS and
@@ -76,7 +76,7 @@ public static class RcloneVfsInvalidator
             // add a way for the call to fail -- an fs string rclone does not
             // match -- for no benefit. The paths are still translated: a lone
             // subtree mount reads a whole-tree path as one inside its own root.
-            if (roots.Count <= 1)
+            if (roots.Count <= 1 && mountCount <= 1)
             {
                 var scoped = roots.Count == 1 ? Relativize(paths, roots[0].RemotePath) : paths;
                 if (scoped.Count > 0)
@@ -99,8 +99,11 @@ public static class RcloneVfsInvalidator
         }
     }
 
-    /// <summary>The distinct VFS instances an rclone is serving, by fs string.</summary>
-    private static async Task<List<VfsRoot>> ActiveRootsAsync(
+    /// <summary>
+    /// The distinct remotes an rclone is serving, and how many mounts are
+    /// serving them.
+    /// </summary>
+    private static async Task<ActiveRoots> ActiveRootsAsync(
         IRcloneClient client,
         CancellationToken cancellationToken)
     {
@@ -113,15 +116,26 @@ public static class RcloneVfsInvalidator
             Log.Debug(
                 "Could not list rclone's mounts before invalidating its directory cache: {Error}",
                 mounts.Error ?? "unknown error");
-            return [];
+            return new ActiveRoots([], 0);
         }
 
-        return (mounts.MountPoints ?? [])
+        var named = (mounts.MountPoints ?? [])
             .Select(mount => mount.Fs)
             .Where(fs => !string.IsNullOrWhiteSpace(fs))
+            .ToList();
+
+        var roots = named
             .Distinct(StringComparer.Ordinal)
             .Select(fs => new VfsRoot(fs!, RcloneImportTranslator.ExtractRemotePath(fs)))
             .ToList();
+
+        // How many mounts there are, not how many distinct remotes. rclone keys
+        // its active VFS instances by remote *and* options and keeps a list per
+        // key, so two mounts of the same remote with different tuning are two
+        // VFS instances sharing one name. Collapsing them to one name would make
+        // the caller send the unqualified request, which rclone refuses outright
+        // whenever more than one VFS is active.
+        return new ActiveRoots(roots, named.Count);
     }
 
     /// <summary>
@@ -162,4 +176,6 @@ public static class RcloneVfsInvalidator
     }
 
     private sealed record VfsRoot(string Fs, string RemotePath);
+
+    private sealed record ActiveRoots(List<VfsRoot> Roots, int MountCount);
 }

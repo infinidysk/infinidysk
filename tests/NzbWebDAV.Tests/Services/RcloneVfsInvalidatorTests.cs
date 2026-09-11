@@ -84,6 +84,23 @@ public sealed class RcloneVfsInvalidatorTests : IDisposable
     }
 
     [Fact]
+    public async Task ForgetAsync_NamesTheVfs_WhenTwoMountsShareOneRemote()
+    {
+        // rclone keys its active VFS instances by remote and options together and
+        // keeps a list per key, so two mounts of the same remote with different
+        // tuning are two VFS instances under one name. Counting distinct remotes
+        // would see one and send the unqualified request, which rclone refuses
+        // outright whenever more than one VFS is active.
+        _handler.Mounts["127.0.0.1:5572"] = ["infinidysk:", "infinidysk:"];
+        RcloneClient.Builtin = RcloneClient.ForEndpoint("http://127.0.0.1:5572", "u", "p");
+
+        await RcloneVfsInvalidator.ForgetAsync(["/content/Movies"], CancellationToken.None);
+
+        Assert.All(_handler.Forgets, f => Assert.Equal("infinidysk:", f.Fs));
+        Assert.NotEmpty(_handler.Forgets);
+    }
+
+    [Fact]
     public async Task ForgetAsync_SendsOneUnqualifiedRequest_WhenTheMountsCannotBeListed()
     {
         // An unreadable mount listing is not an answer. The single-VFS request is
