@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using NzbWebDAV.Clients.Rclone.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
@@ -22,24 +23,25 @@ public class ClearRcloneCacheController(
     {
         var cacheDir = configManager.GetRcloneBuiltinCacheDir();
 
-        // With no daemon running nothing holds the cache open, so the files can
-        // go without touching mounts.
-        if (daemonService.BuiltinClient is not { } client)
-        {
-            var offline = RcloneCachePurger.Purge(cacheDir);
-            return Ok(new RcloneCacheClearedResponse
-            {
-                Status = true,
-                FreedBytes = offline.FreedBytes,
-                Errors = offline.Error is null ? [] : [offline.Error],
-            });
-        }
-
-        // Through the mount gate, and not HttpContext.RequestAborted: a browser
-        // that navigates away mid-purge must not leave the mounts down.
+        // Everything happens inside the mount gate, including deciding whether
+        // there is a daemon at all. The supervisor starts one on its own poll, so
+        // a check made out here can be stale by the time the files go: reading
+        // "no daemon" and then deleting would pull the cache out from under
+        // mounts that came up in between. Not HttpContext.RequestAborted either:
+        // a browser that navigates away mid-purge must not leave the mounts down.
         var outcome = await daemonService.WithMountGateAsync(
             async token =>
             {
+                // With no daemon running nothing holds the cache open, so the
+                // files can go without touching mounts.
+                if (daemonService.BuiltinClient is not { } client)
+                {
+                    return (
+                        Unmount: new RcloneResponse { Success = true },
+                        Purge: RcloneCachePurger.Purge(cacheDir),
+                        Remounted: new RcloneReconcileResult([], [], []));
+                }
+
                 // rclone keeps open handles into the cache directory while a
                 // mount is up. Releasing the mounts first means the files being
                 // deleted are not the ones it is still serving from.
