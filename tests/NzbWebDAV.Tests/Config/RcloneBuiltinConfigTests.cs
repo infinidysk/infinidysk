@@ -332,6 +332,31 @@ public class RcloneBuiltinConfigTests
     }
 
     [Fact]
+    public void ValidateConfigItems_AcceptsACacheDirectory_WhenTheSameRequestClearsTheMounts()
+    {
+        // Clearing the list is a request to have no mounts. Reading the saved
+        // ones instead would refuse a cache directory over mounts the very same
+        // request is removing.
+        var saved = new Dictionary<string, string>
+        {
+            [ConfigKeys.RcloneBuiltinMounts] =
+                """[{"Id":"library","MountPoint":"/mnt/remote/infinidysk"}]""",
+        };
+
+        var items = new[]
+        {
+            new ConfigItem { ConfigName = ConfigKeys.RcloneBuiltinMounts, ConfigValue = "" },
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.RcloneBuiltinCacheDir,
+                ConfigValue = "/mnt/remote/infinidysk/cache",
+            },
+        };
+
+        ConfigManager.ValidateConfigItems(items, savedValue: key => saved.GetValueOrDefault(key));
+    }
+
+    [Fact]
     public void ValidateConfigItems_AcceptsACacheDirectoryOutsideTheSavedMounts()
     {
         var saved = new Dictionary<string, string>

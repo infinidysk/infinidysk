@@ -832,10 +832,16 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         // against an empty other side, so whether a cache directory inside a
         // mount is refused depended on the shape of the request rather than on
         // the configuration it produces.
+        //
+        // The fallback turns on whether the key is in the request at all, not on
+        // whether its value is empty. Clearing the mount list is a request to
+        // have no mounts, and reading the saved ones instead would refuse a cache
+        // directory over mounts the same request is removing.
+        bool BatchContains(string key) => batch.Any(i => i.ConfigName == key);
+
         List<RcloneMountConfig> EffectiveMounts()
         {
-            var staged = BatchMounts();
-            if (staged.Count > 0) return staged;
+            if (BatchContains(ConfigKeys.RcloneBuiltinMounts)) return BatchMounts();
 
             var saved = StringUtil.EmptyToNull(savedValue?.Invoke(ConfigKeys.RcloneBuiltinMounts));
             if (saved is null) return [];
@@ -854,7 +860,9 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         }
 
         string? EffectiveCacheDir() =>
-            BatchCacheDir() ?? StringUtil.EmptyToNull(savedValue?.Invoke(ConfigKeys.RcloneBuiltinCacheDir));
+            BatchContains(ConfigKeys.RcloneBuiltinCacheDir)
+                ? BatchCacheDir()
+                : StringUtil.EmptyToNull(savedValue?.Invoke(ConfigKeys.RcloneBuiltinCacheDir));
 
         string? BatchCacheDir() => batch
             .Where(i => i.ConfigName == ConfigKeys.RcloneBuiltinCacheDir)
