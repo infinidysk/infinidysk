@@ -161,10 +161,7 @@ function parseStoredMounts(value: string | undefined): StoredMount[] {
  * nothing does, the first mount is repointed there rather than a second one
  * added: two mounts for one library is not what the wizard offered.
  */
-export function builtinMountsForCompletion(
-  existing: string | undefined,
-  mountDir: string,
-): string {
+export function builtinMountsForCompletion(existing: string | undefined, mountDir: string): string {
   const dir = trimTrailingSlash(mountDir.trim());
   const mounts = parseStoredMounts(existing);
   if (mounts.length === 0) return builtinMountsFor(mountDir);
@@ -179,10 +176,7 @@ export function builtinMountsForCompletion(
   if (covered) return JSON.stringify(mounts);
 
   const [first, ...rest] = mounts;
-  return JSON.stringify([
-    { ...first, MountPoint: dir, RemotePath: "/", Enabled: true },
-    ...rest,
-  ]);
+  return JSON.stringify([{ ...first, MountPoint: dir, RemotePath: "/", Enabled: true }, ...rest]);
 }
 
 export function parseArrConfig(value: string | undefined): ArrConfig {

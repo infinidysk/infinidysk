@@ -170,7 +170,13 @@ describe("setup model", () => {
     // their mount list in Settings. Replacing it with the wizard's single derived
     // mount deletes shares and tuning the wizard never asked about.
     const existing = JSON.stringify([
-      { Id: "library", MountPoint: "/data/nzbdav", RemotePath: "/", Enabled: true, ReadAheadBytes: 1024 },
+      {
+        Id: "library",
+        MountPoint: "/data/nzbdav",
+        RemotePath: "/",
+        Enabled: true,
+        ReadAheadBytes: 1024,
+      },
       { Id: "extra", MountPoint: "/data/extra", RemotePath: "/content", Enabled: true },
     ]);
     const baseline = {
@@ -190,7 +196,13 @@ describe("setup model", () => {
     // directory imports resolve through. Repointing beats adding a second mount
     // for the same library.
     const existing = JSON.stringify([
-      { Id: "library", MountPoint: "/data/old", RemotePath: "/", Enabled: true, ReadAheadBytes: 1024 },
+      {
+        Id: "library",
+        MountPoint: "/data/old",
+        RemotePath: "/",
+        Enabled: true,
+        ReadAheadBytes: 1024,
+      },
       { Id: "extra", MountPoint: "/data/extra", RemotePath: "/content", Enabled: true },
     ]);
     const baseline = {
@@ -204,7 +216,13 @@ describe("setup model", () => {
     const config = completionSetupConfig(baseline, draft, {});
 
     expect(JSON.parse(config["rclone.builtin.mounts"] ?? "[]")).toEqual([
-      { Id: "library", MountPoint: "/data/new", RemotePath: "/", Enabled: true, ReadAheadBytes: 1024 },
+      {
+        Id: "library",
+        MountPoint: "/data/new",
+        RemotePath: "/",
+        Enabled: true,
+        ReadAheadBytes: 1024,
+      },
       { Id: "extra", MountPoint: "/data/extra", RemotePath: "/content", Enabled: true },
     ]);
   });
