@@ -50,8 +50,15 @@ public static class RcloneVfsInvalidator
     {
         if (paths.Count == 0) return;
 
-        foreach (var target in Targets())
-            await ForgetOnAsync(target, paths, cancellationToken).ConfigureAwait(false);
+        // Started together rather than one after the other. The targets are
+        // independent rclones, and vfs/forget retries with a backoff that reaches
+        // a minute, so a sidecar that has gone away would otherwise hold up the
+        // daemon that is actually serving the library.
+        var pending = Targets()
+            .Select(target => ForgetOnAsync(target, paths, cancellationToken))
+            .ToList();
+
+        await Task.WhenAll(pending).ConfigureAwait(false);
     }
 
     private static async Task ForgetOnAsync(
