@@ -194,7 +194,20 @@ public sealed class SetupWizardService(
                 requested,
                 ConfigKeys.RcloneHost,
                 configManager.GetRcloneHost() ?? "");
-            if (rcEnabled && string.IsNullOrWhiteSpace(rcHost))
+
+            // Only on the sidecar branch. The RC host addresses a separate rclone
+            // container, so with the built-in daemon there is nothing to point it
+            // at -- and the wizard hides the field there. Requiring it anyway
+            // rejected a completion over a setting the operator could no longer
+            // see or correct.
+            var builtinValue = ProposedValue(
+                requested,
+                ConfigKeys.RcloneBuiltinEnabled,
+                configManager.IsRcloneBuiltinEnabled().ToString());
+            if (!bool.TryParse(builtinValue, out var usesBuiltin))
+                throw new BadHttpRequestException("Built-in rclone enabled must be 'true' or 'false'.");
+
+            if (!usesBuiltin && rcEnabled && string.IsNullOrWhiteSpace(rcHost))
                 throw new BadHttpRequestException("Rclone RC host is required when notifications are enabled.");
         }
         else

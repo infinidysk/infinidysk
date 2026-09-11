@@ -99,6 +99,67 @@ public sealed class SetupWizardServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CompleteAsync_DoesNotRequireAnRcHost_WhenRcloneRunsBuiltIn()
+    {
+        // The RC host addresses a separate rclone container, and the wizard hides
+        // the field once the built-in daemon is chosen. Requiring it anyway
+        // refused the completion over a setting the operator could no longer see:
+        // pick sidecar, leave notifications on, switch to built-in, and setup
+        // becomes impossible to finish.
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var context = new DavDatabaseContext(options);
+        await context.Database.EnsureCreatedAsync();
+        var service = CreateService(context, out _);
+
+        await service.CompleteAsync(new CompleteSetupWizardCommand
+        {
+            Strategy = "symlinks",
+            IngestionMethods = ["manual"],
+            ConfigItems =
+            [
+                new ConfigItem { ConfigName = ConfigKeys.RcloneMountDir, ConfigValue = "/mnt/remote" },
+                new ConfigItem { ConfigName = ConfigKeys.RcloneBuiltinEnabled, ConfigValue = "true" },
+                new ConfigItem { ConfigName = ConfigKeys.RcloneRcEnabled, ConfigValue = "true" },
+            ],
+        });
+
+        var state = await context.SetupWizardStates.SingleAsync();
+        Assert.Equal(SetupWizardDisposition.Completed, state.Disposition);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_StillRequiresAnRcHost_OnTheSidecarBranch()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var context = new DavDatabaseContext(options);
+        await context.Database.EnsureCreatedAsync();
+        var service = CreateService(context, out _);
+
+        var error = await Assert.ThrowsAsync<BadHttpRequestException>(() =>
+            service.CompleteAsync(new CompleteSetupWizardCommand
+            {
+                Strategy = "symlinks",
+                IngestionMethods = ["manual"],
+                ConfigItems =
+                [
+                    new ConfigItem { ConfigName = ConfigKeys.RcloneMountDir, ConfigValue = "/mnt/remote" },
+                    new ConfigItem { ConfigName = ConfigKeys.RcloneBuiltinEnabled, ConfigValue = "false" },
+                    new ConfigItem { ConfigName = ConfigKeys.RcloneRcEnabled, ConfigValue = "true" },
+                ],
+            }));
+
+        Assert.Contains("RC host is required", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task CompleteAsync_StrmAlwaysEnablesSegmentCache()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
