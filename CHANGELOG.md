@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.4.0](https://github.com/infinidysk/infinidysk/compare/v1.3.0...v1.4.0) (2026-09-12)
+
+
+### Features
+
+* **health:** PAR2 repair now fixes missing articles inside RAR releases ([#1348](https://github.com/infinidysk/infinidysk/issues/1348)) ([5c7bf79](https://github.com/infinidysk/infinidysk/commit/5c7bf7912307fbc76a02a0c06e55441bcf1a67d0))
+* **ui:** activity chart separates client playback reads from app-triggered reads ([#1340](https://github.com/infinidysk/infinidysk/issues/1340)) ([79ad0ef](https://github.com/infinidysk/infinidysk/commit/79ad0ef29fda9f2e72f286350e1a66cb45844ad8))
+* **usenet:** benchmark configured provider limits above 50 connections ([#1360](https://github.com/infinidysk/infinidysk/issues/1360)) ([63bde75](https://github.com/infinidysk/infinidysk/commit/63bde757cbec76584324cf5ede9c27d775aefb0f))
+
+
+### Bug Fixes
+
+* **arr:** retain WebDAV items when Arr repair only partially completes ([#1381](https://github.com/infinidysk/infinidysk/issues/1381)) ([75420e9](https://github.com/infinidysk/infinidysk/commit/75420e92cbea9435d9c6d7ce1f2201f27b64c4b7))
+* **arr:** stop re-importing uploads rejected by queue rules ([#1380](https://github.com/infinidysk/infinidysk/issues/1380)) ([95e9598](https://github.com/infinidysk/infinidysk/commit/95e9598bf8c6ba777a5a58a32e6b5f09b720ba15))
+* **deps:** Bump advanced-security/component-detection-dependency-submission-action ([#1395](https://github.com/infinidysk/infinidysk/issues/1395)) ([a35ffe2](https://github.com/infinidysk/infinidysk/commit/a35ffe24ac6a9850d4813936fb7210c78268f992))
+* **deps:** Bump js-yaml and @redocly/openapi-core in /frontend ([#1397](https://github.com/infinidysk/infinidysk/issues/1397)) ([5fe0a8d](https://github.com/infinidysk/infinidysk/commit/5fe0a8dc0c367740a7ef52037fe69ebe5d993f60))
+* **deps:** Bump Scalar.AspNetCore from 2.17.1 to 2.17.2 ([#1339](https://github.com/infinidysk/infinidysk/issues/1339)) ([e3737c6](https://github.com/infinidysk/infinidysk/commit/e3737c6a45d2cf5d3ab07eb32907b4cb461ff582))
+* **deps:** Bump the npm-minor-and-patch group ([#1392](https://github.com/infinidysk/infinidysk/issues/1392)) ([b78fa73](https://github.com/infinidysk/infinidysk/commit/b78fa73da05704ab590da14abe92dd8d1e9d379c))
+* **deps:** Bump the npm-minor-and-patch group across 1 directory with 4 updates ([#1341](https://github.com/infinidysk/infinidysk/issues/1341)) ([4e32bb6](https://github.com/infinidysk/infinidysk/commit/4e32bb6b5368ca533efc4a96ad73c19355c53b84))
+* **deps:** Bump the react-router group across 1 directory with 5 updates ([#1337](https://github.com/infinidysk/infinidysk/issues/1337)) ([11c2c02](https://github.com/infinidysk/infinidysk/commit/11c2c027d465664806a0aebc6c013a8cd6a3efbf))
+* **deps:** Bump zensical from 0.0.57 to 0.0.59 in the docs-python group ([#1391](https://github.com/infinidysk/infinidysk/issues/1391)) ([1a98063](https://github.com/infinidysk/infinidysk/commit/1a98063c5f76aeefda74014cd1a99c2212feac45))
+* **docker:** ship the musl rapidyenc native in the Alpine image ([#1370](https://github.com/infinidysk/infinidysk/issues/1370)) ([5275648](https://github.com/infinidysk/infinidysk/commit/52756484649bfe974397e45dec012871af284ada))
+* **health:** defer contended PAR2 repairs ([#1383](https://github.com/infinidysk/infinidysk/issues/1383)) ([4bc4a21](https://github.com/infinidysk/infinidysk/commit/4bc4a212cb7e11fd71799989cb4191256283a644))
+* **health:** prevent false repairs when stored segment alternatives are available ([#1373](https://github.com/infinidysk/infinidysk/issues/1373)) ([6fb47d9](https://github.com/infinidysk/infinidysk/commit/6fb47d9fa94700a02880a2d6a4ece535708f2aaf))
+* **metrics:** count shared-stream pump fetches as client reads ([#1350](https://github.com/infinidysk/infinidysk/issues/1350)) ([581833f](https://github.com/infinidysk/infinidysk/commit/581833f81d0e36035d27727201f97b98f7144d9e))
+* **nntp:** keep playback working when a provider returns the wrong post ([#1357](https://github.com/infinidysk/infinidysk/issues/1357)) ([b4ede00](https://github.com/infinidysk/infinidysk/commit/b4ede004a35d47b966b3b4480167a47b9eaf9625))
+* **queue:** allow reviewed cleanup of large orphan backlogs ([#1352](https://github.com/infinidysk/infinidysk/issues/1352)) ([b5bf01e](https://github.com/infinidysk/infinidysk/commit/b5bf01efc8364de4a8b3479fc69e4a368a225e02))
+* **queue:** import independent RAR and 7z archive sets separately ([#1382](https://github.com/infinidysk/infinidysk/issues/1382)) ([c9250ba](https://github.com/infinidysk/infinidysk/commit/c9250bac749ed0c70522f6091225ee194dd74a23))
+* **sab:** Sonarr/Radarr no longer loop on "Download doesn't contain intermediate path" after a job folder is removed ([#1347](https://github.com/infinidysk/infinidysk/issues/1347)) ([295c4cc](https://github.com/infinidysk/infinidysk/commit/295c4cc9eb0106a3efef7cc3ec7331ef2bbdeabb))
+* **ui:** match app read legend to the activity chart ([#1355](https://github.com/infinidysk/infinidysk/issues/1355)) ([2240674](https://github.com/infinidysk/infinidysk/commit/22406748e80a958e4808bdcf6607bea7f1b8846d))
+* **ui:** render app activity reads with a solid line ([#1349](https://github.com/infinidysk/infinidysk/issues/1349)) ([56f9d4e](https://github.com/infinidysk/infinidysk/commit/56f9d4e5535b8e371004ca15a2988b456e3151f3))
+* **usenet:** speed tests use articles available from the selected provider ([#1361](https://github.com/infinidysk/infinidysk/issues/1361)) ([699e0ca](https://github.com/infinidysk/infinidysk/commit/699e0ca95ca9c196bd81314b3a8cf3cc2a0f159a))
+
+
+### Performance Improvements
+
+* **health:** reduce redundant PAR2 repair work ([#1385](https://github.com/infinidysk/infinidysk/issues/1385)) ([9f72826](https://github.com/infinidysk/infinidysk/commit/9f72826d782e00332a0fed06b27b0a3259f7995c))
+
 ## [1.3.0](https://github.com/infinidysk/infinidysk/compare/v1.2.7...v1.3.0) (2026-09-04)
 
 
