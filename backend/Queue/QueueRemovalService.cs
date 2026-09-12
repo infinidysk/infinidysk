@@ -18,20 +18,17 @@ public sealed class QueueRemovalService(
     /// </summary>
     public async Task<IReadOnlyList<Guid>> RemoveAsync(List<Guid> ids, CancellationToken cancellationToken)
     {
-        IReadOnlyList<Guid> stillRunning = [];
-        if (ids.Count > 0)
-        {
-            stillRunning = await queueManager.RemoveQueueItemsAsync(ids, dbClient, cancellationToken)
-                .ConfigureAwait(false);
-        }
+        if (ids.Count == 0) return [];
 
-        var removedIds = ids.Where(id => !stillRunning.Contains(id)).ToList();
-        if (removedIds.Count > 0)
+        var result = await queueManager.RemoveQueueItemsDetailedAsync(ids, dbClient, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (result.RemovedIds.Length > 0)
         {
-            _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, string.Join(",", removedIds));
+            _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, string.Join(",", result.RemovedIds));
             _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], cancellationToken);
         }
 
-        return stillRunning;
+        return result.StillRunningIds;
     }
 }

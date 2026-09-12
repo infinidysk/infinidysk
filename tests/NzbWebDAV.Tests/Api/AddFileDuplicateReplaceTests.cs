@@ -130,6 +130,26 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AddFileAsync_FailedReplacementPreservesExistingQueueItem()
+    {
+        var existingId = Guid.NewGuid();
+        const string fileName = "Sliders.S01E01.part.99.Pilot.nzb";
+        const string category = "tv";
+
+        await SeedQueueItemAsync(existingId, fileName, category);
+
+        var controller = CreateController();
+        var invalidRequest = CreateRequest(fileName, category, contentBytes: Encoding.UTF8.GetBytes("not valid xml or gzip"));
+
+        await Assert.ThrowsAnyAsync<Exception>(() => controller.AddFileAsync(invalidRequest));
+
+        var existingItem = await _context.QueueItems.AsNoTracking()
+            .SingleOrDefaultAsync(q => q.Id == existingId);
+        Assert.NotNull(existingItem);
+        Assert.Equal(fileName, existingItem.FileName);
+    }
+
+    [Fact]
     public async Task AddFileAsync_RetriesSaveAfterUniqueConflictInsertedBetweenPreCheckAndSave()
     {
         const string fileName = "Sliders.S01E01.part.2.Pilot.nzb";
@@ -368,9 +388,10 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
         string category,
         Guid? nzoId = null,
         bool replaceExisting = true,
-        NzbSubmissionOrigin origin = NzbSubmissionOrigin.Internal)
+        NzbSubmissionOrigin origin = NzbSubmissionOrigin.Internal,
+        byte[]? contentBytes = null)
     {
-        var nzb = """
+        var nzb = contentBytes ?? Encoding.UTF8.GetBytes("""
             <?xml version="1.0" encoding="utf-8"?>
             <nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
               <file subject="test">
@@ -380,14 +401,14 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
                 </segments>
               </file>
             </nzb>
-            """;
+            """);
         return new AddFileRequest
         {
             NzoId = nzoId,
             ReplaceExistingQueueItem = replaceExisting,
             FileName = fileName,
             ContentType = "application/x-nzb",
-            NzbFileStream = new MemoryStream(Encoding.UTF8.GetBytes(nzb)),
+            NzbFileStream = new MemoryStream(nzb),
             Category = category,
             Priority = QueueItem.PriorityOption.Normal,
             PostProcessing = QueueItem.PostProcessingOption.None,

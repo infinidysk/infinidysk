@@ -84,6 +84,17 @@ public class NzbSubmissionService(
         }
 
         using var queueSlotReservation = admissionReservation;
+        if (request.NzoId.HasValue)
+        {
+            var collision = await dbClient.Ctx.QueueItems
+                .AnyAsync(q => q.Id == request.NzoId.Value, request.CancellationToken)
+                .ConfigureAwait(false);
+            if (collision || BlobStore.Exists(request.NzoId.Value))
+            {
+                throw new BadHttpRequestException($"Requested queue item ID '{request.NzoId.Value}' already exists.");
+            }
+        }
+
         await HandleExistingQueueItemAsync(
                 request.FileName,
                 category,
@@ -178,28 +189,17 @@ public class NzbSubmissionService(
 
             // save — never Clear() the change tracker here: WebDAV watch-folder create
             // reads the new QueueItem from the tracker after SubmitAsync returns.
-            dbClient.Ctx.QueueItems.Add(queueItem);
-            dbClient.Ctx.NzbNames.Add(nzbName);
-            try
+            var commitResult = await queueManager.CommitSubmissionAsync(
+                queueItem,
+                nzbName,
+                request.ReplaceExistingQueueItem,
+                dbClient,
+                request.CancellationToken).ConfigureAwait(false);
+
+            foreach (var removedId in commitResult.RemovedIds)
             {
-                await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
-            }
-            catch (DbUpdateException ex) when (
-                request.ReplaceExistingQueueItem && IsCategoryFileNameUniqueViolation(ex))
-            {
-                // TOCTOU: another insert landed after our pre-check. Remove via a fresh
-                // context so this request context's pending Added entities are not flushed
-                // by RemoveQueueItemsAsync's inner SaveChangesAsync, then retry once.
-                await RemoveConflictingQueueItemViaFreshContextAsync(
-                        request.FileName, category, request.CancellationToken)
-                    .ConfigureAwait(false);
-                await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
-            }
-            catch (DbUpdateException ex) when (IsCategoryFileNameUniqueViolation(ex))
-            {
-                throw new BadHttpRequestException(
-                    $"A queue item named '{request.FileName}' already exists in category '{category}'.",
-                    ex);
+                BlobStore.Delete(removedId);
+                _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, removedId.ToString());
             }
 
             _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], request.CancellationToken);
@@ -234,76 +234,14 @@ public class NzbSubmissionService(
         bool replaceExisting,
         CancellationToken ct)
     {
-        var existingId = await dbClient.Ctx.QueueItems.AsNoTracking()
-            .Where(q => q.Category == category && q.FileName == fileName)
-            .Select(q => (Guid?)q.Id)
-            .FirstOrDefaultAsync(ct)
+        var existing = await dbClient.Ctx.QueueItems.AsNoTracking()
+            .AnyAsync(q => q.Category == category && q.FileName == fileName, ct)
             .ConfigureAwait(false);
-        if (existingId is null) return;
-
-        if (!replaceExisting)
+        if (existing && !replaceExisting)
+        {
             throw new BadHttpRequestException(
                 $"A queue item named '{fileName}' already exists in category '{category}'.");
-
-        var wasInProgress = queueManager.FindInProgressQueueItem(existingId.Value) is not null;
-        Log.Warning(
-            "Replacing existing queue item {QueueItemId} ({FileName} in {Category}) on re-add{InProgressSuffix}",
-            existingId.Value,
-            fileName,
-            category,
-            wasInProgress ? "; cancelling in-progress download" : "");
-
-        var stillRunning = await queueManager
-            .RemoveQueueItemsAsync([existingId.Value], dbClient, ct)
-            .ConfigureAwait(false);
-        if (stillRunning.Count > 0)
-        {
-            // Inserting over a quarantined worker would hit the queue unique
-            // constraint and re-attempt removal — a remove/insert loop against a
-            // hung task. Fail the submission visibly instead.
-            throw new BadHttpRequestException(
-                $"The existing queue item '{fileName}' is still stopping and cannot be replaced yet; " +
-                "try again shortly.");
         }
-
-        _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, existingId.Value.ToString());
-        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], ct);
-    }
-
-    private async Task RemoveConflictingQueueItemViaFreshContextAsync(
-        string fileName,
-        string category,
-        CancellationToken ct)
-    {
-        await using var freshCtx = FreshContextFactory();
-        var freshClient = new DavDatabaseClient(freshCtx);
-        var conflictingId = await freshCtx.QueueItems.AsNoTracking()
-            .Where(q => q.Category == category && q.FileName == fileName)
-            .Select(q => (Guid?)q.Id)
-            .FirstOrDefaultAsync(ct)
-            .ConfigureAwait(false);
-        if (conflictingId is null) return;
-
-        var wasInProgress = queueManager.FindInProgressQueueItem(conflictingId.Value) is not null;
-        Log.Warning(
-            "Replacing existing queue item {QueueItemId} ({FileName} in {Category}) after UNIQUE conflict on re-add{InProgressSuffix}",
-            conflictingId.Value,
-            fileName,
-            category,
-            wasInProgress ? "; cancelling in-progress download" : "");
-
-        var stillRunning = await queueManager
-            .RemoveQueueItemsAsync([conflictingId.Value], freshClient, ct)
-            .ConfigureAwait(false);
-        if (stillRunning.Count > 0)
-        {
-            throw new BadHttpRequestException(
-                $"The existing queue item '{fileName}' is still stopping and cannot be replaced yet; " +
-                "try again shortly.");
-        }
-
-        _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, conflictingId.Value.ToString());
-        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], ct);
     }
 
     internal static bool IsCategoryFileNameUniqueViolation(DbUpdateException ex)

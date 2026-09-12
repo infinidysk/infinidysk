@@ -376,21 +376,30 @@ public sealed class DavDatabaseClient(
         return queueItems.CountAsync(cancellationToken: ct);
     }
 
-    public async Task RemoveQueueItemsAsync(List<Guid> ids, CancellationToken ct = default)
+    public async Task<List<Guid>> RemoveQueueItemsAsync(List<Guid> ids, CancellationToken ct = default)
     {
-        // Capture group keys before delete so we can cascade-clean orphaned
-        // watchdog attempts whose only link was via the now-gone queue item.
+        var idList = ids.Distinct().ToList();
+        if (idList.Count == 0) return [];
+
+        var existingIds = await Ctx.QueueItems
+            .Where(x => idList.Contains(x.Id))
+            .Select(x => x.Id)
+            .ToListAsync(ct).ConfigureAwait(false);
+
+        if (existingIds.Count == 0) return [];
+
         var groupKeys = await Ctx.QueueItems
-            .Where(x => ids.Contains(x.Id) && x.ContentGroupKey != null)
+            .Where(x => existingIds.Contains(x.Id) && x.ContentGroupKey != null)
             .Select(x => x.ContentGroupKey!)
             .Distinct()
             .ToListAsync(ct).ConfigureAwait(false);
 
         await Ctx.QueueItems
-            .Where(x => ids.Contains(x.Id))
+            .Where(x => existingIds.Contains(x.Id))
             .ExecuteDeleteAsync(ct).ConfigureAwait(false);
 
-        await CascadeWatchdogEntriesAsync(ids, groupKeys, ct).ConfigureAwait(false);
+        await CascadeWatchdogEntriesAsync(existingIds, groupKeys, ct).ConfigureAwait(false);
+        return existingIds;
     }
 
     /// <summary>
