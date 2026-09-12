@@ -63,7 +63,7 @@ export function ConvertStrmToSymlinks({ savedConfig }: ConvertStrmToSymlinksProp
       <div className="space-y-4">
         <p className="text-sm leading-relaxed text-base-content/70">
           Replace InfiniDysk STRM files in the organized media library with filesystem symlinks to
-          the corresponding files in the rclone mount.
+          the corresponding files under the mount directory.
         </p>
 
         <div className="rounded-lg border border-base-content/10 bg-base-200/40 p-3">
@@ -99,9 +99,10 @@ export function ConvertStrmToSymlinks({ savedConfig }: ConvertStrmToSymlinksProp
           <Icon name="link" className="mt-0.5 !text-[17px] shrink-0 text-base-content/45" />
           <p>
             <span className="font-medium text-base-content/70">
-              The rclone mount must remain available.
+              The mount directory must stay mounted.
             </span>{" "}
-            Created symlinks point directly to their matching mounted files.
+            Created symlinks point directly to their matching mounted files, whether the mount comes
+            from the built-in rclone or your own container.
           </p>
         </div>
       </div>

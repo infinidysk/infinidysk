@@ -20,6 +20,13 @@ public sealed class SetupWizardService(
         ConfigKeys.ApiImportStrategy,
         ConfigKeys.UsenetSegmentCacheEnabled,
         ConfigKeys.RcloneMountDir,
+
+        // The guided setup offers the built-in mount as the symlink path that
+        // needs no second container. Only the choice and the mount list: the
+        // rest of its tuning belongs in Settings.
+        ConfigKeys.RcloneBuiltinEnabled,
+        ConfigKeys.RcloneBuiltinMounts,
+
         ConfigKeys.RcloneRcEnabled,
         ConfigKeys.RcloneHost,
         ConfigKeys.RcloneUser,
@@ -187,7 +194,20 @@ public sealed class SetupWizardService(
                 requested,
                 ConfigKeys.RcloneHost,
                 configManager.GetRcloneHost() ?? "");
-            if (rcEnabled && string.IsNullOrWhiteSpace(rcHost))
+
+            // Only on the sidecar branch. The RC host addresses a separate rclone
+            // container, so with the built-in daemon there is nothing to point it
+            // at -- and the wizard hides the field there. Requiring it anyway
+            // rejected a completion over a setting the operator could no longer
+            // see or correct.
+            var builtinValue = ProposedValue(
+                requested,
+                ConfigKeys.RcloneBuiltinEnabled,
+                configManager.IsRcloneBuiltinEnabled().ToString());
+            if (!bool.TryParse(builtinValue, out var usesBuiltin))
+                throw new BadHttpRequestException("Built-in rclone enabled must be 'true' or 'false'.");
+
+            if (!usesBuiltin && rcEnabled && string.IsNullOrWhiteSpace(rcHost))
                 throw new BadHttpRequestException("Rclone RC host is required when notifications are enabled.");
         }
         else
@@ -222,9 +242,15 @@ public sealed class SetupWizardService(
             requested,
             ConfigKeys.RcloneMountDir,
             configManager.GetRcloneMountDir());
+        // Every path a mount may occupy, not just the symlink root: the wizard now
+        // writes a built-in mount list too, and a library directory inside any of
+        // them produces the same circular orphan report.
+        var mountDirs = new List<string?> { proposedMountDir };
+        mountDirs.AddRange(ProposedBuiltinMountPoints(requested));
+
         if (RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(
                 libraryDir,
-                proposedMountDir,
+                mountDirs,
                 out _,
                 out _))
         {
@@ -245,6 +271,32 @@ public sealed class SetupWizardService(
         state = new SetupWizardState();
         dbClient.Ctx.SetupWizardStates.Add(state);
         return state;
+    }
+
+    /// <summary>
+    /// Mount points from the submitted built-in mount list, or the persisted one
+    /// when the request does not carry it.
+    /// </summary>
+    private IEnumerable<string> ProposedBuiltinMountPoints(IReadOnlyDictionary<string, string> requested)
+    {
+        if (requested.TryGetValue(ConfigKeys.RcloneBuiltinMounts, out var submitted)
+            && !string.IsNullOrWhiteSpace(submitted))
+        {
+            try
+            {
+                return (JsonSerializer.Deserialize<List<RcloneMountConfig>>(submitted) ?? [])
+                    .Where(mount => mount is not null)
+                    .Select(mount => mount.MountPoint);
+            }
+            catch (JsonException)
+            {
+                // Malformed JSON is reported by the config validator itself; this
+                // check has nothing to add.
+                return [];
+            }
+        }
+
+        return configManager.GetRcloneBuiltinMounts().Select(mount => mount.MountPoint);
     }
 
     private static string ProposedValue(

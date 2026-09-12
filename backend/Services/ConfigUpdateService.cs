@@ -17,7 +17,10 @@ public sealed class ConfigUpdateService(
         CancellationToken cancellationToken = default)
     {
         RejectEnvironmentManagedItems(configItems);
-        ConfigManager.ValidateConfigItems(configItems);
+        // The saved values are threaded in so cross-setting checks see the
+        // configuration this request would produce, not only the keys it happens
+        // to carry.
+        ConfigManager.ValidateConfigItems(configItems, savedValue: configManager.GetSavedConfigValue);
         configManager.ValidateQueueAdmissionSettings(configItems);
 
         if (configItems.Count == 0)

@@ -3,9 +3,11 @@ using System.Text;
 using NzbWebDAV.Clients.Rclone;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Tests.TestUtils;
 
 namespace NzbWebDAV.Tests.Clients;
 
+[Collection(nameof(RcloneClientCollection))]
 public class RcloneClientTests : IDisposable
 {
     public RcloneClientTests()

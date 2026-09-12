@@ -574,6 +574,34 @@ public class RemoveUnlinkedFilesTaskTests
     }
 
     [Fact]
+    public void IsLibraryDirInsideRcloneMount_ChecksEveryConfiguredMountPoint()
+    {
+        // The symlink root is no longer the only mount. Built-in mode can mount
+        // anywhere, and a library directory inside one of those paths produces
+        // the same circular orphan report this guard exists to stop.
+        var inside = RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(
+            "/data/nzbdav/completed-symlinks",
+            ["/mnt/nzbdav", "/data/nzbdav"],
+            out _,
+            out var matchedMount);
+
+        Assert.True(inside);
+        Assert.Equal("/data/nzbdav", matchedMount);
+    }
+
+    [Fact]
+    public void IsLibraryDirInsideRcloneMount_AllowsALibraryOutsideEveryMountPoint()
+    {
+        var inside = RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(
+            "/mnt/media/library",
+            ["/mnt/nzbdav", "/data/nzbdav"],
+            out _,
+            out _);
+
+        Assert.False(inside);
+    }
+
+    [Fact]
     public void IsLibraryDirInsideRcloneMount_UsesOsAwareCasing()
     {
         var inside = RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(

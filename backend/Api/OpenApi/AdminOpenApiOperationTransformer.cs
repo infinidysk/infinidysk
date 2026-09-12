@@ -71,6 +71,7 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
             operation.Responses["200"] = new OpenApiResponse { Description = "Success." };
         ApplyMissingPayloadContractOverrides(operation, route, verb);
         ApplyGcDiagnosticsContractOverrides(operation, route, verb);
+        ApplyRcloneMountContractOverrides(operation, route, verb);
         AddProblemResponse(operation, "400", "Bad request.");
         AddProblemResponse(operation, "401", "Unauthorized.");
         AddProblemResponse(operation, "403", "Forbidden.");
@@ -96,6 +97,29 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
                 },
             },
         };
+    }
+
+    /// <summary>
+    /// The remount endpoint selects its mount with a query string rather than a
+    /// form field, so the generated contract has to say so or a client written
+    /// against it cannot call the endpoint at all.
+    /// </summary>
+    private static void ApplyRcloneMountContractOverrides(
+        OpenApiOperation operation,
+        string route,
+        string verb)
+    {
+        if (verb != "post" || route != "api/rclone-mounts/remount") return;
+
+        operation.Parameters ??= [];
+        operation.Parameters.Add(new OpenApiParameter
+        {
+            Name = "id",
+            In = ParameterLocation.Query,
+            Required = true,
+            Description = "Id of the configured mount to unmount and mount again.",
+            Schema = new OpenApiSchema { Type = JsonSchemaType.String },
+        });
     }
 
     private static void ApplyMissingPayloadContractOverrides(
@@ -242,6 +266,10 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
                 ["url", "apiKey", "userAgent", "proxyUrl", "timeoutSeconds", "skipTlsVerification"],
             "api/test-prowlarr-connection" => ["url", "apiKey"],
             "api/test-rclone-connection" => ["host", "user", "pass"],
+            // Empty reads the running external rclone; a pasted "rclone mount ..."
+            // command is the fallback when that instance has no RC enabled.
+            "api/rclone-mounts/import-external" => ["command"],
+            "api/rclone-mounts/webdav-credentials" => ["password"],
             "api/setup-wizard/complete" => ["strategy", "ingestionMethods", "config"],
             "api/set-stream-tracing" => ["enabled", "minutes", "capacity"],
             "api/watchtower-discover-catalogs" => ["url"],
@@ -267,7 +295,9 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
                 field => field,
                 _ => (IOpenApiSchema)new OpenApiSchema { Type = JsonSchemaType.String }),
             additionalProperties: false,
-            requiredProperties: route == "api/setup-wizard/complete" ? fields : null);
+            requiredProperties: route is "api/setup-wizard/complete" or "api/rclone-mounts/webdav-credentials"
+                ? fields
+                : null);
     }
 
     private static OpenApiRequestBody FormBody(

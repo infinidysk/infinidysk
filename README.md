@@ -58,6 +58,7 @@ Please add feature requests and bug reports to the [issue tracker](https://githu
 - **SABnzbd-compatible queue** — Use add, queue, history, pause, resume, and speed-limit operations with configurable concurrent workers.
 - **Sonarr and Radarr integration** — Import through Rclone symlinks or lightweight STRM files and optionally repair unhealthy content.
 - **WebDAV management** — Browse, download, and delete eligible virtual filesystem items from the admin UI.
+- **Built-in rclone mount** — Mount the WebDAV tree from InfiniDysk itself, managed in the admin UI, with a one-click import from an rclone container you already run. Needs `--device /dev/fuse`, `--cap-add SYS_ADMIN`, and an `rshared` bind.
 - **[Experimental AltMount migration](https://www.infinidysk.com/guides/altmount-migration/)** — Rebuild and import an existing AltMount library through a guided wizard that leaves its source metadata untouched.
 
 ### Operations and deployment

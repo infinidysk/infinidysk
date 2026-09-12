@@ -10,6 +10,7 @@ using NzbWebDAV.Clients.Rclone;
 using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav;
 using Serilog;
@@ -1122,35 +1123,14 @@ public class DavDatabaseContext : DbContext
         List<DavItem> addedOrRemovedDavItems,
         CancellationToken cancellationToken = default)
     {
-        var rclone = RcloneClient.Current;
-        if (rclone is not { IsRemoteControlEnabled: true, Host: not null }) return;
         if (addedOrRemovedDavItems.Count == 0) return;
         var vfsForgetPaths = GetRcloneVfsForgetDirectories(addedOrRemovedDavItems);
-        if (vfsForgetPaths.Count == 0) return;
-        await ForgetVfsPathsQuietly(rclone, vfsForgetPaths, cancellationToken).ConfigureAwait(false);
+        await RcloneVfsInvalidator.ForgetAsync(vfsForgetPaths, cancellationToken).ConfigureAwait(false);
     }
 
     public static async Task RcloneVfsForget(List<string> paths, CancellationToken cancellationToken = default)
     {
-        var rclone = RcloneClient.Current;
-        if (rclone is not { IsRemoteControlEnabled: true, Host: not null }) return;
-        if (paths.Count == 0) return;
-        await ForgetVfsPathsQuietly(rclone, paths, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static async Task ForgetVfsPathsQuietly(
-        RcloneClient rclone,
-        List<string> paths,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            await rclone.ForgetVfsPaths(paths, cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // Call sites are fire-and-forget; do not surface cancellation as UnobservedTaskException.
-        }
+        await RcloneVfsInvalidator.ForgetAsync(paths, cancellationToken).ConfigureAwait(false);
     }
 
     public void ClearChangeTracker()

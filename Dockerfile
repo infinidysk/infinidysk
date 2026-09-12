@@ -52,6 +52,20 @@ RUN cmake -B /build -S /src -G Ninja -DCMAKE_BUILD_TYPE=Release \
     fi \
     && cp "$lib_path" /out/librapidyenc.so
 
+# -------- Stage 2c: Fetch the rclone binary for the target arch --------
+# Runs on the build platform (it only downloads). The version is pinned so that
+# rebuilding an image ships the rclone that was reviewed rather than whatever is
+# newest that day; bump it deliberately. The script verifies the release's
+# SHA256SUMS against rclone's signing key before trusting any checksum in it.
+# Alpine's own rclone package is too old: it ships 1.68.2, while --links needs
+# 1.70.3+.
+FROM --platform=$BUILDPLATFORM alpine:${ALPINE_VERSION} AS rclone-fetch
+RUN apk add --no-cache curl unzip gnupg
+ARG TARGETARCH
+ARG RCLONE_VERSION="v1.75.1"
+COPY scripts/install-rclone.sh /install-rclone.sh
+RUN TARGETARCH="${TARGETARCH}" RCLONE_VERSION="${RCLONE_VERSION}" DEST=/out sh /install-rclone.sh
+
 # -------- Stage 2b: Build backend --------
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS backend-build
 
@@ -114,7 +128,20 @@ LABEL org.opencontainers.image.licenses=MIT
 # Prepare environment
 WORKDIR /app
 RUN mkdir /config \
-    && apk add --no-cache nodejs npm libc6-compat shadow su-exec bash curl tzdata
+    && apk add --no-cache nodejs npm libc6-compat shadow su-exec bash curl tzdata fuse3
+
+# rclone for the built-in mount feature, plus the FUSE setting that lets the
+# non-root runtime user pass --allow-other so other containers and host users
+# can read the mount. Mounting still requires the container to be started with
+# --device /dev/fuse and --cap-add SYS_ADMIN.
+COPY --from=rclone-fetch /out/rclone /usr/local/bin/rclone
+RUN touch /etc/fuse.conf \
+    && if [ -s /etc/fuse.conf ] && [ "$(tail -c1 /etc/fuse.conf | wc -l)" -eq 0 ]; then \
+        printf '\n' >> /etc/fuse.conf; \
+    fi \
+    && if ! grep -qxF 'user_allow_other' /etc/fuse.conf; then \
+        printf 'user_allow_other\n' >> /etc/fuse.conf; \
+    fi
 
 # Copy frontend
 COPY --from=frontend-build /frontend/node_modules ./frontend/node_modules

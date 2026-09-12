@@ -134,7 +134,7 @@ public sealed class RemoveMissingPayloadsTask : BaseTask
 
         if (RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(
                 libraryDir,
-                _configManager.GetRcloneMountDir(),
+                _configManager.GetAllRcloneMountDirs(),
                 out var normalizedLibraryDir,
                 out var normalizedMountDir))
         {
@@ -999,7 +999,11 @@ public sealed class RemoveMissingPayloadsTask : BaseTask
         }
 
         Append(_configManager.GetLibraryDir());
-        Append(_configManager.GetRcloneMountDir());
+
+        // Every mount the abort check considers, so an approved preview stops
+        // being valid when the mount layout changes underneath it.
+        foreach (var mountDir in _configManager.GetAllRcloneMountDirs())
+            Append(mountDir);
         foreach (var item in candidates.OrderBy(item => item.Id))
         {
             Append(item.Id.ToString("D"));
