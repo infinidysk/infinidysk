@@ -411,8 +411,17 @@ public class GetWebdavItemController(
 
             try
             {
-                await using var response = await GetWebdavItem(request, ct).ConfigureAwait(false);
-                // HEAD: headers already set, body omitted
+                var item = await store.GetItemAsync(request.Item, ct).ConfigureAwait(false);
+                if (item is null || item is IStoreCollection)
+                    throw new BadHttpRequestException("The file does not exist.");
+
+                Response.Headers["Content-Encoding"] = "identity";
+                Response.Headers["Accept-Ranges"] = "bytes";
+                Response.Headers["Content-Type"] = ContentHeaderUtil.GetContentType(item.Name);
+                Response.Headers["Content-Disposition"] = ContentHeaderUtil.GetContentDisposition(
+                    item.Name, request.ShouldDownload);
+                if (item is BaseStoreItem baseItem && baseItem.FileSize is { } fileSize)
+                    Response.ContentLength = fileSize;
             }
             catch (OperationCanceledException oce) when (!HttpContext.RequestAborted.IsCancellationRequested)
             {

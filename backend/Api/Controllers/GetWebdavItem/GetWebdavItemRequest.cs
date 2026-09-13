@@ -45,7 +45,8 @@ public class GetWebdavItemRequest
         // Parse Range; on malformed/unparseable input leave ranges null so the
         // controller serves full content (RFC 7233: ignore unsatisfiable Range syntax).
         var rangeHeader = context.Request.Headers["Range"].FirstOrDefault() ?? "";
-        if (TryParseRangeHeader(rangeHeader, out var start, out var end, out var suffix))
+        if (HttpMethods.IsGet(context.Request.Method) &&
+            TryParseRangeHeader(rangeHeader, out var start, out var end, out var suffix))
         {
             RangeStart = start;
             RangeEnd = end;
