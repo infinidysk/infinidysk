@@ -179,6 +179,99 @@ public class RemoveUnlinkedFilesTaskTests
     }
 
     [Fact]
+    public async Task DeleteItemsByIdTextAsync_SkipsItemThatBecameRelinkedDuringWait()
+    {
+        await using var harness = await TempDb.CreateAsync();
+        var ctx = harness.Context;
+        await SeedRootsAsync(ctx);
+
+        var orphanId = Guid.NewGuid();
+        var createdAt = DateTime.UtcNow.AddDays(-1);
+        ctx.Items.Add(DavItem.New(
+            orphanId,
+            DavItem.ContentFolder,
+            "orphan.mkv",
+            10,
+            DavItem.ItemType.UsenetFile,
+            DavItem.ItemSubType.NzbFile,
+            null,
+            null,
+            null,
+            null));
+        await ctx.SaveChangesAsync();
+        await ctx.Database.ExecuteSqlAsync($"UPDATE DavItems SET CreatedAt = {createdAt} WHERE Id = {orphanId}");
+
+        // Minimal stand-in for the staged linked-Id table the real run creates.
+        await ctx.Database.ExecuteSqlRawAsync("CREATE TABLE TMP_LINKED_FILES (Id TEXT NOT NULL);");
+
+        var candidates = new List<RemoveUnlinkedFilesTask.UnlinkedFileInfo>
+        {
+            new(orphanId.ToString(), (int)DavItem.ItemType.UsenetFile, "orphan.mkv", "orphan.mkv", null, null, null),
+        };
+
+        // Simulate a concurrent library link created between the SELECT and a delayed retry.
+        await ctx.Database.ExecuteSqlAsync($"INSERT INTO TMP_LINKED_FILES (Id) VALUES ({orphanId})");
+
+        var deletedIds = await RemoveUnlinkedFilesTask.DeleteItemsByIdTextAsync(
+            ctx, candidates, (int)DavItem.ItemType.UsenetFile, DateTime.UtcNow.AddMinutes(1));
+
+        Assert.Empty(deletedIds);
+        Assert.True(await ctx.Items.AnyAsync(x => x.Id == orphanId));
+    }
+
+    [Fact]
+    public async Task DeleteItemsByIdTextAsync_SkipsItemThatEnteredHistoryDuringWait()
+    {
+        await using var harness = await TempDb.CreateAsync();
+        var ctx = harness.Context;
+        await SeedRootsAsync(ctx);
+
+        var orphanId = Guid.NewGuid();
+        ctx.Items.Add(DavItem.New(
+            orphanId,
+            DavItem.ContentFolder,
+            "orphan.mkv",
+            10,
+            DavItem.ItemType.UsenetFile,
+            DavItem.ItemSubType.NzbFile,
+            null,
+            null,
+            null,
+            null));
+        await ctx.SaveChangesAsync();
+
+        await ctx.Database.ExecuteSqlRawAsync("CREATE TABLE TMP_LINKED_FILES (Id TEXT NOT NULL);");
+
+        var candidates = new List<RemoveUnlinkedFilesTask.UnlinkedFileInfo>
+        {
+            new(orphanId.ToString(), (int)DavItem.ItemType.UsenetFile, "orphan.mkv", "orphan.mkv", null, null, null),
+        };
+
+        // Simulate the item becoming history-linked (e.g. requeued for import) between the
+        // SELECT and a delayed retry: it must not be deleted just because its Id still matches.
+        var historyId = Guid.NewGuid();
+        ctx.HistoryItems.Add(new HistoryItem
+        {
+            Id = historyId,
+            CreatedAt = DateTime.UtcNow,
+            FileName = "orphan.nzb",
+            JobName = "orphan",
+            Category = "movies",
+            DownloadStatus = HistoryItem.DownloadStatusOption.Completed,
+            TotalSegmentBytes = 10,
+            DownloadTimeSeconds = 1,
+        });
+        await ctx.SaveChangesAsync();
+        await ctx.Database.ExecuteSqlAsync($"UPDATE DavItems SET HistoryItemId = {historyId} WHERE Id = {orphanId}");
+
+        var deletedIds = await RemoveUnlinkedFilesTask.DeleteItemsByIdTextAsync(
+            ctx, candidates, (int)DavItem.ItemType.UsenetFile, DateTime.UtcNow.AddMinutes(1));
+
+        Assert.Empty(deletedIds);
+        Assert.True(await ctx.Items.AnyAsync(x => x.Id == orphanId));
+    }
+
+    [Fact]
     public async Task RemoveEmptyDirectoriesAsync_ReturnsZero_WhenNoEmptyDirectories()
     {
         await using var harness = await TempDb.CreateAsync();
@@ -1373,6 +1466,66 @@ public class RemoveUnlinkedFilesTaskTests
             await BaseTask.ResetRunningTaskForTestsAsync();
             RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
             try { Directory.Delete(rootDir, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task RemoveUnlinkedItems_RetriesThroughRealSqliteLock_DeletesExactlyOnce()
+    {
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        var libraryDir = Path.Join(Path.GetTempPath(), $"nzbdav-lib-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(libraryDir);
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var ctx = harness.Context;
+            await SeedRootsAsync(ctx);
+            await SeedLinkedItemsAsync(ctx, libraryDir, 5);
+            await SeedOrphanItemsAsync(ctx, 1, "orphan");
+            var orphanId = await ctx.Items
+                .Where(x => x.Type == DavItem.ItemType.UsenetFile && x.Name == "orphan-0.mkv")
+                .Select(x => x.Id)
+                .SingleAsync();
+
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+            ]);
+            var websocket = new WebsocketManager();
+            var task = new RemoveUnlinkedFilesTask(
+                config, websocket, isDryRun: false, createContext: () => harness.CreateContext());
+
+            // Hold a real write transaction on a second connection to the same SQLite file long
+            // enough that the delete's PRAGMA busy_timeout (5s) expires and SQLITE_BUSY is
+            // actually thrown, forcing the task's own contention-retry policy to take over.
+            await using var lockContext = harness.CreateContext();
+            await lockContext.Database.OpenConnectionAsync();
+            await using var lockTransaction = await lockContext.Database.BeginTransactionAsync();
+            await lockContext.Database.ExecuteSqlRawAsync(
+                "UPDATE DavItems SET Path = Path WHERE Id = (SELECT Id FROM DavItems LIMIT 1);");
+
+            var release = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5.5));
+                await lockTransaction.CommitAsync();
+            });
+
+            Assert.True(await task.Execute());
+            await release;
+
+            Assert.False(await ctx.Items.AnyAsync(x => x.Id == orphanId));
+
+            var progress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
+            Assert.NotNull(progress);
+            Assert.DoesNotContain("Failed:", progress);
+            Assert.Contains("Removed 1", progress);
+        }
+        finally
+        {
+            await BaseTask.ResetRunningTaskForTestsAsync();
+            RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
+            try { Directory.Delete(libraryDir, recursive: true); } catch (IOException) { /* best effort */ }
         }
     }
 

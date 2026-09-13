@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Queue.PostProcessors;
 using NzbWebDAV.Services;
@@ -40,7 +41,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
     private readonly Func<Task>? _beforePreviewApproval;
     private ProgressHeartbeat? _progressHeartbeat;
 
-    private async Task<T> ExecuteWithContentionRetryAsync<T>(
+    private static async Task<T> ExecuteWithContentionRetryAsync<T>(
         string phase,
         Func<CancellationToken, Task<T>> operation,
         CancellationToken cancellationToken)
@@ -50,23 +51,29 @@ public class RemoveUnlinkedFilesTask : BaseTask
         Exception? lastContention = null;
         for (var attempt = 0; attempt < 6; attempt++)
         {
-            budgetCts.Token.ThrowIfCancellationRequested();
             try
             {
+                budgetCts.Token.ThrowIfCancellationRequested();
                 return await operation(budgetCts.Token).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception.IsTransientDatabaseException())
             {
                 lastContention = exception;
                 if (attempt == 5)
-                    throw;
+                    throw new CleanupContentionException(phase, attempt + 1, exception);
                 Log.Warning("Orphan cleanup database contention in {Phase}; retry {Attempt}/6.",
                     phase, attempt + 2);
                 await Task.Delay(CleanupContentionDelays[attempt], budgetCts.Token).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The 30-second unit budget expired; this is a policy timeout, not
+                // caller/shutdown cancellation, so it must not look like a normal abort.
+                throw new CleanupContentionException(phase, attempt + 1, lastContention);
+            }
         }
 
-        throw new InvalidOperationException($"Orphan cleanup phase '{phase}' exhausted contention retries.", lastContention);
+        throw new CleanupContentionException(phase, 6, lastContention);
     }
 
     internal record UnlinkedItemInfo(string Id, int Type, string Path);
@@ -173,6 +180,14 @@ public class RemoveUnlinkedFilesTask : BaseTask
             if (current.IsCancellationException(CancellationToken))
             {
                 reason = "nzbdav is shutting down";
+                return true;
+            }
+
+            // Retains phase/attempt-count context instead of falling through to the
+            // raw inner contention message below.
+            if (current is CleanupContentionException)
+            {
+                reason = current.Message;
                 return true;
             }
 
@@ -389,37 +404,76 @@ public class RemoveUnlinkedFilesTask : BaseTask
     }
 
     /// <summary>
-    /// Deletes DavItems by the exact Id text returned from a raw SELECT. Going through
-    /// Guid.Parse + ExecuteDelete re-serializes Ids as uppercase, which silently misses
-    /// rows stored lowercase (e.g. the folder seeded by the Fix-Empty-Categories migration).
+    /// Deletes DavItems by exact Id text as returned by the select, going through
+    /// Guid.Parse + ExecuteDelete re-serializes Ids uppercase, silently missing
+    /// stored lowercase (e.g. seeded by the Fix-Empty-Categories migration).
+    ///
+    /// Re-checks the same eligibility predicate the select used (type, no history
+    /// link, cutoff, not linked) inside the DELETE itself and returns only the Ids
+    /// actually removed: a retry can be delayed several seconds, during which a
+    /// concurrently-relinked or now-historical row must survive instead of being
+    /// blindly deleted by Id alone.
     /// </summary>
-    private static async Task<int> DeleteItemsByIdTextAsync(
+    internal static async Task<List<string>> DeleteItemsByIdTextAsync(
         DavDatabaseContext dbContext,
         List<UnlinkedFileInfo> items,
+        int usenetFileType,
+        DateTime createdBefore,
         CancellationToken cancellationToken = default)
     {
-        var parameters = new DbParameter[items.Count];
+        var isPostgres = dbContext.Database.IsNpgsql();
         var placeholders = new string[items.Count];
+        var parameters = new List<DbParameter>(items.Count + 2);
         for (var i = 0; i < items.Count; i++)
         {
             var name = $"@p{i}";
             placeholders[i] = name;
-            parameters[i] = dbContext.Database.IsNpgsql()
+            parameters.Add(isPostgres
                 ? new NpgsqlParameter(name, items[i].Id)
-                : new SqliteParameter(name, items[i].Id);
+                : new SqliteParameter(name, items[i].Id));
         }
 
+        var cutoffParameter = CreateWallClockParameter(dbContext, createdBefore);
+        cutoffParameter.ParameterName = "@cutoff";
+        parameters.Add(cutoffParameter);
+        parameters.Add(isPostgres
+            ? new NpgsqlParameter("@type", usenetFileType)
+            : new SqliteParameter("@type", usenetFileType));
+
+        var idColumn = isPostgres ? "CAST(\"Id\" AS TEXT)" : "Id";
+        var typeColumn = isPostgres ? "\"Type\"" : "Type";
+        var historyColumn = isPostgres ? "\"HistoryItemId\"" : "HistoryItemId";
+        var createdAtColumn = isPostgres ? "\"CreatedAt\"" : "CreatedAt";
+        var table = isPostgres ? "\"DavItems\"" : "DavItems";
+        var linkedIdColumn = isPostgres ? $"CAST({table}.\"Id\" AS TEXT)" : $"{table}.Id";
         // Placeholder names are generated locally (@p0..@pN); values are bound via
         // provider-specific parameters (NpgsqlParameter or SqliteParameter).
-#pragma warning disable EF1002
-        return await dbContext.Database.ExecuteSqlRawAsync(
-            dbContext.Database.IsNpgsql()
-                ? $"DELETE FROM \"DavItems\" WHERE CAST(\"Id\" AS TEXT) IN ({string.Join(",", placeholders)})"
-                : $"DELETE FROM DavItems WHERE Id IN ({string.Join(",", placeholders)})",
-            parameters.AsEnumerable(),
-            cancellationToken).ConfigureAwait(false);
-#pragma warning restore EF1002
+        var sql = $"""
+                   DELETE FROM {table}
+                   WHERE {idColumn} IN ({string.Join(",", placeholders)})
+                     AND {typeColumn} = @type
+                     AND {historyColumn} IS NULL
+                     AND {createdAtColumn} < @cutoff
+                     AND NOT EXISTS (SELECT 1 FROM TMP_LINKED_FILES t WHERE t.Id = {linkedIdColumn})
+                   RETURNING {idColumn} AS "Id"
+                   """;
+
+        var connection = dbContext.Database.GetDbConnection();
+        if (connection.State != System.Data.ConnectionState.Open)
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        foreach (var parameter in parameters)
+            command.Parameters.Add(parameter);
+
+        var deletedIds = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            deletedIds.Add(reader.GetString(0));
+        return deletedIds;
     }
+
 
     /// <summary>
     /// Deletes empty directories by Id, re-checking emptiness in the same statement so a
@@ -838,10 +892,33 @@ public class RemoveUnlinkedFilesTask : BaseTask
             if (itemsToDelete.Count == 0)
                 break;
 
-            // Delete by the exact Id text from the select so stored casing never matters.
-            // Sidecars go first: once the row is gone, the Generated* ownership metadata
-            // needed to safely delete them is gone with it.
-            foreach (var item in itemsToDelete)
+            // Delete first, re-checking eligibility (type/history/cutoff/linked) inside the
+            // DELETE and returning exactly which Ids were removed. Audit/sidecar/VFS effects
+            // below then apply only to confirmed deletions, never speculatively beforehand:
+            // a retry can be delayed several seconds, during which a row may have become
+            // relinked, historical, or already deleted by a previous attempt.
+            var deletedIds = await ExecuteWithContentionRetryAsync(
+                "orphan deletion",
+                token => DeleteItemsByIdTextAsync(dbContext, itemsToDelete, usenetFileType, createdBefore, token),
+                CancellationToken)
+                .ConfigureAwait(false);
+
+            // A batch that selects rows but deletes none would loop forever with a climbing
+            // counter. Throw so ExecuteInternal reports a terminal "Failed:" status.
+            if (deletedIds.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"selected {itemsToDelete.Count} unlinked items but deleted 0; " +
+                    $"aborting to avoid an infinite loop.");
+            }
+
+            var deletedIdSet = new HashSet<string>(deletedIds, StringComparer.OrdinalIgnoreCase);
+            var confirmedDeletions = itemsToDelete.Where(x => deletedIdSet.Contains(x.Id)).ToList();
+
+            // Sidecars go after confirmed deletion: once the row is gone, the Generated*
+            // ownership metadata needed to safely delete them is gone with it, and a row
+            // skipped by the eligibility recheck above must keep its sidecar untouched.
+            foreach (var item in confirmedDeletions)
             {
                 DeletionAuditLog.Record(
                     "remove-orphaned",
@@ -850,21 +927,8 @@ public class RemoveUnlinkedFilesTask : BaseTask
                 DeleteGeneratedSidecarFiles(item);
             }
 
-            var deleted = await ExecuteWithContentionRetryAsync(
-                "orphan deletion", token => DeleteItemsByIdTextAsync(dbContext, itemsToDelete, token), CancellationToken)
-                .ConfigureAwait(false);
-
-            // A batch that selects rows but deletes none would loop forever with a climbing
-            // counter. Throw so ExecuteInternal reports a terminal "Failed:" status.
-            if (deleted == 0)
-            {
-                throw new InvalidOperationException(
-                    $"selected {itemsToDelete.Count} unlinked items but deleted 0; " +
-                    $"aborting to avoid an infinite loop.");
-            }
-
             // Trigger rclone vfs/forget for deleted items
-            _ = DavDatabaseContext.RcloneVfsForget(itemsToDelete.Select(x => new DavItem
+            _ = DavDatabaseContext.RcloneVfsForget(confirmedDeletions.Select(x => new DavItem
             {
                 Id = Guid.Parse(x.Id),
                 Type = (DavItem.ItemType)x.Type,
@@ -872,8 +936,8 @@ public class RemoveUnlinkedFilesTask : BaseTask
             }).ToList(), CancellationToken);
 
             // Track removed paths
-            _allRemovedPaths.AddRange(itemsToDelete.Select(x => x.Path));
-            removed += deleted;
+            _allRemovedPaths.AddRange(confirmedDeletions.Select(x => x.Path));
+            removed += deletedIds.Count;
 
             UpdatePhase($"Removing unlinked items...\nRemoved {removed}/{totalCount}...");
         }
@@ -957,20 +1021,23 @@ public class RemoveUnlinkedFilesTask : BaseTask
         {
             // NOT EXISTS uses IX_DavItems_ParentId_Name's ParentId prefix; avoid the
             // previous LEFT JOIN anti-join which rescanned poorly at large scale.
-            var emptyDirs = await dbContext.Database
-                .SqlQuery<UnlinkedItemInfo>(
-                    $"""
-                     SELECT CAST(d."Id" AS TEXT) AS "Id", d."Type" AS "Type", d."Path" AS "Path" FROM "DavItems" d
-                     WHERE d."SubType" = {directorySubType}
-                       AND d."HistoryItemId" IS NULL
-                       AND d."CreatedAt" < {CreateWallClockParameter(dbContext, createdBefore)}
-                       AND d."ParentId" NOT IN ({contentFolderId}, {nzbFolderId})
-                       AND NOT EXISTS (
-                           SELECT 1 FROM "DavItems" c WHERE c."ParentId" = d."Id"
-                       )
-                     LIMIT 100
-                     """)
-                .ToListAsync(cancellationToken)
+            var emptyDirs = await ExecuteWithContentionRetryAsync(
+                "empty directory selection",
+                token => dbContext.Database
+                    .SqlQuery<UnlinkedItemInfo>(
+                        $"""
+                         SELECT CAST(d."Id" AS TEXT) AS "Id", d."Type" AS "Type", d."Path" AS "Path" FROM "DavItems" d
+                         WHERE d."SubType" = {directorySubType}
+                           AND d."HistoryItemId" IS NULL
+                           AND d."CreatedAt" < {CreateWallClockParameter(dbContext, createdBefore)}
+                           AND d."ParentId" NOT IN ({contentFolderId}, {nzbFolderId})
+                           AND NOT EXISTS (
+                               SELECT 1 FROM "DavItems" c WHERE c."ParentId" = d."Id"
+                           )
+                         LIMIT 100
+                         """)
+                    .ToListAsync(token),
+                cancellationToken)
                 .ConfigureAwait(false);
 
             if (emptyDirs.Count == 0)
@@ -980,8 +1047,10 @@ public class RemoveUnlinkedFilesTask : BaseTask
             // (the Fix-Empty-Categories migration seeds a lowercase-Id folder). Re-check
             // emptiness in the DELETE so a concurrent insert under a selected folder
             // cannot race into TR_DavItems_DeleteDirectory + DavCleanupService cascade.
-            var deleted = await DeleteEmptyDirectoriesByIdTextAsync(
-                    dbContext, emptyDirs, cancellationToken)
+            var deleted = await ExecuteWithContentionRetryAsync(
+                "empty directory deletion",
+                token => DeleteEmptyDirectoriesByIdTextAsync(dbContext, emptyDirs, token),
+                cancellationToken)
                 .ConfigureAwait(false);
 
             if (deleted == 0)
