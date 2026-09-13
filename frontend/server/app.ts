@@ -1,5 +1,5 @@
 import "react-router";
-import { createRequestHandler } from "@react-router/express";
+import { createRequestHandler } from "./react-router-request-handler";
 import type { ServerBuild } from "react-router";
 import express from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";

@@ -38,7 +38,8 @@ function firstForwardedValue(value: string | string[] | undefined): string | und
   return trimmed ? trimmed : undefined;
 }
 
-function splitHostPort(hostHeader: string): [hostname: string, port: string | undefined] {
+/** Exported for reuse by react-router-request-handler.ts's bracket-aware port fallback. */
+export function splitHostPort(hostHeader: string): [hostname: string, port: string | undefined] {
   // IPv6 literals are bracketed (e.g. "[::1]:8080") so the port can't be found
   // by naively splitting on the last colon of the address itself.
   const bracketMatch = /^\[([^\]]+)](?::(\d+))?$/.exec(hostHeader);

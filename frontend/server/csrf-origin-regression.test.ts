@@ -3,26 +3,16 @@ import type { AddressInfo } from "node:net";
 import express from "express";
 import { afterEach, describe, expect, it } from "vitest";
 import { normalizeForwardedHost } from "./forwarded-headers";
+import { resolvePort } from "./react-router-request-handler";
 
-// Mirrors @react-router/express's createRemixRequest URL resolution (the exact
-// logic that leaked the container's internal port into the SSR request, see
-// normalizeForwardedHost) plus react-router's action CSRF host check. Neither is
-// exported by those packages, so this reproduces them locally to regression-test
-// the fix against a real Express request/response cycle instead of only the
-// normalizeForwardedHost unit, matching how login is actually served in
-// production behind a reverse proxy.
+// Mirrors @react-router/express's createRemixRequest URL resolution (as fixed
+// in react-router-request-handler.ts) plus react-router's action CSRF host
+// check. Neither is exported by those packages, so this reproduces them
+// locally to regression-test the fix against a real Express request/response
+// cycle instead of only the normalizeForwardedHost/resolvePort units, matching
+// how login is actually served in production behind a reverse proxy.
 function resolveRequestUrlHost(req: express.Request): string {
-  const [, hostnamePortStr] = req.app.enabled("trust proxy")
-    ? (req.get("X-Forwarded-Host")?.split(":") ?? [])
-    : [];
-  const [, hostPortStr] = req.get("host")?.split(":") ?? [];
-  const hostnamePort = Number.parseInt(hostnamePortStr ?? "", 10);
-  const hostPort = Number.parseInt(hostPortStr ?? "", 10);
-  const port = Number.isSafeInteger(hostnamePort)
-    ? hostnamePort
-    : Number.isSafeInteger(hostPort)
-      ? hostPort
-      : "";
+  const port = resolvePort(req);
   return `${req.hostname}${port ? `:${port}` : ""}`;
 }
 
@@ -150,5 +140,38 @@ describe("login action origin check (reverse proxy regression)", () => {
     });
 
     expect(status).toBe(400);
+  });
+
+  it("accepts a login proxied through an IPv6 literal on the default HTTPS port", async () => {
+    const server = http.createServer(buildApp(true));
+    servers.push(server);
+    const port = await listen(server);
+
+    const status = await postLogin(port, {
+      Host: `127.0.0.1:${port}`,
+      "X-Forwarded-Host": "[2001:db8::1]",
+      "X-Forwarded-Proto": "https",
+      Origin: "https://[2001:db8::1]",
+    });
+
+    expect(status).toBe(200);
+  });
+
+  it("accepts a login proxied through an IPv6 literal on a non-default port (regression)", async () => {
+    const server = http.createServer(buildApp(true));
+    servers.push(server);
+    const port = await listen(server);
+
+    // Naively splitting "[2001:db8::1]:8443" on ":" treats "db8" as the port
+    // candidate, fails numeric parsing, and silently drops 8443 — the bug
+    // CodeRabbit flagged in @react-router/express's createRemixRequest.
+    const status = await postLogin(port, {
+      Host: `127.0.0.1:${port}`,
+      "X-Forwarded-Host": "[2001:db8::1]:8443",
+      "X-Forwarded-Proto": "https",
+      Origin: "https://[2001:db8::1]:8443",
+    });
+
+    expect(status).toBe(200);
   });
 });
