@@ -32,7 +32,7 @@ export function isActionOriginRejection(error: unknown, request: Request): boole
 
   if (!(error instanceof Error) || error.message !== "Bad Request") return false;
 
-  let isMismatch = false;
+  let isMismatch: boolean;
   try {
     const originUrl = new URL(origin);
     const requestUrl = new URL(request.url);
