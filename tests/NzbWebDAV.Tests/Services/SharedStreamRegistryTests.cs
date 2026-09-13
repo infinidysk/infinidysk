@@ -318,6 +318,7 @@ public class SharedStreamRegistryTests
     {
         public byte[] Data => data;
         public long FileSize => data.Length;
+        public SharedContentIdentity ContentIdentity => new("memory", null, FileSize);
         public int OpenCount;
 
         public async Task<DetachedStreamLease> GetDetachedReadableStreamAsync(CancellationToken cancellationToken)
@@ -329,6 +330,7 @@ public class SharedStreamRegistryTests
             {
                 Stream = new MemoryStream(data, writable: false),
                 Ownership = NullAsyncDisposable.Instance,
+                ContentIdentity = ContentIdentity,
             };
         }
     }
@@ -350,6 +352,7 @@ public class SharedStreamRegistryTests
         InFlightArticleBudget budget) : IDetachedStreamSource
     {
         public long FileSize => (long)segmentCount * segmentSize;
+        public SharedContentIdentity ContentIdentity => new("nzb", null, FileSize);
 
         public Task<DetachedStreamLease> GetDetachedReadableStreamAsync(CancellationToken cancellationToken)
         {
@@ -381,6 +384,7 @@ public class SharedStreamRegistryTests
             {
                 Stream = stream,
                 Ownership = NullAsyncDisposable.Instance,
+                ContentIdentity = ContentIdentity,
             });
         }
     }
@@ -388,6 +392,7 @@ public class SharedStreamRegistryTests
     private sealed class ThrowingSource : IDetachedStreamSource
     {
         public long FileSize => 16;
+        public SharedContentIdentity ContentIdentity => new("throwing", null, FileSize);
         public Task<DetachedStreamLease> GetDetachedReadableStreamAsync(CancellationToken cancellationToken) =>
             throw new IOException("open failed");
     }

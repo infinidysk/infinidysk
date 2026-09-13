@@ -238,6 +238,7 @@ public class SharedStreamHandlerTests
         public override string Name => "movie.mkv";
         public override string UniqueKey => "movie";
         public override long FileSize => payload.Length;
+        public SharedContentIdentity ContentIdentity => new("detached", null, FileSize);
         public override DateTime CreatedAt => DateTime.UnixEpoch;
 
         public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
@@ -254,6 +255,7 @@ public class SharedStreamHandlerTests
                 Stream = TestStreams.Create(payload),
                 Ownership = NullAsyncDisposable.Instance,
                 DavItem = davItem,
+                ContentIdentity = ContentIdentity,
             });
         }
     }
@@ -280,6 +282,7 @@ public class SharedStreamHandlerTests
         public override string Name => "movie.mkv";
         public override string UniqueKey => "exact-nzb";
         public override long FileSize => Payload.Length;
+        public SharedContentIdentity ContentIdentity => new("exact-nzb", null, FileSize);
         public override DateTime CreatedAt => DateTime.UnixEpoch;
 
         public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken) =>
@@ -290,6 +293,7 @@ public class SharedStreamHandlerTests
             {
                 Stream = CreateStream(),
                 Ownership = NullAsyncDisposable.Instance,
+                ContentIdentity = ContentIdentity,
             });
 
         private Stream CreateStream()

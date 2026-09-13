@@ -6,12 +6,15 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Streams;
 
 namespace NzbWebDAV.WebDav.Base;
 
 public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager configManager)
     : BaseStoreReadonlyItem, IDetachedStreamSource
 {
+    public virtual SharedContentIdentity ContentIdentity =>
+        new(UniqueKey, NzbBlobId, FileSize);
     // Derived stream files must use these properties instead of capturing
     // the primary-constructor parameters (CS9107 double-capture).
     protected HttpContext Context => context;
@@ -49,6 +52,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
                 Stream = stream,
                 Ownership = ownership,
                 DavItem = Context.Items["DavItem"] as DavItem,
+                ContentIdentity = ContentIdentity,
             };
         }
         catch

@@ -5,8 +5,8 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services;
-using NzbWebDAV.Streams;
 using NzbWebDAV.WebDav.Base;
+using NzbWebDAV.Streams;
 
 namespace NzbWebDAV.WebDav;
 
@@ -20,6 +20,8 @@ public class DatabaseStoreIdFile(
     InFlightArticleBudget inFlightArticleBudget
 ) : BaseStoreReadonlyItem, IDetachedStreamSource
 {
+    public SharedContentIdentity ContentIdentity =>
+        new(UniqueKey, davItem.FileBlobId, FileSize);
     public override string Name => davItem.Id.ToString();
     public override string UniqueKey => davItem.Id.ToString();
     public override long FileSize => davItem.FileSize!.Value;

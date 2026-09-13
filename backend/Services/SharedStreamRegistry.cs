@@ -63,6 +63,12 @@ public sealed class SharedStreamRegistry : IAsyncDisposable, IDisposable
         readerCt.ThrowIfCancellationRequested();
 
         path = NormalizePath(path);
+        var contentIdentity = source.ContentIdentity;
+        if (string.IsNullOrWhiteSpace(contentIdentity.UniqueKey) || contentIdentity.FileSize != fileSize)
+        {
+            _tracker.RecordSharedAttachMiss(SharedStreamAttachMissReason.Ineligible);
+            return null;
+        }
 
         if (Volatile.Read(ref _disposed) != 0 || !_config.IsSharedStreamsEnabled())
         {
@@ -76,10 +82,10 @@ public sealed class SharedStreamRegistry : IAsyncDisposable, IDisposable
             return null;
         }
 
-        if (TryAttachExisting(path, startOffset, privateFallbackFactory, out var hit, out var windowMiss))
+        if (TryAttachExisting(path, startOffset, contentIdentity, privateFallbackFactory, out var hit, out var windowMiss))
             return hit;
 
-        if (HasOpeningEntry(path))
+        if (HasOpeningEntry(path, contentIdentity))
         {
             _tracker.RecordSharedAttachMiss(SharedStreamAttachMissReason.EntryUnusable);
             return null;
@@ -101,7 +107,7 @@ public sealed class SharedStreamRegistry : IAsyncDisposable, IDisposable
         }
 
         readerCt.ThrowIfCancellationRequested();
-        var reserved = TryReserveOpening(path, startOffset, fileSize, out var capMiss);
+        var reserved = TryReserveOpening(path, startOffset, fileSize, contentIdentity, out var capMiss);
         if (reserved is null)
         {
             _tracker.RecordSharedAttachMiss(capMiss ?? SharedStreamAttachMissReason.AtEntryCap);
@@ -177,6 +183,7 @@ public sealed class SharedStreamRegistry : IAsyncDisposable, IDisposable
     private bool TryAttachExisting(
         string path,
         long startOffset,
+        SharedContentIdentity contentIdentity,
         SharedStreamFallbackFactory fallbackFactory,
         out SharedAttachResult? result,
         out SharedStreamAttachMissReason? windowMiss)
@@ -188,6 +195,8 @@ public sealed class SharedStreamRegistry : IAsyncDisposable, IDisposable
 
         foreach (var entry in SnapshotPath(path))
         {
+            if (entry.ContentIdentity != contentIdentity)
+                continue;
             if (entry.State == SharedStreamEntryState.Opening)
                 continue;
             if (!entry.IsAttachable)
@@ -233,12 +242,13 @@ public sealed class SharedStreamRegistry : IAsyncDisposable, IDisposable
         return true;
     }
 
-    private bool HasOpeningEntry(string path)
+    private bool HasOpeningEntry(string path, SharedContentIdentity contentIdentity)
     {
         lock (_gate)
         {
             return _entries.TryGetValue(path, out var list)
-                && list.Any(entry => entry.State == SharedStreamEntryState.Opening);
+                && list.Any(entry => entry.State == SharedStreamEntryState.Opening
+                    && entry.ContentIdentity == contentIdentity);
         }
     }
 
@@ -246,6 +256,7 @@ public sealed class SharedStreamRegistry : IAsyncDisposable, IDisposable
         string path,
         long startOffset,
         long fileSize,
+        SharedContentIdentity contentIdentity,
         out SharedStreamAttachMissReason? capMiss)
     {
         capMiss = null;
@@ -258,7 +269,8 @@ public sealed class SharedStreamRegistry : IAsyncDisposable, IDisposable
             }
 
             var list = _entries.GetOrAdd(path, static _ => []);
-            if (list.Any(entry => entry.State == SharedStreamEntryState.Opening))
+            if (list.Any(entry => entry.State == SharedStreamEntryState.Opening
+                && entry.ContentIdentity == contentIdentity))
             {
                 capMiss = SharedStreamAttachMissReason.EntryUnusable;
                 return null;
@@ -284,7 +296,8 @@ public sealed class SharedStreamRegistry : IAsyncDisposable, IDisposable
                 _config.GetSharedStreamsRingBytes(),
                 TimeSpan.FromSeconds(_config.GetSharedStreamsGraceSeconds()),
                 _rootCts.Token,
-                _timeProvider);
+                _timeProvider,
+                contentIdentity: contentIdentity);
             entry.OnReaped = HandleReaped;
             entry.OnRingRetainedBytes = _ => PublishRetainedBytes();
             entry.OnForceEvictions = _tracker.RecordSharedReaderEvictions;

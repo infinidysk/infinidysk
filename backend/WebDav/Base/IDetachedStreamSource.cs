@@ -1,4 +1,5 @@
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Streams;
 
 namespace NzbWebDAV.WebDav.Base;
 
@@ -10,6 +11,7 @@ public sealed class DetachedStreamLease
 {
     public required Stream Stream { get; init; }
     public required IAsyncDisposable Ownership { get; init; }
+    public required SharedContentIdentity ContentIdentity { get; init; }
     public DavItem? DavItem { get; init; }
 }
 
@@ -20,5 +22,6 @@ public sealed class DetachedStreamLease
 public interface IDetachedStreamSource
 {
     long FileSize { get; }
+    SharedContentIdentity ContentIdentity { get; }
     Task<DetachedStreamLease> GetDetachedReadableStreamAsync(CancellationToken cancellationToken);
 }

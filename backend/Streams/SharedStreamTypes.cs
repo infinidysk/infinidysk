@@ -1,5 +1,7 @@
 namespace NzbWebDAV.Streams;
 
+public readonly record struct SharedContentIdentity(string UniqueKey, Guid? FileBlobId, long FileSize);
+
 internal sealed class NullAsyncDisposable : IAsyncDisposable
 {
     public static readonly NullAsyncDisposable Instance = new();

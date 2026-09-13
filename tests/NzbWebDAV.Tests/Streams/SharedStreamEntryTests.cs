@@ -467,6 +467,7 @@ public class SharedStreamEntryTests : IDisposable
         {
             Stream = upstream,
             Ownership = NullAsyncDisposable.Instance,
+            ContentIdentity = new SharedContentIdentity("entry-test", null, fileSize),
         });
         return entry;
     }

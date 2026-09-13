@@ -299,6 +299,7 @@ public sealed class MultiProviderNntpClientTerminalMissLoggingTests
             {
                 Stream = upstream,
                 Ownership = NullAsyncDisposable.Instance,
+                ContentIdentity = new SharedContentIdentity($"terminal-{fileName}", null, 8),
             });
             var reader = entry.TryAttach(0, NoFallback, out var reason);
             Assert.True(reader is not null, $"attach missed: {reason}");
