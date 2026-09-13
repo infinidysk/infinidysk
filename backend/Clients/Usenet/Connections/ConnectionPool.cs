@@ -185,8 +185,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         CancellationToken callerCancellationToken)
     {
         if (openTimeout is not null
-            && callerCancellationToken.IsCancellationRequested == false
-            && _sweepCts.IsCancellationRequested == false)
+            && !callerCancellationToken.IsCancellationRequested
+            && !_sweepCts.IsCancellationRequested)
         {
             throw new ConnectionOpenTimeoutException(
                 _connectionOpenProvider,
@@ -528,10 +528,19 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         await _gate.WaitAsync(SemaphorePriority.Low, linked.Token).ConfigureAwait(false);
         Interlocked.Add(ref _gateWaitTicks, Stopwatch.GetElapsedTime(gateWaitStarted).Ticks);
         var gateHeld = true;
+        var warmOpenTimeout = _connectionOpenTimeout?.Invoke();
+        var warmTimeout = warmOpenTimeout ?? TimeSpan.Zero;
+        using var openDeadline = warmOpenTimeout is not null
+            ? CancellationTokenSource.CreateLinkedTokenSource(linked.Token)
+            : null;
+        if (openDeadline is not null)
+            openDeadline.CancelAfter(warmTimeout);
+        var openToken = openDeadline?.Token ?? linked.Token;
+        var openPhase = "HandshakeQueue";
         try
         {
             var handshakeWaitStarted = Stopwatch.GetTimestamp();
-            await _handshakeGate.WaitAsync(linked.Token).ConfigureAwait(false);
+            await _handshakeGate.WaitAsync(openToken).ConfigureAwait(false);
             Interlocked.Add(ref _handshakeWaitTicks, Stopwatch.GetElapsedTime(handshakeWaitStarted).Ticks);
             try
             {
@@ -546,14 +555,17 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 T connection;
                 try
                 {
-                    var pacingReservation = await PaceReplacementHandshakeAsync(linked.Token)
+                      openPhase = "ReplacementPacing";
+                      var pacingReservation = await PaceReplacementHandshakeAsync(openToken)
                         .ConfigureAwait(false);
                     CommitReplacementPacing(pacingReservation);
-                    connection = await _factory(linked.Token).ConfigureAwait(false);
+                      openPhase = "Factory";
+                      connection = await _factory(openToken).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (linked.IsCancellationRequested)
                 {
                     CompleteConnectionCreation(created: false);
+                    ThrowIfLocalOpenTimeout(warmOpenTimeout, openPhase, cancellationToken);
                     throw;
                 }
                 catch (Exception factoryError) when (factoryError is not OutOfMemoryException)
