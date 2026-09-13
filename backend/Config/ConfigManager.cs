@@ -19,6 +19,7 @@ namespace NzbWebDAV.Config;
 public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 {
     public static readonly string AppVersion = EnvironmentUtil.GetEnvironmentVariable("NZBDAV_VERSION") ?? "0.0.0";
+    private static long _nextProviderGeneration;
 
     private readonly ConcurrentDictionary<string, string> _invalidScheduleWarnings = new();
 
@@ -45,6 +46,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     private readonly object _excludeLock = new();
     private IReadOnlyList<Regex>? _compiledExcludeCache;
     private ConfigEnvironmentOverlay _environmentOverlay = ConfigEnvironmentOverlay.Empty;
+    private long _providerGeneration;
     /// <summary>
     /// Raised after configuration values have been committed in memory. Notification is
     /// synchronous, in registration order, and does not run while config locks are held.
@@ -53,6 +55,15 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     /// removed during publication may still run once for that in-flight event.
     /// </summary>
     public event EventHandler<ConfigEventArgs>? OnConfigChanged;
+
+    public (UsenetProviderConfig Providers, long Generation) GetUsenetProviderSnapshot()
+    {
+        lock (_config)
+        {
+            return (GetConfigValue<UsenetProviderConfig>(ConfigKeys.UsenetProviders)
+                    ?? new UsenetProviderConfig(), _providerGeneration);
+        }
+    }
 
     public IDisposable Subscribe(EventHandler<ConfigEventArgs> handler)
     {
@@ -336,6 +347,9 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
             changedConfig = configItems
                 .Where(item => !_environmentOverlay.IsManaged(item.ConfigName))
                 .ToDictionary(x => x.ConfigName, x => x.ConfigValue);
+
+            if (changedConfig.ContainsKey(ConfigKeys.UsenetProviders))
+                _providerGeneration = Interlocked.Increment(ref _nextProviderGeneration);
         }
 
         if (configItems.Any(x => x.ConfigName.StartsWith(ConfigKeys.SearchExcludePrefix, StringComparison.Ordinal)

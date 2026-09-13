@@ -35,7 +35,8 @@ public class MultiProviderNntpClient(
     ActiveReadRegistry? activeReadRegistry = null,
     ArticleMissNegativeCache? articleMissCache = null,
     ConnectionPoolStats? connectionPoolStats = null,
-    ConcurrentReadTracker? concurrentReadTracker = null
+    ConcurrentReadTracker? concurrentReadTracker = null,
+    long? providerGeneration = null
 ) : NntpClient, INntpConnectionStats
 {
     private static readonly TimeSpan RecoveryProbeTimeout = TimeSpan.FromSeconds(15);
@@ -1300,12 +1301,13 @@ public class MultiProviderNntpClient(
     private bool IsCachedMissing(SegmentId segmentId, MultiConnectionNntpClient provider)
     {
         if (articleMissCache == null) return false;
-        return articleMissCache.IsMissing(CacheKey(segmentId, provider));
+        return providerGeneration is { } generation
+            && articleMissCache.IsMissing(CacheKey(segmentId, provider), generation);
     }
 
     private void MarkCachedMissing(SegmentId segmentId, MultiConnectionNntpClient provider)
     {
-        articleMissCache?.MarkMissing(CacheKey(segmentId, provider));
+        articleMissCache?.MarkMissing(CacheKey(segmentId, provider), providerGeneration);
     }
 
     /// <summary>
