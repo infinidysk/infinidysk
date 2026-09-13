@@ -22,7 +22,7 @@ import {
   isExpectedBackendConnectionError,
   isWithinBackendStartupGrace,
 } from "./startup-grace";
-import { applyCanonicalForwardedHeaders } from "./forwarded-headers";
+import { applyCanonicalForwardedHeaders, normalizeForwardedHost } from "./forwarded-headers";
 import { backendProxyTimeoutOptions } from "./backend-proxy-options";
 import { handleBackendProxyResponse } from "./backend-proxy-response";
 import { oidcRouter } from "./oidc-routes";
@@ -54,6 +54,12 @@ if (trustProxy) {
   // Opt-in: honor X-Forwarded-* from the reverse proxy in front of this container.
   // Required for correct public scheme/host when rewriting headers to the backend.
   app.set("trust proxy", 1);
+  // Must run before React Router's request handler builds the SSR Request — see
+  // normalizeForwardedHost for why this prevents spurious action CSRF rejections.
+  app.use((req, _res, next) => {
+    normalizeForwardedHost(req, trustProxy);
+    next();
+  });
 }
 
 let loggedStartupWait = false;

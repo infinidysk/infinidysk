@@ -1,6 +1,127 @@
 import { describe, expect, it } from "vitest";
 import type express from "express";
-import { applyCanonicalForwardedHeaders } from "./forwarded-headers";
+import { applyCanonicalForwardedHeaders, normalizeForwardedHost } from "./forwarded-headers";
+
+function fakeRequest(headers: Record<string, string | string[]>): express.Request {
+  return { headers, protocol: "http" } as unknown as express.Request;
+}
+
+describe("normalizeForwardedHost", () => {
+  it("rewrites the Host header to the forwarded host, dropping the internal port", () => {
+    const req = fakeRequest({
+      host: "internal-container:3000",
+      "x-forwarded-host": "public.example.com",
+      "x-forwarded-proto": "https",
+    });
+
+    normalizeForwardedHost(req, true);
+
+    expect(req.headers.host).toBe("public.example.com");
+  });
+
+  it("uses the first entry when X-Forwarded-Host has multiple comma-separated hops", () => {
+    const req = fakeRequest({
+      host: "internal-container:3000",
+      "x-forwarded-host": "public.example.com, edge.internal",
+      "x-forwarded-proto": "https",
+    });
+
+    normalizeForwardedHost(req, true);
+
+    expect(req.headers.host).toBe("public.example.com");
+  });
+
+  it("leaves the Host header untouched when trustProxy is disabled", () => {
+    const req = fakeRequest({
+      host: "internal-container:3000",
+      "x-forwarded-host": "public.example.com",
+      "x-forwarded-proto": "https",
+    });
+
+    normalizeForwardedHost(req, false);
+
+    expect(req.headers.host).toBe("internal-container:3000");
+  });
+
+  it("leaves the Host header untouched when X-Forwarded-Host is absent", () => {
+    const req = fakeRequest({ host: "internal-container:3000" });
+
+    normalizeForwardedHost(req, true);
+
+    expect(req.headers.host).toBe("internal-container:3000");
+  });
+
+  it("keeps an explicit non-default port carried on X-Forwarded-Host", () => {
+    const req = fakeRequest({
+      host: "internal-container:3000",
+      "x-forwarded-host": "public.example.com:8443",
+      "x-forwarded-proto": "https",
+    });
+
+    normalizeForwardedHost(req, true);
+
+    expect(req.headers.host).toBe("public.example.com:8443");
+  });
+
+  it("appends a non-default X-Forwarded-Port when X-Forwarded-Host omits one", () => {
+    const req = fakeRequest({
+      host: "internal-container:3000",
+      "x-forwarded-host": "public.example.com",
+      "x-forwarded-proto": "https",
+      "x-forwarded-port": "8443",
+    });
+
+    normalizeForwardedHost(req, true);
+
+    expect(req.headers.host).toBe("public.example.com:8443");
+  });
+
+  it("omits a default port (443) reported via X-Forwarded-Port for https", () => {
+    const req = fakeRequest({
+      host: "internal-container:3000",
+      "x-forwarded-host": "public.example.com",
+      "x-forwarded-proto": "https",
+      "x-forwarded-port": "443",
+    });
+
+    normalizeForwardedHost(req, true);
+
+    expect(req.headers.host).toBe("public.example.com");
+  });
+
+  it("omits a default port (80) reported via X-Forwarded-Port for http", () => {
+    const req = fakeRequest({
+      host: "internal-container:3000",
+      "x-forwarded-host": "public.example.com",
+      "x-forwarded-proto": "http",
+      "x-forwarded-port": "80",
+    });
+
+    normalizeForwardedHost(req, true);
+
+    expect(req.headers.host).toBe("public.example.com");
+  });
+
+  it("falls back to req.protocol when X-Forwarded-Proto is absent", () => {
+    const req = { headers: { "x-forwarded-host": "public.example.com" }, protocol: "https" } as unknown as express.Request;
+
+    normalizeForwardedHost(req, true);
+
+    expect(req.headers.host).toBe("public.example.com");
+  });
+
+  it("handles bracketed IPv6 forwarded hosts without splitting the address", () => {
+    const req = fakeRequest({
+      host: "internal-container:3000",
+      "x-forwarded-host": "[2001:db8::1]:8443",
+      "x-forwarded-proto": "https",
+    });
+
+    normalizeForwardedHost(req, true);
+
+    expect(req.headers.host).toBe("[2001:db8::1]:8443");
+  });
+});
 
 describe("applyCanonicalForwardedHeaders", () => {
   it("strips client forwarded headers and sets canonical values from the socket", () => {
