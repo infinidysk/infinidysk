@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
+using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Api.SabControllers.AddFile;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
@@ -141,7 +142,7 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
         var controller = CreateController();
         var invalidRequest = CreateRequest(fileName, category, contentBytes: Encoding.UTF8.GetBytes("not valid xml or gzip"));
 
-        await Assert.ThrowsAnyAsync<Exception>(() => controller.AddFileAsync(invalidRequest));
+        await Assert.ThrowsAsync<ApiValidationException>(() => controller.AddFileAsync(invalidRequest));
 
         var existingItem = await _context.QueueItems.AsNoTracking()
             .SingleOrDefaultAsync(q => q.Id == existingId);

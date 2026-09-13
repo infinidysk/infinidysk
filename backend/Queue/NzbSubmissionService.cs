@@ -86,12 +86,13 @@ public class NzbSubmissionService(
         using var queueSlotReservation = admissionReservation;
         if (request.NzoId.HasValue)
         {
+            var nzoId = request.NzoId.Value;
             var collision = await dbClient.Ctx.QueueItems
-                .AnyAsync(q => q.Id == request.NzoId.Value, request.CancellationToken)
+                .AnyAsync(q => q.Id == nzoId, request.CancellationToken)
                 .ConfigureAwait(false);
-            if (collision || BlobStore.Exists(request.NzoId.Value))
+            if (collision || BlobStore.Exists(nzoId))
             {
-                throw new BadHttpRequestException($"Requested queue item ID '{request.NzoId.Value}' already exists.");
+                throw new BadHttpRequestException($"Requested queue item ID '{nzoId}' already exists.");
             }
         }
 
@@ -105,6 +106,7 @@ public class NzbSubmissionService(
             await AfterDuplicatePreCheckHook().ConfigureAwait(false);
 
         QueueItem? queueItem;
+        Guid[] removedIds = [];
         string? backupPath = null;
         try
         {
@@ -196,13 +198,7 @@ public class NzbSubmissionService(
                 dbClient,
                 request.CancellationToken).ConfigureAwait(false);
 
-            foreach (var removedId in commitResult.RemovedIds)
-            {
-                BlobStore.Delete(removedId);
-                _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, removedId.ToString());
-            }
-
-            _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], request.CancellationToken);
+            removedIds = commitResult.RemovedIds;
         }
         catch
         {
@@ -212,6 +208,21 @@ public class NzbSubmissionService(
             TryDeleteBackupFile(backupPath);
             throw;
         }
+
+        foreach (var removedId in removedIds)
+        {
+            try
+            {
+                BlobStore.Delete(removedId);
+                _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, removedId.ToString());
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
+                Log.Warning(exception, "Could not clean up replaced NZB blob {QueueItemId}", removedId);
+            }
+        }
+
+        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"], request.CancellationToken);
 
         // inform the frontend that a new item was added to the queue
         var message = QueueItemAddedPayload.FromQueueItem(queueItem).ToJson();

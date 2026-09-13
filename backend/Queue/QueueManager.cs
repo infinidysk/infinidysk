@@ -53,6 +53,11 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
 
     private readonly ConcurrentDictionary<Guid, int> _mutationReservations = new();
     private readonly ConcurrentDictionary<Guid, DateTime> _fallbackDeferrals = new();
+    private readonly ConcurrentDictionary<(string Category, string FileName), int> _submissionKeyReservations = new();
+    private readonly ConcurrentDictionary<(string Category, string FileName), SemaphoreSlim> _submissionCommitLocks = new();
+    private readonly Lock _submissionLifetimeLock = new();
+    private TaskCompletionSource _submissionsCompleted = CompletedTaskSource();
+    private int _activeSubmissions;
 
     public void SetFallbackDeferral(Guid queueItemId, DateTime deferUntil)
     {
@@ -263,7 +268,7 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
 
     private sealed class QueueAdmissionReservation(Action release) : IDisposable
     {
-        private Action? _release = release;
+        private Action? _release = release!;
 
         public void Dispose()
         {
@@ -335,7 +340,7 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
 
     private void ReleaseMutationsUnderLock(IEnumerable<Guid> ownedIds)
     {
-        foreach (var id in ownedIds)
+        foreach (var id in ownedIds.Where(id => _mutationReservations.ContainsKey(id)))
         {
             if (_mutationReservations.TryGetValue(id, out var count))
             {
@@ -343,6 +348,48 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
                 else _mutationReservations[id] = count - 1;
             }
         }
+    }
+
+    private void ReserveSubmissionKeyUnderLock((string Category, string FileName) key)
+    {
+        _submissionKeyReservations.AddOrUpdate(key, 1, static (_, count) => checked(count + 1));
+    }
+
+    private void ReleaseSubmissionKeyUnderLock((string Category, string FileName) key)
+    {
+        if (_submissionKeyReservations.TryGetValue(key, out var count))
+        {
+            if (count == 1) _submissionKeyReservations.TryRemove(key, out _);
+            else _submissionKeyReservations[key] = count - 1;
+        }
+    }
+
+    private QueueAdmissionReservation EnterSubmission()
+    {
+        lock (_submissionLifetimeLock)
+        {
+            if (_disposed != 0)
+                ObjectDisposedException.ThrowIf(_disposed != 0, this);
+
+            if (_activeSubmissions++ == 0)
+                _submissionsCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        return new QueueAdmissionReservation(() =>
+        {
+            lock (_submissionLifetimeLock)
+            {
+                if (--_activeSubmissions == 0)
+                    _submissionsCompleted.TrySetResult();
+            }
+        });
+    }
+
+    private static TaskCompletionSource CompletedTaskSource()
+    {
+        var source = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        source.SetResult();
+        return source;
     }
 
     public async Task<QueueRemovalResult> RemoveQueueItemsDetailedAsync(
@@ -408,8 +455,6 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
         return result.StillRunningIds;
     }
 
-    private readonly SemaphoreSlim _submissionCommitLock = new(1, 1);
-
     public async Task<QueueSubmissionCommitResult> CommitSubmissionAsync(
         QueueItem replacement,
         NzbName replacementName,
@@ -417,7 +462,12 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
         DavDatabaseClient dbClient,
         CancellationToken ct)
     {
-        await _submissionCommitLock.WaitAsync(ct).ConfigureAwait(false);
+        using var submissionLifetime = EnterSubmission();
+        var submissionKey = (replacement.Category, replacement.FileName);
+        var submissionCommitLock = _submissionCommitLocks.GetOrAdd(
+            submissionKey,
+            static _ => new SemaphoreSlim(1, 1));
+        await submissionCommitLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             Guid? conflictId = null;
@@ -425,6 +475,11 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
             Guid[] reservedIds = [];
 
             await LockAsync(() =>
+            {
+                ReserveSubmissionKeyUnderLock(submissionKey);
+            }, ct).ConfigureAwait(false);
+
+            try
             {
                 var conflict = dbClient.Ctx.QueueItems.AsNoTracking()
                     .FirstOrDefault(q => q.Category == replacement.Category && q.FileName == replacement.FileName);
@@ -435,16 +490,17 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
                         throw new BadHttpRequestException(
                             $"A queue item named '{replacement.FileName}' already exists in category '{replacement.Category}'.");
                     }
-                    conflictId = conflict.Id;
-                    reservedIds = ReserveMutationsUnderLock([conflict.Id]);
-                    toCancel = _inProgress.Values
-                        .Where(x => x.QueueItem.Id == conflict.Id)
-                        .ToList();
-                }
-            }, ct).ConfigureAwait(false);
 
-            try
-            {
+                    await LockAsync(() =>
+                    {
+                        conflictId = conflict.Id;
+                        reservedIds = ReserveMutationsUnderLock([conflict.Id]);
+                        toCancel = _inProgress.Values
+                            .Where(x => x.QueueItem.Id == conflict.Id)
+                            .ToList();
+                    }, ct).ConfigureAwait(false);
+                }
+
                 if (conflictId is not null)
                 {
                     var stillRunning = await CancelAndAwaitWorkersAsync(toCancel, ct).ConfigureAwait(false);
@@ -496,6 +552,8 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
             }
             finally
             {
+                await LockAsync(() => ReleaseSubmissionKeyUnderLock(submissionKey), CancellationToken.None)
+                    .ConfigureAwait(false);
                 if (reservedIds.Length > 0)
                 {
                     await LockAsync(() => ReleaseMutationsUnderLock(reservedIds), CancellationToken.None).ConfigureAwait(false);
@@ -504,7 +562,7 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
         }
         finally
         {
-            _submissionCommitLock.Release();
+            submissionCommitLock.Release();
         }
     }
 
@@ -944,6 +1002,15 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
                     }
 
                     if (reservedMountKeys.Contains((claimed.item.Category, claimed.item.JobName)))
+                    {
+                        excludeIds.Add(claimed.item.Id);
+                        if (claimed.stream is not null)
+                            await claimed.stream.DisposeAsync().ConfigureAwait(false);
+                        continue;
+                    }
+
+                    if (_submissionKeyReservations.ContainsKey(
+                            (claimed.item.Category, claimed.item.FileName)))
                     {
                         excludeIds.Add(claimed.item.Id);
                         if (claimed.stream is not null)
@@ -1635,7 +1702,9 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
 
         _configChangeSubscription.Dispose();
         _cancellationTokenSource?.Dispose();
-        _submissionCommitLock.Dispose();
+        _submissionsCompleted.Task.GetAwaiter().GetResult();
+        foreach (var submissionLock in _submissionCommitLocks.Values)
+            submissionLock.Dispose();
         if (_inProgress.IsEmpty)
         {
             _stateLock.Dispose();
