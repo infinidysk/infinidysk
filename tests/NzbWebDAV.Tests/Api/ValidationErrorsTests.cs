@@ -22,6 +22,30 @@ public class ValidationErrorsTests
     }
 
     [Fact]
+    public void ValidationErrors_MarksOmittedWhenTruncatedInputCollapsesIntoAnExistingPair()
+    {
+        var errors = new ValidationErrors();
+
+        // Retained in full: exactly at the bound, so this first Add does not truncate
+        // and does not itself set the omission flag.
+        var exactLengthMessage = new string('a', ValidationErrors.MaxMessageLength);
+        errors.Add("nzb", exactLengthMessage);
+        Assert.True(errors.HasErrors);
+
+        // A second, textually distinct (longer) input truncates down to the exact same
+        // bounded pair already retained above. Even though the (field, message) pair
+        // "matches" after normalization, real information (the extra suffix) was lost,
+        // so this must still mark omission instead of being treated as a clean duplicate.
+        var truncatesToSamePair = exactLengthMessage + "-distinct-tail-that-gets-cut";
+        errors.Add("nzb", truncatesToSamePair);
+
+        Assert.True(errors.HasErrors);
+        var dict = errors.ToDictionary();
+        Assert.Single(dict["nzb"], m => m == exactLengthMessage);
+        Assert.Contains(ValidationErrors.OmissionMarker, dict["nzb"]);
+    }
+
+    [Fact]
     public void ValidationErrors_BoundsTotalMessagesAndAppendsOmissionMarker()
     {
         var errors = new ValidationErrors();

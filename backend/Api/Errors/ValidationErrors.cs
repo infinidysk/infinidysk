@@ -33,14 +33,16 @@ public sealed class ValidationErrors
         var normField = TruncateString(field, MaxFieldLength);
         var normMessage = TruncateString(message, MaxMessageLength);
 
-        if (_seenPairs.Contains((normField, normMessage)))
-        {
-            return;
-        }
-
+        // Marked before the duplicate check below: a distinct input that truncates down to an
+        // already-retained pair still lost information and must not look like a clean accept.
         if (normField.Length != field.Length || normMessage.Length != message.Length)
         {
             _omitted = true;
+        }
+
+        if (_seenPairs.Contains((normField, normMessage)))
+        {
+            return;
         }
 
         if (!_errors.TryGetValue(normField, out var list))
