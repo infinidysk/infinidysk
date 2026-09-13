@@ -33,7 +33,7 @@ public sealed class ValidationErrors
         var normField = TruncateString(field, MaxFieldLength);
         var normMessage = TruncateString(message, MaxMessageLength);
 
-        if (!_seenPairs.Add((normField, normMessage)))
+        if (_seenPairs.Contains((normField, normMessage)))
         {
             return;
         }
@@ -67,6 +67,7 @@ public sealed class ValidationErrors
         list.Add(normMessage);
         _totalMessages++;
         _retainedTextLength += totalCost;
+        _seenPairs.Add((normField, normMessage));
     }
 
     public IReadOnlyDictionary<string, string[]> ToDictionary()
@@ -106,11 +107,11 @@ public sealed class ValidationErrors
         if (!HasErrors)
             return;
 
-        var snapshot = NormalizeSnapshot(ToDictionary(), null);
+        var snapshot = Normalize(ToDictionary(), null);
         throw new ApiValidationException(snapshot.Errors, snapshot.Summary);
     }
 
-    public static (IReadOnlyDictionary<string, string[]> Errors, string Summary) NormalizeSnapshot(
+    internal static (IReadOnlyDictionary<string, string[]> Errors, string Summary) Normalize(
         IReadOnlyDictionary<string, string[]> errors,
         string? customMessage)
     {

@@ -69,6 +69,36 @@ public class ValidationErrorsTests
     }
 
     [Fact]
+    public void ValidationErrors_DoesNotTrackDiscardedPairs()
+    {
+        var errors = new ValidationErrors();
+        for (var i = 0; i < 100_000; i++)
+        {
+            errors.Add($"field_{i}", $"message_{i}");
+        }
+
+        errors.Add("nzb", "retained after saturation");
+
+        var dict = errors.ToDictionary();
+        Assert.DoesNotContain("retained after saturation", dict.Values.SelectMany(messages => messages));
+        Assert.True(dict.Sum(pair => pair.Value.Length) <= 32);
+    }
+
+    [Fact]
+    public void ApiValidationException_BoundsCustomSummaryAndCopiesInput()
+    {
+        var input = new Dictionary<string, string[]>
+        {
+            ["field"] = ["message"],
+        };
+        var exception = new ApiValidationException(input, new string('x', 10_000));
+        input["field"][0] = "mutated";
+
+        Assert.Equal(ValidationErrors.MaxMessageLength, exception.Message.Length);
+        Assert.Equal("message", exception.Errors["field"][0]);
+    }
+
+    [Fact]
     public void ValidationErrors_IdempotentNormalization()
     {
         var initial = new Dictionary<string, string[]>

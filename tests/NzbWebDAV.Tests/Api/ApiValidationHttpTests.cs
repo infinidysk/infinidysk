@@ -70,4 +70,33 @@ public sealed class ApiValidationHttpTests
         var ex = Assert.Throws<ApiValidationException>(() => new UpdateConfigRequest(context));
         Assert.True(ex.Errors.ContainsKey("dup"));
     }
+
+    [Fact]
+    public async Task ValidationProblemResponse_RemainsBoundedForSaturatedErrors()
+    {
+        var errors = new ValidationErrors();
+        for (var i = 0; i < 100_000; i++)
+        {
+            errors.Add($"field_{i}", $"Validation error {i} with <escaped> & quoted \\\"text\\\"");
+        }
+
+        var context = new DefaultHttpContext
+        {
+            Response = { Body = new MemoryStream() },
+        };
+        var problem = ApiProblemDetailsFactory.Validation(context, errors.ToDictionary(), new string('s', 10_000));
+        var payload = ApiProblemDetailsFactory.ToWritablePayload(problem);
+
+        await ApiProblemResponse.WriteAsync(
+            context,
+            StatusCodes.Status400BadRequest,
+            payload,
+            ApiProblemDetailsFactory.ProblemContentType);
+
+        var body = ((MemoryStream)context.Response.Body).ToArray();
+        Assert.InRange(body.Length, 1, 65_536);
+        using var json = JsonDocument.Parse(body);
+        var messages = json.RootElement.GetProperty("errors").GetProperty("field_0").EnumerateArray().ToArray();
+        Assert.Equal(ValidationErrors.OmissionMarker, messages[^1].GetString());
+    }
 }
