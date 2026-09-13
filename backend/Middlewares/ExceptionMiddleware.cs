@@ -26,7 +26,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentStreamingReadTimeouts = new();
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentStreamingWriteTimeouts = new();
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentSkippedStreamingRepairs = new();
-    private static readonly ConcurrentDictionary<Guid, DateTime> RecentRepairTriggers = new();
+    private static readonly ConcurrentDictionary<Guid, RepairScheduleReservation> RecentRepairTriggers = new();
     private static readonly TimeSpan DedupeWindow = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan RepairDedupeWindow = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan CleanupThreshold = TimeSpan.FromMinutes(5);
@@ -664,23 +664,20 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             return;
         }
 
-        var now = DateTime.UtcNow;
-        var isDuplicate = false;
-        RecentRepairTriggers.AddOrUpdate(
-            davItemId,
-            _ => now,
-            (_, existing) =>
-            {
-                if (now - existing < RepairDedupeWindow)
-                {
-                    isDuplicate = true;
-                    return existing;
-                }
-                return now;
-            });
-
-        if (isDuplicate)
+        var reservation = new RepairScheduleReservation(DateTime.UtcNow, false);
+        if (RecentRepairTriggers.TryAdd(davItemId, reservation))
+        {
+            // This request owns the pending scheduling attempt.
+        }
+        else if (RecentRepairTriggers.TryGetValue(davItemId, out var existing)
+                 && (!existing.Committed || DateTime.UtcNow - existing.Timestamp < RepairDedupeWindow))
+        {
             return;
+        }
+        else if (existing is null || !RecentRepairTriggers.TryUpdate(davItemId, reservation, existing))
+        {
+            return;
+        }
 
         _ = Task.Run(async () =>
         {
@@ -689,20 +686,31 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
                 await using var dbContext = new DavDatabaseContext();
                 var item = await dbContext.Items.FindAsync(davItemId).ConfigureAwait(false);
                 if (item == null)
+                {
+                    RecentRepairTriggers.TryRemove(
+                        new KeyValuePair<Guid, RepairScheduleReservation>(davItemId, reservation));
                     return;
+                }
 
                 // UnixEpoch sorts first in HealthCheckService (non-null before null, then ascending).
                 // Only skip if already urgent — overdue items must still be bumped (Pukabyte#4).
                 var urgent = DateTimeOffset.UnixEpoch;
                 if (item.NextHealthCheck == urgent)
+                {
+                    RecentRepairTriggers[ davItemId ] = reservation with { Committed = true };
                     return;
+                }
 
                 item.NextHealthCheck = urgent;
                 await dbContext.SaveChangesAsync().ConfigureAwait(false);
+                RecentRepairTriggers.TryUpdate(
+                    davItemId, reservation with { Committed = true }, reservation);
                 Log.Information("Scheduled dynamic repair for {FilePath}", item.Path);
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
+                RecentRepairTriggers.TryRemove(
+                    new KeyValuePair<Guid, RepairScheduleReservation>(davItemId, reservation));
                 Log.Warning(ex, "Failed to schedule dynamic repair for DavItem {DavItemId}", davItemId);
             }
         });
@@ -712,6 +720,8 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
     {
         return threshold <= 0 || failureCount >= threshold;
     }
+
+    private sealed record RepairScheduleReservation(DateTime Timestamp, bool Committed);
 
     private void LogStreamingRepairSkipped(DavItem davItem, string reason)
     {
@@ -811,7 +821,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
         }
         foreach (var kvp in RecentRepairTriggers)
         {
-            if (kvp.Value < cutoff)
+            if (kvp.Value.Timestamp < cutoff)
                 RecentRepairTriggers.TryRemove(kvp.Key, out _);
         }
     }

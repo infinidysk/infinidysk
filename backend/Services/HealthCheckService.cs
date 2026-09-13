@@ -1045,6 +1045,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         // (see nzbdav-dev#209), and structurally corrupt archives can have every article present.
         var isUrgentRepair = davItem.NextHealthCheck == DateTimeOffset.UnixEpoch;
         var repairsAdmitted = _healthWorkSchedule?.Evaluate(_timeProvider.GetUtcNow()).RepairsOpen ?? true;
+        var observedFailureRevision = _failureTracker.GetSnapshot(davItem.Id).Revision;
 
         // Attribution for latency histograms — does not change pool admission priority.
         using var maintenanceScope = ct.SetContext(MaintenanceDownloadContext.Instance);
@@ -1220,7 +1221,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
-            _failureTracker.ClearFailure(davItem.Id);
 
             // A previously degraded file that now sweeps clean has recovered (provider-side
             // restoration): drop the stale hole and corrupt records. The probed container
@@ -1243,6 +1243,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 HealthCheckResult.HealthResult.Healthy,
                 HealthCheckResult.RepairAction.None,
                 healthyMessage, ct).ConfigureAwait(false);
+              _failureTracker.TryClearFailure(davItem.Id, observedFailureRevision);
         }
         catch (OperationCanceledException) when (
             !ct.IsCancellationRequested && statCts?.IsCancellationRequested == true)
@@ -1318,7 +1319,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 var utcNow = DateTimeOffset.UtcNow;
                 davItem.LastHealthCheck = utcNow;
                 davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
-                _failureTracker.ClearFailure(davItem.Id);
                 await RecordHealthResult(
                     dbClient, davItem,
                     HealthCheckResult.HealthResult.Healthy,
@@ -1329,6 +1329,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                         ? "Missing segment repaired from PAR2 parity."
                         : "PAR2 verified every file slice and found no damage.",
                     ct).ConfigureAwait(false);
+                _failureTracker.TryClearFailure(davItem.Id, observedFailureRevision);
                 return;
             }
 
@@ -1443,6 +1444,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         long providerGeneration,
         CancellationToken ct)
     {
+        var observedFailureRevision = _failureTracker.GetSnapshot(davItem.Id).Revision;
         if (!repairsAdmitted)
         {
             await DeferRepairUntilWindow(davItem, dbClient, ct).ConfigureAwait(false);
@@ -1472,7 +1474,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
-            _failureTracker.ClearFailure(davItem.Id);
             // The patched segments are served locally now; any earlier hole/corrupt record is obsolete.
             if (par2Outcome is Par2RepairOutcome.Repaired
                 && (nzbFile.MissingSegmentIndices != null || nzbFile.CorruptSegmentIndices != null))
@@ -1488,6 +1489,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     ? "Missing segment(s) repaired from PAR2 parity."
                     : "PAR2 verified every file slice and found no damage.",
                 ct).ConfigureAwait(false);
+            _failureTracker.TryClearFailure(davItem.Id, observedFailureRevision);
             return;
         }
 

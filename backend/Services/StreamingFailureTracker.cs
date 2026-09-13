@@ -61,12 +61,23 @@ public class StreamingFailureTracker
     {
         _failures.TryRemove(davItemId, out _);
     }
+
+    public bool TryClearFailure(Guid davItemId, long expectedRevision)
+    {
+        if (!_failures.TryGetValue(davItemId, out var current))
+            return expectedRevision == 0;
+        if (current.Revision != expectedRevision)
+            return false;
+        return ((ICollection<KeyValuePair<Guid, StreamingFailureSnapshot>>)_failures)
+            .Remove(new KeyValuePair<Guid, StreamingFailureSnapshot>(davItemId, current));
+    }
 }
 
 public readonly record struct StreamingFailureSnapshot(
     int Count,
     bool HasUnattributedFailure,
-    string[] SegmentIds)
+    string[] SegmentIds,
+    long Revision = 0)
 {
     public static readonly StreamingFailureSnapshot Empty = new(0, false, []);
 
@@ -75,11 +86,11 @@ public readonly record struct StreamingFailureSnapshot(
     internal StreamingFailureSnapshot WithAttributedFailure(string segmentId, int maximumSegmentIds)
     {
         if (SegmentIds.Contains(segmentId, StringComparer.Ordinal) || SegmentIds.Length >= maximumSegmentIds)
-            return this with { Count = Count + 1 };
+            return this with { Count = Count + 1, Revision = Revision + 1 };
 
-        return this with { Count = Count + 1, SegmentIds = [.. SegmentIds, segmentId] };
+        return this with { Count = Count + 1, SegmentIds = [.. SegmentIds, segmentId], Revision = Revision + 1 };
     }
 
     internal StreamingFailureSnapshot WithUnattributedFailure() =>
-        this with { Count = Count + 1, HasUnattributedFailure = true };
+        this with { Count = Count + 1, HasUnattributedFailure = true, Revision = Revision + 1 };
 }
