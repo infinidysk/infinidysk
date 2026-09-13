@@ -20,6 +20,10 @@ namespace NzbWebDAV.Tasks;
 
 public class RemoveUnlinkedFilesTask : BaseTask
 {
+    private static readonly TimeSpan CleanupContentionBudget = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan[] CleanupContentionDelays =
+        [TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(1),
+         TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2)];
     private static readonly TimeSpan DefaultProgressHeartbeatInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan DefaultPreviewLifetime = TimeSpan.FromMinutes(15);
     private static readonly object PreviewLock = new();
@@ -35,6 +39,35 @@ public class RemoveUnlinkedFilesTask : BaseTask
     private readonly Action<string>? _progressObserver;
     private readonly Func<Task>? _beforePreviewApproval;
     private ProgressHeartbeat? _progressHeartbeat;
+
+    private async Task<T> ExecuteWithContentionRetryAsync<T>(
+        string phase,
+        Func<CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
+        using var budgetCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budgetCts.CancelAfter(CleanupContentionBudget);
+        Exception? lastContention = null;
+        for (var attempt = 0; attempt < 6; attempt++)
+        {
+            budgetCts.Token.ThrowIfCancellationRequested();
+            try
+            {
+                return await operation(budgetCts.Token).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception.IsTransientDatabaseException())
+            {
+                lastContention = exception;
+                if (attempt == 5)
+                    throw;
+                Log.Warning("Orphan cleanup database contention in {Phase}; retry {Attempt}/6.",
+                    phase, attempt + 2);
+                await Task.Delay(CleanupContentionDelays[attempt], budgetCts.Token).ConfigureAwait(false);
+            }
+        }
+
+        throw new InvalidOperationException($"Orphan cleanup phase '{phase}' exhausted contention retries.", lastContention);
+    }
 
     internal record UnlinkedItemInfo(string Id, int Type, string Path);
 
@@ -181,7 +214,8 @@ public class RemoveUnlinkedFilesTask : BaseTask
         // get linked file paths
         StartPhase("Scanning all linked files...");
         var startTime = DateTime.Now;
-        var linkedIdCount = await WriteLinkedIdsToTable().ConfigureAwait(false);
+        var linkedIdCount = await ExecuteWithContentionRetryAsync(
+            "linked-file staging", _ => WriteLinkedIdsToTable(), CancellationToken).ConfigureAwait(false);
         if (linkedIdCount < 5)
         {
             _allRemovedPaths.Clear();
@@ -195,7 +229,8 @@ public class RemoveUnlinkedFilesTask : BaseTask
         }
 
         StartPhase("Searching for unlinked webdav items...");
-        var unlinkedItems = await CountUnlinkedItems(startTime).ConfigureAwait(false);
+        var unlinkedItems = await ExecuteWithContentionRetryAsync(
+            "unlinked-item count", _ => CountUnlinkedItems(startTime), CancellationToken).ConfigureAwait(false);
         UpdatePhase(
             $"Searching for unlinked webdav items...\nFound {unlinkedItems} webdav items to remove.");
 
@@ -205,7 +240,8 @@ public class RemoveUnlinkedFilesTask : BaseTask
         // unlinked. Refuse to delete an implausible share of the deletable population.
         // A healthy library here sits around 31% unlinked (samples, nfos, unimported extras),
         // so 90% leaves wide headroom while still catching a broken scan.
-        var deletableItems = await CountDeletableItems(startTime).ConfigureAwait(false);
+        var deletableItems = await ExecuteWithContentionRetryAsync(
+            "deletable-item count", _ => CountDeletableItems(startTime), CancellationToken).ConfigureAwait(false);
         var extremeUnlinkedRatio = deletableItems > 0 && unlinkedItems > deletableItems * 0.9;
         string? previewFingerprint = null;
         if (extremeUnlinkedRatio)
@@ -814,7 +850,8 @@ public class RemoveUnlinkedFilesTask : BaseTask
                 DeleteGeneratedSidecarFiles(item);
             }
 
-            var deleted = await DeleteItemsByIdTextAsync(dbContext, itemsToDelete)
+            var deleted = await ExecuteWithContentionRetryAsync(
+                "orphan deletion", token => DeleteItemsByIdTextAsync(dbContext, itemsToDelete, token), CancellationToken)
                 .ConfigureAwait(false);
 
             // A batch that selects rows but deletes none would loop forever with a climbing
