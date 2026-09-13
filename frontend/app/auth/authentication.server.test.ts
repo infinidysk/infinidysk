@@ -42,7 +42,9 @@ function formRequest(username?: string, password?: string): Request {
 function getSetCookie(responseInit: SessionResponseInit): string {
   const cookie = new Headers(responseInit.headers).get("Set-Cookie");
   if (!cookie) throw new Error("Expected a Set-Cookie header");
-  return cookie;
+  const cookiePair = cookie.split(";", 1)[0];
+  if (!cookiePair) throw new Error("Expected a non-empty Set-Cookie value");
+  return cookiePair;
 }
 
 describe("authentication sessions", () => {

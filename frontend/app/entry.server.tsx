@@ -16,6 +16,36 @@ import { logger } from "../server/logger";
 
 export const streamTimeout = 5_000;
 
+let lastOriginRejectionLogAt = 0;
+const ORIGIN_REJECTION_LOG_THROTTLE_MS = 60_000;
+
+export function resetOriginRejectionLogThrottleForTests(): void {
+  lastOriginRejectionLogAt = 0;
+}
+
+export function isActionOriginRejection(error: unknown, request: Request): boolean {
+  const method = request.method.toUpperCase();
+  if (method === "GET" || method === "HEAD") return false;
+
+  const origin = request.headers.get("origin");
+  if (!origin) return false;
+
+  if (!(error instanceof Error) || error.message !== "Bad Request") return false;
+
+  let isMismatch = false;
+  try {
+    const originUrl = new URL(origin);
+    const requestUrl = new URL(request.url);
+    isMismatch = originUrl.origin !== requestUrl.origin;
+  } catch {
+    isMismatch = true;
+  }
+
+  if (!isMismatch) return false;
+
+  return true;
+}
+
 /**
  * Quiet expected BackendUnavailableError stacks during frontend-first Docker
  * startup. Outside the grace window, emit a throttled single-line warn (no stack).
@@ -32,6 +62,17 @@ export const handleError: HandleErrorFunction = (error, { request }) => {
     if (shouldEmitThrottledBackendUnavailableLog()) {
       logger.warn(
         `Backend unreachable during SSR. Reason: ${formatBackendUnavailableReason(unwrapped)}`,
+      );
+    }
+    return;
+  }
+  if (isActionOriginRejection(unwrapped, request)) {
+    const now = Date.now();
+    if (now - lastOriginRejectionLogAt >= ORIGIN_REJECTION_LOG_THROTTLE_MS) {
+      lastOriginRejectionLogAt = now;
+      const origin = request.headers.get("origin");
+      logger.warn(
+        `Action request origin rejected. Request URL: ${request.url}, Origin: ${origin ?? "unknown"}. If behind a reverse proxy terminating HTTPS, ensure TRUST_PROXY=1 is set.`,
       );
     }
     return;

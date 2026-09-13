@@ -1,6 +1,6 @@
 import type { Route } from "./+types/route";
 import { isAuthenticated, login } from "~/auth/authentication.server";
-import { Form, redirect, useNavigation } from "react-router";
+import { Form, isRouteErrorResponse, redirect, useNavigation, useRouteError } from "react-router";
 import { backendClient } from "~/clients/backend-client.server";
 import { Alert, Button, Icon, Input, Spinner } from "~/components/ui";
 import { isOidcEnabled } from "../../../server/oidc.server";
@@ -110,6 +110,33 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
               )}
             </div>
           </Form>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+export function ErrorBoundary() {
+  const error = useRouteError();
+  const isRejectedAction = isRouteErrorResponse(error) && error.status === 400;
+
+  return (
+    <main className="flex min-h-dvh flex-col bg-base-300">
+      <div className="hero flex-1">
+        <div className="hero-content w-full max-w-sm px-4 py-8">
+          <div className="card w-full border border-base-content/10 bg-base-100 shadow-xl">
+            <div className="card-body gap-5 text-center">
+              <h1 className="text-2xl font-bold tracking-tight text-primary">Sign-in failed</h1>
+              <Alert variant="danger">
+                {isRejectedAction
+                  ? "The sign-in request could not be verified. Return to the login page and try again."
+                  : "Something went wrong while signing in. Return to the login page and try again."}
+              </Alert>
+              <a className="btn btn-primary w-full" href={withUrlBase("/login")}>
+                Return to login
+              </a>
+            </div>
+          </div>
         </div>
       </div>
     </main>
