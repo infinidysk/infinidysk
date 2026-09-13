@@ -32,7 +32,8 @@ export function normalizeForwardedHost(req: express.Request, trustProxy: boolean
   req.headers.host = forwardedPort && !isDefaultPort ? `${hostname}:${forwardedPort}` : hostname;
 }
 
-function firstForwardedValue(value: string | string[] | undefined): string | undefined {
+/** Exported for reuse by react-router-request-handler.ts's multi-hop port fallback. */
+export function firstForwardedValue(value: string | string[] | undefined): string | undefined {
   const raw = Array.isArray(value) ? value[0] : value?.split(",")[0];
   const trimmed = raw?.trim();
   return trimmed ? trimmed : undefined;

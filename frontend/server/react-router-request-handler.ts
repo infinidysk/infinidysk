@@ -5,7 +5,7 @@ import {
   writeReadableStreamToWritable,
 } from "@react-router/node";
 import type express from "express";
-import { splitHostPort } from "./forwarded-headers";
+import { firstForwardedValue, splitHostPort } from "./forwarded-headers";
 
 type Build = ServerBuild | (() => ServerBuild | Promise<ServerBuild>);
 
@@ -38,7 +38,9 @@ export function createRequestHandler({
 
 /** Exported for direct regression coverage of the bracket-aware port fallback. */
 export function resolvePort(req: express.Request): string | undefined {
-  const forwardedHost = req.app?.enabled("trust proxy") ? req.get("X-Forwarded-Host") : undefined;
+  const forwardedHost = req.app?.enabled("trust proxy")
+    ? firstForwardedValue(req.get("X-Forwarded-Host"))
+    : undefined;
   const forwardedPort = forwardedHost ? splitHostPort(forwardedHost)[1] : undefined;
   if (forwardedPort) return forwardedPort;
 

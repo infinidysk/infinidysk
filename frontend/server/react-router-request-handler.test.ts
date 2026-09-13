@@ -52,4 +52,16 @@ describe("resolvePort", () => {
 
     expect(resolvePort(req)).toBeUndefined();
   });
+
+  it("parses only the first hop of a multi-hop X-Forwarded-Host (regression)", () => {
+    const req = fakeRequest({
+      trustProxy: true,
+      host: "internal-container:3000",
+      forwardedHost: "nzbdav.example.com:8443, edge.internal",
+    });
+
+    // Without trimming to the first hop, splitHostPort would return
+    // "8443, edge.internal" as the port, producing an invalid SSR request URL.
+    expect(resolvePort(req)).toBe("8443");
+  });
 });

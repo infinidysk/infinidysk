@@ -174,4 +174,21 @@ describe("login action origin check (reverse proxy regression)", () => {
 
     expect(status).toBe(200);
   });
+
+  it("accepts a login proxied through a multi-hop X-Forwarded-Host chain (regression)", async () => {
+    const server = http.createServer(buildApp(true));
+    servers.push(server);
+    const port = await listen(server);
+
+    // Without trimming to the first hop before parsing the port, splitHostPort
+    // would return "8443, edge.internal" as the port and build an invalid URL.
+    const status = await postLogin(port, {
+      Host: `127.0.0.1:${port}`,
+      "X-Forwarded-Host": "nzbdav.example.com:8443, edge.internal",
+      "X-Forwarded-Proto": "https",
+      Origin: "https://nzbdav.example.com:8443",
+    });
+
+    expect(status).toBe(200);
+  });
 });
