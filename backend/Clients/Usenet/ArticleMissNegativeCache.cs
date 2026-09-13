@@ -42,6 +42,7 @@ namespace NzbWebDAV.Clients.Usenet;
 /// </summary>
 public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 {
+    internal enum ArticleMissOperation { Stat, Body, Article, Head }
     private const int PersistenceQueueCapacity = 4096;
     private const int MaxPersistenceBatchSize = 256;
     private const int MaxCleanupRounds = 8;
@@ -114,6 +115,10 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
             ? $"{articleId}\u0001g:{group}"
             : $"{articleId}\u0001p:{metricsKey}";
     }
+
+    internal static string BuildKey(string articleId, string metricsKey, string? storageGroup,
+        ArticleMissOperation operation) =>
+        $"v2:{operation.ToString().ToLowerInvariant()}\u0001{BuildKey(articleId, metricsKey, storageGroup)}";
 
     public bool IsMissing(string key, long generation = 0)
     {

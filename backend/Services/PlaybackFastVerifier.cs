@@ -131,34 +131,32 @@ public class PlaybackFastVerifier
     private async Task<Verdict> CheckSegmentCoreAsync(string messageId, string mode, CancellationToken ct)
     {
         if (mode == "body")
-        {
-            var resp = await _usenetClient.DecodedBodyAsync(messageId, ct).ConfigureAwait(false);
-            var verdict = resp.ResponseType == UsenetResponseType.ArticleRetrievedBodyFollows
-                ? Verdict.Available
-                : Verdict.Dead;
-
-            // The response code decides the verdict, but the body still arrives, and an unread
-            // one holds the connection for the life of the process. Releasing it must not be
-            // able to turn a verified article into a failure.
-            if (resp.Stream != null)
-            {
-                try
-                {
-                    await resp.Stream.DisposeAsync().ConfigureAwait(false);
-                }
-                catch (Exception e) when (e is not OutOfMemoryException)
-                {
-                    Log.Debug(e, "Failed to release verified article body for {SegmentId}", messageId);
-                }
-            }
-
-            return verdict;
-        }
+            return await ProbeBodyAsync(messageId, ct).ConfigureAwait(false);
 
         var stat = await _usenetClient.StatAsync(messageId, ct).ConfigureAwait(false);
         return stat.ResponseType == UsenetResponseType.ArticleExists
             ? Verdict.Available
+            : await ProbeBodyAsync(messageId, ct).ConfigureAwait(false);
+    }
+
+    private async Task<Verdict> ProbeBodyAsync(string messageId, CancellationToken ct)
+    {
+        var resp = await _usenetClient.DecodedBodyAsync(messageId, ct).ConfigureAwait(false);
+        var verdict = resp.ResponseType == UsenetResponseType.ArticleRetrievedBodyFollows
+            ? Verdict.Available
             : Verdict.Dead;
+        if (resp.Stream is not null)
+        {
+            try
+            {
+                await resp.Stream.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                Log.Debug(e, "Failed to release verified article body for {SegmentId}", messageId);
+            }
+        }
+        return verdict;
     }
 
     public readonly record struct VerifyOutcome(Verdict Verdict, string? ResponderHost);

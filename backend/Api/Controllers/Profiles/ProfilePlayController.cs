@@ -796,7 +796,8 @@ public class ProfilePlayController(
         {
             var shouldDetectSidecarSubs = detectSidecarSubs && string.IsNullOrWhiteSpace(candidate.Subs);
             var preflighted = preflightCache.Get(candidate.NzbUrl);
-            if (preflighted is { Verdict: PlaybackFastVerifier.Verdict.Available, NzbBytes: { } cachedBytes })
+            if (verifyMode != "body" &&
+                preflighted is { Verdict: PlaybackFastVerifier.Verdict.Available, NzbBytes: { } cachedBytes })
             {
                 return new PreVerifyResult(candidate, cachedBytes, preflighted.Verdict, preflighted.ResponderHost,
                     shouldDetectSidecarSubs && await HasSidecarSubtitlesAsync(cachedBytes).ConfigureAwait(false));

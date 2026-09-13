@@ -36,7 +36,7 @@ public class MultiProviderNntpClient(
     ArticleMissNegativeCache? articleMissCache = null,
     ConnectionPoolStats? connectionPoolStats = null,
     ConcurrentReadTracker? concurrentReadTracker = null,
-    long? providerGeneration = null
+    long? providerGeneration = 0
 ) : NntpClient, INntpConnectionStats
 {
     private static readonly TimeSpan RecoveryProbeTimeout = TimeSpan.FromSeconds(15);
@@ -652,7 +652,7 @@ public class MultiProviderNntpClient(
             //   and walk fallbacks immediately (that is the point of cross-request caching).
             // - MarkMissing only from definitive misses inside the retry/fallback loop below.
             IReadOnlyList<MultiConnectionNntpClient> retryProviders;
-            var primaryCachedMiss = IsCachedMissing(segmentId, primaryProvider);
+            var primaryCachedMiss = IsCachedMissing(segmentId, primaryProvider, NntpOperation.PipelinedBody);
             var exhaustedTimeout = lastException != null
                 && lastException.SourceException.TryGetCausingException<TimeoutException>(out _);
             var reprobePrimary = !definitiveMiss
@@ -698,7 +698,7 @@ public class MultiProviderNntpClient(
                         continue;
                     }
 
-                    if (IsCachedMissing(segmentId, provider))
+                    if (IsCachedMissing(segmentId, provider, NntpOperation.PipelinedBody))
                     {
                         walk.CachedSkips++;
                         Log.Debug(
@@ -753,7 +753,7 @@ public class MultiProviderNntpClient(
                             {
                                 walk.CurrentDefinitiveMisses++;
                                 if (group.Length > 0) missingGroups.Add(group);
-                                MarkCachedMissing(segmentId, provider);
+                                MarkCachedMissing(segmentId, provider, NntpOperation.PipelinedBody);
                             }
                             deferredCallback.Discard();
                             coordinator.CompleteAttempt();
@@ -773,7 +773,7 @@ public class MultiProviderNntpClient(
                     {
                         stopwatch.Stop();
                         walk.NoteException(e);
-                        MarkCachedMissingOnThrownMiss(e, segmentId, provider, missingGroups);
+                        MarkCachedMissingOnThrownMiss(e, segmentId, provider, missingGroups, NntpOperation.PipelinedBody);
                         var reason = ClassifyAndRecordFailure(
                             provider.MetricsKey, e, stopwatch.ElapsedMilliseconds,
                             priorMisses?.Count ?? 0, fetchWorkload, traceRange,
@@ -998,7 +998,7 @@ public class MultiProviderNntpClient(
                 continue;
             }
 
-            if (IsCachedMissing(segmentId, provider))
+            if (IsCachedMissing(segmentId, provider, operation))
             {
                 walk.CachedSkips++;
                 Log.Debug(
@@ -1043,7 +1043,7 @@ public class MultiProviderNntpClient(
                     lastNoArticleResult = result;
                     lastOutcomeWasException = false;
                     if (group.Length > 0) missingGroups.Add(group);
-                    MarkCachedMissing(segmentId, provider);
+                    MarkCachedMissing(segmentId, provider, operation);
                     attemptIndex++;
                     continue;
                 }
@@ -1067,7 +1067,7 @@ public class MultiProviderNntpClient(
             {
                 stopwatch.Stop();
                 walk.NoteException(e);
-                MarkCachedMissingOnThrownMiss(e, segmentId, provider, missingGroups);
+                MarkCachedMissingOnThrownMiss(e, segmentId, provider, missingGroups, operation);
                 var reason = ClassifyAndRecordFailure(
                     provider.MetricsKey, e, stopwatch.ElapsedMilliseconds, attemptIndex,
                     fetchWorkload, traceRange, operation, segmentId);
@@ -1298,16 +1298,20 @@ public class MultiProviderNntpClient(
             expectedTotalParts);
     }
 
-    private bool IsCachedMissing(SegmentId segmentId, MultiConnectionNntpClient provider)
+    private bool IsCachedMissing(SegmentId segmentId, MultiConnectionNntpClient provider,
+        NntpOperation operation = NntpOperation.Body)
     {
         if (articleMissCache == null) return false;
         return providerGeneration is { } generation
-            && articleMissCache.IsMissing(CacheKey(segmentId, provider), generation);
+            && TryGetMissOperation(operation) is { } missOperation
+            && articleMissCache.IsMissing(CacheKey(segmentId, provider, missOperation), generation);
     }
 
-    private void MarkCachedMissing(SegmentId segmentId, MultiConnectionNntpClient provider)
+    private void MarkCachedMissing(SegmentId segmentId, MultiConnectionNntpClient provider,
+        NntpOperation operation = NntpOperation.Body)
     {
-        articleMissCache?.MarkMissing(CacheKey(segmentId, provider), providerGeneration);
+        if (TryGetMissOperation(operation) is { } missOperation)
+            articleMissCache?.MarkMissing(CacheKey(segmentId, provider, missOperation), providerGeneration);
     }
 
     /// <summary>
@@ -1321,7 +1325,8 @@ public class MultiProviderNntpClient(
         Exception exception,
         SegmentId? segmentId,
         MultiConnectionNntpClient provider,
-        HashSet<string> missingGroups)
+        HashSet<string> missingGroups,
+        NntpOperation operation = NntpOperation.Body)
     {
         if (segmentId is not { } id) return;
         if (ClassifyException(exception) != SegmentFetch.FetchStatus.Missing) return;
@@ -1329,11 +1334,22 @@ public class MultiProviderNntpClient(
             return;
         var group = NormalizeStorageGroup(provider.StorageGroup);
         if (group.Length > 0) missingGroups.Add(group);
-        MarkCachedMissing(id, provider);
+        MarkCachedMissing(id, provider, operation);
     }
 
-    private static string CacheKey(SegmentId segmentId, MultiConnectionNntpClient provider) =>
-        ArticleMissNegativeCache.BuildKey(segmentId.ToString()!, provider.MetricsKey, provider.StorageGroup);
+    private static string CacheKey(SegmentId segmentId, MultiConnectionNntpClient provider,
+        ArticleMissNegativeCache.ArticleMissOperation operation = ArticleMissNegativeCache.ArticleMissOperation.Body) =>
+        ArticleMissNegativeCache.BuildKey(segmentId.ToString()!, provider.MetricsKey, provider.StorageGroup, operation);
+
+    private static ArticleMissNegativeCache.ArticleMissOperation? TryGetMissOperation(NntpOperation operation) =>
+        operation switch
+        {
+            NntpOperation.Stat or NntpOperation.PipelinedStat => ArticleMissNegativeCache.ArticleMissOperation.Stat,
+            NntpOperation.Body or NntpOperation.PipelinedBody => ArticleMissNegativeCache.ArticleMissOperation.Body,
+            NntpOperation.Article or NntpOperation.PipelinedArticle => ArticleMissNegativeCache.ArticleMissOperation.Article,
+            NntpOperation.Head => ArticleMissNegativeCache.ArticleMissOperation.Head,
+            _ => null,
+        };
 
     private static void LogProviderWalkOutcome(
         ProviderWalkSummary walk,
