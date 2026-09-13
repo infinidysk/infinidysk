@@ -103,7 +103,10 @@ describe("normalizeForwardedHost", () => {
   });
 
   it("falls back to req.protocol when X-Forwarded-Proto is absent", () => {
-    const req = { headers: { "x-forwarded-host": "public.example.com" }, protocol: "https" } as unknown as express.Request;
+    const req = {
+      headers: { "x-forwarded-host": "public.example.com" },
+      protocol: "https",
+    } as unknown as express.Request;
 
     normalizeForwardedHost(req, true);
 
