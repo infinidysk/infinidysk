@@ -519,7 +519,7 @@ public class QueueItemProcessor(
         // step 0 -- perform article existence pre-check against cache
         // https://github.com/infinidysk/infinidysk/issues/101
         var articlesToPrecheck = nzbFiles.SelectMany(x => x.Segments).Select(x => x.MessageId);
-        HealthCheckService.CheckCachedMissingSegmentIds(articlesToPrecheck);
+        HealthCheckService.CheckCachedMissingSegmentIds(articlesToPrecheck, configManager.GetUsenetProviderSnapshot().Generation);
         await ThrowIfRecentlyRejectedAsync(dbClient, queueItem, DateTimeOffset.UtcNow, ct)
             .ConfigureAwait(false);
 

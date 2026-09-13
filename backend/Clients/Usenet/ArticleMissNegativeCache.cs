@@ -48,7 +48,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 
     private readonly ConfigManager _configManager;
     private readonly Func<DavDatabaseContext>? _contextFactory;
-    private readonly ConcurrentDictionary<string, DateTimeOffset> _missingAt = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<(long Generation, string Key), DateTimeOffset> _missingAt = new();
     private readonly Channel<PersistenceWorkItem>? _persistenceQueue;
     private CancellationTokenSource? _persistenceLoopCts;
     private Task _persistenceLoop = Task.CompletedTask;
@@ -59,7 +59,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 
     private abstract record PersistenceWorkItem;
 
-    private sealed record MarkItem(string Key, long ConfirmedAtUnix) : PersistenceWorkItem;
+    private sealed record MarkItem(long Generation, string Key, long ConfirmedAtUnix) : PersistenceWorkItem;
 
     private sealed record ClearItem : PersistenceWorkItem
     {
@@ -115,23 +115,24 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
             : $"{articleId}\u0001p:{metricsKey}";
     }
 
-    public bool IsMissing(string key)
+    public bool IsMissing(string key, long generation = 0)
     {
-        if (!_missingAt.TryGetValue(key, out var markedAt)) return false;
+        if (!_missingAt.TryGetValue((generation, key), out var markedAt)) return false;
         if (DateTimeOffset.UtcNow - markedAt < _configManager.GetArticleMissCacheTtl())
         {
             Interlocked.Increment(ref _hits);
             return true;
         }
-        _missingAt.TryRemove(key, out _);
+        _missingAt.TryRemove((generation, key), out _);
         return false;
     }
 
-    public void MarkMissing(string key)
+    public void MarkMissing(string key, long? generation = 0)
     {
+        if (generation is not { } evidenceGeneration) return;
         var now = DateTimeOffset.UtcNow;
-        MarkMissingInMemory(key, now);
-        _persistenceQueue?.Writer.TryWrite(new MarkItem(key, now.ToUnixTimeMilliseconds()));
+        MarkMissingInMemory(evidenceGeneration, key, now);
+        _persistenceQueue?.Writer.TryWrite(new MarkItem(evidenceGeneration, key, now.ToUnixTimeMilliseconds()));
     }
 
     public void Clear() => _missingAt.Clear();
@@ -159,7 +160,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
             foreach (var entry in entries)
-                _missingAt[entry.CacheKey] = DateTimeOffset.FromUnixTimeMilliseconds(entry.ConfirmedAtUnix);
+                _missingAt[(0, entry.CacheKey)] = DateTimeOffset.FromUnixTimeMilliseconds(entry.ConfirmedAtUnix);
 
             await TrimPersistedAsync(context, cutoffUnix, maxEntries, cancellationToken)
                 .ConfigureAwait(false);
@@ -205,7 +206,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
     /// <summary>Test helper: mark an entry as if it were recorded at <paramref name="at"/>.</summary>
     internal void MarkMissingAtForTests(string key, DateTimeOffset at)
     {
-        MarkMissingInMemory(key, at);
+        MarkMissingInMemory(0, key, at);
     }
 
     /// <summary>
@@ -231,9 +232,9 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         await barrier.Task.ConfigureAwait(false);
     }
 
-    private void MarkMissingInMemory(string key, DateTimeOffset at)
+    private void MarkMissingInMemory(long generation, string key, DateTimeOffset at)
     {
-        _missingAt[key] = at;
+        _missingAt[(generation, key)] = at;
         var maxEntries = _configManager.GetArticleMissCacheMaxEntries();
         if (_missingAt.Count <= maxEntries) return;
         try
@@ -305,7 +306,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         // Weakly-consistent foreach — never LINQ OrderBy/ToArray on the live
         // ConcurrentDictionary (those use Count-then-CopyTo and race under writes).
         // Enumeration only yields fully constructed nodes, so keys are never null.
-        var snapshot = new List<KeyValuePair<string, DateTimeOffset>>(Math.Max(4, _missingAt.Count));
+        var snapshot = new List<KeyValuePair<(long Generation, string Key), DateTimeOffset>>(Math.Max(4, _missingAt.Count));
         foreach (var kv in _missingAt)
         {
             if (kv.Value < cutoff)
@@ -325,8 +326,8 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 
     // Removes only when the timestamp still matches the snapshot, so a concurrent
     // re-mark with a fresher timestamp is never evicted by a stale cleanup round.
-    private void RemoveIfUnchanged(KeyValuePair<string, DateTimeOffset> entry) =>
-        ((ICollection<KeyValuePair<string, DateTimeOffset>>)_missingAt).Remove(entry);
+    private void RemoveIfUnchanged(KeyValuePair<(long Generation, string Key), DateTimeOffset> entry) =>
+        ((ICollection<KeyValuePair<(long Generation, string Key), DateTimeOffset>>)_missingAt).Remove(entry);
 
     private void EnqueueClear()
     {

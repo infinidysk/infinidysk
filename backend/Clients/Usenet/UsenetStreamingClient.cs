@@ -229,7 +229,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         ConcurrentReadTracker? concurrentReadTracker
     )
     {
-        var providerConfig = configManager.GetUsenetProviderConfig();
+        var providerSnapshot = configManager.GetUsenetProviderSnapshot();
+        var providerConfig = providerSnapshot.Providers;
         // Seed the tracker from the persisted metrics rollup so the limit gate
         // is accurate before the first article fetch. Fire-and-forget — the
         // helper logs and swallows DB errors so a metrics outage can't keep
@@ -271,7 +272,8 @@ public class UsenetStreamingClient : WrappingNntpClient
             activeReadRegistry: activeReadRegistry,
             articleMissCache: articleMissCache,
             connectionPoolStats: connectionPoolStats,
-            concurrentReadTracker: concurrentReadTracker);
+            concurrentReadTracker: concurrentReadTracker,
+            providerGeneration: providerSnapshot.Generation);
     }
 
     private static MultiConnectionNntpClient CreateProviderClient

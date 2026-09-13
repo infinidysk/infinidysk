@@ -15,6 +15,7 @@ public sealed record PipelinedBodyResult
     /// remain eligible for rescue/failover.
     /// </summary>
     public bool DefinitivelyMissing { get; init; }
+    public long? ProviderGeneration { get; init; }
 }
 
 public sealed record PipelinedArticleResult
@@ -30,6 +31,7 @@ public sealed record PipelinedArticleResult
     /// remain eligible for rescue/failover.
     /// </summary>
     public bool DefinitivelyMissing { get; init; }
+    public long? ProviderGeneration { get; init; }
 }
 
 public sealed record PipelinedStatResult

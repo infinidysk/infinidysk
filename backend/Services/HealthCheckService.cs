@@ -167,8 +167,8 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     private long _infrastructureBackoffUntilUtcTicks;
     private int _disposed;
 
-    private static readonly HashSet<string> _missingSegmentIds = [];
-    private static readonly Queue<string> _missingSegmentOrder = [];
+    private static readonly HashSet<(long Generation, string SegmentId)> _missingSegmentIds = [];
+    private static readonly Queue<(long Generation, string SegmentId)> _missingSegmentOrder = [];
     private static readonly ConcurrentDictionary<string, List<DateTimeOffset>> _recentRepairRemovalsByPath = new();
 
     internal TimeSpan CoordinatorPollInterval { get; set; } = TimeSpan.FromSeconds(1);
@@ -1275,8 +1275,9 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             {
                 lock (_missingSegmentIds)
                 {
-                    if (_missingSegmentIds.Add(e.SegmentId))
-                        _missingSegmentOrder.Enqueue(e.SegmentId);
+                    var generation = e.ProviderGeneration ?? 0;
+                    if (_missingSegmentIds.Add((generation, e.SegmentId)))
+                        _missingSegmentOrder.Enqueue((generation, e.SegmentId));
                     while (_missingSegmentIds.Count > MaximumMissingSegmentIds)
                         _missingSegmentIds.Remove(_missingSegmentOrder.Dequeue());
                 }
@@ -3642,26 +3643,26 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             yield return segments[index];
     }
 
-    public static void AddMissingSegmentIds(IEnumerable<string> segmentIds)
+    public static void AddMissingSegmentIds(IEnumerable<string> segmentIds, long generation = 0)
     {
         lock (_missingSegmentIds)
         {
             foreach (var segmentId in segmentIds)
             {
-                if (_missingSegmentIds.Add(segmentId))
-                    _missingSegmentOrder.Enqueue(segmentId);
+                if (_missingSegmentIds.Add((generation, segmentId)))
+                    _missingSegmentOrder.Enqueue((generation, segmentId));
                 while (_missingSegmentIds.Count > MaximumMissingSegmentIds)
                     _missingSegmentIds.Remove(_missingSegmentOrder.Dequeue());
             }
         }
     }
 
-    public static void CheckCachedMissingSegmentIds(IEnumerable<string> segmentIds)
+    public static void CheckCachedMissingSegmentIds(IEnumerable<string> segmentIds, long generation = 0)
     {
         lock (_missingSegmentIds)
         {
-            foreach (var segmentId in segmentIds.Where(segmentId => _missingSegmentIds.Contains(segmentId)))
-                throw new UsenetArticleNotFoundException(segmentId);
+            foreach (var segmentId in segmentIds.Where(segmentId => _missingSegmentIds.Contains((generation, segmentId))))
+                throw new UsenetArticleNotFoundException(segmentId) { ProviderGeneration = generation == 0 ? null : generation };
         }
     }
 }
