@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Logging;
 using Serilog;
 
@@ -80,6 +81,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private readonly string _diagnosticName;
     private readonly long _replacementHandshakeSpacingMs;
     private readonly TimeProvider _timeProvider;
+    private readonly Func<TimeSpan>? _connectionOpenTimeout;
+    private readonly string _connectionOpenProvider;
 
     /* --------------------------------- state --------------------------------------- */
 
@@ -136,7 +139,9 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         TimeSpan? replacementHandshakeSpacing = null,
         TimeProvider? timeProvider = null,
         Func<CancellationToken, Task<IDisposable?>>? keepAliveAdmission = null,
-        TimeSpan? keepAliveBorrowTimeout = null)
+        TimeSpan? keepAliveBorrowTimeout = null,
+        Func<TimeSpan>? connectionOpenTimeout = null,
+        string? connectionOpenProvider = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConnections);
 
@@ -162,6 +167,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         _replacementHandshakeSpacingMs = Math.Max(
             0, (long)(replacementHandshakeSpacing ?? TimeSpan.Zero).TotalMilliseconds);
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _connectionOpenTimeout = connectionOpenTimeout;
+        _connectionOpenProvider = connectionOpenProvider ?? _diagnosticName;
         _gate = new PrioritizedSemaphore(maxConnections, maxConnections, priorityOdds);
         _sweeperTask = Task.Run(SweepLoop); // background idle-reaper
     }
@@ -171,6 +178,23 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     /// settings save changes contention behavior without replacing live TLS connections.
     /// </summary>
     public void UpdatePriorityOdds(SemaphorePriorityOdds odds) => _gate.UpdatePriorityOdds(odds);
+
+    private void ThrowIfLocalOpenTimeout(
+        TimeSpan? openTimeout,
+        string phase,
+        CancellationToken callerCancellationToken)
+    {
+        if (openTimeout is not null
+            && callerCancellationToken.IsCancellationRequested == false
+            && _sweepCts.IsCancellationRequested == false)
+        {
+            throw new ConnectionOpenTimeoutException(
+                _connectionOpenProvider,
+                phase,
+                openTimeout.Value,
+                phase == "Factory");
+        }
+    }
 
     /* ============================== public API ==================================== */
 
@@ -306,6 +330,10 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         // Need a fresh connection. Pace handshakes so a cold burst of borrowers
         // does not open dozens of TLS sessions in parallel. While waiting, other
         // connections may return to the idle stack — prefer those over a new handshake.
+        var openTimeout = _connectionOpenTimeout?.Invoke();
+        if (openTimeout is { } timeout)
+            linked.CancelAfter(timeout);
+        var openPhase = "HandshakeQueue";
         try
         {
             var handshakeWaitStarted = Stopwatch.GetTimestamp();
@@ -315,6 +343,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         catch
         {
             ReleaseGateIfActive();
+            ThrowIfLocalOpenTimeout(openTimeout, openPhase, cancellationToken);
             throw;
         }
 
@@ -368,6 +397,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                         return BuildLock(reused!, wasReused: true);
                     if (!creationReserved)
                     {
+                        openPhase = "CreationCapacity";
                         await connectionAvailability.WaitAsync(linked.Token).ConfigureAwait(false);
                         lock (_lifecycleLock)
                         {
@@ -387,6 +417,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                     }
                 }
 
+                openPhase = "ReplacementPacing";
                 pacingReservation = await PaceReplacementHandshakeAsync(linked.Token)
                     .ConfigureAwait(false);
 
@@ -395,6 +426,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 CommitReplacementPacing(pacingReservation);
                 pacingReservation = null;
 
+                openPhase = "Factory";
                 conn = await _factory(linked.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (linked.IsCancellationRequested)
@@ -404,6 +436,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 if (creationReserved)
                     CompleteConnectionCreation(created: false);
                 ReleaseGateIfActive();
+                ThrowIfLocalOpenTimeout(openTimeout, openPhase, cancellationToken);
                 throw;
             }
             catch (Exception factoryError) when (factoryError is not OutOfMemoryException)

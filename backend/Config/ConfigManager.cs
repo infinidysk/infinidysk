@@ -406,6 +406,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                 case ConfigKeys.UsenetInFlightArticleBudgetMb:
                 case ConfigKeys.UsenetIdleConnectionTimeoutSeconds:
                 case ConfigKeys.UsenetNntpReadTimeoutSeconds:
+                case ConfigKeys.UsenetConnectionOpenTimeoutSeconds:
                 case ConfigKeys.UsenetReconnectDelayMilliseconds:
                 case ConfigKeys.UsenetWarmConnectionsFloor:
                 case ConfigKeys.UsenetCircuitBreakerInitialCooldownSeconds:
@@ -1592,6 +1593,13 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     {
         var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetStreamingReadTimeoutSeconds));
         var seconds = int.TryParse(v, out var n) ? Math.Clamp(n, 5, 120) : 30;
+        return TimeSpan.FromSeconds(seconds);
+    }
+
+    public TimeSpan GetConnectionOpenTimeout()
+    {
+        var value = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetConnectionOpenTimeoutSeconds));
+        var seconds = int.TryParse(value, out var parsed) ? Math.Clamp(parsed, 1, 15) : 15;
         return TimeSpan.FromSeconds(seconds);
     }
 

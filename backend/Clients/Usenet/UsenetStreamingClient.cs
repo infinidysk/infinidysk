@@ -258,6 +258,7 @@ public class UsenetStreamingClient : WrappingNntpClient
                 metricsWriter,
                 circuitInitialCooldown,
                 circuitMaxCooldown,
+                configManager.GetConnectionOpenTimeout,
                 streamingPriority,
                 latencyTracker,
                 tripDetector
@@ -285,6 +286,7 @@ public class UsenetStreamingClient : WrappingNntpClient
         MetricsWriter metricsWriter,
         TimeSpan circuitInitialCooldown,
         TimeSpan circuitMaxCooldown,
+        Func<TimeSpan> connectionOpenTimeout,
         SemaphorePriorityOdds? streamingPriority = null,
         ProviderLatencyTracker? latencyTracker = null,
         CorrelatedTripDetector? tripDetector = null
@@ -338,6 +340,10 @@ public class UsenetStreamingClient : WrappingNntpClient
             replacementHandshakeSpacing: reconnectDelay,
             connectionLimitDetector: ex =>
                 UsenetConnectionLimitDetector.TryLearn(ex, out var learned) ? learned : null,
+            connectionOpenTimeout: connectionOpenTimeout,
+            connectionOpenProvider: string.IsNullOrWhiteSpace(connectionDetails.Nickname)
+                ? connectionDetails.Host
+                : connectionDetails.Nickname,
             onConnectionLimitLearned: (learned, effective) =>
             {
                 var label = string.IsNullOrWhiteSpace(connectionDetails.Nickname)
@@ -439,7 +445,9 @@ public class UsenetStreamingClient : WrappingNntpClient
         TimeSpan? replacementHandshakeSpacing = null,
         Func<Exception, int?>? connectionLimitDetector = null,
         Action<int, int>? onConnectionLimitLearned = null,
-        Func<CancellationToken, Task<IDisposable?>>? keepAliveAdmission = null
+        Func<CancellationToken, Task<IDisposable?>>? keepAliveAdmission = null,
+        Func<TimeSpan>? connectionOpenTimeout = null,
+        string? connectionOpenProvider = null
     )
     {
         var idleTimeout = TimeSpan.FromSeconds(idleTimeoutSeconds);
@@ -452,7 +460,9 @@ public class UsenetStreamingClient : WrappingNntpClient
             KeepAliveAsync,
             diagnosticName: diagnosticName,
             replacementHandshakeSpacing: replacementHandshakeSpacing,
-            keepAliveAdmission: keepAliveAdmission);
+            keepAliveAdmission: keepAliveAdmission,
+            connectionOpenTimeout: connectionOpenTimeout,
+            connectionOpenProvider: connectionOpenProvider);
         connectionPool.OnConnectionPoolChanged += onConnectionPoolChanged;
         var args = new ConnectionPoolStats.ConnectionPoolChangedEventArgs(0, 0, maxConnections);
         SynchronousObserverInvoker.Invoke(
