@@ -122,11 +122,21 @@ jobs:
           DEV_LABEL: ${{ needs.resolve.outputs.dev_label }}
         run: |
           set -euo pipefail
+          PREVIOUS_TAG=$(gh release list \
+            --repo "${{ github.repository }}" \
+            --exclude-drafts \
+            --exclude-pre-releases \
+            --limit 1 \
+            --json tagName \
+            --jq '.[0].tagName')
+          [[ -n "$PREVIOUS_TAG" ]] || { echo "Could not find a previous stable release tag" >&2; exit 1; }
           gh release create "$RELEASE_TAG" \
             --repo "${{ github.repository }}" \
             --target "$RELEASE_SHA" \
             --title "$RELEASE_TAG" \
-            --prerelease --generate-notes
+            --prerelease \
+            --generate-notes \
+            --notes-start-tag "$PREVIOUS_TAG"
 
           ROLLING_TITLE="Rolling :rc ($RELEASE_TAG)"
           ROLLING_NOTES="Currently points to [$RELEASE_TAG](https://github.com/${{ github.repository }}/releases/tag/$RELEASE_TAG). See that release for versioned notes and assets."
