@@ -5,9 +5,14 @@ public sealed class ApiValidationException : Exception
     public const string HttpContextItemKey = "NzbWebDAV.ApiValidationException";
 
     public ApiValidationException(IReadOnlyDictionary<string, string[]> errors, string? message = null)
-        : base(message ?? "One or more validation errors occurred.")
+        : this(ValidationErrors.NormalizeSnapshot(errors, message))
     {
-        Errors = errors;
+    }
+
+    private ApiValidationException((IReadOnlyDictionary<string, string[]> Errors, string Summary) snapshot)
+        : base(snapshot.Summary)
+    {
+        Errors = snapshot.Errors;
     }
 
     public IReadOnlyDictionary<string, string[]> Errors { get; }

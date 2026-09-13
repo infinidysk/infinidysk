@@ -81,12 +81,27 @@ public class NzbInputValidatorTests
     }
 
     [Fact]
-    public void RejectsInvalidByteCountAndDuplicateNumbers()
+    public void AcceptsDuplicateSegmentNumbersAndSumsBytes()
+    {
+        const string xml = """
+            <nzb><file subject="file"><segments>
+              <segment bytes="10" number="1">id-one@example</segment>
+              <segment bytes="20" number="1">id-two@example</segment>
+            </segments></file></nzb>
+            """;
+        using var stream = Bytes(xml);
+
+        var bytes = NzbInputValidator.ValidateAndSumSegmentBytes(stream, NzbInputLimits.Default);
+        Assert.Equal(30, bytes);
+    }
+
+    [Fact]
+    public void RejectsInvalidByteCount()
     {
         const string xml = """
             <nzb><file subject="file"><segments>
               <segment bytes="nope" number="1">id-one@example</segment>
-              <segment bytes="10" number="1">id-two@example</segment>
+              <segment bytes="10" number="2">id-two@example</segment>
             </segments></file></nzb>
             """;
         using var stream = Bytes(xml);
@@ -94,7 +109,6 @@ public class NzbInputValidatorTests
         var ex = Assert.Throws<ApiValidationException>(
             () => NzbInputValidator.ValidateAndSumSegmentBytes(stream, NzbInputLimits.Default));
         Assert.Contains(ex.Errors["nzb"], message => message.Contains("byte count", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(ex.Errors["nzb"], message => message.Contains("duplicate", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

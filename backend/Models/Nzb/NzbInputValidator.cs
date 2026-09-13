@@ -100,7 +100,6 @@ public static class NzbInputValidator
         CancellationToken cancellationToken)
     {
         long fileBytes = 0;
-        var seenNumbers = new HashSet<int>();
         if (reader.IsEmptyElement)
             return 0;
 
@@ -132,8 +131,6 @@ public static class NzbInputValidator
                 {
                     if (!int.TryParse(numberAttr, out var number) || number < 1)
                         errors.Add("nzb", "An NZB segment has an invalid number.");
-                    else if (!seenNumbers.Add(number))
-                        errors.Add("nzb", "An NZB file contains duplicate segment numbers.");
                 }
 
                 var messageId = reader.ReadElementContentAsString().Trim();
