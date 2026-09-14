@@ -94,11 +94,7 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         try
         {
             await semaphore.WaitAsync(ct).ConfigureAwait(false);
-            return new QueueAdmissionReservation(() =>
-            {
-                try { semaphore.Release(); }
-                finally { lifetime.Dispose(); }
-            });
+            return new SubmissionIdLeaseReservation(semaphore, lifetime);
         }
         catch
         {
@@ -314,6 +310,28 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         }
     }
 
+    private sealed class SubmissionIdLeaseReservation(
+        SemaphoreSlim semaphore,
+        IDisposable lifetime) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+
+            try
+            {
+                semaphore.Release();
+            }
+            finally
+            {
+                lifetime.Dispose();
+            }
+        }
+    }
+
     /// <summary>
     /// Immutable snapshot of every in-flight queue item and its progress.
     /// Primary (preferred) item is listed first when present.
@@ -378,7 +396,7 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
 
     private void ReleaseMutationsUnderLock(IEnumerable<Guid> ownedIds)
     {
-        foreach (var id in ownedIds.Where(id => _mutationReservations.ContainsKey(id)))
+        foreach (var id in ownedIds)
         {
             if (_mutationReservations.TryGetValue(id, out var count))
             {
@@ -501,7 +519,7 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
     {
         using var submissionLifetime = EnterSubmission();
         var submissionKey = (replacement.Category, replacement.FileName);
-        await _submissionCommitLock.WaitAsync(ct).ConfigureAwait(false);
+        var commitLockHeld = false;
         try
         {
             Guid? conflictId = null;
@@ -561,6 +579,8 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
                     }, ct).ConfigureAwait(false);
                 }
 
+                await _submissionCommitLock.WaitAsync(ct).ConfigureAwait(false);
+                commitLockHeld = true;
                 await using var transaction = await dbClient.Ctx.Database
                     .BeginTransactionAsync(ct)
                     .ConfigureAwait(false);
@@ -613,7 +633,8 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
         }
         finally
         {
-            _submissionCommitLock.Release();
+            if (commitLockHeld)
+                _submissionCommitLock.Release();
         }
     }
 
