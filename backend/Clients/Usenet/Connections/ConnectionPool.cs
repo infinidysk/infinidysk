@@ -629,7 +629,15 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         try
         {
             var handshakeWaitStarted = Stopwatch.GetTimestamp();
-            await _handshakeGate.WaitAsync(openToken).ConfigureAwait(false);
+            try
+            {
+                await _handshakeGate.WaitAsync(openToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (openToken.IsCancellationRequested)
+            {
+                ThrowIfLocalOpenTimeout(warmOpenTimeout, openPhase, cancellationToken);
+                throw;
+            }
             Interlocked.Add(ref _handshakeWaitTicks, Stopwatch.GetElapsedTime(handshakeWaitStarted).Ticks);
             try
             {
