@@ -1697,7 +1697,13 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        Task submissionsCompleted;
+        lock (_submissionLifetimeLock)
+        {
+            if (_disposed != 0) return;
+            _disposed = 1;
+            submissionsCompleted = _submissionsCompleted.Task;
+        }
 
         Task? coordinatorTask;
         CancellationTokenSource? cancellationTokenSource;
@@ -1722,7 +1728,7 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
 
         _configChangeSubscription.Dispose();
         _cancellationTokenSource?.Dispose();
-        _submissionsCompleted.Task.GetAwaiter().GetResult();
+        submissionsCompleted.GetAwaiter().GetResult();
         foreach (var submissionLock in _submissionCommitLocks)
             submissionLock.Dispose();
         foreach (var submissionLock in _submissionIdLocks)
