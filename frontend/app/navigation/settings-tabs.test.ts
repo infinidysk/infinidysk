@@ -15,15 +15,15 @@ describe("settings tabs", () => {
         tabs: group.items.map((item) => item.id),
       })),
     ).toEqual([
+      {
+        title: "System",
+        tabs: ["general", "repairs", "maintenance", "backup", "support", "migration"],
+      },
       { title: "Providers & Search", tabs: ["usenet", "indexers", "profiles"] },
       { title: "Queue & Import", tabs: ["queue", "sabnzbd"] },
       { title: "Playback & Files", tabs: ["streaming", "webdav"] },
       { title: "Automation", tabs: ["watchdog", "preflight", "watchtower", "warden"] },
       { title: "Integrations", tabs: ["arrs", "rclone"] },
-      {
-        title: "System",
-        tabs: ["general", "repairs", "maintenance", "backup", "support", "migration"],
-      },
     ]);
   });
 
