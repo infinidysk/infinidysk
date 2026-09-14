@@ -20,7 +20,10 @@ describe("settings tabs", () => {
       { title: "Playback & Files", tabs: ["streaming", "webdav"] },
       { title: "Automation", tabs: ["watchdog", "preflight", "watchtower", "warden"] },
       { title: "Integrations", tabs: ["arrs", "rclone"] },
-      { title: "System", tabs: ["general", "repairs", "maintenance", "backup", "support", "migration"] },
+      {
+        title: "System",
+        tabs: ["general", "repairs", "maintenance", "backup", "support", "migration"],
+      },
     ]);
   });
 

@@ -238,8 +238,8 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
               </div>
             </ManagedSetting>
             <p className="text-[11px] leading-relaxed text-base-content/45">
-              STRM files also require a public Base URL. Configure it under the General settings
-              tab so generated links can reach this server through your reverse proxy.
+              STRM files also require a public Base URL. Configure it under the General settings tab
+              so generated links can reach this server through your reverse proxy.
             </p>
           </div>
         )}

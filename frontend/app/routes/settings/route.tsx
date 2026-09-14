@@ -237,7 +237,13 @@ const defaultConfig = {
   "warden.backbone-scope": "true",
 };
 
-function GeneralSettings({ config, setNewConfig }: { config: Record<string, string>; setNewConfig: Dispatch<SetStateAction<Record<string, string>>>; }) {
+function GeneralSettings({
+  config,
+  setNewConfig,
+}: {
+  config: Record<string, string>;
+  setNewConfig: Dispatch<SetStateAction<Record<string, string>>>;
+}) {
   return (
     <SettingsPage>
       <SettingsIntro>
@@ -252,7 +258,10 @@ function GeneralSettings({ config, setNewConfig }: { config: Record<string, stri
       >
         <ManagedSetting configKey="general.base-url">
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-base-content" htmlFor="general-base-url-input">
+            <label
+              className="block text-sm font-medium text-base-content"
+              htmlFor="general-base-url-input"
+            >
               Base URL
             </label>
             <Input
@@ -264,7 +273,10 @@ function GeneralSettings({ config, setNewConfig }: { config: Record<string, stri
               value={config["general.base-url"] ?? ""}
               onChange={(e) => setNewConfig({ ...config, "general.base-url": e.target.value })}
             />
-            <p className="text-[11px] leading-relaxed text-base-content/45" id="general-base-url-help">
+            <p
+              className="text-[11px] leading-relaxed text-base-content/45"
+              id="general-base-url-help"
+            >
               Public URL the app should present to browsers and downstream clients. Use the HTTPS
               reverse-proxy address, not the internal backend URL.
             </p>
