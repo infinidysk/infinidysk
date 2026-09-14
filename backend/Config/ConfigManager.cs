@@ -49,6 +49,12 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     private IReadOnlyList<Regex>? _compiledExcludeCache;
     private ConfigEnvironmentOverlay _environmentOverlay = ConfigEnvironmentOverlay.Empty;
     private long _providerGeneration;
+
+    public ConfigManager()
+    {
+        _providerGeneration = _nextProviderGeneration;
+    }
+
     /// <summary>
     /// Raised after configuration values have been committed in memory. Notification is
     /// synchronous, in registration order, and does not run while config locks are held.

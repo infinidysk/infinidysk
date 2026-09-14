@@ -123,21 +123,22 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
             : $"{articleId}\u0001p:{metricsKey}";
     }
 
-    public bool IsMissing(string key, long generation = 0)
+    public bool IsMissing(string key, long? generation = null)
     {
-        if (!_missingAt.TryGetValue((generation, key), out var markedAt)) return false;
+        var lookupGeneration = generation ?? _configManager.GetUsenetProviderSnapshot().Generation;
+        if (!_missingAt.TryGetValue((lookupGeneration, key), out var markedAt)) return false;
         if (DateTimeOffset.UtcNow - markedAt < _configManager.GetArticleMissCacheTtl())
         {
             Interlocked.Increment(ref _hits);
             return true;
         }
-        _missingAt.TryRemove((generation, key), out _);
+        _missingAt.TryRemove((lookupGeneration, key), out _);
         return false;
     }
 
-    public void MarkMissing(string key, long? generation = 0)
+    public void MarkMissing(string key, long? generation = null)
     {
-        if (generation is not { } evidenceGeneration) return;
+        var evidenceGeneration = generation ?? _configManager.GetUsenetProviderSnapshot().Generation;
         var now = DateTimeOffset.UtcNow;
         MarkMissingInMemory(evidenceGeneration, key, now);
         lock (_persistenceStateLock)
@@ -440,23 +441,26 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
                         }
                     }
 
-                    var currentGeneration = _configManager.GetUsenetProviderSnapshot().Generation;
                     var marks = new Dictionary<string, long>(StringComparer.Ordinal);
                     TaskCompletionSource? barrier = null;
                     var itemsRead = 0;
-                    while (itemsRead < MaxPersistenceBatchSize && reader.TryRead(out var item))
+                    lock (_persistenceStateLock)
                     {
-                        itemsRead++;
-                        switch (item)
+                        var currentGeneration = _configManager.GetUsenetProviderSnapshot().Generation;
+                        while (itemsRead < MaxPersistenceBatchSize && reader.TryRead(out var item))
                         {
-                            case MarkItem mark when mark.Generation == currentGeneration:
-                                marks[mark.Key] = mark.ConfirmedAtUnix;
-                                break;
-                            case BarrierItem b:
-                                barrier = b.Completion;
-                                break;
+                            itemsRead++;
+                            switch (item)
+                            {
+                                case MarkItem mark when mark.Generation == currentGeneration:
+                                    marks[mark.Key] = mark.ConfirmedAtUnix;
+                                    break;
+                                case BarrierItem b:
+                                    barrier = b.Completion;
+                                    break;
+                            }
+                            if (barrier is not null) break;
                         }
-                        if (barrier is not null) break;
                     }
 
                     if (marks.Count == 0 && barrier is null)
