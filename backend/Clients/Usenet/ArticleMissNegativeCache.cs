@@ -164,11 +164,15 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
                 .Take(maxEntries)
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
-            foreach (var entry in entries)
-            {
-                if (TryReadPersistedKey(entry.CacheKey, out var generation, out var key))
-                    _missingAt[(generation, key)] = DateTimeOffset.FromUnixTimeMilliseconds(entry.ConfirmedAtUnix);
-            }
+            var validEntries = entries
+                .Select(entry =>
+                {
+                    var parsed = TryReadPersistedKey(entry.CacheKey, out var generation, out var key);
+                    return (entry, parsed, generation, key);
+                })
+                .Where(x => x.parsed);
+            foreach (var (entry, _, generation, key) in validEntries)
+                _missingAt[(generation, key)] = DateTimeOffset.FromUnixTimeMilliseconds(entry.ConfirmedAtUnix);
 
             await TrimPersistedAsync(context, cutoffUnix, maxEntries, cancellationToken)
                 .ConfigureAwait(false);

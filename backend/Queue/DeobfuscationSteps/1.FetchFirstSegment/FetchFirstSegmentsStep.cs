@@ -129,7 +129,7 @@ public static class FetchFirstSegmentsStep
                     // important file, in which case remaining checks cannot help.
                     Log.Warning("First segment for `{FileName}` missing across all providers",
                         files[i].GetSubjectFileName());
-                    results[i] = BuildMissingFirstSegment(files[i]);
+                    results[i] = BuildMissingFirstSegment(files[i], article.ProviderGeneration);
                     progress?.Report(++completed);
 
                     if (DeadNzbFailFast.IsImportantNzbFile(files[i]))

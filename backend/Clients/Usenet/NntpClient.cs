@@ -442,6 +442,7 @@ public abstract class NntpClient : INntpClient
                 Stream = body.Stream,
                 ArticleHeaders = null,
                 DefinitivelyMissing = body.DefinitivelyMissing,
+                ProviderGeneration = body.ProviderGeneration,
             };
         }
     }

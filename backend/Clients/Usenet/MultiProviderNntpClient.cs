@@ -1100,7 +1100,10 @@ public class MultiProviderNntpClient(
             throw new InvalidOperationException("There are no usenet providers configured.");
         lastException?.Throw();
         // All providers were skipped (negative cache / storage-group) without a probe.
-        throw new UsenetArticleNotFoundException(segmentId.ToString()!);
+        throw new UsenetArticleNotFoundException(segmentId.ToString()!)
+        {
+            ProviderGeneration = providerGeneration,
+        };
     }
 
     private async Task<T> RunFromPoolWithBackup<T>
@@ -1250,7 +1253,10 @@ public class MultiProviderNntpClient(
         lastException?.Throw();
         // All providers were skipped (negative cache / storage-group) without a probe.
         if (articleId is { } exhaustedId)
-            throw new UsenetArticleNotFoundException(exhaustedId.ToString()!);
+            throw new UsenetArticleNotFoundException(exhaustedId.ToString()!)
+            {
+                ProviderGeneration = providerGeneration,
+            };
         throw new InvalidOperationException("There are no usenet providers configured.");
     }
 

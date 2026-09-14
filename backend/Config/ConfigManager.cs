@@ -19,7 +19,7 @@ namespace NzbWebDAV.Config;
 public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 {
     public static readonly string AppVersion = EnvironmentUtil.GetEnvironmentVariable("NZBDAV_VERSION") ?? "0.0.0";
-    private static long _nextProviderGeneration;
+    private long _nextProviderGeneration;
 
     private readonly ConcurrentDictionary<string, string> _invalidScheduleWarnings = new();
 
@@ -95,6 +95,9 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
             {
                 _config[configItem.ConfigName] = configItem.ConfigValue;
             }
+            var providers = GetConfigValue<UsenetProviderConfig>(ConfigKeys.UsenetProviders);
+            _providerGeneration = providers?.ProviderGeneration ?? 0;
+            _nextProviderGeneration = Math.Max(_nextProviderGeneration, _providerGeneration);
         }
         lock (_excludeLock) { _compiledExcludeCache = null; }
         SyncPathSanitizer();
@@ -348,8 +351,15 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                 .Where(item => !_environmentOverlay.IsManaged(item.ConfigName))
                 .ToDictionary(x => x.ConfigName, x => x.ConfigValue);
 
-            if (changedConfig.ContainsKey(ConfigKeys.UsenetProviders))
-                _providerGeneration = Interlocked.Increment(ref _nextProviderGeneration);
+            if (changedConfig.TryGetValue(ConfigKeys.UsenetProviders, out var providerJson))
+            {
+                var persistedGeneration = JsonSerializer.Deserialize<UsenetProviderConfig>(providerJson)
+                    ?.ProviderGeneration ?? 0;
+                _providerGeneration = persistedGeneration > 0
+                    ? persistedGeneration
+                    : Interlocked.Increment(ref _nextProviderGeneration);
+                _nextProviderGeneration = Math.Max(_nextProviderGeneration, _providerGeneration);
+            }
         }
 
         if (configItems.Any(x => x.ConfigName.StartsWith(ConfigKeys.SearchExcludePrefix, StringComparison.Ordinal)
@@ -370,6 +380,14 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
             this,
             args,
             SynchronousObserverSource.ConfigChanged);
+    }
+
+    internal string PrepareUsenetProviderConfigForSave(string json)
+    {
+        var providers = JsonSerializer.Deserialize<UsenetProviderConfig>(json)
+                        ?? new UsenetProviderConfig();
+        providers.ProviderGeneration = Interlocked.Increment(ref _nextProviderGeneration);
+        return JsonSerializer.Serialize(providers);
     }
 
     private void SyncPathSanitizer() =>
