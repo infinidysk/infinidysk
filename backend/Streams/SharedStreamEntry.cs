@@ -131,8 +131,14 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         }
         catch
         {
-            lease.Stream.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            lease.Ownership.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            try
+            {
+                lease.Stream.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
+            finally
+            {
+                lease.Ownership.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
             throw;
         }
 
