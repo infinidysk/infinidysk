@@ -389,6 +389,20 @@ Do **not** recreate `priority:*` or `effort:*` labels. Meta labels are fine: `pe
 
 Bug and feature issue templates set Issue Type only (no kind labels, no title prefix).
 
+## Updating an existing pull request
+
+When correcting or implementing requested changes for an existing pull request:
+
+1. Read the pull request metadata and identify its exact `head` branch and repository.
+2. Check out or create a local branch tracking that remote head branch.
+3. Make the changes, run focused validation, commit them, and push to that exact remote branch.
+4. Never infer the branch name from a local branch, review title, or suggested fix.
+5. Never create a new branch for the pull request unless the user explicitly requests it.
+6. Before finishing, verify that the pull request head SHA changed to the pushed commit.
+7. Do not merge the pull request.
+
+If the pull request branch has advanced since checkout, fetch it and replay the changes on top of the current remote head before pushing.
+
 ## After completing a task
 
 When a task that changed the repo is done (unless the user explicitly said not to commit, push, or open a PR):
