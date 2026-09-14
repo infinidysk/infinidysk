@@ -498,7 +498,7 @@ public abstract class NntpClient : INntpClient
                 Stream = response.Stream,
             };
         }
-        catch (UsenetArticleNotFoundException)
+        catch (UsenetArticleNotFoundException exception)
         {
             return new PipelinedBodyResult
             {
@@ -506,7 +506,7 @@ public abstract class NntpClient : INntpClient
                 Found = false,
                 Stream = null,
                 DefinitivelyMissing = true,
-                    ProviderGeneration = ProviderGeneration,
+                    ProviderGeneration = exception.ProviderGeneration ?? ProviderGeneration,
             };
         }
     }

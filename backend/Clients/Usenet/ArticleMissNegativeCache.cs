@@ -182,6 +182,12 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
             foreach (var entry in entries)
                 _missingAt[(startupGeneration, entry.CacheKey)] = DateTimeOffset.FromUnixTimeMilliseconds(entry.ConfirmedAtUnix);
 
+            if (_configManager.GetUsenetProviderSnapshot().Generation != startupGeneration)
+            {
+                foreach (var entry in entries)
+                    _missingAt.TryRemove((startupGeneration, entry.CacheKey), out _);
+            }
+
             await TrimPersistedAsync(context, cutoffUnix, maxEntries, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -455,7 +461,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 
                     if (marks.Count == 0 && barrier is null)
                     {
-                        if (stopping && !reader.TryPeek(out _)) return;
+                        if (stopping && CanStopPersistence(reader)) return;
                         break;
                     }
 
@@ -482,9 +488,9 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
                         appliedClear = _appliedClearGeneration;
                         stopping = _stopping;
                     }
-                    if (requiredClear > appliedClear || (stopping && !reader.TryPeek(out _))) break;
+                    if (requiredClear > appliedClear || (stopping && CanStopPersistence(reader))) break;
                 }
-                if (stopping && !reader.TryPeek(out _)) return;
+                if (stopping && CanStopPersistence(reader)) return;
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -528,6 +534,14 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         await TrimPersistedAsync(
             context, cutoffUnix, _configManager.GetArticleMissCacheMaxEntries(), cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    private bool CanStopPersistence(ChannelReader<PersistenceWorkItem> reader)
+    {
+        lock (_persistenceStateLock)
+        {
+            return _requiredClearGeneration <= _appliedClearGeneration && !reader.TryPeek(out _);
+        }
     }
 
     private static async Task TrimPersistedAsync(

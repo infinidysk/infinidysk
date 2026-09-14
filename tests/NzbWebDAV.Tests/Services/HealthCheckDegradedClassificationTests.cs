@@ -477,8 +477,9 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
         Assert.Equal([segments[50]], Assert.Single(par2.Requests));
         Assert.Equal(oldBlobId, ReloadItem(item.Id).FileBlobId);
-        HealthCheckService.CheckCachedMissingSegmentIds(
-            [segments[50]], _configManager.GetUsenetProviderSnapshot().Generation);
+        Assert.Throws<UsenetArticleNotFoundException>(() =>
+            HealthCheckService.CheckCachedMissingSegmentIds(
+                [segments[50]], _configManager.GetUsenetProviderSnapshot().Generation));
     }
 
     [Fact]

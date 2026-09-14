@@ -206,11 +206,11 @@ public static class FetchFirstSegmentsStep
         {
             return (index, await FetchFirstSegment(nzbFile, usenetClient, cancellationToken).ConfigureAwait(false));
         }
-        catch (UsenetArticleNotFoundException)
+        catch (UsenetArticleNotFoundException e)
         {
             Log.Warning("First segment for `{FileName}` missing across all providers",
                 nzbFile.GetSubjectFileName());
-            return (index, BuildMissingFirstSegment(nzbFile));
+            return (index, BuildMissingFirstSegment(nzbFile, e.ProviderGeneration));
         }
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
         catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)

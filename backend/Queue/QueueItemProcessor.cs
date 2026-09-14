@@ -354,9 +354,8 @@ public class QueueItemProcessor(
             if (e.TryGetCausingException<UsenetArticleNotFoundException>(out var articleNotFound) &&
                 articleNotFound is not null)
             {
-                if (articleNotFound.ProviderGeneration is { } evidenceGeneration)
-                    HealthCheckService.AddProviderMissingSegmentIds(
-                        [articleNotFound.SegmentId], evidenceGeneration);
+                HealthCheckService.AddMissingSegmentIds(
+                    [articleNotFound.SegmentId], articleNotFound.ProviderGeneration ?? 0);
             }
 
             try

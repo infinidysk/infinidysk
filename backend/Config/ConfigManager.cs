@@ -19,7 +19,9 @@ namespace NzbWebDAV.Config;
 public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 {
     public static readonly string AppVersion = EnvironmentUtil.GetEnvironmentVariable("NZBDAV_VERSION") ?? "0.0.0";
-    private static long _nextProviderGeneration;
+    private long _nextProviderGeneration = Math.Max(
+        1L,
+        BitConverter.ToInt64(Guid.NewGuid().ToByteArray()) & long.MaxValue);
 
     private readonly ConcurrentDictionary<string, string> _invalidScheduleWarnings = new();
 
