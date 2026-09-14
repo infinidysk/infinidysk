@@ -23,6 +23,7 @@ public abstract class NntpClient : INntpClient
 
     public virtual int PipeliningDepth => 0;
     public virtual bool ReadStartWarmupEnabled => false;
+    protected virtual long? ProviderGeneration => null;
 
     public virtual Task PrewarmConnectionsAsync(
         int targetConnections,
@@ -284,7 +285,10 @@ public abstract class NntpClient : INntpClient
             // Definitive missing (430 / provider 451) fails the health check; any other
             // response (e.g. a stale connection's goodbye line) must stay retryable.
             if (UsenetArticleAvailability.IsDefinitiveMissing(task.Result))
-                throw new UsenetArticleNotFoundException(task.SegmentId, task.Result.ResponseMessage);
+                throw new UsenetArticleNotFoundException(task.SegmentId, task.Result.ResponseMessage)
+                {
+                    ProviderGeneration = ProviderGeneration,
+                };
             throw new UsenetUnexpectedResponseException(task.SegmentId, task.Result.ResponseMessage);
         }
     }
@@ -495,7 +499,7 @@ public abstract class NntpClient : INntpClient
                 Stream = response.Stream,
             };
         }
-        catch (UsenetArticleNotFoundException)
+        catch (UsenetArticleNotFoundException e)
         {
             return new PipelinedBodyResult
             {
@@ -503,6 +507,7 @@ public abstract class NntpClient : INntpClient
                 Found = false,
                 Stream = null,
                 DefinitivelyMissing = true,
+                ProviderGeneration = e.ProviderGeneration,
             };
         }
     }

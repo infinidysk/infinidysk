@@ -1,6 +1,7 @@
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models.Nzb;
 using Serilog;
@@ -133,30 +134,51 @@ public class PlaybackFastVerifier
         if (mode == "body")
             return await ProbeBodyAsync(messageId, ct).ConfigureAwait(false);
 
-        var stat = await _usenetClient.StatAsync(messageId, ct).ConfigureAwait(false);
-        return stat.ResponseType == UsenetResponseType.ArticleExists
-            ? Verdict.Available
-            : await ProbeBodyAsync(messageId, ct).ConfigureAwait(false);
+        try
+        {
+            var stat = await _usenetClient.StatAsync(messageId, ct).ConfigureAwait(false);
+            if (stat.ResponseType == UsenetResponseType.ArticleExists)
+                return Verdict.Available;
+            return UsenetArticleAvailability.IsDefinitiveMissing(stat)
+                ? await ProbeBodyAsync(messageId, ct).ConfigureAwait(false)
+                : Verdict.Timeout;
+        }
+        catch (UsenetArticleNotFoundException) when (!ct.IsCancellationRequested)
+        {
+            return await ProbeBodyAsync(messageId, ct).ConfigureAwait(false);
+        }
     }
 
     private async Task<Verdict> ProbeBodyAsync(string messageId, CancellationToken ct)
     {
-        var resp = await _usenetClient.DecodedBodyAsync(messageId, ct).ConfigureAwait(false);
-        var verdict = resp.ResponseType == UsenetResponseType.ArticleRetrievedBodyFollows
-            ? Verdict.Available
-            : Verdict.Dead;
-        if (resp.Stream is not null)
+        UsenetDecodedBodyResponse? resp = null;
+        try
         {
-            try
+            resp = await _usenetClient.DecodedBodyAsync(messageId, ct).ConfigureAwait(false);
+            if (resp.ResponseType == UsenetResponseType.ArticleRetrievedBodyFollows)
+                return Verdict.Available;
+            return UsenetArticleAvailability.IsDefinitiveMissing(resp)
+                ? Verdict.Dead
+                : Verdict.Timeout;
+        }
+        catch (UsenetArticleNotFoundException) when (!ct.IsCancellationRequested)
+        {
+            return Verdict.Dead;
+        }
+        finally
+        {
+            if (resp?.Stream is not null)
             {
-                await resp.Stream.DisposeAsync().ConfigureAwait(false);
-            }
-            catch (Exception e) when (e is not OutOfMemoryException)
-            {
-                Log.Debug(e, "Failed to release verified article body for {SegmentId}", messageId);
+                try
+                {
+                    await resp.Stream.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception e) when (e is not OutOfMemoryException)
+                {
+                    Log.Debug(e, "Failed to release verified article body for {SegmentId}", messageId);
+                }
             }
         }
-        return verdict;
     }
 
     public readonly record struct VerifyOutcome(Verdict Verdict, string? ResponderHost);

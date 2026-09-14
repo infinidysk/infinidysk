@@ -1399,9 +1399,9 @@ public class MultiProviderNntpClientTests
         Assert.Equal(0, primary.SingularRequests);
         Assert.Equal(0, backup.SingularRequests);
 
-        await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() =>
-            client.StatAsync("segment", CancellationToken.None));
-        Assert.Equal(0, primary.SingularRequests);
+        var stat = await client.StatAsync("segment", CancellationToken.None);
+        Assert.Equal(222, stat.ResponseCode);
+        Assert.Equal(1, primary.SingularRequests);
         Assert.Equal(0, backup.SingularRequests);
     }
 

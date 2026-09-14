@@ -165,7 +165,10 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
             foreach (var entry in entries)
-                _missingAt[(0, entry.CacheKey)] = DateTimeOffset.FromUnixTimeMilliseconds(entry.ConfirmedAtUnix);
+            {
+                if (TryReadPersistedKey(entry.CacheKey, out var generation, out var key))
+                    _missingAt[(generation, key)] = DateTimeOffset.FromUnixTimeMilliseconds(entry.ConfirmedAtUnix);
+            }
 
             await TrimPersistedAsync(context, cutoffUnix, maxEntries, cancellationToken)
                 .ConfigureAwait(false);
@@ -360,7 +363,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         {
             while (await reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                var marks = new Dictionary<string, long>(StringComparer.Ordinal);
+                var marks = new Dictionary<(long Generation, string Key), long>();
                 var clearPending = false;
                 TaskCompletionSource? barrier = null;
                 var itemsRead = 0;
@@ -375,7 +378,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
                             clearPending = true;
                             break;
                         case MarkItem mark:
-                            marks[mark.Key] = mark.ConfirmedAtUnix;
+                            marks[(mark.Generation, mark.Key)] = mark.ConfirmedAtUnix;
                             break;
                         case BarrierItem b:
                             barrier = b.Completion;
@@ -410,7 +413,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 
     private async Task ApplyBatchAsync(
         bool clearPending,
-        Dictionary<string, long> marks,
+        Dictionary<(long Generation, string Key), long> marks,
         CancellationToken cancellationToken)
     {
         await using var context = _contextFactory!();
@@ -419,12 +422,15 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 
         if (marks.Count > 0)
         {
-            var keys = marks.Keys.ToList();
+            var persistedMarks = marks.ToDictionary(
+                x => PersistedKey(x.Key.Generation, x.Key.Key), x => x.Value,
+                StringComparer.Ordinal);
+            var keys = persistedMarks.Keys.ToList();
             var existing = await context.ArticleMissCacheEntries
                 .Where(x => keys.Contains(x.CacheKey))
                 .ToDictionaryAsync(x => x.CacheKey, cancellationToken)
                 .ConfigureAwait(false);
-            foreach (var (key, confirmedAtUnix) in marks)
+            foreach (var (key, confirmedAtUnix) in persistedMarks)
             {
                 if (existing.TryGetValue(key, out var entry))
                     entry.ConfirmedAtUnix = confirmedAtUnix;
@@ -437,12 +443,31 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
             }
             await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
-
         var cutoffUnix = (DateTimeOffset.UtcNow - _configManager.GetArticleMissCacheTtl())
             .ToUnixTimeMilliseconds();
         await TrimPersistedAsync(
             context, cutoffUnix, _configManager.GetArticleMissCacheMaxEntries(), cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    private static string PersistedKey(long generation, string key) =>
+        generation == 0 ? key : $"g{generation}\u0001{key}";
+
+    private static bool TryReadPersistedKey(string persistedKey, out long generation, out string key)
+    {
+        generation = 0;
+        key = "";
+        if (!persistedKey.StartsWith('g'))
+        {
+            key = persistedKey;
+            return key.Length > 0;
+        }
+        var separator = persistedKey.IndexOf('\u0001', StringComparison.Ordinal);
+        if (separator <= 1 || persistedKey[0] != 'g'
+            || !long.TryParse(persistedKey.AsSpan(1, separator - 1), out generation))
+            return false;
+        key = persistedKey[(separator + 1)..];
+        return key.Length > 0;
     }
 
     private static async Task TrimPersistedAsync(
