@@ -232,6 +232,44 @@ const defaultConfig = {
   "warden.backbone-scope": "true",
 };
 
+function GeneralSettings({ config, setNewConfig }: { config: Record<string, string>; setNewConfig: Dispatch<SetStateAction<Record<string, string>>>; }) {
+  return (
+    <SettingsPage>
+      <SettingsIntro>
+        Configure the public-facing app URL and other global runtime settings that affect every
+        client connection.
+      </SettingsIntro>
+
+      <SettingsCard
+        icon="public"
+        title="Public access"
+        description="External URL used for generated links, callbacks, and reverse-proxy-aware redirects."
+      >
+        <ManagedSetting configKey="general.base-url">
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-base-content" htmlFor="general-base-url-input">
+              Base URL
+            </label>
+            <Input
+              className="w-full"
+              type="text"
+              id="general-base-url-input"
+              aria-describedby="general-base-url-help"
+              placeholder="https://nzbdav.example.com"
+              value={config["general.base-url"] ?? ""}
+              onChange={(e) => setNewConfig({ ...config, "general.base-url": e.target.value })}
+            />
+            <p className="text-[11px] leading-relaxed text-base-content/45" id="general-base-url-help">
+              Public URL the app should present to browsers and downstream clients. Use the HTTPS
+              reverse-proxy address, not the internal backend URL.
+            </p>
+          </div>
+        </ManagedSetting>
+      </SettingsCard>
+    </SettingsPage>
+  );
+}
+
 export async function loader({ request }: Route.LoaderArgs) {
   const activeTab = parseSettingsTab(new URL(request.url).searchParams.get("tab"));
   const [configItems, overviewStats] = await Promise.all([
@@ -573,6 +611,9 @@ function Body(props: BodyProps) {
             )}
             {activeTab === "rclone" && (
               <RcloneSettings config={newConfig} setNewConfig={setNewConfig} />
+            )}
+            {activeTab === "general" && (
+              <GeneralSettings config={newConfig} setNewConfig={setNewConfig} />
             )}
             {activeTab === "maintenance" && (
               <Maintenance savedConfig={config} config={newConfig} setNewConfig={setNewConfig} />

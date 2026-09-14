@@ -237,28 +237,6 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                 </p>
               </div>
             </ManagedSetting>
-            <ManagedSetting configKey="general.base-url">
-              <div className="space-y-2">
-                <label
-                  className="block text-sm font-medium text-base-content"
-                  htmlFor="base-url-input"
-                >
-                  Base URL
-                </label>
-                <Input
-                  className="w-full"
-                  type="text"
-                  id="base-url-input"
-                  aria-describedby="base-url-help"
-                  placeholder="http://localhost:3000"
-                  value={config["general.base-url"]}
-                  onChange={(e) => setNewConfig({ ...config, "general.base-url": e.target.value })}
-                />
-                <p className="text-[11px] leading-relaxed text-base-content/45" id="base-url-help">
-                  URL Emby or Jellyfin can reach. Generated STRM files point to this address.
-                </p>
-              </div>
-            </ManagedSetting>
           </div>
         )}
 
