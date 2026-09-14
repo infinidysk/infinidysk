@@ -406,6 +406,43 @@ public class ArticleMissNegativeCacheTests
     }
 
     [Fact]
+    public async Task ProviderConfigChange_ClearsPersistedEntriesWhenMarkQueueIsFull()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using (var context = new DavDatabaseContext(options))
+            await context.Database.EnsureCreatedAsync();
+
+        var config = CreateConfig(ttlSeconds: 300, maxEntries: 100);
+        var staleKey = ArticleMissNegativeCache.BuildKey("stale", "a.example", null);
+        using var cache = new ArticleMissNegativeCache(
+            config, () => new DavDatabaseContext(options), persistenceQueueCapacity: 1);
+        cache.MarkMissing(staleKey);
+
+        config.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.UsenetProviders,
+                ConfigValue = """{"Providers":[]}""",
+            },
+        ]);
+        var currentGeneration = config.GetUsenetProviderSnapshot().Generation;
+        var freshKey = ArticleMissNegativeCache.BuildKey("fresh", "a.example", null);
+        cache.MarkMissing(freshKey, currentGeneration);
+
+        await cache.StartAsync(CancellationToken.None);
+        await cache.FlushPersistenceForTestsAsync();
+
+        await using var verify = new DavDatabaseContext(options);
+        Assert.Empty(await verify.ArticleMissCacheEntries.ToListAsync());
+        Assert.True(cache.IsMissing(freshKey, currentGeneration));
+    }
+
+    [Fact]
     public async Task PersistedTrim_EnforcesMaxEntries()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

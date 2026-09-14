@@ -50,9 +50,14 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
     private readonly Func<DavDatabaseContext>? _contextFactory;
     private readonly ConcurrentDictionary<(long Generation, string Key), DateTimeOffset> _missingAt = new();
     private readonly Channel<PersistenceWorkItem>? _persistenceQueue;
+    private readonly Channel<bool>? _persistenceWake;
+    private readonly object _persistenceStateLock = new();
     private CancellationTokenSource? _persistenceLoopCts;
     private Task _persistenceLoop = Task.CompletedTask;
     private volatile bool _persistenceLoopStarted;
+    private long _requiredClearGeneration;
+    private long _appliedClearGeneration;
+    private bool _stopping;
     private int _cleanupRunning;
     private int _cleanupContinuationScheduled;
     private long _hits;
@@ -61,23 +66,26 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 
     private sealed record MarkItem(long Generation, string Key, long ConfirmedAtUnix) : PersistenceWorkItem;
 
-    private sealed record ClearItem : PersistenceWorkItem
-    {
-        public static readonly ClearItem Instance = new();
-    }
-
     private sealed record BarrierItem(TaskCompletionSource Completion) : PersistenceWorkItem;
 
     public ArticleMissNegativeCache(
         ConfigManager configManager,
-        Func<DavDatabaseContext>? contextFactory = null)
+        Func<DavDatabaseContext>? contextFactory = null,
+        int persistenceQueueCapacity = PersistenceQueueCapacity)
     {
         _configManager = configManager;
         _contextFactory = contextFactory;
         if (contextFactory is not null)
         {
             _persistenceQueue = Channel.CreateBounded<PersistenceWorkItem>(
-                new BoundedChannelOptions(PersistenceQueueCapacity)
+                new BoundedChannelOptions(persistenceQueueCapacity)
+                {
+                    SingleReader = true,
+                    SingleWriter = false,
+                    FullMode = BoundedChannelFullMode.Wait,
+                });
+            _persistenceWake = Channel.CreateBounded<bool>(
+                new BoundedChannelOptions(1)
                 {
                     SingleReader = true,
                     SingleWriter = false,
@@ -88,8 +96,8 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         configManager.OnConfigChanged += (_, args) =>
         {
             if (!args.ChangedConfig.ContainsKey(ConfigKeys.UsenetProviders)) return;
-            Clear();
-            EnqueueClear();
+            ClearMemory();
+            RequestClear(configManager.GetUsenetProviderSnapshot().Generation);
         };
     }
 
@@ -132,10 +140,19 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         if (generation is not { } evidenceGeneration) return;
         var now = DateTimeOffset.UtcNow;
         MarkMissingInMemory(evidenceGeneration, key, now);
-        _persistenceQueue?.Writer.TryWrite(new MarkItem(evidenceGeneration, key, now.ToUnixTimeMilliseconds()));
+        lock (_persistenceStateLock)
+        {
+                if (!_stopping && _persistenceQueue?.Writer.TryWrite(
+                    new MarkItem(evidenceGeneration, key, now.ToUnixTimeMilliseconds())) == true)
+                SignalPersistence();
+        }
     }
 
-    public void Clear() => _missingAt.Clear();
+    public void Clear()
+    {
+        ClearMemory();
+        RequestClear(_configManager.GetUsenetProviderSnapshot().Generation);
+    }
 
     /// <summary>
     /// Hydrates unexpired misses before NNTP traffic starts, then starts the
@@ -185,7 +202,12 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         if (_persistenceQueue is null) return;
-        _persistenceQueue.Writer.TryComplete();
+        lock (_persistenceStateLock)
+        {
+            _stopping = true;
+            _persistenceQueue.Writer.TryComplete();
+            SignalPersistence();
+        }
         try
         {
             await _persistenceLoop.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -200,7 +222,12 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 
     public void Dispose()
     {
-        _persistenceQueue?.Writer.TryComplete();
+        lock (_persistenceStateLock)
+        {
+            _stopping = true;
+            _persistenceQueue?.Writer.TryComplete();
+            _persistenceWake?.Writer.TryComplete();
+        }
         _persistenceLoopCts?.Cancel();
         _persistenceLoopCts?.Dispose();
         _persistenceLoopCts = null;
@@ -225,14 +252,15 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
     }
 
     /// <summary>Test helper: wait until every work item queued so far has been applied.</summary>
-    internal async Task FlushPersistenceForTestsAsync()
+    internal async Task FlushPersistenceForTestsAsync(CancellationToken cancellationToken = default)
     {
         if (_persistenceQueue is null) return;
         if (!_persistenceLoopStarted)
             throw new InvalidOperationException("StartAsync must be called before flushing persistence.");
         var barrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await _persistenceQueue.Writer.WriteAsync(new BarrierItem(barrier)).ConfigureAwait(false);
-        await barrier.Task.ConfigureAwait(false);
+        await _persistenceQueue.Writer.WriteAsync(new BarrierItem(barrier), cancellationToken).ConfigureAwait(false);
+        SignalPersistence();
+        await barrier.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private void MarkMissingInMemory(long generation, string key, DateTimeOffset at)
@@ -332,94 +360,148 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
     private void RemoveIfUnchanged(KeyValuePair<(long Generation, string Key), DateTimeOffset> entry) =>
         ((ICollection<KeyValuePair<(long Generation, string Key), DateTimeOffset>>)_missingAt).Remove(entry);
 
-    private void EnqueueClear()
+    private void ClearMemory() => _missingAt.Clear();
+
+    private void RequestClear(long generation)
     {
-        if (_persistenceQueue is null) return;
-        if (_persistenceQueue.Writer.TryWrite(ClearItem.Instance)) return;
-        // The queue is momentarily full of pending marks and drains quickly; wait
-        // for room so a provider-change clear is never dropped.
-        _ = Task.Run(async () =>
+        lock (_persistenceStateLock)
         {
-            try
-            {
-                await _persistenceQueue.Writer.WriteAsync(ClearItem.Instance).ConfigureAwait(false);
-            }
-            catch (ChannelClosedException)
-            {
-                // Shutdown raced the config change; nothing left to drain into.
-            }
-        });
+            if (_stopping) return;
+            _requiredClearGeneration = Math.Max(_requiredClearGeneration, generation);
+            SignalPersistence();
+        }
+    }
+
+    private void SignalPersistence() => _persistenceWake?.Writer.TryWrite(true);
+
+    private async Task DeletePersistedAsync(CancellationToken cancellationToken)
+    {
+        await using var context = _contextFactory!();
+        await context.ArticleMissCacheEntries.ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task RunPersistenceLoopAsync(CancellationToken cancellationToken)
     {
         var reader = _persistenceQueue!.Reader;
+        var clearRetry = TimeSpan.Zero;
+        var clearFailureWarnings = 0;
         try
         {
-            while (await reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+            while (true)
             {
-                // Read once per batch: a retired-generation mark queued before the config
-                // change (or lingering behind an already-applied clear from an earlier batch)
-                // must not be persisted just because it shares a batch with unrelated marks.
-                var currentGeneration = _configManager.GetUsenetProviderSnapshot().Generation;
-                var marks = new Dictionary<string, long>(StringComparer.Ordinal);
-                var clearPending = false;
-                TaskCompletionSource? barrier = null;
-                var itemsRead = 0;
-                while (itemsRead < MaxPersistenceBatchSize && reader.TryRead(out var item))
-                {
-                    itemsRead++;
-                    switch (item)
-                    {
-                        case ClearItem:
-                            // Marks queued before the clear must not survive it.
-                            marks.Clear();
-                            clearPending = true;
-                            break;
-                        case MarkItem mark:
-                            if (mark.Generation == currentGeneration)
-                                marks[mark.Key] = mark.ConfirmedAtUnix;
-                            break;
-                        case BarrierItem b:
-                            barrier = b.Completion;
-                            break;
-                    }
-                    if (barrier is not null) break;
-                }
+                await _persistenceWake!.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false);
+                while (_persistenceWake.Reader.TryRead(out _)) { }
 
-                try
+                var stopping = false;
+                while (true)
                 {
-                    if (clearPending || marks.Count > 0)
-                        await ApplyBatchAsync(clearPending, marks, cancellationToken).ConfigureAwait(false);
-                    barrier?.TrySetResult();
+                    long requiredClear;
+                    long appliedClear;
+                    lock (_persistenceStateLock)
+                    {
+                        requiredClear = _requiredClearGeneration;
+                        appliedClear = _appliedClearGeneration;
+                        stopping = _stopping;
+                    }
+
+                    if (requiredClear > appliedClear)
+                    {
+                        try
+                        {
+                            await DeletePersistedAsync(cancellationToken).ConfigureAwait(false);
+                            lock (_persistenceStateLock)
+                                _appliedClearGeneration = Math.Max(_appliedClearGeneration, requiredClear);
+                            clearRetry = TimeSpan.Zero;
+                            continue;
+                        }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+                        catch (Exception e) when (e is not OutOfMemoryException)
+                        {
+                            clearRetry = clearRetry == TimeSpan.Zero
+                                ? TimeSpan.FromMilliseconds(250)
+                                : TimeSpan.FromMilliseconds(Math.Min(clearRetry.TotalMilliseconds * 2, 2000));
+                            if (clearFailureWarnings++ == 0 || clearFailureWarnings % 8 == 0)
+                                Log.Warning(
+                                    "Unable to clear persisted article misses after provider change. Retrying in {Delay}. Reason: {Reason}",
+                                    clearRetry, e.Message);
+                            else
+                                Log.Debug("Article-miss durable clear retry delayed. Reason: {Reason}", e.Message);
+                            await Task.Delay(clearRetry, cancellationToken).ConfigureAwait(false);
+                            continue;
+                        }
+                    }
+
+                    var currentGeneration = _configManager.GetUsenetProviderSnapshot().Generation;
+                    var marks = new Dictionary<string, long>(StringComparer.Ordinal);
+                    TaskCompletionSource? barrier = null;
+                    var itemsRead = 0;
+                    while (itemsRead < MaxPersistenceBatchSize && reader.TryRead(out var item))
+                    {
+                        itemsRead++;
+                        switch (item)
+                        {
+                            case MarkItem mark when mark.Generation == currentGeneration:
+                                marks[mark.Key] = mark.ConfirmedAtUnix;
+                                break;
+                            case BarrierItem b:
+                                barrier = b.Completion;
+                                break;
+                        }
+                        if (barrier is not null) break;
+                    }
+
+                    if (marks.Count == 0 && barrier is null)
+                    {
+                        if (stopping && !reader.TryPeek(out _)) return;
+                        break;
+                    }
+
+                    try
+                    {
+                        if (marks.Count > 0)
+                            await ApplyBatchAsync(marks, cancellationToken).ConfigureAwait(false);
+                        barrier?.TrySetResult();
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        barrier?.TrySetCanceled(cancellationToken);
+                        throw;
+                    }
+                    catch (Exception e) when (e is not OutOfMemoryException)
+                    {
+                        Log.Debug(e, "Unable to persist definitive article misses; retaining memory-only entries.");
+                        barrier?.TrySetException(e);
+                    }
+
+                    lock (_persistenceStateLock)
+                    {
+                        requiredClear = _requiredClearGeneration;
+                        appliedClear = _appliedClearGeneration;
+                        stopping = _stopping;
+                    }
+                    if (requiredClear > appliedClear || (stopping && !reader.TryPeek(out _))) break;
                 }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    barrier?.TrySetCanceled(cancellationToken);
-                    throw;
-                }
-                catch (Exception e) when (e is not OutOfMemoryException)
-                {
-                    Log.Debug(e, "Unable to persist definitive article misses; retaining memory-only entries.");
-                    barrier?.TrySetException(e);
-                }
+                if (stopping && !reader.TryPeek(out _)) return;
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Host is stopping; remaining marks stay memory-only.
+            while (reader.TryRead(out var item))
+            {
+                if (item is BarrierItem barrier)
+                    barrier.Completion.TrySetCanceled(cancellationToken);
+            }
         }
     }
 
     private async Task ApplyBatchAsync(
-        bool clearPending,
         Dictionary<string, long> marks,
         CancellationToken cancellationToken)
     {
         await using var context = _contextFactory!();
-        if (clearPending)
-            await context.ArticleMissCacheEntries.ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
-
         if (marks.Count > 0)
         {
             var keys = marks.Keys.ToList();

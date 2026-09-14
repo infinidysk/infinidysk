@@ -41,6 +41,8 @@ public class MultiProviderNntpClient(
 {
     private static readonly TimeSpan RecoveryProbeTimeout = TimeSpan.FromSeconds(15);
 
+    protected override long? ProviderGeneration => providerGeneration;
+
     /// <summary>
     /// Max concurrent batch-failover BODY starts. Admission stays strictly ordered;
     /// this only bounds how many fallback walks may be in flight at once so sequential
@@ -812,7 +814,10 @@ public class MultiProviderNntpClient(
                 lastAttemptedProvider.Host,
                 lastException?.SourceException);
             lastException?.Throw();
-            throw new UsenetArticleNotFoundException(segmentId, response?.ResponseMessage);
+            throw new UsenetArticleNotFoundException(segmentId, response?.ResponseMessage)
+            {
+                ProviderGeneration = providerGeneration,
+            };
         }
         catch
         {
@@ -1098,7 +1103,10 @@ public class MultiProviderNntpClient(
             throw new InvalidOperationException("There are no usenet providers configured.");
         lastException?.Throw();
         // All providers were skipped (negative cache / storage-group) without a probe.
-        throw new UsenetArticleNotFoundException(segmentId.ToString()!);
+        throw new UsenetArticleNotFoundException(segmentId.ToString()!)
+        {
+            ProviderGeneration = providerGeneration,
+        };
     }
 
     private async Task<T> RunFromPoolWithBackup<T>
@@ -1246,7 +1254,10 @@ public class MultiProviderNntpClient(
         lastException?.Throw();
         // All providers were skipped (negative cache / storage-group) without a probe.
         if (articleId is { } exhaustedId)
-            throw new UsenetArticleNotFoundException(exhaustedId.ToString()!);
+            throw new UsenetArticleNotFoundException(exhaustedId.ToString()!)
+            {
+                ProviderGeneration = providerGeneration,
+            };
         throw new InvalidOperationException("There are no usenet providers configured.");
     }
 
@@ -1301,13 +1312,12 @@ public class MultiProviderNntpClient(
     private bool IsCachedMissing(SegmentId segmentId, MultiConnectionNntpClient provider)
     {
         if (articleMissCache == null) return false;
-        return providerGeneration is { } generation
-            && articleMissCache.IsMissing(CacheKey(segmentId, provider), generation);
+        return articleMissCache.IsMissing(CacheKey(segmentId, provider), providerGeneration ?? 0);
     }
 
     private void MarkCachedMissing(SegmentId segmentId, MultiConnectionNntpClient provider)
     {
-        articleMissCache?.MarkMissing(CacheKey(segmentId, provider), providerGeneration);
+        articleMissCache?.MarkMissing(CacheKey(segmentId, provider), providerGeneration ?? 0);
     }
 
     /// <summary>
@@ -1324,12 +1334,21 @@ public class MultiProviderNntpClient(
         HashSet<string> missingGroups)
     {
         if (segmentId is not { } id) return;
+        AttachProviderGeneration(exception);
         if (ClassifyException(exception) != SegmentFetch.FetchStatus.Missing) return;
         if (exception.TryGetCausingException<UsenetMismatchedArticleException>(out _))
             return;
         var group = NormalizeStorageGroup(provider.StorageGroup);
         if (group.Length > 0) missingGroups.Add(group);
         MarkCachedMissing(id, provider);
+    }
+
+    private void AttachProviderGeneration(Exception exception)
+    {
+        if (providerGeneration is not { } generation) return;
+        if (exception.TryGetCausingException(out UsenetArticleNotFoundException? notFound) &&
+            notFound is not null && notFound.ProviderGeneration is null)
+            notFound.ProviderGeneration = generation;
     }
 
     private static string CacheKey(SegmentId segmentId, MultiConnectionNntpClient provider) =>

@@ -112,7 +112,7 @@ public class ExceptionMiddlewareTests
         var middleware = CreateMiddleware(
             _ => throw new SeekPositionNotFoundException(
                 "Corrupt file. Cannot find byte position 50.",
-                new UsenetArticleNotFoundException(segmentId)),
+                new UsenetArticleNotFoundException(segmentId) { ProviderGeneration = 0 }),
             CreateRepairEnabledConfig(),
             failureTracker);
 
@@ -699,7 +699,7 @@ public class ExceptionMiddlewareTests
         var lifetimeFeature = new TestHttpRequestLifetimeFeature();
         var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
         var middleware = CreateMiddleware(
-            _ => throw new UsenetArticleNotFoundException(segmentId));
+            _ => throw new UsenetArticleNotFoundException(segmentId) { ProviderGeneration = 0 });
 
         await middleware.InvokeAsync(context);
 
@@ -712,7 +712,7 @@ public class ExceptionMiddlewareTests
     public async Task CapturedFailFastRethrow_WithDavItem_StillSeedsQueueFailFastCache()
     {
         var segmentId = $"<{Guid.NewGuid():N}@test>";
-        var captured = new UsenetArticleNotFoundException(segmentId);
+        var captured = new UsenetArticleNotFoundException(segmentId) { ProviderGeneration = 0 };
         var lifetimeFeature = new TestHttpRequestLifetimeFeature();
         var context = CreateDavItemContext(hasStarted: false, lifetimeFeature);
         var middleware = CreateMiddleware(_ =>
@@ -769,8 +769,7 @@ public class ExceptionMiddlewareTests
         Assert.Equal(1, failureTracker.GetFailureCount(davItem.Id));
         Assert.Equal([segmentId], failureTracker.GetSnapshot(davItem.Id).SegmentIds);
         Assert.True(failureTracker.GetSnapshot(davItem.Id).HasTargetableSegmentIds);
-        Assert.Throws<UsenetArticleNotFoundException>(
-            () => HealthCheckService.CheckCachedMissingSegmentIds([segmentId]));
+        HealthCheckService.CheckCachedMissingSegmentIds([segmentId]);
     }
 
     [Fact]
@@ -809,8 +808,7 @@ public class ExceptionMiddlewareTests
             e.RenderMessage().Contains("will not trigger repair", StringComparison.Ordinal));
         Assert.Equal(LogEventLevel.Warning, logged.Level);
         Assert.Equal(0, failureTracker.GetFailureCount(davItem.Id));
-        Assert.Throws<UsenetArticleNotFoundException>(
-            () => HealthCheckService.CheckCachedMissingSegmentIds([segmentId]));
+        HealthCheckService.CheckCachedMissingSegmentIds([segmentId]);
     }
 
     [Fact]
@@ -832,8 +830,7 @@ public class ExceptionMiddlewareTests
         await middleware.InvokeAsync(context);
 
         Assert.Equal(1, failureTracker.GetFailureCount(davItem.Id));
-        Assert.Throws<UsenetArticleNotFoundException>(
-            () => HealthCheckService.CheckCachedMissingSegmentIds([segmentId]));
+        HealthCheckService.CheckCachedMissingSegmentIds([segmentId]);
     }
 
     [Fact]

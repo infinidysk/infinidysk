@@ -354,8 +354,9 @@ public class QueueItemProcessor(
             if (e.TryGetCausingException<UsenetArticleNotFoundException>(out var articleNotFound) &&
                 articleNotFound is not null)
             {
-                HealthCheckService.AddMissingSegmentIds(
-                    [articleNotFound.SegmentId], configManager.GetUsenetProviderSnapshot().Generation);
+                if (articleNotFound.ProviderGeneration is { } evidenceGeneration)
+                    HealthCheckService.AddProviderMissingSegmentIds(
+                        [articleNotFound.SegmentId], evidenceGeneration);
             }
 
             try
@@ -572,9 +573,13 @@ public class QueueItemProcessor(
             // Remember the missing first segments so retries of this item and re-grabs
             // of the same release fail in milliseconds via the step-0 precheck instead
             // of re-verifying every article across all providers.
-            HealthCheckService.AddMissingSegmentIds(
-                importantFilesMissing.Select(x => x.NzbFile.Segments[0].MessageId),
-                configManager.GetUsenetProviderSnapshot().Generation);
+            foreach (var group in importantFilesMissing
+                         .Where(x => x.MissingEvidenceGeneration is not null)
+                         .GroupBy(x => x.MissingEvidenceGeneration!.Value))
+            {
+                HealthCheckService.AddProviderMissingSegmentIds(
+                    group.Select(x => x.NzbFile.Segments[0].MessageId), group.Key);
+            }
 
             var fileNames = string.Join(", ", importantFilesMissing
                 .Select(x => string.IsNullOrEmpty(x.FileName) ? x.NzbFile.Subject : x.FileName)

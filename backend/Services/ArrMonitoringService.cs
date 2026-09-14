@@ -163,6 +163,7 @@ public class ArrMonitoringService : BackgroundService
         CancellationToken ct,
         RejectedReleaseCaptureBudget? captureBudget = null)
     {
+        var policyGeneration = _configManager.GetUsenetProviderSnapshot().Generation;
         // since there may be multiple status messages, multiple actions may apply.
         // in such case, always perform the strongest action.
         var matchingRules = arrConfig.QueueRules
@@ -224,7 +225,8 @@ public class ArrMonitoringService : BackgroundService
         {
             try
             {
-                HealthCheckService.AddMissingSegmentIds(rejectedRelease.Value.SegmentIds);
+                HealthCheckService.AddRejectedReleaseSegmentIds(
+                    rejectedRelease.Value.SegmentIds, policyGeneration);
                 if (rejectedReleaseCaptures is not null)
                     rejectedReleaseCaptures[rejectedRelease.Value.DownloadId] = [];
                 Log.Debug(

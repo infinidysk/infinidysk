@@ -23,6 +23,7 @@ public abstract class NntpClient : INntpClient
 
     public virtual int PipeliningDepth => 0;
     public virtual bool ReadStartWarmupEnabled => false;
+    protected virtual long? ProviderGeneration => null;
 
     public virtual Task PrewarmConnectionsAsync(
         int targetConnections,
@@ -438,11 +439,12 @@ public abstract class NntpClient : INntpClient
                 Stream = body.Stream,
                 ArticleHeaders = null,
                 DefinitivelyMissing = body.DefinitivelyMissing,
+                ProviderGeneration = body.ProviderGeneration,
             };
         }
     }
 
-    private static async Task<PipelinedBodyResult> MapPipelinedBodyResultAsync
+    private async Task<PipelinedBodyResult> MapPipelinedBodyResultAsync
     (
         Task<UsenetDecodedBodyResponse> responseTask,
         string segmentId,
@@ -460,6 +462,7 @@ public abstract class NntpClient : INntpClient
                     Found = false,
                     Stream = null,
                     DefinitivelyMissing = true,
+                    ProviderGeneration = ProviderGeneration,
                 };
             }
 
@@ -503,6 +506,7 @@ public abstract class NntpClient : INntpClient
                 Found = false,
                 Stream = null,
                 DefinitivelyMissing = true,
+                    ProviderGeneration = ProviderGeneration,
             };
         }
     }

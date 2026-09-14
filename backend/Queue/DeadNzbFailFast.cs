@@ -23,9 +23,10 @@ public static class DeadNzbFailFast
     /// <summary>
     /// Records the missing first segment for step-0 cache and throws a non-retryable failure.
     /// </summary>
-    public static void FailMissingImportantFile(NzbFile nzbFile, long generation)
+    public static void FailMissingImportantFile(NzbFile nzbFile, long? generation)
     {
-        HealthCheckService.AddMissingSegmentIds([nzbFile.Segments[0].MessageId], generation);
+        if (generation is { } evidenceGeneration)
+            HealthCheckService.AddProviderMissingSegmentIds([nzbFile.Segments[0].MessageId], evidenceGeneration);
 
         var fileName = nzbFile.GetSubjectFileName();
         if (string.IsNullOrEmpty(fileName))

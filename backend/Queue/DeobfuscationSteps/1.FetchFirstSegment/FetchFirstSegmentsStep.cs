@@ -65,7 +65,7 @@ public static class FetchFirstSegmentsStep
             {
                 Log.Warning("First segment for `{FileName}` missing across all providers",
                     result.NzbFile.GetSubjectFileName());
-                AbortRemainingFirstSegmentChecks(result.NzbFile, configManager, abortCts.Cancel);
+                AbortRemainingFirstSegmentChecks(result, abortCts.Cancel);
             }
         }
 
@@ -129,7 +129,7 @@ public static class FetchFirstSegmentsStep
                     // important file, in which case remaining checks cannot help.
                     Log.Warning("First segment for `{FileName}` missing across all providers",
                         files[i].GetSubjectFileName());
-                    results[i] = BuildMissingFirstSegment(files[i]);
+                    results[i] = BuildMissingFirstSegment(files[i], article.ProviderGeneration);
                     progress?.Report(++completed);
 
                     if (DeadNzbFailFast.IsImportantNzbFile(files[i]))
@@ -157,7 +157,7 @@ public static class FetchFirstSegmentsStep
         }
 
         if (abortFile is not null)
-            AbortRemainingFirstSegmentChecks(abortFile, configManager, cancel: null);
+            AbortRemainingFirstSegmentChecks(results[files.FindIndex(x => ReferenceEquals(x, abortFile))]!, cancel: null);
 
         var pending = Enumerable.Range(0, files.Count).Where(i => results[i] is null).ToList();
         if (pending.Count > 0)
@@ -175,7 +175,7 @@ public static class FetchFirstSegmentsStep
                 progress?.Report(++completed);
 
                 if (result.MissingFirstSegment && DeadNzbFailFast.IsImportantNzbFile(result.NzbFile))
-                    AbortRemainingFirstSegmentChecks(result.NzbFile, configManager, rescueAbortCts.Cancel);
+                    AbortRemainingFirstSegmentChecks(result, rescueAbortCts.Cancel);
             }
         }
 
@@ -183,15 +183,15 @@ public static class FetchFirstSegmentsStep
     }
 
     private static void AbortRemainingFirstSegmentChecks(
-        NzbFile nzbFile,
-        ConfigManager configManager,
+        NzbFileWithFirstSegment result,
         Action? cancel)
     {
+        var nzbFile = result.NzbFile;
         Log.Warning(
             "Aborting remaining first-segment checks after missing important file `{FileName}`",
             nzbFile.GetSubjectFileName());
         cancel?.Invoke();
-        DeadNzbFailFast.FailMissingImportantFile(nzbFile, configManager.GetUsenetProviderSnapshot().Generation);
+        DeadNzbFailFast.FailMissingImportantFile(nzbFile, result.MissingEvidenceGeneration);
     }
 
     private static async Task<(int index, NzbFileWithFirstSegment result)> RescueFirstSegment
@@ -225,12 +225,15 @@ public static class FetchFirstSegmentsStep
         }
     }
 
-    private static NzbFileWithFirstSegment BuildMissingFirstSegment(NzbFile nzbFile) => new()
+    private static NzbFileWithFirstSegment BuildMissingFirstSegment(
+        NzbFile nzbFile,
+        long? evidenceGeneration = null) => new()
     {
         NzbFile = nzbFile,
         First16KB = null,
         Header = null,
         MissingFirstSegment = true,
+        MissingEvidenceGeneration = evidenceGeneration,
         ReleaseDate = DateTimeOffset.UtcNow,
     };
 
@@ -317,9 +320,9 @@ public static class FetchFirstSegmentsStep
                 ReleaseDate = article.ArticleHeaders!.Date
             };
         }
-        catch (UsenetArticleNotFoundException)
+        catch (UsenetArticleNotFoundException e)
         {
-            return BuildMissingFirstSegment(nzbFile);
+            return BuildMissingFirstSegment(nzbFile, e.ProviderGeneration);
         }
         catch (Exception e) when (
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
@@ -341,6 +344,7 @@ public static class FetchFirstSegmentsStep
         public required UsenetYencHeader? Header { get; init; }
         public required byte[]? First16KB { get; init; }
         public required bool MissingFirstSegment { get; init; }
+        public long? MissingEvidenceGeneration { get; init; }
         public required DateTimeOffset ReleaseDate { get; init; }
 
         public bool HasRar4Magic() => HasMagic(Rar4Magic);
