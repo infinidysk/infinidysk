@@ -136,22 +136,24 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         var (item, _) = await AddVideoFileAsync(
             "movie.mkv", segments, [10_000, 10_000, 10_000]);
 
-        // Not urgent yet: IsDurablyUrgentAsync must not misclassify an ordinary item.
-        Assert.False(await HealthCheckService.IsDurablyUrgentAsync(_dbClient, item.Id, CancellationToken.None));
-
-        // Simulate a concurrent request (e.g. a playback failure) that durably committed
-        // the urgent sentinel via a different DbContext while this routine sweep is in flight.
-        await using (var concurrentContext = new DavDatabaseContext(_options))
+        var headClient = new CapturingHeadNntpClient(NewFakeClient(segments, missing: []));
+        var (service, _) = await NewServiceAsync(headClient, par2Outcome: false);
+        service.BeforeHealthyFinalizationOverride = async id =>
         {
-            var concurrentItem = await concurrentContext.Items.SingleAsync(x => x.Id == item.Id);
+            await using var concurrentContext = new DavDatabaseContext(_options);
+            var concurrentItem = await concurrentContext.Items.SingleAsync(x => x.Id == id);
             concurrentItem.NextHealthCheck = DateTimeOffset.UnixEpoch;
             await concurrentContext.SaveChangesAsync();
-        }
+        };
 
-        // The routine sweep's own tracked copy is unaware of that concurrent commit, but the
-        // guard bypasses the identity map and must observe it fresh from the database.
-        Assert.False(item.NextHealthCheck == DateTimeOffset.UnixEpoch);
-        Assert.True(await HealthCheckService.IsDurablyUrgentAsync(_dbClient, item.Id, CancellationToken.None));
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        await using var verificationContext = new DavDatabaseContext(_options);
+        var durableItem = await verificationContext.Items.SingleAsync(x => x.Id == item.Id);
+        Assert.Equal(DateTimeOffset.UnixEpoch, durableItem.NextHealthCheck);
+        Assert.Empty(await verificationContext.HealthCheckResults
+            .Where(x => x.DavItemId == item.Id)
+            .ToListAsync());
     }
 
     [Fact]

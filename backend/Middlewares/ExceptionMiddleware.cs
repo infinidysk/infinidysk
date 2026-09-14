@@ -1,6 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Text;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using NWebDav.Server.Helpers;
 using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Api.SabControllers;
@@ -17,7 +18,11 @@ using Serilog.Events;
 
 namespace NzbWebDAV.Middlewares;
 
-public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManager, StreamingFailureTracker failureTracker)
+public class ExceptionMiddleware(
+    RequestDelegate next,
+    ConfigManager configManager,
+    StreamingFailureTracker failureTracker,
+    IDbContextFactory<DavDatabaseContext>? dbContextFactory = null)
 {
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentMissingArticles = new();
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentConnectionLimitErrors = new();
@@ -31,6 +36,8 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
     private static readonly TimeSpan RepairDedupeWindow = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan CleanupThreshold = TimeSpan.FromMinutes(5);
     private static int _callCount;
+
+    internal Func<Guid, Task>? RepairScheduleCompletionHook { get; set; }
 
     public async Task InvokeAsync(HttpContext context)
     {
@@ -683,7 +690,12 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
         {
             try
             {
-                await using var dbContext = new DavDatabaseContext();
+                await using var mutationGate = await failureTracker
+                    .AcquireMutationGateAsync(davItemId, CancellationToken.None)
+                    .ConfigureAwait(false);
+                await using var dbContext = dbContextFactory is null
+                    ? new DavDatabaseContext()
+                    : await dbContextFactory.CreateDbContextAsync().ConfigureAwait(false);
                 var item = await dbContext.Items.FindAsync(davItemId).ConfigureAwait(false);
                 if (item == null)
                 {
@@ -697,7 +709,10 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
                 var urgent = DateTimeOffset.UnixEpoch;
                 if (item.NextHealthCheck == urgent)
                 {
-                    RecentRepairTriggers[davItemId] = reservation with { Committed = true };
+                    RecentRepairTriggers.TryUpdate(
+                        davItemId,
+                        reservation with { Committed = true },
+                        reservation);
                     return;
                 }
 
@@ -721,7 +736,30 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
                     Log.Warning(ex, "Failed to schedule dynamic repair for DavItem {DavItemId}", davItemId);
                 }
             }
+            finally
+            {
+                if (RepairScheduleCompletionHook is { } completionHook)
+                {
+                    try
+                    {
+                        await completionHook(davItemId).ConfigureAwait(false);
+                    }
+                    catch (Exception e) when (e is not OutOfMemoryException)
+                    {
+                        Log.Debug(e, "Dynamic repair scheduling completion hook failed for DavItem {DavItemId}", davItemId);
+                    }
+                }
+            }
         });
+    }
+
+    internal static void InvalidateRepairSchedulingDedup(Guid davItemId)
+    {
+        if (!RecentRepairTriggers.TryGetValue(davItemId, out var reservation) || !reservation.Committed)
+            return;
+
+        RecentRepairTriggers.TryRemove(
+            new KeyValuePair<Guid, RepairScheduleReservation>(davItemId, reservation));
     }
 
     internal static bool ShouldScheduleUrgentRepair(int threshold, int failureCount)
