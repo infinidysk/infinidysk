@@ -97,7 +97,8 @@ describe("entry.server handleError", () => {
     expect(loggerWarnSpy).toHaveBeenCalledTimes(1);
     const warning = loggerWarnSpy.mock.calls[0]?.[0];
     expect(warning).toContain("Action request origin rejected");
-    expect(warning).toContain("TRUST_PROXY=1");
+    expect(warning).toContain("set the public Base URL");
+    expect(warning).toContain("Trust reverse-proxy headers");
     expect(consoleErrorSpy).not.toHaveBeenCalled();
 
     // Repeated call within throttle window should be suppressed

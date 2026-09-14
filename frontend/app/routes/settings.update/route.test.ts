@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { action } from "./route";
 
-const { updateConfigMock } = vi.hoisted(() => ({
+const { invalidateProxySettingsCacheMock, updateConfigMock } = vi.hoisted(() => ({
+  invalidateProxySettingsCacheMock: vi.fn(),
   updateConfigMock: vi.fn(),
 }));
 
@@ -9,6 +10,10 @@ vi.mock("~/clients/backend-client.server", () => ({
   backendClient: {
     updateConfig: updateConfigMock,
   },
+}));
+
+vi.mock("../../../server/configured-action-origin", () => ({
+  invalidateProxySettingsCache: invalidateProxySettingsCacheMock,
 }));
 
 function configRequest(config: string): Request {
@@ -23,6 +28,7 @@ function configRequest(config: string): Request {
 describe("settings.update route action", () => {
   beforeEach(() => {
     updateConfigMock.mockReset();
+    invalidateProxySettingsCacheMock.mockReset();
   });
 
   it("updates every submitted setting and returns the saved values", async () => {
@@ -74,4 +80,17 @@ describe("settings.update route action", () => {
       "backend unavailable",
     );
   });
+
+  it.each(["general.base-url", "general.trust-proxy"])(
+    "invalidates runtime proxy settings after changing %s",
+    async (configKey) => {
+      updateConfigMock.mockResolvedValueOnce(true);
+
+      await action({
+        request: configRequest(JSON.stringify({ [configKey]: "true" })),
+      } as Parameters<typeof action>[0]);
+
+      expect(invalidateProxySettingsCacheMock).toHaveBeenCalledOnce();
+    },
+  );
 });

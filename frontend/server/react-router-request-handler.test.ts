@@ -1,6 +1,6 @@
 import express from "express";
 import { describe, expect, it } from "vitest";
-import { resolvePort } from "./react-router-request-handler";
+import { resolvePort, resolveRequestUrl } from "./react-router-request-handler";
 
 function fakeRequest(options: {
   trustProxy: boolean;
@@ -63,5 +63,20 @@ describe("resolvePort", () => {
     // Without trimming to the first hop, splitHostPort would return
     // "8443, edge.internal" as the port, producing an invalid SSR request URL.
     expect(resolvePort(req)).toBe("8443");
+  });
+});
+
+describe("resolveRequestUrl", () => {
+  it("uses a configured canonical origin instead of the internal container origin", () => {
+    const req = {
+      ...fakeRequest({ trustProxy: false, host: "internal-container:3000" }),
+      hostname: "internal-container",
+      originalUrl: "/login.data",
+      protocol: "http",
+    } as express.Request;
+
+    expect(resolveRequestUrl(req, "https://nzbdav.example.com").href).toBe(
+      "https://nzbdav.example.com/login.data",
+    );
   });
 });

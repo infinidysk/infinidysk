@@ -522,6 +522,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                     RequireLongInRange(item.ConfigName, value, 1, 256);
                     break;
 
+                case ConfigKeys.GeneralBaseUrl:
                 case ConfigKeys.ProwlarrUrl:
                     RequireHttpUrl(item.ConfigName, value);
                     break;
@@ -573,6 +574,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                 case ConfigKeys.QueuePaused:
                 case ConfigKeys.ProwlarrSyncEnabled:
                 case ConfigKeys.ArrHealthEnabled:
+                case ConfigKeys.GeneralTrustProxy:
                     RequireBool(item.ConfigName, value);
                     break;
 

@@ -72,7 +72,7 @@ export const handleError: HandleErrorFunction = (error, { request }) => {
       lastOriginRejectionLogAt = now;
       const origin = request.headers.get("origin");
       logger.warn(
-        `Action request origin rejected. Request URL: ${request.url}, Origin: ${origin ?? "unknown"}. If behind a reverse proxy terminating HTTPS, ensure TRUST_PROXY=1 is set.`,
+        `Action request origin rejected. Request URL: ${request.url}, Origin: ${origin ?? "unknown"}. If behind a reverse proxy terminating HTTPS, set the public Base URL or enable Trust reverse-proxy headers under Settings > General.`,
       );
     }
     return;

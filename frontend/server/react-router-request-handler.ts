@@ -21,14 +21,21 @@ type Build = ServerBuild | (() => ServerBuild | Promise<ServerBuild>);
 export function createRequestHandler({
   build,
   mode = process.env["NODE_ENV"],
+  resolveCanonicalOrigin,
 }: {
   build: Build;
   mode?: string;
+  resolveCanonicalOrigin?: (req: express.Request) => Promise<string | null | undefined>;
 }): express.RequestHandler {
   const handleRequest = createReactRouterRequestHandler(build, mode);
   return async (req, res, next) => {
     try {
-      const response = await handleRequest(createRemixRequest(req, res));
+      const canonicalOrigin = await resolveCanonicalOrigin?.(req);
+      if (canonicalOrigin === null) {
+        await sendRemixResponse(res, new Response("Bad Request", { status: 400 }));
+        return;
+      }
+      const response = await handleRequest(createRemixRequest(req, res, canonicalOrigin));
       await sendRemixResponse(res, response);
     } catch (error) {
       next(error);
@@ -38,7 +45,10 @@ export function createRequestHandler({
 
 /** Exported for direct regression coverage of the bracket-aware port fallback. */
 export function resolvePort(req: express.Request): string | undefined {
-  const forwardedHost = req.app?.enabled("trust proxy")
+  const trustProxy = req.app?.get("trust proxy fn") as
+    ((address: string, hop: number) => boolean) | undefined;
+  const trustsImmediateProxy = trustProxy?.(req.socket?.remoteAddress ?? "", 0) ?? false;
+  const forwardedHost = trustsImmediateProxy
     ? firstForwardedValue(req.get("X-Forwarded-Host"))
     : undefined;
   const forwardedPort = forwardedHost ? splitHostPort(forwardedHost)[1] : undefined;
@@ -46,6 +56,13 @@ export function resolvePort(req: express.Request): string | undefined {
 
   const rawHost = req.get("host");
   return rawHost ? splitHostPort(rawHost)[1] : undefined;
+}
+
+/** Exported to verify canonical-origin handling independently of React Router internals. */
+export function resolveRequestUrl(req: express.Request, canonicalOrigin?: string): URL {
+  const port = resolvePort(req);
+  const resolvedHost = `${req.hostname.split(/[\\/?#@]/)[0] || "localhost"}${port ? `:${port}` : ""}`;
+  return new URL(req.originalUrl, canonicalOrigin ?? `${req.protocol}://${resolvedHost}`);
 }
 
 function createRemixHeaders(requestHeaders: express.Request["headers"]): Headers {
@@ -61,10 +78,12 @@ function createRemixHeaders(requestHeaders: express.Request["headers"]): Headers
   return headers;
 }
 
-function createRemixRequest(req: express.Request, res: express.Response): Request {
-  const port = resolvePort(req);
-  const resolvedHost = `${req.hostname.split(/[\\/?#@]/)[0] || "localhost"}${port ? `:${port}` : ""}`;
-  const url = new URL(`${req.protocol}://${resolvedHost}${req.originalUrl}`);
+function createRemixRequest(
+  req: express.Request,
+  res: express.Response,
+  canonicalOrigin?: string,
+): Request {
+  const url = resolveRequestUrl(req, canonicalOrigin);
 
   let controller: AbortController | null = new AbortController();
   const init: RequestInit = {

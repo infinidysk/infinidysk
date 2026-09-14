@@ -479,12 +479,13 @@ class BackendClient {
     }
   }
 
-  public async getConfig(keys: string[]): Promise<ConfigItem[]> {
+  public async getConfig(keys: string[], signal?: AbortSignal): Promise<ConfigItem[]> {
     const data = await call<{ configItems?: ConfigItem[] }>(
       adminApi.getConfig,
       "Failed to get config items",
       {
         method: "POST",
+        ...(signal ? { signal } : {}),
         body: form(...keys.map((key) => ["config-keys", key] as [string, string])),
       },
     );

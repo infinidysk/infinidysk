@@ -3,6 +3,7 @@ import { useBlocker, useFetcher, useNavigate, useOutletContext } from "react-rou
 import { z } from "zod";
 import type { Route } from "./+types/route";
 import { BackendApiError, backendClient } from "~/clients/backend-client.server";
+import { invalidateProxySettingsCache } from "../../../server/configured-action-origin";
 import { IS_FRONTEND_AUTH_DISABLED, getSessionUser } from "~/auth/authentication.server";
 import type { AppOutletContext } from "~/auth/authorization";
 import {
@@ -97,6 +98,9 @@ export async function action({ request }: Route.ActionArgs): Promise<SetupAction
     if (!parsed.success) return { ok: false, error: "Review the setup fields and try again." };
 
     const result = await backendClient.completeSetupWizard(parsed.data);
+    if (result.changedConfigKeys.includes("general.base-url")) {
+      invalidateProxySettingsCache();
+    }
     return { ok: true, intent: "complete", ...result };
   } catch (error) {
     if (error instanceof BackendApiError) {

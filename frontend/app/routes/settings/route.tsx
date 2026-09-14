@@ -7,6 +7,7 @@ import {
   SettingsCard,
   ManagedSetting,
   Input,
+  Toggle,
   ManagedEnvProvider,
   omitManagedConfigKeys,
   pinManagedConfigKeys,
@@ -66,9 +67,11 @@ import type { AppOutletContext } from "~/auth/authorization";
 import { isSettingsTabDisabled } from "~/utils/service-provider";
 import { withUrlBase } from "~/utils/url-base";
 import { parseConfigBoolean } from "~/utils/config-bool";
+import { getTrustProxyEnvironmentOverride } from "../../../server/trust-proxy-env.server";
 
 const defaultConfig = {
   "general.base-url": "",
+  "general.trust-proxy": "false",
   "api.key": "",
   "api.categories": "",
   "api.manual-category": "uncategorized",
@@ -254,7 +257,7 @@ function GeneralSettings({
       <SettingsCard
         icon="public"
         title="Public access"
-        description="External URL used for generated links, callbacks, and reverse-proxy-aware redirects."
+        description="External URL used for generated links, callbacks, and secure reverse-proxy requests."
       >
         <ManagedSetting configKey="general.base-url">
           <div className="space-y-2">
@@ -277,8 +280,35 @@ function GeneralSettings({
               className="text-[11px] leading-relaxed text-base-content/45"
               id="general-base-url-help"
             >
-              Public URL the app should present to browsers and downstream clients. Use the HTTPS
-              reverse-proxy address, not the internal backend URL.
+              Public URL the app should trust and present to browsers and downstream clients. Use
+              the HTTPS reverse-proxy address, not the internal backend URL.
+            </p>
+          </div>
+        </ManagedSetting>
+      </SettingsCard>
+
+      <SettingsCard
+        icon="lan"
+        title="Reverse proxy"
+        description="Control whether InfiniDysk accepts proxy-supplied origin and client address headers."
+      >
+        <ManagedSetting configKey="general.trust-proxy">
+          <div className="space-y-2">
+            <Toggle
+              id="general-trust-proxy-toggle"
+              className="cursor-pointer gap-2 p-0"
+              checked={config["general.trust-proxy"] === "true"}
+              onChange={(event) =>
+                setNewConfig({
+                  ...config,
+                  "general.trust-proxy": String(event.target.checked),
+                })
+              }
+              label={<span className="text-sm text-base-content">Trust reverse-proxy headers</span>}
+            />
+            <p className="text-[11px] leading-relaxed text-base-content/45">
+              Enable only when every connection reaches InfiniDysk through your trusted proxy. This
+              accepts forwarded scheme, host, and client IP values and applies immediately.
             </p>
           </div>
         </ManagedSetting>
@@ -303,6 +333,11 @@ export async function loader({ request }: Route.LoaderArgs) {
     if (item.environmentVariableName) {
       managedEnv[item.configName] = item.environmentVariableName;
     }
+  }
+  const trustProxyEnvironment = getTrustProxyEnvironmentOverride();
+  if (trustProxyEnvironment !== undefined) {
+    config["general.trust-proxy"] = String(trustProxyEnvironment);
+    managedEnv["general.trust-proxy"] = "TRUST_PROXY";
   }
 
   return {

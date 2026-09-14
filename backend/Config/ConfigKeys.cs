@@ -133,6 +133,7 @@ public static class ConfigKeys
 
     // general / db / maintenance
     public const string GeneralBaseUrl = "general.base-url";
+    public const string GeneralTrustProxy = "general.trust-proxy";
     public const string DbIsStartupVacuumEnabled = "db.is-startup-vacuum-enabled";
     public const string MaintenanceRemoveOrphanedScheduleEnabled = "maintenance.remove-orphaned-schedule-enabled";
     public const string MaintenanceRemoveOrphanedScheduleTime = "maintenance.remove-orphaned-schedule-time";

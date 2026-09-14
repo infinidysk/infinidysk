@@ -5,12 +5,14 @@ const {
   getConfigMock,
   getSessionUserMock,
   getSetupWizardStateMock,
+  invalidateProxySettingsCacheMock,
   skipSetupWizardMock,
 } = vi.hoisted(() => ({
   completeSetupWizardMock: vi.fn(),
   getConfigMock: vi.fn(),
   getSessionUserMock: vi.fn(),
   getSetupWizardStateMock: vi.fn(),
+  invalidateProxySettingsCacheMock: vi.fn(),
   skipSetupWizardMock: vi.fn(),
 }));
 
@@ -32,6 +34,10 @@ vi.mock("~/auth/authentication.server", () => ({
   getSessionUser: getSessionUserMock,
 }));
 
+vi.mock("../../../server/configured-action-origin", () => ({
+  invalidateProxySettingsCache: invalidateProxySettingsCacheMock,
+}));
+
 import { action, loader } from "./route";
 
 const state = {
@@ -51,6 +57,7 @@ beforeEach(() => {
   getConfigMock.mockReset();
   getSessionUserMock.mockReset();
   getSetupWizardStateMock.mockReset();
+  invalidateProxySettingsCacheMock.mockReset();
   skipSetupWizardMock.mockReset();
   getSessionUserMock.mockResolvedValue({ username: "admin", role: "admin" });
 });
@@ -101,6 +108,25 @@ describe("setup route action", () => {
       ingestionMethods: ["manual"],
       config: { "rclone.mount-dir": "/mnt/nzbdav" },
     });
+  });
+
+  it("invalidates proxy settings when setup changes Base URL", async () => {
+    completeSetupWizardMock.mockResolvedValue({
+      status: true,
+      restartRequired: false,
+      changedConfigKeys: ["general.base-url"],
+    });
+    const form = new FormData();
+    form.set("intent", "complete");
+    form.set("strategy", "strm");
+    form.set("ingestionMethods", '["manual"]');
+    form.set("config", '{"general.base-url":"https://nzbdav.example.com"}');
+
+    await action({
+      request: new Request("http://localhost/setup", { method: "POST", body: form }),
+    } as Parameters<typeof action>[0]);
+
+    expect(invalidateProxySettingsCacheMock).toHaveBeenCalledOnce();
   });
 
   it("records an explicit skip", async () => {

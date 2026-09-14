@@ -127,14 +127,15 @@ Long one-time maintenance does not mark the Compose healthcheck unhealthy — it
     - Bind `127.0.0.1:3000:3000` when the proxy is on the Docker host.
     - Allow HTTP Upgrade on **same-origin** `/ws` (Overview/Queue live updates).
     - Set `SECURE_COOKIES=true` when the UI is HTTPS-only.
-    - Set **Base URL** in Settings (or `TRUST_PROXY=1` so forwarded headers rewrite correctly) for STRM/adapter absolute URLs.
+    - Set **Base URL** in Settings to the public HTTPS address. It supplies STRM/adapter absolute URLs and lets same-origin UI actions such as login work without `TRUST_PROXY`.
+    - Alternatively, enable **Trust reverse-proxy headers** [since 1.4.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.0){ .nzbdav-since } under **Settings → General** and have the proxy send correct `X-Forwarded-Host` and `X-Forwarded-Proto` headers. This is preferable when the public origin can vary. `TRUST_PROXY=1` enables and locks the same behavior from the container environment.
     - For `addurl` to Docker-internal indexers, configure [Trusted local hosts](../configuration/sabnzbd.md) or `TRUSTED_INTERNAL_HOSTS` [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since }.
 
 ## Optional environment
 
 | Variable | Purpose |
 |----------|---------|
-| `TRUST_PROXY=1` | Honor proxy `X-Forwarded-*` when rewriting scheme/host |
+| `TRUST_PROXY=1` | Enable and lock proxy `X-Forwarded-*` trust instead of using the General settings toggle |
 | `TRUSTED_PROXY_CIDRS` | Widen backend proxy trust (split-container) |
 | `TRUSTED_INTERNAL_HOSTS` [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | Allowlist for private `addurl` targets |
 | `SESSION_KEY` | Stable session secret (else persisted under `/config`) |

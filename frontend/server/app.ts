@@ -22,6 +22,11 @@ import {
   isExpectedBackendConnectionError,
   isWithinBackendStartupGrace,
 } from "./startup-grace";
+import {
+  isTrustProxyEnabled,
+  refreshProxySettings,
+  resolveConfiguredActionOrigin,
+} from "./configured-action-origin";
 import { applyCanonicalForwardedHeaders, normalizeForwardedHost } from "./forwarded-headers";
 import { backendProxyTimeoutOptions } from "./backend-proxy-options";
 import { handleBackendProxyResponse } from "./backend-proxy-response";
@@ -46,21 +51,23 @@ export function initializeWebsocketServer(websocketServerInstance: WebSocketServ
   });
 }
 
-const trustProxy =
-  process.env["TRUST_PROXY"] === "1" ||
-  process.env["TRUST_PROXY"]?.toLowerCase() === "true" ||
-  process.env["TRUST_PROXY"]?.toLowerCase() === "yes";
-if (trustProxy) {
-  // Opt-in: honor X-Forwarded-* from the reverse proxy in front of this container.
-  // Required for correct public scheme/host when rewriting headers to the backend.
-  app.set("trust proxy", 1);
-  // Must run before React Router's request handler builds the SSR Request — see
-  // normalizeForwardedHost for why this prevents spurious action CSRF rejections.
-  app.use((req, _res, next) => {
-    normalizeForwardedHost(req, trustProxy);
-    next();
-  });
-}
+app.set("trust proxy", (_address: string, hop: number) => isTrustProxyEnabled() && hop < 1);
+
+// Refresh persisted proxy trust before Express consumers derive public origin or
+// client IP. The environment override remains authoritative when present.
+app.use(async (req, _res, next) => {
+  const hasForwardedHeaders = [
+    "x-forwarded-host",
+    "x-forwarded-for",
+    "x-forwarded-proto",
+    "x-forwarded-port",
+  ].some((header) => req.headers[header] !== undefined);
+  if (!hasForwardedHeaders) return next();
+  await refreshProxySettings();
+  const trustProxy = isTrustProxyEnabled();
+  normalizeForwardedHost(req, trustProxy);
+  next();
+});
 
 let loggedStartupWait = false;
 let lastProxyFailureLogAt = 0;
@@ -94,7 +101,7 @@ const forwardToBackend = createProxyMiddleware({
   on: {
     proxyReq: (proxyReq, req) => {
       applyCanonicalForwardedHeaders(proxyReq, req as express.Request, {
-        trustProxy,
+        trustProxy: isTrustProxyEnabled(),
         pathBase: URL_BASE,
       });
     },
@@ -122,7 +129,7 @@ const credentialRateLimiter = rateLimit({
   keyGenerator: (req) => {
     // When TRUST_PROXY is set, req.ip reflects the client behind the reverse proxy.
     // Default stays socket-IP keyed (spoof-safe without a trusted proxy story).
-    if (trustProxy && req.ip) return ipKeyGenerator(req.ip);
+    if (isTrustProxyEnabled() && req.ip) return ipKeyGenerator(req.ip);
     const remoteAddress = req.socket.remoteAddress;
     return remoteAddress ? ipKeyGenerator(remoteAddress) : "unknown";
   },
@@ -202,5 +209,6 @@ app.use(async (req, res, next) => {
 app.use(
   createRequestHandler({
     build: () => import("virtual:react-router/server-build") as unknown as Promise<ServerBuild>,
+    resolveCanonicalOrigin: resolveConfiguredActionOrigin,
   }),
 );

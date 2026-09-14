@@ -1,6 +1,7 @@
 import type { Route } from "./+types/route";
 import { z } from "zod";
 import { backendClient, type ConfigItem } from "~/clients/backend-client.server";
+import { invalidateProxySettingsCache } from "../../../server/configured-action-origin";
 
 const configFormSchema = z.object({
   config: z.string().min(1),
@@ -35,5 +36,8 @@ export async function action({ request }: Route.ActionArgs) {
   );
 
   await backendClient.updateConfig(configItems);
+  if ("general.base-url" in config.data || "general.trust-proxy" in config.data) {
+    invalidateProxySettingsCache();
+  }
   return { config: config.data };
 }

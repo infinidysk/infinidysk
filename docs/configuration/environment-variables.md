@@ -28,7 +28,7 @@ Advanced reference for **process / container** wiring and **legacy Settings fall
 | `PORT` | `3000` | HTTP listen port |
 | `BACKEND_URL` | required in split deploys | Backend base URL |
 | `FRONTEND_BACKEND_API_KEY` | required | Injected as `x-api-key` for authenticated proxy |
-| `TRUST_PROXY` | off | `1`/`true`/`yes` — honor proxy forwarded headers |
+| `TRUST_PROXY` | Settings value | `1`/`true`/`yes` enables and `0`/`false`/`no` disables proxy-header trust, overriding **Settings → General → Trust reverse-proxy headers** |
 | `SECURE_COOKIES` | unset | `true` for HTTPS-only UI (recommended behind TLS) |
 | `SESSION_KEY` | file under `CONFIG_PATH` | Stable cookie signing secret |
 | `SESSION_MAX_AGE` | ~1 year (seconds) | Session lifetime |
@@ -127,7 +127,7 @@ These apply only when the matching Settings value is empty **and** no
 [`NZBDAV_CONFIG__...`](headless.md) overlay supplies that key.
 
 | Variable | Related setting | Default if both empty |
-|----------|-----------------|------------------------|
+|----------|-----------------|-----------------------|
 | `FRONTEND_BACKEND_API_KEY` | API Key | required |
 | `CATEGORIES` | Categories | `audio,software,tv,movies` |
 | `NZB_GRAB_USER_AGENT` | User Agent / retrieve UA | `SABnzbd/5.1.0` |
