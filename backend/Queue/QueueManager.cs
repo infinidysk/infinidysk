@@ -626,6 +626,7 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
                 {
                     _retryAttempts.TryRemove(id, out _);
                     _stallAttempts.TryRemove(id, out _);
+                    _claimVersions.TryRemove(id, out _);
                     ClearFallbackDeferral(id);
                 }
 
@@ -718,7 +719,7 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
 
         await LockAsync(async () =>
         {
-            await dbClient.Ctx.QueueItems
+            var updatedCount = await dbClient.Ctx.QueueItems
                 .Where(item => queueItemIds.Contains(item.Id))
                 .ExecuteUpdateAsync(
                     s => s
@@ -726,10 +727,18 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
                         .SetProperty(q => q.PauseUntil, (DateTime?)null),
                     ct)
                 .ConfigureAwait(false);
-            foreach (var id in queueItemIds)
+            if (updatedCount > 0)
             {
-                _claimVersions[id] = Interlocked.Increment(ref _nextClaimVersion);
-                ClearFallbackDeferral(id);
+                var updatedIds = await dbClient.Ctx.QueueItems
+                    .Where(item => queueItemIds.Contains(item.Id))
+                    .Select(item => item.Id)
+                    .ToListAsync(ct)
+                    .ConfigureAwait(false);
+                foreach (var id in updatedIds)
+                {
+                    _claimVersions[id] = Interlocked.Increment(ref _nextClaimVersion);
+                    ClearFallbackDeferral(id);
+                }
             }
         }, ct).ConfigureAwait(false);
 
@@ -750,15 +759,23 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
                 .Where(item => queueItemIds.Contains(item.Id));
             if (priority != QueueItem.PriorityOption.Paused)
             {
-                await update.ExecuteUpdateAsync(
+                var updatedCount = await update.ExecuteUpdateAsync(
                     s => s
                         .SetProperty(q => q.Priority, priority)
                         .SetProperty(q => q.PauseUntil, (DateTime?)null),
                     ct).ConfigureAwait(false);
-                foreach (var id in queueItemIds)
+                if (updatedCount > 0)
                 {
-                    _claimVersions[id] = Interlocked.Increment(ref _nextClaimVersion);
-                    ClearFallbackDeferral(id);
+                    var updatedIds = await dbClient.Ctx.QueueItems
+                        .Where(item => queueItemIds.Contains(item.Id))
+                        .Select(item => item.Id)
+                        .ToListAsync(ct)
+                        .ConfigureAwait(false);
+                    foreach (var id in updatedIds)
+                    {
+                        _claimVersions[id] = Interlocked.Increment(ref _nextClaimVersion);
+                        ClearFallbackDeferral(id);
+                    }
                 }
             }
             else
