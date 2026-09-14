@@ -1,7 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { getChangedConfig } from "./route";
+import { getChangedConfig, isGeneralSettingsUpdated } from "./route";
 
 describe("settings change persistence", () => {
+  it.each(["general.base-url", "general.trust-proxy"])(
+    "detects a change to %s",
+    (configKey) => {
+      const config = {
+        "general.base-url": "https://nzbdav.example.com",
+        "general.trust-proxy": "false",
+      };
+
+      expect(
+        isGeneralSettingsUpdated(config, {
+          ...config,
+          [configKey]: configKey === "general.base-url" ? "https://new.example.com" : "true",
+        }),
+      ).toBe(true);
+    },
+  );
+
   it("includes repair settings in the save payload", () => {
     const config = {
       "repair.par2-enabled": "true",

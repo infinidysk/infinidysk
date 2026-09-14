@@ -317,6 +317,16 @@ function GeneralSettings({
   );
 }
 
+export function isGeneralSettingsUpdated(
+  config: Record<string, string>,
+  newConfig: Record<string, string>,
+): boolean {
+  return (
+    config["general.base-url"] !== newConfig["general.base-url"] ||
+    config["general.trust-proxy"] !== newConfig["general.trust-proxy"]
+  );
+}
+
 export async function loader({ request }: Route.LoaderArgs) {
   const activeTab = parseSettingsTab(new URL(request.url).searchParams.get("tab"));
   const [configItems, overviewStats] = await Promise.all([
@@ -421,7 +431,9 @@ function Body(props: BodyProps) {
   const isBackupUpdated = isBackupSettingsUpdated(config, newConfig);
   const isWatchtowerUpdated = isWatchtowerSettingsUpdated(config, newConfig);
   const isWardenUpdated = isWardenSettingsUpdated(config, newConfig);
+  const isGeneralUpdated = isGeneralSettingsUpdated(config, newConfig);
   const isUpdated =
+    isGeneralUpdated ||
     iseUsenetUpdated ||
     isQueueUpdated ||
     isSabnzbdUpdated ||

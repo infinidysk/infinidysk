@@ -67,7 +67,7 @@ export async function refreshProxySettings(now = Date.now()): Promise<ProxySetti
   if (pendingSettings) return pendingSettings;
 
   const generation = cacheGeneration;
-  const request = loadProxySettings(cachedSettings);
+  const request = loadProxySettings();
   const pending = request.then(({ settings, cacheTtlMs }) => {
     if (cacheGeneration === generation) {
       cachedSettings = settings;
@@ -82,7 +82,7 @@ export async function refreshProxySettings(now = Date.now()): Promise<ProxySetti
   return pendingSettings;
 }
 
-async function loadProxySettings(staleSettings: ProxySettings | undefined): Promise<{
+async function loadProxySettings(): Promise<{
   settings: ProxySettings;
   cacheTtlMs: number;
 }> {
@@ -108,7 +108,7 @@ async function loadProxySettings(staleSettings: ProxySettings | undefined): Prom
   } catch (error) {
     logger.debug("Could not read reverse-proxy settings", error);
     return {
-      settings: staleSettings ?? { available: false, baseUrl: null, trustProxy: false },
+      settings: { available: false, baseUrl: null, trustProxy: false },
       cacheTtlMs: FAILURE_CACHE_TTL_MS,
     };
   }

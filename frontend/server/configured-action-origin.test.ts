@@ -137,6 +137,32 @@ describe("resolveConfiguredActionOrigin", () => {
     expect(getConfig).toHaveBeenCalledTimes(2);
   });
 
+  it("discards stale trusted settings when a refresh fails", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    vi.spyOn(logger, "debug").mockImplementation(() => {});
+    const getConfig = vi
+      .spyOn(backendClient, "getConfig")
+      .mockResolvedValueOnce([
+        { configName: "general.base-url", configValue: "https://nzbdav.example.com" },
+        { configName: "general.trust-proxy", configValue: "true" },
+      ])
+      .mockRejectedValueOnce(new Error("backend unavailable"));
+
+    await expect(refreshProxySettings()).resolves.toMatchObject({
+      available: true,
+      trustProxy: true,
+    });
+    vi.setSystemTime(6_001);
+    await expect(refreshProxySettings()).resolves.toEqual({
+      available: false,
+      baseUrl: null,
+      trustProxy: false,
+    });
+    expect(isTrustProxyEnabled()).toBe(false);
+    expect(getConfig).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects an alias even when Host and Origin agree", async () => {
     vi.spyOn(backendClient, "getConfig").mockResolvedValue([
       { configName: "general.base-url", configValue: "https://canonical.example.com" },
