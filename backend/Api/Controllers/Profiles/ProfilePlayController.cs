@@ -649,8 +649,15 @@ public class ProfilePlayController(
                 Log.Information(
                     "Removing orphan play-driven queue item {NzoId} after {IdleSeconds}s with no re-click",
                     nzoId, (int)idle.TotalSeconds);
-                await manager.RemoveQueueItemsAsync(new List<Guid> { nzoId }, freshDbClient, CancellationToken.None)
+                var removal = await manager.RemoveQueueItemsDetailedAsync(
+                        new List<Guid> { nzoId }, freshDbClient, CancellationToken.None)
                     .ConfigureAwait(false);
+                if (removal.RemovedIds.Length > 0)
+                {
+                    _ = websocketManager.SendMessage(
+                        WebsocketTopic.QueueItemRemoved,
+                        string.Join(",", removal.RemovedIds));
+                }
                 _playLastSeen.TryRemove(nzoId, out _);
             }
             catch (Exception e) when (e is DbUpdateException or InvalidOperationException)
@@ -668,8 +675,15 @@ public class ProfilePlayController(
         {
             await using var ctx = new DavDatabaseContext();
             var freshClient = new DavDatabaseClient(ctx);
-            await queueManager.RemoveQueueItemsAsync(new List<Guid> { nzoId }, freshClient, CancellationToken.None)
+            var removal = await queueManager.RemoveQueueItemsDetailedAsync(
+                    new List<Guid> { nzoId }, freshClient, CancellationToken.None)
                 .ConfigureAwait(false);
+            if (removal.RemovedIds.Length > 0)
+            {
+                _ = websocketManager.SendMessage(
+                    WebsocketTopic.QueueItemRemoved,
+                    string.Join(",", removal.RemovedIds));
+            }
         }
         catch (Exception e) when (e is DbUpdateException or InvalidOperationException)
         {

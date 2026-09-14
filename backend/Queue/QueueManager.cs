@@ -54,7 +54,18 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
     private readonly ConcurrentDictionary<Guid, int> _mutationReservations = new();
     private readonly ConcurrentDictionary<Guid, DateTime> _fallbackDeferrals = new();
     private readonly ConcurrentDictionary<(string Category, string FileName), int> _submissionKeyReservations = new();
-    private readonly ConcurrentDictionary<(string Category, string FileName), SemaphoreSlim> _submissionCommitLocks = new();
+    private readonly SemaphoreSlim[] _submissionCommitLocks =
+    [
+        new(1, 1), new(1, 1), new(1, 1), new(1, 1),
+        new(1, 1), new(1, 1), new(1, 1), new(1, 1),
+        new(1, 1), new(1, 1), new(1, 1), new(1, 1),
+        new(1, 1), new(1, 1), new(1, 1), new(1, 1),
+    ];
+    private readonly SemaphoreSlim[] _submissionIdLocks =
+    [
+        new(1, 1), new(1, 1), new(1, 1), new(1, 1),
+        new(1, 1), new(1, 1), new(1, 1), new(1, 1),
+    ];
     private readonly Lock _submissionLifetimeLock = new();
     private TaskCompletionSource _submissionsCompleted = CompletedTaskSource();
     private int _activeSubmissions;
@@ -67,6 +78,13 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
     public void ClearFallbackDeferral(Guid queueItemId)
     {
         _fallbackDeferrals.TryRemove(queueItemId, out _);
+    }
+
+    internal async Task<IDisposable> AcquireSubmissionIdLeaseAsync(Guid id, CancellationToken ct)
+    {
+        var semaphore = _submissionIdLocks[(id.GetHashCode() & int.MaxValue) % _submissionIdLocks.Length];
+        await semaphore.WaitAsync(ct).ConfigureAwait(false);
+        return new QueueAdmissionReservation(() => semaphore.Release());
     }
 
     private static readonly TimeSpan DefaultStuckItemThreshold =
@@ -397,8 +415,6 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
         DavDatabaseClient dbClient,
         CancellationToken ct = default)
     {
-        if (queueItemIds.Count == 0) return new QueueRemovalResult([], []);
-
         List<InProgressQueueItem> toCancel = [];
         Guid[] reservedIds = [];
         await LockAsync(() =>
@@ -464,9 +480,9 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
     {
         using var submissionLifetime = EnterSubmission();
         var submissionKey = (replacement.Category, replacement.FileName);
-        var submissionCommitLock = _submissionCommitLocks.GetOrAdd(
-            submissionKey,
-            static _ => new SemaphoreSlim(1, 1));
+        var submissionCommitLock = _submissionCommitLocks[
+            (HashCode.Combine(submissionKey.Category, submissionKey.FileName) & int.MaxValue)
+            % _submissionCommitLocks.Length];
         await submissionCommitLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -481,25 +497,23 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
 
             try
             {
-                var conflict = dbClient.Ctx.QueueItems.AsNoTracking()
-                    .FirstOrDefault(q => q.Category == replacement.Category && q.FileName == replacement.FileName);
-                if (conflict is not null)
+                await LockAsync(() =>
                 {
+                    var conflict = dbClient.Ctx.QueueItems.AsNoTracking()
+                        .FirstOrDefault(q => q.Category == replacement.Category && q.FileName == replacement.FileName);
+                    if (conflict is null) return;
                     if (!replaceExisting)
                     {
                         throw new BadHttpRequestException(
                             $"A queue item named '{replacement.FileName}' already exists in category '{replacement.Category}'.");
                     }
 
-                    await LockAsync(() =>
-                    {
-                        conflictId = conflict.Id;
-                        reservedIds = ReserveMutationsUnderLock([conflict.Id]);
-                        toCancel = _inProgress.Values
-                            .Where(x => x.QueueItem.Id == conflict.Id)
-                            .ToList();
-                    }, ct).ConfigureAwait(false);
-                }
+                    conflictId = conflict.Id;
+                    reservedIds = ReserveMutationsUnderLock([conflict.Id]);
+                    toCancel = _inProgress.Values
+                        .Where(x => x.QueueItem.Id == conflict.Id)
+                        .ToList();
+                }, ct).ConfigureAwait(false);
 
                 if (conflictId is not null)
                 {
@@ -519,12 +533,6 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
                 if (conflictId is not null)
                 {
                     removedIds = await dbClient.RemoveQueueItemsAsync([conflictId.Value], ct).ConfigureAwait(false);
-                    foreach (var id in removedIds)
-                    {
-                        _retryAttempts.TryRemove(id, out _);
-                        _stallAttempts.TryRemove(id, out _);
-                        ClearFallbackDeferral(id);
-                    }
                 }
 
                 dbClient.Ctx.QueueItems.Add(replacement);
@@ -546,6 +554,13 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
                             $"A queue item named '{replacement.FileName}' already exists in category '{replacement.Category}'.", ex);
                     }
                     throw;
+                }
+
+                foreach (var id in removedIds)
+                {
+                    _retryAttempts.TryRemove(id, out _);
+                    _stallAttempts.TryRemove(id, out _);
+                    ClearFallbackDeferral(id);
                 }
 
                 return new QueueSubmissionCommitResult(replacement, removedIds.ToArray());
@@ -1326,7 +1341,11 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
             ShouldFailOnCancel = () => inProgressQueueItem.FailOnStuckCancel,
             // Terminal states (completed/failed) drop the stall counter; a plain
             // watchdog cancel leaves it so repeated stalls accumulate to the cap.
-            OnTerminal = () => _stallAttempts.TryRemove(queueItem.Id, out _),
+            OnTerminal = () =>
+            {
+                _stallAttempts.TryRemove(queueItem.Id, out _);
+                ClearFallbackDeferral(queueItem.Id);
+            },
             OnBackoffPersistenceFailed = (id, deadline) => SetFallbackDeferral(id, deadline),
         };
         var task = processor.ProcessAsync();
@@ -1652,10 +1671,11 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
 
             var activeFallbackNext = _fallbackDeferrals.Values
                 .Where(d => d > DateTime.Now)
-                .MinBy(d => d);
-            if (activeFallbackNext != default && (nextPause is null || activeFallbackNext < nextPause.Value))
+                .Select(d => (DateTime?)d)
+                .Min();
+            if (activeFallbackNext is not null && (nextPause is null || activeFallbackNext < nextPause.Value))
             {
-                nextPause = activeFallbackNext;
+                nextPause = activeFallbackNext.Value;
             }
 
             if (nextPause is null) return IdleDelay;
@@ -1703,7 +1723,9 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
         _configChangeSubscription.Dispose();
         _cancellationTokenSource?.Dispose();
         _submissionsCompleted.Task.GetAwaiter().GetResult();
-        foreach (var submissionLock in _submissionCommitLocks.Values)
+        foreach (var submissionLock in _submissionCommitLocks)
+            submissionLock.Dispose();
+        foreach (var submissionLock in _submissionIdLocks)
             submissionLock.Dispose();
         if (_inProgress.IsEmpty)
         {

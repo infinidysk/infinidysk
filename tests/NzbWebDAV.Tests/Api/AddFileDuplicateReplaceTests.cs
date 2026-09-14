@@ -335,7 +335,6 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
             _configManager,
             _websocketManager)
         {
-            FreshContextFactory = () => new DavDatabaseContext(_options),
         };
         return controller;
     }
