@@ -697,7 +697,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
                 var urgent = DateTimeOffset.UnixEpoch;
                 if (item.NextHealthCheck == urgent)
                 {
-                    RecentRepairTriggers[ davItemId ] = reservation with { Committed = true };
+                    RecentRepairTriggers[davItemId] = reservation with { Committed = true };
                     return;
                 }
 
@@ -711,7 +711,15 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
             {
                 RecentRepairTriggers.TryRemove(
                     new KeyValuePair<Guid, RepairScheduleReservation>(davItemId, reservation));
-                Log.Warning(ex, "Failed to schedule dynamic repair for DavItem {DavItemId}", davItemId);
+                if (ex.TryGetKnownErrorMessage(out var reason))
+                {
+                    Log.Warning("Dynamic repair scheduling deferred. Reason: {Reason}", reason);
+                    Log.Debug(ex, "Dynamic repair scheduling known failure stack");
+                }
+                else
+                {
+                    Log.Warning(ex, "Failed to schedule dynamic repair for DavItem {DavItemId}", davItemId);
+                }
             }
         });
     }

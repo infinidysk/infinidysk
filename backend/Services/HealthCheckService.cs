@@ -1030,6 +1030,24 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         }
     }
 
+    /// <summary>
+    /// True if another request has already flagged this item urgent (UnixEpoch) in the
+    /// database. Bypasses this context's identity map so a concurrent commit from a
+    /// different DbContext is actually observed here, not a possibly-stale tracked value.
+    /// Internal for tests: exercised directly by the routine-vs-urgent race regression.
+    /// </summary>
+    internal static async Task<bool> IsDurablyUrgentAsync(
+        DavDatabaseClient dbClient, Guid davItemId, CancellationToken ct)
+    {
+        var durable = await dbClient.Ctx.Items
+            .AsNoTracking()
+            .Where(x => x.Id == davItemId)
+            .Select(x => x.NextHealthCheck)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        return durable == DateTimeOffset.UnixEpoch;
+    }
+
     // internal for tests: the degraded-classification scenarios drive this directly.
     internal async Task PerformHealthCheck
     (
@@ -1218,6 +1236,15 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             // the next check is scheduled so the interval doubles with the item's age since release.
             // clamp to a minimum interval: a null release-date (zero-segment item) or a future-dated
             // article header would otherwise schedule the item in the past and hot-loop the service.
+            // A concurrent request may have already flagged this item urgent (e.g. a
+            // playback failure mid-sweep). A routine healthy result must not clobber that
+            // durable sentinel; defer to the existing urgent-repair path instead.
+            if (await IsDurablyUrgentAsync(dbClient, davItem.Id, ct).ConfigureAwait(false))
+            {
+                CompleteHealthProgress(davItem.Id);
+                return;
+            }
+
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
@@ -1243,7 +1270,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 HealthCheckResult.HealthResult.Healthy,
                 HealthCheckResult.RepairAction.None,
                 healthyMessage, ct).ConfigureAwait(false);
-              _failureTracker.TryClearFailure(davItem.Id, observedFailureRevision);
+            _failureTracker.TryClearFailure(davItem.Id, observedFailureRevision);
         }
         catch (OperationCanceledException) when (
             !ct.IsCancellationRequested && statCts?.IsCancellationRequested == true)
@@ -1316,6 +1343,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             }
             if (par2Outcome is Par2RepairOutcome.Repaired or Par2RepairOutcome.VerifiedClean)
             {
+                if (await IsDurablyUrgentAsync(dbClient, davItem.Id, ct).ConfigureAwait(false))
+                {
+                    CompleteHealthProgress(davItem.Id);
+                    return;
+                }
+
                 var utcNow = DateTimeOffset.UtcNow;
                 davItem.LastHealthCheck = utcNow;
                 davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
@@ -1471,6 +1504,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         }
         if (par2Outcome is Par2RepairOutcome.Repaired or Par2RepairOutcome.VerifiedClean)
         {
+            if (await IsDurablyUrgentAsync(dbClient, davItem.Id, ct).ConfigureAwait(false))
+            {
+                CompleteHealthProgress(davItem.Id);
+                return;
+            }
+
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
@@ -3013,7 +3052,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
-            _failureTracker.ClearFailure(davItem.Id);
+            _failureTracker.TryClearFailure(davItem.Id, failureSnapshot.Revision);
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Healthy,

@@ -130,6 +130,31 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RoutineHealthCheck_DoesNotOverwriteConcurrentUrgentRepair()
+    {
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, [10_000, 10_000, 10_000]);
+
+        // Not urgent yet: IsDurablyUrgentAsync must not misclassify an ordinary item.
+        Assert.False(await HealthCheckService.IsDurablyUrgentAsync(_dbClient, item.Id, CancellationToken.None));
+
+        // Simulate a concurrent request (e.g. a playback failure) that durably committed
+        // the urgent sentinel via a different DbContext while this routine sweep is in flight.
+        await using (var concurrentContext = new DavDatabaseContext(_options))
+        {
+            var concurrentItem = await concurrentContext.Items.SingleAsync(x => x.Id == item.Id);
+            concurrentItem.NextHealthCheck = DateTimeOffset.UnixEpoch;
+            await concurrentContext.SaveChangesAsync();
+        }
+
+        // The routine sweep's own tracked copy is unaware of that concurrent commit, but the
+        // guard bypasses the identity map and must observe it fresh from the database.
+        Assert.False(item.NextHealthCheck == DateTimeOffset.UnixEpoch);
+        Assert.True(await HealthCheckService.IsDurablyUrgentAsync(_dbClient, item.Id, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task MissingReleaseDate_PrimaryHeadMissing_UsesLiveFallback()
     {
         var segments = NewSegmentIds(3);
