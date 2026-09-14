@@ -216,11 +216,30 @@ public class RemoveUnlinkedFilesTask : BaseTask
 
     private async Task RemoveUnlinkedFiles()
     {
-        if (IsLibraryDirInsideRcloneMount(
+        bool libraryInsideMount;
+        string libraryDir, mountDir;
+        try
+        {
+            libraryInsideMount = IsLibraryDirInsideRcloneMount(
                 _configManager.GetLibraryDir(),
-                _configManager.GetRcloneMountDir(),
-                out var libraryDir,
-                out var mountDir))
+                _configManager.GetAllRcloneMountDirs(),
+                out libraryDir,
+                out mountDir);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Without the real paths there is no telling whether the library is a
+            // mount, and a delete pass over a mount is what this check prevents.
+            _allRemovedPaths.Clear();
+            var detail =
+                "Could not resolve the symbolic links in Library Directory or an rclone mount path: " +
+                e.Message;
+            Log.Warning("Remove Orphaned Files aborted. Reason: {Reason}", detail);
+            Complete($"Aborted: {detail} Cancelling rather than risk scanning a mount as the library.");
+            return;
+        }
+
+        if (libraryInsideMount)
         {
             _allRemovedPaths.Clear();
             var detail =
@@ -820,7 +839,11 @@ public class RemoveUnlinkedFilesTask : BaseTask
     private void AppendPreviewFingerprintHeader(IncrementalHash hash)
     {
         AppendPreviewFingerprintValue(hash, _configManager.GetLibraryDir());
-        AppendPreviewFingerprintValue(hash, _configManager.GetRcloneMountDir());
+
+        // Every mount the abort check considers, so an approved preview stops
+        // being valid when the mount layout changes underneath it.
+        foreach (var mountDir in _configManager.GetAllRcloneMountDirs())
+            AppendPreviewFingerprintValue(hash, mountDir);
     }
 
     private static void AppendPreviewFingerprintItem(IncrementalHash hash, UnlinkedFileInfo item)
@@ -1274,6 +1297,33 @@ public class RemoveUnlinkedFilesTask : BaseTask
     /// history rows, so they cannot protect files after history is cleared. Scanning them as
     /// the organized library produces a circular, misleading orphan report.
     /// </summary>
+    /// <inheritdoc cref="IsLibraryDirInsideRcloneMount(string?, string?, out string, out string)" />
+    /// <param name="mountDirs">
+    /// Every path a mount of the WebDAV tree may occupy. Built-in mode can mount
+    /// somewhere other than the symlink root, and a library directory inside any
+    /// of them is the same mistake.
+    /// </param>
+    internal static bool IsLibraryDirInsideRcloneMount(
+        string? libraryDir,
+        IEnumerable<string?> mountDirs,
+        out string normalizedLibraryDir,
+        out string normalizedMountDir)
+    {
+        normalizedLibraryDir = NormalizeConfiguredPath(libraryDir);
+        normalizedMountDir = string.Empty;
+
+        foreach (var mountDir in mountDirs)
+        {
+            if (IsLibraryDirInsideRcloneMount(libraryDir, mountDir, out _, out var matched))
+            {
+                normalizedMountDir = matched;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     internal static bool IsLibraryDirInsideRcloneMount(
         string? libraryDir,
         string? mountDir,
@@ -1305,16 +1355,83 @@ public class RemoveUnlinkedFilesTask : BaseTask
         if (trimmed.Length == 0)
             return string.Empty;
 
+        string fullPath;
         try
         {
-            return Path.GetFullPath(trimmed)
+            fullPath = Path.GetFullPath(trimmed)
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         }
         catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException)
         {
             return trimmed;
         }
+
+        // Compared as the directories they really are. A library reached through
+        // a link into a mount, or a mount configured through a link, would
+        // otherwise pass as two unrelated paths.
+        return ResolveSymlinks(fullPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
+
+    /// <summary>The same bound Linux puts on the links followed in one lookup.</summary>
+    private const int MaxSymlinksFollowed = 40;
+
+    /// <summary>
+    /// <paramref name="fullPath"/> with every symlink along it followed, the final
+    /// component included. A component that does not exist ends the walk and the
+    /// rest is kept as written: nothing below it can be a link, and a configured
+    /// directory may simply not have been created yet.
+    /// </summary>
+    /// <exception cref="IOException">A link could not be read, or the links loop.</exception>
+    /// <exception cref="UnauthorizedAccessException">A path component could not be read.</exception>
+    internal static string ResolveSymlinks(string fullPath)
+    {
+        if (fullPath.Length == 0) return fullPath;
+
+        var resolved = Path.GetPathRoot(fullPath) ?? string.Empty;
+        var pending = SplitPathComponents(fullPath[resolved.Length..]);
+        var linksFollowed = 0;
+
+        for (var index = 0; index < pending.Count; index++)
+        {
+            var candidate = Path.Join(resolved, pending[index]);
+
+            FileSystemInfo? target;
+            try
+            {
+                target = File.ResolveLinkTarget(candidate, returnFinalTarget: false);
+            }
+            catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException)
+            {
+                return pending.Skip(index).Aggregate(resolved, (joined, part) => Path.Join(joined, part));
+            }
+
+            if (target is null)
+            {
+                resolved = candidate;
+                continue;
+            }
+
+            if (++linksFollowed > MaxSymlinksFollowed)
+                throw new IOException($"Too many levels of symbolic links in '{fullPath}'.");
+
+            // The target can pass through links of its own, so the walk starts
+            // again from its root with whatever was left of the original path.
+            var targetRoot = Path.GetPathRoot(target.FullName) ?? string.Empty;
+            pending = [.. SplitPathComponents(target.FullName[targetRoot.Length..]), .. pending.Skip(index + 1)];
+            resolved = targetRoot;
+            index = -1;
+        }
+
+        return resolved;
+    }
+
+    private static List<string> SplitPathComponents(string path) =>
+    [
+        .. path.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries),
+    ];
 
     internal static void ClearAuditPathsForTests()
     {
