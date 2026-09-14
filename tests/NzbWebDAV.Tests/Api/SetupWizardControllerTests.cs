@@ -35,6 +35,33 @@ public sealed class SetupWizardControllerTests
     }
 
     [Fact]
+    public async Task Complete_RejectsALibraryDirectoryInsideABuiltinMount()
+    {
+        // The wizard writes a built-in mount list now, so the guard has to look
+        // at those mount points too and not only the symlink root. A library
+        // directory inside one produces a circular orphan report.
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var client = factory.CreateAuthenticatedClient();
+        using var form = new MultipartFormDataContent
+        {
+            { new StringContent("symlinks"), "strategy" },
+            { new StringContent("[\"manual\"]"), "ingestionMethods" },
+            {
+                new StringContent(
+                    "{\"rclone.mount-dir\":\"/mnt/nzbdav\","
+                    + "\"rclone.builtin.enabled\":\"true\","
+                    + "\"rclone.builtin.mounts\":\"[{\\\"Id\\\":\\\"library\\\",\\\"MountPoint\\\":\\\"/data/nzbdav\\\"}]\","
+                    + "\"media.library-dir\":\"/data/nzbdav/library\"}"),
+                "config"
+            },
+        };
+
+        using var response = await client.PostAsync("/api/setup-wizard/complete", form);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Complete_SymlinksDisablesSegmentCacheAndResolvesSetup()
     {
         await using var factory = new NzbDavWebApplicationFactory();

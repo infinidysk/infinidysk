@@ -35,9 +35,13 @@ describe("setup model", () => {
     expect(changedSetupConfig(baseline, draft, managed)).toEqual({});
   });
 
-  it("defaults symlink setup to RC notifications on regardless of stored config", () => {
+  it("defaults a sidecar symlink setup to RC notifications on regardless of stored config", () => {
     const draft = createInitialDraft(
-      { ...SETUP_DEFAULT_CONFIG, "rclone.rc-enabled": "false" },
+      {
+        ...SETUP_DEFAULT_CONFIG,
+        "rclone.builtin.enabled": "false",
+        "rclone.rc-enabled": "false",
+      },
       {},
       [],
     );
@@ -46,9 +50,14 @@ describe("setup model", () => {
     expect(draft.config["usenet.segment-cache.enabled"]).toBe("false");
   });
 
-  it("re-enables RC notifications when switching to symlinks but leaves STRM untouched", () => {
+  it("re-enables RC notifications when switching to sidecar symlinks but leaves STRM untouched", () => {
     const strm = applyStrategy(
-      { ...SETUP_DEFAULT_CONFIG, "api.import-strategy": "strm", "rclone.rc-enabled": "false" },
+      {
+        ...SETUP_DEFAULT_CONFIG,
+        "api.import-strategy": "strm",
+        "rclone.builtin.enabled": "false",
+        "rclone.rc-enabled": "false",
+      },
       "strm",
       {},
     );
@@ -65,7 +74,11 @@ describe("setup model", () => {
   });
 
   it("includes selected branch defaults in the completion payload", () => {
-    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"]);
+    const draft = createInitialDraft(
+      { ...SETUP_DEFAULT_CONFIG, "rclone.builtin.enabled": "false" },
+      {},
+      ["manual"],
+    );
 
     expect(completionSetupConfig(SETUP_DEFAULT_CONFIG, draft, {})).toMatchObject({
       "rclone.mount-dir": "/mnt/nzbdav",
@@ -75,12 +88,161 @@ describe("setup model", () => {
     });
   });
 
-  it("requires read-ahead confirmation and a valid RC host for symlinks", () => {
-    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"]);
+  it("requires read-ahead confirmation and a valid RC host for a sidecar symlink setup", () => {
+    const draft = createInitialDraft(
+      { ...SETUP_DEFAULT_CONFIG, "rclone.builtin.enabled": "false" },
+      {},
+      ["manual"],
+    );
 
     expect(validateSetupStep(1, draft, {}, false, "symlinks")).toEqual([
       "Enter a valid http(s) rclone RC host.",
       "Confirm that the rclone sidecar has VFS read-ahead enabled.",
+    ]);
+  });
+
+  it("offers the built-in rclone first for a new symlink setup", () => {
+    // Running rclone ourselves is the path that needs no second container, so
+    // it is what a fresh install gets unless the operator says otherwise.
+    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"]);
+
+    expect(draft.config["rclone.builtin.enabled"]).toBe("true");
+  });
+
+  it("writes no built-in mount settings for a STRM library", () => {
+    // STRM playback opens URLs directly, so there is nothing to mount and the
+    // wizard has no business changing that setting in either direction.
+    const draft = createInitialDraft(
+      { ...SETUP_DEFAULT_CONFIG, "api.import-strategy": "strm" },
+      {},
+      ["manual"],
+    );
+
+    const config = completionSetupConfig(SETUP_DEFAULT_CONFIG, draft, {});
+
+    expect("rclone.builtin.enabled" in config).toBe(false);
+    expect("rclone.builtin.mounts" in config).toBe(false);
+  });
+
+  it("survives a symlinks to STRM and back round trip", () => {
+    // A detour through STRM must not silently move the operator between the
+    // built-in mount and their own rclone container, in either direction.
+    const builtin = SETUP_DEFAULT_CONFIG;
+    expect(
+      applyStrategy(applyStrategy(builtin, "strm", {}), "symlinks", {})["rclone.builtin.enabled"],
+    ).toBe("true");
+
+    const sidecar = { ...SETUP_DEFAULT_CONFIG, "rclone.builtin.enabled": "false" };
+    expect(
+      applyStrategy(applyStrategy(sidecar, "strm", {}), "symlinks", {})["rclone.builtin.enabled"],
+    ).toBe("false");
+  });
+
+  it("does not propose RC notifications when InfiniDysk runs rclone itself", () => {
+    // Those settings address a separate rclone container. Switching them on for
+    // the built-in daemon would ask for a host that does not exist.
+    const builtin = applyStrategy(
+      { ...SETUP_DEFAULT_CONFIG, "rclone.builtin.enabled": "true", "rclone.rc-enabled": "false" },
+      "symlinks",
+      {},
+    );
+
+    expect(builtin["rclone.rc-enabled"]).toBe("false");
+  });
+
+  it("derives the built-in mount from the mount directory on completion", () => {
+    const draft = createInitialDraft(
+      { ...SETUP_DEFAULT_CONFIG, "rclone.mount-dir": "/data/nzbdav" },
+      {},
+      ["manual"],
+    );
+
+    const config = completionSetupConfig(SETUP_DEFAULT_CONFIG, draft, {});
+
+    expect(config["rclone.builtin.enabled"]).toBe("true");
+    expect(JSON.parse(config["rclone.builtin.mounts"] ?? "[]")).toEqual([
+      { Id: "library", MountPoint: "/data/nzbdav", RemotePath: "/", Enabled: true },
+    ]);
+  });
+
+  it("keeps the mounts a configured install already has when setup is re-run", () => {
+    // Setup is re-runnable, and an operator who opens it again has usually built
+    // their mount list in Settings. Replacing it with the wizard's single derived
+    // mount deletes shares and tuning the wizard never asked about.
+    const existing = JSON.stringify([
+      {
+        Id: "library",
+        MountPoint: "/data/nzbdav",
+        RemotePath: "/",
+        Enabled: true,
+        ReadAheadBytes: 1024,
+      },
+      { Id: "extra", MountPoint: "/data/extra", RemotePath: "/content", Enabled: true },
+    ]);
+    const baseline = {
+      ...SETUP_DEFAULT_CONFIG,
+      "rclone.mount-dir": "/data/nzbdav",
+      "rclone.builtin.mounts": existing,
+    };
+    const draft = createInitialDraft(baseline, {}, ["manual"]);
+
+    const config = completionSetupConfig(baseline, draft, {});
+
+    expect(JSON.parse(config["rclone.builtin.mounts"] ?? "[]")).toEqual(JSON.parse(existing));
+  });
+
+  it("repoints the first mount when setup moves the mount directory", () => {
+    // The wizard still owns one promise: something enabled has to serve the
+    // directory imports resolve through. Repointing beats adding a second mount
+    // for the same library.
+    const existing = JSON.stringify([
+      {
+        Id: "library",
+        MountPoint: "/data/old",
+        RemotePath: "/",
+        Enabled: true,
+        ReadAheadBytes: 1024,
+      },
+      { Id: "extra", MountPoint: "/data/extra", RemotePath: "/content", Enabled: true },
+    ]);
+    const baseline = {
+      ...SETUP_DEFAULT_CONFIG,
+      "rclone.mount-dir": "/data/old",
+      "rclone.builtin.mounts": existing,
+    };
+    const draft = createInitialDraft(baseline, {}, ["manual"]);
+    draft.config["rclone.mount-dir"] = "/data/new";
+
+    const config = completionSetupConfig(baseline, draft, {});
+
+    expect(JSON.parse(config["rclone.builtin.mounts"] ?? "[]")).toEqual([
+      {
+        Id: "library",
+        MountPoint: "/data/new",
+        RemotePath: "/",
+        Enabled: true,
+        ReadAheadBytes: 1024,
+      },
+      { Id: "extra", MountPoint: "/data/extra", RemotePath: "/content", Enabled: true },
+    ]);
+  });
+
+  it("asks only for the mount directory when InfiniDysk runs rclone itself", () => {
+    // No sidecar means no RC host to reach and no flags for the operator to
+    // confirm; asking for either would be asking about a container that is not
+    // there.
+    const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"]);
+
+    expect(validateSetupStep(1, draft, {}, false, "symlinks")).toEqual([]);
+  });
+
+  it("still wants the mount directory for a built-in setup", () => {
+    const draft = createInitialDraft({ ...SETUP_DEFAULT_CONFIG, "rclone.mount-dir": "" }, {}, [
+      "manual",
+    ]);
+
+    expect(validateSetupStep(1, draft, {}, false, "symlinks")).toEqual([
+      "Enter the rclone mount directory.",
     ]);
   });
 
