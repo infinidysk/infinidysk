@@ -12,6 +12,7 @@ export type SettingsTab =
   | "warden"
   | "arrs"
   | "rclone"
+  | "general"
   | "repairs"
   | "maintenance"
   | "backup"
@@ -71,6 +72,7 @@ export const SETTINGS_TAB_GROUPS: SettingsTabGroup[] = [
   {
     title: "System",
     items: [
+      { id: "general", label: "General", icon: "tune" },
       { id: "repairs", label: "Health & Repairs", icon: "build" },
       { id: "maintenance", label: "Maintenance", icon: "settings_suggest" },
       { id: "backup", label: "Backup & Restore", icon: "settings_backup_restore" },

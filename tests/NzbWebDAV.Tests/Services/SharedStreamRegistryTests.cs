@@ -248,7 +248,31 @@ public class SharedStreamRegistryTests
     }
 
     [Fact]
-    public async Task Disabled_IsIneligibleAndDoesNotCreate()
+    public async Task SamePathSameSizeDifferentIdentity_DoesNotAttachToExistingEntry()
+    {
+        var (registry, tracker, sourceA) = CreateRegistry(payloadSize: 1024);
+        await using var registryDispose = registry;
+
+        var resultA = await Attach(registry, sourceA, "/movie.mkv", 0);
+        Assert.NotNull(resultA);
+        await using var streamA = resultA.Stream;
+
+        var payloadB = new byte[1024];
+        Array.Fill(payloadB, (byte)0xFF);
+        var sourceB = new MemoryStreamSource(payloadB);
+
+        var resultB = await registry.TryAttachAsync(
+            "/movie.mkv", 0, null, sourceB.FileSize, sourceB, NoFallback, CancellationToken.None);
+
+        Assert.NotNull(resultB);
+        await using var streamB = resultB!.Stream;
+        Assert.Equal(payloadB, await ReadAllAsync(streamB));
+        Assert.Equal(2, tracker.Snapshot().SharedEntriesCreated);
+        Assert.Equal(0, tracker.Snapshot().SharedAttachHits);
+    }
+
+    [Fact]
+    public async Task SharedStreamsDisabledWhenConfigured_AttachReturnsNull()
     {
         var config = Config((ConfigKeys.UsenetSharedStreamsEnabled, "false"));
         var (registry, tracker, source) = CreateRegistry(config);
@@ -316,9 +340,10 @@ public class SharedStreamRegistryTests
         byte[] data,
         Func<CancellationToken, Task>? beforeOpen = null) : IDetachedStreamSource
     {
+        private readonly string _uniqueKey = Guid.NewGuid().ToString();
         public byte[] Data => data;
         public long FileSize => data.Length;
-        public SharedContentIdentity ContentIdentity => new("memory", null, FileSize);
+        public SharedContentIdentity ContentIdentity => new(_uniqueKey, null, FileSize);
         public int OpenCount;
 
         public async Task<DetachedStreamLease> GetDetachedReadableStreamAsync(CancellationToken cancellationToken)
@@ -351,8 +376,9 @@ public class SharedStreamRegistryTests
         int segmentSize,
         InFlightArticleBudget budget) : IDetachedStreamSource
     {
+        private readonly string _uniqueKey = Guid.NewGuid().ToString();
         public long FileSize => (long)segmentCount * segmentSize;
-        public SharedContentIdentity ContentIdentity => new("nzb", null, FileSize);
+        public SharedContentIdentity ContentIdentity => new(_uniqueKey, null, FileSize);
 
         public Task<DetachedStreamLease> GetDetachedReadableStreamAsync(CancellationToken cancellationToken)
         {

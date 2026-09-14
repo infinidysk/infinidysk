@@ -113,18 +113,27 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(lease);
         ArgumentNullException.ThrowIfNull(lease.Stream);
         ArgumentNullException.ThrowIfNull(lease.Ownership);
-        if (_reservedContentIdentity is { } reservedIdentity && lease.ContentIdentity != reservedIdentity)
-            throw new InvalidOperationException("Detached stream content changed before shared binding.");
-        if (lease.ContentIdentity.FileSize != FileSize)
-            throw new InvalidOperationException("Detached stream content size changed before shared binding.");
-        lock (_lock)
+        try
         {
-            if (_state != SharedStreamEntryState.Opening)
-                throw new InvalidOperationException($"Cannot bind shared entry in state {_state}.");
-            _upstream = lease.Stream;
-            _ownership = lease.Ownership;
-            _davItem = lease.DavItem;
-            _contentIdentity = lease.ContentIdentity;
+            if (_reservedContentIdentity is { } reservedIdentity && lease.ContentIdentity != reservedIdentity)
+                throw new InvalidOperationException("Detached stream content changed before shared binding.");
+            if (lease.ContentIdentity.FileSize != FileSize)
+                throw new InvalidOperationException("Detached stream content size changed before shared binding.");
+            lock (_lock)
+            {
+                if (_state != SharedStreamEntryState.Opening)
+                    throw new InvalidOperationException($"Cannot bind shared entry in state {_state}.");
+                _upstream = lease.Stream;
+                _ownership = lease.Ownership;
+                _davItem = lease.DavItem;
+                _contentIdentity = lease.ContentIdentity;
+            }
+        }
+        catch
+        {
+            lease.Stream.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            lease.Ownership.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            throw;
         }
 
         StartPump();

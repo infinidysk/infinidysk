@@ -39,11 +39,20 @@ public class DatabaseStoreIdFile(
         return GetItem(davItem).GetReadableStreamAsync(cancellationToken);
     }
 
-    public Task<DetachedStreamLease> GetDetachedReadableStreamAsync(CancellationToken cancellationToken)
+    public async Task<DetachedStreamLease> GetDetachedReadableStreamAsync(CancellationToken cancellationToken)
     {
         var item = GetItem(davItem);
         if (item is IDetachedStreamSource source)
-            return source.GetDetachedReadableStreamAsync(cancellationToken);
+        {
+            var lease = await source.GetDetachedReadableStreamAsync(cancellationToken).ConfigureAwait(false);
+            return new DetachedStreamLease
+            {
+                Stream = lease.Stream,
+                Ownership = lease.Ownership,
+                ContentIdentity = ContentIdentity,
+                DavItem = lease.DavItem,
+            };
+        }
 
         throw new InvalidOperationException($"Id child type {davItem.SubType} cannot open a detached stream.");
     }

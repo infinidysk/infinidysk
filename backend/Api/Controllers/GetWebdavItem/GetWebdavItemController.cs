@@ -417,9 +417,10 @@ public class GetWebdavItemController(
 
                 Response.Headers["Content-Encoding"] = "identity";
                 Response.Headers["Accept-Ranges"] = "bytes";
-                Response.Headers["Content-Type"] = ContentHeaderUtil.GetContentType(item.Name);
+                var fileName = (item as DatabaseStoreIdFile)?.FriendlyName ?? item.Name;
+                Response.Headers["Content-Type"] = ContentHeaderUtil.GetContentType(fileName);
                 Response.Headers["Content-Disposition"] = ContentHeaderUtil.GetContentDisposition(
-                    item.Name, request.ShouldDownload);
+                    fileName, request.ShouldDownload);
                 if (item is BaseStoreItem baseItem && baseItem.FileSize is { } fileSize)
                     Response.ContentLength = fileSize;
             }

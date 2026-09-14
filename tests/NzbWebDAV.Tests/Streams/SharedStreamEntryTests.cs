@@ -431,6 +431,34 @@ public class SharedStreamEntryTests : IDisposable
         entry.AbandonOpening();
     }
 
+    [Fact]
+    public void BindWithChangedIdentity_DisposesRejectedLeaseBeforeThrowing()
+    {
+        var entry = new SharedStreamEntry(
+            "/content/movie.mkv",
+            0,
+            64,
+            32,
+            TimeSpan.FromSeconds(1),
+            CancellationToken.None,
+            contentIdentity: new SharedContentIdentity("original", null, 64));
+        var stream = new TrackingStream();
+        var ownership = new TrackingAsyncDisposable();
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            entry.BindAndStart(new DetachedStreamLease
+            {
+                Stream = stream,
+                Ownership = ownership,
+                ContentIdentity = new SharedContentIdentity("replacement", null, 64),
+            }));
+
+        Assert.Contains("content changed", exception.Message, StringComparison.Ordinal);
+        Assert.True(stream.IsDisposed);
+        Assert.True(ownership.IsDisposed);
+        entry.AbandonOpening();
+    }
+
     private static SharedReaderStream Attach(
         SharedStreamEntry entry,
         long start,
@@ -532,6 +560,28 @@ public class SharedStreamEntryTests : IDisposable
 
     private static Dictionary<string, int> SnapshotCounts(FakeNntpClient client) =>
         client.BodyRequestCounts.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+
+    private sealed class TrackingAsyncDisposable : IAsyncDisposable
+    {
+        public bool IsDisposed { get; private set; }
+
+        public ValueTask DisposeAsync()
+        {
+            IsDisposed = true;
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class TrackingStream : MemoryStream
+    {
+        public bool IsDisposed { get; private set; }
+
+        public override ValueTask DisposeAsync()
+        {
+            IsDisposed = true;
+            return base.DisposeAsync();
+        }
+    }
 
     private static async Task WaitUntil(Func<bool> condition, TimeSpan? timeout = null)
     {
