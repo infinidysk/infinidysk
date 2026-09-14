@@ -434,7 +434,9 @@ export function StreamingSettings({
             </label>
             <InputGroup
               className={`w-full max-w-48 ${
-                !isValidConnectionOpenTimeout(config["usenet.connection-open-timeout-seconds"] ?? "")
+                !isValidConnectionOpenTimeout(
+                  config["usenet.connection-open-timeout-seconds"] ?? "",
+                )
                   ? "input-error"
                   : ""
               }`}

@@ -593,6 +593,8 @@ public class MultiConnectionNntpClient(
             {
                 connectionLock = await AcquireConnectionLockAsync(priority, workload, operation, probeLease, ct)
                     .ConfigureAwait(false);
+                if (connectionLock is null)
+                    throw new InvalidOperationException("Connection acquisition returned no lock.");
                 freshConnection = !connectionLock.WasReused;
             }
             catch (Exception e) when (e.IsCancellationException(ct) && e is not OutOfMemoryException)
