@@ -87,6 +87,9 @@ public class NzbSubmissionService(
             var collision = await dbClient.Ctx.QueueItems
                 .AnyAsync(q => q.Id == nzoId, request.CancellationToken)
                 .ConfigureAwait(false);
+            collision |= await dbClient.Ctx.HistoryItems
+                .AnyAsync(h => h.Id == nzoId || h.NzbBlobId == nzoId, request.CancellationToken)
+                .ConfigureAwait(false);
             if (collision)
             {
                 throw new BadHttpRequestException($"Requested queue item ID '{nzoId}' already exists.");

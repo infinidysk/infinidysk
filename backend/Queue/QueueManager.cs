@@ -17,6 +17,7 @@ namespace NzbWebDAV.Queue;
 
 public sealed class QueueManager : IQueueCoordinator, IDisposable
 {
+    private static readonly TimeSpan SubmissionDrainTimeout = TimeSpan.FromSeconds(4);
     private readonly ConcurrentDictionary<Guid, InProgressQueueItem> _inProgress = new();
     private readonly ConcurrentDictionary<Guid, int> _retryAttempts = new();
 
@@ -321,14 +322,8 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
             if (Interlocked.Exchange(ref _disposed, 1) != 0)
                 return;
 
-            try
-            {
-                semaphore.Release();
-            }
-            finally
-            {
-                lifetime.Dispose();
-            }
+            using var leaseLifetime = lifetime;
+            semaphore.Release();
         }
     }
 
@@ -473,8 +468,23 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
             {
                 await LockAsync(async () =>
                 {
-                    removedIds = await dbClient.RemoveQueueItemsAsync(removableIds, ct).ConfigureAwait(false);
-                    await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+                    await using var transaction = await dbClient.Ctx.Database
+                        .BeginTransactionAsync(ct).ConfigureAwait(false);
+                    try
+                    {
+                        removedIds = await dbClient.RemoveQueueItemsAsync(removableIds, ct).ConfigureAwait(false);
+                        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+                        await transaction.CommitAsync(ct).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        try { await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false); }
+                        catch (Exception rollbackException) when (rollbackException is not OutOfMemoryException)
+                        {
+                            Log.Debug(rollbackException, "Failed to roll back queue removal transaction");
+                        }
+                        throw;
+                    }
                     foreach (var id in removedIds)
                     {
                         _retryAttempts.TryRemove(id, out _);
@@ -1793,11 +1803,21 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
 
         _configChangeSubscription.Dispose();
         _cancellationTokenSource?.Dispose();
-        submissionsCompleted.GetAwaiter().GetResult();
-        _submissionCommitLock.Dispose();
-        foreach (var submissionLock in _submissionIdLocks)
-            submissionLock.Dispose();
-        if (_inProgress.IsEmpty)
+        var submissionsDrained = submissionsCompleted.Wait(SubmissionDrainTimeout);
+        if (!submissionsDrained)
+        {
+            Log.Warning(
+                "QueueManager shutdown reached its submission drain timeout; shared queue locks remain undisposed");
+        }
+
+        if (submissionsDrained)
+        {
+            _submissionCommitLock.Dispose();
+            foreach (var submissionLock in _submissionIdLocks)
+                submissionLock.Dispose();
+        }
+
+        if (submissionsDrained && _inProgress.IsEmpty)
         {
             _stateLock.Dispose();
             _finalizeLock.Dispose();
