@@ -63,7 +63,15 @@ public class RemoveUnlinkedFilesTask : BaseTask
                     throw new CleanupContentionException(phase, attempt + 1, exception);
                 Log.Warning("Orphan cleanup database contention in {Phase}; retry {Attempt}/6.",
                     phase, attempt + 2);
-                await Task.Delay(CleanupContentionDelays[attempt], budgetCts.Token).ConfigureAwait(false);
+                try
+                {
+                    await Task.Delay(CleanupContentionDelays[attempt], budgetCts.Token)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    throw new CleanupContentionException(phase, attempt + 1, lastContention);
+                }
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
@@ -230,7 +238,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         StartPhase("Scanning all linked files...");
         var startTime = DateTime.Now;
         var linkedIdCount = await ExecuteWithContentionRetryAsync(
-            "linked-file staging", _ => WriteLinkedIdsToTable(), CancellationToken).ConfigureAwait(false);
+            "linked-file staging", token => WriteLinkedIdsToTable(token), CancellationToken).ConfigureAwait(false);
         if (linkedIdCount < 5)
         {
             _allRemovedPaths.Clear();
@@ -245,7 +253,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
 
         StartPhase("Searching for unlinked webdav items...");
         var unlinkedItems = await ExecuteWithContentionRetryAsync(
-            "unlinked-item count", _ => CountUnlinkedItems(startTime), CancellationToken).ConfigureAwait(false);
+            "unlinked-item count", token => CountUnlinkedItems(startTime, token), CancellationToken).ConfigureAwait(false);
         UpdatePhase(
             $"Searching for unlinked webdav items...\nFound {unlinkedItems} webdav items to remove.");
 
@@ -256,7 +264,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         // A healthy library here sits around 31% unlinked (samples, nfos, unimported extras),
         // so 90% leaves wide headroom while still catching a broken scan.
         var deletableItems = await ExecuteWithContentionRetryAsync(
-            "deletable-item count", _ => CountDeletableItems(startTime), CancellationToken).ConfigureAwait(false);
+            "deletable-item count", token => CountDeletableItems(startTime, token), CancellationToken).ConfigureAwait(false);
         var extremeUnlinkedRatio = deletableItems > 0 && unlinkedItems > deletableItems * 0.9;
         string? previewFingerprint = null;
         if (extremeUnlinkedRatio)
@@ -269,7 +277,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
 
             if (!_isDryRun)
             {
-                previewFingerprint = await ComputePreviewFingerprint(startTime).ConfigureAwait(false);
+                previewFingerprint = await ComputePreviewFingerprint(startTime, CancellationToken).ConfigureAwait(false);
                 if (!TryValidatePreviewApproval(previewFingerprint, out var previewError))
                 {
                     _allRemovedPaths.Clear();
@@ -287,15 +295,22 @@ public class RemoveUnlinkedFilesTask : BaseTask
             int identified;
             if (extremeUnlinkedRatio)
             {
-                await StagePreviewCandidates(startTime).ConfigureAwait(false);
-                var snapshot = await BuildStagedPreviewSnapshot().ConfigureAwait(false);
+                await ExecuteWithContentionRetryAsync(
+                    "preview candidate staging",
+                    async token =>
+                    {
+                        await StagePreviewCandidates(startTime, token).ConfigureAwait(false);
+                        return true;
+                    },
+                    CancellationToken).ConfigureAwait(false);
+                var snapshot = await BuildStagedPreviewSnapshot(CancellationToken).ConfigureAwait(false);
                 identified = snapshot.Count;
                 if (_beforePreviewApproval is not null)
                     await _beforePreviewApproval().ConfigureAwait(false);
                 IssuedPreviewToken = IssuePreviewApproval(snapshot.Fingerprint, _previewLifetime);
             }
             else
-                identified = await DryRunIdentifyUnlinkedFiles(startTime).ConfigureAwait(false);
+                identified = await DryRunIdentifyUnlinkedFiles(startTime, CancellationToken).ConfigureAwait(false);
             Complete($"Done. Identified {identified} unlinked files.");
         }
         else
@@ -312,7 +327,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         }
     }
 
-    private async Task<int> WriteLinkedIdsToTable()
+    private async Task<int> WriteLinkedIdsToTable(CancellationToken cancellationToken)
     {
         await using var dbContext = CreateContext();
         var isPostgres = dbContext.Database.IsNpgsql();
@@ -329,15 +344,16 @@ public class RemoveUnlinkedFilesTask : BaseTask
             DROP TABLE IF EXISTS TMP_LINKED_FILES_UNIQUE;
             """ + (isPostgres
                 ? "CREATE TABLE TMP_LINKED_FILES (Id UUID NOT NULL);"
-                : "CREATE TABLE TMP_LINKED_FILES (Id TEXT NOT NULL);"))
-            .ConfigureAwait(false);
+                : "CREATE TABLE TMP_LINKED_FILES (Id TEXT NOT NULL);"),
+            cancellationToken).ConfigureAwait(false);
 #pragma warning restore EF1003
 
         var scannedCount = 0;
         var batches = GetLinkedIds().ToBatches(100);
         foreach (var batch in batches)
         {
-            await InsertLinkedIdBatchAsync(dbContext, batch).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            await InsertLinkedIdBatchAsync(dbContext, batch, cancellationToken).ConfigureAwait(false);
             scannedCount += batch.Count;
         }
 
@@ -358,7 +374,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
                   INSERT OR IGNORE INTO TMP_LINKED_FILES_UNIQUE (Id) SELECT Id FROM TMP_LINKED_FILES;
                   DROP TABLE TMP_LINKED_FILES;
                   ALTER TABLE TMP_LINKED_FILES_UNIQUE RENAME TO TMP_LINKED_FILES;
-                  """).ConfigureAwait(false);
+                  """, cancellationToken).ConfigureAwait(false);
 
         // Guard uses distinct dav-item ids, not raw symlink/strm count (many links can
         // point at the same item and otherwise sail past the < 5 safety check).
@@ -367,7 +383,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         // PostgreSQL returns bigint, which Npgsql will not read as int.
         return await dbContext.Database
             .SqlQueryRaw<int>("SELECT CAST(COUNT(*) AS INT) AS \"Value\" FROM TMP_LINKED_FILES")
-            .SingleAsync()
+            .SingleAsync(cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -484,6 +500,15 @@ public class RemoveUnlinkedFilesTask : BaseTask
         IReadOnlyList<UnlinkedItemInfo> items,
         CancellationToken cancellationToken = default)
     {
+        return (await DeleteEmptyDirectoriesByIdTextReturningAsync(dbContext, items, cancellationToken)
+            .ConfigureAwait(false)).Count;
+    }
+
+    private static async Task<List<string>> DeleteEmptyDirectoriesByIdTextReturningAsync(
+        DavDatabaseContext dbContext,
+        IReadOnlyList<UnlinkedItemInfo> items,
+        CancellationToken cancellationToken)
+    {
         var parameters = new DbParameter[items.Count];
         var placeholders = new string[items.Count];
         for (var i = 0; i < items.Count; i++)
@@ -495,20 +520,28 @@ public class RemoveUnlinkedFilesTask : BaseTask
                 : new SqliteParameter(name, items[i].Id);
         }
 
-        // Placeholder names are generated locally (@p0..@pN); values are bound via
-        // provider-specific parameters (NpgsqlParameter or SqliteParameter).
-#pragma warning disable EF1002
-        return await dbContext.Database.ExecuteSqlRawAsync(
-            $"""
-             DELETE FROM "DavItems"
-             WHERE {(dbContext.Database.IsNpgsql() ? "CAST(\"Id\" AS TEXT)" : "Id")} IN ({string.Join(",", placeholders)})
-               AND NOT EXISTS (
-                   SELECT 1 FROM "DavItems" c WHERE c."ParentId" = "DavItems"."Id"
-               )
-             """,
-            parameters.AsEnumerable(),
-            cancellationToken).ConfigureAwait(false);
-#pragma warning restore EF1002
+        var idColumn = dbContext.Database.IsNpgsql() ? "CAST(\"Id\" AS TEXT)" : "Id";
+        var connection = dbContext.Database.GetDbConnection();
+        if (connection.State != System.Data.ConnectionState.Open)
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            DELETE FROM "DavItems"
+            WHERE {idColumn} IN ({string.Join(",", placeholders)})
+              AND NOT EXISTS (
+                  SELECT 1 FROM "DavItems" c WHERE c."ParentId" = "DavItems"."Id"
+              )
+            RETURNING {idColumn} AS "Id"
+            """;
+        foreach (var parameter in parameters)
+            command.Parameters.Add(parameter);
+
+        var deletedIds = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            deletedIds.Add(reader.GetString(0));
+        return deletedIds;
     }
 
     private IEnumerable<Guid> GetLinkedIds()
@@ -569,7 +602,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
     /// linked or not. Must mirror CountUnlinkedItems' predicates exactly (minus the link join),
     /// otherwise the safety ratio compares two different populations.
     /// </summary>
-    private async Task<int> CountDeletableItems(DateTime createdBefore)
+    private async Task<int> CountDeletableItems(DateTime createdBefore, CancellationToken cancellationToken)
     {
         await using var dbContext = CreateContext();
         var usenetFileType = (int)DavItem.ItemType.UsenetFile;
@@ -584,11 +617,11 @@ public class RemoveUnlinkedFilesTask : BaseTask
                    AND i."HistoryItemId" IS NULL
                    AND i."CreatedAt" < {CreateWallClockParameter(dbContext, createdBefore)}
                  """)
-            .SingleAsync()
+            .SingleAsync(cancellationToken)
             .ConfigureAwait(false);
     }
 
-    private async Task<int> CountUnlinkedItems(DateTime createdBefore)
+    private async Task<int> CountUnlinkedItems(DateTime createdBefore, CancellationToken cancellationToken)
     {
         await using var dbContext = CreateContext();
         var usenetFileType = (int)DavItem.ItemType.UsenetFile;
@@ -610,13 +643,13 @@ public class RemoveUnlinkedFilesTask : BaseTask
                    AND i."CreatedAt" < {CreateWallClockParameter(dbContext, createdBefore)}
                    AND t.Id IS NULL
                  """)
-            .SingleAsync()
+            .SingleAsync(cancellationToken)
             .ConfigureAwait(false);
 
         return count;
     }
 
-    private async Task<string> ComputePreviewFingerprint(DateTime createdBefore)
+    private async Task<string> ComputePreviewFingerprint(DateTime createdBefore, CancellationToken cancellationToken)
     {
         await using var dbContext = CreateContext();
         var usenetFileType = (int)DavItem.ItemType.UsenetFile;
@@ -642,7 +675,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
                      ORDER BY CAST("Id" AS TEXT)
                      LIMIT 100
                      """)
-                .ToListAsync()
+                .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
 
             if (candidates.Count == 0)
@@ -657,7 +690,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         return Convert.ToHexString(hash.GetHashAndReset());
     }
 
-    private async Task StagePreviewCandidates(DateTime createdBefore)
+    private async Task StagePreviewCandidates(DateTime createdBefore, CancellationToken cancellationToken)
     {
         await using var dbContext = CreateContext();
         var usenetFileType = (int)DavItem.ItemType.UsenetFile;
@@ -674,7 +707,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
                 GeneratedStrmPath TEXT NULL,
                 GeneratedStrmTarget TEXT NULL
             );
-            """).ConfigureAwait(false);
+            """, cancellationToken).ConfigureAwait(false);
 
         await dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""
@@ -690,10 +723,10 @@ public class RemoveUnlinkedFilesTask : BaseTask
                    SELECT 1 FROM TMP_LINKED_FILES t
                    WHERE t.Id = "DavItems"."Id"
                )
-             """).ConfigureAwait(false);
+             """, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<PreviewSnapshot> BuildStagedPreviewSnapshot()
+    private async Task<PreviewSnapshot> BuildStagedPreviewSnapshot(CancellationToken cancellationToken)
     {
         _allRemovedPaths.Clear();
         await using var dbContext = CreateContext();
@@ -716,7 +749,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
                      ORDER BY Id
                      LIMIT 100
                      """)
-                .ToListAsync()
+                .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
 
             if (candidates.Count == 0)
@@ -836,13 +869,16 @@ public class RemoveUnlinkedFilesTask : BaseTask
         await using var dbContext = CreateContext();
         var removed = 0;
         var usenetFileType = (int)DavItem.ItemType.UsenetFile;
+        var reselectedAfterZeroDeletion = false;
 
         while (true)
         {
             // Select items to delete (batch of 100). t.Id on the left inherits NOCASE from
             // the TMP_LINKED_FILES PK so lowercase DavItems.Id still match uppercase links.
-            var itemsToDelete = restrictToApprovedSnapshot
-                ? await dbContext.Database
+            var itemsToDelete = await ExecuteWithContentionRetryAsync(
+                "orphan selection",
+                token => restrictToApprovedSnapshot
+                    ? dbContext.Database
                     .SqlQuery<UnlinkedFileInfo>(
                         $"""
                          SELECT a.Id AS "Id", a.Type AS "Type", a.Path AS "Path", a.Name AS "Name",
@@ -868,9 +904,8 @@ public class RemoveUnlinkedFilesTask : BaseTask
                            )
                          LIMIT 100
                          """)
-                    .ToListAsync()
-                    .ConfigureAwait(false)
-                : await dbContext.Database
+                    .ToListAsync(token)
+                    : dbContext.Database
                     .SqlQuery<UnlinkedFileInfo>(
                     $"""
                      SELECT CAST("Id" AS TEXT) AS "Id", "Type", "Path", "Name",
@@ -885,8 +920,8 @@ public class RemoveUnlinkedFilesTask : BaseTask
                        )
                      LIMIT 100
                      """)
-                    .ToListAsync()
-                    .ConfigureAwait(false);
+                    .ToListAsync(token),
+                CancellationToken).ConfigureAwait(false);
 
             // If there are no more items to delete, we're done.
             if (itemsToDelete.Count == 0)
@@ -907,10 +942,18 @@ public class RemoveUnlinkedFilesTask : BaseTask
             // counter. Throw so ExecuteInternal reports a terminal "Failed:" status.
             if (deletedIds.Count == 0)
             {
+                if (!reselectedAfterZeroDeletion)
+                {
+                    reselectedAfterZeroDeletion = true;
+                    continue;
+                }
+
                 throw new InvalidOperationException(
                     $"selected {itemsToDelete.Count} unlinked items but deleted 0; " +
                     $"aborting to avoid an infinite loop.");
             }
+
+            reselectedAfterZeroDeletion = false;
 
             var deletedIdSet = new HashSet<string>(deletedIds, StringComparer.OrdinalIgnoreCase);
             var confirmedDeletions = itemsToDelete.Where(x => deletedIdSet.Contains(x.Id)).ToList();
@@ -1047,13 +1090,13 @@ public class RemoveUnlinkedFilesTask : BaseTask
             // (the Fix-Empty-Categories migration seeds a lowercase-Id folder). Re-check
             // emptiness in the DELETE so a concurrent insert under a selected folder
             // cannot race into TR_DavItems_DeleteDirectory + DavCleanupService cascade.
-            var deleted = await ExecuteWithContentionRetryAsync(
+            var deletedIds = await ExecuteWithContentionRetryAsync(
                 "empty directory deletion",
-                token => DeleteEmptyDirectoriesByIdTextAsync(dbContext, emptyDirs, token),
+                token => DeleteEmptyDirectoriesByIdTextReturningAsync(dbContext, emptyDirs, token),
                 cancellationToken)
                 .ConfigureAwait(false);
 
-            if (deleted == 0)
+            if (deletedIds.Count == 0)
             {
                 var batchKey = string.Join(",", emptyDirs.Select(x => x.Id));
                 if (batchKey == lastStuckBatchKey)
@@ -1068,11 +1111,10 @@ public class RemoveUnlinkedFilesTask : BaseTask
             }
 
             lastStuckBatchKey = null;
+            var deletedIdSet = new HashSet<string>(deletedIds, StringComparer.OrdinalIgnoreCase);
+            var confirmedDeletions = emptyDirs.Where(x => deletedIdSet.Contains(x.Id)).ToList();
 
-            // Prefer auditing the full selected batch when every row deleted. On a partial
-            // delete the survivors remain for the next iteration; over-auditing the rare
-            // race case is preferable to missing deleted paths.
-            foreach (var dir in emptyDirs)
+            foreach (var dir in confirmedDeletions)
             {
                 DeletionAuditLog.Record(
                     "remove-orphaned",
@@ -1082,7 +1124,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
 
             if (onDeleted is not null)
             {
-                _ = onDeleted(emptyDirs.Select(x => new DavItem
+                _ = onDeleted(confirmedDeletions.Select(x => new DavItem
                 {
                     Id = Guid.Parse(x.Id),
                     Type = (DavItem.ItemType)x.Type,
@@ -1090,14 +1132,14 @@ public class RemoveUnlinkedFilesTask : BaseTask
                 }).ToList());
             }
 
-            removed += deleted;
+            removed += confirmedDeletions.Count;
             onProgress?.Invoke(removed);
         }
 
         return removed;
     }
 
-    private async Task<int> DryRunIdentifyUnlinkedFiles(DateTime createdBefore)
+    private async Task<int> DryRunIdentifyUnlinkedFiles(DateTime createdBefore, CancellationToken cancellationToken)
     {
         _allRemovedPaths.Clear();
         await using var dbContext = CreateContext();
@@ -1126,7 +1168,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
                      ORDER BY CAST("Id" AS TEXT)
                      LIMIT 100
                      """)
-                .ToListAsync()
+                .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
 
             if (batch.Count == 0)
