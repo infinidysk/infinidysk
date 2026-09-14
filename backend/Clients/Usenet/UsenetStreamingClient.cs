@@ -344,6 +344,8 @@ public class UsenetStreamingClient : WrappingNntpClient
             connectionOpenProvider: string.IsNullOrWhiteSpace(connectionDetails.Nickname)
                 ? connectionDetails.Host
                 : connectionDetails.Nickname,
+            onWarmConnectionFailure: (exception, factoryStarted) =>
+                providerClient?.RecordWarmConnectionFailure(exception, factoryStarted),
             onConnectionLimitLearned: (learned, effective) =>
             {
                 var label = string.IsNullOrWhiteSpace(connectionDetails.Nickname)
@@ -447,7 +449,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         Action<int, int>? onConnectionLimitLearned = null,
         Func<CancellationToken, Task<IDisposable?>>? keepAliveAdmission = null,
         Func<TimeSpan>? connectionOpenTimeout = null,
-        string? connectionOpenProvider = null
+        string? connectionOpenProvider = null,
+        Action<Exception, bool>? onWarmConnectionFailure = null
     )
     {
         var idleTimeout = TimeSpan.FromSeconds(idleTimeoutSeconds);
@@ -462,7 +465,8 @@ public class UsenetStreamingClient : WrappingNntpClient
             replacementHandshakeSpacing: replacementHandshakeSpacing,
             keepAliveAdmission: keepAliveAdmission,
             connectionOpenTimeout: connectionOpenTimeout,
-            connectionOpenProvider: connectionOpenProvider);
+            connectionOpenProvider: connectionOpenProvider,
+            onWarmConnectionFailure: onWarmConnectionFailure);
         connectionPool.OnConnectionPoolChanged += onConnectionPoolChanged;
         var args = new ConnectionPoolStats.ConnectionPoolChangedEventArgs(0, 0, maxConnections);
         SynchronousObserverInvoker.Invoke(

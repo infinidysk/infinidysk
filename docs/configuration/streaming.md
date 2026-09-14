@@ -47,16 +47,18 @@ is saturated.
 | Idle connection timeout | `usenet.idle-connection-timeout-seconds` | `60` | Close unused connections after 15–300 seconds; also sets the [connection warming](../features/connection-warming.md) sweep and keepalive cadence |
 | Read-start warm-up [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.read-start-warmup.enabled` | on | Expand pooled-provider connections in parallel when a long buffered WebDAV read starts; captured when each stream opens |
 | NNTP response timeout [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.nntp-read-timeout-seconds` | `30` | Stalled-read inactivity deadline for BODY, ARTICLE, STAT, authentication, and other NNTP responses, 5–120 seconds. This is not a total transfer deadline. Streaming segment/read budgets and the 15-second connect/auth ceiling can expire first. Takes effect on the next provider-pool rebuild or restart. |
+| Fresh connection open timeout [since 1.4.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.0){ .nzbdav-since } | `usenet.connection-open-timeout-seconds` | `15` | Advanced aggregate budget for fresh handshake queueing, replacement pacing, and TCP/TLS/AUTHINFO creation, 1–15 seconds. Normal capacity admission waits and BODY/ARTICLE transfer time are excluded. Applies to new attempts without rebuilding live pools. |
 | Replacement reconnect spacing [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.reconnect-delay-milliseconds` | `500` | Minimum spacing between replacement handshakes after a poisoned connection is closed, 0–5000 milliseconds. Zero disables ordinary replacement spacing; TCP/TLS/AUTHINFO factory failures still back off from a 500ms floor, doubling up to 60 seconds. Takes effect on the next provider-pool rebuild or restart. |
 | Batched article downloads | `usenet.pipelined-body-requests` | on | Fetch WebDAV BODY requests in small batches |
 | Streaming batch width [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `usenet.streaming-body-batch-width` | `4` | Maximum articles per BODY batch (1–8) |
 | Container-aware gap fill [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since } | `usenet.container-aware-fill` | on | MPEG-TS null-packet fill for confirmed gaps |
 
-The NNTP stalled-read timeout, streaming segment timeout, streaming read budget, and idle
-connection timeout are separate deadlines. Connect and AUTHINFO use the earliest of caller
-cancellation, the 15-second connect/auth ceiling, and the configured NNTP stalled-read
-timeout. Saving the NNTP timeout or reconnect spacing does not rebuild live pools; new
-values apply on the next provider-config save or process restart.
+The NNTP stalled-read timeout, streaming segment timeout, streaming read budget, fresh
+connection-open timeout, and idle connection timeout are separate deadlines. Normal
+capacity admission and BODY/ARTICLE transfer are outside the fresh-open budget; its clock
+starts only after idle reuse has failed and covers handshake queueing, replacement pacing,
+and fresh TCP/TLS/AUTHINFO work. Saving these values does not rebuild live pools; new
+values are read by subsequent connection attempts.
 
 ### Segment-cache storage
 

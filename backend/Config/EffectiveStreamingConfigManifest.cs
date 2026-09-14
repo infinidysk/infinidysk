@@ -57,7 +57,8 @@ internal static class EffectiveStreamingConfigManifest
                 configManager.GetStreamingSegmentRetries(),
                 (int)configManager.GetStreamingReadTimeout().TotalSeconds,
                 (int)configManager.GetStreamingWriteTimeout().TotalSeconds,
-                (int)configManager.GetStreamingSegmentTimeout().TotalSeconds),
+                    (int)configManager.GetStreamingSegmentTimeout().TotalSeconds,
+                    (int)configManager.GetConnectionOpenTimeout().TotalSeconds),
             new EffectiveConnectionSettings(
                 configManager.GetMaxDownloadConnections(),
                 configManager.IsMaxDownloadConnectionsPerStream(),
@@ -96,7 +97,8 @@ internal static class EffectiveStreamingConfigManifest
                     Source(configManager, ConfigKeys.UsenetStreamingSegmentRetries),
                     Source(configManager, ConfigKeys.UsenetStreamingReadTimeoutSeconds),
                     Source(configManager, ConfigKeys.UsenetStreamingWriteTimeoutSeconds),
-                    Source(configManager, ConfigKeys.UsenetStreamingSegmentTimeoutSeconds)),
+                    Source(configManager, ConfigKeys.UsenetStreamingSegmentTimeoutSeconds),
+                    Source(configManager, ConfigKeys.UsenetConnectionOpenTimeoutSeconds)),
                 new EffectiveConnectionSettingSources(
                     Source(configManager, ConfigKeys.UsenetMaxDownloadConnections),
                     Source(configManager, ConfigKeys.UsenetMaxDownloadConnectionsPerStream),
@@ -155,7 +157,8 @@ internal sealed record EffectiveStreamingSettings(
     int SegmentRetryCount,
     int ReadTimeoutSeconds,
     int WriteTimeoutSeconds,
-    int SegmentTimeoutSeconds);
+    int SegmentTimeoutSeconds,
+    int ConnectionOpenTimeoutSeconds);
 
 internal sealed record EffectiveConnectionSettings(
     int EffectiveTotalDownloadLimit,
@@ -213,7 +216,8 @@ internal sealed record EffectiveStreamingSettingSources(
     EffectiveConfigSource SegmentRetryCount,
     EffectiveConfigSource ReadTimeoutSeconds,
     EffectiveConfigSource WriteTimeoutSeconds,
-    EffectiveConfigSource SegmentTimeoutSeconds);
+    EffectiveConfigSource SegmentTimeoutSeconds,
+    EffectiveConfigSource ConnectionOpenTimeoutSeconds);
 
 internal sealed record EffectiveConnectionSettingSources(
     EffectiveConfigSource EffectiveTotalDownloadLimit,

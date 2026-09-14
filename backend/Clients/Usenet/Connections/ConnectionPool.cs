@@ -83,6 +83,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private readonly TimeProvider _timeProvider;
     private readonly Func<TimeSpan>? _connectionOpenTimeout;
     private readonly string _connectionOpenProvider;
+    private readonly Action<Exception, bool>? _onWarmConnectionFailure;
 
     /* --------------------------------- state --------------------------------------- */
 
@@ -96,6 +97,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
     private int _live; // number of connections currently alive
     private int _pendingConnectionCreations;
+    private int _lateFactoryCleanups;
     private int _disposed; // 0 == false, 1 == true
     private int _effectiveMaxConnections;
     private int? _learnedConnectionLimit;
@@ -141,7 +143,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         Func<CancellationToken, Task<IDisposable?>>? keepAliveAdmission = null,
         TimeSpan? keepAliveBorrowTimeout = null,
         Func<TimeSpan>? connectionOpenTimeout = null,
-        string? connectionOpenProvider = null)
+        string? connectionOpenProvider = null,
+        Action<Exception, bool>? onWarmConnectionFailure = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConnections);
 
@@ -169,6 +172,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         _timeProvider = timeProvider ?? TimeProvider.System;
         _connectionOpenTimeout = connectionOpenTimeout;
         _connectionOpenProvider = connectionOpenProvider ?? _diagnosticName;
+        _onWarmConnectionFailure = onWarmConnectionFailure;
         _gate = new PrioritizedSemaphore(maxConnections, maxConnections, priorityOdds);
         _sweeperTask = Task.Run(SweepLoop); // background idle-reaper
     }
@@ -208,6 +212,15 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         SemaphorePriority priority,
         CancellationToken cancellationToken = default
     ) => GetConnectionLockCoreAsync(priority, preferIdle: true, cancellationToken);
+
+    public Task<ConnectionLock<T>> GetFreshConnectionLockAsync(
+        SemaphorePriority priority,
+        CancellationToken cancellationToken = default)
+        => GetConnectionLockCoreAsync(
+            priority,
+            preferIdle: false,
+            cancellationToken,
+            retireIdleForFreshProbe: true);
 
     /// <summary>
     /// Best-effort hint that opens missing connections in parallel and returns them idle.
@@ -274,6 +287,9 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             }
             catch (Exception e) when (e is not OutOfMemoryException)
             {
+                NotifyWarmConnectionFailure(
+                    e,
+                    e is ConnectionOpenTimeoutException timeout && timeout.FactoryStarted);
                 state.RequestStop();
                 throw;
             }
@@ -290,11 +306,29 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         public void RequestStop() => Interlocked.Exchange(ref _stopRequested, 1);
     }
 
+    private void NotifyWarmConnectionFailure(Exception exception, bool factoryStarted)
+    {
+        if (_onWarmConnectionFailure is null)
+            return;
+
+        try
+        {
+            _onWarmConnectionFailure(exception, factoryStarted);
+        }
+        catch (Exception observerError) when (observerError is not OutOfMemoryException)
+        {
+            observerError.LogWarningKnownOrStack(
+                "NNTP warm-connection failure observer failed for {Provider}.",
+                _diagnosticName);
+        }
+    }
+
     private async Task<ConnectionLock<T>> GetConnectionLockCoreAsync
     (
         SemaphorePriority priority,
         bool preferIdle,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool retireIdleForFreshProbe = false
     )
     {
         // Make caller cancellation also cancel the wait on the gate.
@@ -321,6 +355,14 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 if (reusedConnection)
                     Interlocked.Increment(ref _connectionsReused);
             }
+            else if (retireIdleForFreshProbe && _idleConnections.TryPop(out var retired))
+            {
+                DisposeConnection(retired.Connection);
+                Interlocked.Decrement(ref _live);
+                Interlocked.Increment(ref _connectionsDestroyed);
+                SignalConnectionAvailabilityUnderLock();
+                staleEvicted = true;
+            }
         }
         if (reusedConnection || staleEvicted)
             TriggerConnectionPoolChangedEvent();
@@ -334,6 +376,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         if (openTimeout is { } timeout)
             linked.CancelAfter(timeout);
         var openPhase = "HandshakeQueue";
+        var factoryCleanupPending = false;
+        Task<T>? factoryTask = null;
         try
         {
             var handshakeWaitStarted = Stopwatch.GetTimestamp();
@@ -427,13 +471,24 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 pacingReservation = null;
 
                 openPhase = "Factory";
-                conn = await _factory(linked.Token).ConfigureAwait(false);
+                factoryTask = _factory(linked.Token).AsTask();
+                conn = _connectionOpenTimeout is null
+                    ? await factoryTask.ConfigureAwait(false)
+                    : await factoryTask.WaitAsync(linked.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (linked.IsCancellationRequested)
             {
                 // PaceReplacementHandshakeAsync rolls back internally if its delay is
                 // canceled. A started factory keeps its spacing reservation.
-                if (creationReserved)
+                if (openPhase == "Factory" && factoryTask is { IsCompleted: false })
+                {
+                    factoryCleanupPending = true;
+                    Interlocked.Increment(ref _lateFactoryCleanups);
+#pragma warning disable CA2025 // The late-completion observer retains cleanup ownership until the factory stops.
+                    _ = ObserveLateFactoryCompletionAsync(factoryTask, creationReserved, handshakeOwned: true);
+#pragma warning restore CA2025
+                }
+                else if (creationReserved)
                     CompleteConnectionCreation(created: false);
                 ReleaseGateIfActive();
                 ThrowIfLocalOpenTimeout(openTimeout, openPhase, cancellationToken);
@@ -505,7 +560,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         {
             lock (_lifecycleLock)
             {
-                if (_disposed == 0)
+                if (_disposed == 0 && !factoryCleanupPending)
                     _handshakeGate.Release();
             }
         }
@@ -515,6 +570,38 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
         static void ThrowDisposed()
             => throw new ObjectDisposedException(nameof(ConnectionPool<T>));
+    }
+
+    private async Task ObserveLateFactoryCompletionAsync(
+        Task<T> factoryTask,
+        bool creationReserved,
+        bool handshakeOwned)
+    {
+        try
+        {
+            var lateConnection = await factoryTask.ConfigureAwait(false);
+            DisposeConnection(lateConnection);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            exception.LogWarningKnownOrStack(
+                "NNTP connection factory completed after the open deadline for {Provider}.",
+                _diagnosticName);
+        }
+        finally
+        {
+            if (creationReserved)
+                CompleteConnectionCreation(created: false);
+            if (handshakeOwned)
+            {
+                lock (_lifecycleLock)
+                {
+                    _handshakeGate.Release();
+                    if (Interlocked.Decrement(ref _lateFactoryCleanups) == 0 && _disposed == 1)
+                        _handshakeGate.Dispose();
+                }
+            }
+        }
     }
 
     private async Task<ConnectionLock<T>?> TryCreateFreshConnectionLockAsync(
@@ -537,6 +624,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             openDeadline.CancelAfter(warmTimeout);
         var openToken = openDeadline?.Token ?? linked.Token;
         var openPhase = "HandshakeQueue";
+        var factoryCleanupPending = false;
+        Task<T>? factoryTask = null;
         try
         {
             var handshakeWaitStarted = Stopwatch.GetTimestamp();
@@ -555,16 +644,32 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 T connection;
                 try
                 {
-                      openPhase = "ReplacementPacing";
-                      var pacingReservation = await PaceReplacementHandshakeAsync(openToken)
+                    openPhase = "ReplacementPacing";
+                    var pacingReservation = await PaceReplacementHandshakeAsync(openToken)
                         .ConfigureAwait(false);
                     CommitReplacementPacing(pacingReservation);
-                      openPhase = "Factory";
-                      connection = await _factory(openToken).ConfigureAwait(false);
+                    openPhase = "Factory";
+#pragma warning disable CA2025 // The late-completion observer retains cleanup ownership until the factory stops.
+                    factoryTask = _factory(openToken).AsTask();
+#pragma warning restore CA2025
+                    connection = warmOpenTimeout is null
+                        ? await factoryTask.ConfigureAwait(false)
+                        : await factoryTask.WaitAsync(openToken).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (linked.IsCancellationRequested)
                 {
-                    CompleteConnectionCreation(created: false);
+                    if (openPhase == "Factory" && factoryTask is { IsCompleted: false })
+                    {
+                        factoryCleanupPending = true;
+                        Interlocked.Increment(ref _lateFactoryCleanups);
+#pragma warning disable CA2025 // The late-completion observer retains cleanup ownership until the factory stops.
+                        _ = ObserveLateFactoryCompletionAsync(factoryTask, creationReserved: true, handshakeOwned: true);
+#pragma warning restore CA2025
+                    }
+                    else
+                    {
+                        CompleteConnectionCreation(created: false);
+                    }
                     ThrowIfLocalOpenTimeout(warmOpenTimeout, openPhase, cancellationToken);
                     throw;
                 }
@@ -612,7 +717,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             {
                 lock (_lifecycleLock)
                 {
-                    if (_disposed == 0)
+                    if (_disposed == 0 && !factoryCleanupPending)
                         _handshakeGate.Release();
                 }
             }
@@ -1260,7 +1365,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         {
             _sweepCts.Dispose();
             _gate.Dispose();
-            _handshakeGate.Dispose();
+            if (Volatile.Read(ref _lateFactoryCleanups) == 0)
+                _handshakeGate.Dispose();
         }
         GC.SuppressFinalize(this);
     }

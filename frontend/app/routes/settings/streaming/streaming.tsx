@@ -424,6 +424,44 @@ export function StreamingSettings({
           </div>
         </ManagedSetting>
 
+        <ManagedSetting configKey="usenet.connection-open-timeout-seconds">
+          <div className="space-y-2">
+            <label
+              className="block text-sm font-medium text-base-content"
+              htmlFor="connection-open-timeout-input"
+            >
+              Fresh Connection Open Timeout
+            </label>
+            <InputGroup
+              className={`w-full max-w-48 ${
+                !isValidConnectionOpenTimeout(config["usenet.connection-open-timeout-seconds"] ?? "")
+                  ? "input-error"
+                  : ""
+              }`}
+              suffix="sec"
+              type="text"
+              inputMode="numeric"
+              id="connection-open-timeout-input"
+              aria-describedby="connection-open-timeout-help"
+              placeholder="15"
+              value={config["usenet.connection-open-timeout-seconds"]}
+              onChange={(e) =>
+                setNewConfig({
+                  ...config,
+                  "usenet.connection-open-timeout-seconds": e.target.value,
+                })
+              }
+            />
+            <p
+              className="text-[11px] leading-relaxed text-base-content/45"
+              id="connection-open-timeout-help"
+            >
+              Advanced: bounds fresh handshake queueing, pacing, and connection creation (1–15s).
+              Normal admission waits and BODY transfer time are excluded.
+            </p>
+          </div>
+        </ManagedSetting>
+
         <ManagedSetting configKey="usenet.streaming-write-timeout-seconds">
           <div className="space-y-2">
             <label
@@ -1051,6 +1089,8 @@ export function isStreamingSettingsUpdated(
       newConfig["usenet.streaming-segment-timeout-seconds"] ||
     config["usenet.streaming-read-timeout-seconds"] !==
       newConfig["usenet.streaming-read-timeout-seconds"] ||
+    config["usenet.connection-open-timeout-seconds"] !==
+      newConfig["usenet.connection-open-timeout-seconds"] ||
     config["usenet.streaming-write-timeout-seconds"] !==
       newConfig["usenet.streaming-write-timeout-seconds"] ||
     config["usenet.streaming-segment-retries"] !== newConfig["usenet.streaming-segment-retries"] ||
@@ -1093,6 +1133,7 @@ export function isStreamingSettingsValid(config: Record<string, string>): boolea
     isValidStreamingPriority(config["usenet.streaming-priority"] ?? "") &&
     isValidStreamingSegmentTimeout(config["usenet.streaming-segment-timeout-seconds"] ?? "") &&
     isValidStreamingReadTimeout(config["usenet.streaming-read-timeout-seconds"] ?? "") &&
+    isValidConnectionOpenTimeout(config["usenet.connection-open-timeout-seconds"] ?? "") &&
     isValidStreamingWriteTimeout(config["usenet.streaming-write-timeout-seconds"] ?? "") &&
     isValidStreamingSegmentRetries(config["usenet.streaming-segment-retries"] ?? "") &&
     isValidArticleBufferSize(config["usenet.article-buffer-size"] ?? "") &&
@@ -1135,6 +1176,12 @@ function isValidStreamingReadTimeout(value: string): boolean {
   if (value.trim() === "") return false;
   const number = Number(value);
   return Number.isInteger(number) && number >= 5 && number <= 120;
+}
+
+function isValidConnectionOpenTimeout(value: string): boolean {
+  if (value.trim() === "") return false;
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 1 && number <= 15;
 }
 
 function isValidStreamingWriteTimeout(value: string): boolean {
