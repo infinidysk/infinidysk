@@ -656,7 +656,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                         ? await factoryTask.ConfigureAwait(false)
                         : await factoryTask.WaitAsync(openToken).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException) when (linked.IsCancellationRequested)
+                catch (OperationCanceledException) when (openToken.IsCancellationRequested)
                 {
                     if (openPhase == "Factory" && factoryTask is { IsCompleted: false })
                     {
