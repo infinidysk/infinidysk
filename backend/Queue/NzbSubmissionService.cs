@@ -99,12 +99,6 @@ public class NzbSubmissionService(
                 BlobStore.Delete(nzoId);
         }
 
-        await HandleExistingQueueItemAsync(
-                request.FileName,
-                category,
-                request.ReplaceExistingQueueItem,
-                request.CancellationToken)
-            .ConfigureAwait(false);
         if (AfterDuplicatePreCheckHook is not null)
             await AfterDuplicatePreCheckHook().ConfigureAwait(false);
 
@@ -240,22 +234,6 @@ public class NzbSubmissionService(
             Status = true,
             NzoIds = [queueItem.Id.ToString()],
         };
-    }
-
-    private async Task HandleExistingQueueItemAsync(
-        string fileName,
-        string category,
-        bool replaceExisting,
-        CancellationToken ct)
-    {
-        var existing = await dbClient.Ctx.QueueItems.AsNoTracking()
-            .AnyAsync(q => q.Category == category && q.FileName == fileName, ct)
-            .ConfigureAwait(false);
-        if (existing && !replaceExisting)
-        {
-            throw new BadHttpRequestException(
-                $"A queue item named '{fileName}' already exists in category '{category}'.");
-        }
     }
 
     internal static bool IsCategoryFileNameUniqueViolation(DbUpdateException ex)

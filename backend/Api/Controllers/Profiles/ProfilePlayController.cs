@@ -658,19 +658,27 @@ public class ProfilePlayController(
                         WebsocketTopic.QueueItemRemoved,
                         string.Join(",", removal.RemovedIds));
                 }
-                _playLastSeen.TryRemove(nzoId, out _);
+                if (removal.StillRunningIds.Contains(nzoId))
+                {
+                    _playLastSeen[nzoId] = DateTimeOffset.UtcNow;
+                    ScheduleOrphanCleanup(nzoId);
+                }
+                else
+                {
+                    _playLastSeen.TryRemove(nzoId, out _);
+                }
             }
             catch (Exception e) when (e is DbUpdateException or InvalidOperationException)
             {
                 Log.Debug(e, "Orphan cleanup for {NzoId} failed", nzoId);
-                _playLastSeen.TryRemove(nzoId, out _);
+                _playLastSeen[nzoId] = DateTimeOffset.UtcNow;
+                ScheduleOrphanCleanup(nzoId);
             }
         });
     }
 
     private async Task RemoveAbortedQueueItemAsync(Guid nzoId)
     {
-        _playLastSeen.TryRemove(nzoId, out _);
         try
         {
             await using var ctx = new DavDatabaseContext();
@@ -684,10 +692,21 @@ public class ProfilePlayController(
                     WebsocketTopic.QueueItemRemoved,
                     string.Join(",", removal.RemovedIds));
             }
+            if (removal.StillRunningIds.Contains(nzoId))
+            {
+                _playLastSeen[nzoId] = DateTimeOffset.UtcNow;
+                ScheduleOrphanCleanup(nzoId);
+            }
+            else
+            {
+                _playLastSeen.TryRemove(nzoId, out _);
+            }
         }
         catch (Exception e) when (e is DbUpdateException or InvalidOperationException)
         {
             Log.Debug(e, "Stall-failover abort cleanup failed for {NzoId}", nzoId);
+            _playLastSeen[nzoId] = DateTimeOffset.UtcNow;
+            ScheduleOrphanCleanup(nzoId);
         }
     }
 

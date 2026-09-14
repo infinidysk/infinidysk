@@ -96,7 +96,7 @@ public class QueueItemProcessor(
     /// </summary>
     internal Action? OnTerminal { get; set; }
 
-    internal Action<Guid, DateTime>? OnBackoffPersistenceFailed { get; set; }
+    internal Func<Guid, DateTime, Task>? OnBackoffPersistenceFailed { get; set; }
 
     internal static async Task ThrowIfRecentlyRejectedAsync(
         DavDatabaseClient dbClient,
@@ -315,7 +315,9 @@ public class QueueItemProcessor(
             }
             catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
             {
-                OnBackoffPersistenceFailed?.Invoke(queueItem.Id, queueItem.PauseUntil ?? DateTime.Now.AddSeconds(60));
+                if (OnBackoffPersistenceFailed is not null)
+                    await OnBackoffPersistenceFailed(queueItem.Id, queueItem.PauseUntil ?? DateTime.Now.AddSeconds(60))
+                        .ConfigureAwait(false);
                 Log.Error(ex, "Failed to schedule retry for queue item {JobName}", queueItem.JobName);
             }
         }
@@ -418,7 +420,8 @@ public class QueueItemProcessor(
         }
         catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
         {
-            OnBackoffPersistenceFailed?.Invoke(queueItem.Id, deferUntil);
+            if (OnBackoffPersistenceFailed is not null)
+                await OnBackoffPersistenceFailed(queueItem.Id, deferUntil).ConfigureAwait(false);
             Log.Warning(
                 "Could not persist the database-error backoff for {JobName}: {Reason}",
                 queueItem.JobName,
