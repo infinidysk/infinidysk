@@ -234,6 +234,88 @@ public class ArticleMissNegativeCacheTests
     }
 
     [Fact]
+    public async Task PersistentCache_HydratesAtCurrentGenerationAtStartup_NotZero()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using (var context = new DavDatabaseContext(options))
+            await context.Database.EnsureCreatedAsync();
+
+        var config = CreateConfig(ttlSeconds: 300, maxEntries: 100);
+        // Advance the generation before anything runs, matching a real deployment where
+        // UsenetProviderIdentity.EnsureAsync bumps it once during startup provider-ID assignment.
+        config.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.UsenetProviders,
+                ConfigValue = """{"Providers":[]}""",
+            },
+        ]);
+        var generation = config.GetUsenetProviderSnapshot().Generation;
+        Assert.NotEqual(0, generation);
+
+        var key = ArticleMissNegativeCache.BuildKey("segment", "a.example", null);
+        using (var first = new ArticleMissNegativeCache(config, () => new DavDatabaseContext(options)))
+        {
+            await first.StartAsync(CancellationToken.None);
+            first.MarkMissing(key, generation);
+            await first.FlushPersistenceForTestsAsync();
+        }
+
+        using var restarted = new ArticleMissNegativeCache(config, () => new DavDatabaseContext(options));
+        await restarted.StartAsync(CancellationToken.None);
+
+        // Hydration must tag rows with the generation active at startup, not a hardcoded 0,
+        // or every persisted miss becomes permanently invisible to lookups after any restart.
+        Assert.True(restarted.IsMissing(key, generation));
+    }
+
+    [Fact]
+    public async Task MarkMissing_RetiredGenerationMark_IsNotPersisted()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using (var context = new DavDatabaseContext(options))
+            await context.Database.EnsureCreatedAsync();
+
+        var config = CreateConfig(ttlSeconds: 300, maxEntries: 100);
+        using var cache = new ArticleMissNegativeCache(config, () => new DavDatabaseContext(options));
+        await cache.StartAsync(CancellationToken.None);
+
+        var retiredGeneration = config.GetUsenetProviderSnapshot().Generation;
+        // Simulate a provider change happening after an in-flight MultiProviderNntpClient
+        // already captured the old (now retired) generation token for its mark.
+        config.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.UsenetProviders,
+                ConfigValue = """{"Providers":[]}""",
+            },
+        ]);
+        var currentGeneration = config.GetUsenetProviderSnapshot().Generation;
+        Assert.NotEqual(retiredGeneration, currentGeneration);
+
+        var staleKey = ArticleMissNegativeCache.BuildKey("stale", "a.example", null);
+        var freshKey = ArticleMissNegativeCache.BuildKey("fresh", "a.example", null);
+        cache.MarkMissing(staleKey, retiredGeneration);
+        cache.MarkMissing(freshKey, currentGeneration);
+        await cache.FlushPersistenceForTestsAsync();
+
+        await using var verify = new DavDatabaseContext(options);
+        var persistedKeys = await verify.ArticleMissCacheEntries.Select(x => x.CacheKey).ToListAsync();
+        Assert.DoesNotContain(staleKey, persistedKeys);
+        Assert.Contains(freshKey, persistedKeys);
+    }
+
+    [Fact]
     public async Task PersistentCache_Hydration_EvictsOldestRowsBeyondCap()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

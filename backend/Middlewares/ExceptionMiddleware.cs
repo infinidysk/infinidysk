@@ -626,11 +626,11 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
     /// Persistently corrupt segments that break playback are seeded here too — the cache is
     /// segment-ID keyed and cause-agnostic.
     /// </summary>
-    internal static void RecordMissingArticleForFailFast(DavItem davItem, string segmentId)
+    internal void RecordMissingArticleForFailFast(DavItem davItem, string segmentId)
     {
         if (!FilenameUtil.IsImportantFileType(davItem.Name))
             return;
-        HealthCheckService.AddMissingSegmentIds([segmentId]);
+        HealthCheckService.AddMissingSegmentIds([segmentId], configManager.GetUsenetProviderSnapshot().Generation);
     }
 
     private static void AbortStartedResponse(HttpContext context)

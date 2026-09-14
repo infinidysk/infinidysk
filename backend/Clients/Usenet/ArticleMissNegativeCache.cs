@@ -151,6 +151,9 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
             var cutoff = DateTimeOffset.UtcNow - _configManager.GetArticleMissCacheTtl();
             var cutoffUnix = cutoff.ToUnixTimeMilliseconds();
             var maxEntries = _configManager.GetArticleMissCacheMaxEntries();
+            // Captured before hydration: a config change mid-query must not let these rows
+            // masquerade as evidence for whatever generation ends up active afterward.
+            var startupGeneration = _configManager.GetUsenetProviderSnapshot().Generation;
             await using var context = _contextFactory();
             var entries = await context.ArticleMissCacheEntries
                 .AsNoTracking()
@@ -160,7 +163,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
             foreach (var entry in entries)
-                _missingAt[(0, entry.CacheKey)] = DateTimeOffset.FromUnixTimeMilliseconds(entry.ConfirmedAtUnix);
+                _missingAt[(startupGeneration, entry.CacheKey)] = DateTimeOffset.FromUnixTimeMilliseconds(entry.ConfirmedAtUnix);
 
             await TrimPersistedAsync(context, cutoffUnix, maxEntries, cancellationToken)
                 .ConfigureAwait(false);
@@ -355,6 +358,10 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         {
             while (await reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
+                // Read once per batch: a retired-generation mark queued before the config
+                // change (or lingering behind an already-applied clear from an earlier batch)
+                // must not be persisted just because it shares a batch with unrelated marks.
+                var currentGeneration = _configManager.GetUsenetProviderSnapshot().Generation;
                 var marks = new Dictionary<string, long>(StringComparer.Ordinal);
                 var clearPending = false;
                 TaskCompletionSource? barrier = null;
@@ -370,7 +377,8 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
                             clearPending = true;
                             break;
                         case MarkItem mark:
-                            marks[mark.Key] = mark.ConfirmedAtUnix;
+                            if (mark.Generation == currentGeneration)
+                                marks[mark.Key] = mark.ConfirmedAtUnix;
                             break;
                         case BarrierItem b:
                             barrier = b.Completion;

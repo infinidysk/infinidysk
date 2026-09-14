@@ -939,7 +939,8 @@ public class ExceptionMiddlewareTests
             Type = DavItem.ItemType.UsenetFile,
         };
 
-        ExceptionMiddleware.RecordMissingArticleForFailFast(davItem, segmentId);
+        var middleware = CreateMiddleware(_ => Task.CompletedTask);
+        middleware.RecordMissingArticleForFailFast(davItem, segmentId);
 
         // Must not throw — unimportant files never enter the fail-fast cache.
         HealthCheckService.CheckCachedMissingSegmentIds([segmentId]);

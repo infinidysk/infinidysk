@@ -108,7 +108,7 @@ public class FailFastDeadNzbTests
         };
 
         var ex = Assert.Throws<NonRetryableDownloadException>(() =>
-            DeadNzbFailFast.FailMissingImportantFile(nzbFile));
+            DeadNzbFailFast.FailMissingImportantFile(nzbFile, generation: 0));
 
         Assert.Contains("dead.rar", ex.Message);
         Assert.Throws<UsenetArticleNotFoundException>(() =>

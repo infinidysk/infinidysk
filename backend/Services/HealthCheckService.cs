@@ -1518,7 +1518,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             // Seed the queue precheck with every confirmed miss so a re-grab of this release
             // fails fast pre-import (issue #732), then take today's repair path.
             if (FilenameUtil.IsImportantFileType(davItem.Name))
-                AddMissingSegmentIds(holeSegmentIds);
+                AddMissingSegmentIds(holeSegmentIds, _configManager.GetUsenetProviderSnapshot().Generation);
             await Repair(davItem, dbClient, ct).ConfigureAwait(false);
             return;
         }
@@ -3609,7 +3609,9 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         try
         {
             var payload = await LoadHealthCheckPayloadAsync(davItem, dbClient, ct).ConfigureAwait(false);
-            AddMissingSegmentIds(EnumerateRejectedReleaseSeedSegments(payload.Segments));
+            AddMissingSegmentIds(
+                EnumerateRejectedReleaseSeedSegments(payload.Segments),
+                _configManager.GetUsenetProviderSnapshot().Generation);
         }
         catch (OutOfMemoryException oom)
         {
