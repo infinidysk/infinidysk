@@ -199,7 +199,11 @@ describe("resolveConfiguredActionOrigin", () => {
       { configName: "general.trust-proxy", configValue: "true" },
     ]);
 
-    await expect(staleRequest).resolves.toMatchObject({ available: true, trustProxy: true });
+    await expect(staleRequest).resolves.toMatchObject({
+      available: true,
+      baseUrl: "https://new.example.com",
+      trustProxy: false,
+    });
     await expect(currentRequest).resolves.toMatchObject({
       available: true,
       baseUrl: "https://new.example.com",

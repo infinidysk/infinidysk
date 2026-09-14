@@ -79,4 +79,17 @@ describe("resolveRequestUrl", () => {
       "https://nzbdav.example.com/login.data",
     );
   });
+
+  it("keeps double-slash request paths on the configured canonical origin", () => {
+    const req = {
+      ...fakeRequest({ trustProxy: false, host: "internal-container:3000" }),
+      hostname: "internal-container",
+      originalUrl: "//login.data",
+      protocol: "http",
+    } as express.Request;
+
+    expect(resolveRequestUrl(req, "https://nzbdav.example.com").href).toBe(
+      "https://nzbdav.example.com//login.data",
+    );
+  });
 });

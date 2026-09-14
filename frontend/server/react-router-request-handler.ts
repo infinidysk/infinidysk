@@ -62,7 +62,9 @@ export function resolvePort(req: express.Request): string | undefined {
 export function resolveRequestUrl(req: express.Request, canonicalOrigin?: string): URL {
   const port = resolvePort(req);
   const resolvedHost = `${req.hostname.split(/[\\/?#@]/)[0] || "localhost"}${port ? `:${port}` : ""}`;
-  return new URL(req.originalUrl, canonicalOrigin ?? `${req.protocol}://${resolvedHost}`);
+  const origin = new URL(canonicalOrigin ?? `${req.protocol}://${resolvedHost}`).origin;
+  const requestTarget = req.originalUrl.startsWith("/") ? req.originalUrl : `/${req.originalUrl}`;
+  return new URL(`${origin}${requestTarget}`);
 }
 
 function createRemixHeaders(requestHeaders: express.Request["headers"]): Headers {

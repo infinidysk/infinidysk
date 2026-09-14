@@ -69,10 +69,10 @@ export async function refreshProxySettings(now = Date.now()): Promise<ProxySetti
   const generation = cacheGeneration;
   const request = loadProxySettings();
   const pending = request.then(({ settings, cacheTtlMs }) => {
-    if (cacheGeneration === generation) {
-      cachedSettings = settings;
-      cacheExpiresAt = Date.now() + cacheTtlMs;
-    }
+    if (cacheGeneration !== generation) return refreshProxySettings();
+
+    cachedSettings = settings;
+    cacheExpiresAt = Date.now() + cacheTtlMs;
     return settings;
   });
   const finalized = pending.finally(() => {
