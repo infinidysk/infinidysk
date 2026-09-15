@@ -58,6 +58,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
     private long _requiredClearGeneration;
     private long _appliedClearGeneration;
     private bool _stopping;
+    private bool _persistenceLoopExited;
     private int _cleanupRunning;
     private int _cleanupContinuationScheduled;
     private long _hits;
@@ -373,7 +374,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
     {
         lock (_persistenceStateLock)
         {
-            if (_stopping) return;
+            if (_persistenceLoopExited) return;
             _requiredClearGeneration = Math.Max(_requiredClearGeneration, generation);
             SignalPersistence();
         }
@@ -465,7 +466,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 
                     if (marks.Count == 0 && barrier is null)
                     {
-                        if (stopping && CanStopPersistence(reader)) return;
+                        if (stopping && TryExitPersistence(reader)) return;
                         break;
                     }
 
@@ -492,9 +493,9 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
                         appliedClear = _appliedClearGeneration;
                         stopping = _stopping;
                     }
-                    if (requiredClear > appliedClear || (stopping && CanStopPersistence(reader))) break;
+                    if (requiredClear > appliedClear || (stopping && CanExitPersistence(reader))) break;
                 }
-                if (stopping && CanStopPersistence(reader)) return;
+                if (stopping && TryExitPersistence(reader)) return;
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -540,11 +541,22 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
             .ConfigureAwait(false);
     }
 
-    private bool CanStopPersistence(ChannelReader<PersistenceWorkItem> reader)
+    private bool CanExitPersistence(ChannelReader<PersistenceWorkItem> reader)
     {
         lock (_persistenceStateLock)
         {
             return _requiredClearGeneration <= _appliedClearGeneration && !reader.TryPeek(out _);
+        }
+    }
+
+    private bool TryExitPersistence(ChannelReader<PersistenceWorkItem> reader)
+    {
+        lock (_persistenceStateLock)
+        {
+            if (_requiredClearGeneration > _appliedClearGeneration || reader.TryPeek(out _))
+                return false;
+            _persistenceLoopExited = true;
+            return true;
         }
     }
 
