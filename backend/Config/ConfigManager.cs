@@ -939,13 +939,30 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                ?? "admin";
     }
 
+    // `WEBDAV_PASSWORD` is plaintext, so it has to be hashed before it can be compared
+    // with a client's credentials. Hashing is PBKDF2 with a fresh salt, so doing it on
+    // every call would produce a different hash each time and defeat the verified-
+    // credential caches in the auth layer (every WebDAV request would then pay two
+    // PBKDF2 derivations). Memoize per plaintext value instead.
+    private static readonly object EnvWebdavPasswordLock = new();
+    private static string? _envWebdavPassword;
+    private static string? _envWebdavPasswordHash;
+
     public string? GetWebdavPasswordHash()
     {
         var hashedPass = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.WebdavPass));
         if (hashedPass != null) return hashedPass;
         var pass = EnvironmentUtil.GetEnvironmentVariable("WEBDAV_PASSWORD");
-        if (pass != null) return PasswordUtil.Hash(pass);
-        return null;
+        if (pass == null) return null;
+        lock (EnvWebdavPasswordLock)
+        {
+            if (_envWebdavPasswordHash == null || !string.Equals(_envWebdavPassword, pass, StringComparison.Ordinal))
+            {
+                _envWebdavPasswordHash = PasswordUtil.Hash(pass);
+                _envWebdavPassword = pass;
+            }
+            return _envWebdavPasswordHash;
+        }
     }
 
     /// <summary>
