@@ -1274,11 +1274,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             CompleteHealthProgress(davItem.Id);
             if (FilenameUtil.IsImportantFileType(davItem.Name))
             {
-                var evidenceGeneration = e.ProviderGeneration ?? providerGeneration;
                 lock (_missingSegmentIds)
                 {
-                    if (_missingSegmentIds.Add((evidenceGeneration, e.SegmentId)))
-                        _missingSegmentOrder.Enqueue((evidenceGeneration, e.SegmentId));
+                    var generation = e.ProviderGeneration ?? providerGeneration;
+                    if (_missingSegmentIds.Add((generation, e.SegmentId)))
+                        _missingSegmentOrder.Enqueue((generation, e.SegmentId));
                     while (_missingSegmentIds.Count > MaximumMissingSegmentIds)
                         _missingSegmentIds.Remove(_missingSegmentOrder.Dequeue());
                 }
@@ -1520,7 +1520,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             // Seed the queue precheck with every confirmed miss so a re-grab of this release
             // fails fast pre-import (issue #732), then take today's repair path.
             if (FilenameUtil.IsImportantFileType(davItem.Name))
-                AddProviderMissingSegmentIds(holeSegmentIds, providerGeneration);
+                AddMissingSegmentIds(holeSegmentIds, providerGeneration);
             await Repair(davItem, dbClient, ct, providerGeneration: providerGeneration).ConfigureAwait(false);
             return;
         }
@@ -3610,13 +3610,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         CancellationToken ct,
         long? providerGeneration = null)
     {
-        var policyGeneration = providerGeneration ?? _configManager.GetUsenetProviderSnapshot().Generation;
+        var generation = providerGeneration ?? _configManager.GetUsenetProviderSnapshot().Generation;
         try
         {
             var payload = await LoadHealthCheckPayloadAsync(davItem, dbClient, ct).ConfigureAwait(false);
-            AddRejectedReleaseSegmentIds(
-                EnumerateRejectedReleaseSeedSegments(payload.Segments),
-                policyGeneration);
+            AddMissingSegmentIds(EnumerateRejectedReleaseSeedSegments(payload.Segments), generation);
         }
         catch (OutOfMemoryException oom)
         {
@@ -3650,22 +3648,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             yield return segments[index];
     }
 
-    public static void AddProviderMissingSegmentIds(IEnumerable<string> segmentIds, long generation)
-    {
-        AddMissingSegmentIdsCore(segmentIds, generation);
-    }
-
-    public static void AddRejectedReleaseSegmentIds(IEnumerable<string> segmentIds, long generation)
-    {
-        AddMissingSegmentIdsCore(segmentIds, generation);
-    }
-
     public static void AddMissingSegmentIds(IEnumerable<string> segmentIds, long generation)
-    {
-        AddMissingSegmentIdsCore(segmentIds, generation);
-    }
-
-    private static void AddMissingSegmentIdsCore(IEnumerable<string> segmentIds, long generation)
     {
         lock (_missingSegmentIds)
         {

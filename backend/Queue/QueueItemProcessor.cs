@@ -572,13 +572,12 @@ public class QueueItemProcessor(
             // Remember the missing first segments so retries of this item and re-grabs
             // of the same release fail in milliseconds via the step-0 precheck instead
             // of re-verifying every article across all providers.
-            foreach (var group in importantFilesMissing
-                         .Where(x => x.MissingEvidenceGeneration is not null)
-                         .GroupBy(x => x.MissingEvidenceGeneration!.Value))
-            {
-                HealthCheckService.AddProviderMissingSegmentIds(
-                    group.Select(x => x.NzbFile.Segments[0].MessageId), group.Key);
-            }
+            HealthCheckService.AddMissingSegmentIds(
+                importantFilesMissing.Select(x => x.NzbFile.Segments[0].MessageId),
+                segments.Where(x => missingNzbFiles.Contains(x.NzbFile))
+                    .Select(x => x.ProviderGeneration)
+                    .FirstOrDefault(x => x.HasValue)
+                ?? configManager.GetUsenetProviderSnapshot().Generation);
 
             var fileNames = string.Join(", ", importantFilesMissing
                 .Select(x => string.IsNullOrEmpty(x.FileName) ? x.NzbFile.Subject : x.FileName)

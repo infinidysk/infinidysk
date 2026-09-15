@@ -4,6 +4,7 @@ namespace NzbWebDAV.Config;
 
 public class UsenetProviderConfig
 {
+    public long ProviderGeneration { get; set; }
     public List<ConnectionDetails> Providers { get; set; } = [];
 
     public int TotalPooledConnections => Math.Max(1, Providers

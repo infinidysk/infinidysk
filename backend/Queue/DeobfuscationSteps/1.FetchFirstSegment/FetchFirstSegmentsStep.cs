@@ -65,7 +65,7 @@ public static class FetchFirstSegmentsStep
             {
                 Log.Warning("First segment for `{FileName}` missing across all providers",
                     result.NzbFile.GetSubjectFileName());
-                AbortRemainingFirstSegmentChecks(result, abortCts.Cancel);
+                AbortRemainingFirstSegmentChecks(result.NzbFile, abortCts.Cancel);
             }
         }
 
@@ -157,7 +157,7 @@ public static class FetchFirstSegmentsStep
         }
 
         if (abortFile is not null)
-            AbortRemainingFirstSegmentChecks(results[files.FindIndex(x => ReferenceEquals(x, abortFile))]!, cancel: null);
+            AbortRemainingFirstSegmentChecks(abortFile, cancel: null);
 
         var pending = Enumerable.Range(0, files.Count).Where(i => results[i] is null).ToList();
         if (pending.Count > 0)
@@ -175,7 +175,7 @@ public static class FetchFirstSegmentsStep
                 progress?.Report(++completed);
 
                 if (result.MissingFirstSegment && DeadNzbFailFast.IsImportantNzbFile(result.NzbFile))
-                    AbortRemainingFirstSegmentChecks(result, rescueAbortCts.Cancel);
+                    AbortRemainingFirstSegmentChecks(result.NzbFile, rescueAbortCts.Cancel);
             }
         }
 
@@ -183,15 +183,14 @@ public static class FetchFirstSegmentsStep
     }
 
     private static void AbortRemainingFirstSegmentChecks(
-        NzbFileWithFirstSegment result,
+        NzbFile nzbFile,
         Action? cancel)
     {
-        var nzbFile = result.NzbFile;
         Log.Warning(
             "Aborting remaining first-segment checks after missing important file `{FileName}`",
             nzbFile.GetSubjectFileName());
         cancel?.Invoke();
-        DeadNzbFailFast.FailMissingImportantFile(nzbFile, result.MissingEvidenceGeneration);
+        DeadNzbFailFast.FailMissingImportantFile(nzbFile);
     }
 
     private static async Task<(int index, NzbFileWithFirstSegment result)> RescueFirstSegment
@@ -226,15 +225,14 @@ public static class FetchFirstSegmentsStep
     }
 
     private static NzbFileWithFirstSegment BuildMissingFirstSegment(
-        NzbFile nzbFile,
-        long? evidenceGeneration = null) => new()
+        NzbFile nzbFile, long? providerGeneration = null) => new()
     {
         NzbFile = nzbFile,
         First16KB = null,
         Header = null,
         MissingFirstSegment = true,
-        MissingEvidenceGeneration = evidenceGeneration,
         ReleaseDate = DateTimeOffset.UtcNow,
+        ProviderGeneration = providerGeneration,
     };
 
     private static async Task<NzbFileWithFirstSegment> BuildFirstSegment
@@ -344,8 +342,8 @@ public static class FetchFirstSegmentsStep
         public required UsenetYencHeader? Header { get; init; }
         public required byte[]? First16KB { get; init; }
         public required bool MissingFirstSegment { get; init; }
-        public long? MissingEvidenceGeneration { get; init; }
         public required DateTimeOffset ReleaseDate { get; init; }
+        public long? ProviderGeneration { get; init; }
 
         public bool HasRar4Magic() => HasMagic(Rar4Magic);
         public bool HasRar5Magic() => HasMagic(Rar5Magic);
