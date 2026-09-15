@@ -1229,7 +1229,8 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             {
                 await HandleConfirmedHolesAsync(
                         davItem, dbClient, nzbFile!, segments, segmentRanges!,
-                    statHoles, remainingCorrupt, repairsAdmitted, providerGeneration, ct)
+                    statHoles, remainingCorrupt, repairsAdmitted, providerGeneration,
+                    observedFailureRevision, ct)
                     .ConfigureAwait(false);
                 return;
             }
@@ -1499,9 +1500,9 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         List<int> corruptIndices,
         bool repairsAdmitted,
         long providerGeneration,
+        long observedFailureRevision,
         CancellationToken ct)
     {
-        var observedFailureRevision = _failureTracker.GetSnapshot(davItem.Id).Revision;
         if (!repairsAdmitted)
         {
             await DeferRepairUntilWindow(davItem, dbClient, ct).ConfigureAwait(false);
