@@ -435,6 +435,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
         List<UnlinkedFileInfo> items,
         int usenetFileType,
         DateTime createdBefore,
+        bool restrictToApprovedSnapshot = false,
         CancellationToken cancellationToken = default)
     {
         var isPostgres = dbContext.Database.IsNpgsql();
@@ -461,7 +462,23 @@ public class RemoveUnlinkedFilesTask : BaseTask
         var historyColumn = isPostgres ? "\"HistoryItemId\"" : "HistoryItemId";
         var createdAtColumn = isPostgres ? "\"CreatedAt\"" : "CreatedAt";
         var table = isPostgres ? "\"DavItems\"" : "DavItems";
-        var linkedIdColumn = isPostgres ? $"CAST({table}.\"Id\" AS TEXT)" : $"{table}.Id";
+        var linkedIdColumn = isPostgres ? $"{table}.\"Id\"" : $"{table}.Id";
+        var approvedSnapshotPredicate = restrictToApprovedSnapshot
+            ? $"""
+                     AND EXISTS (
+                         SELECT 1 FROM TMP_APPROVED_UNLINKED_FILES a
+                         WHERE a.Id = {idColumn}
+                           AND a.Path = {table}."Path"
+                           AND a.Name = {table}."Name"
+                           AND (a.GeneratedStrmOutputRoot = {table}."GeneratedStrmOutputRoot" OR
+                                (a.GeneratedStrmOutputRoot IS NULL AND {table}."GeneratedStrmOutputRoot" IS NULL))
+                           AND (a.GeneratedStrmPath = {table}."GeneratedStrmPath" OR
+                                (a.GeneratedStrmPath IS NULL AND {table}."GeneratedStrmPath" IS NULL))
+                           AND (a.GeneratedStrmTarget = {table}."GeneratedStrmTarget" OR
+                                (a.GeneratedStrmTarget IS NULL AND {table}."GeneratedStrmTarget" IS NULL))
+                     )
+                     """
+            : string.Empty;
         // Placeholder names are generated locally (@p0..@pN); values are bound via
         // provider-specific parameters (NpgsqlParameter or SqliteParameter).
         var sql = $"""
@@ -471,6 +488,7 @@ public class RemoveUnlinkedFilesTask : BaseTask
                      AND {historyColumn} IS NULL
                      AND {createdAtColumn} < @cutoff
                      AND NOT EXISTS (SELECT 1 FROM TMP_LINKED_FILES t WHERE t.Id = {linkedIdColumn})
+                     {approvedSnapshotPredicate}
                    RETURNING {idColumn} AS "Id"
                    """;
 
@@ -500,27 +518,48 @@ public class RemoveUnlinkedFilesTask : BaseTask
         IReadOnlyList<UnlinkedItemInfo> items,
         CancellationToken cancellationToken = default)
     {
-        return (await DeleteEmptyDirectoriesByIdTextReturningAsync(dbContext, items, cancellationToken)
+        return (await DeleteEmptyDirectoriesByIdTextReturningAsync(
+                dbContext, items, null, cancellationToken)
             .ConfigureAwait(false)).Count;
     }
 
     private static async Task<List<string>> DeleteEmptyDirectoriesByIdTextReturningAsync(
         DavDatabaseContext dbContext,
         IReadOnlyList<UnlinkedItemInfo> items,
+        DateTime? createdBefore,
         CancellationToken cancellationToken)
     {
-        var parameters = new DbParameter[items.Count];
+        var parameters = new List<DbParameter>(items.Count + 5);
         var placeholders = new string[items.Count];
         for (var i = 0; i < items.Count; i++)
         {
             var name = $"@p{i}";
             placeholders[i] = name;
-            parameters[i] = dbContext.Database.IsNpgsql()
+            parameters.Add(dbContext.Database.IsNpgsql()
                 ? new NpgsqlParameter(name, items[i].Id)
-                : new SqliteParameter(name, items[i].Id);
+                : new SqliteParameter(name, items[i].Id));
         }
 
-        var idColumn = dbContext.Database.IsNpgsql() ? "CAST(\"Id\" AS TEXT)" : "Id";
+        var isPostgres = dbContext.Database.IsNpgsql();
+        var idColumn = isPostgres ? "CAST(\"Id\" AS TEXT)" : "Id";
+        var directorySubType = (int)DavItem.ItemSubType.Directory;
+        var createdAtPredicate = string.Empty;
+        if (createdBefore is not null)
+        {
+            var cutoffParameter = CreateWallClockParameter(dbContext, createdBefore.Value);
+            cutoffParameter.ParameterName = "@cutoff";
+            parameters.Add(cutoffParameter);
+            createdAtPredicate = "AND \"CreatedAt\" < @cutoff";
+        }
+        parameters.Add(isPostgres
+            ? new NpgsqlParameter("@subtype", directorySubType)
+            : new SqliteParameter("@subtype", directorySubType));
+        parameters.Add(isPostgres
+            ? new NpgsqlParameter("@contentFolderId", DavItem.ContentFolder.Id)
+            : new SqliteParameter("@contentFolderId", DavItem.ContentFolder.Id.ToString()));
+        parameters.Add(isPostgres
+            ? new NpgsqlParameter("@nzbFolderId", DavItem.NzbFolder.Id)
+            : new SqliteParameter("@nzbFolderId", DavItem.NzbFolder.Id.ToString()));
         var connection = dbContext.Database.GetDbConnection();
         if (connection.State != System.Data.ConnectionState.Open)
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -529,6 +568,10 @@ public class RemoveUnlinkedFilesTask : BaseTask
         command.CommandText = $"""
             DELETE FROM "DavItems"
             WHERE {idColumn} IN ({string.Join(",", placeholders)})
+                            AND "SubType" = @subtype
+                            AND "HistoryItemId" IS NULL
+                            {createdAtPredicate}
+                            AND "ParentId" NOT IN (@contentFolderId, @nzbFolderId)
               AND NOT EXISTS (
                   SELECT 1 FROM "DavItems" c WHERE c."ParentId" = "DavItems"."Id"
               )
@@ -934,7 +977,13 @@ public class RemoveUnlinkedFilesTask : BaseTask
             // relinked, historical, or already deleted by a previous attempt.
             var deletedIds = await ExecuteWithContentionRetryAsync(
                 "orphan deletion",
-                token => DeleteItemsByIdTextAsync(dbContext, itemsToDelete, usenetFileType, createdBefore, token),
+                token => DeleteItemsByIdTextAsync(
+                    dbContext,
+                    itemsToDelete,
+                    usenetFileType,
+                    createdBefore,
+                    restrictToApprovedSnapshot,
+                    token),
                 CancellationToken)
                 .ConfigureAwait(false);
 
@@ -1092,7 +1141,8 @@ public class RemoveUnlinkedFilesTask : BaseTask
             // cannot race into TR_DavItems_DeleteDirectory + DavCleanupService cascade.
             var deletedIds = await ExecuteWithContentionRetryAsync(
                 "empty directory deletion",
-                token => DeleteEmptyDirectoriesByIdTextReturningAsync(dbContext, emptyDirs, token),
+                token => DeleteEmptyDirectoriesByIdTextReturningAsync(
+                    dbContext, emptyDirs, createdBefore, token),
                 cancellationToken)
                 .ConfigureAwait(false);
 
