@@ -57,8 +57,9 @@ The NNTP stalled-read timeout, streaming segment timeout, streaming read budget,
 connection-open timeout, and idle connection timeout are separate deadlines. Normal
 capacity admission and BODY/ARTICLE transfer are outside the fresh-open budget; its clock
 starts only after idle reuse has failed and covers handshake queueing, replacement pacing,
-and fresh TCP/TLS/AUTHINFO work. Saving these values does not rebuild live pools; new
-values are read by subsequent connection attempts.
+and fresh TCP/TLS/AUTHINFO work. The fresh connection-open timeout is read by
+subsequent attempts without rebuilding live pools; the other captured pool
+settings require a provider-pool rebuild or restart before they change.
 
 ### Segment-cache storage
 

@@ -327,6 +327,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         }
 
         MultiConnectionNntpClient? providerClient = null;
+        var warmFailureLock = new object();
+        var pendingWarmFailures = new List<(Exception Exception, bool FactoryStarted)>();
 #pragma warning disable CA2000 // the pool is owned by the provider's MultiConnectionNntpClient and disposed on provider config change
         var connectionPool = CreateNewConnectionPool(
 #pragma warning restore CA2000
@@ -347,7 +349,19 @@ public class UsenetStreamingClient : WrappingNntpClient
                 ? connectionDetails.Host
                 : connectionDetails.Nickname,
             onWarmConnectionFailure: (exception, factoryStarted) =>
-                providerClient?.RecordWarmConnectionFailure(exception, factoryStarted),
+            {
+                MultiConnectionNntpClient? client;
+                lock (warmFailureLock)
+                {
+                    client = providerClient;
+                    if (client is null)
+                    {
+                        pendingWarmFailures.Add((exception, factoryStarted));
+                        return;
+                    }
+                }
+                client.RecordWarmConnectionFailure(exception, factoryStarted);
+            },
             onConnectionLimitLearned: (learned, effective) =>
             {
                 var label = string.IsNullOrWhiteSpace(connectionDetails.Nickname)
@@ -415,6 +429,14 @@ public class UsenetStreamingClient : WrappingNntpClient
             nntpReadTimeout,
             reconnectDelay
         );
+        List<(Exception Exception, bool FactoryStarted)> warmFailures;
+        lock (warmFailureLock)
+        {
+            warmFailures = pendingWarmFailures.ToList();
+            pendingWarmFailures.Clear();
+        }
+        foreach (var (exception, factoryStarted) in warmFailures)
+            providerClient.RecordWarmConnectionFailure(exception, factoryStarted);
         return providerClient;
     }
 
