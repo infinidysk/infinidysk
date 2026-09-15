@@ -1166,7 +1166,9 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             // A Quick or aged check must not rediscover a hole that was already recorded by a
             // prior degraded check and send it through the legacy repair path again. Full
             // classification checks still probe recorded holes so they can detect recovery.
-            if (!canClassify && nzbFile is not null)
+            var skipRecordedHoleProbes = depth == HealthCheckDepth.Quick
+                || (age is { TotalDays: > FullDepthDays } && sampled.Count < totalSegments);
+            if (skipRecordedHoleProbes && nzbFile is not null)
                 statSegments = ExcludeRecordedHoles(statSegments, nzbFile);
 
             // setup progress tracking

@@ -630,7 +630,8 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         ]);
         var segments = NewSegmentIds(6);
         var sizes = new long[] { 10_000, 10_000, 50, 10_000, 10_000, 10_000 };
-        var (item, oldBlobId) = await AddVideoFileAsync("movie.mkv", segments, sizes);
+        var (item, oldBlobId) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingHoles: [2]);
         var fake = NewFakeClient(segments, missing: [2]);
         var (service, _) = await NewServiceAsync(fake, par2Outcome: false);
 
@@ -639,6 +640,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         var row = Assert.Single(GetHealthRows(item.Id));
         Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
         Assert.Equal(oldBlobId, ReloadItem(item.Id).FileBlobId);
+        Assert.Contains(segments[2], fake.StatRequestOrder);
     }
 
     [Fact]
