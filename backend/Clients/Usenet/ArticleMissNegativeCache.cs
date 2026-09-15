@@ -124,22 +124,21 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
             : $"{articleId}\u0001p:{metricsKey}";
     }
 
-    public bool IsMissing(string key, long? generation = null)
+    public bool IsMissing(string key, long generation = 0)
     {
-        var lookupGeneration = generation ?? _configManager.GetUsenetProviderSnapshot().Generation;
-        if (!_missingAt.TryGetValue((lookupGeneration, key), out var markedAt)) return false;
+        if (!_missingAt.TryGetValue((generation, key), out var markedAt)) return false;
         if (DateTimeOffset.UtcNow - markedAt < _configManager.GetArticleMissCacheTtl())
         {
             Interlocked.Increment(ref _hits);
             return true;
         }
-        _missingAt.TryRemove((lookupGeneration, key), out _);
+        _missingAt.TryRemove((generation, key), out _);
         return false;
     }
 
-    public void MarkMissing(string key, long? generation = null)
+    public void MarkMissing(string key, long? generation = 0)
     {
-        var evidenceGeneration = generation ?? _configManager.GetUsenetProviderSnapshot().Generation;
+        if (generation is not { } evidenceGeneration) return;
         var now = DateTimeOffset.UtcNow;
         MarkMissingInMemory(evidenceGeneration, key, now);
         lock (_persistenceStateLock)
