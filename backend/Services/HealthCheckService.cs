@@ -1168,8 +1168,13 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             // classification checks still probe recorded holes so they can detect recovery.
             var skipRecordedHoleProbes = depth == HealthCheckDepth.Quick
                 || (age is { TotalDays: > FullDepthDays } && sampled.Count < totalSegments);
+            var excludedRecordedHoleProbe = false;
             if (skipRecordedHoleProbes && nzbFile is not null)
+            {
+                var sampledCount = statSegments.Count;
                 statSegments = ExcludeRecordedHoles(statSegments, nzbFile);
+                excludedRecordedHoleProbe = statSegments.Count < sampledCount;
+            }
 
             // setup progress tracking
             var progressHook = new Progress<int>();
@@ -1302,7 +1307,8 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 HealthCheckResult.HealthResult.Healthy,
                 HealthCheckResult.RepairAction.None,
                 healthyMessage, ct).ConfigureAwait(false);
-            _failureTracker.TryClearFailure(davItem.Id, observedFailureRevision);
+            if (!excludedRecordedHoleProbe)
+                _failureTracker.TryClearFailure(davItem.Id, observedFailureRevision);
         }
         catch (OperationCanceledException) when (
             !ct.IsCancellationRequested && statCts?.IsCancellationRequested == true)

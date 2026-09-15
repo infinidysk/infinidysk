@@ -293,6 +293,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             },
         ]);
         var fake = NewFakeClient(segments, missing: [2]);
+        _failureTracker.RecordFailure(item.Id);
         var (service, _) = await NewServiceAsync(fake, par2Outcome: false);
 
         await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
@@ -303,6 +304,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         var blob = await BlobStore.ReadBlob<DavNzbFile>(blobId);
         Assert.NotNull(blob);
         Assert.Equal([2], blob.MissingSegmentIndices!);
+        Assert.Equal(1, _failureTracker.GetFailureCount(item.Id));
     }
 
     [Fact]
