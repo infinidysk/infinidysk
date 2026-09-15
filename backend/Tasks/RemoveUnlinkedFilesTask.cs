@@ -463,11 +463,12 @@ public class RemoveUnlinkedFilesTask : BaseTask
         var createdAtColumn = isPostgres ? "\"CreatedAt\"" : "CreatedAt";
         var table = isPostgres ? "\"DavItems\"" : "DavItems";
         var linkedIdColumn = isPostgres ? $"{table}.\"Id\"" : $"{table}.Id";
+            var qualifiedIdText = isPostgres ? $"CAST({table}.\"Id\" AS TEXT)" : $"{table}.Id";
         var approvedSnapshotPredicate = restrictToApprovedSnapshot
             ? $"""
                      AND EXISTS (
                          SELECT 1 FROM TMP_APPROVED_UNLINKED_FILES a
-                         WHERE a.Id = {idColumn}
+                         WHERE a.Id = {qualifiedIdText}
                            AND a.Path = {table}."Path"
                            AND a.Name = {table}."Name"
                            AND (a.GeneratedStrmOutputRoot = {table}."GeneratedStrmOutputRoot" OR
