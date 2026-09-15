@@ -1360,6 +1360,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 await using var mutationGate = await _failureTracker
                     .AcquireMutationGateAsync(davItem.Id, ct)
                     .ConfigureAwait(false);
+                ExceptionMiddleware.InvalidateRepairSchedulingDedup(davItem.Id);
                 if (await IsDurablyUrgentAsync(dbClient, davItem.Id, ct).ConfigureAwait(false))
                 {
                     CompleteHealthProgress(davItem.Id);
@@ -3600,7 +3601,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         CancellationToken ct)
     {
         var currentFailure = _failureTracker.GetSnapshot(davItem.Id);
-        if (currentFailure.Revision == observedFailureRevision)
+        if (currentFailure.Revision == 0 || currentFailure.Revision == observedFailureRevision)
             return false;
 
         var utcNow = _timeProvider.GetUtcNow();
