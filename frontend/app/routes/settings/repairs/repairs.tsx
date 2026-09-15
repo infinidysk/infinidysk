@@ -280,8 +280,8 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 How much of each file a health check verifies. Quick STATs only about two dozen
                 head/tail/stride segments per file regardless of size, a fast first pass that
                 reliably tells an intact posting from one lost to takedown or retention, but does
-                not run damage classification. Standard and above check files up to 8000 segments
-                in full, unless the aging option below is turned on; above that, larger files are
+                not run damage classification. Standard and above check files up to 8000 segments in
+                full, unless the aging option below is turned on; above that, larger files are
                 sampled from the start, end, and evenly spaced points in between, so a big release
                 costs a bounded number of STAT commands. Deeper settings verify more of each file
                 and use more usenet traffic. Complete checks every segment.

@@ -34,9 +34,9 @@ const baseConfig: Record<string, string> = {
 
 describe("Repairs settings helpers", () => {
   it("maps health-check depth levels to slider positions", () => {
-    expect(["quick", "standard", "enhanced", "deep", "complete"].map(getHealthCheckDepthIndex)).toEqual([
-      0, 1, 2, 3, 4,
-    ]);
+    expect(
+      ["quick", "standard", "enhanced", "deep", "complete"].map(getHealthCheckDepthIndex),
+    ).toEqual([0, 1, 2, 3, 4]);
     expect(getHealthCheckDepthIndex("unknown")).toBe(0);
   });
 
