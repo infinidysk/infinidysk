@@ -38,6 +38,11 @@ public class MetricsWriter : BackgroundService
     private const int FlushThreshold = 1000;
     private const int MaxQueueLength = 10_000;
     private static readonly TimeSpan FlushInterval = TimeSpan.FromSeconds(5);
+    // Consecutive flush failures back off exponentially up to this cap. Without it a
+    // failing database (corrupt, read-only, full) made the loop retry as fast as
+    // WaitForFlushAsync returns — immediately, once any queue holds 1000 rows.
+    private static readonly TimeSpan MaxFlushBackoff = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan MinRecoveryInterval = TimeSpan.FromMinutes(10);
 
     private readonly ConcurrentQueue<SegmentFetch> _fetches = new();
     private readonly ConcurrentQueue<MetricEvent> _events = new();
@@ -54,6 +59,8 @@ public class MetricsWriter : BackgroundService
     private long _lastFlushLagMs;
     private long _lastSuccessfulFlushAtMs;
     private string? _lastFlushError;
+    private int _consecutiveFlushFailures;
+    private long _lastRecoveryAttemptMs;
 
     // Bumped by BeginResetAsync. An in-flight FlushAsync that drained before the bump
     // must abandon its batch (no write, no requeue) so wiped rows cannot return.
@@ -257,12 +264,79 @@ public class MetricsWriter : BackgroundService
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 ex.LogWarningKnownOrStack("MetricsWriter flush failed.");
+                if (MetricsDatabaseRecovery.IsUnusableDatabase(ex))
+                    await TryRecoverUnusableDatabaseAsync(stoppingToken).ConfigureAwait(false);
+                if (!await BackoffAfterFailureAsync(stoppingToken).ConfigureAwait(false))
+                    break;
             }
         }
 
         // Best-effort drain on shutdown so we don't lose the trailing batch.
         try { await FlushAsync().ConfigureAwait(false); }
         catch (Exception ex) when (ex is not OutOfMemoryException) { Log.Debug(ex, "MetricsWriter final flush failed"); }
+    }
+
+    internal int ConsecutiveFlushFailures => Volatile.Read(ref _consecutiveFlushFailures);
+
+    /// <summary>
+    /// Delay before the next flush attempt after <paramref name="consecutiveFailures"/>
+    /// failures in a row: 1 s, 2 s, 4 s, … capped at <see cref="MaxFlushBackoff"/>.
+    /// </summary>
+    internal static TimeSpan BackoffFor(int consecutiveFailures)
+    {
+        if (consecutiveFailures <= 0)
+            return TimeSpan.Zero;
+        var seconds = Math.Min(Math.Pow(2, consecutiveFailures - 1), MaxFlushBackoff.TotalSeconds);
+        return TimeSpan.FromSeconds(seconds);
+    }
+
+    /// <summary>Returns false when the delay was cancelled by shutdown.</summary>
+    private async Task<bool> BackoffAfterFailureAsync(CancellationToken stoppingToken)
+    {
+        var delay = BackoffFor(ConsecutiveFlushFailures);
+        if (delay == TimeSpan.Zero)
+            return true;
+        try
+        {
+            await Task.Delay(delay, stoppingToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The database file itself is beyond repair (SQLITE_CORRUPT / SQLITE_NOTADB):
+    /// quarantine it and recreate the schema so metrics resume on a fresh file. The
+    /// queued rows survive in memory and land in the new database on the next flush.
+    /// Rate-limited so a recovery that does not stick cannot loop.
+    /// </summary>
+    private async Task TryRecoverUnusableDatabaseAsync(CancellationToken stoppingToken)
+    {
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var last = Interlocked.Read(ref _lastRecoveryAttemptMs);
+        if (last != 0 && now - last < MinRecoveryInterval.TotalMilliseconds)
+            return;
+        Interlocked.Exchange(ref _lastRecoveryAttemptMs, now);
+
+        try
+        {
+            await using var db = _contextFactory();
+            if (!await MetricsDatabaseRecovery.QuarantineIfCorruptAsync(db, stoppingToken).ConfigureAwait(false))
+                return;
+            await db.Database.MigrateAsync(stoppingToken).ConfigureAwait(false);
+            Interlocked.Exchange(ref _consecutiveFlushFailures, 0);
+            Log.Information("Metrics database recreated after quarantine; metrics collection resumes");
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            Log.Warning(ex, "Metrics database recovery failed; will retry after {Interval}", MinRecoveryInterval);
+        }
     }
 
     private async Task WaitForFlushAsync(CancellationToken stoppingToken)
@@ -360,6 +434,8 @@ public class MetricsWriter : BackgroundService
                 return;
             }
 
+            Interlocked.Increment(ref _consecutiveFlushFailures);
+
             // Only requeue if this flush still belongs to the current generation.
             // A reset that started mid-flush must not resurrect wiped rows.
             var queuedRows = fetches.Count + events.Count + sessions.Count + failoverMisses.Count;
@@ -416,6 +492,7 @@ public class MetricsWriter : BackgroundService
         Interlocked.Exchange(ref _lastFlushLagMs, (long)(DateTime.UtcNow - started).TotalMilliseconds);
         Interlocked.Exchange(ref _lastSuccessfulFlushAtMs, completed);
         Interlocked.Exchange(ref _lastFlushError, null);
+        Interlocked.Exchange(ref _consecutiveFlushFailures, 0);
     }
 
     private static List<T> Drain<T>(ConcurrentQueue<T> q)

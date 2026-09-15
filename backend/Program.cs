@@ -713,6 +713,16 @@ public sealed partial class Program
         await using var maintenanceLease = await DatabaseMigrationLease
             .AcquireAsync(DavDatabaseContext.DatabaseFilePath, ct)
             .ConfigureAwait(false);
+
+        // Quarantine a corrupt metrics file up front so none of the probes or
+        // migrations below trip over it; it is disposable (MetricsDatabaseRecovery).
+        {
+            await using var metricsRecoveryContext = new MetricsDbContext();
+            await MetricsDatabaseRecovery
+                .QuarantineIfCorruptAsync(metricsRecoveryContext, ct)
+                .ConfigureAwait(false);
+        }
+
         var argIndex = args.ToList().IndexOf("--db-migration");
         var targetMigration = args.Length > argIndex + 1 ? args[argIndex + 1] : null;
         var environmentOverlay = ConfigEnvironmentOverlay.LoadFromEnvironment();
