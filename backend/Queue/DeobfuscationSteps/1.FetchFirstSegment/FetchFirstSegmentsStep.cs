@@ -190,7 +190,7 @@ public static class FetchFirstSegmentsStep
             "Aborting remaining first-segment checks after missing important file `{FileName}`",
             nzbFile.GetSubjectFileName());
         cancel?.Invoke();
-        DeadNzbFailFast.FailMissingImportantFile(nzbFile);
+        DeadNzbFailFast.FailMissingImportantFile(nzbFile, null);
     }
 
     private static async Task<(int index, NzbFileWithFirstSegment result)> RescueFirstSegment
@@ -344,6 +344,7 @@ public static class FetchFirstSegmentsStep
         public required bool MissingFirstSegment { get; init; }
         public required DateTimeOffset ReleaseDate { get; init; }
         public long? ProviderGeneration { get; init; }
+        public long? MissingEvidenceGeneration => ProviderGeneration;
 
         public bool HasRar4Magic() => HasMagic(Rar4Magic);
         public bool HasRar5Magic() => HasMagic(Rar5Magic);

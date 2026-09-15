@@ -3662,6 +3662,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         }
     }
 
+    public static void AddProviderMissingSegmentIds(IEnumerable<string> segmentIds, long generation) =>
+        AddMissingSegmentIds(segmentIds, generation);
+
+    public static void AddRejectedReleaseSegmentIds(IEnumerable<string> segmentIds, long generation) =>
+        AddMissingSegmentIds(segmentIds, generation);
+
     public static void CheckCachedMissingSegmentIds(IEnumerable<string> segmentIds, long generation = 0)
     {
         lock (_missingSegmentIds)
