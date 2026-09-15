@@ -130,6 +130,33 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RoutineHealthCheck_DoesNotOverwriteConcurrentUrgentRepair()
+    {
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, [10_000, 10_000, 10_000]);
+
+        var headClient = new CapturingHeadNntpClient(NewFakeClient(segments, missing: []));
+        var (service, _) = await NewServiceAsync(headClient, par2Outcome: false);
+        service.BeforeHealthyFinalizationOverride = async id =>
+        {
+            await using var concurrentContext = new DavDatabaseContext(_options);
+            var concurrentItem = await concurrentContext.Items.SingleAsync(x => x.Id == id);
+            concurrentItem.NextHealthCheck = DateTimeOffset.UnixEpoch;
+            await concurrentContext.SaveChangesAsync();
+        };
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        await using var verificationContext = new DavDatabaseContext(_options);
+        var durableItem = await verificationContext.Items.SingleAsync(x => x.Id == item.Id);
+        Assert.Equal(DateTimeOffset.UnixEpoch, durableItem.NextHealthCheck);
+        Assert.Empty(await verificationContext.HealthCheckResults
+            .Where(x => x.DavItemId == item.Id)
+            .ToListAsync());
+    }
+
+    [Fact]
     public async Task MissingReleaseDate_PrimaryHeadMissing_UsesLiveFallback()
     {
         var segments = NewSegmentIds(3);
@@ -230,6 +257,27 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task QuickCheck_DoesNotClassifyFullySampledDamagedFileAsDegraded()
+    {
+        var segments = NewSegmentIds(6);
+        var sizes = new long[] { 10_000, 10_000, 50, 10_000, 10_000, 10_000 };
+        var (item, _) = await AddVideoFileAsync("movie.mkv", segments, sizes);
+        _configManager.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.RepairHealthcheckDepth,
+                ConfigValue = "quick",
+            },
+        ]);
+        var (service, _) = await NewServiceAsync(NewFakeClient(segments, missing: [2]), par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        Assert.NotEqual(HealthCheckResult.HealthResult.Degraded, Assert.Single(GetHealthRows(item.Id)).Result);
+    }
+
+    [Fact]
     public async Task IdenticalRecheck_DoesNotRewriteBlob()
     {
         var segments = NewSegmentIds(6);
@@ -267,7 +315,8 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal(oldBlobId, ReloadItem(item.Id).FileBlobId);
         foreach (var index in new[] { 2, 3, 4 })
             Assert.Throws<UsenetArticleNotFoundException>(
-                () => HealthCheckService.CheckCachedMissingSegmentIds([segments[index]]));
+                () => HealthCheckService.CheckCachedMissingSegmentIds(
+                    [segments[index]], _configManager.GetUsenetProviderSnapshot().Generation));
     }
 
     [Fact]
@@ -285,7 +334,8 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
         Assert.Empty(fake.BodyRequestCounts);
         Assert.Throws<UsenetArticleNotFoundException>(
-            () => HealthCheckService.CheckCachedMissingSegmentIds([segments[0]]));
+            () => HealthCheckService.CheckCachedMissingSegmentIds(
+                [segments[0]], _configManager.GetUsenetProviderSnapshot().Generation));
     }
 
     [Fact]
@@ -475,8 +525,9 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
         Assert.Equal([segments[50]], Assert.Single(par2.Requests));
         Assert.Equal(oldBlobId, ReloadItem(item.Id).FileBlobId);
-        Assert.Throws<UsenetArticleNotFoundException>(
-            () => HealthCheckService.CheckCachedMissingSegmentIds([segments[50]]));
+        Assert.Throws<UsenetArticleNotFoundException>(() =>
+            HealthCheckService.CheckCachedMissingSegmentIds(
+                [segments[50]], _configManager.GetUsenetProviderSnapshot().Generation));
     }
 
     [Fact]
@@ -623,7 +674,8 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal((byte)MediaContainerClass.Mp4MoovAtEnd, blob.ContainerClass);
         Assert.Equal(0L, blob.CriticalHeadEndExclusive);
         Assert.Throws<UsenetArticleNotFoundException>(
-            () => HealthCheckService.CheckCachedMissingSegmentIds([segments[5]]));
+            () => HealthCheckService.CheckCachedMissingSegmentIds(
+                [segments[5]], _configManager.GetUsenetProviderSnapshot().Generation));
     }
 
     [Fact]
@@ -712,7 +764,8 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal((byte)MediaContainerClass.Mp4FastStart, firstBlob.ContainerClass);
         Assert.Equal(15_024, firstBlob.CriticalHeadEndExclusive);
         Assert.Throws<UsenetArticleNotFoundException>(
-            () => HealthCheckService.CheckCachedMissingSegmentIds([segments[1]]));
+            () => HealthCheckService.CheckCachedMissingSegmentIds(
+                [segments[1]], _configManager.GetUsenetProviderSnapshot().Generation));
 
         await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
 

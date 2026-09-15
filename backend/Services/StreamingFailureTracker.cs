@@ -15,8 +15,12 @@ namespace NzbWebDAV.Services;
 /// </summary>
 public class StreamingFailureTracker
 {
+    private const int MutationGateCount = 64;
     private const int MaximumAttributedSegmentIds = 64;
     private readonly ConcurrentDictionary<Guid, StreamingFailureSnapshot> _failures = new();
+    private readonly SemaphoreSlim[] _mutationGates =
+        Enumerable.Range(0, MutationGateCount).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
+    private static long _nextRevision;
 
     /// <summary>Records a definitive article failure and returns the new immutable snapshot.</summary>
     public StreamingFailureSnapshot RecordAttributedFailure(Guid davItemId, string segmentId)
@@ -24,8 +28,8 @@ public class StreamingFailureTracker
         ArgumentException.ThrowIfNullOrEmpty(segmentId);
         return _failures.AddOrUpdate(
             davItemId,
-            _ => new StreamingFailureSnapshot(1, false, [segmentId]),
-            (_, previous) => previous.WithAttributedFailure(segmentId, MaximumAttributedSegmentIds));
+            _ => new StreamingFailureSnapshot(1, false, [segmentId], NextRevision()),
+            (_, previous) => previous.WithAttributedFailure(segmentId, MaximumAttributedSegmentIds, NextRevision()));
     }
 
     /// <summary>Records a structural failure whose responsible segment cannot be proven.</summary>
@@ -33,8 +37,8 @@ public class StreamingFailureTracker
     {
         return _failures.AddOrUpdate(
             davItemId,
-            _ => new StreamingFailureSnapshot(1, true, []),
-            (_, previous) => previous.WithUnattributedFailure());
+            _ => new StreamingFailureSnapshot(1, true, [], NextRevision()),
+            (_, previous) => previous.WithUnattributedFailure(NextRevision()));
     }
 
     /// <summary>Increments a structural failure for compatibility with existing callers.</summary>
@@ -61,25 +65,55 @@ public class StreamingFailureTracker
     {
         _failures.TryRemove(davItemId, out _);
     }
+
+    public bool TryClearFailure(Guid davItemId, long expectedRevision)
+    {
+        if (!_failures.TryGetValue(davItemId, out var current))
+            return expectedRevision == 0;
+        if (current.Revision != expectedRevision)
+            return false;
+        return ((ICollection<KeyValuePair<Guid, StreamingFailureSnapshot>>)_failures)
+            .Remove(new KeyValuePair<Guid, StreamingFailureSnapshot>(davItemId, current));
+    }
+
+    internal async ValueTask<MutationGateLease> AcquireMutationGateAsync(Guid davItemId, CancellationToken ct)
+    {
+        var index = unchecked((uint)davItemId.GetHashCode()) % (uint)_mutationGates.Length;
+        var gate = _mutationGates[index];
+        await gate.WaitAsync(ct).ConfigureAwait(false);
+        return new MutationGateLease(gate);
+    }
+
+    private static long NextRevision() => Interlocked.Increment(ref _nextRevision);
+
+    internal readonly struct MutationGateLease(SemaphoreSlim gate) : IAsyncDisposable
+    {
+        public ValueTask DisposeAsync()
+        {
+            gate.Release();
+            return ValueTask.CompletedTask;
+        }
+    }
 }
 
 public readonly record struct StreamingFailureSnapshot(
     int Count,
     bool HasUnattributedFailure,
-    string[] SegmentIds)
+    string[] SegmentIds,
+    long Revision = 0)
 {
     public static readonly StreamingFailureSnapshot Empty = new(0, false, []);
 
     public bool HasTargetableSegmentIds => Count > 0 && !HasUnattributedFailure && SegmentIds.Length > 0;
 
-    internal StreamingFailureSnapshot WithAttributedFailure(string segmentId, int maximumSegmentIds)
+    internal StreamingFailureSnapshot WithAttributedFailure(string segmentId, int maximumSegmentIds, long revision)
     {
         if (SegmentIds.Contains(segmentId, StringComparer.Ordinal) || SegmentIds.Length >= maximumSegmentIds)
-            return this with { Count = Count + 1 };
+            return this with { Count = Count + 1, Revision = revision };
 
-        return this with { Count = Count + 1, SegmentIds = [.. SegmentIds, segmentId] };
+        return this with { Count = Count + 1, SegmentIds = [.. SegmentIds, segmentId], Revision = revision };
     }
 
-    internal StreamingFailureSnapshot WithUnattributedFailure() =>
-        this with { Count = Count + 1, HasUnattributedFailure = true };
+    internal StreamingFailureSnapshot WithUnattributedFailure(long revision) =>
+        this with { Count = Count + 1, HasUnattributedFailure = true, Revision = revision };
 }

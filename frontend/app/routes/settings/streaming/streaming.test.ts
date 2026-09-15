@@ -23,6 +23,7 @@ const validConfig = {
   "usenet.streaming-priority": "80",
   "usenet.streaming-segment-timeout-seconds": "8",
   "usenet.streaming-read-timeout-seconds": "30",
+  "usenet.connection-open-timeout-seconds": "15",
   "usenet.streaming-write-timeout-seconds": "60",
   "usenet.streaming-segment-retries": "3",
   "usenet.article-buffer-size": "40",
@@ -174,6 +175,7 @@ describe("Streaming settings", () => {
     const numericUpdates: Array<[string, string]> = [
       ["Streaming Segment Timeout", "10"],
       ["Streaming Read Timeout", "45"],
+      ["Fresh Connection Open Timeout", "10"],
       ["Streaming Segment Retries", "4"],
       ["Article Buffer Size", "60"],
       ["In-flight article budget (MiB)", "256"],

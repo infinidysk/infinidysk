@@ -109,4 +109,29 @@ public class StreamingFailureTrackerTests
         Assert.Equal(64, snapshot.SegmentIds.Length);
         Assert.True(snapshot.HasTargetableSegmentIds);
     }
+
+    [Fact]
+    public void TryClearFailure_RejectsFailureRecordedAfterSnapshot()
+    {
+        var tracker = new StreamingFailureTracker();
+        var id = Guid.NewGuid();
+        var first = tracker.RecordAttributedFailure(id, "<first@test>");
+        tracker.RecordAttributedFailure(id, "<second@test>");
+
+        Assert.False(tracker.TryClearFailure(id, first.Revision));
+        Assert.Equal(2, tracker.GetFailureCount(id));
+    }
+
+    [Fact]
+    public async Task MutationGate_SerializesSameItem()
+    {
+        var tracker = new StreamingFailureTracker();
+        var id = Guid.NewGuid();
+        var firstLease = await tracker.AcquireMutationGateAsync(id, CancellationToken.None);
+        var secondLeaseTask = tracker.AcquireMutationGateAsync(id, CancellationToken.None).AsTask();
+
+        Assert.False(secondLeaseTask.IsCompleted);
+        await firstLease.DisposeAsync();
+        await using var secondLease = await secondLeaseTask;
+    }
 }

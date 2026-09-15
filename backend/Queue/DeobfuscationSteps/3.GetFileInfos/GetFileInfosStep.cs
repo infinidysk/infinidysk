@@ -88,6 +88,7 @@ public static class GetFileInfosStep
             IsRar = isRar,
             SniffedVideoExtension = sniffedVideoExtension,
             First16KB = file.First16KB,
+            MissingEvidenceGeneration = file.MissingEvidenceGeneration,
         };
     }
 
@@ -170,5 +171,6 @@ public static class GetFileInfosStep
         public bool IsRar { get; init; }
         public string? SniffedVideoExtension { get; init; }
         public byte[]? First16KB { get; init; }
+        public long? MissingEvidenceGeneration { get; init; }
     }
 }

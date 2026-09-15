@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isRepairsSettingsUpdated, isRepairsSettingsValid } from "./repairs";
+import {
+  getHealthCheckDepthIndex,
+  isRepairsSettingsUpdated,
+  isRepairsSettingsValid,
+} from "./repairs";
 
 const baseConfig: Record<string, string> = {
   "repair.enable": "true",
@@ -29,6 +33,13 @@ const baseConfig: Record<string, string> = {
 };
 
 describe("Repairs settings helpers", () => {
+  it("maps health-check depth levels to slider positions", () => {
+    expect(["quick", "standard", "enhanced", "deep", "complete"].map(getHealthCheckDepthIndex)).toEqual([
+      0, 1, 2, 3, 4,
+    ]);
+    expect(getHealthCheckDepthIndex("unknown")).toBe(0);
+  });
+
   it("detects PAR2 setting changes", () => {
     const updated = { ...baseConfig, "repair.par2-enabled": "true" };
     expect(isRepairsSettingsUpdated(baseConfig, updated)).toBe(true);

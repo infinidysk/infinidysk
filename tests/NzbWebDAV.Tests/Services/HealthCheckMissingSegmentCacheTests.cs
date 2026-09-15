@@ -11,7 +11,7 @@ public class HealthCheckMissingSegmentCacheTests
         var missingId = $"<{Guid.NewGuid():N}@test>";
         var otherId = $"<{Guid.NewGuid():N}@test>";
 
-        HealthCheckService.AddMissingSegmentIds([missingId]);
+        HealthCheckService.AddMissingSegmentIds([missingId], 0);
 
         var ex = Assert.Throws<UsenetArticleNotFoundException>(
             () => HealthCheckService.CheckCachedMissingSegmentIds([missingId]));

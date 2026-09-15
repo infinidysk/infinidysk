@@ -42,7 +42,7 @@
     "isbot": "^5.2.2",
     "material-symbols": "^0.47.1",
     "mime-types": "^3.0.2",
-    "openid-client": "^6.8.7",
+    "openid-client": "^6.8.8",
     "picocolors": "^1.1.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

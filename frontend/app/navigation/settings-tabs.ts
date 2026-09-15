@@ -32,6 +32,17 @@ export type SettingsTabGroup = {
 
 export const SETTINGS_TAB_GROUPS: SettingsTabGroup[] = [
   {
+    title: "System",
+    items: [
+      { id: "general", label: "General", icon: "tune" },
+      { id: "repairs", label: "Health & Repairs", icon: "build" },
+      { id: "maintenance", label: "Maintenance", icon: "settings_suggest" },
+      { id: "backup", label: "Backup & Restore", icon: "settings_backup_restore" },
+      { id: "support", label: "Support", icon: "support_agent" },
+      { id: "migration", label: "Migration (experimental)", icon: "moving" },
+    ],
+  },
+  {
     title: "Providers & Search",
     items: [
       { id: "usenet", label: "Usenet", icon: "cloud" },
@@ -67,17 +78,6 @@ export const SETTINGS_TAB_GROUPS: SettingsTabGroup[] = [
     items: [
       { id: "arrs", label: "Arr Apps", icon: "sync_alt" },
       { id: "rclone", label: "Rclone Server", icon: "dns" },
-    ],
-  },
-  {
-    title: "System",
-    items: [
-      { id: "general", label: "General", icon: "tune" },
-      { id: "repairs", label: "Health & Repairs", icon: "build" },
-      { id: "maintenance", label: "Maintenance", icon: "settings_suggest" },
-      { id: "backup", label: "Backup & Restore", icon: "settings_backup_restore" },
-      { id: "support", label: "Support", icon: "support_agent" },
-      { id: "migration", label: "Migration (experimental)", icon: "moving" },
     ],
   },
 ];

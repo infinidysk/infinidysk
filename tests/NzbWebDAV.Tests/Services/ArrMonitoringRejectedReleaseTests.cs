@@ -63,8 +63,9 @@ public sealed class ArrMonitoringRejectedReleaseTests
         };
         using var httpClient = new HttpClient(new DeleteHandler(HttpStatusCode.NoContent));
         var client = new TestArrClient(httpClient);
+        var configManager = new ConfigManager();
         var service = new ArrMonitoringService(
-            new ConfigManager(),
+            configManager,
             new ArrReplacementSearchBudget(),
             new TestDbContextFactory(options),
             blobStore);
@@ -84,8 +85,8 @@ public sealed class ArrMonitoringRejectedReleaseTests
             item, config, client, new Dictionary<Guid, string[]?>(), CancellationToken.None);
 
         Assert.Throws<UsenetArticleNotFoundException>(() =>
-            HealthCheckService.CheckCachedMissingSegmentIds([segmentId]));
-        HealthCheckService.CheckCachedMissingSegmentIds([$"{Guid.NewGuid():N}@test"]);
+            HealthCheckService.CheckCachedMissingSegmentIds([segmentId], configManager.GetUsenetProviderSnapshot().Generation));
+        HealthCheckService.CheckCachedMissingSegmentIds([$"{Guid.NewGuid():N}@test"], configManager.GetUsenetProviderSnapshot().Generation);
         Assert.Equal([blobId], blobStore.ReadIds);
     }
 
@@ -109,14 +110,14 @@ public sealed class ArrMonitoringRejectedReleaseTests
             await fixture.Handler.RequestReceived.Task;
 
             Assert.Equal([fixture.BlobId], fixture.BlobStore.ReadIds);
-            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]);
+            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId], fixture.ProviderGeneration);
 
             using var completionResponse = new HttpResponseMessage(HttpStatusCode.NoContent);
             response.SetResult(completionResponse);
             await handling;
 
             Assert.Throws<UsenetArticleNotFoundException>(() =>
-                HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]));
+                HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId], fixture.ProviderGeneration));
             Assert.Contains("blocklist=true", fixture.Handler.RequestUri!.Query, StringComparison.Ordinal);
             Assert.Contains("skipRedownload=true", fixture.Handler.RequestUri.Query, StringComparison.Ordinal);
         }
@@ -138,7 +139,7 @@ public sealed class ArrMonitoringRejectedReleaseTests
                 new Dictionary<Guid, string[]?>(),
                 CancellationToken.None);
 
-            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]);
+            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId], fixture.ProviderGeneration);
             Assert.Equal([fixture.BlobId], fixture.BlobStore.ReadIds);
         }
     }
@@ -156,7 +157,7 @@ public sealed class ArrMonitoringRejectedReleaseTests
                 new Dictionary<Guid, string[]?>(),
                 CancellationToken.None);
 
-            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]);
+            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId], fixture.ProviderGeneration);
             Assert.Empty(fixture.BlobStore.ReadIds);
             Assert.Contains("blocklist=false", fixture.Handler.RequestUri!.Query, StringComparison.Ordinal);
         }
@@ -234,7 +235,7 @@ public sealed class ArrMonitoringRejectedReleaseTests
 
             Assert.NotNull(resolution);
             Assert.NotNull(fixture.Handler.RequestUri);
-            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]);
+            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId], fixture.ProviderGeneration);
             if (failure == EvidenceFailure.InvalidDownloadId)
                 Assert.Empty(fixture.BlobStore.ReadIds);
         }
@@ -292,7 +293,7 @@ public sealed class ArrMonitoringRejectedReleaseTests
 
             Assert.Equal([fixture.BlobId], fixture.BlobStore.ReadIds);
             Assert.Equal(2, fixture.Handler.RequestCount);
-            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]);
+            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId], fixture.ProviderGeneration);
         }
     }
 
@@ -321,7 +322,7 @@ public sealed class ArrMonitoringRejectedReleaseTests
 
             Assert.Equal(1, fixture.DbContextFactory.AsyncCreateCount);
             Assert.Equal(2, fixture.Handler.RequestCount);
-            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]);
+            HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId], fixture.ProviderGeneration);
         }
     }
 
@@ -351,7 +352,7 @@ public sealed class ArrMonitoringRejectedReleaseTests
             Assert.Equal([fixture.BlobId], fixture.BlobStore.ReadIds);
             Assert.Equal(2, fixture.Handler.RequestCount);
             Assert.Throws<UsenetArticleNotFoundException>(() =>
-                HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId]));
+                HealthCheckService.CheckCachedMissingSegmentIds([fixture.SegmentId], fixture.ProviderGeneration));
         }
     }
 
@@ -399,7 +400,7 @@ public sealed class ArrMonitoringRejectedReleaseTests
             await context.SaveChangesAsync();
             var dbClient = new DavDatabaseClient(context);
             var nntpClient = new FakeNntpClient(new Dictionary<string, byte[]>());
-            var configManager = new ConfigManager();
+            var configManager = fixture.ConfigManager;
             using var healthCheckConnectionGate = new HealthCheckConnectionGate(configManager);
             await using var nzbStream = new MemoryStream(
                 Encoding.UTF8.GetBytes(CreateNzb(fixture.SegmentId)),
@@ -526,6 +527,7 @@ public sealed class ArrMonitoringRejectedReleaseTests
             DeleteHandler handler,
             TestArrClient client,
             ArrMonitoringService service,
+            ConfigManager configManager,
             ArrQueueRecord item,
             ArrConfig config)
         {
@@ -539,6 +541,7 @@ public sealed class ArrMonitoringRejectedReleaseTests
             Handler = handler;
             Client = client;
             Service = service;
+            ConfigManager = configManager;
             Item = item;
             Config = config;
         }
@@ -551,8 +554,10 @@ public sealed class ArrMonitoringRejectedReleaseTests
         public DeleteHandler Handler { get; }
         public TestArrClient Client { get; }
         public ArrMonitoringService Service { get; }
+        public ConfigManager ConfigManager { get; }
         public ArrQueueRecord Item { get; }
         public ArrConfig Config { get; }
+        public long ProviderGeneration => ConfigManager.GetUsenetProviderSnapshot().Generation;
 
         public static async Task<Fixture> CreateAsync(
             HttpStatusCode statusCode,
@@ -600,8 +605,9 @@ public sealed class ArrMonitoringRejectedReleaseTests
             var dbContextFactory = new TestDbContextFactory(
                 options,
                 timeOut: failure == EvidenceFailure.CaptureTimeout);
+            var configManager = new ConfigManager();
             var service = new ArrMonitoringService(
-                new ConfigManager(),
+                configManager,
                 new ArrReplacementSearchBudget(),
                 dbContextFactory,
                 blobStore);
@@ -636,6 +642,7 @@ public sealed class ArrMonitoringRejectedReleaseTests
                 handler,
                 client,
                 service,
+                configManager,
                 item,
                 config);
         }

@@ -229,7 +229,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         ConcurrentReadTracker? concurrentReadTracker
     )
     {
-        var providerConfig = configManager.GetUsenetProviderConfig();
+        var providerSnapshot = configManager.GetUsenetProviderSnapshot();
+        var providerConfig = providerSnapshot.Providers;
         // Seed the tracker from the persisted metrics rollup so the limit gate
         // is accurate before the first article fetch. Fire-and-forget — the
         // helper logs and swallows DB errors so a metrics outage can't keep
@@ -258,6 +259,7 @@ public class UsenetStreamingClient : WrappingNntpClient
                 metricsWriter,
                 circuitInitialCooldown,
                 circuitMaxCooldown,
+                configManager.GetConnectionOpenTimeout,
                 streamingPriority,
                 latencyTracker,
                 tripDetector
@@ -271,7 +273,8 @@ public class UsenetStreamingClient : WrappingNntpClient
             activeReadRegistry: activeReadRegistry,
             articleMissCache: articleMissCache,
             connectionPoolStats: connectionPoolStats,
-            concurrentReadTracker: concurrentReadTracker);
+            concurrentReadTracker: concurrentReadTracker,
+            providerGeneration: providerSnapshot.Generation);
     }
 
     private static MultiConnectionNntpClient CreateProviderClient
@@ -285,6 +288,7 @@ public class UsenetStreamingClient : WrappingNntpClient
         MetricsWriter metricsWriter,
         TimeSpan circuitInitialCooldown,
         TimeSpan circuitMaxCooldown,
+        Func<TimeSpan> connectionOpenTimeout,
         SemaphorePriorityOdds? streamingPriority = null,
         ProviderLatencyTracker? latencyTracker = null,
         CorrelatedTripDetector? tripDetector = null
@@ -323,6 +327,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         }
 
         MultiConnectionNntpClient? providerClient = null;
+        var warmFailureLock = new object();
+        var pendingWarmFailures = new List<(Exception Exception, bool FactoryStarted)>();
 #pragma warning disable CA2000 // the pool is owned by the provider's MultiConnectionNntpClient and disposed on provider config change
         var connectionPool = CreateNewConnectionPool(
 #pragma warning restore CA2000
@@ -338,6 +344,24 @@ public class UsenetStreamingClient : WrappingNntpClient
             replacementHandshakeSpacing: reconnectDelay,
             connectionLimitDetector: ex =>
                 UsenetConnectionLimitDetector.TryLearn(ex, out var learned) ? learned : null,
+            connectionOpenTimeout: connectionOpenTimeout,
+            connectionOpenProvider: string.IsNullOrWhiteSpace(connectionDetails.Nickname)
+                ? connectionDetails.Host
+                : connectionDetails.Nickname,
+            onWarmConnectionFailure: (exception, factoryStarted) =>
+            {
+                MultiConnectionNntpClient? client;
+                lock (warmFailureLock)
+                {
+                    client = providerClient;
+                    if (client is null)
+                    {
+                        pendingWarmFailures.Add((exception, factoryStarted));
+                        return;
+                    }
+                }
+                client.RecordWarmConnectionFailure(exception, factoryStarted);
+            },
             onConnectionLimitLearned: (learned, effective) =>
             {
                 var label = string.IsNullOrWhiteSpace(connectionDetails.Nickname)
@@ -405,6 +429,14 @@ public class UsenetStreamingClient : WrappingNntpClient
             nntpReadTimeout,
             reconnectDelay
         );
+        List<(Exception Exception, bool FactoryStarted)> warmFailures;
+        lock (warmFailureLock)
+        {
+            warmFailures = pendingWarmFailures.ToList();
+            pendingWarmFailures.Clear();
+        }
+        foreach (var (exception, factoryStarted) in warmFailures)
+            providerClient.RecordWarmConnectionFailure(exception, factoryStarted);
         return providerClient;
     }
 
@@ -439,7 +471,10 @@ public class UsenetStreamingClient : WrappingNntpClient
         TimeSpan? replacementHandshakeSpacing = null,
         Func<Exception, int?>? connectionLimitDetector = null,
         Action<int, int>? onConnectionLimitLearned = null,
-        Func<CancellationToken, Task<IDisposable?>>? keepAliveAdmission = null
+        Func<CancellationToken, Task<IDisposable?>>? keepAliveAdmission = null,
+        Func<TimeSpan>? connectionOpenTimeout = null,
+        string? connectionOpenProvider = null,
+        Action<Exception, bool>? onWarmConnectionFailure = null
     )
     {
         var idleTimeout = TimeSpan.FromSeconds(idleTimeoutSeconds);
@@ -452,7 +487,10 @@ public class UsenetStreamingClient : WrappingNntpClient
             KeepAliveAsync,
             diagnosticName: diagnosticName,
             replacementHandshakeSpacing: replacementHandshakeSpacing,
-            keepAliveAdmission: keepAliveAdmission);
+            keepAliveAdmission: keepAliveAdmission,
+            connectionOpenTimeout: connectionOpenTimeout,
+            connectionOpenProvider: connectionOpenProvider,
+            onWarmConnectionFailure: onWarmConnectionFailure);
         connectionPool.OnConnectionPoolChanged += onConnectionPoolChanged;
         var args = new ConnectionPoolStats.ConnectionPoolChangedEventArgs(0, 0, maxConnections);
         SynchronousObserverInvoker.Invoke(

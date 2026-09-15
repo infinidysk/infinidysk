@@ -234,6 +234,33 @@ public class ArticleMissNegativeCacheTests
     }
 
     [Fact]
+    public async Task PersistentCache_RestoresProviderGeneration()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using (var context = new DavDatabaseContext(options))
+            await context.Database.EnsureCreatedAsync();
+
+        var config = CreateConfig(ttlSeconds: 300, maxEntries: 100);
+        var key = ArticleMissNegativeCache.BuildKey("segment", "a.example", null);
+        using (var first = new ArticleMissNegativeCache(config, () => new DavDatabaseContext(options)))
+        {
+            await first.StartAsync(CancellationToken.None);
+            first.MarkMissing(key, generation: 42);
+            await first.FlushPersistenceForTestsAsync();
+        }
+
+        using var restarted = new ArticleMissNegativeCache(config, () => new DavDatabaseContext(options));
+        await restarted.StartAsync(CancellationToken.None);
+
+        Assert.True(restarted.IsMissing(key, generation: 42));
+        Assert.False(restarted.IsMissing(key, generation: 41));
+    }
+
+    [Fact]
     public async Task PersistentCache_Hydration_EvictsOldestRowsBeyondCap()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

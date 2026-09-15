@@ -62,6 +62,9 @@ public class ProviderCircuitBreaker
     private long _tripCount;
     private long _failureCount;
     private long _articleMissCount;
+    private int _requiresFreshConnectionProbe;
+
+    internal bool RequiresFreshConnectionProbe => Volatile.Read(ref _requiresFreshConnectionProbe) == 1;
 
     public ProviderCircuitBreaker(
         string providerName,
@@ -226,7 +229,10 @@ public class ProviderCircuitBreaker
     /// otherwise close every latched breaker seconds after cooldown expiry and pin a
     /// provider with a persistently broken BODY path at the minimum cooldown forever.
     /// </param>
-    public void RecordSuccess(bool resetsCooldownLadder = true, CircuitProbeLease? probe = null)
+    public void RecordSuccess(
+        bool resetsCooldownLadder = true,
+        CircuitProbeLease? probe = null,
+        bool freshConnection = false)
     {
         lock (_lock)
         {
@@ -242,6 +248,8 @@ public class ProviderCircuitBreaker
             var wasCircuitActive = _trippedUntilMs > 0 || _halfOpenProbeInFlight != 0;
             if (wasCircuitActive && !CanResolveHalfOpen(probe))
                 return;
+            if (RequiresFreshConnectionProbe && (!freshConnection || !OwnsAdmittedProbe(probe ?? CircuitProbeLease.None)))
+                return;
             if (wasCircuitActive)
                 Log.Information("Provider {Provider} recovered — circuit breaker reset.", _providerName);
 
@@ -251,6 +259,7 @@ public class ProviderCircuitBreaker
             if (resetsCooldownLadder)
                 _currentCooldown = _initialCooldown;
             _lastFailureReason = null;
+            Volatile.Write(ref _requiresFreshConnectionProbe, 0);
             ClearAdmittedProbe();
             if (wasCircuitActive)
                 NotifyTransition(ProviderCircuitTransitionState.Closed, cooldown: null);
@@ -270,7 +279,9 @@ public class ProviderCircuitBreaker
     /// still closes because production routing does not claim the slot at selection.
     /// </para>
     /// </summary>
-    public void RecordArticleNotFound(CircuitProbeLease? probe = null)
+    public void RecordArticleNotFound(
+        CircuitProbeLease? probe = null,
+        bool freshConnection = false)
     {
         Interlocked.Increment(ref _articleMissCount);
         var closesHalfOpenCircuit = false;
@@ -282,7 +293,9 @@ public class ProviderCircuitBreaker
 
             if (_trippedUntilMs != 0 || Volatile.Read(ref _halfOpenProbeInFlight) != 0)
             {
-                if (CanResolveHalfOpen(probe))
+                if (CanResolveHalfOpen(probe)
+                    && (!RequiresFreshConnectionProbe
+                        || (freshConnection && OwnsAdmittedProbe(probe ?? CircuitProbeLease.None))))
                     closesHalfOpenCircuit = true;
             }
             else
@@ -293,7 +306,7 @@ public class ProviderCircuitBreaker
         }
 
         if (closesHalfOpenCircuit)
-            RecordSuccess(resetsCooldownLadder: false, probe);
+            RecordSuccess(resetsCooldownLadder: false, probe, freshConnection);
     }
 
     /// <summary>Read-only snapshot for dashboards. Does not claim a half-open probe.</summary>
@@ -339,7 +352,8 @@ public class ProviderCircuitBreaker
     public void RecordConnectionFailure(
         string? reason = null,
         ProviderCircuitPoolDiagnostics? pool = null,
-        CircuitProbeLease? probe = null)
+        CircuitProbeLease? probe = null,
+        bool requiresFreshConnectionProbe = false)
     {
         lock (_lock)
         {
@@ -362,7 +376,7 @@ public class ProviderCircuitBreaker
                 : "connection failure";
             Trip(now, reason is null
                 ? failureReason
-                : $"{failureReason} ({reason})", pool);
+                : $"{failureReason} ({reason})", pool, requiresFreshConnectionProbe);
         }
     }
 
@@ -427,12 +441,18 @@ public class ProviderCircuitBreaker
         }
     }
 
-    private void Trip(long nowMs, string reason, ProviderCircuitPoolDiagnostics? pool = null)
+    private void Trip(
+        long nowMs,
+        string reason,
+        ProviderCircuitPoolDiagnostics? pool = null,
+        bool requiresFreshConnectionProbe = false)
     {
         var appliedCooldown = _currentCooldown;
         _lastFailureReason = reason;
         Interlocked.Increment(ref _tripCount);
         _trippedUntilMs = nowMs + (long)appliedCooldown.TotalMilliseconds;
+        if (requiresFreshConnectionProbe)
+            Volatile.Write(ref _requiresFreshConnectionProbe, 1);
         if (pool is null)
         {
             Log.Warning(

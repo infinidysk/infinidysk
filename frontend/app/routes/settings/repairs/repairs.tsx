@@ -5,7 +5,7 @@ import {
   SettingsPage,
   Tooltip,
 } from "~/components/ui";
-import { Input, Select, Toggle } from "~/components/ui/form";
+import { Input, Toggle } from "~/components/ui/form";
 import { type Dispatch, type SetStateAction } from "react";
 import {
   WeeklyWindowEditor,
@@ -38,6 +38,14 @@ function isWholeNumber(value: string) {
   return parsed >= -9_223_372_036_854_775_808n && parsed <= 9_223_372_036_854_775_807n;
 }
 
+const HEALTHCHECK_DEPTHS = ["quick", "standard", "enhanced", "deep", "complete"] as const;
+const HEALTHCHECK_DEPTH_LABELS = ["Quick", "Standard", "Enhanced", "Deep", "Complete"] as const;
+
+export function getHealthCheckDepthIndex(depth: string) {
+  const index = HEALTHCHECK_DEPTHS.indexOf(depth as (typeof HEALTHCHECK_DEPTHS)[number]);
+  return index >= 0 ? index : 0;
+}
+
 export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) {
   const libraryDirConfig = config["media.library-dir"];
   // `arr.instances` config value shape (backend contract)
@@ -55,6 +63,9 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
   const isRepairEnabled = parseConfigBoolean(config["repair.enable"]);
   const autoRemoveAfter = config["repair.auto-remove-after-failures"] ?? "0";
   const autoRemoveEnabled = isNonNegativeInteger(autoRemoveAfter) && Number(autoRemoveAfter) > 0;
+  const healthcheckDepthIndex = getHealthCheckDepthIndex(
+    config["repair.healthcheck-depth"] ?? "standard",
+  );
 
   return (
     <SettingsPage>
@@ -231,21 +242,37 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
               >
                 Health Check Depth
               </label>
-              <Select
-                className="w-full"
+              <output
+                className="block text-sm font-medium text-primary"
+                htmlFor="healthcheck-depth-input"
+              >
+                {HEALTHCHECK_DEPTH_LABELS[healthcheckDepthIndex]}
+              </output>
+              <input
+                className="range range-primary w-full"
+                type="range"
                 id="healthcheck-depth-input"
                 aria-describedby="healthcheck-depth-help"
-                value={config["repair.healthcheck-depth"] ?? "standard"}
+                min="0"
+                max={HEALTHCHECK_DEPTHS.length - 1}
+                step="1"
+                value={healthcheckDepthIndex}
                 onChange={(e) =>
-                  setNewConfig({ ...config, "repair.healthcheck-depth": e.target.value })
+                  setNewConfig({
+                    ...config,
+                    "repair.healthcheck-depth":
+                      HEALTHCHECK_DEPTHS[Number(e.target.value)] ?? HEALTHCHECK_DEPTHS[0],
+                  })
                 }
+              />
+              <div
+                className="flex justify-between text-[11px] text-base-content/55"
+                aria-hidden="true"
               >
-                <option value="quick">Quick</option>
-                <option value="standard">Standard</option>
-                <option value="enhanced">Enhanced</option>
-                <option value="deep">Deep</option>
-                <option value="complete">Complete</option>
-              </Select>
+                {HEALTHCHECK_DEPTH_LABELS.map((label) => (
+                  <span key={label}>{label}</span>
+                ))}
+              </div>
               <p
                 className="text-[11px] leading-relaxed text-base-content/45"
                 id="healthcheck-depth-help"

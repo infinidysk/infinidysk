@@ -4,6 +4,7 @@ public class UsenetArticleNotFoundException(string segmentId, string? serverResp
     : NonRetryableDownloadException(BuildMessage(segmentId, serverResponse))
 {
     public string SegmentId => segmentId;
+    public long? ProviderGeneration { get; set; }
 
     private static string BuildMessage(string segmentId, string? serverResponse)
     {

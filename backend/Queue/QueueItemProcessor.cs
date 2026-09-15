@@ -354,7 +354,8 @@ public class QueueItemProcessor(
             if (e.TryGetCausingException<UsenetArticleNotFoundException>(out var articleNotFound) &&
                 articleNotFound is not null)
             {
-                HealthCheckService.AddMissingSegmentIds([articleNotFound.SegmentId]);
+                HealthCheckService.AddMissingSegmentIds(
+                    [articleNotFound.SegmentId], articleNotFound.ProviderGeneration ?? 0);
             }
 
             try
@@ -519,7 +520,7 @@ public class QueueItemProcessor(
         // step 0 -- perform article existence pre-check against cache
         // https://github.com/infinidysk/infinidysk/issues/101
         var articlesToPrecheck = nzbFiles.SelectMany(x => x.Segments).Select(x => x.MessageId);
-        HealthCheckService.CheckCachedMissingSegmentIds(articlesToPrecheck);
+        HealthCheckService.CheckCachedMissingSegmentIds(articlesToPrecheck, configManager.GetUsenetProviderSnapshot().Generation);
         await ThrowIfRecentlyRejectedAsync(dbClient, queueItem, DateTimeOffset.UtcNow, ct)
             .ConfigureAwait(false);
 
@@ -572,7 +573,11 @@ public class QueueItemProcessor(
             // of the same release fail in milliseconds via the step-0 precheck instead
             // of re-verifying every article across all providers.
             HealthCheckService.AddMissingSegmentIds(
-                importantFilesMissing.Select(x => x.NzbFile.Segments[0].MessageId));
+                importantFilesMissing.Select(x => x.NzbFile.Segments[0].MessageId),
+                segments.Where(x => missingNzbFiles.Contains(x.NzbFile))
+                    .Select(x => x.ProviderGeneration)
+                    .FirstOrDefault(x => x.HasValue)
+                ?? configManager.GetUsenetProviderSnapshot().Generation);
 
             var fileNames = string.Join(", ", importantFilesMissing
                 .Select(x => string.IsNullOrEmpty(x.FileName) ? x.NzbFile.Subject : x.FileName)
