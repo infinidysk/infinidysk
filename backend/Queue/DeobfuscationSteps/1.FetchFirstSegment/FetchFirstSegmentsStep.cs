@@ -65,7 +65,7 @@ public static class FetchFirstSegmentsStep
             {
                 Log.Warning("First segment for `{FileName}` missing across all providers",
                     result.NzbFile.GetSubjectFileName());
-                AbortRemainingFirstSegmentChecks(result.NzbFile, abortCts.Cancel);
+                AbortRemainingFirstSegmentChecks(result.NzbFile, result.MissingEvidenceGeneration, abortCts.Cancel);
             }
         }
 
@@ -95,6 +95,7 @@ public static class FetchFirstSegmentsStep
         }
         var completed = 0;
         NzbFile? abortFile = null;
+        long? abortGeneration = null;
         using var abortCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
         try
@@ -135,6 +136,7 @@ public static class FetchFirstSegmentsStep
                     if (DeadNzbFailFast.IsImportantNzbFile(files[i]))
                     {
                         abortFile = files[i];
+                        abortGeneration = article.ProviderGeneration;
                         await abortCts.CancelAsync().ConfigureAwait(false);
                         break;
                     }
@@ -157,7 +159,7 @@ public static class FetchFirstSegmentsStep
         }
 
         if (abortFile is not null)
-            AbortRemainingFirstSegmentChecks(abortFile, cancel: null);
+            AbortRemainingFirstSegmentChecks(abortFile, abortGeneration, cancel: null);
 
         var pending = Enumerable.Range(0, files.Count).Where(i => results[i] is null).ToList();
         if (pending.Count > 0)
@@ -175,7 +177,7 @@ public static class FetchFirstSegmentsStep
                 progress?.Report(++completed);
 
                 if (result.MissingFirstSegment && DeadNzbFailFast.IsImportantNzbFile(result.NzbFile))
-                    AbortRemainingFirstSegmentChecks(result.NzbFile, rescueAbortCts.Cancel);
+                    AbortRemainingFirstSegmentChecks(result.NzbFile, result.MissingEvidenceGeneration, rescueAbortCts.Cancel);
             }
         }
 
@@ -184,13 +186,14 @@ public static class FetchFirstSegmentsStep
 
     private static void AbortRemainingFirstSegmentChecks(
         NzbFile nzbFile,
+        long? missingEvidenceGeneration,
         Action? cancel)
     {
         Log.Warning(
             "Aborting remaining first-segment checks after missing important file `{FileName}`",
             nzbFile.GetSubjectFileName());
         cancel?.Invoke();
-        DeadNzbFailFast.FailMissingImportantFile(nzbFile, null);
+        DeadNzbFailFast.FailMissingImportantFile(nzbFile, missingEvidenceGeneration);
     }
 
     private static async Task<(int index, NzbFileWithFirstSegment result)> RescueFirstSegment
