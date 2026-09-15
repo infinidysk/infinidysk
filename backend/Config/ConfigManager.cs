@@ -111,13 +111,44 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     public void ApplyEnvironmentOverlay(ConfigEnvironmentOverlay overlay)
     {
         ArgumentNullException.ThrowIfNull(overlay);
+        Dictionary<string, string>? changedConfig = null;
         lock (_config)
         {
+            var wasProviderManaged = _environmentOverlay.IsManaged(ConfigKeys.UsenetProviders);
+            var previousProviderValue = wasProviderManaged
+                ? _environmentOverlay.Values[ConfigKeys.UsenetProviders]
+                : _config.GetValueOrDefault(ConfigKeys.UsenetProviders);
+            var isProviderManaged = overlay.IsManaged(ConfigKeys.UsenetProviders);
+            var providerValue = isProviderManaged
+                ? overlay.Values[ConfigKeys.UsenetProviders]
+                : _config.GetValueOrDefault(ConfigKeys.UsenetProviders);
+            var providerChanged = wasProviderManaged != isProviderManaged
+                || !string.Equals(previousProviderValue, providerValue, StringComparison.Ordinal);
+
             _environmentOverlay = overlay;
             _deserializedConfig.Clear();
+
+            if (providerChanged)
+            {
+                _providerGeneration = Interlocked.Increment(ref _nextProviderGeneration);
+                changedConfig = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    [ConfigKeys.UsenetProviders] = providerValue ?? "",
+                };
+            }
         }
         lock (_excludeLock) { _compiledExcludeCache = null; }
         SyncPathSanitizer();
+
+        if (changedConfig is not null)
+        {
+            var args = new ConfigEventArgs { ChangedConfig = changedConfig };
+            SynchronousObserverInvoker.Invoke(
+                OnConfigChanged,
+                this,
+                args,
+                SynchronousObserverSource.ConfigChanged);
+        }
     }
 
     public bool IsEnvironmentManaged(string configName)

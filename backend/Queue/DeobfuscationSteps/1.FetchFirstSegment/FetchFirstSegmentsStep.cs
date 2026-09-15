@@ -318,9 +318,9 @@ public static class FetchFirstSegmentsStep
                 ReleaseDate = article.ArticleHeaders!.Date
             };
         }
-        catch (UsenetArticleNotFoundException)
+        catch (UsenetArticleNotFoundException e)
         {
-            return BuildMissingFirstSegment(nzbFile);
+            return BuildMissingFirstSegment(nzbFile, e.ProviderGeneration);
         }
         catch (Exception e) when (
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens
