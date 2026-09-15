@@ -677,7 +677,8 @@ public class ExceptionMiddleware(
             // This request owns the pending scheduling attempt.
         }
         else if (RecentRepairTriggers.TryGetValue(davItemId, out var existing)
-                 && (!existing.Committed || DateTime.UtcNow - existing.Timestamp < RepairDedupeWindow))
+             && existing is not null
+             && (!existing.Committed || DateTime.UtcNow - existing.Timestamp < RepairDedupeWindow))
         {
             return;
         }

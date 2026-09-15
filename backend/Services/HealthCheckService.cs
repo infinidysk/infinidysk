@@ -3087,7 +3087,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
-            _failureTracker.TryClearFailure(davItem.Id, failureSnapshot.Revision);
             ExceptionMiddleware.InvalidateRepairSchedulingDedup(davItem.Id);
             await RecordHealthResult(
                 dbClient, davItem,
@@ -3100,6 +3099,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     : "PAR2 verified every file slice and found no damage.",
                 ct)
                 .ConfigureAwait(false);
+            _failureTracker.TryClearFailure(davItem.Id, failureSnapshot.Revision);
             return;
         }
 
