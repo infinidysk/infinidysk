@@ -108,7 +108,7 @@ public class FailFastDeadNzbTests
         };
 
         var ex = Assert.Throws<NonRetryableDownloadException>(() =>
-            DeadNzbFailFast.FailMissingImportantFile(nzbFile));
+            DeadNzbFailFast.FailMissingImportantFile(nzbFile, generation: 0));
 
         Assert.Contains("dead.rar", ex.Message);
         Assert.Throws<UsenetArticleNotFoundException>(() =>
@@ -145,7 +145,7 @@ public class FailFastDeadNzbTests
         Assert.Equal(probeId, exception.SegmentId);
         Assert.IsAssignableFrom<NonRetryableDownloadException>(exception);
 
-        HealthCheckService.AddMissingSegmentIds([exception.SegmentId]);
+        HealthCheckService.AddMissingSegmentIds([exception.SegmentId], 0);
         Assert.Throws<UsenetArticleNotFoundException>(() =>
             HealthCheckService.CheckCachedMissingSegmentIds([probeId]));
     }

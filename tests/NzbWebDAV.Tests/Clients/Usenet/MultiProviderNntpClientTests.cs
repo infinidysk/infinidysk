@@ -1059,7 +1059,8 @@ public class MultiProviderNntpClientTests
         await client.DecodedBodyAsync("segment", CancellationToken.None);
         Assert.Equal(1, missing.SingularRequests);
 
-        var key = ArticleMissNegativeCache.BuildKey("segment", "a.example", null);
+        var key = ArticleMissNegativeCache.BuildKey("segment", "a.example", null,
+            ArticleMissNegativeCache.ArticleMissOperation.Body);
         cache.MarkMissingAtForTests(key, DateTimeOffset.UtcNow - TimeSpan.FromSeconds(31));
 
         await client.DecodedBodyAsync("segment", CancellationToken.None);
@@ -1162,7 +1163,8 @@ public class MultiProviderNntpClientTests
     {
         var config = new ConfigManager();
         var cache = new ArticleMissNegativeCache(config);
-        cache.MarkMissing(ArticleMissNegativeCache.BuildKey("segment", "a.example", null));
+        cache.MarkMissing(ArticleMissNegativeCache.BuildKey("segment", "a.example", null,
+            ArticleMissNegativeCache.ArticleMissOperation.Body));
 
         var primary = new ScriptedNntpClient
         {
@@ -1365,8 +1367,10 @@ public class MultiProviderNntpClientTests
     {
         var config = new ConfigManager();
         var cache = new ArticleMissNegativeCache(config);
-        cache.MarkMissing(ArticleMissNegativeCache.BuildKey("segment", "a.example", null));
-        cache.MarkMissing(ArticleMissNegativeCache.BuildKey("segment", "b.example", null));
+        cache.MarkMissing(ArticleMissNegativeCache.BuildKey("segment", "a.example", null,
+            ArticleMissNegativeCache.ArticleMissOperation.Body));
+        cache.MarkMissing(ArticleMissNegativeCache.BuildKey("segment", "b.example", null,
+            ArticleMissNegativeCache.ArticleMissOperation.Body));
 
         var primary = new ScriptedNntpClient
         {
@@ -1395,9 +1399,9 @@ public class MultiProviderNntpClientTests
         Assert.Equal(0, primary.SingularRequests);
         Assert.Equal(0, backup.SingularRequests);
 
-        await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() =>
-            client.StatAsync("segment", CancellationToken.None));
-        Assert.Equal(0, primary.SingularRequests);
+        var stat = await client.StatAsync("segment", CancellationToken.None);
+        Assert.Equal(222, stat.ResponseCode);
+        Assert.Equal(1, primary.SingularRequests);
         Assert.Equal(0, backup.SingularRequests);
     }
 

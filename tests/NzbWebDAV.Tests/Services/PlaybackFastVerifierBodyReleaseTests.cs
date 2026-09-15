@@ -41,7 +41,21 @@ public class PlaybackFastVerifierBodyReleaseTests
         Assert.Equal(PlaybackFastVerifier.Verdict.Available, outcome.Verdict);
     }
 
-    private static ScriptedBodyClient BuildClient(YencStream stream)
+    [Fact]
+    public async Task VerifyAsync_StatUnexpectedResponse_DoesNotProbeBody()
+    {
+        var client = BuildClient(new TrackingYencStream(), UsenetResponseType.ServiceDiscontinued);
+        var verifier = new PlaybackFastVerifier(client);
+
+        var outcome = await verifier.VerifyAsync(Nzb(), "stat", sampleCount: 1, CancellationToken.None);
+
+        Assert.Equal(PlaybackFastVerifier.Verdict.Timeout, outcome.Verdict);
+        Assert.Equal(0, client.BodyRequests);
+    }
+
+    private static ScriptedBodyClient BuildClient(
+        YencStream stream,
+        UsenetResponseType statResponseType = UsenetResponseType.ArticleExists)
     {
         var configManager = new ConfigManager();
         configManager.UpdateValues([
@@ -60,7 +74,8 @@ public class PlaybackFastVerifierBodyReleaseTests
             new MetricsWriter(),
             new ProviderBytesTracker(),
             new StreamTraceBuffer(100),
-            new ActiveReadRegistry());
+            new ActiveReadRegistry(),
+            statResponseType);
     }
 
     private static MemoryStream Nzb()
@@ -87,19 +102,34 @@ public class PlaybackFastVerifierBodyReleaseTests
         MetricsWriter metricsWriter,
         ProviderBytesTracker bytesTracker,
         StreamTraceBuffer streamTrace,
-        ActiveReadRegistry activeReadRegistry) : UsenetStreamingClient(
+        ActiveReadRegistry activeReadRegistry,
+        UsenetResponseType statResponseType) : UsenetStreamingClient(
         configManager, websocketManager, usageTracker, metricsWriter, bytesTracker,
         streamTrace, activeReadRegistry)
     {
-        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+        public int BodyRequests { get; private set; }
+
+        public override Task<UsenetStatResponse> StatAsync(
             SegmentId segmentId, CancellationToken cancellationToken) =>
-            Task.FromResult(new UsenetDecodedBodyResponse
+            Task.FromResult(new UsenetStatResponse
+            {
+                ResponseCode = (int)statResponseType,
+                ResponseMessage = $"{(int)statResponseType} <{segmentId}>",
+                ArticleExists = statResponseType == UsenetResponseType.ArticleExists,
+            });
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId, CancellationToken cancellationToken)
+        {
+            BodyRequests++;
+            return Task.FromResult(new UsenetDecodedBodyResponse
             {
                 SegmentId = segmentId.ToString(),
                 ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
                 ResponseMessage = $"222 <{segmentId}>",
                 Stream = stream,
             });
+            }
     }
 
     private sealed class TrackingYencStream : YencStream

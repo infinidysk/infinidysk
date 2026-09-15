@@ -182,7 +182,8 @@ public static class UsenetProviderIdentity
         UsenetProviderConfig providerConfig,
         CancellationToken ct)
     {
-        var json = JsonSerializer.Serialize(providerConfig);
+        var json = configManager.PrepareUsenetProviderConfigForSave(
+            JsonSerializer.Serialize(providerConfig));
         await using var db = new DavDatabaseContext();
         var item = await db.ConfigItems
             .FirstOrDefaultAsync(c => c.ConfigName == ConfigKeys.UsenetProviders, ct)

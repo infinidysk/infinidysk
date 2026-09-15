@@ -52,7 +52,10 @@ public sealed class ConfigUpdateService(
             }
 
             if (item.ConfigName == ConfigKeys.UsenetProviders)
+            {
                 resolvedValue = NormalizeUsenetProviderIds(resolvedValue, existingValue);
+                resolvedValue = configManager.PrepareUsenetProviderConfigForSave(resolvedValue);
+            }
 
             return new ConfigItem
             {

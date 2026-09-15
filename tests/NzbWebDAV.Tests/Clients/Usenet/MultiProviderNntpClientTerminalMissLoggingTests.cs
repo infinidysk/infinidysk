@@ -119,8 +119,10 @@ public sealed class MultiProviderNntpClientTerminalMissLoggingTests
         const string segmentId = "cache-skip@terminal-miss";
         var config = new ConfigManager();
         var cache = new ArticleMissNegativeCache(config);
-        cache.MarkMissing(ArticleMissNegativeCache.BuildKey(segmentId, "a.example", ""));
-        cache.MarkMissing(ArticleMissNegativeCache.BuildKey(segmentId, "b.example", ""));
+        cache.MarkMissing(ArticleMissNegativeCache.BuildKey(
+            segmentId, "a.example", "", ArticleMissNegativeCache.ArticleMissOperation.Body));
+        cache.MarkMissing(ArticleMissNegativeCache.BuildKey(
+            segmentId, "b.example", "", ArticleMissNegativeCache.ArticleMissOperation.Body));
         var first = new MultiProviderNntpClientTests.ScriptedNntpClient
         {
             BatchResponseCode = 430,

@@ -19,6 +19,9 @@ namespace NzbWebDAV.Config;
 public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
 {
     public static readonly string AppVersion = EnvironmentUtil.GetEnvironmentVariable("NZBDAV_VERSION") ?? "0.0.0";
+    private long _nextProviderGeneration = Math.Max(
+        1L,
+        BitConverter.ToInt64(Guid.NewGuid().ToByteArray()) & long.MaxValue);
 
     private readonly ConcurrentDictionary<string, string> _invalidScheduleWarnings = new();
 
@@ -45,6 +48,13 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     private readonly object _excludeLock = new();
     private IReadOnlyList<Regex>? _compiledExcludeCache;
     private ConfigEnvironmentOverlay _environmentOverlay = ConfigEnvironmentOverlay.Empty;
+    private long _providerGeneration;
+
+    public ConfigManager()
+    {
+        _providerGeneration = _nextProviderGeneration;
+    }
+
     /// <summary>
     /// Raised after configuration values have been committed in memory. Notification is
     /// synchronous, in registration order, and does not run while config locks are held.
@@ -53,6 +63,15 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     /// removed during publication may still run once for that in-flight event.
     /// </summary>
     public event EventHandler<ConfigEventArgs>? OnConfigChanged;
+
+    public (UsenetProviderConfig Providers, long Generation) GetUsenetProviderSnapshot()
+    {
+        lock (_config)
+        {
+            return (GetConfigValue<UsenetProviderConfig>(ConfigKeys.UsenetProviders)
+                    ?? new UsenetProviderConfig(), _providerGeneration);
+        }
+    }
 
     public IDisposable Subscribe(EventHandler<ConfigEventArgs> handler)
     {
@@ -84,6 +103,9 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
             {
                 _config[configItem.ConfigName] = configItem.ConfigValue;
             }
+            var providers = GetConfigValue<UsenetProviderConfig>(ConfigKeys.UsenetProviders);
+            _providerGeneration = providers?.ProviderGeneration ?? 0;
+            _nextProviderGeneration = Math.Max(_nextProviderGeneration, _providerGeneration);
         }
         lock (_excludeLock) { _compiledExcludeCache = null; }
         SyncPathSanitizer();
@@ -97,13 +119,44 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     public void ApplyEnvironmentOverlay(ConfigEnvironmentOverlay overlay)
     {
         ArgumentNullException.ThrowIfNull(overlay);
+        Dictionary<string, string>? changedConfig = null;
         lock (_config)
         {
+            var wasProviderManaged = _environmentOverlay.IsManaged(ConfigKeys.UsenetProviders);
+            var previousProviderValue = wasProviderManaged
+                ? _environmentOverlay.Values[ConfigKeys.UsenetProviders]
+                : _config.GetValueOrDefault(ConfigKeys.UsenetProviders);
+            var isProviderManaged = overlay.IsManaged(ConfigKeys.UsenetProviders);
+            var providerValue = isProviderManaged
+                ? overlay.Values[ConfigKeys.UsenetProviders]
+                : _config.GetValueOrDefault(ConfigKeys.UsenetProviders);
+            var providerChanged = wasProviderManaged != isProviderManaged
+                || !string.Equals(previousProviderValue, providerValue, StringComparison.Ordinal);
+
             _environmentOverlay = overlay;
             _deserializedConfig.Clear();
+
+            if (providerChanged)
+            {
+                _providerGeneration = Interlocked.Increment(ref _nextProviderGeneration);
+                changedConfig = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    [ConfigKeys.UsenetProviders] = providerValue ?? "",
+                };
+            }
         }
         lock (_excludeLock) { _compiledExcludeCache = null; }
         SyncPathSanitizer();
+
+        if (changedConfig is not null)
+        {
+            var args = new ConfigEventArgs { ChangedConfig = changedConfig };
+            SynchronousObserverInvoker.Invoke(
+                OnConfigChanged,
+                this,
+                args,
+                SynchronousObserverSource.ConfigChanged);
+        }
     }
 
     public bool IsEnvironmentManaged(string configName)
@@ -336,6 +389,16 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
             changedConfig = configItems
                 .Where(item => !_environmentOverlay.IsManaged(item.ConfigName))
                 .ToDictionary(x => x.ConfigName, x => x.ConfigValue);
+
+            if (changedConfig.TryGetValue(ConfigKeys.UsenetProviders, out var providerJson))
+            {
+                var persistedGeneration = JsonSerializer.Deserialize<UsenetProviderConfig>(providerJson)
+                    ?.ProviderGeneration ?? 0;
+                _providerGeneration = persistedGeneration > 0
+                    ? persistedGeneration
+                    : Interlocked.Increment(ref _nextProviderGeneration);
+                _nextProviderGeneration = Math.Max(_nextProviderGeneration, _providerGeneration);
+            }
         }
 
         if (configItems.Any(x => x.ConfigName.StartsWith(ConfigKeys.SearchExcludePrefix, StringComparison.Ordinal)
@@ -356,6 +419,14 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
             this,
             args,
             SynchronousObserverSource.ConfigChanged);
+    }
+
+    internal string PrepareUsenetProviderConfigForSave(string json)
+    {
+        var providers = JsonSerializer.Deserialize<UsenetProviderConfig>(json)
+                        ?? new UsenetProviderConfig();
+        providers.ProviderGeneration = Interlocked.Increment(ref _nextProviderGeneration);
+        return JsonSerializer.Serialize(providers);
     }
 
     private void SyncPathSanitizer() =>

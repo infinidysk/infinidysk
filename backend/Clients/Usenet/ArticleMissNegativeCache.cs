@@ -42,24 +42,29 @@ namespace NzbWebDAV.Clients.Usenet;
 /// </summary>
 public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 {
+    internal enum ArticleMissOperation { Stat, Body, Article, Head }
     private const int PersistenceQueueCapacity = 4096;
     private const int MaxPersistenceBatchSize = 256;
     private const int MaxCleanupRounds = 8;
 
     private readonly ConfigManager _configManager;
     private readonly Func<DavDatabaseContext>? _contextFactory;
-    private readonly ConcurrentDictionary<string, DateTimeOffset> _missingAt = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<(long Generation, string Key), DateTimeOffset> _missingAt = new();
     private readonly Channel<PersistenceWorkItem>? _persistenceQueue;
+    private readonly object _persistenceStateLock = new();
     private CancellationTokenSource? _persistenceLoopCts;
     private Task _persistenceLoop = Task.CompletedTask;
     private volatile bool _persistenceLoopStarted;
+    private bool _stopping;
+    private bool _persistenceLoopExited;
+    private Task? _pendingClearWrite;
     private int _cleanupRunning;
     private int _cleanupContinuationScheduled;
     private long _hits;
 
     private abstract record PersistenceWorkItem;
 
-    private sealed record MarkItem(string Key, long ConfirmedAtUnix) : PersistenceWorkItem;
+    private sealed record MarkItem(long Generation, string Key, long ConfirmedAtUnix) : PersistenceWorkItem;
 
     private sealed record ClearItem : PersistenceWorkItem
     {
@@ -81,7 +86,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
                 {
                     SingleReader = true,
                     SingleWriter = false,
-                    FullMode = BoundedChannelFullMode.DropWrite,
+                    FullMode = BoundedChannelFullMode.Wait,
                 });
         }
 
@@ -115,23 +120,32 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
             : $"{articleId}\u0001p:{metricsKey}";
     }
 
-    public bool IsMissing(string key)
+    internal static string BuildKey(string articleId, string metricsKey, string? storageGroup,
+        ArticleMissOperation operation) =>
+        $"v2:{operation.ToString().ToLowerInvariant()}\u0001{BuildKey(articleId, metricsKey, storageGroup)}";
+
+    public bool IsMissing(string key, long generation = 0)
     {
-        if (!_missingAt.TryGetValue(key, out var markedAt)) return false;
+        if (!_missingAt.TryGetValue((generation, key), out var markedAt)) return false;
         if (DateTimeOffset.UtcNow - markedAt < _configManager.GetArticleMissCacheTtl())
         {
             Interlocked.Increment(ref _hits);
             return true;
         }
-        _missingAt.TryRemove(key, out _);
+        _missingAt.TryRemove((generation, key), out _);
         return false;
     }
 
-    public void MarkMissing(string key)
+    public void MarkMissing(string key, long? generation = 0)
     {
+        if (generation is not { } evidenceGeneration) return;
         var now = DateTimeOffset.UtcNow;
-        MarkMissingInMemory(key, now);
-        _persistenceQueue?.Writer.TryWrite(new MarkItem(key, now.ToUnixTimeMilliseconds()));
+        MarkMissingInMemory(evidenceGeneration, key, now);
+        lock (_persistenceStateLock)
+        {
+            if (!_stopping)
+                _persistenceQueue?.Writer.TryWrite(new MarkItem(evidenceGeneration, key, now.ToUnixTimeMilliseconds()));
+        }
     }
 
     public void Clear() => _missingAt.Clear();
@@ -158,8 +172,15 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
                 .Take(maxEntries)
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
-            foreach (var entry in entries)
-                _missingAt[entry.CacheKey] = DateTimeOffset.FromUnixTimeMilliseconds(entry.ConfirmedAtUnix);
+            var validEntries = entries
+                .Select(entry =>
+                {
+                    var parsed = TryReadPersistedKey(entry.CacheKey, out var generation, out var key);
+                    return (entry, parsed, generation, key);
+                })
+                .Where(x => x.parsed);
+            foreach (var (entry, _, generation, key) in validEntries)
+                _missingAt[(generation, key)] = DateTimeOffset.FromUnixTimeMilliseconds(entry.ConfirmedAtUnix);
 
             await TrimPersistedAsync(context, cutoffUnix, maxEntries, cancellationToken)
                 .ConfigureAwait(false);
@@ -181,9 +202,14 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         if (_persistenceQueue is null) return;
-        _persistenceQueue.Writer.TryComplete();
+        var barrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_persistenceStateLock)
+            _stopping = true;
         try
         {
+            await _persistenceQueue.Writer.WriteAsync(new BarrierItem(barrier), cancellationToken)
+                .ConfigureAwait(false);
+            await barrier.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             await _persistenceLoop.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -196,7 +222,11 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 
     public void Dispose()
     {
-        _persistenceQueue?.Writer.TryComplete();
+        lock (_persistenceStateLock)
+        {
+            _stopping = true;
+            _persistenceQueue?.Writer.TryComplete();
+        }
         _persistenceLoopCts?.Cancel();
         _persistenceLoopCts?.Dispose();
         _persistenceLoopCts = null;
@@ -205,7 +235,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
     /// <summary>Test helper: mark an entry as if it were recorded at <paramref name="at"/>.</summary>
     internal void MarkMissingAtForTests(string key, DateTimeOffset at)
     {
-        MarkMissingInMemory(key, at);
+        MarkMissingInMemory(0, key, at);
     }
 
     /// <summary>
@@ -231,9 +261,9 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         await barrier.Task.ConfigureAwait(false);
     }
 
-    private void MarkMissingInMemory(string key, DateTimeOffset at)
+    private void MarkMissingInMemory(long generation, string key, DateTimeOffset at)
     {
-        _missingAt[key] = at;
+        _missingAt[(generation, key)] = at;
         var maxEntries = _configManager.GetArticleMissCacheMaxEntries();
         if (_missingAt.Count <= maxEntries) return;
         try
@@ -305,7 +335,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         // Weakly-consistent foreach — never LINQ OrderBy/ToArray on the live
         // ConcurrentDictionary (those use Count-then-CopyTo and race under writes).
         // Enumeration only yields fully constructed nodes, so keys are never null.
-        var snapshot = new List<KeyValuePair<string, DateTimeOffset>>(Math.Max(4, _missingAt.Count));
+        var snapshot = new List<KeyValuePair<(long Generation, string Key), DateTimeOffset>>(Math.Max(4, _missingAt.Count));
         foreach (var kv in _missingAt)
         {
             if (kv.Value < cutoff)
@@ -325,26 +355,51 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 
     // Removes only when the timestamp still matches the snapshot, so a concurrent
     // re-mark with a fresher timestamp is never evicted by a stale cleanup round.
-    private void RemoveIfUnchanged(KeyValuePair<string, DateTimeOffset> entry) =>
-        ((ICollection<KeyValuePair<string, DateTimeOffset>>)_missingAt).Remove(entry);
+    private void RemoveIfUnchanged(KeyValuePair<(long Generation, string Key), DateTimeOffset> entry) =>
+        ((ICollection<KeyValuePair<(long Generation, string Key), DateTimeOffset>>)_missingAt).Remove(entry);
 
     private void EnqueueClear()
     {
         if (_persistenceQueue is null) return;
-        if (_persistenceQueue.Writer.TryWrite(ClearItem.Instance)) return;
-        // The queue is momentarily full of pending marks and drains quickly; wait
-        // for room so a provider-change clear is never dropped.
-        _ = Task.Run(async () =>
+        lock (_persistenceStateLock)
         {
-            try
-            {
-                await _persistenceQueue.Writer.WriteAsync(ClearItem.Instance).ConfigureAwait(false);
-            }
-            catch (ChannelClosedException)
-            {
-                // Shutdown raced the config change; nothing left to drain into.
-            }
-        });
+            if (_persistenceLoopExited) return;
+            if (_persistenceQueue.Writer.TryWrite(ClearItem.Instance)) return;
+            // The queue is momentarily full of pending marks and drains quickly; wait
+            // for room so a provider-change clear is never dropped.
+            _pendingClearWrite = _persistenceQueue.Writer.WriteAsync(ClearItem.Instance).AsTask();
+            _ = _pendingClearWrite.ContinueWith(
+                task =>
+                {
+                    if (task.IsFaulted && task.Exception is not null)
+                        Log.Debug(task.Exception, "Unable to enqueue provider-change article-miss clear.");
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+    }
+
+    private bool TryExitPersistence(ChannelReader<PersistenceWorkItem> reader)
+    {
+        lock (_persistenceStateLock)
+        {
+            if (!_stopping || reader.TryPeek(out _)
+                || _pendingClearWrite is { IsCompleted: false })
+                return false;
+            _persistenceLoopExited = true;
+            _persistenceQueue!.Writer.TryComplete();
+            return true;
+        }
+    }
+
+    private void CompletePendingClearWriteIfFinished()
+    {
+        lock (_persistenceStateLock)
+        {
+            if (_pendingClearWrite?.IsCompleted == true)
+                _pendingClearWrite = null;
+        }
     }
 
     private async Task RunPersistenceLoopAsync(CancellationToken cancellationToken)
@@ -354,7 +409,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         {
             while (await reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                var marks = new Dictionary<string, long>(StringComparer.Ordinal);
+                var marks = new Dictionary<(long Generation, string Key), long>();
                 var clearPending = false;
                 TaskCompletionSource? barrier = null;
                 var itemsRead = 0;
@@ -369,7 +424,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
                             clearPending = true;
                             break;
                         case MarkItem mark:
-                            marks[mark.Key] = mark.ConfirmedAtUnix;
+                            marks[(mark.Generation, mark.Key)] = mark.ConfirmedAtUnix;
                             break;
                         case BarrierItem b:
                             barrier = b.Completion;
@@ -383,6 +438,8 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
                     if (clearPending || marks.Count > 0)
                         await ApplyBatchAsync(clearPending, marks, cancellationToken).ConfigureAwait(false);
                     barrier?.TrySetResult();
+                    CompletePendingClearWriteIfFinished();
+                    if (barrier is not null && TryExitPersistence(reader)) return;
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -404,7 +461,7 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 
     private async Task ApplyBatchAsync(
         bool clearPending,
-        Dictionary<string, long> marks,
+        Dictionary<(long Generation, string Key), long> marks,
         CancellationToken cancellationToken)
     {
         await using var context = _contextFactory!();
@@ -413,12 +470,15 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
 
         if (marks.Count > 0)
         {
-            var keys = marks.Keys.ToList();
+            var persistedMarks = marks.ToDictionary(
+                x => PersistedKey(x.Key.Generation, x.Key.Key), x => x.Value,
+                StringComparer.Ordinal);
+            var keys = persistedMarks.Keys.ToList();
             var existing = await context.ArticleMissCacheEntries
                 .Where(x => keys.Contains(x.CacheKey))
                 .ToDictionaryAsync(x => x.CacheKey, cancellationToken)
                 .ConfigureAwait(false);
-            foreach (var (key, confirmedAtUnix) in marks)
+            foreach (var (key, confirmedAtUnix) in persistedMarks)
             {
                 if (existing.TryGetValue(key, out var entry))
                     entry.ConfirmedAtUnix = confirmedAtUnix;
@@ -431,12 +491,31 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
             }
             await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
-
         var cutoffUnix = (DateTimeOffset.UtcNow - _configManager.GetArticleMissCacheTtl())
             .ToUnixTimeMilliseconds();
         await TrimPersistedAsync(
             context, cutoffUnix, _configManager.GetArticleMissCacheMaxEntries(), cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    private static string PersistedKey(long generation, string key) =>
+        generation == 0 ? key : $"g{generation}\u0001{key}";
+
+    private static bool TryReadPersistedKey(string persistedKey, out long generation, out string key)
+    {
+        generation = 0;
+        key = "";
+        if (!persistedKey.StartsWith('g'))
+        {
+            key = persistedKey;
+            return key.Length > 0;
+        }
+        var separator = persistedKey.IndexOf('\u0001', StringComparison.Ordinal);
+        if (separator <= 1 || persistedKey[0] != 'g'
+            || !long.TryParse(persistedKey.AsSpan(1, separator - 1), out generation))
+            return false;
+        key = persistedKey[(separator + 1)..];
+        return key.Length > 0;
     }
 
     private static async Task TrimPersistedAsync(

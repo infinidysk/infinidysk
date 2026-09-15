@@ -15,7 +15,8 @@ internal sealed class FakeNntpClient(
     IReadOnlyDictionary<string, LongRange>? segmentRanges = null,
     Func<string, byte[], Stream>? decodedStreamFactory = null,
     IReadOnlyDictionary<string, byte[]>? localSegments = null,
-    IReadOnlyDictionary<string, UsenetYencHeader>? yencHeaders = null) : NntpClient
+    IReadOnlyDictionary<string, UsenetYencHeader>? yencHeaders = null,
+    long? providerGeneration = 0) : NntpClient
 {
     // Copied at construction so tests can add/restore articles via Serve() without
     // mutating the caller's dictionary.
@@ -213,7 +214,10 @@ internal sealed class FakeNntpClient(
     {
         var key = segmentId.ToString();
         if (!segments.TryGetValue(key, out var bytes))
-            throw new UsenetArticleNotFoundException(key, "430 No such article");
+            throw new UsenetArticleNotFoundException(key, "430 No such article")
+            {
+                ProviderGeneration = providerGeneration,
+            };
         var range = default(LongRange);
         var hasRange = segmentRanges is not null && segmentRanges.TryGetValue(key, out range);
 

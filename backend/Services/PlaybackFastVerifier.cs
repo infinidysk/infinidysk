@@ -1,6 +1,7 @@
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models.Nzb;
 using Serilog;
@@ -131,16 +132,42 @@ public class PlaybackFastVerifier
     private async Task<Verdict> CheckSegmentCoreAsync(string messageId, string mode, CancellationToken ct)
     {
         if (mode == "body")
-        {
-            var resp = await _usenetClient.DecodedBodyAsync(messageId, ct).ConfigureAwait(false);
-            var verdict = resp.ResponseType == UsenetResponseType.ArticleRetrievedBodyFollows
-                ? Verdict.Available
-                : Verdict.Dead;
+            return await ProbeBodyAsync(messageId, ct).ConfigureAwait(false);
 
-            // The response code decides the verdict, but the body still arrives, and an unread
-            // one holds the connection for the life of the process. Releasing it must not be
-            // able to turn a verified article into a failure.
-            if (resp.Stream != null)
+        try
+        {
+            var stat = await _usenetClient.StatAsync(messageId, ct).ConfigureAwait(false);
+            if (stat.ResponseType == UsenetResponseType.ArticleExists)
+                return Verdict.Available;
+            return UsenetArticleAvailability.IsDefinitiveMissing(stat)
+                ? await ProbeBodyAsync(messageId, ct).ConfigureAwait(false)
+                : Verdict.Timeout;
+        }
+        catch (UsenetArticleNotFoundException) when (!ct.IsCancellationRequested)
+        {
+            return await ProbeBodyAsync(messageId, ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<Verdict> ProbeBodyAsync(string messageId, CancellationToken ct)
+    {
+        UsenetDecodedBodyResponse? resp = null;
+        try
+        {
+            resp = await _usenetClient.DecodedBodyAsync(messageId, ct).ConfigureAwait(false);
+            if (resp.ResponseType == UsenetResponseType.ArticleRetrievedBodyFollows)
+                return Verdict.Available;
+            return UsenetArticleAvailability.IsDefinitiveMissing(resp)
+                ? Verdict.Dead
+                : Verdict.Timeout;
+        }
+        catch (UsenetArticleNotFoundException) when (!ct.IsCancellationRequested)
+        {
+            return Verdict.Dead;
+        }
+        finally
+        {
+            if (resp?.Stream is not null)
             {
                 try
                 {
@@ -151,14 +178,7 @@ public class PlaybackFastVerifier
                     Log.Debug(e, "Failed to release verified article body for {SegmentId}", messageId);
                 }
             }
-
-            return verdict;
         }
-
-        var stat = await _usenetClient.StatAsync(messageId, ct).ConfigureAwait(false);
-        return stat.ResponseType == UsenetResponseType.ArticleExists
-            ? Verdict.Available
-            : Verdict.Dead;
     }
 
     public readonly record struct VerifyOutcome(Verdict Verdict, string? ResponderHost);

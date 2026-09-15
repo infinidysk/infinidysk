@@ -114,7 +114,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
 
             if (context.Items["DavItem"] is DavItem davItem)
             {
-                RecordMissingArticleForFailFast(davItem, notFound.SegmentId);
+                RecordMissingArticleForFailFast(davItem, notFound.SegmentId, notFound.ProviderGeneration);
                 ScheduleRepair(davItem, notFound.SegmentId);
             }
 
@@ -153,7 +153,7 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
 
             if (context.Items["DavItem"] is DavItem davItem)
             {
-                RecordMissingArticleForFailFast(davItem, corrupt.SegmentId);
+                RecordMissingArticleForFailFast(davItem, corrupt.SegmentId, generation: null);
                 ScheduleRepair(davItem, corrupt.SegmentId);
             }
 
@@ -626,11 +626,11 @@ public class ExceptionMiddleware(RequestDelegate next, ConfigManager configManag
     /// Persistently corrupt segments that break playback are seeded here too — the cache is
     /// segment-ID keyed and cause-agnostic.
     /// </summary>
-    internal static void RecordMissingArticleForFailFast(DavItem davItem, string segmentId)
+    internal void RecordMissingArticleForFailFast(DavItem davItem, string segmentId, long? generation = null)
     {
-        if (!FilenameUtil.IsImportantFileType(davItem.Name))
+        if (!FilenameUtil.IsImportantFileType(davItem.Name) || generation is not { } evidenceGeneration)
             return;
-        HealthCheckService.AddMissingSegmentIds([segmentId]);
+        HealthCheckService.AddProviderMissingSegmentIds([segmentId], evidenceGeneration);
     }
 
     private static void AbortStartedResponse(HttpContext context)

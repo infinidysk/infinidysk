@@ -267,7 +267,8 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal(oldBlobId, ReloadItem(item.Id).FileBlobId);
         foreach (var index in new[] { 2, 3, 4 })
             Assert.Throws<UsenetArticleNotFoundException>(
-                () => HealthCheckService.CheckCachedMissingSegmentIds([segments[index]]));
+                () => HealthCheckService.CheckCachedMissingSegmentIds(
+                    [segments[index]], _configManager.GetUsenetProviderSnapshot().Generation));
     }
 
     [Fact]
@@ -285,7 +286,8 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
         Assert.Empty(fake.BodyRequestCounts);
         Assert.Throws<UsenetArticleNotFoundException>(
-            () => HealthCheckService.CheckCachedMissingSegmentIds([segments[0]]));
+            () => HealthCheckService.CheckCachedMissingSegmentIds(
+                [segments[0]], _configManager.GetUsenetProviderSnapshot().Generation));
     }
 
     [Fact]
@@ -475,8 +477,9 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
         Assert.Equal([segments[50]], Assert.Single(par2.Requests));
         Assert.Equal(oldBlobId, ReloadItem(item.Id).FileBlobId);
-        Assert.Throws<UsenetArticleNotFoundException>(
-            () => HealthCheckService.CheckCachedMissingSegmentIds([segments[50]]));
+        Assert.Throws<UsenetArticleNotFoundException>(() =>
+            HealthCheckService.CheckCachedMissingSegmentIds(
+                [segments[50]], _configManager.GetUsenetProviderSnapshot().Generation));
     }
 
     [Fact]
@@ -623,7 +626,8 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal((byte)MediaContainerClass.Mp4MoovAtEnd, blob.ContainerClass);
         Assert.Equal(0L, blob.CriticalHeadEndExclusive);
         Assert.Throws<UsenetArticleNotFoundException>(
-            () => HealthCheckService.CheckCachedMissingSegmentIds([segments[5]]));
+            () => HealthCheckService.CheckCachedMissingSegmentIds(
+                [segments[5]], _configManager.GetUsenetProviderSnapshot().Generation));
     }
 
     [Fact]
@@ -712,7 +716,8 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal((byte)MediaContainerClass.Mp4FastStart, firstBlob.ContainerClass);
         Assert.Equal(15_024, firstBlob.CriticalHeadEndExclusive);
         Assert.Throws<UsenetArticleNotFoundException>(
-            () => HealthCheckService.CheckCachedMissingSegmentIds([segments[1]]));
+            () => HealthCheckService.CheckCachedMissingSegmentIds(
+                [segments[1]], _configManager.GetUsenetProviderSnapshot().Generation));
 
         await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
 

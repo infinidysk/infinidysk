@@ -37,7 +37,7 @@ public class HealthCheckRejectedReleaseSeedTests
         var segments = NewSegmentIds(HealthCheckService.RejectedReleaseSeedSegments + 50);
 
         HealthCheckService.AddMissingSegmentIds(
-            HealthCheckService.SelectRejectedReleaseSeedSegments(segments));
+            HealthCheckService.SelectRejectedReleaseSeedSegments(segments), 0);
 
         var ex = Assert.Throws<UsenetArticleNotFoundException>(
             () => HealthCheckService.CheckCachedMissingSegmentIds(segments));
