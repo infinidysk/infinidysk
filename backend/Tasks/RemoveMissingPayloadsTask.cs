@@ -132,11 +132,27 @@ public sealed class RemoveMissingPayloadsTask : BaseTask
             return;
         }
 
-        if (RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(
+        bool libraryInsideMount;
+        string normalizedLibraryDir, normalizedMountDir;
+        try
+        {
+            libraryInsideMount = RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(
                 libraryDir,
-                _configManager.GetRcloneMountDir(),
-                out var normalizedLibraryDir,
-                out var normalizedMountDir))
+                _configManager.GetAllRcloneMountDirs(),
+                out normalizedLibraryDir,
+                out normalizedMountDir);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Without the real paths there is no telling whether the library is a
+            // mount, and removing items over a mount is what this check prevents.
+            Complete(
+                "Aborted: Could not resolve the symbolic links in Library Directory or an rclone mount " +
+                $"path: {e.Message} Cancelling rather than risk treating a mount as the library.");
+            return;
+        }
+
+        if (libraryInsideMount)
         {
             Complete(
                 $"Aborted: Library Directory '{normalizedLibraryDir}' is inside the rclone mount " +
@@ -999,7 +1015,11 @@ public sealed class RemoveMissingPayloadsTask : BaseTask
         }
 
         Append(_configManager.GetLibraryDir());
-        Append(_configManager.GetRcloneMountDir());
+
+        // Every mount the abort check considers, so an approved preview stops
+        // being valid when the mount layout changes underneath it.
+        foreach (var mountDir in _configManager.GetAllRcloneMountDirs())
+            Append(mountDir);
         foreach (var item in candidates.OrderBy(item => item.Id))
         {
             Append(item.Id.ToString("D"));
