@@ -43,7 +43,7 @@ const HEALTHCHECK_DEPTH_LABELS = ["Quick", "Standard", "Enhanced", "Deep", "Comp
 
 export function getHealthCheckDepthIndex(depth: string) {
   const index = HEALTHCHECK_DEPTHS.indexOf(depth as (typeof HEALTHCHECK_DEPTHS)[number]);
-  return index >= 0 ? index : 0;
+  return index >= 0 ? index : HEALTHCHECK_DEPTHS.indexOf("standard");
 }
 
 export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) {
@@ -261,7 +261,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                   setNewConfig({
                     ...config,
                     "repair.healthcheck-depth":
-                      HEALTHCHECK_DEPTHS[Number(e.target.value)] ?? HEALTHCHECK_DEPTHS[0],
+                      HEALTHCHECK_DEPTHS[Number(e.target.value)] ?? "standard",
                   })
                 }
               />

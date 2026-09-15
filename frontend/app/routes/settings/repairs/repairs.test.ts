@@ -37,7 +37,7 @@ describe("Repairs settings helpers", () => {
     expect(
       ["quick", "standard", "enhanced", "deep", "complete"].map(getHealthCheckDepthIndex),
     ).toEqual([0, 1, 2, 3, 4]);
-    expect(getHealthCheckDepthIndex("unknown")).toBe(0);
+    expect(getHealthCheckDepthIndex("unknown")).toBe(1);
   });
 
   it("detects PAR2 setting changes", () => {

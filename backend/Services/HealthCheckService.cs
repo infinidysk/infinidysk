@@ -1163,6 +1163,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                               && segmentRanges.Length == totalSegments
                               && sampled.Count == totalSegments;
 
+            // A Quick or aged check must not rediscover a hole that was already recorded by a
+            // prior degraded check and send it through the legacy repair path again. Full
+            // classification checks still probe recorded holes so they can detect recovery.
+            if (!canClassify && nzbFile is not null)
+                statSegments = ExcludeRecordedHoles(statSegments, nzbFile);
+
             // setup progress tracking
             var progressHook = new Progress<int>();
             var debounce = DebounceUtil.CreateDebounce(TimeSpan.FromMilliseconds(200));
@@ -1842,6 +1848,27 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 throw;
             }
         }
+    }
+
+    private static SegmentIndexView ExcludeRecordedHoles(
+        SegmentIndexView sampled,
+        DavNzbFile nzbFile)
+    {
+        var recorded = (nzbFile.MissingSegmentIndices ?? [])
+            .Concat(nzbFile.CorruptSegmentIndices ?? [])
+            .ToHashSet();
+        if (recorded.Count == 0) return sampled;
+
+        var indexes = new List<int>(sampled.Count);
+        for (var index = 0; index < sampled.Count; index++)
+        {
+            var sourceIndex = sampled.SourceIndexAt(index);
+            if (!recorded.Contains(sourceIndex)) indexes.Add(sourceIndex);
+        }
+
+        return indexes.Count == sampled.Count
+            ? sampled
+            : new SegmentIndexView(sampled.Source, indexes.ToArray());
     }
 
     private async Task<bool> StatCandidateExistsAsync(

@@ -278,6 +278,34 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task QuickCheck_DoesNotRecheckPreviouslyRecordedHole()
+    {
+        var segments = NewSegmentIds(6);
+        var sizes = new long[] { 10_000, 10_000, 50, 10_000, 10_000, 10_000 };
+        var (item, blobId) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingHoles: [2]);
+        _configManager.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.RepairHealthcheckDepth,
+                ConfigValue = "quick",
+            },
+        ]);
+        var fake = NewFakeClient(segments, missing: [2]);
+        var (service, _) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        Assert.Equal(HealthCheckResult.HealthResult.Healthy, Assert.Single(GetHealthRows(item.Id)).Result);
+        Assert.DoesNotContain(segments[2], fake.StatRequestOrder);
+        Assert.Equal(blobId, ReloadItem(item.Id).FileBlobId);
+        var blob = await BlobStore.ReadBlob<DavNzbFile>(blobId);
+        Assert.NotNull(blob);
+        Assert.Equal([2], blob.MissingSegmentIndices!);
+    }
+
+    [Fact]
     public async Task IdenticalRecheck_DoesNotRewriteBlob()
     {
         var segments = NewSegmentIds(6);
