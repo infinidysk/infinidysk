@@ -40,12 +40,9 @@ public class LazyRarProcessor(
 
     private const double YencDecodeRatio = 0.95;
 
-    // We dropped the explicit "must be a single-file archive" check because
-    // detecting it required walking past the first file header. This sanity
-    // check replaces it: if the matched file isn't large enough to span
-    // most of the NZB, it's likely a companion file (.nfo, sample, etc.)
-    // sitting in front of the actual video inside a multi-file archive,
-    // so we bail out to let the eager processor pick the right one.
+    // Cheap early rejection for obvious companion-file-first layouts (.nfo, sample, …):
+    // if the matched member is small relative to the NZB, skip straight to eager. The
+    // correctness proof that no later member exists is ProveSingleMemberAsync.
     private const double InnerFileSizeRatioThreshold = 0.70;
 
     public override async Task<BaseProcessor.Result?> ProcessAsync()
@@ -273,6 +270,15 @@ public class LazyRarProcessor(
             return null;
         }
 
+        if (!await ProveSingleMemberAsync(
+                firstInfo,
+                trailingInfos,
+                pathInArchive)
+                .ConfigureAwait(false))
+        {
+            return null;
+        }
+
         return new Result
         {
             ArchiveSetId = archiveSetId,
@@ -420,6 +426,55 @@ public class LazyRarProcessor(
         }
 
         return ValidateResolvedSize(resolvedSize, expectedFileSize, isEncrypted, pathInArchive);
+    }
+
+    // The first file header proves nothing about later members; only header enumeration
+    // in the volume where the selected member ends can. False falls back to eager.
+    private async Task<bool> ProveSingleMemberAsync(
+        GetFileInfosStep.FileInfo firstInfo,
+        List<GetFileInfosStep.FileInfo> trailingInfos,
+        string pathInArchive)
+    {
+        var terminating = trailingInfos.Count == 0 ? firstInfo : trailingInfos[^1];
+        try
+        {
+            // Structural absence can only be proved against the physical volume length.
+            // Always probe the final yEnc part: even a supplied PAR2 size may be stale or
+            // underestimated and could otherwise end exactly at the selected member.
+            var streamLength = await usenetClient
+                .GetFileSizeAsync(terminating.NzbFile, ct)
+                .ConfigureAwait(false);
+            await using var stream = usenetClient.GetFileStream(
+                terminating.NzbFile, streamLength, articleBufferSize: 0);
+            if (!await RarUtil.HasAdditionalFileMemberAsync(stream, password, ct).ConfigureAwait(false))
+                return true;
+
+            Log.Information(
+                "LazyRarProcessor: {File} contains another file member after {Inner}; falling back to eager",
+                terminating.FileName, pathInArchive);
+            return false;
+        }
+        catch (RetryableDownloadException)
+        {
+            throw;
+        }
+        catch (Exception e) when (
+            !ct.IsCancellationRequested &&
+            e.IsTransientTransportException() &&
+            e is not OutOfMemoryException)
+        {
+            throw new RetryableDownloadException(
+                $"Transient provider failure while verifying RAR members of {terminating.FileName}.",
+                e);
+        }
+        catch (Exception e) when (!e.IsCancellationException() && e is not OutOfMemoryException)
+        {
+            Log.Information(
+                "LazyRarProcessor: could not verify that {Inner} is the only member of {File}; " +
+                "falling back to eager. Reason: {Reason}",
+                pathInArchive, terminating.FileName, e.Message);
+            return false;
+        }
     }
 
     private static bool ValidateResolvedSize(

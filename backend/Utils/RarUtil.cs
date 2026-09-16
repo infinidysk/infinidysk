@@ -142,7 +142,47 @@ public static class RarUtil
                         "Only rar files with compression method m0 are supported.");
                 return headers;
             }
+
             return headers;
+        }
+        catch (Exception e) when (TryMapHeaderParseFailure(e, cancellableStream, out var mapped)
+            && e is not OutOfMemoryException)
+        {
+            throw mapped;
+        }
+    }
+
+    // Structural single-member proof for lazy mounting: true when the volume holds a second
+    // non-directory file header. Deferred data-skip means only header bytes are read; the
+    // one payload-position access is the seek past the first member's packed data.
+    public static async Task<bool> HasAdditionalFileMemberAsync
+    (
+        Stream stream,
+        string? password,
+        CancellationToken ct
+    )
+    {
+        ct.ThrowIfCancellationRequested();
+        await using var cancellableStream = new CancellableStream(stream, ct);
+        try
+        {
+            var readerOptions = new ReaderOptions
+            {
+                Password = password,
+                LeaveStreamOpen = true,
+            };
+            var headerFactory = new RarHeaderFactory(StreamingMode.Seekable, readerOptions);
+            var fileHeaders = 0;
+            await foreach (var header in headerFactory
+                .ReadHeadersAsync(cancellableStream, ct).ConfigureAwait(false))
+            {
+                if (header.HeaderType == HeaderType.EndArchive) return false;
+                if (header.HeaderType != HeaderType.File) continue;
+                if (header is not IRarFileHeader fh || fh.IsDirectory || fh.FileName == "QO") continue;
+                if (++fileHeaders > 1) return true;
+            }
+
+            return false;
         }
         catch (Exception e) when (TryMapHeaderParseFailure(e, cancellableStream, out var mapped)
             && e is not OutOfMemoryException)
