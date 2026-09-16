@@ -15,25 +15,20 @@ const routeArgs = (request: Request) => ({
 describe("logout route", () => {
   async function authenticatedRequest(method = "GET", body?: URLSearchParams) {
     const session = await setSessionUser(new Request("http://localhost/"), "admin");
-    const headers = { Cookie: session.headers?.["Set-Cookie"] as string };
+    const cookie = new Headers(session.headers).get("Set-Cookie");
+    if (!cookie) throw new Error("Expected a Set-Cookie header");
+    const headers = { Cookie: cookie };
     return body
       ? new Request("http://localhost/logout", { method, body, headers })
       : new Request("http://localhost/logout", { method, headers });
   }
 
-  it("clears the session for GET requests", async () => {
+  it("preserves the session for GET requests", async () => {
     const request = await authenticatedRequest();
-    const response = await loader(routeArgs(request));
+    const response = loader(routeArgs(request));
 
-    expect(response.status).toBe(302);
-    expect(response.headers.get("Location")).toBe("/login");
-    await expect(
-      isAuthenticated(
-        new Request("http://localhost/", {
-          headers: { Cookie: response.headers.get("Set-Cookie")! },
-        }),
-      ),
-    ).resolves.toBe(false);
+    expect(response).toBeNull();
+    await expect(isAuthenticated(request)).resolves.toBe(true);
   });
 
   it("clears the session for confirmed POST requests", async () => {
