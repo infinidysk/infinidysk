@@ -176,13 +176,20 @@ public static class RarUtil
             await foreach (var header in headerFactory
                 .ReadHeadersAsync(cancellableStream, ct).ConfigureAwait(false))
             {
-                if (header.HeaderType == HeaderType.EndArchive) return false;
+                if (header.HeaderType == HeaderType.EndArchive)
+                {
+                    if (fileHeaders == 1) return false;
+                    throw new CorruptRarException(
+                        "Failed to verify the expected RAR file member.");
+                }
                 if (header.HeaderType != HeaderType.File) continue;
                 if (header is not IRarFileHeader fh || fh.IsDirectory || fh.FileName == "QO") continue;
                 if (++fileHeaders > 1) return true;
             }
 
-            return false;
+            if (fileHeaders == 1) return false;
+            throw new CorruptRarException(
+                "Failed to verify the expected RAR file member.");
         }
         catch (Exception e) when (TryMapHeaderParseFailure(e, cancellableStream, out var mapped)
             && e is not OutOfMemoryException)
