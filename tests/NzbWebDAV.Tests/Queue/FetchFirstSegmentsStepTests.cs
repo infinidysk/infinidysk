@@ -1,4 +1,5 @@
 using System.Text;
+using System.Threading.Channels;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
@@ -6,7 +7,9 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
+using NzbWebDAV.Queue;
 using NzbWebDAV.Queue.DeobfuscationSteps._1.FetchFirstSegment;
+using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
 using NzbWebDAV.Streams;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
@@ -152,6 +155,116 @@ public class FetchFirstSegmentsStepTests
         Assert.IsType<System.Net.Sockets.SocketException>(ex.InnerException!.InnerException);
     }
 
+    [Theory]
+    [InlineData("a1@x,b2@x,b1@x,a2@x")]
+    [InlineData("b2@x,b1@x,a2@x,a1@x")]
+    [InlineData("a2@x,a1@x,b2@x,b1@x")]
+    public async Task FetchFirstSegments_ConcurrentCompletionOrder_PreservesNzbOrder(string completionOrderCsv)
+    {
+        var completionOrder = completionOrderCsv.Split(',');
+        var config = CreatePipeliningConfig(enabled: false, depth: 4);
+        string[] sourceOrder = ["a1@x", "a2@x", "b1@x", "b2@x"];
+        var subjects = new Dictionary<string, string>
+        {
+            ["a1@x"] = "\"shared.part01.rar\" yEnc", ["a2@x"] = "\"shared.part02.rar\" yEnc",
+            ["b1@x"] = "\"shared.part01.rar\" yEnc", ["b2@x"] = "\"shared.part02.rar\" yEnc",
+        };
+        var files = sourceOrder.Select(id => CreateFile(id, subjects[id])).ToList();
+        var gates = sourceOrder.ToDictionary(
+            id => id,
+            _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        var progressReports = Channel.CreateUnbounded<int>();
+        using var client = new TrackingArticleNntpClient(
+            missingIds: [], presentPayload: RarPayload(), completionGates: gates);
+
+        var fetch = FetchFirstSegmentsStep.FetchFirstSegments(
+            files, client, config, CancellationToken.None, new ChannelProgress(progressReports.Writer));
+        await client.AllGatedRequestsStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        for (var index = 0; index < completionOrder.Length; index++)
+        {
+            gates[completionOrder[index]].TrySetResult();
+            Assert.Equal(index + 1,
+                await progressReports.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        var results = await fetch;
+
+        Assert.Equal(sourceOrder, results.Select(r => r.NzbFile.Segments[0].MessageId));
+        Assert.All(results, r => Assert.False(r.MissingFirstSegment));
+
+        var fileInfos = GetFileInfosStep.GetFileInfos(results, []);
+        var descriptors = ArchiveSetGrouping.Resolve(fileInfos, new ArchiveSetIdAllocator());
+        Assert.Equal(2, descriptors.Count);
+        Assert.Equal(["a1@x", "a2@x"], descriptors[0].FileInfos.Select(x => x.NzbFile.Segments[0].MessageId));
+        Assert.Equal(["b1@x", "b2@x"], descriptors[1].FileInfos.Select(x => x.NzbFile.Segments[0].MessageId));
+    }
+
+    [Fact]
+    public async Task FetchFirstSegments_ConcurrentCompletionOrder_PreservesSevenZipSets()
+    {
+        var config = CreatePipeliningConfig(enabled: false, depth: 4);
+        string[] sourceOrder = ["a1@x", "a2@x", "b1@x", "b2@x"];
+        var subjects = new Dictionary<string, string>
+        {
+            ["a1@x"] = "\"shared.7z.001\" yEnc", ["a2@x"] = "\"shared.7z.002\" yEnc",
+            ["b1@x"] = "\"shared.7z.001\" yEnc", ["b2@x"] = "\"shared.7z.002\" yEnc",
+        };
+        var files = sourceOrder.Select(id => CreateFile(id, subjects[id])).ToList();
+        var payload = Encoding.ASCII.GetBytes(new string('x', 64));
+        var gates = sourceOrder.ToDictionary(
+            id => id,
+            _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        var progressReports = Channel.CreateUnbounded<int>();
+        using var client = new TrackingArticleNntpClient(
+            missingIds: [], presentPayload: payload, completionGates: gates);
+
+        var fetch = FetchFirstSegmentsStep.FetchFirstSegments(
+            files, client, config, CancellationToken.None, new ChannelProgress(progressReports.Writer));
+        await client.AllGatedRequestsStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var completionOrder = new[] { "a1@x", "b2@x", "b1@x", "a2@x" };
+        for (var index = 0; index < completionOrder.Length; index++)
+        {
+            gates[completionOrder[index]].TrySetResult();
+            Assert.Equal(index + 1,
+                await progressReports.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        var results = await fetch;
+
+        var descriptors = ArchiveSetGrouping.Resolve(
+            GetFileInfosStep.GetFileInfos(results, []), new ArchiveSetIdAllocator());
+        Assert.Equal(2, descriptors.Count);
+        Assert.All(descriptors, d => Assert.True(d.IsSevenZip));
+        Assert.Equal(["a1@x", "a2@x"], descriptors[0].FileInfos.Select(x => x.NzbFile.Segments[0].MessageId));
+        Assert.Equal(["b1@x", "b2@x"], descriptors[1].FileInfos.Select(x => x.NzbFile.Segments[0].MessageId));
+    }
+
+    [Fact]
+    public async Task FetchFirstSegments_ConcurrentProgress_AdvancesOnCompletionNotSourceIndex()
+    {
+        var config = CreatePipeliningConfig(enabled: false, depth: 4);
+        string[] sourceOrder = ["a@x", "b@x"];
+        var files = sourceOrder.Select(id => CreateFile(id, $"\"{id}.rar\" yEnc")).ToList();
+        var gates = sourceOrder.ToDictionary(
+            id => id,
+            _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        var progressReports = Channel.CreateUnbounded<int>();
+        using var client = new TrackingArticleNntpClient(
+            missingIds: [], presentPayload: RarPayload(), completionGates: gates);
+
+        var fetch = FetchFirstSegmentsStep.FetchFirstSegments(
+            files, client, config, CancellationToken.None, new ChannelProgress(progressReports.Writer));
+        await client.AllGatedRequestsStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        gates["b@x"].TrySetResult();
+        Assert.Equal(1,
+            await progressReports.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.False(fetch.IsCompleted);
+        gates["a@x"].TrySetResult();
+        Assert.Equal(2,
+            await progressReports.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+        var results = await fetch;
+
+        Assert.Equal(sourceOrder, results.Select(r => r.NzbFile.Segments[0].MessageId));
+    }
+
     [Fact]
     public async Task FetchFirstSegments_PipelinedRescueTransientError_IsRetryable()
     {
@@ -260,6 +373,16 @@ public class FetchFirstSegmentsStepTests
         return new CachedYencStream(headers, new MemoryStream(payload, writable: false));
     }
 
+    private sealed class ChannelProgress(ChannelWriter<int> writer) : IProgress<int>
+    {
+        public void Report(int value) => Assert.True(writer.TryWrite(value));
+    }
+
+    private static readonly byte[] Rar4Magic = [0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00];
+
+    private static byte[] RarPayload() =>
+        [.. Rar4Magic, .. Enumerable.Repeat((byte)'x', 64)];
+
     private sealed class MissingPipelinedNntpClient(bool definitivelyMissing) : NntpClient
     {
         public int ArticleFetches { get; private set; }
@@ -342,15 +465,20 @@ public class FetchFirstSegmentsStepTests
 
     private sealed class TrackingArticleNntpClient(
         IReadOnlyCollection<string> missingIds,
-        byte[]? presentPayload = null) : NntpClient
+        byte[]? presentPayload = null,
+        IReadOnlyDictionary<string, TaskCompletionSource>? completionGates = null) : NntpClient
     {
+        private int _gatedRequestsStarted;
+
         public HashSet<string> RequestedSegmentIds { get; } = new(StringComparer.Ordinal);
+        public TaskCompletionSource AllGatedRequestsStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId, CancellationToken cancellationToken) =>
             DecodedArticleAsync(segmentId, null, cancellationToken);
 
-        public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+        public override async Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
             SegmentId segmentId,
             ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
@@ -358,6 +486,13 @@ public class FetchFirstSegmentsStepTests
             cancellationToken.ThrowIfCancellationRequested();
             var key = segmentId.ToString();
             RequestedSegmentIds.Add(key);
+
+            if (completionGates?.TryGetValue(key, out var gate) == true)
+            {
+                if (Interlocked.Increment(ref _gatedRequestsStarted) == completionGates.Count)
+                    AllGatedRequestsStarted.TrySetResult();
+                await gate.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
 
             if (missingIds.Contains(key))
             {
@@ -367,7 +502,7 @@ public class FetchFirstSegmentsStepTests
 
             var payload = presentPayload ?? Encoding.ASCII.GetBytes(new string('x', 64));
             onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
-            return Task.FromResult(new UsenetDecodedArticleResponse
+            return new UsenetDecodedArticleResponse
             {
                 SegmentId = key,
                 ResponseCode = (int)UsenetResponseType.ArticleRetrievedHeadAndBodyFollow,
@@ -380,7 +515,7 @@ public class FetchFirstSegmentsStepTests
                         ["Date"] = DateTimeOffset.UtcNow.ToString("R"),
                     },
                 },
-            });
+            };
         }
 
         public override Task ConnectAsync(

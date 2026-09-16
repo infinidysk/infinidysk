@@ -47,18 +47,19 @@ public static class FetchFirstSegmentsStep
     {
         // Preserve QueueDownloadContext so primary preference / fan-out survive abort linking.
         using var abortCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var results = new List<NzbFileWithFirstSegment>(files.Count);
+        // Completion order is network order; archive-set grouping needs NZB order.
+        var results = new NzbFileWithFirstSegment?[files.Count];
         var completed = 0;
 
-        await foreach (var result in files
-                           .Select(x => FetchFirstSegment(x, usenetClient, abortCts.Token))
+        await foreach (var (index, result) in files
+                           .Select((file, index) => FetchFirstSegmentIndexed(index, file, usenetClient, abortCts.Token))
                            .WithConcurrencyAsync(
                                QueueFanOut.GetConcurrency(configManager, abortCts.Token),
                                abortCts.Token)
                            .WithCancellation(abortCts.Token)
                            .ConfigureAwait(false))
         {
-            results.Add(result);
+            results[index] = result;
             progress?.Report(++completed);
 
             if (result.MissingFirstSegment && DeadNzbFailFast.IsImportantNzbFile(result.NzbFile))
@@ -69,8 +70,16 @@ public static class FetchFirstSegmentsStep
             }
         }
 
-        return results;
+        return results.Select(x => x!).ToList();
     }
+
+    private static async Task<(int Index, NzbFileWithFirstSegment Result)> FetchFirstSegmentIndexed
+    (
+        int index,
+        NzbFile nzbFile,
+        INntpClient usenetClient,
+        CancellationToken cancellationToken
+    ) => (index, await FetchFirstSegment(nzbFile, usenetClient, cancellationToken).ConfigureAwait(false));
 
     private static async Task<List<NzbFileWithFirstSegment>> FetchFirstSegmentsPipelined
     (
