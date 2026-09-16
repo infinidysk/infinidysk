@@ -377,6 +377,10 @@ public partial class UsenetClient
                     break;
                 }
 
+                PayloadBytesObserver.InvokeContained(
+                    _options.PayloadBytesObserver,
+                    line.Length + 2);
+
                 if (!shouldWrite)
                 {
                     drainedBytes += line.Length + 2;
@@ -518,6 +522,10 @@ public partial class UsenetClient
 
                     return null;
                 }
+
+                PayloadBytesObserver.InvokeContained(
+                    _options.PayloadBytesObserver,
+                    bytes.Length + 2);
 
                 drainedBytes += bytes.Length + 2;
                 pendingCharge += bytes.Length + 2;

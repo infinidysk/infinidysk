@@ -37,7 +37,8 @@ public class BaseNntpClient : NntpClient
     public BaseNntpClient(
         bool skipTlsVerification,
         TimeSpan? readTimeout = null,
-        bool applyBandwidthLimit = true)
+        bool applyBandwidthLimit = true,
+        Action<int>? payloadBytesObserver = null)
         : this(new UsenetClient(new UsenetClientOptions
 #pragma warning restore CA2000
         {
@@ -52,6 +53,7 @@ public class BaseNntpClient : NntpClient
             ? static (bytes, ct) =>
                 UsenetBandwidthLimiter.Current?.AcquireAsync(bytes, ct) ?? ValueTask.CompletedTask
             : null,
+            PayloadBytesObserver = payloadBytesObserver,
         }))
     {
         ReadTimeout = readTimeout ?? TimeSpan.FromSeconds(30);

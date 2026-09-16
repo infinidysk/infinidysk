@@ -53,6 +53,20 @@ public class NntpYencBodyDecoderTests
     }
 
     [Test]
+    public async Task DecodeAsync_PayloadBytesObserver_CountsEachWireLineOnce()
+    {
+        var body = YencWireBodies.SinglePart([0x04, 0x05, 0x06]);
+        var observed = 0;
+        var result = await DecodeAsync(
+            body.Wire,
+            [int.MaxValue],
+            payloadBytesObserver: bytes => observed += bytes);
+
+        AssertSuccessful(result, body);
+        Assert.That(observed, Is.EqualTo(body.Wire.Length - 3));
+    }
+
+    [Test]
     public async Task DecodeAsync_AllByteValues_RoundTrips()
     {
         var decoded = Enumerable.Range(0, 256).Select(value => (byte)value).ToArray();
@@ -435,7 +449,8 @@ public class NntpYencBodyDecoderTests
         TimeProvider? timeProvider = null,
         TimeSpan? readTimeout = null,
         FragmentedReadStream? source = null,
-        Func<int, CancellationToken, ValueTask>? payloadBandwidthAcquirer = null)
+        Func<int, CancellationToken, ValueTask>? payloadBandwidthAcquirer = null,
+        Action<int>? payloadBytesObserver = null)
     {
         source ??= new FragmentedReadStream(wireBody, fragmentSizes);
         using var reader = new NntpLineReader(source, maximumLineLength, readerBufferSize);
@@ -462,6 +477,7 @@ public class NntpYencBodyDecoderTests
             DecodedBodyPauseWriterThreshold = pauseWriterThreshold,
             DecodedBodyResumeWriterThreshold = resumeWriterThreshold,
             PayloadBandwidthAcquirer = payloadBandwidthAcquirer,
+            PayloadBytesObserver = payloadBytesObserver,
         };
 
         var decoder = new NntpYencBodyDecoder(

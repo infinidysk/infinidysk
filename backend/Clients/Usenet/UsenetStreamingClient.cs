@@ -231,12 +231,6 @@ public class UsenetStreamingClient : WrappingNntpClient
     {
         var providerSnapshot = configManager.GetUsenetProviderSnapshot();
         var providerConfig = providerSnapshot.Providers;
-        // Seed the tracker from the persisted metrics rollup so the limit gate
-        // is accurate before the first article fetch. Fire-and-forget — the
-        // helper logs and swallows DB errors so a metrics outage can't keep
-        // the streaming client from coming up. Limit enforcement degrades
-        // gracefully to "uncapped until seed completes".
-        _ = ProviderUsageHelper.SeedTrackerAsync(bytesTracker, providerConfig);
 
         var connectionPoolStats = new ConnectionPoolStats(providerConfig, websocketManager);
         var idleTimeoutSeconds = configManager.GetIdleConnectionTimeoutSeconds();
@@ -262,7 +256,8 @@ public class UsenetStreamingClient : WrappingNntpClient
                 configManager.GetConnectionOpenTimeout,
                 streamingPriority,
                 latencyTracker,
-                tripDetector
+                tripDetector,
+                bytesTracker
             ))
             .ToList();
         return new MultiProviderNntpClient(
@@ -291,7 +286,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         Func<TimeSpan> connectionOpenTimeout,
         SemaphorePriorityOdds? streamingPriority = null,
         ProviderLatencyTracker? latencyTracker = null,
-        CorrelatedTripDetector? tripDetector = null
+        CorrelatedTripDetector? tripDetector = null,
+        ProviderBytesTracker? bytesTracker = null
     )
     {
         var maxConnections = connectionDetails.MaxConnections;
@@ -333,7 +329,12 @@ public class UsenetStreamingClient : WrappingNntpClient
         var connectionPool = CreateNewConnectionPool(
 #pragma warning restore CA2000
             maxConnections: maxConnections,
-            connectionFactory: ct => CreateNewConnection(connectionDetails, nntpReadTimeout, ct),
+            connectionFactory: ct => CreateNewConnection(
+                connectionDetails,
+                nntpReadTimeout,
+                ct,
+                onPayloadBytes: bytes => bytesTracker?.Add(
+                    UsenetProviderIdentity.MetricsKey(connectionDetails), bytes)),
             onConnectionPoolChanged,
             idleTimeoutSeconds,
             warmConnectionFloor,
@@ -524,13 +525,15 @@ public class UsenetStreamingClient : WrappingNntpClient
         UsenetProviderConfig.ConnectionDetails connectionDetails,
         TimeSpan readTimeout,
         CancellationToken ct,
-        bool applyBandwidthLimit = true
+        bool applyBandwidthLimit = true,
+        Action<int>? onPayloadBytes = null
     ) => CreateNewConnection(
         connectionDetails,
         () => new BaseNntpClient(
             connectionDetails.UseSsl && connectionDetails.SkipTlsVerification,
             readTimeout,
-            applyBandwidthLimit),
+            applyBandwidthLimit,
+            onPayloadBytes),
         ct);
 
     internal static async ValueTask<INntpClient> CreateNewConnection

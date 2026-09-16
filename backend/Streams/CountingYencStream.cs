@@ -8,10 +8,9 @@ using UsenetSharp.Streams;
 namespace NzbWebDAV.Streams;
 
 /// <summary>
-/// Wraps a YencStream and attributes every byte read back to the provider that
-/// served it. The inner stream still performs the real decode work; this class
-/// just observes the byte count on each Read and forwards it to
-/// ProviderBytesTracker so per-provider download volume can be aggregated.
+/// Wraps a YencStream and records decoded consumer throughput for the provider
+/// that served it. Quota attribution occurs at the raw BODY boundary in
+/// BaseNntpClient; this class only measures bytes delivered to the consumer.
 /// </summary>
 public sealed class CountingYencStream : YencStream
 {
@@ -45,7 +44,6 @@ public sealed class CountingYencStream : YencStream
         _activeReadTicks += Stopwatch.GetTimestamp() - start;
         if (n > 0)
         {
-            _tracker.Add(_providerKey, n);
             _bytes += n;
             if (MultiProviderNntpClient.CurrentReadSessionId is { } sessionId)
                 _activeReadRegistry?.AddBytesFetched(sessionId, n);

@@ -75,6 +75,14 @@ public sealed record UsenetClientOptions
     public Func<int, CancellationToken, ValueTask>? PayloadBandwidthAcquirer { get; init; }
 
     /// <summary>
+    /// Observer invoked once for every raw NNTP BODY payload line received, with the
+    /// transmitted content length plus CRLF. Command/status bytes and the terminating
+    /// dot line are excluded. Implementations must be non-blocking; exceptions are
+    /// contained by UsenetSharp.
+    /// </summary>
+    public Action<int>? PayloadBytesObserver { get; init; }
+
+    /// <summary>
     /// Gets how cancelled body transfers release the connection.
     /// </summary>
     /// <remarks>

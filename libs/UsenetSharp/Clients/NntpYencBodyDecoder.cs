@@ -165,6 +165,10 @@ internal sealed class NntpYencBodyDecoder(
                             break;
                         }
 
+                        PayloadBytesObserver.InvokeContained(
+                            options.PayloadBytesObserver,
+                            contentLength + 2);
+
                         if (!shouldWrite)
                         {
                             payloadStart = -1;
