@@ -548,6 +548,12 @@ public sealed partial class Program
                     SigtermUtil.GetCancellationToken())));
             await RunHostAndSetExitCodeAsync(app).ConfigureAwait(false);
         }
+        catch (ConfigEnvironmentException exception)
+        {
+            Log.Fatal("Invalid headless configuration: {Message}", exception.Message);
+            Environment.ExitCode = 1;
+            return;
+        }
         catch (ConfigPathAccessException exception)
         {
             // Operator-facing configuration failure — one actionable line, a clean
@@ -695,6 +701,7 @@ public sealed partial class Program
             .ConfigureAwait(false);
         var argIndex = args.ToList().IndexOf("--db-migration");
         var targetMigration = args.Length > argIndex + 1 ? args[argIndex + 1] : null;
+        var environmentOverlay = ConfigEnvironmentOverlay.LoadFromEnvironment();
         var backupStore = new DatabaseBackupStore();
         backupStore.EnsureInitialized();
         var pendingRestore = backupStore.ReadPendingRestore();
@@ -742,7 +749,7 @@ public sealed partial class Program
                 .ClearAbandonedMigrationLockAsync(metricsContext, ct)
                 .ConfigureAwait(false);
             await metricsContext.Database.MigrateAsync(ct).ConfigureAwait(false);
-            await PerformDatabaseVacuumIfEnabled().ConfigureAwait(false);
+            await PerformDatabaseVacuumIfEnabled(environmentOverlay, ct).ConfigureAwait(false);
             return;
         }
 
@@ -760,7 +767,8 @@ public sealed partial class Program
                 .GetPendingMigrationsAsync(ct)
                 .ConfigureAwait(false))
                 .ToList();
-            var vacuumEnabledProbe = await IsDatabaseStartupVacuumEnabledAsync().ConfigureAwait(false);
+            var vacuumEnabledProbe = await IsDatabaseStartupVacuumEnabledAsync(environmentOverlay, ct)
+                .ConfigureAwait(false);
 
             // Routine restarts with nothing to do: skip the status server and its
             // grace delay so Docker does not bind/unbind :8080 just to say "idle".
@@ -810,7 +818,8 @@ public sealed partial class Program
                 .ConfigureAwait(false);
 
             var pending = (await databaseContext.Database.GetPendingMigrationsAsync(ct).ConfigureAwait(false)).ToList();
-            var vacuumEnabled = await IsDatabaseStartupVacuumEnabledAsync().ConfigureAwait(false);
+            var vacuumEnabled = await IsDatabaseStartupVacuumEnabledAsync(environmentOverlay, ct)
+                .ConfigureAwait(false);
 
             var remainingSteps = new List<MigrationProgress.MigrationStep>();
             foreach (var id in pending)
@@ -1120,30 +1129,35 @@ public sealed partial class Program
                 : config.GetSegmentCacheWriteBehindBytes() > 0 ? "bounded" : "inline";
     }
 
-    private static async Task<bool> IsDatabaseStartupVacuumEnabledAsync()
+    internal static async Task<bool> IsDatabaseStartupVacuumEnabledAsync(
+        ConfigEnvironmentOverlay environmentOverlay,
+        CancellationToken ct)
     {
+        var configManager = new ConfigManager();
+
         // Fresh / WAL-created empty databases have no ConfigItems table yet. Querying
         // it before migrations run is what broke brand-new installs after #269.
         await using var databaseContext = new DavDatabaseContext();
-        if (!await DatabaseStartupGuards
-                .ConfigItemsTableExistsAsync(databaseContext, SigtermUtil.GetCancellationToken())
+        if (await DatabaseStartupGuards
+                .ConfigItemsTableExistsAsync(databaseContext, ct)
                 .ConfigureAwait(false))
         {
-            return false;
+            await configManager.LoadConfig().ConfigureAwait(false);
         }
 
-        var configManager = new ConfigManager();
-        await configManager.LoadConfig().ConfigureAwait(false);
+        configManager.ApplyEnvironmentOverlay(environmentOverlay);
         return configManager.IsDatabaseStartupVacuumEnabled();
     }
 
-    private static async Task PerformDatabaseVacuumIfEnabled()
+    private static async Task PerformDatabaseVacuumIfEnabled(
+        ConfigEnvironmentOverlay environmentOverlay,
+        CancellationToken ct)
     {
-        if (await IsDatabaseStartupVacuumEnabledAsync().ConfigureAwait(false))
+        if (await IsDatabaseStartupVacuumEnabledAsync(environmentOverlay, ct).ConfigureAwait(false))
         {
             Log.Information("Performing database vacuum");
             await using var databaseContext = new DavDatabaseContext();
-            await databaseContext.Database.ExecuteSqlRawAsync("VACUUM;").ConfigureAwait(false);
+            await databaseContext.Database.ExecuteSqlRawAsync("VACUUM;", ct).ConfigureAwait(false);
             Log.Information("Database vacuum completed");
         }
     }
