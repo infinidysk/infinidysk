@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.1](https://github.com/infinidysk/infinidysk/compare/v1.4.0...v1.4.1) (2026-09-16)
+
+
+### Bug Fixes
+
+* **auth:** direct sign-in works again when Base URL points to a reverse proxy ([#1443](https://github.com/infinidysk/infinidysk/issues/1443)) ([72a9bdb](https://github.com/infinidysk/infinidysk/commit/72a9bdb0d18e68bd662ca1fd4ab540d370ac2fb5))
+* **ui:** restore logout when a direct GET request is used ([#1445](https://github.com/infinidysk/infinidysk/issues/1445)) ([3ef8667](https://github.com/infinidysk/infinidysk/commit/3ef8667b9efeb83bc7b53558cd795e8f2fa2bf8f))
+
 ## [1.4.0](https://github.com/infinidysk/infinidysk/compare/v1.3.0...v1.4.0) (2026-09-15)
 
 
