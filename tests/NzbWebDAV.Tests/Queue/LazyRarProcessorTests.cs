@@ -1,5 +1,7 @@
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Exceptions;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
@@ -95,6 +97,7 @@ public class LazyRarProcessorTests
         using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
         {
             ["first@example.com"] = volumeBytes,
+            ["r00@example.com"] = continuationBytes,
         });
 
         var result = await new LazyRarProcessor([first, trailing], client, password: null, CancellationToken.None)
@@ -129,6 +132,7 @@ public class LazyRarProcessorTests
         using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
         {
             ["first@example.com"] = volumeBytes,
+            ["r00@example.com"] = continuationBytes,
         });
 
         var result = await new LazyRarProcessor([first, trailing], client, password: null, CancellationToken.None)
@@ -161,6 +165,7 @@ public class LazyRarProcessorTests
         using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
         {
             ["first@example.com"] = volumeBytes,
+            ["r00@example.com"] = continuationBytes,
         });
 
         var result = await new LazyRarProcessor([first, trailing], client, password: null, CancellationToken.None)
@@ -188,6 +193,7 @@ public class LazyRarProcessorTests
         using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
         {
             ["first@example.com"] = volumeBytes,
+            ["r00@example.com"] = continuationBytes,
         });
 
         var result = await new LazyRarProcessor([first, trailing], client, password: null, CancellationToken.None)
@@ -265,6 +271,7 @@ public class LazyRarProcessorTests
         using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
         {
             ["part1@example.com"] = firstBytes,
+            ["part3@example.com"] = finalBytes,
         });
 
         var result = Assert.IsType<LazyRarProcessor.Result>(
@@ -422,6 +429,129 @@ public class LazyRarProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_SingleVolumeWithSecondMember_ReturnsNull()
+    {
+        var volumeBytes = BuildRar4Volume("Episode01.mkv", 800, firstVolume: true,
+            trailingMembers: [("Episode02.mkv", 200)]);
+        var first = FileInfoFor("vol.rar", "first@example.com", volumeBytes.Length, volumeBytes.Length);
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["first@example.com"] = volumeBytes,
+        });
+
+        var result = await new LazyRarProcessor([first], client, password: null, CancellationToken.None)
+            .ProcessAsync();
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SingleVolumeWithSecondMember_WithoutPar2Size_ReturnsNull()
+    {
+        var volumeBytes = BuildRar4Volume("Episode01.mkv", 800, firstVolume: true,
+            trailingMembers: [("Episode02.mkv", 200)]);
+        var first = FileInfoFor("vol.rar", "first@example.com", volumeBytes.Length, fileSize: null);
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["first@example.com"] = volumeBytes,
+        });
+
+        Assert.Null(await new LazyRarProcessor([first], client, password: null, CancellationToken.None)
+            .ProcessAsync());
+    }
+
+    [Fact]
+    public async Task ProcessAsync_MultipartFinalVolumeWithAnotherMember_ReturnsNull()
+    {
+        const string member = "movie.mkv";
+        var firstBytes = BuildRar4SplitFirstVolume(member, packedSize: 600, uncompressedSize: 1_200);
+        var finalBytes = BuildRar4ContinuationVolume(member, packedSize: 600,
+            trailingMembers: [("sample.mkv", 100)]);
+        var first = FileInfoFor("opaque.part01.rar", "part1@example.com", firstBytes.Length, firstBytes.Length);
+        var last = FileInfoFor("opaque.part02.rar", "part2@example.com", finalBytes.Length, fileSize: null, finalBytes);
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["part1@example.com"] = firstBytes,
+            ["part2@example.com"] = finalBytes,
+        });
+
+        Assert.Null(await new LazyRarProcessor([first, last], client, password: null, CancellationToken.None)
+            .ProcessAsync());
+    }
+
+    [Fact]
+    public async Task ProcessAsync_TrueSingleMemberSingleVolume_StillMounts()
+    {
+        var volumeBytes = BuildRar4Volume("movie.mkv", 1_000, firstVolume: true);
+        var first = FileInfoFor("vol.rar", "first@example.com", volumeBytes.Length, volumeBytes.Length);
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["first@example.com"] = volumeBytes,
+        });
+
+        var result = Assert.IsType<LazyRarProcessor.Result>(
+            await new LazyRarProcessor([first], client, password: null, CancellationToken.None).ProcessAsync());
+
+        Assert.Equal("movie.mkv", result.PathInArchive);
+        Assert.Empty(result.PendingParts);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_DirectoryHeaderAfterMember_DoesNotRejectLazy()
+    {
+        var volumeBytes = BuildRar4Volume("movie.mkv", 1_000, firstVolume: true,
+            trailingDirectories: ["Extras"]);
+        var first = FileInfoFor("vol.rar", "first@example.com", volumeBytes.Length, volumeBytes.Length);
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["first@example.com"] = volumeBytes,
+        });
+
+        Assert.IsType<LazyRarProcessor.Result>(
+            await new LazyRarProcessor([first], client, password: null, CancellationToken.None).ProcessAsync());
+    }
+
+    [Fact]
+    public async Task ProcessAsync_TransientFailureDuringProof_IsRetryable()
+    {
+        const string member = "movie.mkv";
+        var firstBytes = BuildRar4SplitFirstVolume(member, packedSize: 600, uncompressedSize: 1_200);
+        var finalBytes = BuildRar4ContinuationVolume(member, packedSize: 600);
+        var first = FileInfoFor("opaque.part01.rar", "part1@example.com", firstBytes.Length, firstBytes.Length);
+        var last = FileInfoFor("opaque.part02.rar", "part2@example.com", finalBytes.Length, finalBytes.Length, finalBytes);
+        using var client = new MemoryServingNntpClient(
+            new Dictionary<string, byte[]> { ["part1@example.com"] = firstBytes, ["part2@example.com"] = finalBytes },
+            bodyFailure: id => id == "part2@example.com" ? new IOException("provider blip") : null);
+
+        var ex = await Assert.ThrowsAsync<RetryableDownloadException>(() =>
+            new LazyRarProcessor([first, last], client, password: null, CancellationToken.None).ProcessAsync());
+
+        Assert.True(ex.TryGetCausingException<IOException>(out _));
+    }
+
+    [Fact]
+    public async Task ProcessAsync_CancellationDuringProof_Propagates()
+    {
+        const string member = "movie.mkv";
+        var firstBytes = BuildRar4SplitFirstVolume(member, packedSize: 600, uncompressedSize: 1_200);
+        var finalBytes = BuildRar4ContinuationVolume(member, packedSize: 600);
+        var first = FileInfoFor("opaque.part01.rar", "part1@example.com", firstBytes.Length, firstBytes.Length);
+        var last = FileInfoFor("opaque.part02.rar", "part2@example.com", finalBytes.Length, finalBytes.Length, finalBytes);
+        using var cts = new CancellationTokenSource();
+        using var client = new MemoryServingNntpClient(
+            new Dictionary<string, byte[]> { ["part1@example.com"] = firstBytes, ["part2@example.com"] = finalBytes },
+            bodyFailure: id =>
+            {
+                if (id != "part2@example.com") return null;
+                cts.Cancel();
+                return new OperationCanceledException(cts.Token);
+            });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            new LazyRarProcessor([first, last], client, password: null, cts.Token).ProcessAsync());
+    }
+
+    [Fact]
     public async Task BuildRar4SplitFirstVolume_IsFirstVolumeStoredSplit()
     {
         var bytes = BuildRar4SplitFirstVolume("movie.mkv", packedSize: 100, uncompressedSize: 500);
@@ -434,6 +564,19 @@ public class LazyRarProcessorTests
         Assert.Equal("movie.mkv", file.FileName);
         Assert.Equal(500u, file.UncompressedSize);
         Assert.Equal(100u, file.AdditionalDataSize);
+    }
+
+    [Fact]
+    public async Task BuildRar4Volume_TrailingMembers_AreEnumeratedAsSeparateFileHeaders()
+    {
+        var bytes = BuildRar4Volume("a.mkv", 300, firstVolume: true,
+            trailingMembers: [("b.mkv", 100)]);
+        await using var stream = new MemoryStream(bytes, writable: false);
+
+        var headers = await RarUtil.GetRarHeadersAsync(stream, password: null, CancellationToken.None);
+
+        Assert.Equal(["a.mkv", "b.mkv"],
+            headers.OfType<SharpCompress.Common.Rar.Headers.IRarFileHeader>().Select(h => h.FileName));
     }
 
     private static GetFileInfosStep.FileInfo FileInfoFor(
@@ -465,7 +608,9 @@ public class LazyRarProcessorTests
     /// Serves raw decoded bytes via CachedYencStream so tests do not depend on
     /// rapidyenc native (same approach as LazyRarResolverTests).
     /// </summary>
-    private sealed class MemoryServingNntpClient(IReadOnlyDictionary<string, byte[]> segments) : NntpClient
+    private sealed class MemoryServingNntpClient(
+        IReadOnlyDictionary<string, byte[]> segments,
+        Func<string, Exception?>? bodyFailure = null) : NntpClient
     {
         public override Task ConnectAsync(
             string host, int port, bool useSsl, CancellationToken cancellationToken) =>
@@ -494,6 +639,7 @@ public class LazyRarProcessorTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             var key = segmentId.ToString();
+            if (bodyFailure?.Invoke(key) is { } failure) throw failure;
             if (!segments.TryGetValue(key, out var bytes))
                 throw new NzbWebDAV.Exceptions.UsenetArticleNotFoundException(key);
 

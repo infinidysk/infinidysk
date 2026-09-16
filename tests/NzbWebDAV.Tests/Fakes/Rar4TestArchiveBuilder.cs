@@ -13,7 +13,7 @@ internal static class Rar4TestArchiveBuilder
         BuildRar4Volume(
             fileName,
             packedSize,
-            uncompressedSize,
+            uncompressedSize ?? packedSize,
             firstVolume: true,
             splitBefore: false,
             splitAfter: true,
@@ -25,16 +25,18 @@ internal static class Rar4TestArchiveBuilder
         int trailingBytes = 0,
         bool splitAfter = false,
         bool encrypted = false,
-        int? uncompressedSize = null) =>
+        int? uncompressedSize = null,
+        IReadOnlyList<(string FileName, int PackedSize)>? trailingMembers = null) =>
         BuildRar4Volume(
             fileName,
             packedSize,
-            uncompressedSize ?? packedSize,
+            uncompressedSize,
             firstVolume: false,
             splitBefore: true,
             splitAfter: splitAfter,
             trailingBytes: trailingBytes,
-            encrypted: encrypted);
+            encrypted: encrypted,
+            trailingMembers: trailingMembers);
 
     internal static byte[] BuildRar4Volume(
         string fileName,
@@ -45,11 +47,52 @@ internal static class Rar4TestArchiveBuilder
         bool splitAfter = false,
         int trailingBytes = 0,
         ReadOnlySpan<byte> payloadPrefix = default,
-        bool encrypted = false)
+        bool encrypted = false,
+        IReadOnlyList<(string FileName, int PackedSize)>? trailingMembers = null,
+        IReadOnlyList<string>? trailingDirectories = null)
     {
         using var stream = new MemoryStream();
         stream.Write([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00]);
 
+        WriteArchiveHeader(stream, firstVolume);
+        WriteFileEntry(
+            stream,
+            fileName,
+            packedSize,
+            uncompressedSize ?? packedSize,
+            splitBefore,
+            splitAfter,
+            encrypted,
+            isDirectory: false,
+            payloadPrefix);
+        foreach (var (memberName, memberPacked) in trailingMembers ?? [])
+            WriteFileEntry(
+                stream,
+                memberName,
+                memberPacked,
+                memberPacked,
+                splitBefore: false,
+                splitAfter: false,
+                encrypted: false,
+                isDirectory: false,
+                payloadPrefix: default);
+        foreach (var directoryName in trailingDirectories ?? [])
+            WriteFileEntry(
+                stream,
+                directoryName,
+                packedSize: 0,
+                uncompressedSize: 0,
+                splitBefore: false,
+                splitAfter: false,
+                encrypted: false,
+                isDirectory: true,
+                payloadPrefix: default);
+        stream.Write(new byte[trailingBytes]);
+        return stream.ToArray();
+    }
+
+    private static void WriteArchiveHeader(Stream stream, bool firstVolume)
+    {
         Span<byte> archiveBody = stackalloc byte[11];
         archiveBody[0] = 0x73;
         var archiveFlags = firstVolume ? (ushort)0x0101 : (ushort)0x0001;
@@ -58,7 +101,19 @@ internal static class Rar4TestArchiveBuilder
         BinaryPrimitives.WriteUInt16LittleEndian(archiveBody[5..], 0);
         BinaryPrimitives.WriteUInt32LittleEndian(archiveBody[7..], 0);
         WriteHeader(stream, archiveBody);
+    }
 
+    private static void WriteFileEntry(
+        Stream stream,
+        string fileName,
+        int packedSize,
+        int uncompressedSize,
+        bool splitBefore,
+        bool splitAfter,
+        bool encrypted,
+        bool isDirectory,
+        ReadOnlySpan<byte> payloadPrefix)
+    {
         var nameBytes = Encoding.ASCII.GetBytes(fileName);
         var headSize = (ushort)(32 + nameBytes.Length);
         var fileBody = new byte[headSize - 2];
@@ -67,7 +122,8 @@ internal static class Rar4TestArchiveBuilder
         var fileFlags = (ushort)(0x8000
                                  | (splitBefore ? 0x0001 : 0)
                                  | (splitAfter ? 0x0002 : 0)
-                                 | (encrypted ? 0x0004 : 0));
+                                 | (encrypted ? 0x0004 : 0)
+                                 | (isDirectory ? 0x00E0 : 0));
         BinaryPrimitives.WriteUInt16LittleEndian(fileBody.AsSpan(offset), fileFlags);
         offset += 2;
         BinaryPrimitives.WriteUInt16LittleEndian(fileBody.AsSpan(offset), headSize);
@@ -76,7 +132,7 @@ internal static class Rar4TestArchiveBuilder
         offset += 4;
         BinaryPrimitives.WriteUInt32LittleEndian(
             fileBody.AsSpan(offset),
-            (uint)(uncompressedSize ?? packedSize));
+            (uint)uncompressedSize);
         offset += 4;
         fileBody[offset++] = 2; // HostOS Unix
         BinaryPrimitives.WriteUInt32LittleEndian(fileBody.AsSpan(offset), 0);
@@ -94,11 +150,10 @@ internal static class Rar4TestArchiveBuilder
         nameBytes.CopyTo(fileBody.AsSpan(offset));
         WriteHeader(stream, fileBody);
 
+        if (isDirectory) return;
         var payload = new byte[packedSize];
         payloadPrefix.CopyTo(payload);
         stream.Write(payload);
-        stream.Write(new byte[trailingBytes]);
-        return stream.ToArray();
     }
 
     private static void WriteHeader(Stream stream, ReadOnlySpan<byte> bodyWithoutCrc)
