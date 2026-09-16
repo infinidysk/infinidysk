@@ -44,18 +44,16 @@ export function matchConfiguredActionOrigin(
   }
 }
 
+// Base URL only adds a trusted origin; anything else defers to React Router's same-origin check.
 export async function resolveConfiguredActionOrigin(
   req: express.Request,
-): Promise<string | null | undefined> {
+): Promise<string | undefined> {
   if (req.method === "GET" || req.method === "HEAD" || !req.get("origin")) return undefined;
 
   const settings = await refreshProxySettings();
-  if (!settings.available) return null;
-  if (!settings.baseUrl) return undefined;
+  if (!settings.available || !settings.baseUrl) return undefined;
 
-  const matchingOrigin = matchConfiguredActionOrigin(req, settings.baseUrl);
-  if (matchingOrigin) return matchingOrigin;
-  return null;
+  return matchConfiguredActionOrigin(req, settings.baseUrl);
 }
 
 export function isTrustProxyEnabled(): boolean {

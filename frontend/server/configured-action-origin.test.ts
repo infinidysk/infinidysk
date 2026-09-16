@@ -129,7 +129,7 @@ describe("resolveConfiguredActionOrigin", () => {
         { configName: "general.base-url", configValue: "https://nzbdav.example.com" },
       ]);
 
-    await expect(resolveConfiguredActionOrigin(proxiedRequest())).resolves.toBeNull();
+    await expect(resolveConfiguredActionOrigin(proxiedRequest())).resolves.toBeUndefined();
     vi.setSystemTime(2_001);
     await expect(resolveConfiguredActionOrigin(proxiedRequest())).resolves.toBe(
       "https://nzbdav.example.com",
@@ -163,7 +163,7 @@ describe("resolveConfiguredActionOrigin", () => {
     expect(getConfig).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects an alias even when Host and Origin agree", async () => {
+  it("defers to the same-origin check when the browser origin differs from Base URL", async () => {
     vi.spyOn(backendClient, "getConfig").mockResolvedValue([
       { configName: "general.base-url", configValue: "https://canonical.example.com" },
       { configName: "general.trust-proxy", configValue: "false" },
@@ -178,7 +178,25 @@ describe("resolveConfiguredActionOrigin", () => {
       },
     } as express.Request;
 
-    await expect(resolveConfiguredActionOrigin(aliasRequest)).resolves.toBeNull();
+    await expect(resolveConfiguredActionOrigin(aliasRequest)).resolves.toBeUndefined();
+  });
+
+  it("defers to the same-origin check for a direct LAN login when Base URL is the proxy address", async () => {
+    vi.spyOn(backendClient, "getConfig").mockResolvedValue([
+      { configName: "general.base-url", configValue: "https://nzbdav.example.com" },
+      { configName: "general.trust-proxy", configValue: "true" },
+    ]);
+    const directRequest = {
+      method: "POST",
+      protocol: "http",
+      get: (name: string) => {
+        if (name.toLowerCase() === "origin") return "http://192.168.1.10:3000";
+        if (name.toLowerCase() === "host") return "192.168.1.10:3000";
+        return undefined;
+      },
+    } as express.Request;
+
+    await expect(resolveConfiguredActionOrigin(directRequest)).resolves.toBeUndefined();
   });
 
   it("does not restore stale settings when invalidated during an in-flight read", async () => {

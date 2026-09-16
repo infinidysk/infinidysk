@@ -25,16 +25,12 @@ export function createRequestHandler({
 }: {
   build: Build;
   mode?: string;
-  resolveCanonicalOrigin?: (req: express.Request) => Promise<string | null | undefined>;
+  resolveCanonicalOrigin?: (req: express.Request) => Promise<string | undefined>;
 }): express.RequestHandler {
   const handleRequest = createReactRouterRequestHandler(build, mode);
   return async (req, res, next) => {
     try {
       const canonicalOrigin = await resolveCanonicalOrigin?.(req);
-      if (canonicalOrigin === null) {
-        await sendRemixResponse(res, new Response("Bad Request", { status: 400 }));
-        return;
-      }
       const response = await handleRequest(createRemixRequest(req, res, canonicalOrigin));
       await sendRemixResponse(res, response);
     } catch (error) {

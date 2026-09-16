@@ -1,20 +1,21 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import express from "express";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { backendClient } from "~/clients/backend-client.server";
+import {
+  invalidateProxySettingsCache,
+  resolveConfiguredActionOrigin,
+} from "./configured-action-origin";
 import { normalizeForwardedHost } from "./forwarded-headers";
-import { resolvePort } from "./react-router-request-handler";
+import { resolveRequestUrl } from "./react-router-request-handler";
 
-// Mirrors @react-router/express's createRemixRequest URL resolution (as fixed
-// in react-router-request-handler.ts) plus react-router's action CSRF host
-// check. Neither is exported by those packages, so this reproduces them
-// locally to regression-test the fix against a real Express request/response
-// cycle instead of only the normalizeForwardedHost/resolvePort units, matching
-// how login is actually served in production behind a reverse proxy.
-function resolveRequestUrlHost(req: express.Request): string {
-  const port = resolvePort(req);
-  return `${req.hostname}${port ? `:${port}` : ""}`;
-}
+// Mirrors createRequestHandler in react-router-request-handler.ts (canonical
+// origin resolution + SSR URL construction) plus react-router's action CSRF
+// host check. The framework check is not exported, so it is reproduced locally
+// to regression-test login against a real Express request/response cycle —
+// directly and behind a reverse proxy — with the Base URL and trust-proxy
+// settings the production handler reads from the backend.
 
 function buildApp(trustProxy: boolean): express.Express {
   const app = express();
@@ -25,10 +26,11 @@ function buildApp(trustProxy: boolean): express.Express {
       next();
     });
   }
-  app.post("/login.data", (req, res) => {
+  app.post("/login.data", async (req, res) => {
+    const canonicalOrigin = await resolveConfiguredActionOrigin(req);
+    const requestUrlHost = resolveRequestUrl(req, canonicalOrigin).host;
     const origin = req.get("origin");
     const originHost = origin ? new URL(origin).host : null;
-    const requestUrlHost = resolveRequestUrlHost(req);
     if (originHost && originHost !== requestUrlHost) {
       res.status(400).send("Bad Request");
       return;
@@ -75,6 +77,16 @@ function postLogin(port: number, headers: http.OutgoingHttpHeaders): Promise<num
 
 describe("login action origin check (reverse proxy regression)", () => {
   const servers: http.Server[] = [];
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    invalidateProxySettingsCache();
+    // Reporter's setup: Base URL is the proxy's public address and proxy trust is enabled.
+    vi.spyOn(backendClient, "getConfig").mockResolvedValue([
+      { configName: "general.base-url", configValue: "https://nzbdav.example.com" },
+      { configName: "general.trust-proxy", configValue: "true" },
+    ]);
+  });
 
   afterEach(async () => {
     await Promise.all(servers.splice(0).map((server) => close(server)));
@@ -190,5 +202,46 @@ describe("login action origin check (reverse proxy regression)", () => {
     });
 
     expect(status).toBe(200);
+  });
+
+  it("accepts a direct login when Base URL points at the reverse proxy and proxy trust is enabled", async () => {
+    const server = http.createServer(buildApp(true));
+    servers.push(server);
+    const port = await listen(server);
+
+    // No X-Forwarded-* headers: the browser reached the container directly.
+    const status = await postLogin(port, {
+      Host: `127.0.0.1:${port}`,
+      Origin: `http://127.0.0.1:${port}`,
+    });
+
+    expect(status).toBe(200);
+  });
+
+  it("accepts a direct login when the reverse-proxy settings cannot be read", async () => {
+    vi.spyOn(backendClient, "getConfig").mockRejectedValue(new Error("backend unavailable"));
+    const server = http.createServer(buildApp(true));
+    servers.push(server);
+    const port = await listen(server);
+
+    const status = await postLogin(port, {
+      Host: `127.0.0.1:${port}`,
+      Origin: `http://127.0.0.1:${port}`,
+    });
+
+    expect(status).toBe(200);
+  });
+
+  it("still rejects a cross-origin action on a direct connection when Base URL is configured", async () => {
+    const server = http.createServer(buildApp(true));
+    servers.push(server);
+    const port = await listen(server);
+
+    const status = await postLogin(port, {
+      Host: `127.0.0.1:${port}`,
+      Origin: "https://attacker.example",
+    });
+
+    expect(status).toBe(400);
   });
 });
