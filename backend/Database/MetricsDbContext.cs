@@ -50,6 +50,7 @@ public sealed class MetricsDbContext : DbContext
     public DbSet<FailoverHourly> FailoverHourly => Set<FailoverHourly>();
     public DbSet<CatalogueDaily> CatalogueDaily => Set<CatalogueDaily>();
     public DbSet<ProviderLifetimeTotal> ProviderLifetimeTotals => Set<ProviderLifetimeTotal>();
+    public DbSet<ProviderQuotaUsage> ProviderQuotaUsage => Set<ProviderQuotaUsage>();
     public DbSet<ArrImportEvent> ArrImportEvents => Set<ArrImportEvent>();
 
     protected override void OnModelCreating(ModelBuilder b)
@@ -199,6 +200,17 @@ public sealed class MetricsDbContext : DbContext
             e.Property(x => x.Retries).IsRequired();
             e.Property(x => x.SumDurationMs).IsRequired();
             e.Property(x => x.FailoverSaves).IsRequired();
+        });
+
+        b.Entity<ProviderQuotaUsage>(e =>
+        {
+            e.ToTable("ProviderQuotaUsage");
+            e.HasKey(x => x.Provider);
+
+            e.Property(x => x.Provider).IsRequired().HasMaxLength(255);
+            e.Property(x => x.BytesUsed).IsRequired();
+            e.Property(x => x.ResetAt).IsRequired();
+            e.Property(x => x.UpdatedAt).IsRequired();
         });
 
         b.Entity<ArrImportEvent>(e =>

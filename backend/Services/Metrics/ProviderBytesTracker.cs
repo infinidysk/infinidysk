@@ -12,6 +12,7 @@ namespace NzbWebDAV.Services.Metrics;
 /// Two pieces of state:
 ///   - _buckets keyed by (minute, providerKey) -> bytes, drained by the rollup service
 ///   - _lifetime keyed by providerKey -> total bytes, exposed for "all-time" tiles
+///   - _quota keyed by providerKey -> exact raw BODY bytes for the current reset epoch
 ///
 /// providerKey is the stable per-account identity (<c>ProviderId</c>), not the NNTP host.
 /// </summary>
@@ -22,11 +23,42 @@ public sealed class ProviderBytesTracker
     private readonly ConcurrentDictionary<(long Minute, string ProviderKey), long> _buckets = new();
     private readonly ConcurrentDictionary<string, long> _lifetime = new();
     private long _lifetimeAll;
+    private readonly ConcurrentDictionary<string, QuotaCounter> _quota = new(StringComparer.Ordinal);
 
     private readonly ConcurrentDictionary<string, double> _bytesPerMs = new();
     private readonly ConcurrentDictionary<string, long> _speedRecordedAt = new();
     private readonly Func<long> _timestampProvider;
     private const double SpeedEwmaAlpha = 0.3;
+
+    private sealed class QuotaCounter(long resetAt, long bytesUsed)
+    {
+        private readonly Lock _gate = new();
+        private long _resetAt = resetAt;
+        private long _bytesUsed = Math.Max(0, bytesUsed);
+
+        public void Add(long bytes)
+        {
+            lock (_gate) _bytesUsed = checked(_bytesUsed + bytes);
+        }
+
+        public void Reset(long resetAt)
+        {
+            lock (_gate)
+            {
+                if (resetAt < _resetAt) return;
+                _resetAt = resetAt;
+                _bytesUsed = 0;
+            }
+        }
+
+        public ProviderQuotaSnapshot Snapshot(string provider)
+        {
+            lock (_gate)
+                return new ProviderQuotaSnapshot(provider, _bytesUsed, _resetAt);
+        }
+    }
+
+    public readonly record struct ProviderQuotaSnapshot(string Provider, long BytesUsed, long ResetAt);
 
     public ProviderBytesTracker() : this(Stopwatch.GetTimestamp)
     {
@@ -44,30 +76,38 @@ public sealed class ProviderBytesTracker
         _buckets.AddOrUpdate((minute, providerKey), bytes, (_, prev) => prev + bytes);
         _lifetime.AddOrUpdate(providerKey, bytes, (_, prev) => prev + bytes);
         Interlocked.Add(ref _lifetimeAll, bytes);
+        _quota.GetOrAdd(providerKey, static _ => new QuotaCounter(0, 0)).Add(bytes);
     }
 
     public long LifetimeAll => Interlocked.Read(ref _lifetimeAll);
 
     public IReadOnlyDictionary<string, long> LifetimeByProvider => _lifetime;
 
-    /// <summary>
-    /// Overwrites the in-memory lifetime counter for a provider key. Used at startup to
-    /// hydrate from ProviderHourly and after a counter reset to drop back to
-    /// zero. Does not touch <see cref="LifetimeAll"/> since that reflects the
-    /// total bytes observed by this process; rewriting it on every config
-    /// change would make the overview tile jump around for unrelated reasons.
-    /// </summary>
-    public void SetLifetime(string providerKey, long bytes)
+    public void InitializeQuota(string providerKey, long resetAt, long bytesUsed)
     {
         if (string.IsNullOrEmpty(providerKey)) return;
-        _lifetime[providerKey] = Math.Max(0, bytes);
+        if (!_quota.TryAdd(providerKey, new QuotaCounter(resetAt, bytesUsed)))
+            throw new InvalidOperationException($"Provider quota {providerKey} was initialized more than once.");
+    }
+
+    public void ResetQuota(string providerKey, long resetAt) =>
+        _quota.GetOrAdd(providerKey, _ => new QuotaCounter(resetAt, 0)).Reset(resetAt);
+
+    public long GetQuotaBytes(string providerKey)
+    {
+        if (string.IsNullOrEmpty(providerKey) || !_quota.TryGetValue(providerKey, out var counter))
+            return 0;
+        return counter.Snapshot(providerKey).BytesUsed;
     }
 
     public long GetLifetime(string providerKey)
     {
         if (string.IsNullOrEmpty(providerKey)) return 0;
-        return _lifetime.TryGetValue(providerKey, out var v) ? v : 0;
+        return _lifetime.TryGetValue(providerKey, out var value) ? value : 0;
     }
+
+    public IReadOnlyList<ProviderQuotaSnapshot> SnapshotQuota() =>
+        _quota.Select(pair => pair.Value.Snapshot(pair.Key)).ToArray();
 
     public void RecordSegmentThroughput(string providerKey, long bytes, double activeMs)
     {
@@ -111,7 +151,7 @@ public sealed class ProviderBytesTracker
 
     /// <summary>
     /// Clears pending minute buckets and all lifetime counters. Used by the
-    /// overview-stats reset after usage has been folded into BytesUsedOffset.
+    /// overview-stats reset. Quota counters are independent and remain intact.
     /// Speed EWMAs are kept: they drive failover heuristics, not statistics.
     /// </summary>
     public void ResetCounters()
@@ -123,9 +163,7 @@ public sealed class ProviderBytesTracker
 
     /// <summary>
     /// Clears one provider's pending buckets and lifetime counter, and deducts
-    /// its share from the all-time total. Unlike SetLifetime (config-change
-    /// rehydration), this is a deliberate stats reset, so the overview tile
-    /// dropping is the intended outcome.
+    /// its share from the all-time total. Quota counters are independent and remain intact.
     /// </summary>
     public void ResetProvider(string providerKey)
     {

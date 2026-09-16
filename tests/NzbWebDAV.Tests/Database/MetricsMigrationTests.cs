@@ -65,6 +65,8 @@ public sealed class MetricsMigrationTests
             Assert.Equal(9, providerHour.Misses);
             Assert.Equal(0, providerHour.Errors);
 
+            Assert.Empty(await context.ProviderQuotaUsage.AsNoTracking().ToListAsync());
+
             Assert.Empty(await context.Database.GetPendingMigrationsAsync());
         }
         finally

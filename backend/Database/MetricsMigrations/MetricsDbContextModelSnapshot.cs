@@ -245,6 +245,26 @@ namespace NzbWebDAV.Database.MetricsMigrations
                     b.ToTable("ProviderLifetimeTotals", (string)null);
                 });
 
+            modelBuilder.Entity("NzbWebDAV.Database.Models.Metrics.ProviderQuotaUsage", b =>
+                {
+                    b.Property<string>("Provider")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("BytesUsed")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("ResetAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Provider");
+
+                    b.ToTable("ProviderQuotaUsage", (string)null);
+                });
+
             modelBuilder.Entity("NzbWebDAV.Database.Models.Metrics.ProviderMinute", b =>
                 {
                     b.Property<long>("Minute")

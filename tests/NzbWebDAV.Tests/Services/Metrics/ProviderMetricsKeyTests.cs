@@ -36,8 +36,8 @@ public class ProviderMetricsKeyTests
         var keyA = UsenetProviderIdentity.MetricsKey(providerA);
         var keyB = UsenetProviderIdentity.MetricsKey(providerB);
 
-        tracker.SetLifetime(keyA, 960); // over 95% effective limit
-        tracker.SetLifetime(keyB, 100);
+        tracker.InitializeQuota(keyA, 0, 960); // over 95% effective limit
+        tracker.InitializeQuota(keyB, 0, 100);
 
         Assert.Equal(960, ProviderUsageHelper.ComputeUsage(tracker, providerA));
         Assert.Equal(100, ProviderUsageHelper.ComputeUsage(tracker, providerB));
@@ -89,7 +89,7 @@ public class ProviderMetricsKeyTests
     }
 
     [Fact]
-    public async Task SeedTrackerAsync_SeedsEveryProviderWithoutHostDedup()
+    public async Task HydrateQuotaAsync_SeedsEveryProviderWithoutHostDedup()
     {
         await using var harness = await MetricsHarness.CreateAsync();
         var providerA = MakeProvider("news.example.com", "a");
@@ -105,13 +105,15 @@ public class ProviderMetricsKeyTests
         await harness.Context.SaveChangesAsync();
 
         var tracker = new ProviderBytesTracker();
-        await ProviderUsageHelper.SeedTrackerAsync(
+        await ProviderUsageHelper.HydrateQuotaAsync(
             tracker,
             new UsenetProviderConfig { Providers = [providerA, providerB] },
-            () => harness.CreateContext());
+            () => harness.CreateContext(),
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            CancellationToken.None);
 
-        Assert.Equal(111, tracker.GetLifetime(keyA));
-        Assert.Equal(222, tracker.GetLifetime(keyB));
+        Assert.Equal(111, tracker.GetQuotaBytes(keyA));
+        Assert.Equal(222, tracker.GetQuotaBytes(keyB));
     }
 
     [Fact]

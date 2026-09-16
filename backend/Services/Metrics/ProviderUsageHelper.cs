@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
+using NzbWebDAV.Database.Models.Metrics;
 using Serilog;
 
 namespace NzbWebDAV.Services.Metrics;
@@ -8,9 +9,8 @@ namespace NzbWebDAV.Services.Metrics;
 /// <summary>
 /// Glue between the persistent metrics rollups and the in-memory byte tracker
 /// for the per-provider data cap. Two responsibilities:
-///   - hydrate <see cref="ProviderBytesTracker"/> from ProviderHourly so the
-///     hot-path limit check has an accurate "bytes since reset" number after
-///     restart or a config change,
+///   - hydrate <see cref="ProviderBytesTracker"/> from durable quota state so the
+///     hot-path limit check has an accurate "bytes since reset" number after restart,
 ///   - expose the same computation directly for read-only API consumers that
 ///     don't want to round-trip through the tracker.
 ///
@@ -37,21 +37,6 @@ public static class ProviderUsageHelper
     public const double EffectiveLimitFraction = 0.95;
 
     /// <summary>
-    /// Computes raw bytes fetched for one provider since its last reset,
-    /// summed from ProviderHourly. The caller adds <see cref="UsenetProviderConfig.ConnectionDetails.BytesUsedOffset"/>
-    /// if it wants the user-facing total.
-    /// </summary>
-    public static async Task<long> ReadDbBytesSinceResetAsync(string providerKey, long resetAt)
-    {
-        if (string.IsNullOrEmpty(providerKey)) return 0;
-        await using var db = new MetricsDbContext();
-        // SumAsync over nothing returns 0; no need to guard for empty.
-        return await db.ProviderHourly
-            .Where(x => x.Provider == providerKey && x.Hour >= resetAt)
-            .SumAsync(x => x.BytesFetched)
-            .ConfigureAwait(false);
-    }
-
     /// <summary>
     /// Raw ProviderHourly rows over the last 7 days for the supplied provider keys,
     /// grouped by key. Returning rows rather than a pre-aggregated sum lets
@@ -134,40 +119,72 @@ public static class ProviderUsageHelper
     }
 
     /// <summary>
-    /// Walks every provider in <paramref name="config"/> and writes its
-    /// since-reset byte total into <paramref name="tracker"/>. Best-effort —
-    /// failures are logged but never thrown, since a metrics DB hiccup must
-    /// not prevent the streaming client from starting up.
-    /// </summary>
-    public static async Task SeedTrackerAsync(ProviderBytesTracker tracker, UsenetProviderConfig config)
-    {
-        await SeedTrackerAsync(tracker, config, () => new MetricsDbContext()).ConfigureAwait(false);
-    }
-
-    public static async Task SeedTrackerAsync(
+    public static async Task HydrateQuotaAsync(
         ProviderBytesTracker tracker,
         UsenetProviderConfig config,
-        Func<MetricsDbContext> dbFactory)
+        Func<MetricsDbContext> dbFactory,
+        long nowMs,
+        CancellationToken ct)
     {
-        if (config.Providers.Count == 0) return;
-        try
+        await using var db = dbFactory();
+        var rows = await db.ProviderQuotaUsage
+            .ToDictionaryAsync(x => x.Provider, ct)
+            .ConfigureAwait(false);
+
+        foreach (var provider in config.Providers.Where(p => p.ProviderId != Guid.Empty))
         {
-            await using var db = dbFactory();
-            foreach (var provider in config.Providers.Where(provider => provider.ProviderId != Guid.Empty))
+            var key = UsenetProviderIdentity.MetricsKey(provider);
+            long bytesUsed;
+            if (rows.TryGetValue(key, out var row) && row.ResetAt == provider.BytesUsedResetAt)
             {
-                var key = UsenetProviderIdentity.MetricsKey(provider);
-                var bytes = await db.ProviderHourly
-                    .Where(x => x.Provider == key && x.Hour >= provider.BytesUsedResetAt)
-                    .SumAsync(x => x.BytesFetched)
-                    .ConfigureAwait(false);
-                tracker.SetLifetime(key, bytes);
+                bytesUsed = row.BytesUsed;
             }
+            else if (row is not null)
+            {
+                bytesUsed = 0;
+                row.BytesUsed = 0;
+                row.ResetAt = provider.BytesUsedResetAt;
+                row.UpdatedAt = nowMs;
+            }
+            else
+            {
+                bytesUsed = await db.ProviderHourly
+                    .Where(x => x.Provider == key && x.Hour >= provider.BytesUsedResetAt)
+                    .SumAsync(x => x.BytesFetched, ct)
+                    .ConfigureAwait(false);
+                db.ProviderQuotaUsage.Add(new ProviderQuotaUsage
+                {
+                    Provider = key,
+                    BytesUsed = bytesUsed,
+                    ResetAt = provider.BytesUsedResetAt,
+                    UpdatedAt = nowMs,
+                });
+            }
+
+            tracker.InitializeQuota(key, provider.BytesUsedResetAt, bytesUsed);
         }
-        catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
-        {
-            Log.Warning(ex, "Failed to seed ProviderBytesTracker from metrics DB; continuing with zeros.");
-        }
+
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
     }
+
+    public static Task PersistQuotaSnapshotAsync(
+        MetricsDbContext db,
+        ProviderBytesTracker.ProviderQuotaSnapshot snapshot,
+        long updatedAt,
+        CancellationToken ct) =>
+        db.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            INSERT INTO ProviderQuotaUsage (Provider, BytesUsed, ResetAt, UpdatedAt)
+            VALUES ({snapshot.Provider}, {snapshot.BytesUsed}, {snapshot.ResetAt}, {updatedAt})
+            ON CONFLICT(Provider) DO UPDATE SET
+                BytesUsed = excluded.BytesUsed,
+                ResetAt = excluded.ResetAt,
+                UpdatedAt = excluded.UpdatedAt
+            WHERE excluded.ResetAt > ProviderQuotaUsage.ResetAt
+               OR (excluded.ResetAt = ProviderQuotaUsage.ResetAt
+                   AND excluded.BytesUsed >= ProviderQuotaUsage.BytesUsed);
+            """,
+            ct);
 
     /// <summary>
     /// Total user-facing usage = bytes since reset (live in tracker) + offset.
@@ -177,7 +194,7 @@ public static class ProviderUsageHelper
     public static long ComputeUsage(ProviderBytesTracker tracker, UsenetProviderConfig.ConnectionDetails provider)
     {
         if (provider.ProviderId == Guid.Empty) return Math.Max(0, provider.BytesUsedOffset);
-        var live = tracker.GetLifetime(UsenetProviderIdentity.MetricsKey(provider));
+        var live = tracker.GetQuotaBytes(UsenetProviderIdentity.MetricsKey(provider));
         return Math.Max(0, live + provider.BytesUsedOffset);
     }
 
