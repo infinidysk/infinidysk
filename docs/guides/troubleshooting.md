@@ -41,6 +41,26 @@ sqlite3 "${CONFIG_PATH:-/config}/db.sqlite" "DELETE FROM Accounts WHERE Type = 1
 Then visit the UI and complete onboarding. Queue, history, settings, and WebDAV
 credentials are untouched.
 
+## Sign-in fails with "The sign-in request could not be verified"
+
+The login form posts to the same origin the page was loaded from. The request is rejected with
+this message when the browser's `Origin` header does not match the host InfiniDysk believes it
+is serving, and the frontend logs a throttled
+`Action request origin rejected. Request URL: …, Origin: …` warning.
+
+- **Behind a reverse proxy:** the container sees its internal `Host` (for example
+  `nzbdav:3000`) while the browser sends the public origin. Either enable
+  **Settings → General → Trust reverse-proxy headers** (or set `TRUST_PROXY=1`) and have the
+  proxy send `X-Forwarded-Host` and `X-Forwarded-Proto`, or set **Base URL** to the public
+  HTTPS address.
+- **Direct access (no proxy):** Base URL and Trust reverse-proxy headers do not restrict direct
+  sign-in; `http://<lan-ip>:3000` keeps working alongside the proxied address. If direct sign-in
+  still fails, something between the browser and the container is injecting `X-Forwarded-*`
+  headers (tunnels, NAS app portals, ingress controllers). Route those connections through the
+  proxy that sets correct headers, or disable proxy trust for them.
+- **Cross-site requests:** a form submitted from a different origin is rejected on purpose
+  (CSRF protection).
+
 ## Streaming readiness (`/ready`) [since 0.10.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.10.0){ .nzbdav-since }
 
 The backend readiness endpoint reports whether InfiniDysk can make progress on new streams. It returns

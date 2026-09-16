@@ -127,7 +127,7 @@ Long one-time maintenance does not mark the Compose healthcheck unhealthy — it
     - Bind `127.0.0.1:3000:3000` when the proxy is on the Docker host.
     - Allow HTTP Upgrade on **same-origin** `/ws` (Overview/Queue live updates).
     - Set `SECURE_COOKIES=true` when the UI is HTTPS-only.
-    - Set **Base URL** in Settings to the public HTTPS address. It supplies STRM/adapter absolute URLs and lets same-origin UI actions such as login work without `TRUST_PROXY`.
+    - Set **Base URL** in Settings to the public HTTPS address. It supplies STRM/adapter absolute URLs and lets same-origin UI actions such as login work through the proxy without `TRUST_PROXY`. It never blocks signing in directly over another address (for example `http://<lan-ip>:3000`); those requests use the standard same-origin check.
     - Alternatively, enable **Trust reverse-proxy headers** [since 1.4.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.0){ .nzbdav-since } under **Settings → General** and have the proxy send correct `X-Forwarded-Host` and `X-Forwarded-Proto` headers. This is preferable when the public origin can vary. `TRUST_PROXY=1` enables and locks the same behavior from the container environment.
     - For `addurl` to Docker-internal indexers, configure [Trusted local hosts](../configuration/sabnzbd.md) or `TRUSTED_INTERNAL_HOSTS` [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since }.
 
