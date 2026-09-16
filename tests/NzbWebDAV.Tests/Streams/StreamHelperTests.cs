@@ -92,8 +92,8 @@ public class StreamHelperTests
         Assert.Equal(3, await stream.ReadAsync(buffer));
         Assert.Equal(0, await stream.ReadAsync(buffer));
 
-        Assert.Equal(3, tracker.GetLifetime("provider"));
-        Assert.Equal(3, tracker.LifetimeAll);
+        Assert.Equal(0, tracker.GetQuotaBytes("provider"));
+        Assert.Equal(0, tracker.LifetimeAll);
     }
 
     [Fact]

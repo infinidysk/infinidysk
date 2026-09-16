@@ -212,6 +212,19 @@ public sealed partial class Program
                 .EnsureAsync(configManager, SigtermUtil.GetCancellationToken())
                 .ConfigureAwait(false);
 
+            var providerBytesTracker = new ProviderBytesTracker();
+            await ProviderUsageHelper.HydrateQuotaAsync(
+                    providerBytesTracker,
+                    configManager.GetUsenetProviderConfig(),
+                    () => new MetricsDbContext(),
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    startupCancellationToken)
+                .ConfigureAwait(false);
+            // Register before UsenetStreamingClient so reset fencing runs first.
+#pragma warning disable CA2000 // ownership transfers to the application host through DI
+            var providerQuotaService = new ProviderQuotaService(configManager, providerBytesTracker);
+#pragma warning restore CA2000
+
             // initialize rclone client
             RcloneClient.Initialize(configManager);
 
@@ -410,9 +423,11 @@ public sealed partial class Program
                 .AddSingleton<VariantResolver>()
                 .AddSingleton<MetricsWriter>()
                 .AddHostedService(sp => sp.GetRequiredService<MetricsWriter>())
-                .AddSingleton<ProviderBytesTracker>()
+                .AddSingleton(providerBytesTracker)
                 .AddSingleton<ProviderLatencyTracker>()
                 .AddHostedService<MetricsRollupService>()
+                .AddSingleton(providerQuotaService)
+                .AddHostedService(sp => sp.GetRequiredService<ProviderQuotaService>())
                 .AddHostedService<MetricsRetentionService>()
                 .AddHostedService<SqliteMaintenanceService>()
                 .AddSingleton<LiveStatsBroadcaster>()
