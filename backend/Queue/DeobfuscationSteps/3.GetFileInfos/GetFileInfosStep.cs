@@ -125,9 +125,11 @@ public static class GetFileInfosStep
     }
 
     /// <summary>
-    /// When RAR volumes share colliding subject-derived names (no distinct part
-    /// identity) but yEnc headers restore distinct .partN/.rNN identity, prefer
-    /// the header names. Skipped when any volume already has a PAR2 name.
+    /// When RAR volumes share colliding subject-derived names (no distinct volume
+    /// identity) but yEnc headers restore distinct identities, prefer the header names.
+    /// Identity is (case-insensitive base, scheme, normalized ordinal) — the same key
+    /// ArchiveSetGrouping uses — so independent sets in one NZB may repeat ordinals.
+    /// Skipped when any volume already has a PAR2 name.
     /// </summary>
     internal static void RepairRarGroupNames(List<NamePick> picks)
     {
@@ -137,22 +139,28 @@ public static class GetFileInfosStep
         if (group.Count < 2) return;
         // Keep PAR2 authoritative; never mix PAR2 + header repairs in one group.
         if (group.Any(x => x.HasPar2Name)) return;
-        if (HasDistinctRarParts(group.Select(x => x.Info.FileName))) return;
-        if (!HasDistinctRarParts(group.Select(x => x.HeaderName))) return;
+        if (HasDistinctRarVolumeIdentities(group.Select(x => x.Info.FileName))) return;
+        if (!HasDistinctRarVolumeIdentities(group.Select(x => x.HeaderName))) return;
 
         Log.Information(
-            "Repairing {Count} RAR volume names without distinct part identity using yEnc header names",
+            "Repairing {Count} RAR volume names without distinct volume identity using yEnc header names",
             group.Count);
         foreach (var pick in group)
             pick.Info = pick.Info with { FileName = pick.HeaderName };
     }
 
-    private static bool HasDistinctRarParts(IEnumerable<string> names)
+    internal static bool HasDistinctRarVolumeIdentities(IEnumerable<string> names)
     {
-        var parts = names.Select(FilenameUtil.GetRarPartOrdinal).ToList();
-        return parts.Count > 0
-               && parts.All(p => p is not null)
-               && parts.Distinct().Count() == parts.Count;
+        var identities = new HashSet<(string BaseName, FilenameUtil.RarVolumeScheme Scheme, int Ordinal)>();
+        var count = 0;
+        foreach (var name in names)
+        {
+            count++;
+            if (FilenameUtil.GetRarVolumeName(name) is not { } volume) return false;
+            if (!identities.Add((volume.BaseName.ToLowerInvariant(), volume.Scheme, volume.Ordinal))) return false;
+        }
+
+        return count > 0;
     }
 
     internal sealed class NamePick

@@ -54,25 +54,6 @@ public class UtilityTests
     }
 
     [Theory]
-    [InlineData("archive.part03.rar", 3)]
-    [InlineData("archive.r07", 100007)]
-    [InlineData("x.rar", -1)]
-    [InlineData("X.RAR", -1)]
-    public void GetRarPartOrdinal_ParsesKnownRarSuffixes(string filename, int expected)
-    {
-        Assert.Equal(expected, FilenameUtil.GetRarPartOrdinal(filename));
-    }
-
-    [Theory]
-    [InlineData("x.mkv")]
-    [InlineData("")]
-    [InlineData(null)]
-    public void GetRarPartOrdinal_ReturnsNullForNonRarNames(string? filename)
-    {
-        Assert.Null(FilenameUtil.GetRarPartOrdinal(filename));
-    }
-
-    [Theory]
     [InlineData("Episode.part01.rar", "Episode", FilenameUtil.RarVolumeScheme.Part, 0)]
     [InlineData("Episode.PART2.RAR", "Episode", FilenameUtil.RarVolumeScheme.Part, 1)]
     [InlineData("Episode.r07", "Episode", FilenameUtil.RarVolumeScheme.Classic, 8)]

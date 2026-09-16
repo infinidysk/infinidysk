@@ -94,31 +94,6 @@ public static partial class FilenameUtil
                || Regex.IsMatch(filename, @"\.r(\d+)$", RegexOptions.IgnoreCase);
     }
 
-    /// <summary>
-    /// Injective ordinal for RAR volume identity checks.
-    /// .partN.rar → N, .rNN → N + 100_000, bare .rar → -1, else null.
-    /// </summary>
-    public static int? GetRarPartOrdinal(string? filename)
-    {
-        if (string.IsNullOrEmpty(filename)) return null;
-        var partMatch = Regex.Match(filename, @"\.part(\d+)\.rar$", RegexOptions.IgnoreCase);
-        if (partMatch.Success && int.TryParse(
-                partMatch.Groups[1].Value,
-                NumberStyles.None,
-                CultureInfo.InvariantCulture,
-                out var partOrdinal))
-            return partOrdinal;
-        var rMatch = Regex.Match(filename, @"\.r(\d+)$", RegexOptions.IgnoreCase);
-        if (rMatch.Success && int.TryParse(
-                rMatch.Groups[1].Value,
-                NumberStyles.None,
-                CultureInfo.InvariantCulture,
-                out var rOrdinal) && rOrdinal <= int.MaxValue - 100_000)
-            return rOrdinal + 100_000;
-        if (filename.EndsWith(".rar", StringComparison.OrdinalIgnoreCase)) return -1;
-        return null;
-    }
-
     [GeneratedRegex(@"\A(?<base>.+)\.part(?<ordinal>[0-9]+)\.rar\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex RarPartVolumeRegex { get; }
 

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using NzbWebDAV.Models.Nzb;
+using NzbWebDAV.Queue;
 using NzbWebDAV.Queue.DeobfuscationSteps._1.FetchFirstSegment;
 using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
 using NzbWebDAV.Tests.Par2Recovery;
@@ -159,6 +160,98 @@ public class GetFileInfosStepTests
 
         Assert.Equal(["abc123.rar", "abc123.r00", "abc123.r01"], results.Select(x => x.FileName));
         Assert.All(results, r => Assert.True(r.IsRar));
+    }
+
+    [Fact]
+    public void GetFileInfos_RepairsIndependentPartSetsWhoseOrdinalsRestart()
+    {
+        var inputs = new List<FetchFirstSegmentsStep.NzbFileWithFirstSegment>
+        {
+            Seg("Release.Name.rar", "Episode01.part01.rar"),
+            Seg("Release.Name.rar", "Episode01.part02.rar"),
+            Seg("Release.Name.rar", "Episode02.part01.rar"),
+            Seg("Release.Name.rar", "Episode02.part02.rar"),
+        };
+
+        var results = GetFileInfosStep.GetFileInfos(inputs, []);
+
+        Assert.Equal(
+            ["Episode01.part01.rar", "Episode01.part02.rar", "Episode02.part01.rar", "Episode02.part02.rar"],
+            results.Select(x => x.FileName));
+
+        var descriptors = ArchiveSetGrouping.Resolve(results, new ArchiveSetIdAllocator());
+        Assert.Equal(2, descriptors.Count);
+        Assert.Equal([inputs[0].NzbFile, inputs[1].NzbFile], descriptors[0].FileInfos.Select(x => x.NzbFile));
+        Assert.Equal([inputs[2].NzbFile, inputs[3].NzbFile], descriptors[1].FileInfos.Select(x => x.NzbFile));
+    }
+
+    [Fact]
+    public void GetFileInfos_RepairsIndependentClassicSetsWhoseNumberingRestarts()
+    {
+        var inputs = new List<FetchFirstSegmentsStep.NzbFileWithFirstSegment>
+        {
+            Seg("Release.Name.rar", "Episode01.rar"),
+            Seg("Release.Name.rar", "Episode01.r00"),
+            Seg("Release.Name.rar", "Episode02.rar"),
+            Seg("Release.Name.rar", "Episode02.r00"),
+        };
+
+        var results = GetFileInfosStep.GetFileInfos(inputs, []);
+
+        Assert.Equal(["Episode01.rar", "Episode01.r00", "Episode02.rar", "Episode02.r00"], results.Select(x => x.FileName));
+        Assert.Equal(2, ArchiveSetGrouping.Resolve(results, new ArchiveSetIdAllocator()).Count);
+    }
+
+    [Fact]
+    public void GetFileInfos_DeclinesRepairWhenHeaderIdentitiesRepeat()
+    {
+        var inputs = new List<FetchFirstSegmentsStep.NzbFileWithFirstSegment>
+        {
+            Seg("Release.Name.rar", "Episode01.part01.rar"),
+            Seg("Release.Name.rar", "Episode01.part01.rar"),
+        };
+
+        var results = GetFileInfosStep.GetFileInfos(inputs, []);
+
+        Assert.All(results, r => Assert.Equal("Release.Name.rar", r.FileName));
+    }
+
+    [Fact]
+    public void GetFileInfos_HeaderBaseComparisonIsCaseInsensitive()
+    {
+        var inputs = new List<FetchFirstSegmentsStep.NzbFileWithFirstSegment>
+        {
+            Seg("Release.Name.rar", "Episode01.part01.rar"),
+            Seg("Release.Name.rar", "episode01.part01.rar"),
+        };
+
+        var results = GetFileInfosStep.GetFileInfos(inputs, []);
+
+        Assert.All(results, r => Assert.Equal("Release.Name.rar", r.FileName));
+    }
+
+    [Fact]
+    public void GetFileInfos_LeavesDistinctPerSetSubjectNamesUntouched()
+    {
+        var inputs = new List<FetchFirstSegmentsStep.NzbFileWithFirstSegment>
+        {
+            Seg("Episode01.part01.rar", "hashA.part01.rar"),
+            Seg("Episode02.part01.rar", "hashB.part01.rar"),
+        };
+
+        var results = GetFileInfosStep.GetFileInfos(inputs, []);
+
+        Assert.Equal(["Episode01.part01.rar", "Episode02.part01.rar"], results.Select(x => x.FileName));
+    }
+
+    [Theory]
+    [InlineData(new[] { "a.part01.rar", "a.part02.rar", "b.part01.rar" }, true)]
+    [InlineData(new[] { "a.rar", "a.r00", "A.r00" }, false)]
+    [InlineData(new[] { "a.part01.rar", "notrar.bin" }, false)]
+    [InlineData(new string[0], false)]
+    public void HasDistinctRarVolumeIdentities_UsesCompleteIdentity(string[] names, bool expected)
+    {
+        Assert.Equal(expected, GetFileInfosStep.HasDistinctRarVolumeIdentities(names));
     }
 
     [Fact]
