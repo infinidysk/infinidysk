@@ -31,6 +31,19 @@ Add one or more accounts. Each provider supports:
 
 Persisted as `usenet.providers` JSON.
 
+## Data-cap accounting [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }
+
+Data-cap usage counts the raw NNTP `BODY` payload received from the provider,
+including yEnc headers, trailers, and bodies drained after an early close or
+cancellation. NNTP command/status traffic and the terminating dot line are
+excluded. The counter is independent of Overview statistics and analytics
+retention, and a reset takes effect at the configured instant. On the first
+startup after upgrading, InfiniDysk preserves the legacy displayed value; all
+traffic received after that uses exact accounting.
+
+Back up `/config` before upgrading; the metrics migration applies automatically
+at startup.
+
 !!! warning "Cleartext"
 
     Disabling SSL stores/sends credentials in cleartext on the wire — only for trusted networks.
