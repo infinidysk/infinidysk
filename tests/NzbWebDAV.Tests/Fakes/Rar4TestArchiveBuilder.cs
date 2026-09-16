@@ -13,7 +13,7 @@ internal static class Rar4TestArchiveBuilder
         BuildRar4Volume(
             fileName,
             packedSize,
-            uncompressedSize ?? packedSize,
+            uncompressedSize,
             firstVolume: true,
             splitBefore: false,
             splitAfter: true,
