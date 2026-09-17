@@ -434,6 +434,11 @@ public class YencStream : FastReadOnlyNonSeekableStream
         var separator = token.IndexOf((byte)'=');
         if (separator <= 0)
         {
+            if (token.SequenceEqual("total"u8))
+            {
+                hasTotalParts = true;
+                totalParts = 0;
+            }
             return;
         }
 

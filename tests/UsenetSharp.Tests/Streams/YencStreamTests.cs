@@ -148,6 +148,7 @@ public class YencStreamTests
     [TestCase(" total=0", true, 0)]
     [TestCase(" total=invalid", true, 0)]
     [TestCase(" total=", true, 0)]
+    [TestCase(" total", true, 0)]
     [TestCase(" total=4invalid", true, 0)]
     [TestCase(" total=-1", true, -1)]
     public void ParseYencHeaders_TotalPresence_DistinguishesOmittedFromInvalid(
