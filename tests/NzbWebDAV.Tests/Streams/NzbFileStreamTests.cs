@@ -419,6 +419,145 @@ public class NzbFileStreamTests
         Assert.Equal(offset + read, stream.Position);
     }
 
+    [Fact]
+    public async Task LegacySeek_TransientProbeOnTarget_ReturnsBytesFromRequestedOffset()
+    {
+        var (segments, ranges) = NonUniformGeometry();
+        var client = new FakeNntpClient(
+            segments, useCachedYencStreams: true, segmentRanges: ranges,
+            headerProbeFailure: (id, attempt) =>
+                id == "two" && attempt == 1 ? new IOException("probe blip") : null);
+        await using var stream = new NzbFileStream(
+            SegmentIds, 12, client, articleBufferSize: 2, segmentByteRanges: null,
+            usePipelinedBodyRequests: false, fileName: "nonuniform.bin", readBudgetOverride: 3);
+        stream.Seek(5, SeekOrigin.Begin);
+        var buffer = new byte[3];
+
+        var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false);
+
+        Assert.Equal("fgh", Encoding.ASCII.GetString(buffer, 0, read));
+        Assert.Equal(2, client.HeaderProbeCount);
+        Assert.Equal(8, stream.Position);
+    }
+
+    [Fact]
+    public async Task LegacySeek_EstimateThatMisleadsTheSearch_IsCorrectedWithExactGeometry()
+    {
+        var (segments, ranges) = NonUniformGeometry();
+        var client = new FakeNntpClient(
+            segments, useCachedYencStreams: true, segmentRanges: ranges,
+            headerProbeFailure: (id, attempt) =>
+                id == "two" && attempt == 1 ? new TimeoutException("probe timeout") : null);
+        await using var stream = new NzbFileStream(
+            SegmentIds, 12, client, articleBufferSize: 2, segmentByteRanges: null,
+            usePipelinedBodyRequests: false, fileName: "nonuniform.bin", readBudgetOverride: 3);
+        stream.Seek(4, SeekOrigin.Begin);
+        var buffer = new byte[3];
+
+        var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false);
+
+        Assert.Equal("efg", Encoding.ASCII.GetString(buffer, 0, read));
+    }
+
+    [Fact]
+    public async Task LegacySeek_PersistentTransientProbeOnTarget_FailsInsteadOfGuessing()
+    {
+        var (segments, ranges) = NonUniformGeometry();
+        var client = new FakeNntpClient(
+            segments, useCachedYencStreams: true, segmentRanges: ranges,
+            headerProbeFailure: (id, _) => id == "two" ? new IOException("probe blip") : null);
+        await using var stream = new NzbFileStream(
+            SegmentIds, 12, client, articleBufferSize: 2, segmentByteRanges: null,
+            usePipelinedBodyRequests: false, fileName: "nonuniform.bin", readBudgetOverride: 3);
+        stream.Seek(5, SeekOrigin.Begin);
+
+        var ex = await Assert.ThrowsAsync<IOException>(
+            async () => await stream.ReadAtLeastAsync(new byte[3], 3, throwOnEndOfStream: false));
+        Assert.Equal("probe blip", ex.Message);
+        Assert.Empty(client.BodyRequestCounts);
+    }
+
+    [Fact]
+    public async Task LegacySeek_MissingTarget_UsesFallbackIdGeometry()
+    {
+        var (segments, ranges) = NonUniformGeometry();
+        segments.Remove("two");
+        segments["two-alt"] = Encoding.ASCII.GetBytes("fghij");
+        ranges.Remove("two");
+        ranges["two-alt"] = new LongRange(5, 10);
+        var client = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        await using var stream = new NzbFileStream(
+            SegmentIds, 12, client, articleBufferSize: 2, segmentByteRanges: null,
+            usePipelinedBodyRequests: false, fileName: "nonuniform.bin",
+            segmentFallbacks: [[], ["two-alt"], []], readBudgetOverride: 3);
+        stream.Seek(6, SeekOrigin.Begin);
+        var buffer = new byte[3];
+
+        var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false);
+
+        Assert.Equal("ghi", Encoding.ASCII.GetString(buffer, 0, read));
+    }
+
+    [Fact]
+    public async Task LegacySeek_MissingTargetWithoutFallback_FailsWithMissingArticleCause()
+    {
+        var (segments, ranges) = NonUniformGeometry();
+        segments.Remove("two");
+        ranges.Remove("two");
+        var client = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        await using var stream = new NzbFileStream(
+            SegmentIds, 12, client, articleBufferSize: 2, segmentByteRanges: null,
+            usePipelinedBodyRequests: false, fileName: "nonuniform.bin", readBudgetOverride: 3);
+        stream.Seek(5, SeekOrigin.Begin);
+
+        var ex = await Assert.ThrowsAsync<SeekPositionNotFoundException>(
+            async () => await stream.ReadAtLeastAsync(new byte[3], 3, throwOnEndOfStream: false));
+        var missing = Assert.IsType<UsenetArticleNotFoundException>(ex.InnerException);
+        Assert.Equal("two", missing.SegmentId);
+        Assert.Equal(5, stream.Position);
+    }
+
+    [Fact]
+    public async Task LegacySeek_BodyGeometryChangedAfterProbe_FailsBeforeEmittingBytes()
+    {
+        var (segments, ranges) = NonUniformGeometry();
+        var client = new FakeNntpClient(
+            segments, useCachedYencStreams: true, segmentRanges: ranges,
+            responseHeaderFactory: (id, requestNumber) =>
+                id == "two" && requestNumber >= 2
+                    ? new UsenetYencHeader
+                    {
+                        FileName = "fake.bin", FileSize = 12, LineLength = 128,
+                        PartNumber = 2, TotalParts = 3, PartOffset = 4, PartSize = 5,
+                    }
+                    : null);
+        await using var stream = new NzbFileStream(
+            SegmentIds, 12, client, articleBufferSize: 2, segmentByteRanges: null,
+            usePipelinedBodyRequests: false, fileName: "nonuniform.bin", readBudgetOverride: 3);
+        stream.Seek(5, SeekOrigin.Begin);
+
+        await Assert.ThrowsAsync<SeekPositionNotFoundException>(
+            async () => await stream.ReadAsync(new byte[3]));
+        Assert.Equal(5, stream.Position);
+    }
+
+    private static (Dictionary<string, byte[]> Segments, Dictionary<string, LongRange> Ranges)
+        NonUniformGeometry() =>
+    (
+        new Dictionary<string, byte[]>
+        {
+            ["one"] = Encoding.ASCII.GetBytes("abcde"),
+            ["two"] = Encoding.ASCII.GetBytes("fghij"),
+            ["three"] = Encoding.ASCII.GetBytes("kl"),
+        },
+        new Dictionary<string, LongRange>
+        {
+            ["one"] = new(0, 5),
+            ["two"] = new(5, 10),
+            ["three"] = new(10, 12),
+        }
+    );
+
     [Theory]
     [InlineData(0, false)]
     [InlineData(4, true)]
@@ -1078,7 +1217,9 @@ public class NzbFileStreamTests
     private static FakeNntpClient CreateClient()
     {
         return new FakeNntpClient(
-            SegmentIds.Zip(SegmentBytes).ToDictionary(pair => pair.First, pair => pair.Second));
+            SegmentIds.Zip(SegmentBytes).ToDictionary(pair => pair.First, pair => pair.Second),
+            useCachedYencStreams: true,
+            segmentRanges: SegmentIds.Zip(SegmentRanges).ToDictionary(pair => pair.First, pair => pair.Second));
     }
 
     private static FlakySeekNntpClient CreateFlakyClient(Func<Stream> firstFlakyBody)
