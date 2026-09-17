@@ -36,7 +36,7 @@ replace_exact(
 
 write(
     "backend/Config/MediaServerConfig.cs",
-    textwrap.dedent(r'''\
+    textwrap.dedent(r'''
     using System.Text.Json.Serialization;
 
     namespace NzbWebDAV.Config;
@@ -190,7 +190,7 @@ replace_exact(
 # ---------------------------------------------------------------------------
 write(
     "backend/Models/Playback/PlaybackModels.cs",
-    textwrap.dedent(r'''\
+    textwrap.dedent(r'''
     using System.Text.Json.Serialization;
 
     namespace NzbWebDAV.Models.Playback;
@@ -295,7 +295,7 @@ write(
 
 write(
     "backend/Services/PlaybackSessionRegistry.cs",
-    textwrap.dedent(r'''\
+    textwrap.dedent(r'''
     using System.Collections.Concurrent;
     using NzbWebDAV.Config;
     using NzbWebDAV.Models.Playback;
@@ -514,7 +514,7 @@ write(
 # ---------------------------------------------------------------------------
 write(
     "backend/Clients/MediaServers/IMediaPlaybackSessionSource.cs",
-    textwrap.dedent(r'''\
+    textwrap.dedent(r'''
     using NzbWebDAV.Config;
     using NzbWebDAV.Models.Playback;
 
@@ -532,7 +532,7 @@ write(
 
 write(
     "backend/Clients/MediaServers/MediaServerJson.cs",
-    textwrap.dedent(r'''\
+    textwrap.dedent(r'''
     using System.Text.Json;
 
     namespace NzbWebDAV.Clients.MediaServers;
@@ -596,7 +596,7 @@ write(
 
 write(
     "backend/Clients/MediaServers/MediaServerHttp.cs",
-    textwrap.dedent(r'''\
+    textwrap.dedent(r'''
     using System.Text.Json;
 
     namespace NzbWebDAV.Clients.MediaServers;
@@ -640,7 +640,7 @@ write(
 
 write(
     "backend/Clients/MediaServers/PlexPlaybackSessionSource.cs",
-    textwrap.dedent(r'''\
+    textwrap.dedent(r'''
     using System.Net;
     using System.Net.Http.Headers;
     using System.Text.Json;
@@ -770,7 +770,7 @@ write(
 
 write(
     "backend/Clients/MediaServers/EmbyJellyfinPlaybackSessionSource.cs",
-    textwrap.dedent(r'''\
+    textwrap.dedent(r'''
     using System.Net;
     using System.Net.Http.Headers;
     using System.Text.Json;
@@ -958,7 +958,7 @@ replace_exact(
 # ---------------------------------------------------------------------------
 write(
     "tests/NzbWebDAV.Tests/Config/MediaServerConfigTests.cs",
-    textwrap.dedent(r'''\
+    textwrap.dedent(r'''
     using System.Text.Json;
     using NzbWebDAV.Config;
     using NzbWebDAV.Database.Models;
@@ -1043,7 +1043,7 @@ write(
 
 write(
     "tests/NzbWebDAV.Tests/Services/PlaybackSessionRegistryTests.cs",
-    textwrap.dedent(r'''\
+    textwrap.dedent(r'''
     using NzbWebDAV.Config;
     using NzbWebDAV.Models.Playback;
     using NzbWebDAV.Services;
@@ -1144,7 +1144,7 @@ write(
 
 write(
     "tests/NzbWebDAV.Tests/Clients/MediaServers/MediaPlaybackSessionSourceTests.cs",
-    textwrap.dedent(r'''\
+    textwrap.dedent(r'''
     using System.Text.Json;
     using NzbWebDAV.Clients.MediaServers;
     using NzbWebDAV.Models.Playback;
@@ -1226,7 +1226,7 @@ write(
 
 write(
     "tests/NzbWebDAV.Tests/Services/ActiveReadDavItemIdentityTests.cs",
-    textwrap.dedent(r'''\
+    textwrap.dedent(r'''
     using NzbWebDAV.Services;
 
     namespace NzbWebDAV.Tests.Services;
