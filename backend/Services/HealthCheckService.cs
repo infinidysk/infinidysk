@@ -2024,9 +2024,19 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 
     private async Task<bool> TryConfirmSegmentCleanAsync(string segmentId, CancellationToken ct)
     {
+        UsenetDecodedBodyResponse body;
         try
         {
-            var body = await _usenetClient.DecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
+            using var conclusive = ConclusiveAvailabilityContext.Begin();
+            body = await _usenetClient.DecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
+        }
+        catch (UsenetArticleNotFoundException)
+        {
+            return false;
+        }
+
+        try
+        {
             await SegmentResponseValidator
                 .ThrowOnSegmentIdMismatchAsync(segmentId, body)
                 .ConfigureAwait(false);
@@ -2057,12 +2067,13 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         }
         catch (Exception e) when (
             e is UsenetCorruptArticleException
-                or UsenetArticleNotFoundException
-                or UsenetUnexpectedResponseException)
+                or UsenetArticleNotFoundException)
         {
             return false;
         }
-        catch (Exception e) when (e is not OutOfMemoryException)
+        catch (Exception e) when (
+            !ConclusiveAvailabilityContext.IsActive
+            && e is not OutOfMemoryException)
         {
             Log.Debug(e, "Re-confirmation probe of recorded corrupt segment {SegmentId} failed", segmentId);
             return false;
