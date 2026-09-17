@@ -189,6 +189,7 @@ write(
     "backend/Services/MediaServerSessionPoller.cs",
     textwrap.dedent(r'''
     using System.Text.Json;
+    using Microsoft.Extensions.Hosting;
     using NzbWebDAV.Clients.MediaServers;
     using NzbWebDAV.Config;
     using NzbWebDAV.Models.Playback;
@@ -590,6 +591,7 @@ write(
     "backend/Services/CurrentActivityBroadcaster.cs",
     textwrap.dedent(r'''
     using System.Text.Json;
+    using Microsoft.Extensions.Hosting;
     using NzbWebDAV.Websocket;
     using Serilog;
 
