@@ -115,10 +115,10 @@ public static class GetPar2FileDescriptorsStep
                 }
                 if (!complete)
                     throw new InvalidDataException("PAR2 metadata is missing or truncated.");
-                foreach (var descriptor in candidateDescriptors)
+                foreach (var descriptor in candidateDescriptors
+                             .Where(descriptor => seenFileIds.Add(Convert.ToHexString(descriptor.FileID))))
                 {
-                    if (seenFileIds.Add(Convert.ToHexString(descriptor.FileID)))
-                        fileDescriptors.Add(descriptor);
+                    fileDescriptors.Add(descriptor);
                 }
             }
             catch (Exception exception) when (!cancellationToken.IsCancellationRequested

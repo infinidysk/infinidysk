@@ -103,8 +103,9 @@ public class NzbFileStream(
                 throw new InvalidDataException("Invalid persisted PAR2 verification metadata.");
             if (_verifiedStream is not null) return _verifiedStream;
             var reader = new Par2CandidateReader(verificationProof, usenetClient, ReadPar2CandidateAsync);
-            return _verifiedStream ??= new Par2VerifiedFileStream(verificationProof,
+            _verifiedStream = new Par2VerifiedFileStream(verificationProof,
                 reader.ReadAsync, reader.ReadPrefixAsync);
+            return _verifiedStream;
         }
     }
 

@@ -52,10 +52,13 @@ internal sealed class Par2CandidateReader(
         if (await TryCandidateAsync().ConfigureAwait(false)) return;
         if (WrappingNntpClient.Unwrap(client) is MultiProviderNntpClient providers)
         {
-            foreach (var provider in providers.GetPar2VerificationProviders())
+            foreach (var retry in providers.GetPar2VerificationProviders()
+                         .Select(provider => new Par2VerificationReadContext(provider)))
             {
-                using var retry = new Par2VerificationReadContext(provider);
-                if (await TryCandidateAsync().ConfigureAwait(false)) return;
+                using (retry)
+                {
+                    if (await TryCandidateAsync().ConfigureAwait(false)) return;
+                }
             }
         }
 
