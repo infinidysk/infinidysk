@@ -1118,6 +1118,7 @@ public class MultiProviderNntpClient(
         var attribution = AttributionContext.Value;
         if (attribution != null) attribution.Host = null;
         ExceptionDispatchInfo? lastException = null;
+        ExceptionDispatchInfo? lastInconclusiveFailure = null;
         T? lastNoArticleResult = null;
         var lastOutcomeWasException = false;
         MultiConnectionNntpClient? lastAttemptedProvider = null;
@@ -1235,6 +1236,8 @@ public class MultiProviderNntpClient(
                 (priorMisses ??= new()).Add((provider.MetricsKey, reason));
                 lastException = ExceptionDispatchInfo.Capture(e);
                 lastOutcomeWasException = ClassifyException(e) != SegmentFetch.FetchStatus.Missing;
+                if (lastOutcomeWasException)
+                    lastInconclusiveFailure = lastException;
                 attemptIndex++;
             }
         }
@@ -1247,6 +1250,10 @@ public class MultiProviderNntpClient(
             walk, articleId, operation, lastAttemptedProvider?.Host, lastException?.SourceException);
         if (lastOutcomeWasException)
             lastException!.Throw();
+        if (ConclusiveAvailabilityContext.IsActive
+            && !walk.IsPureDefinitiveMiss
+            && lastInconclusiveFailure is not null)
+            lastInconclusiveFailure.Throw();
         if (lastNoArticleResult is not null) return lastNoArticleResult;
         if (orderedProviders.Count == 0)
             throw new InvalidOperationException("There are no usenet providers configured.");

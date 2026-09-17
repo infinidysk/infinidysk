@@ -1226,9 +1226,13 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     // the full hole set instead of aborting on the first one. The concurrency
                     // budget fans full STAT pipeline windows across admitted metadata connections;
                     // the depth argument is BODY-oriented interface baggage and unused here.
-                    var missingIds = await _usenetClient.CollectMissingSegmentsPipelinedAsync(
-                            statSegments, depth: 0, concurrency, progress, statCts.Token)
-                        .ConfigureAwait(false);
+                    IReadOnlyList<string> missingIds;
+                    using (ConclusiveAvailabilityContext.Begin())
+                    {
+                        missingIds = await _usenetClient.CollectMissingSegmentsPipelinedAsync(
+                                statSegments, depth: 0, concurrency, progress, statCts.Token)
+                            .ConfigureAwait(false);
+                    }
                     confirmedHoles = await ConfirmHolesThroughFallbacksAsync(
                             missingIds, statSegments, payload.Segments, concurrency, statCts)
                         .ConfigureAwait(false);
@@ -1888,8 +1892,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         UsenetStatResponse response;
         try
         {
+            using var conclusive = ConclusiveAvailabilityContext.Begin();
             response = await _usenetClient.StatAsync(candidateId, ct).ConfigureAwait(false);
         }
+        // Under ConclusiveAvailabilityContext this only fires for a pure definitive miss;
+        // mixed walks rethrow their provider failure and reach the transient/deferred catches.
         catch (UsenetArticleNotFoundException)
         {
             return false;
@@ -2397,6 +2404,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         {
             try
             {
+                using var conclusive = ConclusiveAvailabilityContext.Begin();
                 var response = await _usenetClient.HeadAsync(candidateId, ct).ConfigureAwait(false);
                 if (!UsenetArticleAvailability.IsDefinitiveMissing(response))
                     return response;
@@ -2424,6 +2432,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         {
             try
             {
+                using var conclusive = ConclusiveAvailabilityContext.Begin();
                 var response = await _usenetClient.DecodedBodyAsync(candidateId, ct).ConfigureAwait(false);
                 if (!UsenetArticleAvailability.IsDefinitiveMissing(response))
                     return response;
