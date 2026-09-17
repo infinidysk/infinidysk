@@ -100,6 +100,7 @@ public static class ConfigKeys
 
     // media / repair / arr
     public const string MediaLibraryDir = "media.library-dir";
+    public const string MediaServersInstances = "media-servers.instances";
     public const string RepairEnable = "repair.enable";
     public const string RepairHealthcheckConcurrency = "repair.healthcheck-concurrency";
     public const string RepairHealthcheckWorkers = "repair.healthcheck-workers";

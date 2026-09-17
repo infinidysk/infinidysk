@@ -674,6 +674,11 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                     RequireJson<ArrConfig>(item.ConfigName, value, jsonOptions);
                     break;
 
+                case ConfigKeys.MediaServersInstances:
+                    RequireJson<MediaServerConfig>(item.ConfigName, value, jsonOptions);
+                    RequireValidMediaServerConfig(item.ConfigName, value, jsonOptions);
+                    break;
+
                 case ConfigKeys.IndexersInstances:
                     RequireJson<IndexerConfig>(item.ConfigName, value, jsonOptions);
                     RequireIndexerMaxResponseBytes(value, jsonOptions);
@@ -774,6 +779,20 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                 throw new ArgumentException(
                     $"Config value for '{label}' must be a whole number from 1 through {ExternalMetadataResponseLimits.HardMaxResponseBytes}.");
             }
+        }
+
+        void RequireValidMediaServerConfig(string key, string value, JsonSerializerOptions? options)
+        {
+            MediaServerConfig? config;
+            try
+            {
+                config = JsonSerializer.Deserialize<MediaServerConfig>(value, options);
+            }
+            catch (JsonException)
+            {
+                return; // RequireJson above produces the canonical parse error.
+            }
+            MediaServerConfig.Validate(key, config);
         }
 
         void RequireHttpUrl(string key, string value)
@@ -2403,6 +2422,12 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     {
         var defaultValue = new ArrConfig();
         return GetConfigValue<ArrConfig>(ConfigKeys.ArrInstances) ?? defaultValue;
+    }
+
+    public MediaServerConfig GetMediaServerConfig()
+    {
+        return GetConfigValue<MediaServerConfig>(ConfigKeys.MediaServersInstances)
+               ?? new MediaServerConfig();
     }
 
     /// <summary>

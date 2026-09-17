@@ -139,7 +139,7 @@ public class GetWebdavItemController(
         var fileName = idFile?.FriendlyName ?? item.Name;
 
         if (HttpContext.Items["readSessionId"] is Guid sid)
-            activeReadRegistry.UpdateInfo(sid, fileName, fileSize);
+            activeReadRegistry.UpdateInfo(sid, fileName, fileSize, idFile?.DavItemId);
 
         // set the content-type and content-disposition headers
         Response.Headers["Content-Type"] = ContentHeaderUtil.GetContentType(fileName);
@@ -322,9 +322,9 @@ public class GetWebdavItemController(
         CancellationTokenSource readCts,
         CancellationToken ct)
     {
-        // 64 KB chunks; after each write report (bytesRead, absolutePosition)
-        // so the Right-Now panel can show real playback location and the
-        // throughput rate populates correctly.
+        // 64 KB chunks; after each write report (bytesRead, absolutePosition).
+        // absolutePosition is transport/source position, not authoritative viewer
+        // progress when an intermediary such as rclone is reading ahead.
         var buffer = new byte[StreamingResponseWriteWatchdog.CopyChunkBytes];
         var position = startOffset;
         var writeWatchdog = new StreamingResponseWriteWatchdog(

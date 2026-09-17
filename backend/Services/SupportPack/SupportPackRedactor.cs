@@ -56,7 +56,8 @@ internal sealed partial class SupportPackRedactor
         }
 
         if (key is ConfigKeys.UsenetProviders or ConfigKeys.ArrInstances
-            or ConfigKeys.IndexersInstances or ConfigKeys.ProfilesInstances)
+            or ConfigKeys.IndexersInstances or ConfigKeys.ProfilesInstances
+            or ConfigKeys.MediaServersInstances)
         {
             try
             {
