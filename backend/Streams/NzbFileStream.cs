@@ -263,17 +263,17 @@ public class NzbFileStream(
 
         var avg = EstimatedSegmentSize;
         UsenetArticleNotFoundException? missingProbeArticle = null;
-        var authoritative = new Dictionary<int, LongRange>();
+        var authoritative = new Dictionary<int, (LongRange Range, bool WasClippedAtFileEnd)>();
         var estimated = new HashSet<int>();
 
         async ValueTask<LongRange> ProbeAsync(int guess)
         {
-            if (authoritative.TryGetValue(guess, out var known)) return known;
+            if (authoritative.TryGetValue(guess, out var known)) return known.Range;
             try
             {
-                var range = await ProbeAuthoritativeRangeAsync(fileSegmentIds[guess], guess, ct).ConfigureAwait(false);
-                authoritative[guess] = range;
-                return range;
+                var resolved = await ProbeAuthoritativeRangeAsync(fileSegmentIds[guess], guess, ct).ConfigureAwait(false);
+                authoritative[guess] = resolved;
+                return resolved.Range;
             }
             catch (UsenetArticleNotFoundException e)
             {
@@ -309,14 +309,24 @@ public class NzbFileStream(
                     ProbeAsync,
                     ct).ConfigureAwait(false);
 
-                if (!estimated.Contains(found.FoundIndex)) return found;
+                if (!estimated.Contains(found.FoundIndex))
+                {
+                    return authoritative.TryGetValue(found.FoundIndex, out var resolved)
+                        ? found with { FoundByteRangeWasClippedAtFileEnd = resolved.WasClippedAtFileEnd }
+                        : found;
+                }
 
                 var exact = await ResolveAuthoritativeRangeAsync(
                     found.FoundIndex, missingProbeArticle, ct).ConfigureAwait(false);
                 authoritative[found.FoundIndex] = exact;
                 estimated.Remove(found.FoundIndex);
-                if (exact.Contains(byteOffset))
-                    return new InterpolationSearch.Result(found.FoundIndex, exact);
+                if (exact.Range.Contains(byteOffset))
+                    return new InterpolationSearch.Result(
+                        found.FoundIndex,
+                        exact.Range)
+                    {
+                        FoundByteRangeWasClippedAtFileEnd = exact.WasClippedAtFileEnd,
+                    };
 
                 if (correction >= MaximumProvisionalSeekCorrections)
                 {
@@ -333,17 +343,24 @@ public class NzbFileStream(
         }
     }
 
-    private async Task<LongRange> ProbeAuthoritativeRangeAsync(string segmentId, int index, CancellationToken ct)
+    private async Task<(LongRange Range, bool WasClippedAtFileEnd)> ProbeAuthoritativeRangeAsync(
+        string segmentId,
+        int index,
+        CancellationToken ct)
     {
         var header = await usenetClient.GetYencHeadersAsync(segmentId, ct).ConfigureAwait(false);
         var range = new LongRange(header.PartOffset, header.PartOffset + header.PartSize);
+        var wasClippedAtFileEnd = false;
         if (index == fileSegmentIds.Length - 1 &&
             range.StartInclusive >= 0 && range.StartInclusive < fileSize && range.EndExclusive > fileSize)
+        {
             range = new LongRange(range.StartInclusive, fileSize);
-        return range;
+            wasClippedAtFileEnd = true;
+        }
+        return (range, wasClippedAtFileEnd);
     }
 
-    private async Task<LongRange> ResolveAuthoritativeRangeAsync(
+    private async Task<(LongRange Range, bool WasClippedAtFileEnd)> ResolveAuthoritativeRangeAsync(
         int index,
         UsenetArticleNotFoundException? missingProbeArticle,
         CancellationToken ct)
@@ -360,14 +377,13 @@ public class NzbFileStream(
 
         if (segmentFallbacks is { } fallbacks && index < fallbacks.Length && fallbacks[index] is { } fallbackIds)
         {
-            foreach (var fallbackId in fallbackIds)
+            foreach (var fallbackId in fallbackIds.Where(id => !string.IsNullOrEmpty(id)))
             {
-                if (string.IsNullOrEmpty(fallbackId)) continue;
                 try
                 {
                     return await ProbeAuthoritativeRangeAsync(fallbackId, index, ct).ConfigureAwait(false);
                 }
-                catch (UsenetArticleNotFoundException) { }
+                catch (UsenetArticleNotFoundException e) { missing = e; }
             }
         }
 
@@ -504,6 +520,7 @@ public class NzbFileStream(
             prefixBytes,
             rangeStart,
             foundSegment.FoundByteRange,
+            foundSegment.FoundByteRangeWasClippedAtFileEnd,
             cancellationToken);
     }
 
@@ -527,6 +544,7 @@ public class NzbFileStream(
             prefixBytes,
             rangeStart,
             foundSegment.FoundByteRange,
+            foundSegment.FoundByteRangeWasClippedAtFileEnd,
             cancellationToken);
     }
 
@@ -537,6 +555,7 @@ public class NzbFileStream(
         long prefixBytes,
         long rangeStart,
         LongRange? expectedFirstSegmentRange,
+        bool expectedFirstSegmentRangeWasClippedAtFileEnd,
         CancellationToken cancellationToken)
     {
         var initialBatchPlan = TryCreateInitialBatchPlan(
@@ -573,6 +592,7 @@ public class NzbFileStream(
                     {
                         InitialBatchPlan = initialBatchPlan,
                         ExpectedFirstSegmentRange = expectedFirstSegmentRange,
+                        ExpectedFirstSegmentRangeWasClippedAtFileEnd = expectedFirstSegmentRangeWasClippedAtFileEnd,
                     },
                     prefixBytes)
                 .ConfigureAwait(false);

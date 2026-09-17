@@ -70,5 +70,8 @@ public static class InterpolationSearch
         }
     }
 
-    public record Result(int FoundIndex, LongRange FoundByteRange);
+    public record Result(int FoundIndex, LongRange FoundByteRange)
+    {
+        public bool FoundByteRangeWasClippedAtFileEnd { get; init; }
+    }
 }

@@ -159,7 +159,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         HashSet<string>? knownCorruptSegmentIds = null,
         IReadOnlySet<int>? knownMissingSegmentIndices = null,
         InitialBodyBatchPlan? initialBatchPlan = null,
-        LongRange? expectedFirstSegmentRange = null
+        LongRange? expectedFirstSegmentRange = null,
+        bool expectedFirstSegmentRangeWasClippedAtFileEnd = false
     )
     {
         return articleBufferSize == 0
@@ -167,7 +168,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 segmentIds, usenetClient, estimatedSegmentSize, fileName, segmentFallbacks,
                 exactSegmentSizes, useContainerAwareFill, firstSegmentFileOffset,
                 failFastOnFirstSegment, knownCorruptSegmentIds, knownMissingSegmentIndices,
-                expectedFirstSegmentRange)
+                expectedFirstSegmentRange,
+                expectedFirstSegmentRangeWasClippedAtFileEnd)
             : new MultiSegmentStream(
                 segmentIds,
                 usenetClient,
@@ -208,7 +210,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         int bodyPipelineBatchWidth = BodyPipelineBatchSize,
         HashSet<string>? knownCorruptSegmentIds = null,
         IReadOnlySet<int>? knownMissingSegmentIndices = null,
-        LongRange? expectedFirstSegmentRange = null
+        LongRange? expectedFirstSegmentRange = null,
+        bool expectedFirstSegmentRangeWasClippedAtFileEnd = false
     )
     {
         return CreateWithInitialBatchPlan(
@@ -230,7 +233,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             knownCorruptSegmentIds,
             knownMissingSegmentIndices,
             initialBatchPlan: null,
-            expectedFirstSegmentRange);
+            expectedFirstSegmentRange,
+            expectedFirstSegmentRangeWasClippedAtFileEnd);
     }
 
     internal sealed record FirstSegmentHybridOptions(
@@ -254,6 +258,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     {
         internal InitialBodyBatchPlan? InitialBatchPlan { get; init; }
         internal LongRange? ExpectedFirstSegmentRange { get; init; }
+        internal bool ExpectedFirstSegmentRangeWasClippedAtFileEnd { get; init; }
     }
 
     /// <summary>
@@ -382,7 +387,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 options.BodyPipelineBatchWidth,
                 options.KnownCorruptSegmentIds,
                 options.KnownMissingSegmentIndices,
-                options.ExpectedFirstSegmentRange);
+                options.ExpectedFirstSegmentRange,
+                options.ExpectedFirstSegmentRangeWasClippedAtFileEnd);
 #pragma warning restore CA2000
             return await DiscardPrefixOrDisposeAsync(
                     stream, firstSegmentPrefixBytes, options.CancellationToken)
@@ -579,7 +585,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             options.FailFastOnFirstSegment,
             options.KnownCorruptSegmentIds,
             firstKnownMissing,
-            options.ExpectedFirstSegmentRange);
+            options.ExpectedFirstSegmentRange,
+            options.ExpectedFirstSegmentRangeWasClippedAtFileEnd);
 #pragma warning restore CA2000
 
         if (!remainderPlan.NeedsRemainder)

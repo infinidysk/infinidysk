@@ -29,6 +29,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly HashSet<string>? _knownCorruptSegmentIds;
     private readonly IReadOnlySet<int>? _knownMissingSegmentIndices;
     private readonly LongRange? _expectedFirstSegmentRange;
+    private readonly bool _expectedFirstSegmentRangeWasClippedAtFileEnd;
     private readonly byte[] _scratch = new byte[16];
     private Stream? _stream;
     private int _currentIndex;
@@ -60,7 +61,8 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         bool failFastOnFirstSegment = false,
         HashSet<string>? knownCorruptSegmentIds = null,
         IReadOnlySet<int>? knownMissingSegmentIndices = null,
-        LongRange? expectedFirstSegmentRange = null)
+        LongRange? expectedFirstSegmentRange = null,
+        bool expectedFirstSegmentRangeWasClippedAtFileEnd = false)
     {
         _segmentIds = segmentIds;
         _segmentFallbacks = segmentFallbacks;
@@ -73,6 +75,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         _knownCorruptSegmentIds = knownCorruptSegmentIds;
         _knownMissingSegmentIndices = knownMissingSegmentIndices;
         _expectedFirstSegmentRange = expectedFirstSegmentRange;
+        _expectedFirstSegmentRangeWasClippedAtFileEnd = expectedFirstSegmentRangeWasClippedAtFileEnd;
     }
 
     // Positioning is distinct from emission. If a candidate BODY is replaced
@@ -980,7 +983,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         if (header is null)
             return false;
         var actual = new LongRange(header.PartOffset, header.PartOffset + header.PartSize);
-        if (actual.EndExclusive > expected.EndExclusive)
+        if (_expectedFirstSegmentRangeWasClippedAtFileEnd && actual.EndExclusive > expected.EndExclusive)
             actual = new LongRange(actual.StartInclusive, expected.EndExclusive);
         return actual == expected;
     }
