@@ -812,7 +812,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         CancellationToken ct)
     {
         var now = _timeProvider.GetUtcNow();
-        davItem.HealthRepairPending = true;
         davItem.LastHealthCheck = now;
         if (davItem.NextHealthCheck != DateTimeOffset.UnixEpoch)
             davItem.NextHealthCheck = now.AddSeconds(1);
@@ -826,7 +825,8 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 HealthCheckResult.HealthResult.Unhealthy,
                 HealthCheckResult.RepairAction.ActionNeeded,
                 "PAR2 repair remains pending because repair capacity is contended.",
-                ct)
+                ct,
+                repairPending: true)
             .ConfigureAwait(false);
     }
 
@@ -3630,7 +3630,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         var now = _timeProvider.GetUtcNow();
         var admission = _healthWorkSchedule?.Evaluate(now);
         var scheduledResume = admission?.NextRepairsChange ?? now + TimeSpan.FromDays(1);
-        davItem.HealthRepairPending = true;
         davItem.LastHealthCheck = now;
         // Keep the UnixEpoch urgent sentinel. Replacing it with the window time would
         // send the item through STAT on resume, and STAT can pass after BODY failed.
@@ -3646,7 +3645,8 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             HealthCheckResult.HealthResult.Unhealthy,
             HealthCheckResult.RepairAction.ActionNeeded,
             $"Repair deferred by the repair schedule. Next repair window opens {scheduledResume:u}.",
-            ct).ConfigureAwait(false);
+            ct,
+            repairPending: true).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -3698,16 +3698,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         HealthCheckResult.HealthResult result,
         HealthCheckResult.RepairAction repairStatus,
         string message,
-        CancellationToken ct
+        CancellationToken ct,
+        bool repairPending = false
     )
     {
-        if (result is HealthCheckResult.HealthResult.Healthy
-            || repairStatus is HealthCheckResult.RepairAction.Repaired
-                or HealthCheckResult.RepairAction.Deleted
-                or HealthCheckResult.RepairAction.RepairedViaPar2)
-        {
-            davItem.HealthRepairPending = false;
-        }
+        davItem.HealthRepairPending = repairPending;
 
         var identity = repairStatus is HealthCheckResult.RepairAction.Deleted or HealthCheckResult.RepairAction.Repaired
             ? await GetRepairHistoryIdentityAsync(dbClient.Ctx, davItem, ct).ConfigureAwait(false)

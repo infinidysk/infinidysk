@@ -304,6 +304,46 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal(StreamingFailureSnapshot.Empty, _failureTracker.GetSnapshot(item.Id));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PendingRepair_MissingLibraryLink_DefersWithoutImmediateRequeue(bool urgent)
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" },
+        ]);
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, [10_000, 10_000, 10_000]);
+        if (urgent)
+            item.NextHealthCheck = DateTimeOffset.UnixEpoch;
+        await _context.SaveChangesAsync();
+        var (service, par2) = await NewServiceAsync(
+            NewFakeClient(segments, missing: [0, 1, 2]), Par2RepairOutcome.DeferredBusy);
+        service.CreateDbContextOverride = () => new DavDatabaseContext(_options);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        Assert.True(ReloadItem(item.Id).HealthRepairPending);
+        Assert.Contains("repair capacity is contended", Assert.Single(GetHealthRows(item.Id)).Message);
+        Assert.Contains(item.Id, await service.SelectNextHealthCheckIdsAsync(
+            [], allowChecks: true, allowRepairs: true, maximumCount: 1, CancellationToken.None));
+
+        par2.Outcome = Par2RepairOutcome.NotRepaired;
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        Assert.Equal(2, GetHealthRows(item.Id).Count);
+        var row = Assert.Single(GetHealthRows(item.Id), result =>
+            result.Message?.Contains("No corresponding imported symlink or .strm file", StringComparison.Ordinal) == true);
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+        var persisted = ReloadItem(item.Id);
+        Assert.True(persisted.NextHealthCheck > DateTimeOffset.UtcNow.AddHours(23));
+        Assert.False(persisted.HealthRepairPending);
+        Assert.Empty(await service.SelectNextHealthCheckIdsAsync(
+            [], allowChecks: true, allowRepairs: true, maximumCount: 1, CancellationToken.None));
+    }
+
     [Fact]
     public async Task BoundedHole_MarksDegraded_PersistsHoles_AndSkipsRepair()
     {
@@ -1731,12 +1771,13 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Par2RepairOutcome repairOutcome) : Par2RepairService(configManager, null!, store)
     {
         public List<string[]> Requests { get; } = [];
+        public Par2RepairOutcome Outcome { get; set; } = repairOutcome;
 
         public override Task<Par2RepairOutcome> TryPar2RepairAsync(
             DavItem davItem, IReadOnlyList<string>? missingSegmentIds, CancellationToken ct)
         {
             Requests.Add(missingSegmentIds?.ToArray() ?? []);
-            return Task.FromResult(repairOutcome);
+            return Task.FromResult(Outcome);
         }
     }
 }
