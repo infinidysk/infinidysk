@@ -11,30 +11,46 @@ const HealthResultHealthy: HealthResult = 0;
 const HealthResultDegraded: HealthResult = 2;
 const RepairActionRepaired: RepairAction = 1;
 const RepairActionDeleted: RepairAction = 2;
+const RepairActionNeeded: RepairAction = 3;
 const RepairActionRepairedViaPar2: RepairAction = 4;
 
 export function HealthStats({ stats }: HealthStatsProps) {
   const totalChecked = stats.reduce((sum, stat) => sum + stat.count, 0);
-  const healthy = stats
-    .filter((stat) => stat.result === HealthResultHealthy)
-    .reduce((sum, stat) => sum + stat.count, 0);
-  const repaired = stats
-    .filter(
-      (stat) =>
-        stat.repairStatus === RepairActionRepaired ||
-        stat.repairStatus === RepairActionRepairedViaPar2,
-    )
-    .reduce((sum, stat) => sum + stat.count, 0);
-  const deleted = stats
-    .filter((stat) => stat.repairStatus === RepairActionDeleted)
-    .reduce((sum, stat) => sum + stat.count, 0);
-  const degraded = stats
-    .filter((stat) => stat.result === HealthResultDegraded)
-    .reduce((sum, stat) => sum + stat.count, 0);
+  const counts = { healthy: 0, repaired: 0, deleted: 0, degraded: 0, actionNeeded: 0 };
+  for (const stat of stats) {
+    if (
+      stat.repairStatus === RepairActionRepaired ||
+      stat.repairStatus === RepairActionRepairedViaPar2
+    ) {
+      counts.repaired += stat.count;
+    } else if (stat.repairStatus === RepairActionDeleted) {
+      counts.deleted += stat.count;
+    } else if (stat.repairStatus === RepairActionNeeded) {
+      counts.actionNeeded += stat.count;
+    } else if (stat.result === HealthResultHealthy) {
+      counts.healthy += stat.count;
+    } else if (stat.result === HealthResultDegraded) {
+      counts.degraded += stat.count;
+    } else {
+      counts.actionNeeded += stat.count;
+    }
+  }
 
-  const getPercentage = (count: number) => {
-    return totalChecked > 0 ? Math.round((count / totalChecked) * 100) : 0;
-  };
+  const percentages = { ...counts };
+  if (totalChecked > 0) {
+    const outcomes = Object.keys(counts) as (keyof typeof counts)[];
+    for (const outcome of outcomes) {
+      percentages[outcome] = Math.floor((counts[outcome] * 100) / totalChecked);
+    }
+    const remaining = 100 - Object.values(percentages).reduce((sum, value) => sum + value, 0);
+    const largestRemainders = outcomes.sort(
+      (first, second) =>
+        ((counts[second] * 100) % totalChecked) - ((counts[first] * 100) % totalChecked),
+    );
+    for (const outcome of largestRemainders.slice(0, remaining)) {
+      percentages[outcome] += 1;
+    }
+  }
 
   return (
     <section className="card w-full border border-base-content/10 bg-base-100 shadow-sm">
@@ -50,7 +66,7 @@ export function HealthStats({ stats }: HealthStatsProps) {
           </p>
         </div>
 
-        <div className="stats stats-vertical w-full bg-base-200/40 sm:stats-horizontal">
+        <div className="stats stats-vertical w-full bg-base-200/40 xl:stats-horizontal">
           <Stat
             icon="fact_check"
             iconClassName="text-base-content/50"
@@ -61,32 +77,40 @@ export function HealthStats({ stats }: HealthStatsProps) {
             icon="check_circle"
             iconClassName="text-success"
             iconFilled
-            title={`Healthy (${getPercentage(healthy)}%)`}
-            value={healthy}
+            title={`Healthy (${percentages.healthy}%)`}
+            value={counts.healthy}
             valueClassName="text-success"
           />
           <Stat
             icon="build_circle"
             iconClassName="text-info"
             iconFilled
-            title={`Repaired (${getPercentage(repaired)}%)`}
-            value={repaired}
+            title={`Repaired (${percentages.repaired}%)`}
+            value={counts.repaired}
             valueClassName="text-info"
           />
           <Stat
             icon="delete"
             iconClassName="text-error"
             iconFilled
-            title={`Deleted (${getPercentage(deleted)}%)`}
-            value={deleted}
+            title={`Deleted (${percentages.deleted}%)`}
+            value={counts.deleted}
             valueClassName="text-error"
           />
           <Stat
             icon="warning"
             iconClassName="text-warning"
             iconFilled
-            title={`Degraded (${getPercentage(degraded)}%)`}
-            value={degraded}
+            title={`Degraded (${percentages.degraded}%)`}
+            value={counts.degraded}
+            valueClassName="text-warning"
+          />
+          <Stat
+            icon="error"
+            iconClassName="text-warning"
+            iconFilled
+            title={`Action needed (${percentages.actionNeeded}%)`}
+            value={counts.actionNeeded}
             valueClassName="text-warning"
           />
         </div>
