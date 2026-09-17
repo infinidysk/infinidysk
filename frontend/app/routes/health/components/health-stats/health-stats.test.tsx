@@ -91,8 +91,8 @@ describe("HealthStats", () => {
 });
 
 function expectOverviewTotals(markup: string, expectedCounts: number[]) {
-  const counts = [...markup.matchAll(/class="stat-value[^"]*">(\d+)</g)].map(
-    (match) => Number(match[1]),
+  const counts = [...markup.matchAll(/class="stat-value[^"]*">(\d+)</g)].map((match) =>
+    Number(match[1]),
   );
   const percentages = [...markup.matchAll(/\((\d+)%\)/g)].map((match) => Number(match[1]));
 
