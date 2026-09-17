@@ -590,7 +590,7 @@ public class MultiProviderNntpClient(
             {
                 response = await primaryResponse.ConfigureAwait(false);
                 await RejectMismatchedYencFileAsync(
-                    segmentId, response, cancellationToken).ConfigureAwait(false);
+                    segmentId, primaryProvider.MetricsKey, response, cancellationToken).ConfigureAwait(false);
             }
             catch (NntpClientRetiredException)
             {
@@ -721,7 +721,7 @@ public class MultiProviderNntpClient(
                         response = await provider.DecodedBodyAsync(
                             segmentId, deferredCallback.Invoke, cancellationToken).ConfigureAwait(false);
                         await RejectMismatchedYencFileAsync(
-                            segmentId, response, cancellationToken).ConfigureAwait(false);
+                            segmentId, provider.MetricsKey, response, cancellationToken).ConfigureAwait(false);
                         stopwatch.Stop();
                         var responseType = response.ResponseType;
                         if (responseType == UsenetResponseType.ArticleRetrievedBodyFollows)
@@ -1021,7 +1021,7 @@ public class MultiProviderNntpClient(
                 var result = await task(provider, deferredCallback.Invoke)
                     .ConfigureAwait(false);
                 await RejectMismatchedYencFileAsync(
-                    segmentId, result, cancellationToken).ConfigureAwait(false);
+                    segmentId, provider.MetricsKey, result, cancellationToken).ConfigureAwait(false);
                 stopwatch.Stop();
                 if (result.ResponseType == successResponseType)
                 {
@@ -1169,7 +1169,7 @@ public class MultiProviderNntpClient(
                 walk.Attempts++;
                 var result = await task.Invoke(provider).ConfigureAwait(false);
                 await RejectMismatchedYencFileAsync(
-                    articleId, result, cancellationToken).ConfigureAwait(false);
+                    articleId, provider.MetricsKey, result, cancellationToken).ConfigureAwait(false);
                 stopwatch.Stop();
 
                 // if no article with that message-id is found, try again with the next provider.
@@ -1262,6 +1262,7 @@ public class MultiProviderNntpClient(
 
     private static async Task RejectMismatchedYencFileAsync(
         SegmentId? requestedId,
+        string providerKey,
         UsenetResponse response,
         CancellationToken cancellationToken)
     {
@@ -1299,6 +1300,8 @@ public class MultiProviderNntpClient(
         if (header is null || YencFileValidationContext.MatchesExpectedFile(header))
             return;
 
+        YencFileValidationContext.Current?.ReportMismatch(
+            segmentId.ToString(), providerKey, response.ResponseCode, header);
         await bodyStream.DisposeAsync().ConfigureAwait(false);
 
         throw new UsenetMismatchedArticleException(

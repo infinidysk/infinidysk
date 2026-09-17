@@ -105,7 +105,7 @@ public class NzbFileStream(
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
-        using var yencFileValidation = YencFileValidationContext.Begin(fileSegmentIds.Length);
+        using var yencFileValidation = YencFileValidationContext.BeginStreaming(fileSegmentIds, segmentFallbacks);
         if (buffer.IsEmpty) return 0;
         if (_position >= fileSize) return 0;
         // A prior Seek started the old inner stream's teardown non-blocking; join it
