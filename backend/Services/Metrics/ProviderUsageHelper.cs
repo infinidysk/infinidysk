@@ -135,7 +135,8 @@ public static class ProviderUsageHelper
         {
             var key = UsenetProviderIdentity.MetricsKey(provider);
             long bytesUsed;
-            if (rows.TryGetValue(key, out var row) && row.ResetAt == provider.BytesUsedResetAt)
+            if (rows.TryGetValue(key, out var row) && row is not null &&
+                row.ResetAt == provider.BytesUsedResetAt)
             {
                 bytesUsed = row.BytesUsed;
             }

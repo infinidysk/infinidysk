@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
@@ -43,7 +44,22 @@ public sealed class ProviderQuotaService : BackgroundService
                 if (!_resetAt.TryGetValue(key, out var previous))
                 {
                     _resetAt[key] = provider.BytesUsedResetAt;
-                    _tracker.InitializeQuota(key, provider.BytesUsedResetAt, 0);
+                    var bytesUsed = 0L;
+                    try
+                    {
+                        using var db = _dbFactory();
+                        var row = db.ProviderQuotaUsage.AsNoTracking()
+                            .SingleOrDefault(x => x.Provider == key);
+                        if (row is not null && row.ResetAt == provider.BytesUsedResetAt)
+                            bytesUsed = row.BytesUsed;
+                    }
+                    catch (Exception e) when (e is not OutOfMemoryException)
+                    {
+                        e.LogWarningKnownOrStack(
+                            "Provider quota hydration failed for a newly configured provider; starting at zero.");
+                    }
+
+                    _tracker.InitializeQuota(key, provider.BytesUsedResetAt, bytesUsed);
                     continue;
                 }
 

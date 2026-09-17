@@ -117,6 +117,39 @@ public class ProviderMetricsKeyTests
     }
 
     [Fact]
+    public async Task RemapHostMetricsBeforeHydration_PreservesLegacyQuotaBytes()
+    {
+        await using var harness = await MetricsHarness.CreateAsync();
+        var provider = MakeProvider("news.example.com", "restored");
+        var key = UsenetProviderIdentity.MetricsKey(provider);
+        var hour = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        hour -= hour % 3_600_000;
+
+        harness.Context.ProviderHourly.Add(new ProviderHourly
+        {
+            Hour = hour,
+            Provider = provider.Host,
+            BytesFetched = 777,
+        });
+        await harness.Context.SaveChangesAsync();
+
+        await UsenetProviderIdentity.RemapHostKeyedMetricsAsync(
+            new UsenetProviderConfig { Providers = [provider] },
+            harness.Context,
+            CancellationToken.None);
+
+        var tracker = new ProviderBytesTracker();
+        await ProviderUsageHelper.HydrateQuotaAsync(
+            tracker,
+            new UsenetProviderConfig { Providers = [provider] },
+            () => harness.CreateContext(),
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            CancellationToken.None);
+
+        Assert.Equal(777, tracker.GetQuotaBytes(key));
+    }
+
+    [Fact]
     public async Task Remap_AttributesHostRowsToFirstSameHostProvider()
     {
         await using var harness = await MetricsHarness.CreateAsync();

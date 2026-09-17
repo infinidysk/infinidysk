@@ -206,16 +206,24 @@ public sealed partial class Program
                 RunYencNativeSelfTest();
 
             // Assign stable ProviderIds (persisting if needed) before the streaming
-            // client is built. Cheap and non-fatal; the heavy legacy-metrics remap
-            // runs in the background after the app starts (see below).
+            // client is built. Provider IDs must exist before legacy metrics are
+            // remapped and quota state is hydrated.
             await UsenetProviderIdentity
                 .EnsureAsync(configManager, SigtermUtil.GetCancellationToken())
                 .ConfigureAwait(false);
 
+            var providerConfig = configManager.GetUsenetProviderConfig();
+            await using (var metricsRemap = new MetricsDbContext())
+            {
+                await UsenetProviderIdentity.RemapHostKeyedMetricsAsync(
+                    providerConfig, metricsRemap, startupCancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             var providerBytesTracker = new ProviderBytesTracker();
             await ProviderUsageHelper.HydrateQuotaAsync(
                     providerBytesTracker,
-                    configManager.GetUsenetProviderConfig(),
+                    providerConfig,
                     () => new MetricsDbContext(),
                     DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     startupCancellationToken)
@@ -552,15 +560,6 @@ public sealed partial class Program
             // process-wide SIGTERM token used by later integration tests.
             if (!app.Environment.IsEnvironment("Testing"))
                 app.Lifetime.ApplicationStopping.Register(SigtermUtil.Cancel);
-            // Remap legacy host-keyed metrics rows onto ProviderIds after the app is
-            // serving. This can rewrite a lot of rows on old databases and must never
-            // delay the /health endpoint: blocking startup on it caused a container
-            // boot-loop (entrypoint kills the backend after its 30s health window).
-            // The remap is chunked, resumable, and never throws.
-            app.Lifetime.ApplicationStarted.Register(() => _ = Task.Run(() =>
-                UsenetProviderIdentity.RemapHostKeyedMetricsAsync(
-                    configManager.GetUsenetProviderConfig(),
-                    SigtermUtil.GetCancellationToken())));
             await RunHostAndSetExitCodeAsync(app).ConfigureAwait(false);
         }
         catch (ConfigEnvironmentException exception)
