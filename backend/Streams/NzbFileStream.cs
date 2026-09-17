@@ -287,7 +287,7 @@ public class NzbFileStream(
                 OomDiagnostics.LogHeapStateOnOom(oom, "seek probe");
                 throw;
             }
-            catch (Exception e) when (articleBufferSize > 0 && !ct.IsCancellationRequested)
+            catch (Exception e) when (!ct.IsCancellationRequested)
             {
                 e.LogWarningKnownOrStack(
                     "Seek probe transient failure on segment index {Index}. Using estimated range.", guess);

@@ -158,14 +158,16 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         int bodyPipelineBatchWidth = BodyPipelineBatchSize,
         HashSet<string>? knownCorruptSegmentIds = null,
         IReadOnlySet<int>? knownMissingSegmentIndices = null,
-        InitialBodyBatchPlan? initialBatchPlan = null
+        InitialBodyBatchPlan? initialBatchPlan = null,
+        LongRange? expectedFirstSegmentRange = null
     )
     {
         return articleBufferSize == 0
             ? new UnbufferedMultiSegmentStream(
                 segmentIds, usenetClient, estimatedSegmentSize, fileName, segmentFallbacks,
                 exactSegmentSizes, useContainerAwareFill, firstSegmentFileOffset,
-                failFastOnFirstSegment, knownCorruptSegmentIds, knownMissingSegmentIndices)
+                failFastOnFirstSegment, knownCorruptSegmentIds, knownMissingSegmentIndices,
+                expectedFirstSegmentRange)
             : new MultiSegmentStream(
                 segmentIds,
                 usenetClient,
@@ -205,7 +207,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         long? firstSegmentFileOffset = null,
         int bodyPipelineBatchWidth = BodyPipelineBatchSize,
         HashSet<string>? knownCorruptSegmentIds = null,
-        IReadOnlySet<int>? knownMissingSegmentIndices = null
+        IReadOnlySet<int>? knownMissingSegmentIndices = null,
+        LongRange? expectedFirstSegmentRange = null
     )
     {
         return CreateWithInitialBatchPlan(
@@ -226,7 +229,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             bodyPipelineBatchWidth,
             knownCorruptSegmentIds,
             knownMissingSegmentIndices,
-            initialBatchPlan: null);
+            initialBatchPlan: null,
+            expectedFirstSegmentRange);
     }
 
     internal sealed record FirstSegmentHybridOptions(
@@ -377,7 +381,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 options.FirstSegmentFileOffset,
                 options.BodyPipelineBatchWidth,
                 options.KnownCorruptSegmentIds,
-                options.KnownMissingSegmentIndices);
+                options.KnownMissingSegmentIndices,
+                options.ExpectedFirstSegmentRange);
 #pragma warning restore CA2000
             return await DiscardPrefixOrDisposeAsync(
                     stream, firstSegmentPrefixBytes, options.CancellationToken)
@@ -527,6 +532,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         var firstExactSizes = options.ExactSegmentSizes.Length == options.SegmentIds.Length
             ? options.ExactSegmentSizes[..1]
             : default;
+        var planningFirstExactSizes = firstExactSizes.Length == 1
+            ? firstExactSizes
+            : options.ExpectedFirstSegmentRange is { } expected
+                ? new[] { expected.Count }.AsMemory()
+                : default;
         var remainingExactSizes = options.ExactSegmentSizes.Length == options.SegmentIds.Length
             ? options.ExactSegmentSizes[1..]
             : default;
@@ -544,15 +554,15 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             .Select(index => index - 1)
             .ToHashSet();
         var remainingOffset = options.FirstSegmentFileOffset;
-        if (remainingOffset is not null && firstExactSizes.Length == 1)
+        if (remainingOffset is not null && planningFirstExactSizes.Length == 1)
         {
-            try { remainingOffset = checked(remainingOffset.Value + firstExactSizes.Span[0]); }
+            try { remainingOffset = checked(remainingOffset.Value + planningFirstExactSizes.Span[0]); }
             catch (OverflowException) { remainingOffset = null; }
         }
 
         var remainderPlan = PlanHybridRemainder(
             options.SegmentIds.Length,
-            firstExactSizes,
+            planningFirstExactSizes,
             firstSegmentPrefixBytes,
             effectiveReadBudget);
 

@@ -73,8 +73,6 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         _knownCorruptSegmentIds = knownCorruptSegmentIds;
         _knownMissingSegmentIndices = knownMissingSegmentIndices;
         _expectedFirstSegmentRange = expectedFirstSegmentRange;
-        if (expectedFirstSegmentRange is { } expected)
-            _segmentSizes.RecordExactSize(0, expected.Count);
     }
 
     // Positioning is distinct from emission. If a candidate BODY is replaced
@@ -908,6 +906,10 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                 fallbackStream = null;
                 return accepted;
             }
+            catch (SeekPositionNotFoundException)
+            {
+                await DisposeBodyStreamAsync(fallbackStream).ConfigureAwait(false);
+            }
             catch (UsenetArticleNotFoundException)
             {
                 await DisposeBodyStreamAsync(fallbackStream).ConfigureAwait(false);
@@ -978,6 +980,8 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         if (header is null)
             return false;
         var actual = new LongRange(header.PartOffset, header.PartOffset + header.PartSize);
+        if (actual.EndExclusive > expected.EndExclusive)
+            actual = new LongRange(actual.StartInclusive, expected.EndExclusive);
         return actual == expected;
     }
 
