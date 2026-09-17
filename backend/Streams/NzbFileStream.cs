@@ -366,6 +366,7 @@ public class NzbFileStream(
         CancellationToken ct)
     {
         UsenetArticleNotFoundException? missing = missingProbeArticle;
+        Exception? transientProbeFailure = null;
         try
         {
             return await ProbeAuthoritativeRangeAsync(fileSegmentIds[index], index, ct).ConfigureAwait(false);
@@ -373,6 +374,13 @@ public class NzbFileStream(
         catch (UsenetArticleNotFoundException e)
         {
             missing = e;
+        }
+        catch (Exception e) when (!ct.IsCancellationRequested && e.IsTransientTransportException())
+        {
+            transientProbeFailure = e;
+            e.LogWarningKnownOrStack(
+                "Authoritative seek probe transient failure on primary segment index {Index}; trying fallbacks.",
+                index);
         }
 
         if (segmentFallbacks is { } fallbacks && index < fallbacks.Length && fallbacks[index] is { } fallbackIds)
@@ -384,8 +392,18 @@ public class NzbFileStream(
                     return await ProbeAuthoritativeRangeAsync(fallbackId, index, ct).ConfigureAwait(false);
                 }
                 catch (UsenetArticleNotFoundException e) { missing = e; }
+                catch (Exception e) when (!ct.IsCancellationRequested && e.IsTransientTransportException())
+                {
+                    transientProbeFailure = e;
+                    e.LogWarningKnownOrStack(
+                        "Authoritative seek probe transient failure on fallback segment index {Index}; trying next fallback.",
+                        index);
+                }
             }
         }
+
+        if (transientProbeFailure is not null)
+            ExceptionDispatchInfo.Capture(transientProbeFailure).Throw();
 
         throw new SeekPositionNotFoundException(
             $"Cannot establish exact geometry for segment {index} of " +

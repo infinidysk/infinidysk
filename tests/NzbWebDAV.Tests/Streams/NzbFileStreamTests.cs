@@ -499,6 +499,27 @@ public class NzbFileStreamTests
     }
 
     [Fact]
+    public async Task LegacySeek_TransientTargetProbe_UsesFallbackIdGeometry()
+    {
+        var (segments, ranges) = NonUniformGeometry();
+        segments["two-alt"] = segments["two"];
+        ranges["two-alt"] = ranges["two"];
+        var client = new FakeNntpClient(
+            segments, useCachedYencStreams: true, segmentRanges: ranges,
+            headerProbeFailure: (id, _) => id == "two" ? new IOException("probe blip") : null);
+        await using var stream = new NzbFileStream(
+            SegmentIds, 12, client, articleBufferSize: 2, segmentByteRanges: null,
+            usePipelinedBodyRequests: false, fileName: "nonuniform.bin",
+            segmentFallbacks: [[], ["two-alt"], []], readBudgetOverride: 3);
+        stream.Seek(6, SeekOrigin.Begin);
+        var buffer = new byte[3];
+
+        var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false);
+
+        Assert.Equal("ghi", Encoding.ASCII.GetString(buffer, 0, read));
+    }
+
+    [Fact]
     public async Task LegacySeek_MissingTargetWithoutFallback_FailsWithMissingArticleCause()
     {
         var (segments, ranges) = NonUniformGeometry();
