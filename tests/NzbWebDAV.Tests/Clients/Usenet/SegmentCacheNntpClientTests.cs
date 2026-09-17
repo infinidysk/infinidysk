@@ -14,6 +14,56 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 
 public sealed class SegmentCacheNntpClientTests
 {
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(null, false)]
+    public async Task DecodedBodyAsync_CachedZeroTotal_OnlyUsesConfirmedOmission(
+        bool? hasTotalParts, bool expectCacheHit)
+    {
+        var cacheDir = NewCacheDir();
+        const string segmentId = "omitted-total";
+        byte[] cachedContent = "old"u8.ToArray();
+        byte[] liveContent = "new"u8.ToArray();
+        try
+        {
+            WriteCacheEntry(cacheDir, segmentId, cachedContent, totalParts: 0, hasTotalParts: hasTotalParts);
+            var inner = new FakeNntpClient(
+                new Dictionary<string, byte[]> { [segmentId] = liveContent },
+                useCachedYencStreams: true,
+                yencHeaders: new Dictionary<string, UsenetYencHeader>
+                {
+                    [segmentId] = new()
+                    {
+                        FileName = "fake.bin",
+                        FileSize = liveContent.Length,
+                        LineLength = 128,
+                        PartNumber = 1,
+                        TotalParts = 3,
+                        PartOffset = 0,
+                        PartSize = liveContent.Length,
+                    },
+                });
+            using var client = new SegmentCacheNntpClient(inner, cacheDir, maxBytes: 1024 * 1024);
+            await client.CatalogLoadTask.WaitAsync(TimeSpan.FromSeconds(5));
+            using var validation = YencFileValidationContext.Begin(3);
+
+            var response = await client.DecodedBodyAsync(segmentId, CancellationToken.None);
+            await using var responseStream = response.Stream!;
+            using var output = new MemoryStream();
+            await responseStream.CopyToAsync(output);
+
+            Assert.Equal(expectCacheHit ? cachedContent : liveContent, output.ToArray());
+            Assert.Equal(expectCacheHit ? 0 : 1, inner.BodyRequestCount);
+            if (expectCacheHit)
+                Assert.False((await responseStream.GetYencHeadersAsync())!.HasTotalParts);
+        }
+        finally
+        {
+            DeleteCacheDir(cacheDir);
+        }
+    }
+
     [Fact]
     public async Task DecodedBodyAsync_CachedHeaderFromDifferentPost_RefetchesFromProvider()
     {
@@ -1621,7 +1671,8 @@ public sealed class SegmentCacheNntpClientTests
         string cacheDir,
         string segmentId,
         byte[] content,
-        int totalParts = 1)
+        int totalParts = 1,
+        bool? hasTotalParts = null)
     {
         var hash = SegmentHash(segmentId);
         var directory = Path.Join(cacheDir, hash[..2]);
@@ -1637,10 +1688,15 @@ public sealed class SegmentCacheNntpClientTests
             PartOffset = 0,
             PartSize = content.Length,
             TotalParts = totalParts,
+            HasTotalParts = hasTotalParts,
         };
         File.WriteAllText(
             Path.Join(directory, hash) + ".h",
-            JsonSerializer.Serialize(header, new JsonSerializerOptions { IncludeFields = true }));
+            JsonSerializer.Serialize(header, new JsonSerializerOptions
+            {
+                IncludeFields = true,
+                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+            }));
     }
 
     private sealed class ScriptedStatusNntpClient(

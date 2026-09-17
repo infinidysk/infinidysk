@@ -118,6 +118,7 @@ public class YencStreamTests
             Assert.That(headers.LineLength, Is.EqualTo(128));
             Assert.That(headers.PartNumber, Is.EqualTo(2));
             Assert.That(headers.TotalParts, Is.EqualTo(4));
+            Assert.That(headers.HasTotalParts, Is.True);
             Assert.That(headers.PartOffset, Is.EqualTo(250));
             Assert.That(headers.PartSize, Is.EqualTo(250));
         });
@@ -136,8 +137,33 @@ public class YencStreamTests
             Assert.That(headers.LineLength, Is.Zero);
             Assert.That(headers.PartNumber, Is.Zero);
             Assert.That(headers.TotalParts, Is.Zero);
+            Assert.That(headers.HasTotalParts, Is.False);
             Assert.That(headers.PartOffset, Is.Zero);
             Assert.That(headers.PartSize, Is.Zero);
+        });
+    }
+
+    [TestCase("", false, 0)]
+    [TestCase(" total=4", true, 4)]
+    [TestCase(" total=0", true, 0)]
+    [TestCase(" total=invalid", true, 0)]
+    [TestCase(" total=", true, 0)]
+    [TestCase(" total=4invalid", true, 0)]
+    [TestCase(" total=-1", true, -1)]
+    public void ParseYencHeaders_TotalPresence_DistinguishesOmittedFromInvalid(
+        string totalField, bool hasTotalParts, int totalParts)
+    {
+        var headers = YencStream.ParseYencHeaders(
+            Encoding.ASCII.GetBytes($"=ybegin part=2{totalField} line=128 size=1000 name=test.bin"),
+            "=ypart begin=251 end=500"u8);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(headers.HasTotalParts, Is.EqualTo(hasTotalParts));
+            Assert.That(headers.TotalParts, Is.EqualTo(totalParts));
+            Assert.That(headers.PartNumber, Is.EqualTo(2));
+            Assert.That(headers.PartOffset, Is.EqualTo(250));
+            Assert.That(headers.PartSize, Is.EqualTo(250));
         });
     }
 

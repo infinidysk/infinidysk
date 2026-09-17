@@ -7,6 +7,7 @@ public record UsenetYencHeader
     public required int LineLength;
     public required int PartNumber;
     public required int TotalParts;
+    public bool? HasTotalParts;
     public required long PartSize;
     public required long PartOffset;
 

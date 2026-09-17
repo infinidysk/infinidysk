@@ -31,6 +31,72 @@ public sealed class MultiProviderNntpClientYencValidationTests
         Assert.Equal(expected, YencFileValidationContext.MatchesExpectedFile(header));
     }
 
+    [Theory]
+    [InlineData(false, 0, true)]
+    [InlineData(true, 0, false)]
+    [InlineData(null, 0, false)]
+    [InlineData(false, 931, false)]
+    [InlineData(true, 931, false)]
+    [InlineData(null, 931, false)]
+    [InlineData(true, -1, false)]
+    [InlineData(true, 3, true)]
+    public void MatchesExpectedFile_OnlyConfirmedOmissionBypassesCountComparison(
+        bool? hasTotalParts, int totalParts, bool expected)
+    {
+        using var validation = YencFileValidationContext.Begin(3);
+        var header = CreateHeader(partNumber: 2, totalParts: totalParts) with
+        {
+            HasTotalParts = hasTotalParts,
+        };
+
+        Assert.Equal(expected, YencFileValidationContext.MatchesExpectedFile(header));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OmittedTotal_SizeProbeAndStreaming_UsePrimaryProvider(bool pipelined)
+    {
+        var segments = new Dictionary<string, byte[]>
+        {
+            ["first"] = [1, 2, 3],
+            ["second"] = [4, 5, 6],
+            ["third"] = [7, 8, 9],
+        };
+        var headers = segments.Keys.Select((segmentId, index) => new
+        {
+            SegmentId = segmentId,
+            Header = CreateHeader(index + 1, totalParts: 0) with
+            {
+                HasTotalParts = false,
+                PartOffset = index * 3,
+            },
+        }).ToDictionary(entry => entry.SegmentId, entry => entry.Header);
+        using var primary = new FakeNntpClient(segments, useCachedYencStreams: true, yencHeaders: headers);
+        using var backup = new FakeNntpClient(segments, useCachedYencStreams: true);
+        using var client = CreateProviderClient(primary, backup);
+        var file = new NzbFile { Subject = "fake.bin" };
+        foreach (var (segmentId, index) in segments.Keys.Select((segmentId, index) => (segmentId, index)))
+        {
+            file.Segments.Add(new NzbSegment { Bytes = 3, MessageId = segmentId, Number = index + 1 });
+        }
+
+        var fileSize = await client.GetFileSizeAsync(file, CancellationToken.None);
+        Assert.Equal(9, fileSize);
+        Assert.Equal(new LongRange(6, 9), file.Segments[^1].ByteRange);
+
+        await using var stream = new NzbFileStream(
+            segments.Keys.ToArray(), fileSize, client,
+            articleBufferSize: pipelined ? 4 : 0,
+            usePipelinedBodyRequests: pipelined);
+        using var output = new MemoryStream();
+        await stream.CopyToAsync(output);
+
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9], output.ToArray());
+        Assert.True(primary.BodyRequestCount >= 3);
+        Assert.Equal(0, backup.BodyRequestCount);
+    }
+
     [Fact]
     public async Task GetYencHeadersAsync_MismatchedTotalParts_UsesBackupProvider()
     {
@@ -56,11 +122,14 @@ public sealed class MultiProviderNntpClientYencValidationTests
         Assert.Equal(1, correctPost.BodyRequestCount);
     }
 
-    [Fact]
-    public async Task GetYencHeadersAsync_MultipartHeaderWithoutTotal_UsesBackupProvider()
+    [Theory]
+    [InlineData(null)]
+    [InlineData(true)]
+    public async Task GetYencHeadersAsync_MultipartZeroTotalWithoutConfirmedOmission_UsesBackupProvider(
+        bool? hasTotalParts)
     {
         var segments = new Dictionary<string, byte[]> { ["segment"] = [1, 2, 3] };
-        var wrongPost = CreateClient(segments, partNumber: 1, totalParts: 0);
+        var wrongPost = CreateClient(segments, partNumber: 1, totalParts: 0, hasTotalParts: hasTotalParts);
         var correctPost = CreateClient(segments, partNumber: 1, totalParts: 3);
         using var client = CreateProviderClient(wrongPost, correctPost);
         using var validation = YencFileValidationContext.Begin(expectedTotalParts: 3);
@@ -316,7 +385,8 @@ public sealed class MultiProviderNntpClientYencValidationTests
         int partNumber,
         int totalParts,
         string segmentId = "segment",
-        long partOffset = 0) =>
+        long partOffset = 0,
+        bool? hasTotalParts = null) =>
         new(
             segments,
             useCachedYencStreams: true,
@@ -329,6 +399,7 @@ public sealed class MultiProviderNntpClientYencValidationTests
                     LineLength = 128,
                     PartNumber = partNumber,
                     TotalParts = totalParts,
+                    HasTotalParts = hasTotalParts,
                     PartOffset = partOffset,
                     PartSize = 3,
                 },

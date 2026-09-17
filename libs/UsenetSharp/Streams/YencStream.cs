@@ -374,6 +374,7 @@ public class YencStream : FastReadOnlyNonSeekableStream
         string fileName = string.Empty;
         int partNumber = 0;
         int totalParts = 0;
+        bool hasTotalParts = false;
 
         var ybeginFields = ybeginLine[7..];
         foreach (var tokenRange in ybeginFields.Split((byte)' '))
@@ -384,7 +385,8 @@ public class YencStream : FastReadOnlyNonSeekableStream
                 ref fileSize,
                 ref fileName,
                 ref partNumber,
-                ref totalParts);
+                ref totalParts,
+                ref hasTotalParts);
         }
 
         // Parse =ypart line if present
@@ -414,6 +416,7 @@ public class YencStream : FastReadOnlyNonSeekableStream
             LineLength = lineLength,
             PartNumber = partNumber,
             TotalParts = totalParts,
+            HasTotalParts = hasTotalParts,
             PartSize = partSize,
             PartOffset = partOffset
         };
@@ -425,7 +428,8 @@ public class YencStream : FastReadOnlyNonSeekableStream
         ref long fileSize,
         ref string fileName,
         ref int partNumber,
-        ref int totalParts)
+        ref int totalParts,
+        ref bool hasTotalParts)
     {
         var separator = token.IndexOf((byte)'=');
         if (separator <= 0)
@@ -453,6 +457,7 @@ public class YencStream : FastReadOnlyNonSeekableStream
         }
         else if (key.SequenceEqual("total"u8))
         {
+            hasTotalParts = true;
             totalParts = ParseInt32(value);
         }
     }
