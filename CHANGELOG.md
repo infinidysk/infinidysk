@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.4.2](https://github.com/infinidysk/infinidysk/compare/v1.4.1...v1.4.2) (2026-09-17)
+
+
+### Bug Fixes
+
+* **db:** startup vacuum runs when enabled through NZBDAV_CONFIG__DB__IS_STARTUP_VACUUM_ENABLED ([#1450](https://github.com/infinidysk/infinidysk/issues/1450)) ([b0a5404](https://github.com/infinidysk/infinidysk/commit/b0a5404a04a9a0a0442d5d390cffae1e7f348cfc))
+* **health:** clear stale pending repairs when recording deferred results ([#1462](https://github.com/infinidysk/infinidysk/issues/1462)) ([e51ffd8](https://github.com/infinidysk/infinidysk/commit/e51ffd8cbe78948c33910f7f6b11abcce85e72cb))
+* **health:** prevent provider timeouts from triggering repair or blocklisting ([#1457](https://github.com/infinidysk/infinidysk/issues/1457)) ([447c2bd](https://github.com/infinidysk/infinidysk/commit/447c2bd094834d0192ef79a06485af91d9b04e29))
+* **health:** require a pure definitive-miss provider walk before treating a segment as missing ([9d34565](https://github.com/infinidysk/infinidysk/commit/9d345657d59952064c0b28bdf164516908e14116))
+* **health:** show a complete health overview breakdown totaling 100% ([#1458](https://github.com/infinidysk/infinidysk/issues/1458)) ([207758e](https://github.com/infinidysk/infinidysk/commit/207758e85df4a81550f3bda56c74db9b330345f1))
+* **queue:** group shuffled first RAR volumes with matching continuations ([8bc3a18](https://github.com/infinidysk/infinidysk/commit/8bc3a183c3feb1aad7671caeb30203e76588f703))
+* **queue:** lazy RAR mounting no longer drops extra files hidden behind the first archive member ([#1453](https://github.com/infinidysk/infinidysk/issues/1453)) ([55f9b5c](https://github.com/infinidysk/infinidysk/commit/55f9b5ce044aad98a506c6d1bdeae24bce800a44))
+* **queue:** season packs with repeated RAR/7z volume numbers import as separate archives ([#1452](https://github.com/infinidysk/infinidysk/issues/1452)) ([9b4739b](https://github.com/infinidysk/infinidysk/commit/9b4739b4ce55314943db7c0c2145136621338cb5))
+* **usenet:** allow imports when yEnc headers omit the total count ([#1460](https://github.com/infinidysk/infinidysk/issues/1460)) ([70e9d86](https://github.com/infinidysk/infinidysk/commit/70e9d8610791305fe45fd408c94fc7958c474d87))
+* **usenet:** log per-provider yenc rejection diagnostics ([#1459](https://github.com/infinidysk/infinidysk/issues/1459)) ([2e0b576](https://github.com/infinidysk/infinidysk/commit/2e0b5764f91b63c3fc570f83a7dd782576a9864d))
+* **usenet:** provider data caps count all BODY traffic and survive resets, restarts and metrics cleanup ([#1454](https://github.com/infinidysk/infinidysk/issues/1454)) ([0d68d67](https://github.com/infinidysk/infinidysk/commit/0d68d67325a561636d594e4cf817cf0f9109634b))
+* **usenet:** recover imports with conflicting yEnc metadata using PAR2-verified reads ([#1461](https://github.com/infinidysk/infinidysk/issues/1461)) ([ef5d503](https://github.com/infinidysk/infinidysk/commit/ef5d503c60c8996310bb28e17e2e91ebcf874910))
+* **usenet:** verify conflicting yEnc metadata against persisted PAR2 proofs ([692a67f](https://github.com/infinidysk/infinidysk/commit/692a67f0f7278a6b2d684e3b53ea0bdf73d0518d))
+
 ## [1.4.1](https://github.com/infinidysk/infinidysk/compare/v1.4.0...v1.4.1) (2026-09-16)
 
 
