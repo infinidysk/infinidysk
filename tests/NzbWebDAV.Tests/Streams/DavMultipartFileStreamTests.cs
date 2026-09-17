@@ -17,6 +17,43 @@ namespace NzbWebDAV.Tests.Streams;
 public class DavMultipartFileStreamTests
 {
     [Fact]
+    public async Task ReadAsync_ProofBackedPendingPartsAreNotEagerlyOpened()
+    {
+        using var client = new FakeNntpClient(new Dictionary<string, byte[]>
+        {
+            ["segment"] = [0, 1, 2, 3, 4, 5, 6, 7],
+        }, useCachedYencStreams: true);
+        var multipart = MultipartFile(new LongRange(0, 8), new LongRange(0, 8));
+        multipart.Metadata.IsLazy = true;
+        multipart.Metadata.PathInArchive = "movie.mkv";
+        multipart.Metadata.FileParts[0].IsSplitAfter = true;
+        multipart.Metadata.PendingParts =
+        [
+            new DavMultipartFile.PendingPart
+            {
+                SegmentIds = ["pending"],
+                SegmentIdByteRange = new LongRange(0, 8),
+                EstimatedDataSize = 8,
+                VerificationProof = new Par2FileProof(),
+            }
+        ];
+        var opened = 0;
+        var resolver = new LazyRarResolver(client, new ConfigManager())
+        {
+            VolumeStreamFactory = (_, _) =>
+            {
+                Interlocked.Increment(ref opened);
+                return new MemoryStream();
+            },
+        };
+        await using var stream = new DavMultipartFileStream(
+            multipart, client, 0, resolver, usePipelinedBodyRequests: false);
+
+        Assert.Equal(8, await stream.ReadAsync(new byte[8]));
+        Assert.Equal(0, Volatile.Read(ref opened));
+    }
+
+    [Fact]
     public void GetEffectivePartLength_UsesPackedRangeEndForUnderestimatedVolume()
     {
         var part = MultipartFile(

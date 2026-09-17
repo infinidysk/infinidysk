@@ -17,19 +17,22 @@ internal sealed class YencFileValidationContext : IDisposable
     private readonly NzbFile? _file;
     private readonly string[]? _segmentIds;
     private readonly string[][]? _segmentFallbacks;
+    private readonly bool _deferToPar2Proof;
 
     private YencFileValidationContext(
         int expectedTotalParts,
         string stage = "Unknown",
         NzbFile? file = null,
         string[]? segmentIds = null,
-        string[][]? segmentFallbacks = null)
+        string[][]? segmentFallbacks = null,
+        bool deferToPar2Proof = false)
     {
         ExpectedTotalParts = expectedTotalParts;
         Stage = stage;
         _file = file;
         _segmentIds = segmentIds;
         _segmentFallbacks = segmentFallbacks;
+        _deferToPar2Proof = deferToPar2Proof;
         Active.Value = this;
     }
 
@@ -39,7 +42,8 @@ internal sealed class YencFileValidationContext : IDisposable
     public string Stage { get; }
 
     public static bool MatchesExpectedFile(UsenetYencHeader header) =>
-        CurrentExpectedTotalParts is not { } expectedTotalParts
+        Current?._deferToPar2Proof == true
+        || CurrentExpectedTotalParts is not { } expectedTotalParts
         || (expectedTotalParts == 1 && header.TotalParts == 0)
         || (header.HasTotalParts == false && header.TotalParts == 0)
         || header.TotalParts == expectedTotalParts;
@@ -52,7 +56,14 @@ internal sealed class YencFileValidationContext : IDisposable
 
     public static IDisposable BeginStreaming(string[] segmentIds, string[][]? segmentFallbacks) =>
         new YencFileValidationContext(
-            segmentIds.Length, "Streaming", segmentIds: segmentIds, segmentFallbacks: segmentFallbacks);
+            segmentIds.Length, "Streaming", segmentIds: segmentIds, segmentFallbacks: segmentFallbacks,
+            deferToPar2Proof: Current?._deferToPar2Proof == true
+                && ReferenceEquals(Current._segmentIds, segmentIds));
+
+    internal static IDisposable BeginBufferedPar2ProofRead(string[] segmentIds, string[][]? segmentFallbacks) =>
+        new YencFileValidationContext(
+            segmentIds.Length, "BufferedPar2ProofRead", segmentIds: segmentIds,
+            segmentFallbacks: segmentFallbacks, deferToPar2Proof: true);
 
     public (string? FileAnchor, int? Position, int? NzbNumber) GetRequestDetails(string requestedId)
     {

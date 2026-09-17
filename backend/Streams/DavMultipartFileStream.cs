@@ -58,7 +58,8 @@ public class DavMultipartFileStream : FastReadOnlyStream
 
         if (_resolver != null
             && _mpf.Metadata.IsLazy
-            && (_mpf.Metadata.PendingParts?.Length ?? 0) > 0)
+            && (_mpf.Metadata.PendingParts?.Length ?? 0) > 0
+            && !_mpf.Metadata.PendingParts!.Any(part => part.VerificationProof is not null))
         {
             // Fire-and-forget: resolve every trailing volume's header in the
             // BACKGROUND so reads never block on it. The first volume is already
@@ -334,7 +335,8 @@ public class DavMultipartFileStream : FastReadOnlyStream
             _inFlightArticleBudget,
             streamingBodyBatchWidth: _streamingBodyBatchWidth,
             segmentByteRangesTrusted: part.SegmentByteRangesTrusted == true,
-            readBudgetOverride: readBudgetOverride);
+            readBudgetOverride: readBudgetOverride,
+            verificationProof: part.VerificationProof);
         stream.Seek(part.FilePartByteRange.StartInclusive + extraOffset, SeekOrigin.Begin);
         var expectedLength = part.FilePartByteRange.Count - extraOffset;
         var responseLength = readBudgetOverride is { } cap

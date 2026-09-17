@@ -1,5 +1,6 @@
 using NzbWebDAV.Config;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
@@ -18,6 +19,61 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 [Collection(nameof(GlobalLoggerCollection))]
 public sealed class MultiProviderNntpClientYencValidationTests
 {
+    [Fact]
+    public async Task ValidationContext_Par2DeferralIsLimitedToItsCandidateAndRestoresStrictValidation()
+    {
+        string[] segmentIds = ["first", "second"];
+        var mismatch = CreateHeader(557, 931);
+        using var parent = YencFileValidationContext.Begin(2);
+        Assert.False(YencFileValidationContext.MatchesExpectedFile(mismatch));
+        await Task.Run(() =>
+        {
+            using var proofRead = YencFileValidationContext.BeginBufferedPar2ProofRead(segmentIds, null);
+            using (YencFileValidationContext.BeginStreaming(segmentIds, null))
+                Assert.True(YencFileValidationContext.MatchesExpectedFile(mismatch));
+            using (YencFileValidationContext.BeginStreaming(["other"], null))
+                Assert.False(YencFileValidationContext.MatchesExpectedFile(mismatch));
+            using (YencFileValidationContext.Begin(2))
+                Assert.False(YencFileValidationContext.MatchesExpectedFile(mismatch));
+        });
+        Assert.False(YencFileValidationContext.MatchesExpectedFile(mismatch));
+        Assert.Equal(2, YencFileValidationContext.CurrentExpectedTotalParts);
+    }
+
+    [Fact]
+    public void Par2ProviderScope_RestoresAttributionAndCannotSelectDisabledOrOpenProviders()
+    {
+        using var fake = new FakeNntpClient(new Dictionary<string, byte[]>());
+        using var healthy = MultiProviderNntpClientTests.CreateProvider(fake, host: "healthy.example");
+        using var disabled = MultiProviderNntpClientTests.CreateProvider(fake, host: "disabled.example", providerType: ProviderType.Disabled);
+        var breaker = new ProviderCircuitBreaker("open.example");
+        breaker.RecordFailure();
+        breaker.RecordFailure();
+        breaker.RecordFailure();
+        using var open = MultiProviderNntpClientTests.CreateProvider(fake, host: "open.example", circuitBreaker: breaker);
+        using var client = new MultiProviderNntpClient([healthy, disabled, open]);
+        var previous = MultiProviderNntpClient.AttributionContext.Value;
+        var parent = new MultiProviderNntpClient.ResponderAttribution { Host = "parent" };
+        MultiProviderNntpClient.AttributionContext.Value = parent;
+        try
+        {
+            Assert.Same(healthy, Assert.Single(client.GetPar2VerificationProviders()));
+            using (new Par2VerificationReadContext(disabled))
+            {
+                Assert.Empty(client.GetPar2VerificationProviders());
+                Assert.NotSame(parent, MultiProviderNntpClient.AttributionContext.Value);
+            }
+            using (new Par2VerificationReadContext(open))
+                Assert.Empty(client.GetPar2VerificationProviders());
+            Assert.Same(parent, MultiProviderNntpClient.AttributionContext.Value);
+            Assert.Null(Par2VerificationReadContext.PreferredProvider);
+        }
+        finally
+        {
+            MultiProviderNntpClient.AttributionContext.Value = previous;
+        }
+    }
+
     [Fact]
     public void ValidationContext_SizeProbe_PreservesOrdinalAndRestoresParent()
     {

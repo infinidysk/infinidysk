@@ -71,6 +71,10 @@ public partial class DavNzbFile
     [MemoryPackOrder(8)]
     public bool? SegmentByteRangesTrusted { get; set; }
 
+    [NotMapped]
+    [MemoryPackOrder(9)]
+    public Par2FileProof? VerificationProof { get; set; }
+
     // navigation helpers
     [MemoryPackIgnore]
     public DavItem? DavItem { get; set; }

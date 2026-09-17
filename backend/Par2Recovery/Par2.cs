@@ -1,8 +1,10 @@
-﻿using System.Runtime.CompilerServices;
+﻿using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models;
 using NzbWebDAV.Par2Recovery.Packets;
 using Serilog;
 
@@ -16,6 +18,141 @@ namespace NzbWebDAV.Par2Recovery
         );
 
         private const string Par2PacketHeaderMagic = "PAR2\0PKT";
+
+        /// <summary>
+        /// Reads checksum-verified metadata without reading recovery bodies. Malformed,
+        /// truncated, or conflicting metadata throws before any descriptions are yielded.
+        /// A complete coherent metadata prefix may supply proofs when stopping at recovery data.
+        /// </summary>
+        public static async IAsyncEnumerable<FileDesc> ReadVerifiedFileDescriptions
+        (
+            Stream stream,
+            bool stopAtRecoverySlice = false,
+            [EnumeratorCancellation] CancellationToken ct = default
+        )
+        {
+            if (!stream.CanSeek)
+                throw new NotSupportedException("Verified PAR2 metadata requires a seekable stream to skip recovery bodies.");
+
+            var budget = new Par2MemoryBudget(256L * 1024 * 1024);
+            var options = new Par2RepairReader.ReadOptions(budget, RetainRecoveryPayload: false);
+            var packets = new Dictionary<string, Par2Packet>(StringComparer.Ordinal);
+            var header = new byte[64];
+            try
+            {
+                while (stream.Position < stream.Length)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var position = stream.Position;
+                    await stream.ReadExactlyAsync(header, ct).ConfigureAwait(false);
+                    if (!header.AsSpan(0, 8).SequenceEqual("PAR2\0PKT"u8))
+                        throw new InvalidDataException("Invalid PAR2 magic constant.");
+
+                    var length = BinaryPrimitives.ReadUInt64LittleEndian(header.AsSpan(8));
+                    if (length < 64 || length > int.MaxValue || length % 4 != 0)
+                        throw new InvalidDataException($"Invalid PAR2 packet length {length}.");
+                    var bodyLength = (int)length - 64;
+                    if (bodyLength > stream.Length - stream.Position)
+                        throw new EndOfStreamException("Truncated PAR2 packet body.");
+
+                    var packetType = Encoding.ASCII.GetString(header, 48, 16).TrimEnd('\0');
+                    if (packetType == RecvSlic.PacketType)
+                    {
+                        if (bodyLength < 4 || bodyLength - 4 > (long)MainPacket.MaxSliceSize)
+                            throw new InvalidDataException("Invalid PAR2 recovery packet length.");
+                        stream.Seek(bodyLength, SeekOrigin.Current);
+                        if (stopAtRecoverySlice)
+                            break;
+                        continue;
+                    }
+
+                    if (packetType is not (MainPacket.PacketType or FileDesc.PacketType
+                        or IfscPacket.PacketType or UniFileN.PacketType))
+                    {
+                        stream.Seek(bodyLength, SeekOrigin.Current);
+                        continue;
+                    }
+
+                    stream.Seek(position, SeekOrigin.Begin);
+                    var packet = await Par2RepairReader.ReadVerifiedPacketAsync(stream, options, ct)
+                        .ConfigureAwait(false);
+                    var fileId = packet switch
+                    {
+                        FileDesc description => Convert.ToHexString(description.FileID),
+                        IfscPacket checksums => Convert.ToHexString(checksums.FileId),
+                        UniFileN unicodeName => Convert.ToHexString(unicodeName.FileID),
+                        _ => string.Empty,
+                    };
+                    var key = Convert.ToHexString(packet.Header.RecoverySetID) + packetType + fileId;
+                    if (packets.TryGetValue(key, out var existing))
+                    {
+                        packet.ReleaseMemory();
+                        if (!packet.Header.PacketHash.AsSpan().SequenceEqual(existing.Header.PacketHash))
+                            throw new InvalidDataException("Conflicting duplicate PAR2 metadata packet.");
+                    }
+                    else
+                    {
+                        packets.Add(key, packet);
+                    }
+                }
+
+                var mainByFile = new Dictionary<string, MainPacket>(StringComparer.Ordinal);
+                foreach (var main in packets.Values.OfType<MainPacket>())
+                {
+                    var setId = Convert.ToHexString(main.Header.RecoverySetID);
+                    foreach (var fileId in main.FileIds)
+                        mainByFile.Add(setId + Convert.ToHexString(fileId), main);
+                }
+
+                foreach (var description in packets.Values.OfType<FileDesc>())
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var setId = Convert.ToHexString(description.Header.RecoverySetID);
+                    var fileId = Convert.ToHexString(description.FileID);
+                    if (packets.TryGetValue(setId + UniFileN.PacketType + fileId, out var namePacket)
+                        && namePacket is UniFileN { FileName.Length: > 0 } unicodeName)
+                        description.FileName = unicodeName.FileName;
+
+                    if (!mainByFile.TryGetValue(setId + fileId, out var main)
+                        || !packets.TryGetValue(setId + IfscPacket.PacketType + fileId, out var slicePacket)
+                        || slicePacket is not IfscPacket checksums
+                        || description.FileLength == 0 || description.FileLength > long.MaxValue
+                        || main.SliceSize > 32 * 1024 * 1024
+                        || (description.FileLength - 1) / main.SliceSize + 1 != (ulong)checksums.Slices.Count)
+                        continue;
+
+                    budget.Charge(512L + checksums.Slices.Count * 20L);
+                    var proof = new Par2FileProof
+                    {
+                        FileLength = (long)description.FileLength,
+                        SliceSize = (int)main.SliceSize,
+                        SliceMd5 = new byte[checksums.Slices.Count * 16],
+                        SliceCrc32 = new uint[checksums.Slices.Count],
+                        FileId = description.FileID.ToArray(),
+                        FileHash = description.FileHash.ToArray(),
+                        File16kHash = description.File16kHash.ToArray(),
+                    };
+                    for (var sliceIndex = 0; sliceIndex < checksums.Slices.Count; sliceIndex++)
+                    {
+                        checksums.Slices[sliceIndex].Md5.CopyTo(proof.SliceMd5, sliceIndex * 16);
+                        proof.SliceCrc32[sliceIndex] = checksums.Slices[sliceIndex].Crc32;
+                    }
+                    if (proof.IsValidFor((long)description.FileLength))
+                        description.VerificationProof = proof;
+                }
+
+                foreach (var description in packets.Values.OfType<FileDesc>())
+                {
+                    ct.ThrowIfCancellationRequested();
+                    yield return description;
+                }
+            }
+            finally
+            {
+                foreach (var packet in packets.Values)
+                    packet.ReleaseMemory();
+            }
+        }
 
         public static async IAsyncEnumerable<FileDesc> ReadFileDescriptions
         (

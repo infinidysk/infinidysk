@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
 using NzbWebDAV.Models.Nzb;
+using NzbWebDAV.Par2Recovery;
+using NzbWebDAV.Par2Recovery.Packets;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Queue.DeobfuscationSteps._1.FetchFirstSegment;
 using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
@@ -11,6 +13,124 @@ namespace NzbWebDAV.Tests.Queue;
 public class GetFileInfosStepTests
 {
     private static readonly byte[] Rar4Magic = [0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00];
+
+    [Theory]
+    [InlineData(1, 4103, false)]
+    [InlineData(2, 4103, true)]
+    [InlineData(1, 4104, true)]
+    [InlineData(1, 4102, true)]
+    [InlineData(2, 4104, true)]
+    [InlineData(0, 4103, false)]
+    [InlineData(1, 0, false)]
+    [InlineData(0, 0, false)]
+    [InlineData(-1, -1, false)]
+    [InlineData(2, 0, true)]
+    [InlineData(0, 4104, true)]
+    public async Task GetFileInfos_ActivatesVerifiedProofOnlyForPositiveMetadataMismatch(
+        int totalParts, long headerFileSize, bool expectedProof)
+    {
+        var data = Enumerable.Range(0, 4103).Select(value => (byte)value).ToArray();
+        var descriptor = await ReadProofDescriptor(data);
+        Assert.NotNull(descriptor.VerificationProof);
+        var input = ProofFile(data, totalParts, headerFileSize);
+
+        var result = Assert.Single(GetFileInfosStep.GetFileInfos([input], [descriptor]));
+
+        Assert.Equal("verified.mkv", result.FileName);
+        Assert.Equal(data.Length, result.FileSize);
+        Assert.Same(input.NzbFile, result.NzbFile);
+        if (expectedProof)
+            Assert.Same(descriptor.VerificationProof, result.NzbFile.VerificationProof);
+        else
+            Assert.Null(result.NzbFile.VerificationProof);
+    }
+
+    [Theory]
+    [InlineData(true, 4200)]
+    [InlineData(false, 4102)]
+    [InlineData(false, 4400)]
+    public async Task GetFileInfos_CannotActivateProofWithoutPrefixAndSizeWindowMatch(
+        bool corruptPrefix, long yencodedSize)
+    {
+        var data = Enumerable.Range(0, 4103).Select(value => (byte)value).ToArray();
+        var descriptor = await ReadProofDescriptor(data);
+        Assert.NotNull(descriptor.VerificationProof);
+        var prefix = data.ToArray();
+        if (corruptPrefix) prefix[0] ^= 1;
+        var input = ProofFile(prefix, totalParts: 2, headerFileSize: 4104);
+        input.NzbFile.Segments[0] = new NzbSegment
+        {
+            MessageId = input.NzbFile.Segments[0].MessageId,
+            Bytes = yencodedSize,
+        };
+
+        var result = Assert.Single(GetFileInfosStep.GetFileInfos([input], [descriptor]));
+
+        Assert.Null(result.FileSize);
+        Assert.Null(result.NzbFile.VerificationProof);
+    }
+
+    [Fact]
+    public async Task GetFileInfos_LegacyDescriptorCannotActivateProofDespiteMetadataMismatch()
+    {
+        var data = Enumerable.Range(0, 4103).Select(value => (byte)value).ToArray();
+        var (index, _) = Par2TestEncoder.EncodeSet("verified.mkv", data, 4096, []);
+        var descriptor = Assert.Single(await Par2TestPackets.ReadFileDescsAsync(index));
+        Assert.Null(descriptor.VerificationProof);
+        var input = ProofFile(data, totalParts: 2, headerFileSize: 4104);
+
+        var result = Assert.Single(GetFileInfosStep.GetFileInfos([input], [descriptor]));
+
+        Assert.Equal("verified.mkv", result.FileName);
+        Assert.Equal(data.Length, result.FileSize);
+        Assert.Null(result.NzbFile.VerificationProof);
+    }
+
+    [Fact]
+    public async Task GetFileInfos_WithoutFirstHeaderDoesNotActivateProof()
+    {
+        var data = Enumerable.Range(0, 4103).Select(value => (byte)value).ToArray();
+        var descriptor = await ReadProofDescriptor(data);
+        Assert.NotNull(descriptor.VerificationProof);
+        var input = VideoFile("obfuscated.mkv", 4200, data);
+
+        var result = Assert.Single(GetFileInfosStep.GetFileInfos([input], [descriptor]));
+
+        Assert.Equal(data.Length, result.FileSize);
+        Assert.Null(result.NzbFile.VerificationProof);
+    }
+
+    private static async Task<FileDesc> ReadProofDescriptor(byte[] data)
+    {
+        var (index, _) = Par2TestEncoder.EncodeSet("verified.mkv", data, 4096, []);
+        using var stream = new MemoryStream(index);
+        var descriptors = new List<FileDesc>();
+        await foreach (var descriptor in Par2.ReadVerifiedFileDescriptions(stream))
+            descriptors.Add(descriptor);
+        return Assert.Single(descriptors);
+    }
+
+    private static FetchFirstSegmentsStep.NzbFileWithFirstSegment ProofFile(
+        byte[] first16Kb, int totalParts, long headerFileSize)
+    {
+        return new()
+        {
+            NzbFile = VideoFile("obfuscated.mkv", 4200, first16Kb).NzbFile,
+            Header = new UsenetYencHeader
+            {
+                FileName = "obfuscated.mkv",
+                FileSize = headerFileSize,
+                LineLength = 128,
+                PartNumber = 1,
+                TotalParts = totalParts,
+                PartOffset = 0,
+                PartSize = first16Kb.Length,
+            },
+            First16KB = first16Kb,
+            MissingFirstSegment = false,
+            ReleaseDate = DateTimeOffset.UnixEpoch,
+        };
+    }
 
     [Fact]
     public async Task GetFileInfos_AssignsPar2NamesFromMultiplePar2Sets()

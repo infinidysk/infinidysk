@@ -32,7 +32,8 @@ public class NzbFileStream(
     IReadOnlySet<int>? knownMissingSegmentIndices = null,
     bool segmentByteRangesTrusted = true,
     long? readBudgetOverride = null,
-    bool readStartWarmupEnabled = false
+    bool readStartWarmupEnabled = false,
+    Par2FileProof? verificationProof = null
 ) : FastReadOnlyStream
 {
     private const long MaximumForwardDrainBytes = 1024 * 1024;
@@ -45,6 +46,7 @@ public class NzbFileStream(
     private long _pendingForwardDrain;
     private bool _disposed;
     private Stream? _innerStream;
+    private Par2VerifiedFileStream? _verifiedStream;
     // Teardown of the inner stream a Seek replaced is started non-blocking (Seek is
     // synchronous), but the next ReadAsync must await it before opening a new inner
     // stream — otherwise rapid scrubbing overlaps generations and pins the article
@@ -56,7 +58,7 @@ public class NzbFileStream(
     private readonly LongRange[]? _segmentByteRanges = ValidateAndCloneSegmentByteRanges(
         segmentByteRanges,
         fileSegmentIds.Length,
-        fileSize,
+        verificationProof?.FileLength ?? fileSize,
         fileName,
         segmentByteRangesTrusted);
     private readonly HashSet<int>? _knownMissingSegmentIndices =
@@ -90,21 +92,55 @@ public class NzbFileStream(
     }
 
     public override bool CanSeek => true;
-    public override long Length => fileSize;
+    public override long Length => verificationProof?.FileLength ?? fileSize;
+
+    private Par2VerifiedFileStream VerifiedStream
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (verificationProof is null || !verificationProof.IsValidFor(Length))
+                throw new InvalidDataException("Invalid persisted PAR2 verification metadata.");
+            if (_verifiedStream is not null) return _verifiedStream;
+            var reader = new Par2CandidateReader(verificationProof, usenetClient, ReadPar2CandidateAsync);
+            return _verifiedStream ??= new Par2VerifiedFileStream(verificationProof,
+                reader.ReadAsync, reader.ReadPrefixAsync);
+        }
+    }
+
+    private async Task ReadPar2CandidateAsync(long start, Memory<byte> target, CancellationToken cancellationToken)
+    {
+        using var validation = YencFileValidationContext.BeginBufferedPar2ProofRead(fileSegmentIds, segmentFallbacks);
+        await using var candidate = new NzbFileStream(
+            fileSegmentIds, Length, usenetClient, articleBufferSize: articleBufferSize,
+            segmentByteRanges: _segmentByteRanges, usePipelinedBodyRequests: usePipelinedBodyRequests,
+            fileName: fileName, segmentFallbacks: segmentFallbacks,
+            inFlightArticleBudget: inFlightArticleBudget, readBudgetOverride: target.Length,
+            streamingBodyBatchWidth: streamingBodyBatchWidth);
+        candidate.Position = start;
+        await candidate.ReadExactlyAsync(target, cancellationToken).ConfigureAwait(false);
+    }
 
     public override long Position
     {
-        get => _position;
+        get => verificationProof is null ? _position : VerifiedStream.Position;
         set => Seek(value, SeekOrigin.Begin);
     }
 
     public override void Flush()
     {
+        if (verificationProof is not null)
+        {
+            VerifiedStream.Flush();
+            return;
+        }
         _innerStream?.Flush();
     }
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
+        if (verificationProof is not null)
+            return await VerifiedStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
         using var yencFileValidation = YencFileValidationContext.BeginStreaming(fileSegmentIds, segmentFallbacks);
         if (buffer.IsEmpty) return 0;
         if (_position >= fileSize) return 0;
@@ -153,6 +189,7 @@ public class NzbFileStream(
 
     public override long Seek(long offset, SeekOrigin origin)
     {
+        if (verificationProof is not null) return VerifiedStream.Seek(offset, origin);
         long absoluteOffset;
         try
         {
@@ -925,6 +962,7 @@ public class NzbFileStream(
         {
             if (disposing)
             {
+                _verifiedStream?.Dispose();
                 _innerStream?.Dispose();
                 // The prior Seek's teardown is async and cannot be awaited here; observe
                 // any fault so it is not left unobserved, matching the fire-and-forget
@@ -950,6 +988,7 @@ public class NzbFileStream(
     {
         if (_disposed) return;
         _disposed = true;
+        if (_verifiedStream is not null) await _verifiedStream.DisposeAsync().ConfigureAwait(false);
         if (_pendingInnerDispose is { } pending)
         {
             _pendingInnerDispose = null;

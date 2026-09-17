@@ -133,6 +133,7 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
                             SegmentByteRanges = rangeIndex.Ranges,
                             SegmentByteRangesTrusted = rangeIndex.IsTrusted,
                             SegmentFallbackIds = x.NzbFile.GetSegmentFallbackIds(),
+                            VerificationProof = x.NzbFile.VerificationProof,
                         };
                     }).ToArray(),
                 }

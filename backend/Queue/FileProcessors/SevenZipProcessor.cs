@@ -247,6 +247,7 @@ public class SevenZipProcessor : BaseProcessor
                     SegmentByteRanges = rangeIndex.Ranges,
                     SegmentByteRangesTrusted = rangeIndex.IsTrusted,
                     SegmentFallbackIds = nzbFile.GetSegmentFallbackIds(),
+                    VerificationProof = nzbFile.VerificationProof,
                 };
             })
             .ToArray();

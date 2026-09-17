@@ -144,6 +144,12 @@ public abstract class NntpClient : INntpClient
     public virtual async Task<long> GetFileSizeAsync(NzbFile file, CancellationToken ct)
     {
         if (file.Segments.Count == 0) return 0;
+        if (file.VerificationProof is { } proof)
+        {
+            if (!proof.IsValidFor(proof.FileLength))
+                throw new InvalidDataException("Invalid PAR2 verification metadata.");
+            return proof.FileLength;
+        }
         using var yencFileValidation = YencFileValidationContext.BeginSizeProbe(file);
         var headers = await GetYencHeadersAsync(file.Segments[^1].MessageId, ct).ConfigureAwait(false);
         file.Segments[^1].ByteRange = LongRange.FromStartAndSize(headers.PartOffset, headers.PartSize);
@@ -180,7 +186,8 @@ public abstract class NntpClient : INntpClient
             knownCorruptSegmentIds,
             knownMissingSegmentIndices,
             rangeIndex.IsTrusted,
-            readStartWarmupEnabled: ReadStartWarmupEnabled);
+            readStartWarmupEnabled: ReadStartWarmupEnabled,
+            verificationProof: nzbFile.VerificationProof);
     }
 
     public virtual NzbFileStream GetFileStream(
@@ -211,7 +218,8 @@ public abstract class NntpClient : INntpClient
             knownCorruptSegmentIds,
             knownMissingSegmentIndices,
             rangeIndex.IsTrusted,
-            readStartWarmupEnabled: ReadStartWarmupEnabled
+            readStartWarmupEnabled: ReadStartWarmupEnabled,
+            verificationProof: nzbFile.VerificationProof
         );
     }
 
@@ -229,7 +237,8 @@ public abstract class NntpClient : INntpClient
         HashSet<string>? knownCorruptSegmentIds = null,
         IReadOnlySet<int>? knownMissingSegmentIndices = null,
         bool segmentByteRangesTrusted = true,
-        long? readBudgetOverride = null)
+        long? readBudgetOverride = null,
+        Par2FileProof? verificationProof = null)
     {
         return new NzbFileStream(
             segmentIds,
@@ -247,7 +256,8 @@ public abstract class NntpClient : INntpClient
             knownMissingSegmentIndices,
             segmentByteRangesTrusted,
             readBudgetOverride,
-            ReadStartWarmupEnabled);
+            ReadStartWarmupEnabled,
+            verificationProof);
     }
 
     private static string? ResolveFileName(string? fileName, NzbFile nzbFile)

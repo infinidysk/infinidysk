@@ -197,6 +197,7 @@ public class LazyRarProcessor(
             SegmentByteRanges = firstRangeIndex.Ranges,
             SegmentByteRangesTrusted = firstRangeIndex.IsTrusted,
             SegmentFallbackIds = firstInfo.NzbFile.GetSegmentFallbackIds(),
+            VerificationProof = firstInfo.NzbFile.VerificationProof,
             IsSplitAfter = fileHeader.IsSplitAfter,
         };
 
@@ -221,6 +222,7 @@ public class LazyRarProcessor(
                 SegmentIdByteRange = LongRange.FromStartAndSize(0, streamLength),
                 EstimatedDataSize = estimate,
                 SegmentFallbackIds = partInfo.NzbFile.GetSegmentFallbackIds(),
+                VerificationProof = partInfo.NzbFile.VerificationProof,
             });
             pendingStreamSum += streamLength;
             pendingSum += estimate;

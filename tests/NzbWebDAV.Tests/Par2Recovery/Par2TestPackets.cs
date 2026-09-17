@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using NzbWebDAV.Par2Recovery;
 using NzbWebDAV.Par2Recovery.Packets;
@@ -74,6 +75,12 @@ internal static class Par2TestPackets
             handle.Free();
         }
 
+    #pragma warning disable CA5351
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
+        hash.AppendData(headerBytes.AsSpan(32));
+        hash.AppendData(body);
+        hash.GetHashAndReset().CopyTo(headerBytes, 16);
+    #pragma warning restore CA5351
         stream.Write(headerBytes);
         stream.Write(body);
     }

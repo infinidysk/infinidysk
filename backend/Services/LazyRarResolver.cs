@@ -160,7 +160,8 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
             part.SegmentIds,
             fileSize,
             part.SegmentFallbackIds,
-            part.SegmentByteRanges);
+            part.SegmentByteRanges,
+            part.VerificationProof);
         var headers = await RarUtil.ReadHeadersUntilFirstFileAsync(
                 stream, meta.ArchivePassword, ct)
             .ConfigureAwait(false);
@@ -421,7 +422,8 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         await using var stream = OpenVolumeStream(
             pending.SegmentIds,
             fileSize,
-            pending.SegmentFallbackIds);
+            pending.SegmentFallbackIds,
+            verificationProof: pending.VerificationProof);
 
         // A continuation must be the first real file header in the next
         // physical volume. Reading only that header avoids scanning unrelated
@@ -457,6 +459,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
                 SegmentIdByteRange = LongRange.FromStartAndSize(0, Math.Max(fileSize, dataStart + dataSize)),
                 FilePartByteRange = LongRange.FromStartAndSize(dataStart, dataSize),
                 SegmentFallbackIds = pending.SegmentFallbackIds,
+                VerificationProof = pending.VerificationProof,
                 IsSplitAfter = match.IsSplitAfter,
             },
             FoundPath = match.FileName,
@@ -471,14 +474,16 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         string[] segmentIds,
         long fileSize,
         string[][]? segmentFallbacks = null,
-        LongRange[]? segmentByteRanges = null) =>
+        LongRange[]? segmentByteRanges = null,
+        Par2FileProof? verificationProof = null) =>
         VolumeStreamFactory?.Invoke(segmentIds, fileSize)
         ?? usenetClient.GetFileStream(
             segmentIds,
             fileSize,
             articleBufferSize: 0,
             segmentByteRanges: segmentByteRanges,
-            segmentFallbacks: segmentFallbacks);
+            segmentFallbacks: segmentFallbacks,
+            verificationProof: verificationProof);
 
     private async Task<long> MeasureVolumeSizeAsync(string[] segmentIds, CancellationToken ct)
     {

@@ -77,6 +77,9 @@ public partial class DavMultipartFile
         // Null on legacy blobs. Only true permits arithmetic segment seeking.
         [MemoryPackOrder(6)]
         public bool? SegmentByteRangesTrusted { get; set; }
+
+        [MemoryPackOrder(7)]
+        public Par2FileProof? VerificationProof { get; set; }
     }
 
     // A RAR part whose internal byte range hasn't been parsed yet.
@@ -99,5 +102,8 @@ public partial class DavMultipartFile
 
         [MemoryPackOrder(3)]
         public string[][]? SegmentFallbackIds { get; set; }
+
+        [MemoryPackOrder(4)]
+        public Par2FileProof? VerificationProof { get; set; }
     }
 }

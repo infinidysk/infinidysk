@@ -2,6 +2,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models.Nzb;
+using NzbWebDAV.Par2Recovery;
 using NzbWebDAV.Queue.DeobfuscationSteps._1.FetchFirstSegment;
 using NzbWebDAV.Queue.DeobfuscationSteps._2.GetPar2FileDescriptors;
 using NzbWebDAV.Streams;
@@ -12,6 +13,50 @@ namespace NzbWebDAV.Tests.Queue;
 
 public class GetPar2FileDescriptorsStepTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetPar2FileDescriptors_ReadsChecksumPacketsAcrossArticles(bool corruptTail)
+    {
+        var (index, _) = Par2TestEncoder.EncodeSet("movie.mkv", new byte[8192], 4096, []);
+        var split = (int)System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(index.AsSpan(8));
+        var first = index[..split];
+        var last = index[split..];
+        if (corruptTail) last[^1] ^= 1;
+        var file = Par2File("index.par2", "first@example.com", first);
+        file.NzbFile.Segments.Add(new NzbSegment { MessageId = "last@example.com", Bytes = last.Length });
+        using var client = new Par2ServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["first@example.com"] = first,
+            ["last@example.com"] = last,
+        });
+
+        var descriptors = await GetPar2FileDescriptorsStep.GetPar2FileDescriptors([file], client);
+
+        Assert.Equal(2, client.RequestedSegmentIds.Count);
+        if (corruptTail) Assert.Empty(descriptors);
+        else Assert.NotNull(Assert.Single(descriptors).VerificationProof);
+    }
+
+    [Fact]
+    public async Task GetPar2FileDescriptors_BootstrapsVerifiedIndexWithoutTrustingPositiveMetadata()
+    {
+        var (index, _) = Par2TestEncoder.EncodeSet("movie.mkv", new byte[4096], 4096, []);
+        var file = Par2File("index.par2", "index@example.com", index);
+        file.Header!.FileSize = 1;
+        file.Header.PartSize = 1;
+        file.Header.TotalParts = 999;
+        using var client = new Par2ServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["index@example.com"] = index,
+        });
+
+        var descriptor = Assert.Single(await GetPar2FileDescriptorsStep.GetPar2FileDescriptors([file], client));
+
+        Assert.NotNull(descriptor.VerificationProof);
+        Assert.Equal("index@example.com", Assert.Single(client.RequestedSegmentIds));
+    }
+
     [Fact]
     public async Task GetPar2FileDescriptors_MergesDescriptorsFromAllIndexFiles()
     {
@@ -117,7 +162,7 @@ public class GetPar2FileDescriptorsStepTests
 
         using var client = new Par2ServingNntpClient(new Dictionary<string, byte[]>
         {
-            ["vol@example.com"] = vol,
+            ["vol@example.com"] = vol[..768000],
         });
 
         var files = new List<FetchFirstSegmentsStep.NzbFileWithFirstSegment>

@@ -274,6 +274,7 @@ public static class NestedRarExpansionStep
                 SegmentByteRanges = rangeIndex.Ranges,
                 SegmentByteRangesTrusted = rangeIndex.IsTrusted,
                 SegmentFallbackIds = segment.NzbFile.GetSegmentFallbackIds(),
+                VerificationProof = segment.NzbFile.VerificationProof,
             };
         }).ToArray();
 

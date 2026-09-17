@@ -24,6 +24,11 @@ public static class GetFileInfosStep
         var picks = files.Select(x =>
         {
             var fileDesc = GetMatchingFileDescriptor(x, hashToFileDescMap, md5);
+            if (fileDesc?.VerificationProof is { } proof && proof.IsValidFor((long)fileDesc.FileLength)
+                && x.Header is { } header
+                && ((header.TotalParts > 0 && header.TotalParts != x.NzbFile.Segments.Count)
+                    || (header.FileSize > 0 && header.FileSize != proof.FileLength)))
+                x.NzbFile.VerificationProof = proof;
             return new NamePick
             {
                 Info = GetFileInfo(x, fileDesc),

@@ -1742,6 +1742,14 @@ public class MultiProviderNntpClient(
 
     private static string NormalizeStorageGroup(string? value) => value?.Trim() ?? "";
 
+    internal IReadOnlyList<MultiConnectionNntpClient> GetPar2VerificationProviders()
+    {
+        var ordered = SelectOrderedProviders(NntpOperation.Body, out var reserved);
+        reserved?.ReleasePending(NntpOperation.Body);
+        return ordered.Where(provider => provider.GetCircuitBreakerSnapshot().State != ProviderCircuitState.Open)
+            .ToArray();
+    }
+
     private List<MultiConnectionNntpClient> SelectOrderedProviders(
         NntpOperation operation,
         out MultiConnectionNntpClient? reserved)
@@ -1751,6 +1759,9 @@ public class MultiProviderNntpClient(
             var enabled = providers
                 .Where(x => x.ProviderType != ProviderType.Disabled)
                 .Where(x => !IsOverLimit(x))
+                .Where(x => Par2VerificationReadContext.PreferredProvider is not { } preferred
+                    || ReferenceEquals(x, preferred)
+                    && x.GetCircuitBreakerSnapshot().State != ProviderCircuitState.Open)
                 .ToList();
 
             // Reading state here must not claim the half-open probe slot. IsTripped claims
