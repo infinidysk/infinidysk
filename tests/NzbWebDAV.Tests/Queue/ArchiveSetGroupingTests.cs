@@ -7,6 +7,32 @@ namespace NzbWebDAV.Tests.Queue;
 public class ArchiveSetGroupingTests
 {
     [Fact]
+    public void Resolve_PartVolumesMatchWhenContinuationPrecedesFirst()
+    {
+        var descriptors = ArchiveSetGrouping.Resolve([
+            Info("Episode.part03.rar"),
+            Info("Episode.part01.rar"),
+            Info("Episode.part02.rar"),
+            Info("Episode.part04.rar"),
+        ], new ArchiveSetIdAllocator());
+
+        Assert.Equal(4, Assert.Single(descriptors).FileInfos.Count);
+    }
+
+    [Fact]
+    public void Resolve_AmbiguousFirstPartDoesNotMergeSets()
+    {
+        var descriptors = ArchiveSetGrouping.Resolve([
+            Info("Episode.part02.rar", "first"),
+            Info("Episode.part02.rar", "second"),
+            Info("Episode.part01.rar", "ambiguous"),
+        ], new ArchiveSetIdAllocator());
+
+        Assert.Equal(3, descriptors.Count);
+        Assert.All(descriptors, descriptor => Assert.Single(descriptor.FileInfos));
+    }
+
+    [Fact]
     public void Resolve_IndependentRarBasesGetIndependentIds()
     {
         var descriptors = ArchiveSetGrouping.Resolve([
