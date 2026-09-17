@@ -1067,7 +1067,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ReconfirmationProbe_MismatchedSegmentId_KeepsCorruptRecord()
+    public async Task ReconfirmationProbe_MismatchedSegmentId_DefersHealthCheck()
     {
         var segments = NewSegmentIds(4);
         var sizes = new long[] { 10_000, 10_000, 50, 10_000 };
@@ -1080,8 +1080,9 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
 
         var row = Assert.Single(GetHealthRows(item.Id));
-        Assert.Equal(HealthCheckResult.HealthResult.Degraded, row.Result);
-        Assert.Equal([segments[2]], Assert.Single(par2.Requests));
+        Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+        Assert.Empty(par2.Requests);
         var blob = await BlobStore.ReadBlob<DavNzbFile>(ReloadItem(item.Id).FileBlobId!.Value);
         Assert.Equal([2], blob!.CorruptSegmentIndices!);
     }

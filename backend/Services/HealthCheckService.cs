@@ -2071,13 +2071,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         {
             return false;
         }
-        catch (Exception e) when (
-            !ConclusiveAvailabilityContext.IsActive
-            && e is not OutOfMemoryException)
-        {
-            Log.Debug(e, "Re-confirmation probe of recorded corrupt segment {SegmentId} failed", segmentId);
-            return false;
-        }
     }
 
     internal bool MarkHealthProgressStarted(Guid davItemId)

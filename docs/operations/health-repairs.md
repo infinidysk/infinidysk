@@ -24,9 +24,11 @@ escalation path when playback breaks. Confirmed corrupt segments are recorded an
 full-coverage health classification so those files are not reported healthy — see
 [Realtime corruption detection](../configuration/repairs.md).
 
-A segment counts as missing only when every eligible provider answered definitively; if a walk would
-otherwise conclude that the segment is missing but any provider timed out or failed to connect, the
-file is marked *Action needed* and rechecked later instead of being repaired or blocklisted.
+A segment counts as missing only when every eligible provider source is conclusively unavailable;
+cached negative results and storage-group sibling evidence can establish that without probing every
+provider. If a walk would otherwise conclude that the segment is missing but any provider timed out
+or failed to connect, the file is marked *Action needed* and rechecked later instead of being
+repaired or blocklisted.
 
 ## Health-check retention
 
