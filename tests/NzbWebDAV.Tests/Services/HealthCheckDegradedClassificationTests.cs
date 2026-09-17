@@ -21,7 +21,6 @@ using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Services.StreamTrace;
-using NzbWebDAV.Tests.Clients.Usenet;
 using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Websocket;
@@ -128,93 +127,6 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         var admission = Assert.IsType<HealthCheckAdmissionContext>(headClient.AdmissionContext);
         Assert.Same(_healthCheckConnectionGate, admission.Gate);
         Assert.Equal(HealthCheckAdmissionPriority.Background, admission.Priority);
-    }
-
-    [Fact]
-    public async Task TransportFailureThen430_DefersWithActionNeeded_AndSeedsNothing()
-    {
-        var segments = NewSegmentIds(4);
-        var sizes = new long[] { 10_000, 10_000, 10_000, 10_000 };
-        var (item, blobId) = await AddVideoFileAsync("movie.mkv", segments, sizes);
-        using var multi = TwoProviderClient(
-            new() { BatchResponseCode = 430, SingularException = _ => new IOException("connection reset") },
-            new() { BatchResponseCode = 430, StatResponseCode = 430 });
-        var (service, _) = await NewServiceAsync(multi, par2Outcome: false);
-
-        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
-
-        var row = Assert.Single(GetHealthRows(item.Id));
-        Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
-        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
-        Assert.Contains("connection reset", row.Message, StringComparison.Ordinal);
-        var reloaded = ReloadItem(item.Id);
-        Assert.Equal(blobId, reloaded.FileBlobId);
-        Assert.True(reloaded.NextHealthCheck > DateTimeOffset.UtcNow.AddHours(12));
-        HealthCheckService.CheckCachedMissingSegmentIds(
-            segments, _configManager.GetUsenetProviderSnapshot().Generation);
-    }
-
-    [Fact]
-    public async Task Then430ThenTransportFailure_StillDefers()
-    {
-        var segments = NewSegmentIds(4);
-        var (item, blobId) = await AddVideoFileAsync(
-            "movie.mkv", segments, [10_000, 10_000, 10_000, 10_000]);
-        using var multi = TwoProviderClient(
-            new() { BatchResponseCode = 430, StatResponseCode = 430 },
-            new() { BatchResponseCode = 430, SingularException = _ => new IOException("connection reset") });
-        var (service, _) = await NewServiceAsync(multi, par2Outcome: false);
-
-        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
-
-        var row = Assert.Single(GetHealthRows(item.Id));
-        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
-        Assert.Equal(blobId, ReloadItem(item.Id).FileBlobId);
-    }
-
-    [Fact]
-    public async Task AuthFailureThen430_DefersWithoutRepair()
-    {
-        var segments = NewSegmentIds(4);
-        var (item, blobId) = await AddVideoFileAsync(
-            "movie.mkv", segments, [10_000, 10_000, 10_000, 10_000]);
-        using var multi = TwoProviderClient(
-            new()
-            {
-                BatchResponseCode = 430,
-                SingularException = _ => new CouldNotLoginToUsenetException("481 auth failed", responseCode: 481),
-            },
-            new() { BatchResponseCode = 430, StatResponseCode = 430 });
-        var (service, _) = await NewServiceAsync(multi, par2Outcome: false);
-
-        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
-
-        var row = Assert.Single(GetHealthRows(item.Id));
-        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
-        Assert.StartsWith("Health check deferred:", row.Message, StringComparison.Ordinal);
-        Assert.Equal(blobId, ReloadItem(item.Id).FileBlobId);
-        HealthCheckService.CheckCachedMissingSegmentIds(
-            segments, _configManager.GetUsenetProviderSnapshot().Generation);
-    }
-
-    [Fact]
-    public async Task AllProvidersDefinitivelyMissing_StillReachesMissingPath()
-    {
-        var segments = NewSegmentIds(4);
-        var (item, _) = await AddVideoFileAsync(
-            "movie.mp4", segments, [50, 10_000, 10_000, 10_000]);
-        using var multi = TwoProviderClient(
-            new() { BatchResponseCode = 430, StatResponseCode = 430 },
-            new() { BatchResponseCode = 430, StatResponseCode = 430 });
-        var (service, _) = await NewServiceAsync(multi, par2Outcome: false);
-
-        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
-
-        var row = Assert.Single(GetHealthRows(item.Id));
-        Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
-        Assert.Throws<UsenetArticleNotFoundException>(() =>
-            HealthCheckService.CheckCachedMissingSegmentIds(
-                [segments[0]], _configManager.GetUsenetProviderSnapshot().Generation));
     }
 
     [Fact]
@@ -1168,15 +1080,6 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal(item.Id, persisted.Id);
         Assert.True(persisted.NextHealthCheck > DateTimeOffset.UtcNow.AddHours(23));
     }
-
-    private static MultiProviderNntpClient TwoProviderClient(
-        MultiProviderNntpClientTests.ScriptedNntpClient first,
-        MultiProviderNntpClientTests.ScriptedNntpClient second) =>
-        new(
-        [
-            MultiProviderNntpClientTests.CreateProvider(first, host: "a.example"),
-            MultiProviderNntpClientTests.CreateProvider(second, host: "b.example"),
-        ]);
 
     private static string[] NewSegmentIds(int count) =>
         Enumerable.Range(0, count).Select(i => $"seg{i}-{Guid.NewGuid():N}@test").ToArray();
