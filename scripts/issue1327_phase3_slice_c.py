@@ -144,12 +144,14 @@ write(
             if (!normalized.StartsWith(prefix, StringComparison.Ordinal))
                 return false;
 
-            var remainder = normalized[prefix.Length..];
-            if (string.IsNullOrWhiteSpace(remainder) || remainder.Contains('/'))
+            var remainder = normalized[prefix.Length..].TrimEnd('/');
+            if (string.IsNullOrWhiteSpace(remainder))
                 return false;
 
-            var dot = remainder.LastIndexOf('.');
-            var idText = dot > 0 ? remainder[..dot] : remainder;
+            var slash = remainder.LastIndexOf('/');
+            var fileName = slash >= 0 ? remainder[(slash + 1)..] : remainder;
+            var dot = fileName.LastIndexOf('.');
+            var idText = dot > 0 ? fileName[..dot] : fileName;
             return Guid.TryParse(idText, out davItemId);
         }
 
@@ -178,7 +180,8 @@ write(
             path.Trim().Replace('\\', '/');
 
         private static bool IsWindowsStyle(string path) =>
-            path.Contains('\\') || (path.Length >= 2 && char.IsLetter(path[0]) && path[1] == ':');
+            path.Contains('\\', StringComparison.Ordinal)
+            || (path.Length >= 2 && char.IsLetter(path[0]) && path[1] == ':');
 
         private readonly record struct CacheKey(Guid InstanceId, string LocalPath);
     }
@@ -188,6 +191,7 @@ write(
 write(
     "backend/Services/MediaServerSessionPoller.cs",
     textwrap.dedent(r'''
+    using System.Security.Cryptography;
     using System.Text.Json;
     using Microsoft.Extensions.Hosting;
     using NzbWebDAV.Clients.MediaServers;
@@ -212,7 +216,7 @@ write(
         private readonly ConfigManager _configManager;
         private readonly PlaybackSessionRegistry _registry;
         private readonly PlaybackDavItemResolver _resolver;
-        private readonly IReadOnlyDictionary<MediaServerType, IMediaPlaybackSessionSource> _sources;
+        private readonly Dictionary<MediaServerType, IMediaPlaybackSessionSource> _sources;
         private readonly Func<double> _jitter;
         private readonly Dictionary<Guid, PollSchedule> _schedules = new();
         private readonly SemaphoreSlim _tickGate = new(1, 1);
@@ -222,7 +226,12 @@ write(
             PlaybackSessionRegistry registry,
             PlaybackDavItemResolver resolver,
             IEnumerable<IMediaPlaybackSessionSource> sources)
-            : this(configManager, registry, resolver, sources, () => Random.Shared.NextDouble())
+            : this(
+                configManager,
+                registry,
+                resolver,
+                sources,
+                () => RandomNumberGenerator.GetInt32(0, 1_000_001) / 1_000_000d)
         {
         }
 
@@ -238,6 +247,12 @@ write(
             _resolver = resolver;
             _sources = sources.ToDictionary(source => source.ServerType);
             _jitter = jitter;
+        }
+
+        public override void Dispose()
+        {
+            _tickGate.Dispose();
+            base.Dispose();
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -493,7 +508,7 @@ write(
 
             var transport = reads.Select(read =>
             {
-                IReadOnlyList<AuthoritativePlaybackSession> matches = [];
+                List<AuthoritativePlaybackSession> matches = [];
                 var scope = TransportCorrelationScope.None;
 
                 var nativeMatch = playback.FirstOrDefault(session =>
@@ -748,7 +763,7 @@ write(
             var resolved = resolver.Resolve(Instance("/movies", "/unused"), new PlaybackObservation
             {
                 NativeSessionId = "s1",
-                MediaSourcePath = $"https://server.example/view/.ids/{id}.mkv",
+                MediaSourcePath = $"https://server.example/view/.ids/abcde/{id}.mkv",
             });
 
             Assert.Equal(id, resolved);
