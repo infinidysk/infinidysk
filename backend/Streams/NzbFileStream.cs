@@ -42,6 +42,7 @@ public class NzbFileStream(
     // A range in this size class is commonly an initial probe or a scrub preview.
     // Avoid draining its target segment into a pooled buffer before returning bytes.
     private const long MaximumDirectRangeBytes = 1024 * 1024;
+    private const int MaximumProvisionalSeekCorrections = 3;
     private long _position;
     private long _pendingForwardDrain;
     private bool _disposed;
@@ -262,70 +263,118 @@ public class NzbFileStream(
 
         var avg = EstimatedSegmentSize;
         UsenetArticleNotFoundException? missingProbeArticle = null;
+        var authoritative = new Dictionary<int, LongRange>();
+        var estimated = new HashSet<int>();
+
+        async ValueTask<LongRange> ProbeAsync(int guess)
+        {
+            if (authoritative.TryGetValue(guess, out var known)) return known;
+            try
+            {
+                var range = await ProbeAuthoritativeRangeAsync(fileSegmentIds[guess], guess, ct).ConfigureAwait(false);
+                authoritative[guess] = range;
+                return range;
+            }
+            catch (UsenetArticleNotFoundException e)
+            {
+                missingProbeArticle = e;
+                Log.Warning(
+                    "Seek probe hit missing article {SegmentId} (segment index {Index}) while reading {FileName}. Using estimated range.",
+                    e.SegmentId, guess, string.IsNullOrEmpty(fileName) ? "unknown" : fileName);
+            }
+            catch (OutOfMemoryException oom)
+            {
+                OomDiagnostics.LogHeapStateOnOom(oom, "seek probe");
+                throw;
+            }
+            catch (Exception e) when (articleBufferSize > 0 && !ct.IsCancellationRequested)
+            {
+                e.LogWarningKnownOrStack(
+                    "Seek probe transient failure on segment index {Index}. Using estimated range.", guess);
+            }
+
+            estimated.Add(guess);
+            var start = guess * avg;
+            return new LongRange(start, Math.Min(fileSize, start + avg));
+        }
+
         try
         {
-            return await InterpolationSearch.Find(
-                byteOffset,
-                new LongRange(0, fileSegmentIds.Length),
-                new LongRange(0, fileSize),
-                async (guess) =>
+            for (var correction = 0; ; correction++)
+            {
+                var found = await InterpolationSearch.Find(
+                    byteOffset,
+                    new LongRange(0, fileSegmentIds.Length),
+                    new LongRange(0, fileSize),
+                    ProbeAsync,
+                    ct).ConfigureAwait(false);
+
+                if (!estimated.Contains(found.FoundIndex)) return found;
+
+                var exact = await ResolveAuthoritativeRangeAsync(
+                    found.FoundIndex, missingProbeArticle, ct).ConfigureAwait(false);
+                authoritative[found.FoundIndex] = exact;
+                estimated.Remove(found.FoundIndex);
+                if (exact.Contains(byteOffset))
+                    return new InterpolationSearch.Result(found.FoundIndex, exact);
+
+                if (correction >= MaximumProvisionalSeekCorrections)
                 {
-                    try
-                    {
-                        var header = await usenetClient.GetYencHeadersAsync(fileSegmentIds[guess], ct).ConfigureAwait(false);
-                        var range = new LongRange(header.PartOffset, header.PartOffset + header.PartSize);
-
-                        // A lazy RAR part's logical length ends with its packed file
-                        // data, while its final yEnc segment can also contain trailing
-                        // archive structure. Keep the generic interpolation search
-                        // strict, but trim this known final-probe overflow so valid
-                        // tail seeks can still converge through the preceding segment.
-                        if (guess == fileSegmentIds.Length - 1 &&
-                            range.StartInclusive >= 0 &&
-                            range.StartInclusive < fileSize &&
-                            range.EndExclusive > fileSize)
-                        {
-                            range = new LongRange(range.StartInclusive, fileSize);
-                        }
-
-                        return range;
-                    }
-                    catch (UsenetArticleNotFoundException e)
-                    {
-                        // The probe segment itself is missing — fall back to a
-                        // synthetic uniform-size range so interpolation can still
-                        // converge. The actual body read of this segment (if it
-                        // turns out to be the seek target) gets a same-length gap from
-                        // MultiSegmentStream.
-                        missingProbeArticle = e;
-                        Log.Warning(
-                            "Seek probe hit missing article {SegmentId} (segment index {Index}) while reading {FileName}. Using estimated range.",
-                            e.SegmentId, guess, string.IsNullOrEmpty(fileName) ? "unknown" : fileName);
-                        var start = guess * avg;
-                        var end = Math.Min(fileSize, start + avg);
-                        return new LongRange(start, end);
-                    }
-                    catch (OutOfMemoryException oom)
-                    {
-                        OomDiagnostics.LogHeapStateOnOom(oom, "seek probe");
-                        throw;
-                    }
-                    catch (Exception e) when (articleBufferSize > 0 && !ct.IsCancellationRequested && e is not OutOfMemoryException)
-                    {
-                        e.LogWarningKnownOrStack(
-                            "Seek probe transient failure on segment index {Index}. Using estimated range.", guess);
-                        var start = guess * avg;
-                        var end = Math.Min(fileSize, start + avg);
-                        return new LongRange(start, end);
-                    }
-                },
-                ct
-            ).ConfigureAwait(false);
+                    throw new SeekPositionNotFoundException(
+                        $"Cannot establish exact segment geometry for byte position {byteOffset} in " +
+                        $"{(string.IsNullOrEmpty(fileName) ? "unknown" : fileName)} after {correction + 1} corrections.",
+                        missingProbeArticle);
+                }
+            }
         }
-        catch (SeekPositionNotFoundException e) when (missingProbeArticle is not null)
+        catch (SeekPositionNotFoundException e) when (missingProbeArticle is not null && e.InnerException is null)
         {
             throw new SeekPositionNotFoundException(e.Message, missingProbeArticle);
         }
+    }
+
+    private async Task<LongRange> ProbeAuthoritativeRangeAsync(string segmentId, int index, CancellationToken ct)
+    {
+        var header = await usenetClient.GetYencHeadersAsync(segmentId, ct).ConfigureAwait(false);
+        var range = new LongRange(header.PartOffset, header.PartOffset + header.PartSize);
+        if (index == fileSegmentIds.Length - 1 &&
+            range.StartInclusive >= 0 && range.StartInclusive < fileSize && range.EndExclusive > fileSize)
+            range = new LongRange(range.StartInclusive, fileSize);
+        return range;
+    }
+
+    private async Task<LongRange> ResolveAuthoritativeRangeAsync(
+        int index,
+        UsenetArticleNotFoundException? missingProbeArticle,
+        CancellationToken ct)
+    {
+        UsenetArticleNotFoundException? missing = missingProbeArticle;
+        try
+        {
+            return await ProbeAuthoritativeRangeAsync(fileSegmentIds[index], index, ct).ConfigureAwait(false);
+        }
+        catch (UsenetArticleNotFoundException e)
+        {
+            missing = e;
+        }
+
+        if (segmentFallbacks is { } fallbacks && index < fallbacks.Length && fallbacks[index] is { } fallbackIds)
+        {
+            foreach (var fallbackId in fallbackIds)
+            {
+                if (string.IsNullOrEmpty(fallbackId)) continue;
+                try
+                {
+                    return await ProbeAuthoritativeRangeAsync(fallbackId, index, ct).ConfigureAwait(false);
+                }
+                catch (UsenetArticleNotFoundException) { }
+            }
+        }
+
+        throw new SeekPositionNotFoundException(
+            $"Cannot establish exact geometry for segment {index} of " +
+            $"{(string.IsNullOrEmpty(fileName) ? "unknown" : fileName)}; refusing to position from an estimate.",
+            missing);
     }
 
     private static LongRange[]? ValidateAndCloneSegmentByteRanges(
@@ -454,6 +503,7 @@ public class NzbFileStream(
             readBudget,
             prefixBytes,
             rangeStart,
+            foundSegment.FoundByteRange,
             cancellationToken);
     }
 
@@ -464,12 +514,19 @@ public class NzbFileStream(
         CancellationToken cancellationToken)
     {
         var prefixBytes = rangeStart - foundSegment.FoundByteRange.StartInclusive;
+        if (prefixBytes < 0 || prefixBytes >= foundSegment.FoundByteRange.Count)
+        {
+            throw new SeekPositionNotFoundException(
+                $"Resolved segment {foundSegment.FoundIndex} range {foundSegment.FoundByteRange} does not contain " +
+                $"byte position {rangeStart}.");
+        }
         return GetPositionedMultiSegmentStreamAsync(
             foundSegment.FoundIndex,
             failFastOnFirstSegment: false,
             readBudget,
             prefixBytes,
             rangeStart,
+            foundSegment.FoundByteRange,
             cancellationToken);
     }
 
@@ -479,6 +536,7 @@ public class NzbFileStream(
         long? readBudget,
         long prefixBytes,
         long rangeStart,
+        LongRange? expectedFirstSegmentRange,
         CancellationToken cancellationToken)
     {
         var initialBatchPlan = TryCreateInitialBatchPlan(
@@ -514,6 +572,7 @@ public class NzbFileStream(
                         cancellationToken)
                     {
                         InitialBatchPlan = initialBatchPlan,
+                        ExpectedFirstSegmentRange = expectedFirstSegmentRange,
                     },
                     prefixBytes)
                 .ConfigureAwait(false);

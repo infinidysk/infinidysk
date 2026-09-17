@@ -4,6 +4,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Services.StreamTrace;
 using Serilog;
@@ -27,6 +28,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly bool _failFastOnFirstSegment;
     private readonly HashSet<string>? _knownCorruptSegmentIds;
     private readonly IReadOnlySet<int>? _knownMissingSegmentIndices;
+    private readonly LongRange? _expectedFirstSegmentRange;
     private readonly byte[] _scratch = new byte[16];
     private Stream? _stream;
     private int _currentIndex;
@@ -57,7 +59,8 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         long? firstSegmentFileOffset = null,
         bool failFastOnFirstSegment = false,
         HashSet<string>? knownCorruptSegmentIds = null,
-        IReadOnlySet<int>? knownMissingSegmentIndices = null)
+        IReadOnlySet<int>? knownMissingSegmentIndices = null,
+        LongRange? expectedFirstSegmentRange = null)
     {
         _segmentIds = segmentIds;
         _segmentFallbacks = segmentFallbacks;
@@ -69,6 +72,9 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         _failFastOnFirstSegment = failFastOnFirstSegment;
         _knownCorruptSegmentIds = knownCorruptSegmentIds;
         _knownMissingSegmentIndices = knownMissingSegmentIndices;
+        _expectedFirstSegmentRange = expectedFirstSegmentRange;
+        if (expectedFirstSegmentRange is { } expected)
+            _segmentSizes.RecordExactSize(0, expected.Count);
     }
 
     // Positioning is distinct from emission. If a candidate BODY is replaced
@@ -377,6 +383,11 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         try
         {
             await SegmentResponseValidator.ThrowOnSegmentIdMismatchAsync(segmentId, body).ConfigureAwait(false);
+            if (!await MatchesPositioningGeometryAsync(stream, segmentIndex, cancellationToken).ConfigureAwait(false))
+            {
+                await DisposeBodyStreamAsync(stream).ConfigureAwait(false);
+                return null;
+            }
             if (!await SegmentResponseValidator.IsFallbackPartSizeCompatibleAsync(
                     stream, _segmentSizes, segmentIndex, cancellationToken).ConfigureAwait(false))
             {
@@ -873,6 +884,13 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                 await SegmentResponseValidator
                     .ThrowOnSegmentIdMismatchAsync(fallbackId, body)
                     .ConfigureAwait(false);
+                if (!await MatchesPositioningGeometryAsync(
+                        fallbackStream!, segmentIndex, cancellationToken).ConfigureAwait(false))
+                {
+                    await DisposeBodyStreamAsync(fallbackStream).ConfigureAwait(false);
+                    fallbackStream = null;
+                    continue;
+                }
                 if (!await SegmentResponseValidator.IsFallbackPartSizeCompatibleAsync(
                         fallbackStream!, _segmentSizes, segmentIndex, cancellationToken)
                         .ConfigureAwait(false))
@@ -932,9 +950,35 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         ThrowIfPlaybackFailFast();
         using (FetchAttributionContext.Begin(_fileName))
         {
-            return await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
+            var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
                 .ConfigureAwait(false);
+            if (!await MatchesPositioningGeometryAsync(
+                    response.Stream!, _openSegmentIndex, cancellationToken).ConfigureAwait(false))
+            {
+                await DisposeBodyStreamAsync(response.Stream).ConfigureAwait(false);
+                throw new SeekPositionNotFoundException(
+                    $"BODY geometry for segment {_openSegmentIndex} of {_fileName} does not match " +
+                    $"the expected positioning range {_expectedFirstSegmentRange}.");
+            }
+
+            return response;
         }
+    }
+
+    private async Task<bool> MatchesPositioningGeometryAsync(
+        Stream stream,
+        int segmentIndex,
+        CancellationToken cancellationToken)
+    {
+        if (segmentIndex != 0 || _expectedFirstSegmentRange is not { } expected)
+            return true;
+        if (stream is not YencStream yenc)
+            return false;
+        var header = await yenc.GetYencHeadersAsync(cancellationToken).ConfigureAwait(false);
+        if (header is null)
+            return false;
+        var actual = new LongRange(header.PartOffset, header.PartOffset + header.PartSize);
+        return actual == expected;
     }
 
     private async Task DisposeOpenBodyAsync()

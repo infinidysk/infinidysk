@@ -7,6 +7,7 @@ using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models;
 using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Services.StreamTrace;
@@ -248,6 +249,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         CancellationToken CancellationToken)
     {
         internal InitialBodyBatchPlan? InitialBatchPlan { get; init; }
+        internal LongRange? ExpectedFirstSegmentRange { get; init; }
     }
 
     /// <summary>
@@ -566,7 +568,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             options.FirstSegmentFileOffset,
             options.FailFastOnFirstSegment,
             options.KnownCorruptSegmentIds,
-            firstKnownMissing);
+            firstKnownMissing,
+            options.ExpectedFirstSegmentRange);
 #pragma warning restore CA2000
 
         if (!remainderPlan.NeedsRemainder)
