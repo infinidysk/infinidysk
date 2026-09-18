@@ -85,6 +85,10 @@ public sealed class RcloneImportService
                     $"Could not read the VFS settings for '{mountPoint.MountPoint}'; " +
                     "InfiniDysk's defaults were used for it instead.");
             }
+            else
+            {
+                warnings.AddRange(RcloneImportTranslator.GetImportWarnings(stats.Options));
+            }
 
             mounts.Add(RcloneImportTranslator.Translate(mountPoint, stats.Success ? stats.Options : null));
         }

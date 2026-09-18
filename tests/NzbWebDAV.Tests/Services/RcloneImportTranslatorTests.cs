@@ -69,6 +69,17 @@ public class RcloneImportTranslatorTests
     }
 
     [Fact]
+    public void Translate_FallsBackToOffForAnUnknownCacheMode()
+    {
+        var options = TunedOptions();
+        options.CacheMode = "future-mode";
+
+        var mount = RcloneImportTranslator.Translate(LiveMount(), options);
+
+        Assert.Equal(RcloneVfsCacheMode.Off, mount.VfsCacheMode);
+    }
+
+    [Fact]
     public void Translate_PreservesLinksBecauseSymlinkImportsDependOnIt()
     {
         var mount = RcloneImportTranslator.Translate(LiveMount(), TunedOptions());
@@ -177,6 +188,22 @@ public class RcloneImportTranslatorTests
 
         Assert.Null(mount.VfsCacheMaxSizeBytes);
         Assert.Equal(TimeSpan.FromDays(7), mount.DirCacheTime);
+    }
+
+    [Fact]
+    public void GetImportWarnings_ExplainsValuesThatCannotBeRepresented()
+    {
+        var options = TunedOptions();
+        options.CacheMode = "future-mode";
+        options.CacheMaxAge = -1;
+        options.ReadAhead = -1;
+
+        var warnings = RcloneImportTranslator.GetImportWarnings(options);
+
+        Assert.Equal(3, warnings.Count);
+        Assert.Contains(warnings, warning => warning.Contains("cache mode", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(warnings, warning => warning.Contains("cache age", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(warnings, warning => warning.Contains("read-ahead", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
