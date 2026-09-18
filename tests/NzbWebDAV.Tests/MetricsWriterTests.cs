@@ -56,21 +56,30 @@ public class MetricsWriterTests
     public async Task SuccessfulFlush_ResetsFailureCount()
     {
         var databasePath = Path.Join(Path.GetTempPath(), $"nzbdav-metrics-writer-{Guid.NewGuid():N}.sqlite");
+        var invalidParent = Path.GetTempFileName();
         try
         {
-            var options = new DbContextOptionsBuilder<MetricsDbContext>()
+            var invalidOptions = new DbContextOptionsBuilder<MetricsDbContext>()
+                .UseSqlite($"Data Source={Path.Join(invalidParent, "metrics.sqlite")}")
+                .Options;
+            var validOptions = new DbContextOptionsBuilder<MetricsDbContext>()
                 .UseSqlite($"Data Source={databasePath};Pooling=False")
                 .Options;
-            await using (var context = new MetricsDbContext(options))
+            await using (var context = new MetricsDbContext(validOptions))
                 await context.Database.MigrateAsync();
 
-            var writer = new MetricsWriter(() => new MetricsDbContext(options));
+            Func<MetricsDbContext> contextFactory = () => new MetricsDbContext(invalidOptions);
+            var writer = new MetricsWriter(() => contextFactory());
             writer.RecordFetch(new SegmentFetch
             {
                 At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 Provider = "test",
                 Status = SegmentFetch.FetchStatus.Ok,
             });
+            await Assert.ThrowsAnyAsync<Exception>(() => writer.FlushNowAsync());
+            Assert.NotEqual(0, writer.ConsecutiveFlushFailures);
+
+            contextFactory = () => new MetricsDbContext(validOptions);
             await writer.FlushNowAsync();
             Assert.Equal(0, writer.ConsecutiveFlushFailures);
             Assert.Null(writer.Stats.LastFlushError);
@@ -80,6 +89,7 @@ public class MetricsWriterTests
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             foreach (var f in new[] { databasePath, databasePath + "-wal", databasePath + "-shm" })
                 if (File.Exists(f)) File.Delete(f);
+            File.Delete(invalidParent);
         }
     }
 }

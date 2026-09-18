@@ -97,10 +97,12 @@ internal static class MetricsDatabaseRecovery
     internal static bool Quarantine(string databasePath, IReadOnlyList<string> findings)
     {
         var target = databasePath + QuarantineSuffix(DateTimeOffset.UtcNow);
+        var primaryMoved = false;
         try
         {
             SqliteConnection.ClearAllPools();
             File.Move(databasePath, target);
+            primaryMoved = true;
             foreach (var sidecar in new[] { "-wal", "-shm", "-journal" })
             {
                 if (File.Exists(databasePath + sidecar))
@@ -109,8 +111,16 @@ internal static class MetricsDatabaseRecovery
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            Log.Error(ex, "Metrics database at {Path} is corrupt but could not be quarantined", databasePath);
-            return false;
+            if (!primaryMoved)
+            {
+                Log.Error(ex, "Metrics database at {Path} is corrupt but could not be quarantined", databasePath);
+                return false;
+            }
+
+            Log.Warning(
+                ex,
+                "Metrics database at {Path} was quarantined, but one or more sidecars could not be moved",
+                databasePath);
         }
 
         Log.Error(
