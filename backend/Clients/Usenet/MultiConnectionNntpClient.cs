@@ -1289,14 +1289,8 @@ public class MultiConnectionNntpClient(
         Task callbackCompletion,
         CancellationTokenSource? attemptCts)
     {
-        try
-        {
-            await BatchLifecycle.ObserveAllAsync(transportCompletion, callbackCompletion).ConfigureAwait(false);
-        }
-        finally
-        {
-            attemptCts?.Dispose();
-        }
+        using var _ = attemptCts;
+        await BatchLifecycle.ObserveAllAsync(transportCompletion, callbackCompletion).ConfigureAwait(false);
     }
 
     private async Task<UsenetDecodedBodyResponse> RecordSuccessfulResponseAsync(

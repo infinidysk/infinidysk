@@ -67,7 +67,7 @@ public sealed class MultiConnectionBatchLifecycleTests
         });
         using var queueCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var batches = new List<UsenetDecodedBodyBatch>();
-        var registrations = new List<CancellationTokenRegistration>();
+        using var registrations = new CancellationRegistrationScope();
         var recorder = new ArticleBodyCompletionRecorder();
         try
         {
@@ -108,10 +108,21 @@ public sealed class MultiConnectionBatchLifecycleTests
                 connection.FireCapturedCallback(ArticleBodyResult.Cancelled);
                 connection.CompleteProducer();
             }
-            foreach (var registration in registrations)
-                registration.Dispose();
             foreach (var batch in batches)
                 await batch.DrainAsync();
+        }
+    }
+
+    private sealed class CancellationRegistrationScope : IDisposable
+    {
+        private readonly List<CancellationTokenRegistration> registrations = [];
+
+        public void Add(CancellationTokenRegistration registration) => registrations.Add(registration);
+
+        public void Dispose()
+        {
+            foreach (var registration in registrations)
+                registration.Dispose();
         }
     }
 
