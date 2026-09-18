@@ -1,1 +1,1 @@
-Temporary Phase 4 post-upstream validation trigger. Remove before completion.
+Temporary Phase 4 final post-regeneration validation trigger. Remove before completion.
