@@ -115,6 +115,21 @@ public sealed class PlaybackSessionRegistry
         _authorities.TryRemove(instanceId, out _);
     }
 
+    public bool TryGetNativeDavItemId(string playerSession, out Guid davItemId)
+    {
+        davItemId = Guid.Empty;
+        if (string.IsNullOrWhiteSpace(playerSession))
+            return false;
+
+        if (!_sessions.TryGetValue(
+                new PlaybackSessionKey(NativeExploreInstanceId, playerSession),
+                out var session))
+            return false;
+
+        davItemId = session.DavItemId;
+        return davItemId != Guid.Empty;
+    }
+
     public void UpsertNative(
         string playerSession,
         Guid davItemId,

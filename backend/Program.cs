@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -339,6 +339,7 @@ public sealed partial class Program
                 .AddHostedService<LogBroadcaster>()
                 .AddSingleton<ActiveReadRegistry>()
                 .AddSingleton<PlaybackSessionRegistry>()
+                .AddSingleton<NativePlaybackSessionService>()
                 .AddSingleton<PlaybackDavItemResolver>()
                 .AddSingleton<NzbWebDAV.Clients.MediaServers.IMediaPlaybackSessionSource, NzbWebDAV.Clients.MediaServers.PlexPlaybackSessionSource>()
                 .AddSingleton<NzbWebDAV.Clients.MediaServers.IMediaPlaybackSessionSource, NzbWebDAV.Clients.MediaServers.EmbyPlaybackSessionSource>()

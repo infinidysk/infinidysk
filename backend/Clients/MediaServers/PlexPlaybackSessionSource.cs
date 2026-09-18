@@ -1,5 +1,4 @@
 
-using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using NzbWebDAV.Config;
@@ -9,10 +8,7 @@ namespace NzbWebDAV.Clients.MediaServers;
 
 public sealed class PlexPlaybackSessionSource : IMediaPlaybackSessionSource
 {
-    private static readonly HttpClient SharedClient = new(new SocketsHttpHandler
-    {
-        AutomaticDecompression = DecompressionMethods.All,
-    });
+    private static readonly HttpClient SharedClient = new(MediaServerHttp.CreateSessionHandler());
     private readonly HttpClient _client;
 
     public PlexPlaybackSessionSource() : this(SharedClient) { }

@@ -8,6 +8,14 @@ namespace NzbWebDAV.Tests.Clients.MediaServers;
 public class MediaPlaybackSessionSourceTests
 {
     [Fact]
+    public void SessionHttpHandler_DoesNotAutomaticallyFollowRedirects()
+    {
+        using var handler = MediaServerHttp.CreateSessionHandler();
+
+        Assert.False(handler.AllowAutoRedirect);
+    }
+
+    [Fact]
     public void PlexParser_NormalizesSessionStateProgressAndPath()
     {
         using var document = JsonDocument.Parse("""

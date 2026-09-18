@@ -124,6 +124,30 @@ public class ActiveReadRegistry
         if (davItemId is { } resolvedId) entry.DavItemId = resolvedId;
     }
 
+    public bool TryResolveDavItemIdForPlayerSession(string playerSession, out Guid davItemId)
+    {
+        davItemId = Guid.Empty;
+        if (string.IsNullOrWhiteSpace(playerSession))
+            return false;
+
+        var cutoff = DateTimeOffset.UtcNow - ActivityWindow;
+        var matches = _entries.Values
+            .Where(entry =>
+                entry.LastActivityAt >= cutoff
+                && entry.DavItemId.HasValue
+                && string.Equals(entry.PlayerSession, playerSession, StringComparison.Ordinal))
+            .Select(entry => entry.DavItemId!.Value)
+            .Distinct()
+            .Take(2)
+            .ToList();
+
+        if (matches.Count != 1)
+            return false;
+
+        davItemId = matches[0];
+        return true;
+    }
+
     public IReadOnlyList<Entry> Snapshot()
     {
         var cutoff = DateTimeOffset.UtcNow - ActivityWindow;

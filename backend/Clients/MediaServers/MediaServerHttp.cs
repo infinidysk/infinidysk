@@ -1,4 +1,5 @@
 
+using System.Net;
 using System.Text.Json;
 
 namespace NzbWebDAV.Clients.MediaServers;
@@ -6,6 +7,12 @@ namespace NzbWebDAV.Clients.MediaServers;
 internal static class MediaServerHttp
 {
     private const int MaxSessionResponseBytes = 4 * 1024 * 1024;
+
+    internal static SocketsHttpHandler CreateSessionHandler() => new()
+    {
+        AutomaticDecompression = DecompressionMethods.All,
+        AllowAutoRedirect = false,
+    };
 
     public static Uri Endpoint(string baseUrl, string relativePath) =>
         new(baseUrl.TrimEnd('/') + "/" + relativePath.TrimStart('/'), UriKind.Absolute);

@@ -22,4 +22,23 @@ public class ActiveReadDavItemIdentityTests
         Assert.Equal("friendly.mkv", entry.FileName);
         Assert.Equal(200, entry.FileSize);
     }
+
+    [Fact]
+    public void PlayerSessionIdentity_FailsClosedWhenAssociationIsAmbiguous()
+    {
+        var registry = new ActiveReadRegistry();
+        var first = Guid.NewGuid();
+        registry.GetOrCreate(
+            "/.ids/one", "client", "one.mkv", 100,
+            playerSession: "player-1", davItemId: first);
+
+        Assert.True(registry.TryResolveDavItemIdForPlayerSession("player-1", out var resolved));
+        Assert.Equal(first, resolved);
+
+        registry.GetOrCreate(
+            "/.ids/two", "client", "two.mkv", 100,
+            playerSession: "player-1", davItemId: Guid.NewGuid());
+
+        Assert.False(registry.TryResolveDavItemIdForPlayerSession("player-1", out _));
+    }
 }
