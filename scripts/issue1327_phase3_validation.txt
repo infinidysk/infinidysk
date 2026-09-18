@@ -1,0 +1,1 @@
+Temporary broad validation trigger for issue #1327 Phase 3 after OpenAPI refresh. Remove after CI completes.
