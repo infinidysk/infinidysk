@@ -16,6 +16,61 @@ namespace NzbWebDAV.Tests.Tasks;
 [Collection(nameof(BaseTaskCollection))]
 public class RemoveUnlinkedFilesTaskTests
 {
+    [Fact]
+    public async Task ContentionRetry_HealthyOperationCanOutlastContentionBudget()
+    {
+        var result = await RemoveUnlinkedFilesTask.ExecuteWithContentionRetryAsync(
+            "linked-file staging",
+            async token =>
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(100), token);
+                return 42;
+            },
+            CancellationToken.None,
+            TimeSpan.Zero);
+
+        Assert.Equal(42, result);
+    }
+
+    [Fact]
+    public async Task ContentionRetry_ActualContentionStartsBudget()
+    {
+        var contention = new Microsoft.Data.Sqlite.SqliteException("database is locked", 5);
+        var attempts = 0;
+
+        var exception = await Assert.ThrowsAsync<NzbWebDAV.Exceptions.CleanupContentionException>(
+            () => RemoveUnlinkedFilesTask.ExecuteWithContentionRetryAsync<int>(
+                "linked-file staging",
+                token =>
+                {
+                    attempts++;
+                    return Task.FromException<int>(contention);
+                },
+                CancellationToken.None,
+                TimeSpan.Zero));
+
+        Assert.Equal(1, attempts);
+        Assert.Same(contention, exception.InnerException);
+    }
+
+    [Fact]
+    public async Task ContentionRetry_CallerCancellationRemainsCancellation()
+    {
+        using var cancellation = new CancellationTokenSource();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => RemoveUnlinkedFilesTask.ExecuteWithContentionRetryAsync(
+                "linked-file staging",
+                async token =>
+                {
+                    cancellation.Cancel();
+                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                    return 0;
+                },
+                cancellation.Token,
+                TimeSpan.Zero));
+    }
+
     [Theory]
     [InlineData(DateTimeKind.Local)]
     [InlineData(DateTimeKind.Unspecified)]
