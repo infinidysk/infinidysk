@@ -265,6 +265,7 @@ public class NzbFileStream(
         UsenetArticleNotFoundException? missingProbeArticle = null;
         var authoritative = new Dictionary<int, (LongRange Range, bool WasClippedAtFileEnd)>();
         var estimated = new HashSet<int>();
+        var lastEstimatedIndex = -1;
 
         async ValueTask<LongRange> ProbeAsync(int guess)
         {
@@ -294,6 +295,7 @@ public class NzbFileStream(
             }
 
             estimated.Add(guess);
+            lastEstimatedIndex = guess;
             var start = guess * avg;
             var end = guess == fileSegmentIds.Length - 1
                 ? fileSize
@@ -305,12 +307,25 @@ public class NzbFileStream(
         {
             for (var correction = 0; ; correction++)
             {
-                var found = await InterpolationSearch.Find(
-                    byteOffset,
-                    new LongRange(0, fileSegmentIds.Length),
-                    new LongRange(0, fileSize),
-                    ProbeAsync,
-                    ct).ConfigureAwait(false);
+                InterpolationSearch.Result found;
+                try
+                {
+                    found = await InterpolationSearch.Find(
+                        byteOffset,
+                        new LongRange(0, fileSegmentIds.Length),
+                        new LongRange(0, fileSize),
+                        ProbeAsync,
+                        ct).ConfigureAwait(false);
+                }
+                catch (SeekPositionNotFoundException) when (
+                    lastEstimatedIndex >= 0 && estimated.Contains(lastEstimatedIndex))
+                {
+                    found = new InterpolationSearch.Result(
+                        lastEstimatedIndex,
+                        authoritative.TryGetValue(lastEstimatedIndex, out var lastResolved)
+                            ? lastResolved.Range
+                            : new LongRange(lastEstimatedIndex * avg, Math.Min(fileSize, (lastEstimatedIndex + 1) * avg)));
+                }
 
                 if (!estimated.Contains(found.FoundIndex))
                 {
@@ -320,9 +335,11 @@ public class NzbFileStream(
                 }
 
                 var exact = await ResolveAuthoritativeRangeAsync(
-                    found.FoundIndex, missingProbeArticle, ct).ConfigureAwait(false);
+                    found.FoundIndex, byteOffset, missingProbeArticle, ct).ConfigureAwait(false);
                 authoritative[found.FoundIndex] = exact;
                 estimated.Remove(found.FoundIndex);
+                if (found.FoundIndex == lastEstimatedIndex)
+                    lastEstimatedIndex = -1;
                 if (exact.Range.Contains(byteOffset))
                     return new InterpolationSearch.Result(
                         found.FoundIndex,
@@ -365,14 +382,19 @@ public class NzbFileStream(
 
     private async Task<(LongRange Range, bool WasClippedAtFileEnd)> ResolveAuthoritativeRangeAsync(
         int index,
+        long byteOffset,
         UsenetArticleNotFoundException? missingProbeArticle,
         CancellationToken ct)
     {
         UsenetArticleNotFoundException? missing = missingProbeArticle;
         Exception? transientProbeFailure = null;
+        (LongRange Range, bool WasClippedAtFileEnd)? firstNonContaining = null;
         try
         {
-            return await ProbeAuthoritativeRangeAsync(fileSegmentIds[index], index, ct).ConfigureAwait(false);
+            var primary = await ProbeAuthoritativeRangeAsync(fileSegmentIds[index], index, ct).ConfigureAwait(false);
+            if (primary.Range.Contains(byteOffset))
+                return primary;
+            firstNonContaining = primary;
         }
         catch (UsenetArticleNotFoundException e)
         {
@@ -392,7 +414,10 @@ public class NzbFileStream(
             {
                 try
                 {
-                    return await ProbeAuthoritativeRangeAsync(fallbackId, index, ct).ConfigureAwait(false);
+                    var fallback = await ProbeAuthoritativeRangeAsync(fallbackId, index, ct).ConfigureAwait(false);
+                    if (fallback.Range.Contains(byteOffset))
+                        return fallback;
+                    firstNonContaining ??= fallback;
                 }
                 catch (UsenetArticleNotFoundException e) { missing = e; }
                 catch (Exception e) when (!ct.IsCancellationRequested && e.IsTransientTransportException())
@@ -407,6 +432,9 @@ public class NzbFileStream(
 
         if (transientProbeFailure is not null)
             ExceptionDispatchInfo.Capture(transientProbeFailure).Throw();
+
+        if (firstNonContaining is { } nonContaining)
+            return nonContaining;
 
         throw new SeekPositionNotFoundException(
             $"Cannot establish exact geometry for segment {index} of " +

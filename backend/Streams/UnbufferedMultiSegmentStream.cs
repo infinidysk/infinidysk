@@ -436,9 +436,21 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
     {
         remaining = 0;
         if (_openSegmentIndex < 0) return false;
-        if (!_segmentSizes.TryGetExactSize(_openSegmentIndex, out var exact)) return false;
-        remaining = Math.Max(0, exact - _openSegmentBytes);
-        return true;
+        var hasExactSize = _segmentSizes.TryGetExactSize(_openSegmentIndex, out var exact);
+        if (hasExactSize)
+            remaining = Math.Max(0, exact - _openSegmentBytes);
+
+        if (_expectedFirstSegmentRangeWasClippedAtFileEnd &&
+            _openSegmentIndex == 0 &&
+            _expectedFirstSegmentRange is { } expected)
+        {
+            var clippedRemaining = Math.Max(0, expected.Count - _openSegmentBytes);
+            if (!hasExactSize || clippedRemaining < remaining)
+                remaining = clippedRemaining;
+            hasExactSize = true;
+        }
+
+        return hasExactSize;
     }
 
     private async Task FinishOpenSegmentAsync()
