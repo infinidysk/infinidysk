@@ -2,126 +2,98 @@
 import { cleanup, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ActiveRead } from "~/clients/backend-client.server";
-import { LiveReadsPanel, LiveReadsPanelContent, type LiveReadRow } from "./live-reads-panel";
+import {
+  LiveReadsPanel,
+  LiveReadsPanelContent,
+  type LiveReadRow,
+} from "./live-reads-panel";
+import type {
+  AuthoritativePlaybackSession,
+  CurrentPlaybackActivity,
+  CurrentTransportActivity,
+  PlaybackAuthoritySnapshot,
+} from "./current-activity";
+
+const NOW = "2026-09-18T04:00:00.000Z";
 
 function fixtureRead(
   id: string,
   fileName: string,
-  path: string,
-  currentOffset: number,
-  fileSize: number,
-  clientUserAgent: string,
-  clientIp: string,
-  providers: ActiveRead["providers"],
-  overrides?: { startedMinutesAgo?: number; bytesRead?: number; bytesFetched?: number },
-): ActiveRead {
-  const now = Date.now();
+  overrides: Partial<CurrentTransportActivity> = {},
+): CurrentTransportActivity {
   return {
     id,
+    davItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     fileName,
-    path,
-    startedAt: now - (overrides?.startedMinutesAgo ?? 20) * 60_000,
-    lastActivityAt: now,
-    bytesRead: overrides?.bytesRead ?? currentOffset,
-    bytesFetched: overrides?.bytesFetched ?? 0,
-    currentOffset,
-    fileSize,
-    clientUserAgent,
-    clientIp,
-    providers,
+    path: `/completed-symlinks/movies/${fileName}`,
+    startedAt: "2026-09-18T03:40:00.000Z",
+    lastActivityAt: NOW,
+    bytesRead: 1_100_000_000,
+    bytesFetched: 900_000_000,
+    sourceOffset: 1_100_000_000,
+    fileSize: 3_800_000_000,
+    clientIp: "192.168.1.10",
+    clientUserAgent: "rclone/1.73",
+    playerSession: null,
+    correlationScope: "None",
+    matchingPlaybackSessionCount: 0,
+    shared: false,
+    providers: [{ host: "news.eweka.nl", nickname: "Eweka", segments: 17 }],
+    ...overrides,
   };
 }
 
-function historyAround(rate: number, samples = 45): number[] {
-  return Array.from({ length: samples }, (_, i) =>
-    Math.max(0, rate * (0.72 + 0.55 * Math.abs(Math.sin(i / 4)))),
-  );
+function fixtureSession(
+  nativeSessionId: string,
+  title: string,
+  overrides: Partial<AuthoritativePlaybackSession> = {},
+): AuthoritativePlaybackSession {
+  return {
+    key: {
+      sourceInstanceId: "11111111-1111-1111-1111-111111111111",
+      nativeSessionId,
+    },
+    sourceInstanceName: "Plex Home",
+    sourceType: "Plex",
+    nativeSessionId,
+    userName: "alice",
+    clientName: "Plex",
+    deviceName: "Living Room Shield",
+    itemId: "plex-item-1",
+    title,
+    mediaType: "movie",
+    seriesName: null,
+    seasonNumber: null,
+    episodeNumber: null,
+    state: "Playing",
+    positionMs: 4_462_000,
+    durationMs: 9_948_000,
+    deliveryMethod: "DirectPlay",
+    mediaSourceId: "source-1",
+    mediaSourcePath: "/movies/Dune Part Two.mkv",
+    davItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    lastConfirmedAt: NOW,
+    freshness: "Fresh",
+    ...overrides,
+  };
 }
 
-const fixtureRows: LiveReadRow[] = [
-  {
-    read: fixtureRead(
-      "a1b2c3d4-0001-4000-8000-000000000001",
-      "The.Prestige.2006.1080p.BluRay.x264-GRP.mkv",
-      "/completed-symlinks/movies/The.Prestige.2006.1080p.BluRay.x264-GRP.mkv",
-      3_200_000_000,
-      8_400_000_000,
-      "Plex/1.107.0",
-      "192.168.1.20",
-      [
-        { host: "news.eweka.nl", nickname: "Eweka", segments: 41 },
-        { host: "news.newshosting.com", nickname: "Newshosting", segments: 18 },
-      ],
-      { startedMinutesAgo: 84, bytesFetched: 3_800_000_000 },
-    ),
-    rate: 7_200_000,
-    history: historyAround(7_200_000),
-  },
-  {
-    read: fixtureRead(
-      "a1b2c3d4-0002-4000-8000-000000000002",
-      "The.Last.of.Us.S01E03.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv",
-      "/completed-symlinks/tv/The.Last.of.Us.S01E03.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv",
-      412_000_000,
-      1_100_000_000,
-      "Infuse/8.0",
-      "192.168.1.34",
-      [{ host: "news.eweka.nl", nickname: "Eweka", segments: 22 }],
-      { startedMinutesAgo: 20, bytesFetched: 600_000_000 },
-    ),
-    rate: 4_100_000,
-    history: historyAround(4_100_000),
-  },
-  {
-    read: fixtureRead(
-      "a1b2c3d4-0003-4000-8000-000000000003",
-      "Dune.Part.Two.2024.2160p.WEB-DL.DDP5.1.Atmos.H.265-GRP.mkv",
-      "/completed-symlinks/movies/Dune.Part.Two.2024.2160p.WEB-DL.DDP5.1.Atmos.H.265-GRP.mkv",
-      1_100_000_000,
-      3_800_000_000,
-      "VLC/3.0.20",
-      "192.168.1.51",
-      [
-        { host: "news.newshosting.com", nickname: "Newshosting", segments: 17 },
-        { host: "news.usenetserver.com", nickname: "UsenetServer", segments: 9 },
-      ],
-      { startedMinutesAgo: 33, bytesRead: 2_900_000_000, bytesFetched: 2_950_000_000 },
-    ),
-    rate: 2_800_000,
-    history: historyAround(2_800_000),
-  },
-  {
-    read: fixtureRead(
-      "a1b2c3d4-0004-4000-8000-000000000004",
-      "Severance.S02E01.2160p.ATVP.WEB-DL.DDP5.1.H.265-GRP.mkv",
-      "/completed-symlinks/tv/Severance.S02E01.2160p.ATVP.WEB-DL.DDP5.1.H.265-GRP.mkv",
-      218_000_000,
-      890_000_000,
-      "rclone/1.68",
-      "192.168.1.10",
-      [{ host: "news.usenetserver.com", nickname: "UsenetServer", segments: 13 }],
-      { startedMinutesAgo: 5, bytesFetched: 300_000_000 },
-    ),
-    rate: 1_900_000,
-    history: historyAround(1_900_000),
-  },
-  {
-    read: fixtureRead(
-      "a1b2c3d4-0005-4000-8000-000000000005",
-      "9f2c7a1e4b.mkv",
-      "/completed-symlinks/movies/Interstellar.2014.1080p.BluRay.x264-GRP/9f2c7a1e4b.mkv",
-      900_000_000,
-      5_200_000_000,
-      "Kodi/21.0",
-      "192.168.1.64",
-      [{ host: "news.eweka.nl", nickname: "Eweka", segments: 30 }],
-      { startedMinutesAgo: 12, bytesFetched: 1_200_000_000 },
-    ),
-    rate: 5_400_000,
-    history: historyAround(5_400_000),
-  },
-];
+function playback(
+  nativeSessionId: string,
+  title: string,
+  overrides: Partial<CurrentPlaybackActivity> = {},
+): CurrentPlaybackActivity {
+  return {
+    session: fixtureSession(nativeSessionId, title),
+    transportReadIds: [],
+    hasSharedFileTransport: false,
+    ...overrides,
+  };
+}
+
+function row(read: CurrentTransportActivity, rate = 7_200_000): LiveReadRow {
+  return { read, rate, history: [rate * 0.8, rate, rate * 1.1] };
+}
 
 describe("LiveReadsPanel", () => {
   afterEach(() => {
@@ -129,117 +101,194 @@ describe("LiveReadsPanel", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders the empty state when there are no active reads", () => {
+  it("renders a truthful empty state", () => {
     const markup = renderToStaticMarkup(<LiveReadsPanel />);
 
     expect(markup).toContain("Right now");
-    expect(markup).toContain("No files are being read right now.");
+    expect(markup).toContain("No confirmed playback or active InfiniDysk reads right now.");
   });
 
-  it("renders each active read as a full-width row", () => {
-    const markup = renderToStaticMarkup(<LiveReadsPanelContent rows={fixtureRows} />);
+  it("renders authoritative playback before transport-only reads with typed counts", () => {
+    const playing = playback("plex-1", "Dune: Part Two");
+    const paused = playback("plex-2", "Arrival", {
+      session: fixtureSession("plex-2", "Arrival", { state: "Paused" }),
+    });
+    const read = row(fixtureRead("read-1", "Scanner.Read.mkv"));
 
-    expect(markup).toContain("5 active");
-    expect(markup).not.toContain("h-[21rem]");
-    expect(markup).not.toContain("sm:h-[30rem]");
-    expect(markup).toContain("overflow-x-hidden");
-    expect(markup).toContain("pr-4");
-    expect(markup).toContain("The.Prestige.2006.1080p.BluRay.x264-GRP.mkv");
-    expect(markup).toContain("Severance.S02E01.2160p.ATVP.WEB-DL.DDP5.1.H.265-GRP.mkv");
-    // Speed, progress, and computed time left
-    expect(markup).toContain("7.2 MB/s");
-    expect(markup).toContain("text-secondary");
-    expect(markup).toContain("3.2 GB");
-    expect(markup).toContain("/ 8.4 GB");
-    expect(markup).toContain("12m left");
-    expect(markup).toContain("6m left");
-    // Meta line: client and provider badges
-    expect(markup).toContain("Plex");
-    expect(markup).toContain("192.168.1.20");
-    expect(markup).toContain("hidden font-mono text-base-content/40 sm:inline");
-    expect(markup).toContain("Eweka");
-    expect(markup).not.toContain("Copy session id");
-    expect(markup).not.toContain("a1b2c3d4");
-  });
-
-  it("places the newest read first", () => {
-    const markup = renderToStaticMarkup(<LiveReadsPanelContent rows={fixtureRows} />);
-
-    expect(markup.indexOf("Severance.S02E01.2160p.ATVP.WEB-DL.DDP5.1.H.265-GRP.mkv")).toBeLessThan(
-      markup.indexOf("The.Prestige.2006.1080p.BluRay.x264-GRP.mkv"),
+    const markup = renderToStaticMarkup(
+      <LiveReadsPanelContent playback={[paused, playing]} rows={[read]} />,
     );
+
+    expect(markup).toContain("1 playing · 1 paused · 1 other reads");
+    expect(markup.indexOf("Dune: Part Two")).toBeLessThan(markup.indexOf("Scanner.Read.mkv"));
+    expect(markup).toContain("PLAYING");
+    expect(markup).toContain("PAUSED");
+    expect(markup).toContain("READ");
   });
 
-  it("does not label rows as MOVIE or EPISODE", () => {
-    const markup = renderToStaticMarkup(<LiveReadsPanelContent rows={fixtureRows} />);
+  it("uses authoritative viewer position rather than WebDAV source offset", () => {
+    const transport = row(
+      fixtureRead("read-1", "Dune.Part.Two.mkv", {
+        matchingPlaybackSessionCount: 1,
+        correlationScope: "File",
+        sourceOffset: 3_500_000_000,
+        fileSize: 3_800_000_000,
+      }),
+      38_000_000,
+    );
+    const activity = playback("plex-1", "Dune: Part Two", {
+      transportReadIds: ["read-1"],
+    });
 
-    expect(markup).not.toContain("MOVIE");
-    expect(markup).not.toContain("EPISODE");
-    expect(markup).toContain("font-bold");
-    expect(markup).toContain("w-20 shrink-0");
-    expect(markup).toContain("lg:w-28");
+    const markup = renderToStaticMarkup(
+      <LiveReadsPanelContent playback={[activity]} rows={[transport]} />,
+    );
+
+    expect(markup).toContain("1:14:22 / 2:45:48");
+    expect(markup).toContain("InfiniDysk source: 38 MB/s");
+    expect(markup).not.toContain("source 3.5 GB");
   });
 
-  it("renders a speed sparkline per row", () => {
-    const markup = renderToStaticMarkup(<LiveReadsPanelContent rows={fixtureRows} />);
+  it("keeps a paused playback row when there is no current transport", () => {
+    const activity = playback("plex-1", "Dune: Part Two", {
+      session: fixtureSession("plex-1", "Dune: Part Two", {
+        state: "Paused",
+        positionMs: 4_505_000,
+      }),
+    });
 
-    expect(markup.match(/<svg/g)?.length).toBeGreaterThanOrEqual(5);
+    const markup = renderToStaticMarkup(
+      <LiveReadsPanelContent playback={[activity]} rows={[]} />,
+    );
+
+    expect(markup).toContain("PAUSED");
+    expect(markup).toContain("1:15:05 / 2:45:48");
+    expect(markup).toContain("InfiniDysk source: idle");
   });
 
-  it("shows session age and Usenet-fetched bytes in the meta line", () => {
-    const markup = renderToStaticMarkup(<LiveReadsPanelContent rows={fixtureRows} />);
+  it("never labels an unattributed transport read as playback", () => {
+    const markup = renderToStaticMarkup(
+      <LiveReadsPanelContent playback={[]} rows={[row(fixtureRead("read-1", "Scan.mkv"))]} />,
+    );
 
-    expect(markup).toContain("1h 24m in");
-    expect(markup).toContain("5m in");
-    expect(markup).toContain("fetched 3.8 GB");
-    expect(markup).toContain("max-sm:hidden");
+    expect(markup).toContain("READ");
+    expect(markup).toContain("No matching playback session");
+    expect(markup).not.toContain("PLAYING");
+    expect(markup).not.toContain("PAUSED");
+    expect(markup).toContain("source 1.1 GB");
   });
 
-  it("notes total bytes served when the player is scrubbing", () => {
-    const markup = renderToStaticMarkup(<LiveReadsPanelContent rows={fixtureRows} />);
+  it("marks shared file transport instead of assigning it to one viewer", () => {
+    const sharedRead = row(
+      fixtureRead("read-shared", "Shared.Movie.mkv", {
+        matchingPlaybackSessionCount: 2,
+        correlationScope: "File",
+        shared: true,
+      }),
+    );
+    const first = playback("plex-a", "Shared Movie", {
+      transportReadIds: ["read-shared"],
+      hasSharedFileTransport: true,
+    });
+    const second = playback("plex-b", "Shared Movie", {
+      session: fixtureSession("plex-b", "Shared Movie", { userName: "bob" }),
+      transportReadIds: ["read-shared"],
+      hasSharedFileTransport: true,
+    });
 
-    // Dune row: 2.9 GB served vs 1.1 GB current position.
-    expect(markup).toContain("2.9 GB served");
-    // Linear rows (bytesRead == currentOffset) get no such note.
-    expect(markup.match(/served</g)).toHaveLength(1);
+    const markup = renderToStaticMarkup(
+      <LiveReadsPanelContent playback={[first, second]} rows={[sharedRead]} />,
+    );
+
+    expect(markup.match(/shared\/file-level transport/g)).toHaveLength(2);
+    expect(markup).not.toContain("No matching playback session");
   });
 
-  it("falls back to the release folder name for obfuscated file names", () => {
-    const markup = renderToStaticMarkup(<LiveReadsPanelContent rows={fixtureRows} />);
+  it("surfaces stale or unavailable playback authority without clearing known rows", () => {
+    const authority: PlaybackAuthoritySnapshot = {
+      sourceInstanceId: "11111111-1111-1111-1111-111111111111",
+      sourceInstanceName: "Plex Home",
+      sourceType: "Plex",
+      available: false,
+      isStale: true,
+      lastSuccessfulPollAt: "2026-09-18T03:59:00.000Z",
+      lastFailureAt: NOW,
+      lastErrorKind: "timeout",
+    };
+    const activity = playback("plex-1", "Dune: Part Two", {
+      session: fixtureSession("plex-1", "Dune: Part Two", { freshness: "Stale" }),
+    });
+
+    const markup = renderToStaticMarkup(
+      <LiveReadsPanelContent playback={[activity]} rows={[]} authorities={[authority]} />,
+    );
+
+    expect(markup).toContain("Plex Home: playback status stale/unavailable");
+    expect(markup).toContain("STALE");
+    expect(markup).toContain("Dune: Part Two");
+  });
+
+  it("shows source telemetry and providers only as transport detail", () => {
+    const transport = row(
+      fixtureRead("read-1", "Dune.Part.Two.mkv", {
+        matchingPlaybackSessionCount: 1,
+        correlationScope: "File",
+        bytesFetched: 1_200_000_000,
+      }),
+      7_200_000,
+    );
+    const activity = playback("plex-1", "Dune: Part Two", {
+      transportReadIds: ["read-1"],
+    });
+
+    const markup = renderToStaticMarkup(
+      <LiveReadsPanelContent playback={[activity]} rows={[transport]} />,
+    );
+
+    expect(markup).toContain("InfiniDysk source: 7.2 MB/s · fetched 1.2 GB");
+    expect(markup).toContain("Eweka");
+    expect(markup).toContain("Direct Play");
+    expect(markup).toContain("Living Room Shield");
+  });
+
+  it("falls back to the release folder name for obfuscated transport leaves", () => {
+    const read = fixtureRead("read-1", "9f2c7a1e4b.mkv", {
+      path: "/completed-symlinks/movies/Interstellar.2014.1080p.BluRay.x264-GRP/9f2c7a1e4b.mkv",
+    });
+    const markup = renderToStaticMarkup(
+      <LiveReadsPanelContent playback={[]} rows={[row(read)]} />,
+    );
 
     expect(markup).toContain("Interstellar.2014.1080p.BluRay.x264-GRP.mkv");
     expect(markup).not.toContain("9f2c7a1e4b.mkv</span>");
-  });
-
-  it("renders an em dash for time left when the rate stalls", () => {
-    const stalled: LiveReadRow[] = [{ ...fixtureRows[0]!, rate: 0 }];
-    const markup = renderToStaticMarkup(<LiveReadsPanelContent rows={stalled} />);
-
-    expect(markup).toContain("—");
-    expect(markup).not.toContain("left</span>");
   });
 
   it("does not lock height until the first snapshot is ready", () => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(rectWithHeight(240));
 
     const { container } = render(
-      <LiveReadsPanelContent rows={fixtureRows.slice(0, 2)} snapshotReady={false} />,
+      <LiveReadsPanelContent
+        playback={[]}
+        rows={[row(fixtureRead("read-1", "Read.mkv"))]}
+        snapshotReady={false}
+      />,
     );
-    const section = container.querySelector("section");
-    expect(section?.style.height).toBe("");
+    expect(container.querySelector("section")?.style.height).toBe("");
   });
 
-  it("locks the first snapshot height when more reads arrive", () => {
+  it("locks the first snapshot height when more activity arrives", () => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(rectWithHeight(240));
+    const first = row(fixtureRead("read-1", "Read.mkv"));
+    const second = row(fixtureRead("read-2", "Another.mkv"));
 
     const { container, rerender } = render(
-      <LiveReadsPanelContent rows={fixtureRows.slice(0, 2)} snapshotReady />,
+      <LiveReadsPanelContent playback={[]} rows={[first]} snapshotReady />,
     );
     const section = container.querySelector("section");
     expect(section?.style.height).toBe("240px");
     expect(section?.className).toContain("overflow-hidden");
 
-    rerender(<LiveReadsPanelContent rows={fixtureRows} snapshotReady />);
+    rerender(<LiveReadsPanelContent playback={[]} rows={[first, second]} snapshotReady />);
     expect(section?.style.height).toBe("240px");
     expect(container.querySelector("ul")?.className).toContain("overflow-y-auto");
   });
