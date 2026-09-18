@@ -153,8 +153,10 @@ public static class GetFileInfosStep
         Log.Information(
             "Repairing {Count} RAR volume names with colliding or fragmented archive identities using yEnc header names",
             group.Count);
-            foreach (var pick in group.Where(pick => !pick.Par2SuppliedFileName))
-            pick.Info = pick.Info with { FileName = pick.HeaderName };
+        foreach (var groupPick in group.Where(pick => !pick.Par2SuppliedFileName))
+        {
+            groupPick.Info = groupPick.Info with { FileName = groupPick.HeaderName };
+        }
     }
 
     private static bool CanRepairFragmentedRarGroup(List<NamePick> group)
