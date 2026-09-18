@@ -32,7 +32,7 @@ import {
   type SetupDraft,
 } from "./setup-model";
 import type { ManagedEnvMap } from "~/components/ui";
-import { parseMediaServerConfig } from "../settings/media-servers/media-servers";
+import { parseMediaServerConfig } from "~/utils/media-server-config";
 
 export const SETUP_STEPS = [
   "Library type",
