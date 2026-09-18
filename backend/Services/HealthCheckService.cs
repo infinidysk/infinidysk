@@ -132,8 +132,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 
     /// <summary>
     /// Operator-forced full recheck sentinel for <see cref="DavItem.NextHealthCheck"/>, written by
-    /// the reset-health-check-queue endpoint. Like the UnixEpoch urgent sentinel it overrides the
-    /// history-linked exclusion, but it is processed as a normal STAT check (not an urgent repair)
+    /// the reset-health-check-queue endpoint. It is processed as a normal STAT check (not an urgent repair)
     /// and is overwritten by regular scheduling once the check completes.
     /// </summary>
     public static readonly DateTimeOffset ForcedRecheckSentinel = DateTimeOffset.UnixEpoch.AddSeconds(1);
@@ -955,18 +954,8 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 
     public static IQueryable<DavItem> GetHealthCheckQueueItemsQuery(DavDatabaseClient dbClient)
     {
-        // History-linked files are skipped for routine STAT checks so they do not race SAB
-        // post-processing. UnixEpoch is the playback-triggered urgent sentinel from
-        // ExceptionMiddleware; ForcedRecheckSentinel is the operator-triggered full-library
-        // recheck from the reset-health-check-queue endpoint. Those sentinels and deferred
-        // repairs intentionally override only that exclusion.
         return dbClient.Ctx.Items
-            .Where(x => x.Type == DavItem.ItemType.UsenetFile)
-            .Where(x =>
-                x.HistoryItemId == null ||
-                x.NextHealthCheck == DateTimeOffset.UnixEpoch ||
-                x.HealthRepairPending ||
-                x.NextHealthCheck == ForcedRecheckSentinel);
+            .Where(x => x.Type == DavItem.ItemType.UsenetFile);
     }
 
     private DavDatabaseContext CreateContext() =>
