@@ -267,6 +267,15 @@ public class NzbFileStream(
         var estimated = new HashSet<int>();
         var lastEstimatedIndex = -1;
 
+        LongRange EstimatedRange(int index)
+        {
+            var start = index * avg;
+            var end = index == fileSegmentIds.Length - 1
+                ? fileSize
+                : Math.Min(fileSize, start + avg);
+            return new LongRange(start, end);
+        }
+
         async ValueTask<LongRange> ProbeAsync(int guess)
         {
             if (authoritative.TryGetValue(guess, out var known)) return known.Range;
@@ -299,11 +308,7 @@ public class NzbFileStream(
 
             estimated.Add(guess);
             lastEstimatedIndex = guess;
-            var start = guess * avg;
-            var end = guess == fileSegmentIds.Length - 1
-                ? fileSize
-                : Math.Min(fileSize, start + avg);
-            return new LongRange(start, end);
+            return EstimatedRange(guess);
         }
 
         try
@@ -327,7 +332,7 @@ public class NzbFileStream(
                         lastEstimatedIndex,
                         authoritative.TryGetValue(lastEstimatedIndex, out var lastResolved)
                             ? lastResolved.Range
-                            : new LongRange(lastEstimatedIndex * avg, Math.Min(fileSize, (lastEstimatedIndex + 1) * avg)));
+                            : EstimatedRange(lastEstimatedIndex));
                 }
 
                 if (!estimated.Contains(found.FoundIndex))
@@ -351,7 +356,7 @@ public class NzbFileStream(
                         FoundByteRangeWasClippedAtFileEnd = exact.WasClippedAtFileEnd,
                     };
 
-                if (correction >= MaximumProvisionalSeekCorrections)
+                if (correction + 1 >= MaximumProvisionalSeekCorrections)
                 {
                     throw new SeekPositionNotFoundException(
                         $"Cannot establish exact segment geometry for byte position {byteOffset} in " +
