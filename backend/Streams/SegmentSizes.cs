@@ -67,9 +67,9 @@ internal sealed class SegmentSizes
             return;
         }
 
-        if (_discoveredSizes.TryGetValue(segmentIndex, out var existing) && existing != size)
+        var existing = _discoveredSizes.GetOrAdd(segmentIndex, size);
+        if (existing != size)
             throw new InvalidDataException($"Conflicting exact size for segment index {segmentIndex}.");
-        _discoveredSizes[segmentIndex] = size;
     }
 
     /// <summary>
