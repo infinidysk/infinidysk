@@ -1,4 +1,5 @@
 using NzbWebDAV.Config;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Utils;
 using NzbWebDAV.Tests.Database;
 
@@ -25,6 +26,7 @@ public sealed class WebdavPasswordHashTests
             // credential caches that key on the hash.
             Assert.Equal(first, second);
             Assert.True(PasswordUtil.Verify(first!, password));
+            Assert.False(PasswordUtil.Verify(first, "wrong-password"));
 
             var changed = $"env-{Guid.NewGuid():N}";
             Environment.SetEnvironmentVariable("WEBDAV_PASSWORD", changed);
@@ -32,6 +34,28 @@ public sealed class WebdavPasswordHashTests
 
             Assert.NotEqual(first, third);
             Assert.True(PasswordUtil.Verify(third!, changed));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("WEBDAV_PASSWORD", previous);
+        }
+    }
+
+    [Fact]
+    public void PersistedPasswordHash_OverridesEnvironmentPassword()
+    {
+        var previous = Environment.GetEnvironmentVariable("WEBDAV_PASSWORD");
+        try
+        {
+            Environment.SetEnvironmentVariable("WEBDAV_PASSWORD", "legacy-password");
+            var config = new ConfigManager();
+            var persistedHash = PasswordUtil.Hash("persisted-password");
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.WebdavPass, ConfigValue = persistedHash },
+            ]);
+
+            Assert.Equal(persistedHash, config.GetWebdavPasswordHash());
         }
         finally
         {
