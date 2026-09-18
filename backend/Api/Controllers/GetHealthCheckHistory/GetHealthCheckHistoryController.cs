@@ -1,6 +1,8 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
+using NzbWebDAV.Database.Models;
+using NzbWebDAV.Services;
 
 namespace NzbWebDAV.Api.Controllers.GetHealthCheckHistory;
 
@@ -19,6 +21,27 @@ public class GetHealthCheckHistoryController(DavDatabaseClient dbClient) : BaseA
             request.CancellationToken).ConfigureAwait(false);
         var itemsQuery = dbClient.Ctx.HealthCheckResults
             .AsNoTracking();
+        if (request.CurrentActionNeeded)
+        {
+            itemsQuery = itemsQuery
+                .Where(item => item.RepairStatus == HealthCheckResult.RepairAction.ActionNeeded)
+                .Where(item => dbClient.Ctx.Items.Any(file =>
+                    file.Id == item.DavItemId &&
+                    file.Type == DavItem.ItemType.UsenetFile &&
+                    file.NextHealthCheck != DateTimeOffset.UnixEpoch &&
+                    file.NextHealthCheck != HealthCheckService.ForcedRecheckSentinel))
+                .Where(item => !dbClient.Ctx.HealthCheckResults.Any(other =>
+                    other.DavItemId == item.DavItemId &&
+                    (other.CreatedAt > item.CreatedAt ||
+                     (other.CreatedAt == item.CreatedAt &&
+                      other.RepairStatus != HealthCheckResult.RepairAction.ActionNeeded))))
+                .Where(item => item.Id == dbClient.Ctx.HealthCheckResults
+                    .Where(other => other.DavItemId == item.DavItemId)
+                    .OrderByDescending(other => other.CreatedAt)
+                    .ThenByDescending(other => other.Id)
+                    .Select(other => other.Id)
+                    .First());
+        }
         if (request.RepairStatuses is not null)
             itemsQuery = itemsQuery.Where(x => request.RepairStatuses.Contains(x.RepairStatus));
         if (request.Results is not null)

@@ -9,6 +9,7 @@ public class GetHealthCheckHistoryRequest
 {
     public int Page { get; init; } = 1;
     public int PageSize { get; init; } = 20;
+    public bool CurrentActionNeeded { get; init; }
     public IReadOnlySet<HealthCheckResult.RepairAction>? RepairStatuses { get; init; }
     public IReadOnlySet<HealthCheckResult.HealthResult>? Results { get; init; }
     public CancellationToken CancellationToken { get; init; }
@@ -20,7 +21,16 @@ public class GetHealthCheckHistoryRequest
         var pageSizeParam = context.GetQueryParam("pageSize");
         var repairStatusParam = context.GetQueryParam("repairStatus");
         var resultParam = context.GetQueryParam("result");
+        var currentActionNeededParam = context.GetQueryParam("currentActionNeeded");
         CancellationToken = context.RequestAborted;
+
+        if (currentActionNeededParam is not null)
+        {
+            if (!bool.TryParse(currentActionNeededParam, out var currentActionNeeded))
+                errors.Add("currentActionNeeded", "Invalid currentActionNeeded parameter");
+            else
+                CurrentActionNeeded = currentActionNeeded;
+        }
 
         if (pageParam is not null)
         {

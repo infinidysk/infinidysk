@@ -103,12 +103,22 @@ The list follows Health-check retention and is cleared with the Health-check sta
 **Settings → Maintenance**. It records automatic health actions only — deleting items manually or
 through the API does not add a repair-history row.
 
-Use **Re-check action needed** [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
-in the Health history header to queue another check for every live file whose latest result still
-requires action. Each file is queued once, including files still present in SAB history; older
-**Action needed** events that were superseded by a successful check are ignored. Existing history
-rows remain available as an audit trail. Re-checks pause while downloads are processing and follow
-the configured health-check and repair schedules.
+History does not include **Action needed** records, including under the **Degraded** filter.
+These represent unresolved work rather than completed actions.
+
+## Needs attention [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }
+
+The **Needs attention** section appears above the health schedule. It shows the latest unresolved
+check for each existing file, with its NZB identity and failure reason. Resolved failures, deleted
+files, duplicate checks, and files already queued for repair are excluded. It has separate paging
+from history and refreshes when health-check results arrive.
+
+Use a file's **Re-check** button to retry that item, or **Re-check action needed** to queue all
+eligible files, including files on other pages. Retry controls require Background Repairs to be
+enabled and are unavailable to read-only users. A retry queues another check; it does not guarantee
+repair. Files leave this list while queued and return if the next check still requires action.
+Re-checks pause while downloads are processing and follow the configured health-check and repair
+schedules. Existing check records remain stored until health-check retention removes them.
 
 ## Manual checks
 

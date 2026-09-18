@@ -41,13 +41,13 @@ public class RemoveUnlinkedFilesTask : BaseTask
     private readonly Func<Task>? _beforePreviewApproval;
     private ProgressHeartbeat? _progressHeartbeat;
 
-    private static async Task<T> ExecuteWithContentionRetryAsync<T>(
+    internal static async Task<T> ExecuteWithContentionRetryAsync<T>(
         string phase,
         Func<CancellationToken, Task<T>> operation,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? contentionBudget = null)
     {
         using var budgetCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budgetCts.CancelAfter(CleanupContentionBudget);
         Exception? lastContention = null;
         for (var attempt = 0; attempt < 6; attempt++)
         {
@@ -58,6 +58,9 @@ public class RemoveUnlinkedFilesTask : BaseTask
             }
             catch (Exception exception) when (exception.IsTransientDatabaseException())
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (lastContention is null)
+                    budgetCts.CancelAfter(contentionBudget ?? CleanupContentionBudget);
                 lastContention = exception;
                 if (attempt == 5)
                     throw new CleanupContentionException(phase, attempt + 1, exception);
@@ -73,10 +76,9 @@ public class RemoveUnlinkedFilesTask : BaseTask
                     throw new CleanupContentionException(phase, attempt + 1, lastContention);
                 }
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (
+                budgetCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
-                // The 30-second unit budget expired; this is a policy timeout, not
-                // caller/shutdown cancellation, so it must not look like a normal abort.
                 throw new CleanupContentionException(phase, attempt + 1, lastContention);
             }
         }

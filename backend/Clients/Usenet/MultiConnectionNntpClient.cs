@@ -1223,7 +1223,7 @@ public class MultiConnectionNntpClient(
         if (exception is ConnectionOpenTimeoutException timeout && factoryStarted)
         {
             RecordProviderConnectionFailure(
-                $"warm-open-timeout-phase-{timeout.Phase}",
+                $"warm-open-timeout-phase-{timeout.Phase}: {timeout.Message}",
                 requiresFreshConnectionProbe: true);
             return;
         }

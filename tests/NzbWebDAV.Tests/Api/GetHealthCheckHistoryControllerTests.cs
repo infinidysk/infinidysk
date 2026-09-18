@@ -118,6 +118,7 @@ public sealed class GetHealthCheckHistoryControllerTests : IAsyncLifetime
 
     [Theory]
     [InlineData("?repairStatus=unknown")]
+    [InlineData("?currentActionNeeded=invalid")]
     [InlineData("?page=0")]
     [InlineData("?pageSize=0")]
     [InlineData("?pageSize=251")]
@@ -156,6 +157,41 @@ public sealed class GetHealthCheckHistoryControllerTests : IAsyncLifetime
         Assert.Null(identity);
     }
 
+    [Fact]
+    public async Task GetAsync_CurrentActionNeededReturnsOnlyLatestEligibleFilesBeforePaging()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var active = NewResult(now, HealthCheckResult.RepairAction.ActionNeeded);
+        var duplicate = NewResult(now, HealthCheckResult.RepairAction.ActionNeeded, active.DavItemId);
+        var older = NewResult(now.AddDays(-1), HealthCheckResult.RepairAction.ActionNeeded, active.DavItemId);
+        var secondActive = NewResult(now.AddMinutes(-1), HealthCheckResult.RepairAction.ActionNeeded);
+        var resolved = NewResult(now, HealthCheckResult.RepairAction.ActionNeeded);
+        var healthy = NewResult(now.AddSeconds(1), HealthCheckResult.RepairAction.None, resolved.DavItemId);
+        var tied = NewResult(now, HealthCheckResult.RepairAction.ActionNeeded);
+        var repaired = NewResult(now, HealthCheckResult.RepairAction.Repaired, tied.DavItemId);
+        var deleted = NewResult(now, HealthCheckResult.RepairAction.ActionNeeded);
+        var queued = NewResult(now, HealthCheckResult.RepairAction.ActionNeeded);
+        var deferred = NewResult(now, HealthCheckResult.RepairAction.ActionNeeded);
+
+        foreach (var result in new[] { active, secondActive, resolved, tied, queued, deferred })
+        {
+            var file = DavItem.New(result.DavItemId, DavItem.ContentFolder,
+                result.DavItemId.ToString(), 100, DavItem.ItemType.UsenetFile,
+                DavItem.ItemSubType.NzbFile, null, null, null, null);
+            file.NextHealthCheck = result == queued ? HealthCheckService.ForcedRecheckSentinel
+                : result == deferred ? DateTimeOffset.UnixEpoch : now.AddDays(1);
+            _context.Items.Add(file);
+        }
+        _context.HealthCheckResults.AddRange(
+            active, duplicate, older, secondActive, resolved, healthy, tied, repaired, deleted, queued, deferred);
+        await _context.SaveChangesAsync();
+
+        var response = await InvokeAsync("?currentActionNeeded=true&pageSize=1&page=2");
+
+        Assert.Equal(2, response.TotalCount);
+        Assert.Equal([secondActive.Id], response.Items.Select(item => item.Id));
+    }
+
     private async Task<GetHealthCheckHistoryResponse> InvokeAsync(string query)
     {
         var result = await InvokeActionAsync(query);
@@ -174,11 +210,11 @@ public sealed class GetHealthCheckHistoryControllerTests : IAsyncLifetime
         return controller.InvokeAsync();
     }
 
-    private static HealthCheckResult NewResult(DateTimeOffset createdAt, HealthCheckResult.RepairAction repairStatus) => new()
+    private static HealthCheckResult NewResult(DateTimeOffset createdAt, HealthCheckResult.RepairAction repairStatus, Guid? davItemId = null) => new()
     {
         Id = Guid.NewGuid(),
         CreatedAt = createdAt,
-        DavItemId = Guid.NewGuid(),
+        DavItemId = davItemId ?? Guid.NewGuid(),
         Path = "/content/example.mkv",
         Result = repairStatus == HealthCheckResult.RepairAction.None
             ? HealthCheckResult.HealthResult.Healthy

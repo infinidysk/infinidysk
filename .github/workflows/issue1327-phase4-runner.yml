@@ -1,0 +1,79 @@
+name: Issue 1327 Phase 4 Runner
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-format:
+    if: startsWith(github.event.pull_request.head.ref, 'feat/1327-authoritative-playback')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out feature head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Format Phase 4 frontend files
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npx prettier --write \
+            app/routes/explore/media-preview/media-preview.test.tsx \
+            app/routes/overview/components/live-reads-panel/live-reads-panel.test.tsx \
+            app/routes/overview/components/live-reads-panel/live-reads-panel.tsx \
+            app/routes/settings/media-servers/media-servers.test.ts \
+            app/routes/settings/route.tsx \
+            app/routes/setup/setup-steps.tsx
+
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Regenerate contract and run focused backend tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet build backend/NzbWebDAV.csproj -c Release
+          UPDATE_ADMIN_OPENAPI=1 dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release \
+            --filter "FullyQualifiedName~AdminOpenApiIntegrationTests.CommittedContract_MatchesNormalizedRuntimeDocument"
+          dotnet test tests/NzbWebDAV.Tests/NzbWebDAV.Tests.csproj -c Release --no-build \
+            --filter "FullyQualifiedName~MediaServerTokenResolverTests|FullyQualifiedName~TestMediaServerConnectionControllerTests|FullyQualifiedName~MediaServerConfigTests|FullyQualifiedName~NativePlaybackSessionServiceTests|FullyQualifiedName~CurrentActivityComposerTests"
+
+      - name: Commit generated/formatting changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            contracts/openapi/admin-v1.json \
+            frontend/app/routes/explore/media-preview/media-preview.test.tsx \
+            frontend/app/routes/overview/components/live-reads-panel/live-reads-panel.test.tsx \
+            frontend/app/routes/overview/components/live-reads-panel/live-reads-panel.tsx \
+            frontend/app/routes/settings/media-servers/media-servers.test.ts \
+            frontend/app/routes/settings/route.tsx \
+            frontend/app/routes/setup/setup-steps.tsx
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "Phase 4 generated and formatted files already current."
+            exit 0
+          fi
+          git commit -m "chore(dev): refresh issue 1327 phase 4 generated files"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}

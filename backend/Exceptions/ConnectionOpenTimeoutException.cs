@@ -5,9 +5,14 @@ public sealed class ConnectionOpenTimeoutException(
     string phase,
     TimeSpan budget,
     bool factoryStarted,
-    Exception? innerException = null)
+    Exception? innerException = null,
+    TimeSpan? beforeFactoryElapsed = null,
+    TimeSpan? factoryElapsed = null)
     : RetryableDownloadException(
-        $"Connection opening for provider '{provider}' exceeded the {budget.TotalSeconds:0}s budget during {phase}.",
+        $"Connection opening for provider '{provider}' exceeded the {budget.TotalSeconds:0}s budget during {phase}." +
+        (beforeFactoryElapsed is { } before && factoryElapsed is { } factory
+            ? FormattableString.Invariant($" BeforeFactory={before.TotalMilliseconds:0}ms, Factory={factory.TotalMilliseconds:0}ms.")
+            : ""),
         innerException)
 {
     public string Phase { get; } = phase;

@@ -3,7 +3,7 @@ import { Badge, Button, Icon, RadioJoinFilter } from "~/components/ui";
 import { Pagination } from "~/components/pagination/pagination";
 import { Truncate } from "~/components/truncate/truncate";
 
-export type HealthHistoryFilter = "all" | "deleted" | "repaired" | "degraded" | "action-needed";
+export type HealthHistoryFilter = "all" | "deleted" | "repaired" | "degraded";
 
 export type HealthHistoryTableProps = {
   items: HealthCheckResult[];
@@ -13,13 +13,10 @@ export type HealthHistoryTableProps = {
   pageSizeOptions: readonly number[];
   filter: HealthHistoryFilter;
   refreshing: boolean;
-  canRequeueActionNeeded: boolean;
-  requeueingActionNeeded: boolean;
   onFilterSelected: (filter: HealthHistoryFilter) => void;
   onPageSelected: (page: number) => void;
   onPageSizeSelected: (pageSize: number) => void;
   onRefresh: () => void;
-  onRequeueActionNeeded: () => void;
 };
 
 const desktopHeaderClass =
@@ -40,13 +37,10 @@ export function HealthHistoryTable({
   pageSizeOptions,
   filter,
   refreshing,
-  canRequeueActionNeeded,
-  requeueingActionNeeded,
   onFilterSelected,
   onPageSelected,
   onPageSizeSelected,
   onRefresh,
-  onRequeueActionNeeded,
 }: HealthHistoryTableProps) {
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
@@ -60,25 +54,11 @@ export function HealthHistoryTable({
           <div>
             <h2 className="card-title text-xl">Health history</h2>
             <p className="mt-1 text-xs text-base-content/60">
-              Repairs, deletions, degraded files, and items requiring action are retained according
-              to your health-check retention setting.
+              Repairs, deletions, and degraded checks are retained according to your health-check
+              retention setting.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {canRequeueActionNeeded && (
-              <Button
-                variant="outline"
-                size="small"
-                onClick={onRequeueActionNeeded}
-                disabled={requeueingActionNeeded}
-              >
-                <Icon
-                  name={requeueingActionNeeded ? "progress_activity" : "replay"}
-                  className={`!text-[16px] ${requeueingActionNeeded ? "animate-spin" : ""}`}
-                />
-                {requeueingActionNeeded ? "Queueing..." : "Re-check action needed"}
-              </Button>
-            )}
             <Button onClick={onRefresh} disabled={refreshing}>
               <Icon name="refresh" className={`!text-[16px] ${refreshing ? "animate-spin" : ""}`} />
               Refresh
@@ -93,11 +73,10 @@ export function HealthHistoryTable({
             value={filter}
             onChange={onFilterSelected}
             options={[
-              { id: "all", label: "Deleted, repaired & action needed" },
+              { id: "all", label: "Deleted & repaired" },
               { id: "deleted", label: "Deleted" },
               { id: "repaired", label: "Repaired" },
               { id: "degraded", label: "Degraded" },
-              { id: "action-needed", label: "Action needed" },
             ]}
           />
           {totalCount > 0 && (
@@ -146,9 +125,120 @@ export function HealthHistoryTable({
   );
 }
 
-function HistoryRow({ item }: { item: HealthCheckResult }) {
+export function HealthAttentionTable({
+  items,
+  totalCount,
+  page,
+  pageSize,
+  pageSizeOptions,
+  refreshing,
+  onPageSelected,
+  onPageSizeSelected,
+  onRefresh,
+  canRequeueActionNeeded,
+  requeueingActionNeeded,
+  onRequeueActionNeeded,
+}: Omit<HealthHistoryTableProps, "filter" | "onFilterSelected"> & {
+  canRequeueActionNeeded: boolean;
+  requeueingActionNeeded: boolean;
+  onRequeueActionNeeded: (davItemId?: string) => void;
+}) {
+  return (
+    <section aria-labelledby="health-attention-heading" className="min-w-0">
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-3">
+        <h2 id="health-attention-heading" className="text-xl font-semibold">
+          Needs attention ({totalCount.toLocaleString()})
+        </h2>
+        <div className="flex flex-wrap gap-2">
+          {canRequeueActionNeeded && totalCount > 0 && (
+            <Button
+              variant="outline"
+              size="small"
+              onClick={() => onRequeueActionNeeded()}
+              disabled={requeueingActionNeeded}
+            >
+              <Icon
+                name={requeueingActionNeeded ? "progress_activity" : "replay"}
+                className={requeueingActionNeeded ? "animate-spin" : ""}
+              />
+              {requeueingActionNeeded ? "Queueing..." : "Re-check action needed"}
+            </Button>
+          )}
+          <Button onClick={onRefresh} disabled={refreshing}>
+            <Icon name="refresh" className={refreshing ? "animate-spin" : ""} />
+            Refresh
+          </Button>
+        </div>
+      </div>
+      {items.length === 0 ? (
+        <p className="py-4 text-base-content/70">No items need attention.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="table table-zebra table-sm w-full min-w-0 table-fixed text-base-content min-[900px]:table-auto">
+            <thead>
+              <tr>
+                <th className="pl-4 md:pl-6">NZB</th>
+                <th className={desktopHeaderClass}>Status</th>
+                <th className={desktopHeaderClass}>Reason</th>
+                <th className={desktopHeaderClass}>Last checked</th>
+                {canRequeueActionNeeded && <th className={desktopHeaderClass}>Actions</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <HistoryRow
+                  key={item.id}
+                  item={item}
+                  requeueing={requeueingActionNeeded}
+                  onRequeue={
+                    canRequeueActionNeeded ? () => onRequeueActionNeeded(item.davItemId) : undefined
+                  }
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {totalCount > 0 && (
+        <div className="pt-3">
+          <Pagination
+            pageNumber={page}
+            totalPages={Math.max(1, Math.ceil(totalCount / pageSize))}
+            totalCount={totalCount}
+            pageSize={pageSize}
+            pageSizeOptions={pageSizeOptions}
+            onPageSelected={onPageSelected}
+            onPageSizeSelected={onPageSizeSelected}
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function HistoryRow({
+  item,
+  onRequeue,
+  requeueing,
+}: {
+  item: HealthCheckResult;
+  onRequeue?: (() => void) | undefined;
+  requeueing?: boolean;
+}) {
   const title = item.nzbFileName ?? basename(item.path);
   const timestamp = formatTimestamp(item.createdAt);
+  const requeueButton = onRequeue && (
+    <Button
+      variant="outline"
+      size="small"
+      onClick={onRequeue}
+      disabled={requeueing}
+      aria-label={`Re-check ${title}`}
+    >
+      <Icon name="replay" />
+      Re-check
+    </Button>
+  );
 
   return (
     <tr className="border-base-content/10">
@@ -170,6 +260,7 @@ function HistoryRow({ item }: { item: HealthCheckResult }) {
             <MetaChip label="When" value={timestamp.relative} title={timestamp.absolute} />
             {item.message && <MetaChip label="Reason" value={item.message} title={item.message} />}
           </div>
+          {requeueButton && <div className="mt-2 min-[900px]:hidden">{requeueButton}</div>}
         </div>
       </td>
       <td className={desktopCellClass}>
@@ -186,6 +277,11 @@ function HistoryRow({ item }: { item: HealthCheckResult }) {
       >
         <time dateTime={item.createdAt}>{timestamp.relative}</time>
       </td>
+      {onRequeue && (
+        <td className="hidden px-3 py-3 text-right align-top min-[900px]:table-cell">
+          {requeueButton}
+        </td>
+      )}
     </tr>
   );
 }
@@ -217,7 +313,7 @@ function MetaChip({ label, value, title }: { label: string; value: string; title
 }
 
 function EmptyState({ filter }: { filter: HealthHistoryFilter }) {
-  const label = filter === "all" ? "deleted, repaired, or action needed" : filter.replace("-", " ");
+  const label = filter === "all" ? "deleted or repaired" : filter;
   return (
     <div className="hero min-h-[220px] py-8">
       <div className="hero-content">

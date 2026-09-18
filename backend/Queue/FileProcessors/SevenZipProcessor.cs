@@ -53,8 +53,7 @@ public class SevenZipProcessor : BaseProcessor
 
             if (sevenZipEntries.Any(x => x.CompressionType != CompressionType.None))
             {
-                const string message = "Only uncompressed 7z files are supported.";
-                throw new Unsupported7zCompressionMethodException(message);
+                throw new Unsupported7zCompressionMethodException();
             }
 
             if (sevenZipEntries.Any(x => x.IsEncrypted && x.IsSolid))

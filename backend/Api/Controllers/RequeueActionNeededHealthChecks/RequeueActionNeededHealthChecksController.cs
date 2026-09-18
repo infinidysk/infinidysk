@@ -33,9 +33,19 @@ public class RequeueActionNeededHealthChecksController(
                 });
         }
 
-        var requeuedCount = await HealthCheckQueueMutations
-            .RequeueLatestActionNeededAsync(dbClient.Ctx, HttpContext.RequestAborted)
-            .ConfigureAwait(false);
+        Guid? itemId = null;
+        if (HttpContext.Request.Query.TryGetValue("davItemId", out var itemIdParam))
+        {
+            if (!Guid.TryParse(itemIdParam, out var parsedId))
+                return BadRequest(new BaseApiResponse { Status = false, Error = "Invalid davItemId parameter." });
+            itemId = parsedId;
+        }
+
+        var requeuedCount = itemId is Guid selectedId
+            ? await HealthCheckQueueMutations.RequeueActionNeededIdsAsync(
+                dbClient.Ctx, [selectedId], HttpContext.RequestAborted).ConfigureAwait(false)
+            : await HealthCheckQueueMutations.RequeueLatestActionNeededAsync(
+                dbClient.Ctx, HttpContext.RequestAborted).ConfigureAwait(false);
 
         return Ok(new RequeueActionNeededHealthChecksResponse
         {

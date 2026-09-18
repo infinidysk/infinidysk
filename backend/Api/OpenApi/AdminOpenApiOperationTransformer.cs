@@ -26,6 +26,17 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
         operation.OperationId = $"{verb}-{routeName}";
         operation.Summary = HumanizeControllerName(descriptor.ControllerName);
         AddKnownFormRequestBody(operation, route, verb);
+        if (route == "api/get-health-check-history")
+        {
+            operation.Parameters ??= [];
+            operation.Parameters.Add(new OpenApiParameter
+            {
+                Name = "currentActionNeeded",
+                In = ParameterLocation.Query,
+                Description = "Return one latest unresolved check per existing Usenet file, excluding files already queued for repair. Filtering precedes pagination.",
+                Schema = new OpenApiSchema { Type = JsonSchemaType.Boolean },
+            });
+        }
         operation.Responses ??= [];
         if (route == "api/trigger-health-check")
         {
@@ -44,6 +55,14 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
         }
         if (route == "api/requeue-action-needed-health-checks")
         {
+            operation.Parameters ??= [];
+            operation.Parameters.Add(new OpenApiParameter
+            {
+                Name = "davItemId",
+                In = ParameterLocation.Query,
+                Description = "Re-check only this file if it still needs action. Omit to re-check all eligible files.",
+                Schema = new OpenApiSchema { Type = JsonSchemaType.String, Format = "uuid" },
+            });
             operation.Responses["200"] = new OpenApiResponse
             {
                 Description = "Action-needed files were queued for another health check.",

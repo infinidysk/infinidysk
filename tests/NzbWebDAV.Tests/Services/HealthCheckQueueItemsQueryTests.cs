@@ -37,7 +37,7 @@ public sealed class HealthCheckQueueItemsQueryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Query_ExcludesHistoryLinkedNonUrgent_AndIncludesUrgentForcedAndUnlinked()
+    public async Task Query_IncludesHistoryLinkedScheduledAndUnchecked_AlongsideUrgentForcedAndUnlinked()
     {
         var historyId = Guid.NewGuid();
         var scheduledAt = DateTimeOffset.UtcNow.AddHours(1);
@@ -63,12 +63,38 @@ public sealed class HealthCheckQueueItemsQueryTests : IAsyncLifetime
             .Select(x => x.Id)
             .ToListAsync();
 
-        Assert.DoesNotContain(historyLinkedNonUrgent.Id, ids);
-        Assert.DoesNotContain(historyLinkedUnchecked.Id, ids);
+        Assert.Contains(historyLinkedNonUrgent.Id, ids);
+        Assert.Contains(historyLinkedUnchecked.Id, ids);
         Assert.Contains(historyLinkedUrgent.Id, ids);
         Assert.Contains(historyLinkedForced.Id, ids);
         Assert.Contains(unlinkedUrgent.Id, ids);
         Assert.Contains(unlinkedScheduled.Id, ids);
+    }
+
+    [Fact]
+    public async Task MakeDue_IncludesPreviouslyCheckedHistoryLinkedFiles_AndPreservesUrgentRepairs()
+    {
+        var historyId = Guid.NewGuid();
+        var scheduled = NewUsenetFile("history-linked-scheduled.mkv", historyId, DateTimeOffset.UtcNow.AddDays(30));
+        scheduled.LastHealthCheck = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var urgent = NewUsenetFile("history-linked-urgent.mkv", historyId, DateTimeOffset.UnixEpoch);
+        _context.Items.AddRange(scheduled, urgent);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var updated = await HealthCheckQueueMutations.MakeDueAsync(_context, CancellationToken.None);
+        var currentDateTime = DateTimeOffset.UtcNow;
+        var dueItems = await HealthCheckService.GetHealthCheckQueueItemsQuery(_dbClient)
+            .Where(item => item.NextHealthCheck == null || item.NextHealthCheck < currentDateTime)
+            .ToListAsync();
+
+        Assert.Equal(1, updated);
+        Assert.Equal(2, dueItems.Count);
+        var scheduledResult = Assert.Single(dueItems, item => item.Id == scheduled.Id);
+        Assert.Null(scheduledResult.NextHealthCheck);
+        Assert.Equal(scheduled.LastHealthCheck, scheduledResult.LastHealthCheck);
+        Assert.Equal(historyId, scheduledResult.HistoryItemId);
+        Assert.Equal(DateTimeOffset.UnixEpoch, Assert.Single(dueItems, item => item.Id == urgent.Id).NextHealthCheck);
     }
 
     [Fact]
@@ -151,7 +177,7 @@ public sealed class HealthCheckQueueItemsQueryTests : IAsyncLifetime
     [Fact]
     public async Task UncheckedCount_ExcludesNonMediaFiles()
     {
-        var videoFile = NewUsenetFile("movie.mkv", null, nextHealthCheck: null);
+        var videoFile = NewUsenetFile("movie.mkv", Guid.NewGuid(), nextHealthCheck: null);
         var audioFile = NewUsenetFile("track.flac", null, nextHealthCheck: null);
         var archiveFile = NewUsenetFile("archive.rar", null, nextHealthCheck: null);
         var imageFile = NewUsenetFile("cover.jpg", null, nextHealthCheck: null);

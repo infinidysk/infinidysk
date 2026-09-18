@@ -21,10 +21,6 @@ public class ResetHealthCheckQueueController(DavDatabaseClient dbClient) : BaseA
                 new BaseApiResponse { Status = false, Error = "POST required" });
         }
 
-        // Mark every non-urgent usenet file with the forced-recheck sentinel. Unlike a plain
-        // null reset, the sentinel overrides the history-linked exclusion in the health-check
-        // queue query, so files still present in SAB history are re-checked too — without
-        // deleting any history rows. Urgent repairs (UnixEpoch) are left untouched.
         await dbClient.Ctx.Items
             .Where(x => x.Type == DavItem.ItemType.UsenetFile)
             .Where(x => x.NextHealthCheck != DateTimeOffset.UnixEpoch)

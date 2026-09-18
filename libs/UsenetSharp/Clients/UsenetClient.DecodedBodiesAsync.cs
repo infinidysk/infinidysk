@@ -512,6 +512,21 @@ public partial class UsenetClient
         if (failure == null) return null;
         var description = failure.GetType().Name;
 
+        if (failure is UsenetSharp.Exceptions.UsenetProtocolException)
+        {
+            var protocolReason = failure.Message switch
+            {
+                "The NNTP connection closed before the article body terminator was received." => "connection closed before body terminator",
+                "The NNTP connection closed while draining a cancelled body." => "connection closed while draining cancelled body",
+                "The abandoned NNTP body exceeded the configured drain limit." => "abandoned body drain limit exceeded",
+                "The cancelled NNTP body exceeded the configured drain limit." => "cancelled body drain limit exceeded",
+                "The NNTP body contained more non-yEnc data than the configured drain limit." => "non-yEnc data drain limit exceeded",
+                _ => null
+            };
+            if (protocolReason != null)
+                return $"{description}: {protocolReason}";
+        }
+
         // A direct SocketException (no wrapper) carries the socket error code on itself.
         // Format matches the wrapped case so "SocketException:" filters work uniformly.
         if (failure is System.Net.Sockets.SocketException directSocket)

@@ -7,6 +7,29 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 public class ConnectionPoolWarmConnectionTests
 {
     [Fact]
+    public async Task WarmToAsync_OpenTimeoutReportsTimingBreakdown()
+    {
+        var failure = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var pool = new ConnectionPool<TestConnection>(
+            maxConnections: 1,
+            connectionFactory: async ct =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                return new TestConnection(1);
+            },
+            idleTimeout: TimeSpan.FromMinutes(1),
+            connectionOpenTimeout: () => TimeSpan.FromMilliseconds(100),
+            onWarmConnectionFailure: (exception, _) => failure.TrySetResult(exception));
+
+        await pool.WarmToAsync(1);
+        var exception = await failure.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.IsType<NzbWebDAV.Exceptions.ConnectionOpenTimeoutException>(exception);
+        Assert.Contains("during Factory.", exception.Message, StringComparison.Ordinal);
+        Assert.Matches(@"BeforeFactory=\d+ms, Factory=\d+ms\.", exception.Message);
+    }
+
+    [Fact]
     public async Task WarmToAsync_OpensMissingConnectionsInParallel()
     {
         var entered = 0;

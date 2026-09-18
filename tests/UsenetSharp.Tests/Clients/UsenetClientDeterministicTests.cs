@@ -1806,6 +1806,27 @@ public class UsenetClientDeterministicTests
         Assert.That(reason, Is.EqualTo("SocketException: ConnectionReset"));
     }
 
+    [TestCase("The NNTP connection closed before the article body terminator was received.", "connection closed before body terminator")]
+    [TestCase("The NNTP connection closed while draining a cancelled body.", "connection closed while draining cancelled body")]
+    [TestCase("The abandoned NNTP body exceeded the configured drain limit.", "abandoned body drain limit exceeded")]
+    [TestCase("The cancelled NNTP body exceeded the configured drain limit.", "cancelled body drain limit exceeded")]
+    [TestCase("The NNTP body contained more non-yEnc data than the configured drain limit.", "non-yEnc data drain limit exceeded")]
+    public void DescribeFailure_KnownProtocolFailure_ReportsSafeReason(string message, string expected)
+    {
+        var reason = UsenetClient.DescribeFailure(new UsenetProtocolException(message));
+
+        Assert.That(reason, Is.EqualTo($"UsenetProtocolException: {expected}"));
+    }
+
+    [TestCase("server response contains secret article@example.com\r\ninjected log event")]
+    [TestCase("unrecognized protocol failure")]
+    public void DescribeFailure_UnknownProtocolFailure_DoesNotExposeMessage(string message)
+    {
+        var reason = UsenetClient.DescribeFailure(new UsenetProtocolException(message));
+
+        Assert.That(reason, Is.EqualTo("UsenetProtocolException"));
+    }
+
     [Test]
     public void DescribeFailure_WrappedSocketException_ReportsTheSocketErrorCode()
     {

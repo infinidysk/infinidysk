@@ -1,4 +1,5 @@
 using System.Text;
+using NzbWebDAV.Tests.TestUtils;
 using NzbWebDAV.Utils;
 using SharpCompress.Common;
 
@@ -33,6 +34,28 @@ public class SevenZipUtilTests
             .ToArray();
 
         Assert.Equal(expectedEntryBytes, storedEntryBytes);
+    }
+
+    [Theory]
+    [InlineData("7Zip.LZMA.7z", null)]
+    [InlineData("7Zip.solid.7z", null)]
+    [InlineData("7Zip.LZMA.Aes.7z", "testpassword")]
+    [InlineData("7Zip.LZMA2.Aes.7z", "testpassword")]
+    public async Task GetSevenZipEntriesAsync_ExposesCompressionBeforeRequiringPackedRange(
+        string archiveName, string? password)
+    {
+        var archivePath = Path.Join(RepoPaths.FindRepoRoot(), "tests", "TestArchives", "Archives", archiveName);
+        await using var archiveStream = File.OpenRead(archivePath);
+
+        var entries = await SevenZipUtil.GetSevenZipEntriesAsync(
+            archiveStream, password, CancellationToken.None);
+
+        Assert.NotEmpty(entries);
+        Assert.All(entries, entry =>
+        {
+            Assert.Equal(CompressionType.LZMA, entry.CompressionType);
+            Assert.Throws<InvalidOperationException>(() => entry.ByteRangeWithinArchive);
+        });
     }
 
     [Fact]

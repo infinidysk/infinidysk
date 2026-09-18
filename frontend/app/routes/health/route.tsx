@@ -4,6 +4,7 @@ import { HealthTable } from "./components/health-table/health-table";
 import { HealthStats } from "./components/health-stats/health-stats";
 import {
   HealthHistoryTable,
+  HealthAttentionTable,
   type HealthHistoryFilter,
 } from "./components/health-history-table/health-history-table";
 import { useCallback, useEffect, useState } from "react";
@@ -59,12 +60,7 @@ function parsePageSize(value: string | null): number {
 }
 
 function parseHistoryFilter(value: string | null): HealthHistoryFilter {
-  return value === "deleted" ||
-    value === "repaired" ||
-    value === "action-needed" ||
-    value === "degraded"
-    ? value
-    : "all";
+  return value === "deleted" || value === "repaired" || value === "degraded" ? value : "all";
 }
 
 function isBackgroundRepairsEnabled(
@@ -81,16 +77,18 @@ export async function loader({ request }: Route.LoaderArgs) {
   const historyPage = parsePage(url.searchParams.get("page"));
   const historyPageSize = parsePageSize(url.searchParams.get("pageSize"));
   const historyFilter = parseHistoryFilter(url.searchParams.get("status"));
+  const attentionPage = parsePage(url.searchParams.get("attentionPage"));
+  const attentionPageSize = parsePageSize(url.searchParams.get("attentionPageSize"));
   // Degraded is a HealthResult, not a RepairAction, so it filters on `result`
   // instead of `repairStatus`.
   const repairStatus =
     historyFilter === "all"
-      ? "deleted,repaired,action-needed"
+      ? "deleted,repaired"
       : historyFilter === "degraded"
-        ? undefined
+        ? "none,deleted,repaired"
         : historyFilter;
   const result = historyFilter === "degraded" ? "degraded" : undefined;
-  const [queueData, historyData, config] = await Promise.all([
+  const [queueData, historyData, config, attentionData] = await Promise.all([
     backendClient.getHealthCheckQueue(30),
     backendClient.getHealthCheckHistory({
       page: historyPage,
@@ -99,6 +97,11 @@ export async function loader({ request }: Route.LoaderArgs) {
       ...(result !== undefined ? { result } : {}),
     }),
     backendClient.getConfig([enabledKey]),
+    backendClient.getHealthCheckHistory({
+      page: attentionPage,
+      pageSize: attentionPageSize,
+      currentActionNeeded: true,
+    }),
   ]);
 
   return {
@@ -110,6 +113,10 @@ export async function loader({ request }: Route.LoaderArgs) {
     historyPage,
     historyPageSize,
     historyFilter,
+    attentionItems: attentionData.items,
+    attentionTotalCount: attentionData.totalCount,
+    attentionPage,
+    attentionPageSize,
     isEnabled: isBackgroundRepairsEnabled(config, enabledKey),
     schedule: queueData.schedule ?? null,
   };
@@ -165,12 +172,22 @@ export default function Health({ loaderData }: Route.ComponentProps) {
   }, [loaderData.schedule]);
 
   const setHistoryParams = useCallback(
-    (params: { page?: number; pageSize?: number; status?: HealthHistoryFilter }) => {
+    (params: {
+      page?: number;
+      pageSize?: number;
+      status?: HealthHistoryFilter;
+      attentionPage?: number;
+      attentionPageSize?: number;
+    }) => {
       setSearchParams(
         (previous) => {
           const next = new URLSearchParams(previous);
           if (params.page !== undefined) next.set("page", String(params.page));
           if (params.pageSize !== undefined) next.set("pageSize", String(params.pageSize));
+          if (params.attentionPage !== undefined)
+            next.set("attentionPage", String(params.attentionPage));
+          if (params.attentionPageSize !== undefined)
+            next.set("attentionPageSize", String(params.attentionPageSize));
           if (params.status !== undefined) {
             if (params.status === "all") next.delete("status");
             else next.set("status", params.status);
@@ -223,6 +240,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
       const status = parseHealthItemStatusMessage(message);
       if (!status) return;
       setQueueState((x) => completeHealthCheck(x, status.davItemId));
+      void revalidator.revalidate();
       setHistoryStats((x) => {
         // 'hs' websocket payload carries numeric HealthResult / RepairAction enum values
         const healthResultNum: HealthResult = status.healthResult;
@@ -254,7 +272,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         return newStats;
       });
     },
-    [setQueueState, setHistoryStats],
+    [setQueueState, setHistoryStats, revalidator],
   );
 
   const onHealthItemProgress = useCallback(
@@ -301,41 +319,48 @@ export default function Health({ loaderData }: Route.ComponentProps) {
     }
   }, [revalidator]);
 
-  const onRequeueActionNeeded = useCallback(async () => {
-    setRequeueingActionNeeded(true);
-    setRequeueFeedback(null);
-    try {
-      const response = await fetch(withUrlBase("/api/requeue-action-needed-health-checks"), {
-        method: "POST",
-      });
-      if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+  const onRequeueActionNeeded = useCallback(
+    async (davItemId?: string) => {
+      setRequeueingActionNeeded(true);
+      setRequeueFeedback(null);
+      try {
+        const query = davItemId ? `?${new URLSearchParams({ davItemId })}` : "";
+        const response = await fetch(
+          withUrlBase(`/api/requeue-action-needed-health-checks${query}`),
+          {
+            method: "POST",
+          },
+        );
+        if (!response.ok) {
+          const body = (await response.json().catch(() => null)) as { error?: string } | null;
+          setRequeueFeedback({
+            variant: "danger",
+            message: body?.error || "Could not queue action-needed items for re-check.",
+          });
+          return;
+        }
+
+        const body = (await response.json()) as { requeuedCount?: number };
+        const requeuedCount = body.requeuedCount ?? 0;
+        setRequeueFeedback({
+          variant: "success",
+          message:
+            requeuedCount === 0
+              ? "No current action-needed items to re-check."
+              : `Queued ${requeuedCount.toLocaleString()} item${requeuedCount === 1 ? "" : "s"} for re-check.`,
+        });
+        void revalidator.revalidate();
+      } catch {
         setRequeueFeedback({
           variant: "danger",
-          message: body?.error || "Could not queue action-needed items for re-check.",
+          message: "Could not queue action-needed items for re-check.",
         });
-        return;
+      } finally {
+        setRequeueingActionNeeded(false);
       }
-
-      const body = (await response.json()) as { requeuedCount?: number };
-      const requeuedCount = body.requeuedCount ?? 0;
-      setRequeueFeedback({
-        variant: "success",
-        message:
-          requeuedCount === 0
-            ? "No current action-needed items to re-check."
-            : `Queued ${requeuedCount.toLocaleString()} item${requeuedCount === 1 ? "" : "s"} for re-check.`,
-      });
-      void revalidator.revalidate();
-    } catch {
-      setRequeueFeedback({
-        variant: "danger",
-        message: "Could not queue action-needed items for re-check.",
-      });
-    } finally {
-      setRequeueingActionNeeded(false);
-    }
-  }, [revalidator]);
+    },
+    [revalidator],
+  );
 
   const onWebsocketMessage = useCallback(
     (topic: string, message: string) => {
@@ -379,6 +404,36 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         }
       />
       <HealthStats stats={historyStats} />
+      <HealthAttentionTable
+        items={loaderData.attentionItems}
+        totalCount={loaderData.attentionTotalCount}
+        page={loaderData.attentionPage}
+        pageSize={loaderData.attentionPageSize}
+        pageSizeOptions={PAGE_SIZE_OPTIONS}
+        refreshing={revalidator.state !== "idle"}
+        canRequeueActionNeeded={isEnabled && !isReadOnly}
+        requeueingActionNeeded={requeueingActionNeeded}
+        onPageSelected={(attentionPage) => setHistoryParams({ attentionPage })}
+        onPageSizeSelected={(attentionPageSize) =>
+          setHistoryParams({ attentionPageSize, attentionPage: 1 })
+        }
+        onRefresh={() => void revalidator.revalidate()}
+        onRequeueActionNeeded={(davItemId) => void onRequeueActionNeeded(davItemId)}
+      />
+      {requeueFeedback && (
+        <Alert
+          className="alert-soft py-3 text-sm"
+          variant={requeueFeedback.variant}
+          role="status"
+          aria-live="polite"
+        >
+          <Icon
+            name={requeueFeedback.variant === "success" ? "check_circle" : "error"}
+            className="shrink-0 !text-[20px]"
+          />
+          <span>{requeueFeedback.message}</span>
+        </Alert>
+      )}
       {triggerError && (
         <Alert className="alert-soft" variant="danger">
           <Icon name="error" className="shrink-0 !text-[20px]" />
@@ -427,20 +482,6 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         isEnabled={isEnabled}
         healthCheckItems={getVisibleHealthCheckItems(queueItems)}
       />
-      {requeueFeedback && (
-        <Alert
-          className="alert-soft py-3 text-sm"
-          variant={requeueFeedback.variant}
-          role="status"
-          aria-live="polite"
-        >
-          <Icon
-            name={requeueFeedback.variant === "success" ? "check_circle" : "error"}
-            className="shrink-0 !text-[20px]"
-          />
-          <span>{requeueFeedback.message}</span>
-        </Alert>
-      )}
       <HealthHistoryTable
         items={historyItems}
         totalCount={historyTotalCount}
@@ -449,13 +490,10 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         pageSizeOptions={PAGE_SIZE_OPTIONS}
         filter={loaderData.historyFilter}
         refreshing={revalidator.state !== "idle"}
-        canRequeueActionNeeded={isEnabled && !isReadOnly}
-        requeueingActionNeeded={requeueingActionNeeded}
         onFilterSelected={onHistoryFilterSelected}
         onPageSelected={(page) => setHistoryParams({ page })}
         onPageSizeSelected={onHistoryPageSizeSelected}
         onRefresh={() => void revalidator.revalidate()}
-        onRequeueActionNeeded={() => void onRequeueActionNeeded()}
       />
     </div>
   );

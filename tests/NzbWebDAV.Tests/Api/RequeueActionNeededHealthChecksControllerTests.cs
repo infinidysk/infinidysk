@@ -199,14 +199,44 @@ public sealed class RequeueActionNeededHealthChecksControllerTests : IAsyncLifet
         Assert.NotEqual(HealthCheckService.ForcedRecheckSentinel, updated.NextHealthCheck);
     }
 
-    private async Task<RequeueActionNeededHealthChecksResponse> InvokeAsync()
+    [Fact]
+    public async Task RequeueAsync_SelectedFileDoesNotQueueOtherFiles()
     {
-        var result = await InvokeActionAsync(HttpMethods.Post);
+        var now = DateTimeOffset.UtcNow;
+        var selected = NewItem("selected.mkv", now.AddDays(1));
+        var other = NewItem("other.mkv", now.AddDays(1));
+        _context.Items.AddRange(selected, other);
+        _context.HealthCheckResults.AddRange(
+            NewResult(selected, now, HealthCheckResult.RepairAction.ActionNeeded),
+            NewResult(other, now, HealthCheckResult.RepairAction.ActionNeeded));
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var response = await InvokeAsync($"?davItemId={selected.Id}");
+
+        Assert.Equal(1, response.RequeuedCount);
+        Assert.Equal(HealthCheckService.ForcedRecheckSentinel,
+            (await _context.Items.SingleAsync(item => item.Id == selected.Id)).NextHealthCheck);
+        Assert.Equal(now.AddDays(1).ToUnixTimeSeconds(),
+            (await _context.Items.SingleAsync(item => item.Id == other.Id)).NextHealthCheck!.Value.ToUnixTimeSeconds());
+    }
+
+    [Theory]
+    [InlineData("?davItemId=invalid")]
+    [InlineData("?davItemId=")]
+    public async Task RequeueAsync_InvalidSelectedFileReturnsBadRequest(string query)
+    {
+        Assert.IsType<BadRequestObjectResult>(await InvokeActionAsync(HttpMethods.Post, query));
+    }
+
+    private async Task<RequeueActionNeededHealthChecksResponse> InvokeAsync(string query = "")
+    {
+        var result = await InvokeActionAsync(HttpMethods.Post, query);
         return Assert.IsType<OkObjectResult>(result).Value as RequeueActionNeededHealthChecksResponse
             ?? throw new Xunit.Sdk.XunitException("Expected requeue action-needed response.");
     }
 
-    private Task<IActionResult> InvokeActionAsync(string method)
+    private Task<IActionResult> InvokeActionAsync(string method, string query = "")
     {
         var controller = new TestController(_dbClient, _configManager)
         {
@@ -216,6 +246,7 @@ public sealed class RequeueActionNeededHealthChecksControllerTests : IAsyncLifet
             }
         };
         controller.HttpContext.Request.Method = method;
+        controller.HttpContext.Request.QueryString = new QueryString(query);
         return controller.InvokeAsync();
     }
 
