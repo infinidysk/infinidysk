@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   isMediaServersSettingsUpdated,
   isMediaServersSettingsValid,
-  parseMediaServerConfig,
 } from "./media-servers";
+import { parseMediaServerConfig } from "~/utils/media-server-config";
 
 const MASK =
   "__NZBDAV_SECRET_MASK_V1__:AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
