@@ -47,19 +47,8 @@ export function parseMediaServerConfig(value: string | undefined): MediaServerCo
     const parsed = JSON.parse(value) as Partial<MediaServerConfig> | null;
     if (!parsed || !Array.isArray(parsed.Instances)) return { Instances: [] };
 
-    const instances = parsed.Instances.filter(
-      (instance): instance is MediaServerInstance =>
-        instance !== null &&
-        typeof instance === "object" &&
-        typeof (instance as MediaServerInstance).Id === "string" &&
-        typeof (instance as MediaServerInstance).Name === "string" &&
-        typeof (instance as MediaServerInstance).BaseUrl === "string" &&
-        typeof (instance as MediaServerInstance).Token === "string" &&
-        typeof (instance as MediaServerInstance).Enabled === "boolean" &&
-        isMediaServerType((instance as MediaServerInstance).Type) &&
-        Array.isArray((instance as MediaServerInstance).PathMappings),
-    );
-    return { Instances: instances };
+    const candidates: unknown[] = parsed.Instances;
+    return { Instances: candidates.filter(isMediaServerInstance) };
   } catch {
     return { Instances: [] };
   }
@@ -482,6 +471,20 @@ export function MediaServersSettings({ config, setNewConfig }: MediaServersSetti
         </div>
       </ManagedSetting>
     </SettingsPage>
+  );
+}
+
+function isMediaServerInstance(value: unknown): value is MediaServerInstance {
+  if (value === null || typeof value !== "object") return false;
+  const instance = value as Record<string, unknown>;
+  return (
+    typeof instance.Id === "string" &&
+    typeof instance.Name === "string" &&
+    typeof instance.BaseUrl === "string" &&
+    typeof instance.Token === "string" &&
+    typeof instance.Enabled === "boolean" &&
+    isMediaServerType(instance.Type) &&
+    Array.isArray(instance.PathMappings)
   );
 }
 
