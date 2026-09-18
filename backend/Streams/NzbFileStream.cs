@@ -274,6 +274,9 @@ public class NzbFileStream(
             {
                 var resolved = await ProbeAuthoritativeRangeAsync(fileSegmentIds[guess], guess, ct).ConfigureAwait(false);
                 authoritative[guess] = resolved;
+                estimated.Remove(guess);
+                if (lastEstimatedIndex == guess)
+                    lastEstimatedIndex = -1;
                 return resolved.Range;
             }
             catch (UsenetArticleNotFoundException e)
