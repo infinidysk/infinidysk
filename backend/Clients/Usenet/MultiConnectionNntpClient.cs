@@ -383,11 +383,15 @@ public class MultiConnectionNntpClient(
                 var callbackInvoked = 0;
                 var callbackCompletion = new TaskCompletionSource(
                     TaskCreationOptions.RunContinuationsAsynchronously);
+                attemptCts?.CancelAfter(Timeout.InfiniteTimeSpan);
                 deferredCallback.Activate(OnConnectionReadyAgain);
+                var completion = CompleteBatchLifecycleAsync(
+                    batch.Completion, callbackCompletion.Task, attemptCts);
+                attemptCts = null;
                 return new UsenetDecodedBodyBatch
                 {
                     Responses = wrapped,
-                    Completion = CompleteBatchLifecycleAsync(batch.Completion, callbackCompletion.Task),
+                    Completion = completion,
                 };
 
                 void OnConnectionReadyAgain(ArticleBodyResult result, string? failureReason)
@@ -641,6 +645,7 @@ public class MultiConnectionNntpClient(
             T? result;
             var deferredCallback = new DeferredArticleBodyCallback();
             CancellationTokenSource? attemptCts = null;
+            CancellationTokenSource? bodyCts = null;
             try
             {
                 var commandCt = ct;
@@ -662,6 +667,12 @@ public class MultiConnectionNntpClient(
                         workload,
                         operation,
                         Stopwatch.GetElapsedTime(responseStarted));
+                    if (IsBodyCommand(name) && attemptCts is not null)
+                    {
+                        attemptCts.CancelAfter(Timeout.InfiniteTimeSpan);
+                        bodyCts = attemptCts;
+                        attemptCts = null;
+                    }
                 }
             }
             catch (Exception e) when (
@@ -824,6 +835,7 @@ public class MultiConnectionNntpClient(
                 deferredCallback.Activate((articleBodyResult, failureReason) =>
                 {
                     if (Interlocked.Exchange(ref callbackInvoked, 1) != 0) return;
+                    using var completedBodyCts = bodyCts;
 
                     if (articleBodyResult == ArticleBodyResult.NotRetrieved)
                     {
@@ -1272,9 +1284,19 @@ public class MultiConnectionNntpClient(
             inner);
     }
 
-    private static async Task CompleteBatchLifecycleAsync(Task transportCompletion, Task callbackCompletion)
+    private static async Task CompleteBatchLifecycleAsync(
+        Task transportCompletion,
+        Task callbackCompletion,
+        CancellationTokenSource? attemptCts)
     {
-        await BatchLifecycle.ObserveAllAsync(transportCompletion, callbackCompletion).ConfigureAwait(false);
+        try
+        {
+            await BatchLifecycle.ObserveAllAsync(transportCompletion, callbackCompletion).ConfigureAwait(false);
+        }
+        finally
+        {
+            attemptCts?.Dispose();
+        }
     }
 
     private async Task<UsenetDecodedBodyResponse> RecordSuccessfulResponseAsync(

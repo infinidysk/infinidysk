@@ -23,6 +23,43 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 public class StreamingTimeoutTests
 {
     [Fact]
+    public async Task RunWithConnection_CancellationAfterBodyReturn_ReleasesTransfer()
+    {
+        var inner = new LateBodyCompletionClient();
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1, _ => ValueTask.FromResult<INntpClient>(inner));
+        var breaker = new ProviderCircuitBreaker("late-body-cancel");
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, "late-body-cancel", maxTransferConnections: 1);
+        using var callerCts = new CancellationTokenSource();
+        using var timeoutScope = callerCts.Token.SetContext(new StreamingTimeoutContext
+        {
+            PerSegmentTimeout = TimeSpan.FromMinutes(1),
+            MaxRetries = 0,
+        });
+        var recorder = new ArticleBodyCompletionRecorder();
+
+        var response = await client.DecodedBodyAsync("seg", recorder.Invoke, callerCts.Token);
+        using var stream = response.Stream;
+        using var registration = inner.BodyToken.Register(() => inner.Complete(ArticleBodyResult.Cancelled));
+        try
+        {
+            Assert.Equal(1, client.GetConnectionAdmissionSnapshot()!.ActiveTransferOperations);
+            await callerCts.CancelAsync();
+            Assert.True(inner.BodyToken.IsCancellationRequested);
+            Assert.Equal(0, client.GetConnectionAdmissionSnapshot()!.ActiveTransferOperations);
+            Assert.Equal(0, client.ActiveConnections);
+            Assert.Equal(1, recorder.Count);
+            Assert.Equal(ArticleBodyResult.Cancelled, recorder.Result);
+            Assert.Equal(0, breaker.GetSnapshot().FailureCount);
+        }
+        finally
+        {
+            inner.Complete(ArticleBodyResult.Cancelled);
+        }
+    }
+
+    [Fact]
     public async Task MissingArticle_ReturnsCleanMissWithoutReplacingConnection()
     {
         var breaker = new ProviderCircuitBreaker("missing-article");
@@ -1018,6 +1055,25 @@ public class StreamingTimeoutTests
             output.Write(Encoding.ASCII.GetBytes("\r\n"));
             output.Write(Encoding.ASCII.GetBytes($"=yend size={source.Length}\r\n"));
             return output.ToArray();
+        }
+    }
+
+    private sealed class LateBodyCompletionClient()
+        : HealthyNntpClient(new Dictionary<string, byte[]> { ["seg"] = [1, 2, 3] })
+    {
+        private ArticleBodyCompletionHandler? _onCompleted;
+        public CancellationToken BodyToken { get; private set; }
+
+        public void Complete(ArticleBodyResult result) => _onCompleted?.Invoke(result);
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId,
+            ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            BodyToken = cancellationToken;
+            _onCompleted = onConnectionReadyAgain;
+            return base.DecodedBodyAsync(segmentId, null, cancellationToken);
         }
     }
 
