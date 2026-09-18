@@ -430,11 +430,11 @@ public class NzbFileStream(
             }
         }
 
-        if (transientProbeFailure is not null)
-            ExceptionDispatchInfo.Capture(transientProbeFailure).Throw();
-
         if (firstNonContaining is { } nonContaining)
             return nonContaining;
+
+        if (transientProbeFailure is not null)
+            ExceptionDispatchInfo.Capture(transientProbeFailure).Throw();
 
         throw new SeekPositionNotFoundException(
             $"Cannot establish exact geometry for segment {index} of " +
