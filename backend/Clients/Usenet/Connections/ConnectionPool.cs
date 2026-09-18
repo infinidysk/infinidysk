@@ -600,6 +600,12 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             var lateConnection = await factoryTask.ConfigureAwait(false);
             DisposeConnection(lateConnection);
         }
+        catch (OperationCanceledException exception)
+        {
+            Log.Warning(
+                "NNTP connection factory stopped after the open attempt was cancelled for {Provider}. Reason: {Reason}",
+                _diagnosticName, exception.Message);
+        }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             exception.LogWarningKnownOrStack(

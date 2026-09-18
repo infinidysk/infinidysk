@@ -786,6 +786,77 @@ public class StreamingTimeoutTests
             && e.RenderMessage().Contains("No retries left", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task ConnectionPool_LateFactoryFailure_OnlyCancellationOmitsStack(
+        bool deadlineExpires,
+        bool factoryCancelled)
+    {
+        var sink = new CollectingSink();
+        var previous = Log.Logger;
+        using var logger = new LoggerConfiguration()
+            .MinimumLevel.Warning()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        Log.Logger = logger;
+
+        try
+        {
+            var lateFactory = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var attempts = 0;
+            var openTimeout = deadlineExpires ? TimeSpan.FromMilliseconds(100) : TimeSpan.FromSeconds(5);
+            await using var pool = new ConnectionPool<object>(
+                maxConnections: 1,
+                _ => Interlocked.Increment(ref attempts) == 1
+                    ? new ValueTask<object>(lateFactory.Task)
+                    : ValueTask.FromResult(new object()),
+                diagnosticName: "news.late-factory.example",
+                connectionOpenTimeout: () => openTimeout);
+            using var caller = new CancellationTokenSource();
+            var borrow = pool.GetConnectionLockAsync(SemaphorePriority.High, caller.Token);
+            Assert.Equal(1, pool.PendingConnectionCreations);
+
+            if (deadlineExpires)
+                await Assert.ThrowsAsync<ConnectionOpenTimeoutException>(() => borrow.WaitAsync(TimeSpan.FromSeconds(5)));
+            else
+            {
+                await caller.CancelAsync();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => borrow.WaitAsync(TimeSpan.FromSeconds(5)));
+            }
+
+            openTimeout = TimeSpan.FromSeconds(5);
+            Exception failure = factoryCancelled
+                ? new OperationCanceledException("Connection opening was cancelled.")
+                : new InvalidOperationException("Unexpected factory failure.");
+            lateFactory.SetException(failure);
+
+            using var recovered = await pool.GetConnectionLockAsync(SemaphorePriority.High)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(0, pool.PendingConnectionCreations);
+            Assert.Equal(1, pool.LiveConnections);
+            Assert.Equal(2, attempts);
+
+            var warning = Assert.Single(sink.Events);
+            Assert.Equal(LogEventLevel.Warning, warning.Level);
+            Assert.Equal("news.late-factory.example", Assert.IsType<ScalarValue>(warning.Properties["Provider"]).Value);
+            if (factoryCancelled)
+            {
+                Assert.Null(warning.Exception);
+                Assert.Equal(failure.Message, Assert.IsType<ScalarValue>(warning.Properties["Reason"]).Value);
+                Assert.Contains("open attempt was cancelled", warning.RenderMessage(), StringComparison.Ordinal);
+            }
+            else
+                Assert.Same(failure, warning.Exception);
+        }
+        finally
+        {
+            Log.Logger = previous;
+        }
+    }
+
     [Fact]
     public async Task ConnectionPoolGate_CancelsWithinStreamingReadDeadline()
     {
