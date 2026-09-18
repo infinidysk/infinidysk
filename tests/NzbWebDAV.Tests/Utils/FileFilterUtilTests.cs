@@ -107,13 +107,17 @@ public class FileFilterUtilTests
             "/content/tv/Show.S01E01.1080p-Group/Sample/show.s01e01.mkv"));
     }
 
-    [Fact]
-    public void IsSampleFile_MainFeatureUnderSampleDirectory_IsKeptBySizeGuard()
+    [Theory]
+    [InlineData(40_000_000L)]
+    [InlineData(8_000_000_000L)]
+    [InlineData(0L)]
+    [InlineData(null)]
+    public void IsSampleFile_OnlyVideoUnderSampleDirectory_IsFiltered(long? fileSize)
     {
-        Assert.False(FileFilterUtil.IsSampleFile(
+        Assert.True(FileFilterUtil.IsSampleFile(
             "movie.mkv",
-            FeatureSize,
-            FeatureSize,
+            fileSize,
+            fileSize ?? 0,
             "/content/movies/Release/Sample/movie.mkv"));
     }
 

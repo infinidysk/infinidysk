@@ -10,8 +10,8 @@ namespace NzbWebDAV.Utils;
 public static partial class FileFilterUtil
 {
     /// <summary>
-    /// A sample must be smaller than this fraction of the largest video file
-    /// in the same release before it is treated as a sample.
+    /// A filename-only sample match must be smaller than this fraction of the
+    /// largest video file in the same release before it is treated as a sample.
     /// </summary>
     public const double SampleMaxSizeRatio = 0.20;
 
@@ -64,11 +64,10 @@ public static partial class FileFilterUtil
     }
 
     /// <summary>
-    /// True when the file is a video whose name (or, when <paramref name="davPath"/>
-    /// is given, one of its release subfolders) looks like a sample and which is much
-    /// smaller than the largest video in the same release. The size check is what
-    /// keeps a real release such as `Free.Samples.2012.mkv` — which is itself the
-    /// largest video — from being filtered out.
+    /// True for a video under a sample subfolder when <paramref name="davPath"/>
+    /// is given, regardless of size or the presence of other videos. Filename-only
+    /// sample matches must be much smaller than the largest video in the release,
+    /// keeping real titles such as `Free.Samples.2012.mkv` from being filtered out.
     /// </summary>
     public static bool IsSampleFile(
         string filename,
@@ -77,8 +76,8 @@ public static partial class FileFilterUtil
         string? davPath = null)
     {
         if (!FilenameUtil.IsVideoFile(filename)) return false;
-        if (!LooksLikeSampleName(filename) && !(davPath != null && HasSampleDirectory(davPath)))
-            return false;
+        if (davPath != null && HasSampleDirectory(davPath)) return true;
+        if (!LooksLikeSampleName(filename)) return false;
 
         // Without sizes to compare against, we cannot tell a sample apart
         // from a small release, so leave the file alone.

@@ -110,6 +110,22 @@ public class ArchiveSetGroupingTests
     }
 
     [Fact]
+    public void Resolve_ClassicRarVolumesWithoutMagic_StillFormArchiveSet()
+    {
+        var descriptors = ArchiveSetGrouping.Resolve([
+            Info("Release.r00") with { IsRar = false },
+            Info("Release.rar") with { IsRar = false },
+            Info("Release.r01") with { IsRar = false },
+            Info("Release.sample.mkv"),
+        ], new ArchiveSetIdAllocator());
+
+        var descriptor = Assert.Single(descriptors);
+        Assert.False(descriptor.IsSevenZip);
+        Assert.Equal(["Release.r00", "Release.rar", "Release.r01"],
+            descriptor.FileInfos.Select(file => file.FileName));
+    }
+
+    [Fact]
     public void Resolve_StandaloneBeforeMultipartSevenZipRemainSeparate()
     {
         AssertStandaloneAndMultipartSevenZipRemainSeparate(["A.7z", "A.7z.001", "A.7z.002"]);
