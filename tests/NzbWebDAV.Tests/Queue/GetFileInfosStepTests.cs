@@ -397,9 +397,9 @@ public class GetFileInfosStepTests
 #pragma warning disable CA5351 // MD5 here is content hashing for the NZB/PAR2 ecosystem, not security
         var descriptors = await Par2TestPackets.ReadFileDescsAsync(Par2TestPackets.BuildPar2Bytes(
             Par2TestPackets.BuildFileDescBody(
-                FileId(0x0A), "0123456789abcdef0123456789abcdef.part01.rar", MD5.HashData(first16kA), fileLength: 7),
+                FileId(0x0A), "0123456789abcdef0123456789abcdef.part1.rar", MD5.HashData(first16kA), fileLength: 7),
             Par2TestPackets.BuildFileDescBody(
-                FileId(0x0B), "0123456789abcdef0123456789abcdef.part02.rar", MD5.HashData(first16kB), fileLength: 8)));
+                FileId(0x0B), "0123456789abcdef0123456789abcdef.part2.rar", MD5.HashData(first16kB), fileLength: 8)));
 #pragma warning restore CA5351
         var inputs = new List<FetchFirstSegmentsStep.NzbFileWithFirstSegment>
         {
