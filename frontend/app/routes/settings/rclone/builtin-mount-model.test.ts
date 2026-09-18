@@ -158,9 +158,7 @@ describe("newMount", () => {
   });
 
   it("gives additional mounts distinct ids", () => {
-    expect(newMount([], "/data/nzbdav").Id).not.toBe(
-      newMount([mount()], "/data/nzbdav").Id,
-    );
+    expect(newMount([], "/data/nzbdav").Id).not.toBe(newMount([mount()], "/data/nzbdav").Id);
   });
 
   it("does not reuse an id after a mount is removed", () => {
