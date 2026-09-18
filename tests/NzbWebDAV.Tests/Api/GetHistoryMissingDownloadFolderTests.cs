@@ -9,6 +9,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Tests.Database;
@@ -105,6 +106,41 @@ public sealed class GetHistoryMissingDownloadFolderTests : IAsyncLifetime
         var completedSlot = Assert.Single(completed.History.Slots);
         Assert.Equal(liveId.ToString(), completedSlot.NzoId);
         Assert.Equal(1, completed.History.TotalCount);
+    }
+
+    [Theory]
+    [InlineData("rar")]
+    [InlineData("7z")]
+    public async Task CompressionRejection_IsReportedAsFailedWithPolicyReasonForArr(string archiveType)
+    {
+        var rejection = archiveType == "rar"
+            ? (NonRetryableDownloadException)new UnsupportedRarCompressionMethodException()
+            : new Unsupported7zCompressionMethodException();
+        var id = Guid.NewGuid();
+        _context.HistoryItems.Add(new HistoryItem
+        {
+            Id = id,
+            CreatedAt = DateTime.UtcNow,
+            FileName = "release.nzb",
+            JobName = "release",
+            Category = "tv",
+            DownloadStatus = HistoryItem.DownloadStatusOption.Failed,
+            FailMessage = rejection.Message,
+        });
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var response = await CreateController().GetHistoryAsync(BuildRequest("?failed_only=1"));
+        var slot = Assert.Single(response.History.Slots);
+        Assert.Equal(id.ToString(), slot.NzoId);
+        Assert.Equal(HistoryItem.DownloadStatusOption.Failed, slot.Status);
+        Assert.Equal(rejection.Message, slot.FailMessage);
+        Assert.True(string.IsNullOrEmpty(slot.DownloadPath));
+
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(response));
+        var serializedSlot = json.RootElement.GetProperty("history").GetProperty("slots")[0];
+        Assert.Equal("Failed", serializedSlot.GetProperty("status").GetString());
+        Assert.Equal(rejection.Message, serializedSlot.GetProperty("fail_message").GetString());
     }
 
     private async Task<Guid> SeedCompletedAsync(string fileName, Guid? downloadDirId)

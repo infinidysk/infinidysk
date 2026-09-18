@@ -39,6 +39,25 @@ Registered and enabled instances light up the Overview **Arr Health** widget [si
 
 Enable **Repairs** with a **Library Directory** once paths and \*Arr instances exist — [Repairs](../configuration/repairs.md).
 
+## Rejected compressed archives
+
+InfiniDysk intentionally rejects compressed RAR and 7z archive contents. Direct
+streaming and seeking require stored, uncompressed payloads: RAR `m0` or 7z
+Copy/store. This is a streaming design limitation, not an application error.
+Choose another release with stored archives or direct media files. This restriction
+does not apply to video codecs such as H.264 or HEVC, or to the NZB manifest itself.
+
+These rejections are reported through SABnzbd history with `status: "Failed"`
+and an explanatory `fail_message`. For downloads grabbed and tracked by Sonarr
+or Radarr, that is the normal failed-download signal used for blocklisting and
+replacement handling. Enable automatic redownload of failed downloads in the
+Arr application's download-client settings to request a replacement search;
+interactive-search grabs have a separate automatic-redownload setting.
+
+InfiniDysk does not directly force an Arr search for this rejection. Manually
+uploaded NZBs without matching Arr grab history do not trigger that automatic
+workflow, and a search can only grab another release if an eligible one is available.
+
 ## Next
 
 [Infinite library use case](../use-cases/infinite-library-arr.md) · [SABnzbd API details](../features/sab-api.md)

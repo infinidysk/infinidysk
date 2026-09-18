@@ -3,11 +3,26 @@ using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
 using NzbWebDAV.Queue.FileProcessors;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Extensions;
 
 namespace NzbWebDAV.Tests.Queue;
 
 public class SevenZipProcessorTests
 {
+    [Fact]
+    public void CompressionRejection_ExplainsStreamingPolicyAndRemainsNonRetryable()
+    {
+        var exception = new Unsupported7zCompressionMethodException();
+
+        Assert.Contains("intentionally unsupported", exception.Message);
+        Assert.Contains("streaming and seeking", exception.Message);
+        Assert.Contains("Copy/store", exception.Message);
+        Assert.Contains("not an application error", exception.Message);
+        Assert.Contains("Choose a different release", exception.Message);
+        Assert.True(exception.IsNonRetryableDownloadException());
+        Assert.False(exception.IsRetryableDownloadException());
+    }
+
     [Theory]
     [InlineData(new[] { "A.7z.003", "A.7z.001", "A.7z.002" }, new[] { "A.7z.001", "A.7z.002", "A.7z.003" })]
     [InlineData(new[] { "Movie.7z" }, new[] { "Movie.7z" })]

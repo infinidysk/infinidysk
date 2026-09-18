@@ -14,6 +14,33 @@ namespace NzbWebDAV.Tests.Utils;
 
 public class RarUtilTests
 {
+    [Theory]
+    [InlineData("all")]
+    [InlineData("find")]
+    [InlineData("first")]
+    public async Task CompressedHeaders_ExplainStreamingPolicyAndRemainNonRetryable(string reader)
+    {
+        await using var stream = new MemoryStream(BuildRar4(0x33, ("movie.mkv", "payload"u8.ToArray())));
+        var exception = await Assert.ThrowsAsync<UnsupportedRarCompressionMethodException>(async () =>
+        {
+            if (reader == "all")
+                await RarUtil.GetRarHeadersAsync(stream, null, CancellationToken.None);
+            else if (reader == "find")
+                await RarUtil.FindFirstFileHeaderAsync(stream, null, _ => true, CancellationToken.None);
+            else
+                await RarUtil.ReadHeadersUntilFirstFileAsync(stream, null, CancellationToken.None);
+        });
+
+        Assert.Equal(new UnsupportedRarCompressionMethodException().Message, exception.Message);
+        Assert.Contains("intentionally unsupported", exception.Message);
+        Assert.Contains("streaming and seeking", exception.Message);
+        Assert.Contains("stored/m0", exception.Message);
+        Assert.Contains("not an application error", exception.Message);
+        Assert.Contains("Choose a different release", exception.Message);
+        Assert.True(exception.IsNonRetryableDownloadException());
+        Assert.False(exception.IsRetryableDownloadException());
+    }
+
     [Fact]
     public void TryMapHeaderParseFailure_WrapsSeekPastEndAsCorruptRarException()
     {
@@ -205,7 +232,10 @@ public class RarUtilTests
         return false;
     }
 
-    private static byte[] BuildStoredRar4(params (string FileName, byte[] Payload)[] files)
+    private static byte[] BuildStoredRar4(params (string FileName, byte[] Payload)[] files) =>
+        BuildRar4(0x30, files);
+
+    private static byte[] BuildRar4(byte compressionMethod, params (string FileName, byte[] Payload)[] files)
     {
         using var ms = new MemoryStream();
         ms.Write([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00]);
@@ -241,7 +271,7 @@ public class RarUtilTests
             BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), 0);
             o += 4;
             body[o++] = 20; // UnpVer
-            body[o++] = 0x30; // store
+            body[o++] = compressionMethod;
             BinaryPrimitives.WriteUInt16LittleEndian(body.AsSpan(o), (ushort)nameBytes.Length);
             o += 2;
             BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(o), 0);

@@ -49,8 +49,7 @@ public static class RarUtil
 
                 // we only support stored files (compression method m0).
                 if (!fh.IsStored)
-                    throw new UnsupportedRarCompressionMethodException(
-                        "Only rar files with compression method m0 are supported.");
+                    throw new UnsupportedRarCompressionMethodException();
 
                 // TODO: support solid archives
                 if (fh.IsEncrypted && fh.IsSolid)
@@ -95,8 +94,7 @@ public static class RarUtil
                 if (header.HeaderType != HeaderType.File) continue;
                 if (header is not IRarFileHeader fh || fh.IsDirectory) continue;
                 if (!fh.IsStored)
-                    throw new UnsupportedRarCompressionMethodException(
-                        "Only rar files with compression method m0 are supported.");
+                    throw new UnsupportedRarCompressionMethodException();
                 if (predicate(fh)) return fh;
             }
             return null;
@@ -138,8 +136,7 @@ public static class RarUtil
                 if (header.HeaderType != HeaderType.File) continue;
                 if (header is not IRarFileHeader fh || fh.IsDirectory) continue;
                 if (!fh.IsStored)
-                    throw new UnsupportedRarCompressionMethodException(
-                        "Only rar files with compression method m0 are supported.");
+                    throw new UnsupportedRarCompressionMethodException();
                 return headers;
             }
 
