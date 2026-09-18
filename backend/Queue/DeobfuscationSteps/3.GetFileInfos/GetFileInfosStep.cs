@@ -130,11 +130,9 @@ public static class GetFileInfosStep
     }
 
     /// <summary>
-    /// When RAR volumes share colliding subject-derived names (no distinct volume
-    /// identity) but yEnc headers restore distinct identities, prefer the header names.
-    /// Identity is (case-insensitive base, scheme, normalized ordinal) — the same key
-    /// ArchiveSetGrouping uses — so independent sets in one NZB may repeat ordinals.
-    /// Skipped when any volume already has a PAR2 name.
+    /// Use distinct header identities for colliding names, or a contiguous header set
+    /// for fragmented names with matching ordinals or anchored unnumbered names.
+    /// Never contradict a PAR2 name.
     /// </summary>
     internal static void RepairRarGroupNames(List<NamePick> picks)
     {
@@ -142,16 +140,54 @@ public static class GetFileInfosStep
         // does not depend on the (possibly colliding) FileName.
         var group = picks.Where(x => x.Info.IsRar).ToList();
         if (group.Count < 2) return;
-        // Keep PAR2 authoritative; never mix PAR2 + header repairs in one group.
-        if (group.Any(x => x.HasPar2Name)) return;
-        if (HasDistinctRarVolumeIdentities(group.Select(x => x.Info.FileName))) return;
         if (!HasDistinctRarVolumeIdentities(group.Select(x => x.HeaderName))) return;
+        if ((group.Any(x => x.HasPar2Name)
+             || HasDistinctRarVolumeIdentities(group.Select(x => x.Info.FileName)))
+            && !CanRepairFragmentedRarGroup(group)) return;
 
         Log.Information(
-            "Repairing {Count} RAR volume names without distinct volume identity using yEnc header names",
+            "Repairing {Count} RAR volume names with colliding or fragmented archive identities using yEnc header names",
             group.Count);
-        foreach (var pick in group)
+        foreach (var pick in group.Where(pick => !pick.HasPar2Name))
             pick.Info = pick.Info with { FileName = pick.HeaderName };
+    }
+
+    private static bool CanRepairFragmentedRarGroup(List<NamePick> group)
+    {
+        var identities = group.Select(pick => (
+            Pick: pick,
+            Selected: FilenameUtil.GetRarVolumeName(pick.Info.FileName),
+            Header: FilenameUtil.GetRarVolumeName(pick.HeaderName))).ToList();
+        if (identities.Any(identity => identity.Selected is null || identity.Header is null)) return false;
+        var first = identities[0].Header!.Value;
+        var hasUnnumberedNames = false;
+        var hasMatchingNumberedAnchor = false;
+        foreach (var identity in identities)
+        {
+            var selected = identity.Selected!.Value;
+            var header = identity.Header!.Value;
+            if (header.Scheme != first.Scheme
+                || !string.Equals(header.BaseName, first.BaseName, StringComparison.OrdinalIgnoreCase))
+                return false;
+            var sameBase = string.Equals(selected.BaseName, header.BaseName, StringComparison.OrdinalIgnoreCase);
+            var sameOrdinal = selected.Scheme == header.Scheme && selected.Ordinal == header.Ordinal;
+            if (identity.Pick.HasPar2Name && (!sameBase || !sameOrdinal)) return false;
+            if (sameOrdinal)
+            {
+                hasMatchingNumberedAnchor |= sameBase
+                    && (selected.Scheme == FilenameUtil.RarVolumeScheme.Part || selected.Ordinal > 0);
+                continue;
+            }
+            if (selected.Scheme != FilenameUtil.RarVolumeScheme.Classic || selected.Ordinal != 0)
+                return false;
+            hasUnnumberedNames = true;
+        }
+        if (hasUnnumberedNames && !hasMatchingNumberedAnchor)
+            return false;
+        return identities.Select(identity => identity.Selected!.Value.BaseName)
+                   .Distinct(StringComparer.OrdinalIgnoreCase).Skip(1).Any()
+               && identities.Select(identity => identity.Header!.Value.Ordinal).Order()
+                   .SequenceEqual(Enumerable.Range(0, group.Count));
     }
 
     internal static bool HasDistinctRarVolumeIdentities(IEnumerable<string> names)

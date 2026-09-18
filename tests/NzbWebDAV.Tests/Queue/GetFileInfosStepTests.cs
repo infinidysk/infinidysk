@@ -365,6 +365,58 @@ public class GetFileInfosStepTests
     }
 
     [Theory]
+    [InlineData("first.part01.rar", "second.part02.rar", "archive.part01.rar", "archive.part02.rar", true)]
+    [InlineData("first.rar", "second.r00", "archive.rar", "archive.r00", true)]
+    [InlineData("first.part01.rar", "second.part03.rar", "archive.part01.rar", "archive.part03.rar", false)]
+    [InlineData("first.part01.rar", "second.part02.rar", "archive.part02.rar", "archive.part01.rar", false)]
+    [InlineData("first.part01.rar", "second.part01.rar", "archive.part01.rar", "archive.part02.rar", false)]
+    [InlineData("first.part01.rar", "second.part02.rar", "first.part01.rar", "second.part02.rar", false)]
+    [InlineData("archive.part01.rar", "b082fa0beaa644d3aa01045d5b8d0b36.rar", "archive.part01.rar", "archive.part02.rar", true)]
+    [InlineData("archive.part01.rar", "Movie.2024.rar", "archive.part01.rar", "archive.part02.rar", true)]
+    [InlineData("archive.part01.rar", "_7aBCdEFGhIJKLmNOPqRSTUvWxyz.rar", "archive.part01.rar", "archive.part02.rar", true)]
+    [InlineData("archive.part01.rar", "Movie_Title_2024.rar", "archive.part01.rar", "archive.part02.rar", true)]
+    [InlineData("Movie.2024.rar", "Other.Movie.rar", "archive.part01.rar", "archive.part02.rar", false)]
+    [InlineData("b082fa0beaa644d3aa01045d5b8d0b36.rar", "a082fa0beaa644d3aa01045d5b8d0b36.rar", "archive.part01.rar", "archive.part02.rar", false)]
+    public void GetFileInfos_RepairsOnlyContiguousFragmentedSetsWithMatchingOrdinals(
+        string firstSubject, string secondSubject, string firstHeader, string secondHeader, bool repaired)
+    {
+        var results = GetFileInfosStep.GetFileInfos(
+            [Seg(firstSubject, firstHeader), Seg(secondSubject, secondHeader)], []);
+
+        Assert.Equal(repaired ? new[] { firstHeader, secondHeader } : [firstSubject, secondSubject],
+            results.Select(result => result.FileName));
+        if (repaired)
+            Assert.Single(ArchiveSetGrouping.Resolve(results, new ArchiveSetIdAllocator()));
+    }
+
+    [Theory]
+    [InlineData("archive.part01.rar", true)]
+    [InlineData("authoritative.part01.rar", false)]
+    public void RepairRarGroupNames_RespectsPar2AnchorInFragmentedSet(string par2Name, bool repaired)
+    {
+        var picks = new List<GetFileInfosStep.NamePick>
+        {
+            new()
+            {
+                Info = GetFileInfosStep.GetFileInfos([Seg(par2Name, null)], [])[0],
+                HeaderName = "archive.part01.rar",
+                HasPar2Name = true,
+            },
+            new()
+            {
+                Info = GetFileInfosStep.GetFileInfos([Seg("scrambled.part02.rar", null)], [])[0],
+                HeaderName = "archive.part02.rar",
+                HasPar2Name = false,
+            },
+        };
+
+        GetFileInfosStep.RepairRarGroupNames(picks);
+
+        Assert.Equal(par2Name, picks[0].Info.FileName);
+        Assert.Equal(repaired ? "archive.part02.rar" : "scrambled.part02.rar", picks[1].Info.FileName);
+    }
+
+    [Theory]
     [InlineData(new[] { "a.part01.rar", "a.part02.rar", "b.part01.rar" }, true)]
     [InlineData(new[] { "a.rar", "a.r00", "A.r00" }, false)]
     [InlineData(new[] { "a.part01.rar", "notrar.bin" }, false)]
