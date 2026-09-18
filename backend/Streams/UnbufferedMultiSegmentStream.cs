@@ -458,7 +458,12 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         var completedIndex = _openSegmentIndex;
         if (_openSegmentIndex >= 0
             && !_segmentSizes.TryGetExactSize(_openSegmentIndex, out _))
-            _segmentSizes.RecordObservedSize(_openSegmentIndex, _openSegmentBytes);
+        {
+            if (_openSegmentFromLiveFetch && _openSegmentBytes > 0)
+                _segmentSizes.RecordExactSize(_openSegmentIndex, _openSegmentBytes);
+            else
+                _segmentSizes.RecordObservedSize(_openSegmentIndex, _openSegmentBytes);
+        }
         if (!_openSegmentHole)
         {
             _consecutiveZeroFills = 0;
@@ -969,16 +974,23 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         {
             var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
                 .ConfigureAwait(false);
-            if (!await MatchesPositioningGeometryAsync(
-                    response.Stream!, _openSegmentIndex, cancellationToken).ConfigureAwait(false))
+            try
+            {
+                if (!await MatchesPositioningGeometryAsync(
+                        response.Stream!, _openSegmentIndex, cancellationToken).ConfigureAwait(false))
+                {
+                    throw new SeekPositionNotFoundException(
+                        $"BODY geometry for segment {_openSegmentIndex} of {_fileName} does not match " +
+                        $"the expected positioning range {_expectedFirstSegmentRange}.");
+                }
+
+                return response;
+            }
+            catch
             {
                 await DisposeBodyStreamAsync(response.Stream).ConfigureAwait(false);
-                throw new SeekPositionNotFoundException(
-                    $"BODY geometry for segment {_openSegmentIndex} of {_fileName} does not match " +
-                    $"the expected positioning range {_expectedFirstSegmentRange}.");
+                throw;
             }
-
-            return response;
         }
     }
 

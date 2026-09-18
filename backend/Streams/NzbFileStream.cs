@@ -569,7 +569,7 @@ public class NzbFileStream(
             prefixBytes,
             rangeStart,
             foundSegment.FoundByteRange,
-            foundSegment.FoundByteRangeWasClippedAtFileEnd,
+            foundSegment.FoundIndex == fileSegmentIds.Length - 1,
             cancellationToken);
     }
 
