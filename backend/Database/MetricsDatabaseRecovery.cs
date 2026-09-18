@@ -66,7 +66,16 @@ internal static class MetricsDatabaseRecovery
             return false;
         }
 
-        await context.Database.CloseConnectionAsync().ConfigureAwait(false);
+        try
+        {
+            await context.Database.CloseConnectionAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            Log.Warning(ex, "Metrics database connection could not be closed before quarantine; continuing.");
+            return false;
+        }
+
         return Quarantine(databasePath, findings);
     }
 

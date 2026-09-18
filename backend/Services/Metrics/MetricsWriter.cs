@@ -255,7 +255,8 @@ public class MetricsWriter : BackgroundService
                 await WaitForFlushAsync(stoppingToken).ConfigureAwait(false);
                 await FlushAsync().ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (SigtermUtil.IsSigtermTriggered())
+            catch (OperationCanceledException) when (
+                stoppingToken.IsCancellationRequested || SigtermUtil.IsSigtermTriggered())
             {
                 break;
             }
