@@ -380,12 +380,16 @@ describe("MediaPreview", () => {
       Object.defineProperty(video, "currentTime", { configurable: true, value: 25 });
       Object.defineProperty(video, "duration", { configurable: true, value: 300 });
       fireEvent(video, new Event("pause"));
-      const before = nativePlaybackBodies(fetchMock).filter((body) => body.event === "Report").length;
+      const before = nativePlaybackBodies(fetchMock).filter(
+        (body) => body.event === "Report",
+      ).length;
 
       act(() => {
         vi.advanceTimersByTime(25_000);
       });
-      const after = nativePlaybackBodies(fetchMock).filter((body) => body.event === "Report").length;
+      const after = nativePlaybackBodies(fetchMock).filter(
+        (body) => body.event === "Report",
+      ).length;
       expect(after).toBeGreaterThan(before);
       expect(nativePlaybackBodies(fetchMock).at(-1)).toEqual(
         expect.objectContaining({ state: "Paused", positionMs: 25_000 }),

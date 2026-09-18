@@ -2,11 +2,7 @@
 import { cleanup, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  LiveReadsPanel,
-  LiveReadsPanelContent,
-  type LiveReadRow,
-} from "./live-reads-panel";
+import { LiveReadsPanel, LiveReadsPanelContent, type LiveReadRow } from "./live-reads-panel";
 import type {
   AuthoritativePlaybackSession,
   CurrentPlaybackActivity,
@@ -157,9 +153,7 @@ describe("LiveReadsPanel", () => {
       }),
     });
 
-    const markup = renderToStaticMarkup(
-      <LiveReadsPanelContent playback={[activity]} rows={[]} />,
-    );
+    const markup = renderToStaticMarkup(<LiveReadsPanelContent playback={[activity]} rows={[]} />);
 
     expect(markup).toContain("PAUSED");
     expect(markup).toContain("1:15:05 / 2:45:48");
@@ -255,9 +249,7 @@ describe("LiveReadsPanel", () => {
     const read = fixtureRead("read-1", "9f2c7a1e4b.mkv", {
       path: "/completed-symlinks/movies/Interstellar.2014.1080p.BluRay.x264-GRP/9f2c7a1e4b.mkv",
     });
-    const markup = renderToStaticMarkup(
-      <LiveReadsPanelContent playback={[]} rows={[row(read)]} />,
-    );
+    const markup = renderToStaticMarkup(<LiveReadsPanelContent playback={[]} rows={[row(read)]} />);
 
     expect(markup).toContain("Interstellar.2014.1080p.BluRay.x264-GRP.mkv");
     expect(markup).not.toContain("9f2c7a1e4b.mkv</span>");

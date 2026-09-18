@@ -1013,10 +1013,7 @@ export function ReviewStep({
         variant={enabledMediaServers.length > 0 ? "success" : "info"}
         className="alert-soft items-start text-sm"
       >
-        <Icon
-          name={enabledMediaServers.length > 0 ? "live_tv" : "info"}
-          className="!text-[20px]"
-        />
+        <Icon name={enabledMediaServers.length > 0 ? "live_tv" : "info"} className="!text-[20px]" />
         <span>
           {enabledMediaServers.length > 0 ? (
             <>
@@ -1027,8 +1024,7 @@ export function ReviewStep({
           ) : (
             <>
               Media-server playback authority is optional and is not configured. Right now will
-              still show InfiniDysk transport reads. You can add Plex, Emby, or Jellyfin later
-              under{" "}
+              still show InfiniDysk transport reads. You can add Plex, Emby, or Jellyfin later under{" "}
               <a className="link font-medium" href={withUrlBase("/settings?tab=media-servers")}>
                 Media Servers
               </a>

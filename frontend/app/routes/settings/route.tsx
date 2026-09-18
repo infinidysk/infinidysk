@@ -480,14 +480,14 @@ function Body(props: BodyProps) {
                   : isMediaServersUpdated && !isMediaServersSettingsValid(newConfig)
                     ? "Invalid Media Server settings"
                     : isIndexersUpdated && !isIndexersSettingsValid(newConfig)
-                    ? "Invalid Indexers settings"
-                    : isProfilesUpdated && !isProfilesSettingsValid(newConfig)
-                      ? "Invalid Search Profiles settings"
-                      : isRepairsUpdated && !isRepairsSettingsValid(newConfig)
-                        ? "Invalid Repairs settings"
-                        : isWatchtowerUpdated && !isWatchtowerSettingsValid(newConfig)
-                          ? "Invalid Watchtower settings"
-                          : "Save";
+                      ? "Invalid Indexers settings"
+                      : isProfilesUpdated && !isProfilesSettingsValid(newConfig)
+                        ? "Invalid Search Profiles settings"
+                        : isRepairsUpdated && !isRepairsSettingsValid(newConfig)
+                          ? "Invalid Repairs settings"
+                          : isWatchtowerUpdated && !isWatchtowerSettingsValid(newConfig)
+                            ? "Invalid Watchtower settings"
+                            : "Save";
   const saveButtonVariant =
     saveButtonLabel === "Save" ? "primary" : saveButtonLabel === "Saved" ? "success" : "secondary";
   const isSaveButtonDisabled = saveButtonLabel !== "Save";

@@ -268,7 +268,8 @@ function PlaybackRow({
   const rate = transport.reduce((sum, row) => sum + row.rate, 0);
   const fetched = transport.reduce((sum, row) => sum + row.read.bytesFetched, 0);
   const providers = aggregateProviders(transport);
-  const title = session.title?.trim() || session.mediaSourcePath || session.itemId || "Playback session";
+  const title =
+    session.title?.trim() || session.mediaSourcePath || session.itemId || "Playback session";
   const pct =
     session.positionMs !== null && session.durationMs !== null && session.durationMs > 0
       ? Math.min(100, Math.max(0, (session.positionMs / session.durationMs) * 100))
@@ -359,7 +360,9 @@ function TransportOnlyRow({ row }: { row: LiveReadRow }) {
             className="min-w-0 overflow-hidden"
             content={display.isReleaseFallback ? `${read.path}\n(obfuscated file name)` : read.path}
           >
-            <span className="block truncate text-xs font-bold text-base-content">{display.name}</span>
+            <span className="block truncate text-xs font-bold text-base-content">
+              {display.name}
+            </span>
           </Tooltip>
         </div>
 
@@ -375,7 +378,10 @@ function TransportOnlyRow({ row }: { row: LiveReadRow }) {
           <span className="min-w-0 flex-1 truncate font-medium text-base-content lg:w-[10rem] lg:flex-none">
             source {formatBytes(read.sourceOffset)}
             {read.fileSize ? (
-              <span className="font-normal text-base-content/50"> / {formatBytes(read.fileSize)}</span>
+              <span className="font-normal text-base-content/50">
+                {" "}
+                / {formatBytes(read.fileSize)}
+              </span>
             ) : null}
           </span>
           <progress

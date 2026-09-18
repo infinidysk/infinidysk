@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  isMediaServersSettingsUpdated,
-  isMediaServersSettingsValid,
-} from "./media-servers";
+import { isMediaServersSettingsUpdated, isMediaServersSettingsValid } from "./media-servers";
 import { parseMediaServerConfig } from "~/utils/media-server-config";
 
 const MASK =
@@ -46,9 +43,7 @@ describe("media server settings", () => {
               BaseUrl: "https://jellyfin.example.test",
               Token: MASK,
               Enabled: true,
-              PathMappings: [
-                { MediaServerPrefix: "/media", InfiniDyskPrefix: "/mnt/media" },
-              ],
+              PathMappings: [{ MediaServerPrefix: "/media", InfiniDyskPrefix: "/mnt/media" }],
             },
           ],
         }),
