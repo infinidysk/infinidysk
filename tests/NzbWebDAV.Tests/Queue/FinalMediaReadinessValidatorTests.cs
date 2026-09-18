@@ -132,6 +132,17 @@ public sealed class FinalMediaReadinessValidatorTests : IDisposable
             targets.Select(x => x.Name).OrderBy(x => x).ToArray());
     }
 
+    [Theory]
+    [InlineData("Sample/Movie.mkv")]
+    [InlineData("Extras/Samples/Movie.sample.mkv")]
+    public void PlanTargets_OnlyVideoUnderSampleDirectory_IsExcluded(string fileName)
+    {
+        var targets = FinalMediaReadinessValidator.PlanTargets(
+            [DirectFile(fileName, 50_000_000)], "movies", "Job", new ConfigManager());
+
+        Assert.Empty(targets);
+    }
+
     [Fact]
     public void PlanTargets_SampleHeuristicUsesLargestVideoAcrossArchiveOutputs()
     {

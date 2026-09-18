@@ -35,8 +35,7 @@ public class BlocklistedFilePostProcessor(ConfigManager configManager, DavDataba
         var blocklistedFilenames = configManager.GetBlocklistedFiles();
         var sampleFilterEnabled = configManager.IsSampleFilterEnabled();
 
-        // The sample heuristic compares each candidate against the largest video
-        // in the same release, so the largest video can never be a sample itself.
+        // Filename-only sample matches need a sibling-size comparison.
         var largestVideoFileSize = sampleFilterEnabled
             ? addedFiles
                 .Where(x => FilenameUtil.IsVideoFile(x.Name))

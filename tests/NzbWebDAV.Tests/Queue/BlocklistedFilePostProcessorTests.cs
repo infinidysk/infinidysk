@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Queue.PostProcessors;
 
 namespace NzbWebDAV.Tests.Queue;
@@ -118,6 +119,41 @@ public class BlocklistedFilePostProcessorTests : IDisposable
         Assert.Contains(keep.Path, remainingAdded);
         Assert.DoesNotContain(sample.Path, remainingAdded);
         Assert.DoesNotContain(_context.BlobNzbFiles, b => b.Id == sample.FileBlobId);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void RemoveFilteredFiles_SampleDirectoryOnlyMedia_FailsImportUnlessFilteringDisabledOrMainMediaExists(
+        bool sampleFilterEnabled, bool includeMainMedia)
+    {
+        _config.UpdateValues([
+            new()
+            {
+                ConfigName = ConfigKeys.ApiSampleFilterEnabled,
+                ConfigValue = sampleFilterEnabled ? "true" : "false",
+            },
+        ]);
+        var category = SeedDirectory(DavItem.ContentFolder, "movies");
+        var mount = SeedDirectory(category, "Release");
+        var sampleDir = SeedDirectory(mount, "Sample");
+        var sample = SeedNzbFile(sampleDir, "release-sample.mkv", 40_000_000);
+        SeedNzbFile(mount, "release.rar", 250_000_000);
+        SeedNzbFile(mount, "release.r00", 250_000_000);
+        if (includeMainMedia)
+            SeedNzbFile(mount, "release.mkv", 2_000_000_000);
+
+        new BlocklistedFilePostProcessor(_config, _dbClient).RemoveFilteredFiles();
+
+        var exception = Record.Exception(new EnsureImportableMediaValidator(_dbClient).ThrowIfValidationFails);
+        if (sampleFilterEnabled && !includeMainMedia)
+            Assert.IsType<NoMediaFilesFoundException>(exception);
+        else
+            Assert.Null(exception);
+        Assert.Equal(!sampleFilterEnabled, _context.BlobNzbFiles.Any(blob => blob.Id == sample.FileBlobId));
+        Assert.Equal(!sampleFilterEnabled, _context.ChangeTracker.Entries<DavItem>()
+            .Any(entry => entry.State == EntityState.Added && entry.Entity.Id == sample.Id));
     }
 
     [Fact]

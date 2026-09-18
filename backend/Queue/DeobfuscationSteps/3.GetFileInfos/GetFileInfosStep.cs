@@ -29,12 +29,14 @@ public static class GetFileInfosStep
                 && ((header.TotalParts > 0 && header.TotalParts != x.NzbFile.Segments.Count)
                     || (header.FileSize > 0 && header.FileSize != proof.FileLength)))
                 x.NzbFile.VerificationProof = proof;
+            var info = GetFileInfo(x, fileDesc, out var par2SuppliedFileName);
             return new NamePick
             {
-                Info = GetFileInfo(x, fileDesc),
+                Info = info,
                 HeaderName = x.Header?.FileName ?? "",
-                // Usable PAR2 name only — null descriptor or empty FileName does not count.
+                Par2Name = fileDesc?.FileName ?? "",
                 HasPar2Name = !string.IsNullOrWhiteSpace(fileDesc?.FileName),
+                Par2SuppliedFileName = par2SuppliedFileName,
             };
         }).ToList();
 
@@ -61,18 +63,21 @@ public static class GetFileInfosStep
 
     private static FileInfo GetFileInfo(
         FetchFirstSegmentsStep.NzbFileWithFirstSegment file,
-        FileDesc? fileDesc
+        FileDesc? fileDesc,
+        out bool par2SuppliedFileName
     )
     {
         var subjectFileName = file.NzbFile.GetSubjectFileName();
         var headerFileName = file.Header?.FileName ?? "";
         var par2FileName = fileDesc?.FileName ?? "";
-        var filename = new List<(string? FileName, int Priority)>
+        var namePick = new List<(string? FileName, int Priority, bool IsPar2Name)>
         {
-            (FileName: par2FileName, Priority: GetFilenamePriority(par2FileName, 3)),
-            (FileName: subjectFileName, Priority: GetFilenamePriority(subjectFileName, 2)),
-            (FileName: headerFileName, Priority: GetFilenamePriority(headerFileName, 1)),
-        }.Where(x => x.FileName is not null).MaxBy(x => x.Priority).FileName ?? "";
+            (FileName: par2FileName, Priority: GetFilenamePriority(par2FileName, 3), IsPar2Name: true),
+            (FileName: subjectFileName, Priority: GetFilenamePriority(subjectFileName, 2), IsPar2Name: false),
+            (FileName: headerFileName, Priority: GetFilenamePriority(headerFileName, 1), IsPar2Name: false),
+        }.Where(x => x.FileName is not null).MaxBy(x => x.Priority);
+        var filename = namePick.FileName ?? "";
+        par2SuppliedFileName = namePick.IsPar2Name;
 
         var isRar = file.HasRar4Magic() || file.HasRar5Magic();
         string? sniffedVideoExtension = null;
@@ -130,11 +135,9 @@ public static class GetFileInfosStep
     }
 
     /// <summary>
-    /// When RAR volumes share colliding subject-derived names (no distinct volume
-    /// identity) but yEnc headers restore distinct identities, prefer the header names.
-    /// Identity is (case-insensitive base, scheme, normalized ordinal) — the same key
-    /// ArchiveSetGrouping uses — so independent sets in one NZB may repeat ordinals.
-    /// Skipped when any volume already has a PAR2 name.
+    /// Use distinct header identities for colliding names, or a contiguous header set
+    /// for fragmented names with matching ordinals or anchored unnumbered names.
+    /// Never contradict a PAR2 name.
     /// </summary>
     internal static void RepairRarGroupNames(List<NamePick> picks)
     {
@@ -142,16 +145,66 @@ public static class GetFileInfosStep
         // does not depend on the (possibly colliding) FileName.
         var group = picks.Where(x => x.Info.IsRar).ToList();
         if (group.Count < 2) return;
-        // Keep PAR2 authoritative; never mix PAR2 + header repairs in one group.
-        if (group.Any(x => x.HasPar2Name)) return;
-        if (HasDistinctRarVolumeIdentities(group.Select(x => x.Info.FileName))) return;
         if (!HasDistinctRarVolumeIdentities(group.Select(x => x.HeaderName))) return;
+        if ((group.Any(x => x.HasPar2Name)
+               || HasDistinctRarVolumeIdentities(group.Select(x => x.Info.FileName))
+               || HasExplicitRarVolumeOrdinal(group.Select(x => x.Info.FileName)))
+            && !CanRepairFragmentedRarGroup(group)) return;
 
         Log.Information(
-            "Repairing {Count} RAR volume names without distinct volume identity using yEnc header names",
+            "Repairing {Count} RAR volume names with colliding or fragmented archive identities using yEnc header names",
             group.Count);
-        foreach (var pick in group)
-            pick.Info = pick.Info with { FileName = pick.HeaderName };
+        foreach (var groupPick in group.Where(pick => !pick.Par2SuppliedFileName))
+        {
+            groupPick.Info = groupPick.Info with { FileName = groupPick.HeaderName };
+        }
+    }
+
+    private static bool CanRepairFragmentedRarGroup(List<NamePick> group)
+    {
+        var identities = group.Select(pick => (
+            Pick: pick,
+            Selected: FilenameUtil.GetRarVolumeName(pick.Info.FileName),
+                Header: FilenameUtil.GetRarVolumeName(pick.HeaderName),
+                Par2: pick.HasPar2Name ? FilenameUtil.GetRarVolumeName(pick.Par2Name) : null)).ToList();
+        if (identities.Any(identity =>
+                identity.Selected is null
+                || identity.Header is null
+                || (identity.Pick.HasPar2Name && identity.Par2 is null)))
+            return false;
+        var first = identities[0].Header!.Value;
+        var hasUnnumberedNames = false;
+        var hasMatchingNumberedAnchor = false;
+        foreach (var identity in identities)
+        {
+            var selected = identity.Selected!.Value;
+            var header = identity.Header!.Value;
+            if (header.Scheme != first.Scheme
+                || !string.Equals(header.BaseName, first.BaseName, StringComparison.OrdinalIgnoreCase))
+                return false;
+                if (identity.Par2 is { } par2
+                    && (par2.Scheme != header.Scheme
+                        || !string.Equals(par2.BaseName, header.BaseName, StringComparison.OrdinalIgnoreCase)
+                        || par2.Ordinal != header.Ordinal))
+                    return false;
+            var sameBase = string.Equals(selected.BaseName, header.BaseName, StringComparison.OrdinalIgnoreCase);
+            var sameOrdinal = selected.Scheme == header.Scheme && selected.Ordinal == header.Ordinal;
+            if (sameOrdinal)
+            {
+                hasMatchingNumberedAnchor |= sameBase
+                    && (selected.Scheme == FilenameUtil.RarVolumeScheme.Part || selected.Ordinal > 0);
+                continue;
+            }
+            if (selected.Scheme != FilenameUtil.RarVolumeScheme.Classic || selected.Ordinal != 0)
+                return false;
+            hasUnnumberedNames = true;
+        }
+        if (hasUnnumberedNames && !hasMatchingNumberedAnchor)
+            return false;
+        return identities.Select(identity => identity.Selected!.Value.BaseName)
+                   .Distinct(StringComparer.OrdinalIgnoreCase).Skip(1).Any()
+               && identities.Select(identity => identity.Header!.Value.Ordinal).Order()
+                   .SequenceEqual(Enumerable.Range(0, group.Count));
     }
 
     internal static bool HasDistinctRarVolumeIdentities(IEnumerable<string> names)
@@ -168,11 +221,19 @@ public static class GetFileInfosStep
         return count > 0;
     }
 
+    private static bool HasExplicitRarVolumeOrdinal(IEnumerable<string> names)
+    {
+        return names.Select(FilenameUtil.GetRarVolumeName).Any(volume =>
+            volume is { Scheme: FilenameUtil.RarVolumeScheme.Part } || volume?.Ordinal > 0);
+    }
+
     internal sealed class NamePick
     {
         public required FileInfo Info { get; set; }
         public required string HeaderName { get; init; }
+        public required string Par2Name { get; init; }
         public required bool HasPar2Name { get; init; }
+        public required bool Par2SuppliedFileName { get; init; }
     }
 
     public record FileInfo
