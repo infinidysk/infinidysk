@@ -432,5 +432,9 @@ describe("MediaPreview", () => {
 function nativePlaybackBodies(fetchMock: ReturnType<typeof vi.fn>): Array<Record<string, unknown>> {
   return fetchMock.mock.calls
     .filter(([input]) => String(input).endsWith("/api/playback/native"))
-    .map(([, init]) => JSON.parse(String((init as RequestInit | undefined)?.body)) as Record<string, unknown>);
+    .map(([, init]) => {
+      const body = (init as RequestInit | undefined)?.body;
+      if (typeof body !== "string") throw new Error("Expected JSON string request body");
+      return JSON.parse(body) as Record<string, unknown>;
+    });
 }
