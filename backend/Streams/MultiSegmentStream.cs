@@ -579,7 +579,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             options.EstimatedSegmentSize,
             options.FileName,
             firstFallbacks,
-            firstExactSizes,
+            planningFirstExactSizes,
             options.UseContainerAwareFill,
             options.FirstSegmentFileOffset,
             options.FailFastOnFirstSegment,
