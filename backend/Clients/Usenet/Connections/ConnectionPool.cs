@@ -186,6 +186,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private void ThrowIfLocalOpenTimeout(
         TimeSpan? openTimeout,
         string phase,
+        long openStarted,
+        long? factoryStarted,
         CancellationToken callerCancellationToken)
     {
         if (openTimeout is not null
@@ -196,7 +198,9 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 _connectionOpenProvider,
                 phase,
                 openTimeout.Value,
-                phase == "Factory");
+                phase == "Factory",
+                beforeFactoryElapsed: Stopwatch.GetElapsedTime(openStarted, factoryStarted ?? Stopwatch.GetTimestamp()),
+                factoryElapsed: factoryStarted is { } started ? Stopwatch.GetElapsedTime(started) : TimeSpan.Zero);
         }
     }
 
@@ -376,6 +380,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         // does not open dozens of TLS sessions in parallel. While waiting, other
         // connections may return to the idle stack — prefer those over a new handshake.
         var openTimeout = _connectionOpenTimeout?.Invoke();
+        var openStarted = Stopwatch.GetTimestamp();
+        long? factoryStarted = null;
         if (openTimeout is { } timeout)
             linked.CancelAfter(timeout);
         var openPhase = "HandshakeQueue";
@@ -399,7 +405,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             if (!handshakeOwned)
                 CompleteHandshakeOperation(gateAcquired: false);
             ReleaseGateIfActive();
-            ThrowIfLocalOpenTimeout(openTimeout, openPhase, cancellationToken);
+            ThrowIfLocalOpenTimeout(openTimeout, openPhase, openStarted, factoryStarted, cancellationToken);
             throw;
         }
 
@@ -483,6 +489,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 pacingReservation = null;
 
                 openPhase = "Factory";
+                factoryStarted = Stopwatch.GetTimestamp();
                 factoryTask = _factory(linked.Token).AsTask();
                 conn = _connectionOpenTimeout is null
                     ? await factoryTask.ConfigureAwait(false)
@@ -505,7 +512,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 else if (creationReserved)
                     CompleteConnectionCreation(created: false);
                 ReleaseGateIfActive();
-                ThrowIfLocalOpenTimeout(openTimeout, openPhase, cancellationToken);
+                ThrowIfLocalOpenTimeout(openTimeout, openPhase, openStarted, factoryStarted, cancellationToken);
                 throw;
             }
             catch (Exception factoryError) when (factoryError is not OutOfMemoryException)
@@ -628,6 +635,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         Interlocked.Add(ref _gateWaitTicks, Stopwatch.GetElapsedTime(gateWaitStarted).Ticks);
         var gateHeld = true;
         var warmOpenTimeout = _connectionOpenTimeout?.Invoke();
+        var openStarted = Stopwatch.GetTimestamp();
+        long? factoryStarted = null;
         var warmTimeout = warmOpenTimeout ?? TimeSpan.Zero;
         using var openDeadline = warmOpenTimeout is not null
             ? CancellationTokenSource.CreateLinkedTokenSource(linked.Token)
@@ -656,7 +665,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             {
                 if (!handshakeOwned)
                     CompleteHandshakeOperation(gateAcquired: false);
-                ThrowIfLocalOpenTimeout(warmOpenTimeout, openPhase, cancellationToken);
+                ThrowIfLocalOpenTimeout(warmOpenTimeout, openPhase, openStarted, factoryStarted, cancellationToken);
                 throw;
             }
             Interlocked.Add(ref _handshakeWaitTicks, Stopwatch.GetElapsedTime(handshakeWaitStarted).Ticks);
@@ -678,6 +687,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                         .ConfigureAwait(false);
                     CommitReplacementPacing(pacingReservation);
                     openPhase = "Factory";
+                    factoryStarted = Stopwatch.GetTimestamp();
 #pragma warning disable CA2025 // The late-completion observer retains cleanup ownership until the factory stops.
                     factoryTask = _factory(openToken).AsTask();
 #pragma warning restore CA2025
@@ -701,7 +711,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                     {
                         CompleteConnectionCreation(created: false);
                     }
-                    ThrowIfLocalOpenTimeout(warmOpenTimeout, openPhase, cancellationToken);
+                    ThrowIfLocalOpenTimeout(warmOpenTimeout, openPhase, openStarted, factoryStarted, cancellationToken);
                     throw;
                 }
                 catch (Exception factoryError) when (factoryError is not OutOfMemoryException)
