@@ -460,6 +460,33 @@ public class NzbFileStreamTests
     }
 
     [Fact]
+    public async Task LegacySeek_FinalByteAfterTransientProbe_UsesAuthoritativeGeometry()
+    {
+        var segmentIds = new[] { "one", "two", "three" };
+        var segments = segmentIds.ToDictionary(
+            id => id,
+            _ => Enumerable.Range(0, 5).Select(value => (byte)value).ToArray());
+        var ranges = new Dictionary<string, LongRange>
+        {
+            ["one"] = new(0, 5),
+            ["two"] = new(5, 10),
+            ["three"] = new(10, 15),
+        };
+        var client = new FakeNntpClient(
+            segments, useCachedYencStreams: true, segmentRanges: ranges,
+            headerProbeFailure: (id, attempt) =>
+                id == "three" && attempt == 1 ? new IOException("probe blip") : null);
+        await using var stream = new NzbFileStream(
+            segmentIds, fileSize: 13, client, articleBufferSize: 0,
+            segmentByteRanges: null, usePipelinedBodyRequests: false);
+        stream.Seek(12, SeekOrigin.Begin);
+
+        var buffer = new byte[1];
+        Assert.Equal(1, await stream.ReadAsync(buffer));
+        Assert.Equal(2, buffer[0]);
+    }
+
+    [Fact]
     public async Task LegacySeek_PersistentTransientProbeOnTarget_FailsInsteadOfGuessing()
     {
         var (segments, ranges) = NonUniformGeometry();

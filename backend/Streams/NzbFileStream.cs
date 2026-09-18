@@ -295,7 +295,10 @@ public class NzbFileStream(
 
             estimated.Add(guess);
             var start = guess * avg;
-            return new LongRange(start, Math.Min(fileSize, start + avg));
+            var end = guess == fileSegmentIds.Length - 1
+                ? fileSize
+                : Math.Min(fileSize, start + avg);
+            return new LongRange(start, end);
         }
 
         try
