@@ -141,7 +141,7 @@ describe("LiveReadsPanel", () => {
     );
 
     expect(markup).toContain("1:14:22 / 2:45:48");
-    expect(markup).toContain("InfiniDysk source: 38 MB/s");
+    expect(markup).toContain("InfiniDysk source: 38.0 MB/s");
     expect(markup).not.toContain("source 3.5 GB");
   });
 
