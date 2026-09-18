@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MediaPreview } from "./media-preview";
 
@@ -336,6 +336,80 @@ describe("MediaPreview", () => {
     expect(screen.getByRole("status").textContent).toContain("Loading");
   });
 
+  it("reports authoritative native play/pause state using the stable playerSession", () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = renderPreview();
+    const video = container.querySelector("video")!;
+    const playerSession = new URL(video.getAttribute("src")!, "http://localhost").searchParams.get(
+      "playerSession",
+    );
+
+    Object.defineProperty(video, "currentTime", { configurable: true, value: 12.5 });
+    Object.defineProperty(video, "duration", { configurable: true, value: 120 });
+    fireEvent(video, new Event("play"));
+
+    let reports = nativePlaybackBodies(fetchMock);
+    expect(reports).toContainEqual({
+      playerSession,
+      event: "Report",
+      state: "Playing",
+      positionMs: 12_500,
+      durationMs: 120_000,
+      title: "movie.mkv",
+      mediaType: "video",
+    });
+
+    Object.defineProperty(video, "currentTime", { configurable: true, value: 15 });
+    fireEvent(video, new Event("pause"));
+    reports = nativePlaybackBodies(fetchMock);
+    expect(reports).toContainEqual(
+      expect.objectContaining({ event: "Report", state: "Paused", positionMs: 15_000 }),
+    );
+  });
+
+  it("heartbeats a paused native session while transport may be idle", () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+      vi.stubGlobal("fetch", fetchMock);
+      const { container } = renderPreview();
+      const video = container.querySelector("video")!;
+
+      Object.defineProperty(video, "currentTime", { configurable: true, value: 25 });
+      Object.defineProperty(video, "duration", { configurable: true, value: 300 });
+      fireEvent(video, new Event("pause"));
+      const before = nativePlaybackBodies(fetchMock).filter((body) => body.event === "Report").length;
+
+      act(() => {
+        vi.advanceTimersByTime(25_000);
+      });
+      const after = nativePlaybackBodies(fetchMock).filter((body) => body.event === "Report").length;
+      expect(after).toBeGreaterThan(before);
+      expect(nativePlaybackBodies(fetchMock).at(-1)).toEqual(
+        expect.objectContaining({ state: "Paused", positionMs: 25_000 }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ends native playback when the preview really unmounts", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container, unmount } = renderPreview();
+    const video = container.querySelector("video")!;
+    fireEvent(video, new Event("play"));
+
+    unmount();
+    expect(video.getAttribute("src")).toBeNull();
+    expect(loadMock).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(nativePlaybackBodies(fetchMock).some((body) => body.event === "End")).toBe(true);
+    });
+  });
+
   it("releases the source on unmount so the stream is aborted", () => {
     const { container, unmount } = renderPreview();
     const video = container.querySelector("video")!;
@@ -354,3 +428,9 @@ describe("MediaPreview", () => {
     expect(screen.getByText("Stream trace")).toBeTruthy();
   });
 });
+
+function nativePlaybackBodies(fetchMock: ReturnType<typeof vi.fn>): Array<Record<string, unknown>> {
+  return fetchMock.mock.calls
+    .filter(([input]) => String(input).endsWith("/api/playback/native"))
+    .map(([, init]) => JSON.parse(String((init as RequestInit | undefined)?.body)) as Record<string, unknown>);
+}
