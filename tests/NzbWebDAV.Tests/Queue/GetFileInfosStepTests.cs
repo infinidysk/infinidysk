@@ -389,6 +389,33 @@ public class GetFileInfosStepTests
             Assert.Single(ArchiveSetGrouping.Resolve(results, new ArchiveSetIdAllocator()));
     }
 
+    [Fact]
+    public async Task GetFileInfos_RepairsWhenMatchingPar2NamesLosePriorityToSubjects()
+    {
+        var first16kA = Rar4Magic;
+        var first16kB = Rar4Magic.Concat([0]).ToArray();
+#pragma warning disable CA5351 // MD5 here is content hashing for the NZB/PAR2 ecosystem, not security
+        var descriptors = await Par2TestPackets.ReadFileDescsAsync(Par2TestPackets.BuildPar2Bytes(
+            Par2TestPackets.BuildFileDescBody(
+                FileId(0x0A), "0123456789abcdef0123456789abcdef.part01.rar", MD5.HashData(first16kA), fileLength: 7),
+            Par2TestPackets.BuildFileDescBody(
+                FileId(0x0B), "0123456789abcdef0123456789abcdef.part02.rar", MD5.HashData(first16kB), fileLength: 8)));
+#pragma warning restore CA5351
+        var inputs = new List<FetchFirstSegmentsStep.NzbFileWithFirstSegment>
+        {
+            Seg("Movie.One.part01.rar", "0123456789abcdef0123456789abcdef.part01.rar", first16kA),
+            Seg("Movie.Two.part02.rar", "0123456789abcdef0123456789abcdef.part02.rar", first16kB),
+        };
+        inputs[0].NzbFile.Segments.Add(new NzbSegment { MessageId = "part1@example.com", Bytes = first16kA.Length });
+        inputs[1].NzbFile.Segments.Add(new NzbSegment { MessageId = "part2@example.com", Bytes = first16kB.Length });
+
+        var results = GetFileInfosStep.GetFileInfos(inputs, descriptors);
+
+        Assert.Equal(
+            ["0123456789abcdef0123456789abcdef.part01.rar", "0123456789abcdef0123456789abcdef.part02.rar"],
+            results.Select(x => x.FileName));
+    }
+
     [Theory]
     [InlineData("archive.part01.rar", true)]
     [InlineData("authoritative.part01.rar", false)]
@@ -410,13 +437,17 @@ public class GetFileInfosStepTests
             },
         };
 
+                Par2Name = par2Name,
         GetFileInfosStep.RepairRarGroupNames(picks);
+                Par2SuppliedFileName = true,
 
         Assert.Equal(par2Name, picks[0].Info.FileName);
         Assert.Equal(repaired ? "archive.part02.rar" : "scrambled.part02.rar", picks[1].Info.FileName);
     }
 
+                Par2Name = "",
     [Theory]
+                Par2SuppliedFileName = false,
     [InlineData(new[] { "a.part01.rar", "a.part02.rar", "b.part01.rar" }, true)]
     [InlineData(new[] { "a.rar", "a.r00", "A.r00" }, false)]
     [InlineData(new[] { "a.part01.rar", "notrar.bin" }, false)]
@@ -483,7 +514,9 @@ public class GetFileInfosStepTests
                     IsRar = true,
                 },
                 HeaderName = "vol.rar",
+                Par2Name = "Release.rar",
                 HasPar2Name = true,
+                Par2SuppliedFileName = true,
             },
             new()
             {
@@ -495,7 +528,9 @@ public class GetFileInfosStepTests
                     IsRar = true,
                 },
                 HeaderName = "vol.r00",
+                Par2Name = "",
                 HasPar2Name = false,
+                Par2SuppliedFileName = false,
             },
         };
 
