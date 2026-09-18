@@ -216,12 +216,17 @@ export default function Health({ loaderData }: Route.ComponentProps) {
 
   // effects
   useEffect(() => {
-    if (queueItems.length >= 15) return;
+    if (!isEnabled) return;
+    const controller = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     const refetchData = async () => {
-      const response = await fetch(withUrlBase("/api/get-health-check-queue?pageSize=30"));
-      if (response.ok) {
-        // /api/get-health-check-queue returns HealthCheckQueueResponse
+      try {
+        const response = await fetch(withUrlBase("/api/get-health-check-queue?pageSize=30"), {
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
         const healthCheckQueue = (await response.json()) as HealthCheckQueueResponse;
+        if (controller.signal.aborted) return;
         setQueueState((state) =>
           mergeHealthCheckQueue(state, {
             items: healthCheckQueue.items,
@@ -229,10 +234,20 @@ export default function Health({ loaderData }: Route.ComponentProps) {
           }),
         );
         if (healthCheckQueue.schedule) setSchedule(healthCheckQueue.schedule);
+      } catch {
+        if (controller.signal.aborted) return;
+      } finally {
+        if (!controller.signal.aborted) {
+          timeout = setTimeout(() => void refetchData(), 5000);
+        }
       }
     };
-    void refetchData(); // fire-and-forget queue refill
-  }, [queueItems.length]);
+    void refetchData();
+    return () => {
+      controller.abort();
+      clearTimeout(timeout);
+    };
+  }, [isEnabled]);
 
   // events
   const onHealthItemStatus = useCallback(

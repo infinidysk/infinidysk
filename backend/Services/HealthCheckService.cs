@@ -189,6 +189,10 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     internal Func<Guid, Task>? BeforeHealthyFinalizationOverride { get; set; }
     internal IReadOnlyCollection<Guid> InProgressHealthCheckIds => _inProgress.Keys.ToArray();
 
+    public IReadOnlyDictionary<Guid, int> GetActiveHealthCheckProgress() => _inProgress
+        .Where(entry => entry.Value.ProcessingTask?.IsCompleted != true)
+        .ToDictionary(entry => entry.Key, entry => entry.Value.Progress);
+
     public HealthCheckService
     (
         ConfigManager configManager,
@@ -869,9 +873,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         private Task? _cancellationTask;
         private int _disposed;
         private int _progressState;
+        private int _progress;
 
         public ContextualCancellationTokenSource Cancellation { get; } = cancellation;
         public Task? ProcessingTask { get; set; }
+        public int Progress => Volatile.Read(ref _progress);
 
         public bool TryStartProgress()
         {
@@ -883,11 +889,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             }
         }
 
-        public bool TryPublishProgress(Action publish)
+        public bool TryPublishProgress(int progress, Action publish)
         {
             lock (_progressLock)
             {
                 if ((_progressState & ProgressClosedFlag) != 0) return false;
+                Volatile.Write(ref _progress, Math.Clamp(progress, 0, 100));
                 publish();
                 return true;
             }
@@ -1186,6 +1193,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                         return;
 
                     _ = progressWorker.TryPublishProgress(
+                        progress,
                         () => _ = _websocketManager.SendMessage(
                             WebsocketTopic.HealthItemProgress,
                             message));

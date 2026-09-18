@@ -20,7 +20,9 @@ export function mergeHealthCheckQueue(
   );
   return {
     items: refreshed.items.map((item) =>
-      progressById.has(item.id) ? { ...item, progress: progressById.get(item.id)! } : item,
+      item.progress === undefined && progressById.has(item.id)
+        ? { ...item, progress: progressById.get(item.id)! }
+        : item,
     ),
     uncheckedCount: refreshed.uncheckedCount,
   };
@@ -114,7 +116,7 @@ export function getVisibleHealthCheckItems(
   items: HealthCheckQueueItem[],
   maximumCount = 10,
 ): HealthCheckQueueItem[] {
-  const progressing = items.filter((item) => (item.progress ?? 0) > 0);
-  const waiting = items.filter((item) => (item.progress ?? 0) <= 0);
+  const progressing = items.filter((item) => item.progress != null);
+  const waiting = items.filter((item) => item.progress == null);
   return [...progressing, ...waiting].slice(0, maximumCount);
 }
