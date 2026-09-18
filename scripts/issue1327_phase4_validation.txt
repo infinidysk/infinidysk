@@ -1,1 +1,1 @@
-Temporary Phase 4 CI trigger. Remove before completion.
+Temporary Phase 4 CI/contract trigger. Remove before completion.
