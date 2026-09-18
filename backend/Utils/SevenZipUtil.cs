@@ -45,7 +45,7 @@ public static class SevenZipUtil
 
         public long FolderStartByteOffset { get; } = entry.FolderStartOffset;
 
-        public LongRange ByteRangeWithinArchive { get; } = GetPackedByteRange(entry);
+        public LongRange ByteRangeWithinArchive => GetPackedByteRange(entry);
 
         private static LongRange GetPackedByteRange(SevenZipArchiveEntry archiveEntry)
         {
