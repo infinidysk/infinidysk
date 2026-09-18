@@ -23,7 +23,7 @@ describe("settings tabs", () => {
       { title: "Queue & Import", tabs: ["queue", "sabnzbd"] },
       { title: "Playback & Files", tabs: ["streaming", "webdav"] },
       { title: "Automation", tabs: ["watchdog", "preflight", "watchtower", "warden"] },
-      { title: "Integrations", tabs: ["arrs", "rclone"] },
+      { title: "Integrations", tabs: ["arrs", "media-servers", "rclone"] },
     ]);
   });
 
@@ -51,10 +51,14 @@ describe("settings tabs", () => {
     });
   });
 
-  it("uses an extensible Arr Apps label for current and future integrations", () => {
+  it("uses discoverable integration labels", () => {
     expect(getSettingsTabItem("arrs")).toMatchObject({
       id: "arrs",
       label: "Arr Apps",
+    });
+    expect(getSettingsTabItem("media-servers")).toMatchObject({
+      id: "media-servers",
+      label: "Media Servers",
     });
   });
 });
