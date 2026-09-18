@@ -164,7 +164,11 @@ public static class GetFileInfosStep
             Selected: FilenameUtil.GetRarVolumeName(pick.Info.FileName),
                 Header: FilenameUtil.GetRarVolumeName(pick.HeaderName),
                 Par2: pick.HasPar2Name ? FilenameUtil.GetRarVolumeName(pick.Par2Name) : null)).ToList();
-        if (identities.Any(identity => identity.Selected is null || identity.Header is null)) return false;
+        if (identities.Any(identity =>
+                identity.Selected is null
+                || identity.Header is null
+                || (identity.Pick.HasPar2Name && identity.Par2 is null)))
+            return false;
         var first = identities[0].Header!.Value;
         var hasUnnumberedNames = false;
         var hasMatchingNumberedAnchor = false;

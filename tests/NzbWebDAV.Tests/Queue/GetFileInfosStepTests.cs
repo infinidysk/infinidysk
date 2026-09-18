@@ -416,6 +416,34 @@ public class GetFileInfosStepTests
             results.Select(x => x.FileName));
     }
 
+    [Fact]
+    public void RepairRarGroupNames_DoesNotRepairWhenPar2NameIsNotARarVolume()
+    {
+        var picks = new List<GetFileInfosStep.NamePick>
+        {
+            new()
+            {
+                Info = GetFileInfosStep.GetFileInfos([Seg("Movie.One.part01.rar", null)], [])[0],
+                HeaderName = "0123456789abcdef0123456789abcdef.part01.rar",
+                Par2Name = "fedcba9876543210fedcba9876543210.bin",
+                HasPar2Name = true,
+                Par2SuppliedFileName = false,
+            },
+            new()
+            {
+                Info = GetFileInfosStep.GetFileInfos([Seg("Movie.Two.part02.rar", null)], [])[0],
+                HeaderName = "0123456789abcdef0123456789abcdef.part02.rar",
+                Par2Name = "",
+                HasPar2Name = false,
+                Par2SuppliedFileName = false,
+            },
+        };
+
+        GetFileInfosStep.RepairRarGroupNames(picks);
+
+        Assert.Equal(["Movie.One.part01.rar", "Movie.Two.part02.rar"], picks.Select(pick => pick.Info.FileName));
+    }
+
     [Theory]
     [InlineData("archive.part01.rar", true)]
     [InlineData("authoritative.part01.rar", false)]
