@@ -36,13 +36,13 @@ function isMediaServerInstance(value: unknown): value is MediaServerInstance {
   if (value === null || typeof value !== "object") return false;
   const instance = value as Record<string, unknown>;
   return (
-    typeof instance.Id === "string" &&
-    typeof instance.Name === "string" &&
-    typeof instance.BaseUrl === "string" &&
-    typeof instance.Token === "string" &&
-    typeof instance.Enabled === "boolean" &&
-    isMediaServerType(instance.Type) &&
-    Array.isArray(instance.PathMappings)
+    typeof instance["Id"] === "string" &&
+    typeof instance["Name"] === "string" &&
+    typeof instance["BaseUrl"] === "string" &&
+    typeof instance["Token"] === "string" &&
+    typeof instance["Enabled"] === "boolean" &&
+    isMediaServerType(instance["Type"]) &&
+    Array.isArray(instance["PathMappings"])
   );
 }
 
