@@ -211,6 +211,22 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                     await HandleCorruptionAsync(segmentIndex, segmentId, e, cancellationToken)
                         .ConfigureAwait(false);
                 }
+                catch (SeekPositionNotFoundException)
+                {
+                    var fallback = await TryFallbackSegmentsAsync(
+                            segmentIndex, GetRecoveryState(segmentIndex, segmentId), cancellationToken)
+                        .ConfigureAwait(false);
+                    if (fallback is not null)
+                    {
+                        _stream = fallback;
+                        _openSegmentFromLiveFetch = true;
+                        _openSegmentHole = false;
+                    }
+                    else
+                    {
+                        throw;
+                    }
+                }
                 catch (Exception e) when (IsRecoverableTransportFailure(e, cancellationToken))
                 {
                     await DisposeBodyStreamAsync(fetched).ConfigureAwait(false);
@@ -668,6 +684,20 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                 await HandleCorruptionAsync(segmentIndex, segmentId, e, cancellationToken)
                     .ConfigureAwait(false);
                 return;
+            }
+            catch (SeekPositionNotFoundException)
+            {
+                var fallback = await TryFallbackSegmentsAsync(segmentIndex, state, cancellationToken)
+                    .ConfigureAwait(false);
+                if (fallback is not null)
+                {
+                    _stream = fallback;
+                    _openSegmentFromLiveFetch = true;
+                    _openSegmentHole = false;
+                    return;
+                }
+
+                throw;
             }
             catch (Exception e) when (IsRecoverableTransportFailure(e, cancellationToken))
             {
