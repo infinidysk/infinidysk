@@ -32,19 +32,33 @@ vi.mock("./components/health-stats/health-stats", () => ({
 }));
 
 vi.mock("./components/health-history-table/health-history-table", () => ({
-  HealthHistoryTable: ({
+  HealthHistoryTable: () => <div data-testid="health-history" />,
+  HealthAttentionTable: ({
     canRequeueActionNeeded,
     requeueingActionNeeded,
     onRequeueActionNeeded,
   }: {
     canRequeueActionNeeded: boolean;
     requeueingActionNeeded: boolean;
-    onRequeueActionNeeded: () => void;
+    onRequeueActionNeeded: (davItemId?: string) => void;
   }) => (
-    <div data-testid="health-history">
+    <div data-testid="health-attention">
       {canRequeueActionNeeded && (
-        <button type="button" disabled={requeueingActionNeeded} onClick={onRequeueActionNeeded}>
+        <button
+          type="button"
+          disabled={requeueingActionNeeded}
+          onClick={() => onRequeueActionNeeded()}
+        >
           {requeueingActionNeeded ? "Queueing..." : "Re-check action needed"}
+        </button>
+      )}
+      {canRequeueActionNeeded && (
+        <button
+          type="button"
+          disabled={requeueingActionNeeded}
+          onClick={() => onRequeueActionNeeded("file-1")}
+        >
+          Re-check file
         </button>
       )}
     </div>
@@ -94,6 +108,10 @@ function renderHealth(options: { isEnabled?: boolean } = {}) {
           historyPage: 1,
           historyPageSize: 25,
           historyFilter: "all",
+          attentionItems: [],
+          attentionTotalCount: 2,
+          attentionPage: 1,
+          attentionPageSize: 25,
           isEnabled: options.isEnabled ?? true,
           schedule: null,
         },
@@ -110,6 +128,22 @@ function jsonResponse(body: object, status = 200) {
 }
 
 describe("Health action-needed re-check", () => {
+  it("places attention and its actions before the schedule and history", () => {
+    renderHealth();
+    const attention = screen.getByTestId("health-attention");
+    expect(attention.contains(screen.getByRole("button", { name: "Re-check action needed" }))).toBe(
+      true,
+    );
+    expect(
+      attention.compareDocumentPosition(screen.getByTestId("health-table")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      attention.compareDocumentPosition(screen.getByTestId("health-history")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("queues current action-needed items and revalidates the page", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ status: true, requeuedCount: 2 }));
     renderHealth();
@@ -135,6 +169,21 @@ describe("Health action-needed re-check", () => {
       "No current action-needed items to re-check.",
     );
     expect(revalidateMock).toHaveBeenCalledOnce();
+  });
+
+  it("sends a selected file ID for a per-item re-check", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ status: true, requeuedCount: 1 }));
+    renderHealth();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Re-check file" }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/requeue-action-needed-health-checks?davItemId=file-1",
+      { method: "POST" },
+    );
+    expect((await screen.findByRole("status")).textContent).toContain(
+      "Queued 1 item for re-check.",
+    );
   });
 
   it("shows the backend conflict reason without revalidating", async () => {

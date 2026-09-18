@@ -4,17 +4,13 @@ import userEvent from "@testing-library/user-event";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HealthCheckResult } from "~/clients/backend-client.server";
-import { HealthHistoryTable, type HealthHistoryFilter } from "./health-history-table";
+import {
+  HealthAttentionTable,
+  HealthHistoryTable,
+  type HealthHistoryFilter,
+} from "./health-history-table";
 
-function table(
-  items: HealthCheckResult[] = [],
-  filter: HealthHistoryFilter = "all",
-  options: {
-    canRequeueActionNeeded?: boolean;
-    requeueingActionNeeded?: boolean;
-    onRequeueActionNeeded?: () => void;
-  } = {},
-) {
+function table(items: HealthCheckResult[] = [], filter: HealthHistoryFilter = "all") {
   return (
     <HealthHistoryTable
       items={items}
@@ -24,19 +20,42 @@ function table(
       pageSizeOptions={[25, 50]}
       filter={filter}
       refreshing={false}
-      canRequeueActionNeeded={options.canRequeueActionNeeded ?? false}
-      requeueingActionNeeded={options.requeueingActionNeeded ?? false}
       onFilterSelected={vi.fn()}
       onPageSelected={vi.fn()}
       onPageSizeSelected={vi.fn()}
       onRefresh={vi.fn()}
-      onRequeueActionNeeded={options.onRequeueActionNeeded ?? vi.fn()}
     />
   );
 }
 
 function render(items: HealthCheckResult[] = [], filter: HealthHistoryFilter = "all") {
   return renderToStaticMarkup(table(items, filter));
+}
+
+function attentionTable(
+  options: {
+    items?: HealthCheckResult[];
+    canRequeueActionNeeded?: boolean;
+    requeueingActionNeeded?: boolean;
+    onRequeueActionNeeded?: () => void;
+  } = {},
+) {
+  return (
+    <HealthAttentionTable
+      items={options.items ?? []}
+      totalCount={2}
+      page={1}
+      pageSize={25}
+      pageSizeOptions={[25, 50]}
+      refreshing={false}
+      onPageSelected={vi.fn()}
+      onPageSizeSelected={vi.fn()}
+      onRefresh={vi.fn()}
+      canRequeueActionNeeded={options.canRequeueActionNeeded ?? false}
+      requeueingActionNeeded={options.requeueingActionNeeded ?? false}
+      onRequeueActionNeeded={options.onRequeueActionNeeded ?? vi.fn()}
+    />
+  );
 }
 
 afterEach(cleanup);
@@ -86,8 +105,10 @@ describe("HealthHistoryTable", () => {
   it("explains empty repair history", () => {
     const markup = render();
 
-    expect(markup).toContain("No deleted, repaired, or action needed items");
+    expect(markup).toContain("No deleted or repaired items");
     expect(markup).toContain("health-check retention");
+    expect(markup).not.toContain("Action needed");
+    expect(markup).not.toContain("Re-check action needed");
   });
 
   it("shows a warning-toned badge for degraded rows", () => {
@@ -121,21 +142,22 @@ describe("HealthHistoryTable", () => {
   });
 
   it("shows action-needed rows with a warning badge", () => {
-    const markup = render(
-      [
-        {
-          id: "1",
-          createdAt: "2026-08-17T12:00:00Z",
-          davItemId: "dav-1",
-          path: "/content/tv/Example/episode.mkv",
-          nzbFileName: "Example.Release.nzb",
-          jobName: "Example.Release",
-          result: 1,
-          repairStatus: 3,
-          message: "Streaming payload missing.",
-        },
-      ],
-      "action-needed",
+    const markup = renderToStaticMarkup(
+      attentionTable({
+        items: [
+          {
+            id: "1",
+            createdAt: "2026-08-17T12:00:00Z",
+            davItemId: "dav-1",
+            path: "/content/tv/Example/episode.mkv",
+            nzbFileName: "Example.Release.nzb",
+            jobName: "Example.Release",
+            result: 1,
+            repairStatus: 3,
+            message: "Streaming payload missing.",
+          },
+        ],
+      }),
     );
 
     expect(markup).toContain("Action needed");
@@ -145,8 +167,8 @@ describe("HealthHistoryTable", () => {
   });
 
   it("shows the bulk re-check action only when permitted", () => {
-    const allowed = renderToStaticMarkup(table([], "all", { canRequeueActionNeeded: true }));
-    const hidden = renderToStaticMarkup(table());
+    const allowed = renderToStaticMarkup(attentionTable({ canRequeueActionNeeded: true }));
+    const hidden = renderToStaticMarkup(attentionTable());
 
     expect(allowed).toContain("Re-check action needed");
     expect(hidden).not.toContain("Re-check action needed");
@@ -154,7 +176,7 @@ describe("HealthHistoryTable", () => {
 
   it("disables the bulk action while items are being queued", () => {
     const markup = renderToStaticMarkup(
-      table([], "all", {
+      attentionTable({
         canRequeueActionNeeded: true,
         requeueingActionNeeded: true,
       }),
@@ -167,7 +189,7 @@ describe("HealthHistoryTable", () => {
   it("invokes the bulk re-check callback", async () => {
     const onRequeueActionNeeded = vi.fn();
     renderDom(
-      table([], "all", {
+      attentionTable({
         canRequeueActionNeeded: true,
         onRequeueActionNeeded,
       }),
@@ -176,5 +198,34 @@ describe("HealthHistoryTable", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Re-check action needed" }));
 
     expect(onRequeueActionNeeded).toHaveBeenCalledOnce();
+  });
+
+  it("re-checks only the selected attention item", async () => {
+    const onRequeueActionNeeded = vi.fn();
+    renderDom(
+      attentionTable({
+        canRequeueActionNeeded: true,
+        onRequeueActionNeeded,
+        items: [
+          {
+            id: "result-1",
+            davItemId: "file-1",
+            path: "/content/example.mkv",
+            nzbFileName: null,
+            jobName: null,
+            createdAt: "2026-09-18T00:00:00Z",
+            result: 1,
+            repairStatus: 3,
+            message: "Provider unavailable",
+          },
+        ],
+      }),
+    );
+
+    await userEvent
+      .setup()
+      .click(screen.getAllByRole("button", { name: "Re-check example.mkv" })[0]!);
+
+    expect(onRequeueActionNeeded).toHaveBeenCalledWith("file-1");
   });
 });

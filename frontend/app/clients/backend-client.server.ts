@@ -618,6 +618,7 @@ class BackendClient {
     if (params.pageSize !== undefined) qs.set("pageSize", String(params.pageSize));
     if (params.repairStatus) qs.set("repairStatus", params.repairStatus);
     if (params.result) qs.set("result", params.result);
+    if (params.currentActionNeeded) qs.set("currentActionNeeded", "true");
     const query = qs.toString();
     return await call<HealthCheckHistoryResponse>(
       `${adminApi.getHealthCheckHistory}${query ? `?${query}` : ""}`,
@@ -988,6 +989,7 @@ export type GetHealthCheckHistoryParams = {
   pageSize?: number;
   repairStatus?: string;
   result?: string;
+  currentActionNeeded?: boolean;
 };
 
 export type HealthCheckStats = {

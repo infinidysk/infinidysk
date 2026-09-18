@@ -3273,6 +3273,16 @@
     "/api/get-health-check-history": {
       "get": {
         "operationId": "get-api-get-health-check-history",
+        "parameters": [
+          {
+            "description": "Return one latest unresolved check per existing Usenet file, excluding files already queued for repair. Filtering precedes pagination.",
+            "in": "query",
+            "name": "currentActionNeeded",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK"
@@ -8439,6 +8449,17 @@
     "/api/requeue-action-needed-health-checks": {
       "post": {
         "operationId": "post-api-requeue-action-needed-health-checks",
+        "parameters": [
+          {
+            "description": "Re-check only this file if it still needs action. Omit to re-check all eligible files.",
+            "in": "query",
+            "name": "davItemId",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {

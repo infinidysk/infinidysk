@@ -46,6 +46,7 @@ describe("health route loader", () => {
   beforeEach(() => {
     getConfigMock.mockReset();
     getHealthCheckHistoryMock.mockReset();
+    getHealthCheckHistoryMock.mockResolvedValue({ stats: [], items: [], totalCount: 0 });
     getHealthCheckQueueMock.mockReset();
   });
 
@@ -74,6 +75,10 @@ describe("health route loader", () => {
       historyPage: 1,
       historyPageSize: 25,
       historyFilter: "all",
+      attentionItems: [],
+      attentionTotalCount: 0,
+      attentionPage: 1,
+      attentionPageSize: 25,
       isEnabled: true,
       schedule: null,
     });
@@ -81,7 +86,7 @@ describe("health route loader", () => {
     expect(getHealthCheckHistoryMock).toHaveBeenCalledWith({
       page: 1,
       pageSize: 25,
-      repairStatus: "deleted,repaired,action-needed",
+      repairStatus: "deleted,repaired",
     });
     expect(getConfigMock).toHaveBeenCalledWith(["repair.enable"]);
   });
@@ -167,21 +172,22 @@ describe("health route loader", () => {
       page: 1,
       pageSize: 25,
       result: "degraded",
+      repairStatus: "none,deleted,repaired",
     });
   });
 
-  it("maps the action-needed history filter to the repair-status query parameter", async () => {
+  it("ignores the retired action-needed history filter", async () => {
     getHealthCheckQueueMock.mockResolvedValue({ uncheckedCount: 0, items: [] });
     getHealthCheckHistoryMock.mockResolvedValue({ stats: [], items: [], totalCount: 0 });
     getConfigMock.mockResolvedValue([]);
 
     await expect(loader(loaderArgs("/health?status=action-needed"))).resolves.toMatchObject({
-      historyFilter: "action-needed",
+      historyFilter: "all",
     });
     expect(getHealthCheckHistoryMock).toHaveBeenCalledWith({
       page: 1,
       pageSize: 25,
-      repairStatus: "action-needed",
+      repairStatus: "deleted,repaired",
     });
   });
 
@@ -196,7 +202,34 @@ describe("health route loader", () => {
     expect(getHealthCheckHistoryMock).toHaveBeenCalledWith({
       page: 1,
       pageSize: 25,
-      repairStatus: "deleted,repaired,action-needed",
+      repairStatus: "deleted,repaired",
+    });
+  });
+
+  it("pages current attention items independently of history", async () => {
+    getHealthCheckQueueMock.mockResolvedValue({ uncheckedCount: 0, items: [] });
+    getConfigMock.mockResolvedValue([]);
+    const attentionItems = [{ id: "active-file" }];
+    getHealthCheckHistoryMock.mockResolvedValueOnce({ stats: [], items: [], totalCount: 0 });
+    getHealthCheckHistoryMock.mockResolvedValueOnce({
+      stats: [],
+      items: attentionItems,
+      totalCount: 101,
+    });
+
+    await expect(
+      loader(loaderArgs("/health?page=2&attentionPage=3&attentionPageSize=50")),
+    ).resolves.toMatchObject({
+      historyPage: 2,
+      attentionPage: 3,
+      attentionPageSize: 50,
+      attentionItems,
+      attentionTotalCount: 101,
+    });
+    expect(getHealthCheckHistoryMock).toHaveBeenCalledWith({
+      page: 3,
+      pageSize: 50,
+      currentActionNeeded: true,
     });
   });
 
