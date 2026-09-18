@@ -30,6 +30,11 @@ import {
 } from "./streaming/streaming";
 import { isArrsSettingsUpdated, isArrsSettingsValid, ArrsSettings } from "./arrs/arrs";
 import {
+  isMediaServersSettingsUpdated,
+  isMediaServersSettingsValid,
+  MediaServersSettings,
+} from "./media-servers/media-servers";
+import {
   isIndexersSettingsUpdated,
   isIndexersSettingsValid,
   IndexersSettings,
@@ -140,6 +145,7 @@ const defaultConfig = {
   "rclone.pass": "",
   "rclone.mount-dir": "",
   "media.library-dir": "",
+  "media-servers.instances": '{"Instances":[]}',
   "arr.instances": '{"RadarrInstances":[],"SonarrInstances":[],"QueueRules":[]}',
   "arr.health-enabled": "true",
   "indexers.instances": '{"Indexers":[]}',
@@ -422,6 +428,7 @@ function Body(props: BodyProps) {
   const isStreamingUpdated = isStreamingSettingsUpdated(config, newConfig);
   const isWebdavUpdated = isWebdavSettingsUpdated(config, newConfig);
   const isArrsUpdated = isArrsSettingsUpdated(config, newConfig);
+  const isMediaServersUpdated = isMediaServersSettingsUpdated(config, newConfig);
   const isIndexersUpdated = isIndexersSettingsUpdated(config, newConfig);
   const isProfilesUpdated = isProfilesSettingsUpdated(config, newConfig);
   const isRepairsUpdated = isRepairsSettingsUpdated(config, newConfig);
@@ -441,6 +448,7 @@ function Body(props: BodyProps) {
     isStreamingUpdated ||
     isWebdavUpdated ||
     isArrsUpdated ||
+    isMediaServersUpdated ||
     isIndexersUpdated ||
     isProfilesUpdated ||
     isRepairsUpdated ||
@@ -469,7 +477,9 @@ function Body(props: BodyProps) {
                 ? "Invalid WebDAV settings"
                 : isArrsUpdated && !isArrsSettingsValid(newConfig)
                   ? "Invalid Arrs settings"
-                  : isIndexersUpdated && !isIndexersSettingsValid(newConfig)
+                  : isMediaServersUpdated && !isMediaServersSettingsValid(newConfig)
+                    ? "Invalid Media Server settings"
+                    : isIndexersUpdated && !isIndexersSettingsValid(newConfig)
                     ? "Invalid Indexers settings"
                     : isProfilesUpdated && !isProfilesSettingsValid(newConfig)
                       ? "Invalid Search Profiles settings"
@@ -670,6 +680,9 @@ function Body(props: BodyProps) {
             )}
             {activeTab === "arrs" && (
               <ArrsSettings config={newConfig} setNewConfig={setNewConfig} />
+            )}
+            {activeTab === "media-servers" && (
+              <MediaServersSettings config={newConfig} setNewConfig={setNewConfig} />
             )}
             {activeTab === "repairs" && (
               <RepairsSettings config={newConfig} setNewConfig={setNewConfig} />
