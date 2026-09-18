@@ -393,7 +393,7 @@ public class GetFileInfosStepTests
     public async Task GetFileInfos_RepairsWhenMatchingPar2NamesLosePriorityToSubjects()
     {
         var first16kA = Rar4Magic;
-        var first16kB = Rar4Magic.Concat([0]).ToArray();
+        var first16kB = Enumerable.Concat(Rar4Magic, new byte[] { 0 }).ToArray();
 #pragma warning disable CA5351 // MD5 here is content hashing for the NZB/PAR2 ecosystem, not security
         var descriptors = await Par2TestPackets.ReadFileDescsAsync(Par2TestPackets.BuildPar2Bytes(
             Par2TestPackets.BuildFileDescBody(
