@@ -427,27 +427,27 @@ public class GetFileInfosStepTests
             {
                 Info = GetFileInfosStep.GetFileInfos([Seg(par2Name, null)], [])[0],
                 HeaderName = "archive.part01.rar",
+                Par2Name = par2Name,
                 HasPar2Name = true,
+                Par2SuppliedFileName = true,
             },
             new()
             {
                 Info = GetFileInfosStep.GetFileInfos([Seg("scrambled.part02.rar", null)], [])[0],
                 HeaderName = "archive.part02.rar",
+                Par2Name = "",
                 HasPar2Name = false,
+                Par2SuppliedFileName = false,
             },
         };
 
-                Par2Name = par2Name,
         GetFileInfosStep.RepairRarGroupNames(picks);
-                Par2SuppliedFileName = true,
 
         Assert.Equal(par2Name, picks[0].Info.FileName);
         Assert.Equal(repaired ? "archive.part02.rar" : "scrambled.part02.rar", picks[1].Info.FileName);
     }
 
-                Par2Name = "",
     [Theory]
-                Par2SuppliedFileName = false,
     [InlineData(new[] { "a.part01.rar", "a.part02.rar", "b.part01.rar" }, true)]
     [InlineData(new[] { "a.rar", "a.r00", "A.r00" }, false)]
     [InlineData(new[] { "a.part01.rar", "notrar.bin" }, false)]
