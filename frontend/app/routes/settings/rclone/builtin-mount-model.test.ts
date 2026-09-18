@@ -150,15 +150,25 @@ describe("newMount", () => {
   // a first mount should default to. A generic placeholder invites a typo that
   // silently breaks every imported file.
   it("defaults the first mount to where symlink imports expect it", () => {
-    expect(newMount(0, "/data/nzbdav").MountPoint).toBe("/data/nzbdav");
+    expect(newMount([], "/data/nzbdav").MountPoint).toBe("/data/nzbdav");
   });
 
   it("falls back to a placeholder when no mount directory is configured", () => {
-    expect(newMount(0, undefined).MountPoint).toBe("/mnt/remote/infinidysk");
+    expect(newMount([], undefined).MountPoint).toBe("/mnt/remote/infinidysk");
   });
 
   it("gives additional mounts distinct ids", () => {
-    expect(newMount(0, "/data/nzbdav").Id).not.toBe(newMount(1, "/data/nzbdav").Id);
+    expect(newMount([], "/data/nzbdav").Id).not.toBe(
+      newMount([mount()], "/data/nzbdav").Id,
+    );
+  });
+
+  it("does not reuse an id after a mount is removed", () => {
+    const mounts = [mount(), mount({ Id: "library-3" })];
+
+    expect(newMount(mounts, "/data/nzbdav").Id).toBe("library-2");
+    expect(newMount(removeMount(mounts, "library-2"), "/data/nzbdav").Id).toBe("library-2");
+    expect(newMount(removeMount(mounts, "library"), "/data/nzbdav").Id).toBe("library");
   });
 });
 

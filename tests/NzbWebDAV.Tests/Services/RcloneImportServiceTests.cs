@@ -97,6 +97,21 @@ public class RcloneImportServiceTests
     }
 
     [Fact]
+    public async Task PreviewAsync_WarnsWhenTheExternalSettingsCannotBeRepresented()
+    {
+        var external = External();
+        external.Options!.CacheMode = "future-mode";
+        external.Options.CacheMaxAge = -1;
+        external.Options.ReadAhead = -1;
+
+        var preview = await new RcloneImportService().PreviewAsync(external, "/config", CancellationToken.None);
+
+        Assert.Contains(preview.Warnings, warning => warning.Contains("cache mode", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(preview.Warnings, warning => warning.Contains("cache age", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(preview.Warnings, warning => warning.Contains("read-ahead", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task PreviewAsync_SurfacesAMountPointThatWouldBeRejected()
     {
         var external = External();

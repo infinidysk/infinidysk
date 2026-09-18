@@ -53,6 +53,32 @@ public static class RcloneImportTranslator
         return mount;
     }
 
+    internal static IReadOnlyList<string> GetImportWarnings(VfsOptions options)
+    {
+        var warnings = new List<string>();
+
+        if (!IsKnownCacheMode(options.CacheMode))
+        {
+            warnings.Add(
+                $"The external rclone reported an unsupported VFS cache mode '{options.CacheMode ?? "(none)"}'; " +
+                "caching was set to Off. Choose a supported mode before applying if needed.");
+        }
+
+        if (options.CacheMaxAge == NoLimit)
+        {
+            warnings.Add(
+                "The external rclone has no VFS cache age limit; InfiniDysk will use its default cache age.");
+        }
+
+        if (options.ReadAhead == NoLimit)
+        {
+            warnings.Add(
+                "The external rclone has unlimited VFS read-ahead; InfiniDysk will use its default read-ahead size.");
+        }
+
+        return warnings;
+    }
+
     /// <summary>
     /// Recovers the path portion of an fs string such as <c>nzbdav:/content</c>.
     /// A root mount comes back from rclone as <c>nzbdav:</c> with no slash at all.
@@ -91,9 +117,13 @@ public static class RcloneImportTranslator
     }
 
     private static RcloneVfsCacheMode ParseCacheMode(string? mode) =>
-        Enum.TryParse<RcloneVfsCacheMode>(mode, ignoreCase: true, out var parsed)
+        IsKnownCacheMode(mode) && Enum.TryParse<RcloneVfsCacheMode>(mode, ignoreCase: true, out var parsed)
             ? parsed
-            : RcloneVfsCacheMode.Full;
+            : RcloneVfsCacheMode.Off;
+
+    private static bool IsKnownCacheMode(string? mode) =>
+        Enum.TryParse<RcloneVfsCacheMode>(mode, ignoreCase: true, out var parsed)
+        && Enum.IsDefined(parsed);
 
     // Zero is a setting, not an absence: --dir-cache-time=0 asks rclone to cache
     // nothing, and importing that as "unset" silently replaces it with the

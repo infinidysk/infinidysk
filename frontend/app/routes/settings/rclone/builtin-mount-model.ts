@@ -141,9 +141,17 @@ export function describeMountState({ configured, enabled, mounted }: MountStateI
  * imported file points at `<mount-dir>/.ids/...`, so a mount anywhere else leaves
  * the whole library unplayable.
  */
-export function newMount(index: number, symlinkMountDir: string | undefined): BuiltinMount {
+export function newMount(
+  mounts: readonly Pick<BuiltinMount, "Id">[],
+  symlinkMountDir: string | undefined,
+): BuiltinMount {
+  const ids = new Set(mounts.map((mount) => mount.Id));
+  let id = "library";
+  let suffix = 2;
+  while (ids.has(id)) id = `library-${suffix++}`;
+
   return {
-    Id: index === 0 ? "library" : `library-${index + 1}`,
+    Id: id,
     MountPoint: symlinkMountDir?.trim() || "/mnt/remote/infinidysk",
     ...MOUNT_DEFAULTS,
   };

@@ -691,7 +691,7 @@ export function BuiltinMountSettings({ config, setNewConfig }: BuiltinMountSetti
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="ghost"
-                onClick={() => writeMounts([...mounts, newMount(mounts.length, symlinkMountDir)])}
+                onClick={() => writeMounts([...mounts, newMount(mounts, symlinkMountDir)])}
               >
                 Add a mount
               </Button>
