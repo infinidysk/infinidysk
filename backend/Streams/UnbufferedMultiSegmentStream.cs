@@ -476,7 +476,10 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
             && !_segmentSizes.TryGetExactSize(_openSegmentIndex, out _))
         {
             if (_openSegmentFromLiveFetch && _openSegmentBytes > 0)
+            {
                 _segmentSizes.RecordExactSize(_openSegmentIndex, _openSegmentBytes);
+                _segmentSizes.RecordObservedSize(_openSegmentIndex, _openSegmentBytes);
+            }
             else
                 _segmentSizes.RecordObservedSize(_openSegmentIndex, _openSegmentBytes);
         }
