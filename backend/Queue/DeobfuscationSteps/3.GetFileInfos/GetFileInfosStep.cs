@@ -147,7 +147,8 @@ public static class GetFileInfosStep
         if (group.Count < 2) return;
         if (!HasDistinctRarVolumeIdentities(group.Select(x => x.HeaderName))) return;
         if ((group.Any(x => x.HasPar2Name)
-             || HasDistinctRarVolumeIdentities(group.Select(x => x.Info.FileName)))
+               || HasDistinctRarVolumeIdentities(group.Select(x => x.Info.FileName))
+               || HasExplicitRarVolumeOrdinal(group.Select(x => x.Info.FileName)))
             && !CanRepairFragmentedRarGroup(group)) return;
 
         Log.Information(
@@ -218,6 +219,12 @@ public static class GetFileInfosStep
         }
 
         return count > 0;
+    }
+
+    private static bool HasExplicitRarVolumeOrdinal(IEnumerable<string> names)
+    {
+        return names.Select(FilenameUtil.GetRarVolumeName).Any(volume =>
+            volume is { Scheme: FilenameUtil.RarVolumeScheme.Part } || volume?.Ordinal > 0);
     }
 
     internal sealed class NamePick

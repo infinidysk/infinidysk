@@ -282,6 +282,18 @@ public class GetFileInfosStepTests
         Assert.All(results, r => Assert.True(r.IsRar));
     }
 
+    [Theory]
+    [InlineData("Release.part01.rar", "Release.part01.rar", "archive.part01.rar", "archive.part02.rar")]
+    [InlineData("Release.r00", "Release.r00", "archive.rar", "archive.r00")]
+    public void GetFileInfos_DoesNotRepairCollidingExplicitVolumeOrdinals(
+        string firstSubject, string secondSubject, string firstHeader, string secondHeader)
+    {
+        var results = GetFileInfosStep.GetFileInfos(
+            [Seg(firstSubject, firstHeader), Seg(secondSubject, secondHeader)], []);
+
+        Assert.Equal([firstSubject, secondSubject], results.Select(result => result.FileName));
+    }
+
     [Fact]
     public void GetFileInfos_RepairsIndependentPartSetsWhoseOrdinalsRestart()
     {
