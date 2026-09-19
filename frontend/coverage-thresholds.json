@@ -1,7 +1,7 @@
 {
   "global": {
     "branches": 30,
-    "functions": 26,
+    "functions": 29,
     "lines": 34,
     "statements": 33
   },
