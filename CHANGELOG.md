@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.4.3](https://github.com/infinidysk/infinidysk/compare/v1.4.2...v1.4.3) (2026-09-19)
+
+
+### Features
+
+* **health:** add actions to resolve attention items and clarify health statistics ([#1484](https://github.com/infinidysk/infinidysk/issues/1484)) ([5b395b4](https://github.com/infinidysk/infinidysk/commit/5b395b4680635ee99037674f19bf501ea898fdfe))
+* **health:** separate active attention items from repair history ([#1463](https://github.com/infinidysk/infinidysk/issues/1463)) ([68f4d2b](https://github.com/infinidysk/infinidysk/commit/68f4d2b63f276675cc2e53ebc30a0fc3c21e6ae6))
+* **support:** identify stalled playback and repeated health checks in support packs ([#1482](https://github.com/infinidysk/infinidysk/issues/1482)) ([873d317](https://github.com/infinidysk/infinidysk/commit/873d317d4ecfcb6d67cf390065960debd2942ee1))
+
+
+### Bug Fixes
+
+* **auth:** hash the WEBDAV_PASSWORD env value once, not per request ([#1438](https://github.com/infinidysk/infinidysk/issues/1438)) ([6ae4c24](https://github.com/infinidysk/infinidysk/commit/6ae4c24050ed29b0298c43285c0031f520be51c9))
+* **deps:** Bump github/codeql-action in the github-actions group ([#1478](https://github.com/infinidysk/infinidysk/issues/1478)) ([d542ca5](https://github.com/infinidysk/infinidysk/commit/d542ca55b872bd22ed9e8615797c56d5b609acc8))
+* **deps:** Bump zensical from 0.0.59 to 0.0.61 in the docs-python group ([#1476](https://github.com/infinidysk/infinidysk/issues/1476)) ([5b6d6ff](https://github.com/infinidysk/infinidysk/commit/5b6d6ff188b74881fe52d61eecbae97686450348))
+* **health:** explain blocked removals and omit file extensions from searches ([#1490](https://github.com/infinidysk/infinidysk/issues/1490)) ([e9f2734](https://github.com/infinidysk/infinidysk/commit/e9f2734558d7f88a0536826eaa33f7b10a48f5f8))
+* **health:** include history-linked files in routine checks ([#1466](https://github.com/infinidysk/infinidysk/issues/1466)) ([d55e941](https://github.com/infinidysk/infinidysk/commit/d55e941e7bdfcdf150c919282d49bf78578a2749))
+* **health:** keep running health checks visible after starting a full scan ([#1481](https://github.com/infinidysk/infinidysk/issues/1481)) ([ab7652a](https://github.com/infinidysk/infinidysk/commit/ab7652a06c5cd74e4a1bcbd7b26a66847506eb54))
+* **health:** start orphan cleanup retry budget after contention ([#1464](https://github.com/infinidysk/infinidysk/issues/1464)) ([6d255ae](https://github.com/infinidysk/infinidysk/commit/6d255aebdfa2469a8998d156131682b2ee6032e3))
+* **metrics:** quarantine a corrupt metrics database and back off failed flushes ([#1435](https://github.com/infinidysk/infinidysk/issues/1435)) ([5093dd0](https://github.com/infinidysk/infinidysk/commit/5093dd0e7bb57c50e7d87f820ac197d17063bf67))
+* **nntp:** handle late connection factory cancellation without stacks ([#1473](https://github.com/infinidysk/infinidysk/issues/1473)) ([13acf51](https://github.com/infinidysk/infinidysk/commit/13acf519e3b9b45a8115d521820459c0d8fbf275))
+* **nntp:** normalize pooled capacity by configured connection limits ([#1491](https://github.com/infinidysk/infinidysk/issues/1491)) ([570975f](https://github.com/infinidysk/infinidysk/commit/570975f53b67888d6625aac3e9f23140bf201322))
+* **queue:** classify unsupported 7z compression before packed range lookup ([#1468](https://github.com/infinidysk/infinidysk/issues/1468)) ([f9354d4](https://github.com/infinidysk/infinidysk/commit/f9354d46816cf39ae9475ca3532894eb2f5b6f23))
+* **queue:** explain intentional archive compression rejection ([#1470](https://github.com/infinidysk/infinidysk/issues/1470)) ([efd1368](https://github.com/infinidysk/infinidysk/commit/efd1368241e5105cfc28cbaf100fae783c987214))
+* **queue:** filter sample-directory videos without sibling-size comparisons ([#1475](https://github.com/infinidysk/infinidysk/issues/1475)) ([f76d460](https://github.com/infinidysk/infinidysk/commit/f76d46077de21011e80261ff5c7774b4a9095451))
+* **queue:** import RAR releases with individually scrambled volume names ([#1469](https://github.com/infinidysk/infinidysk/issues/1469)) ([eac163b](https://github.com/infinidysk/infinidysk/commit/eac163b6104733218342e4fb687fba1aa258a238))
+* **ui:** clarify Activity totals and make support easier to find ([#1485](https://github.com/infinidysk/infinidysk/issues/1485)) ([eaba97a](https://github.com/infinidysk/infinidysk/commit/eaba97a0a91d93b64a55205558fefb0ea3464a45))
+* **usenet:** include protocol reasons and open timings in breaker logs ([#1465](https://github.com/infinidysk/infinidysk/issues/1465)) ([de34a6c](https://github.com/infinidysk/infinidysk/commit/de34a6c3fb97acd19dcae22a310cc3059e8c538a))
+* **usenet:** prevent playback stalls when a provider's transfer slots are stuck ([#1489](https://github.com/infinidysk/infinidysk/issues/1489)) ([7a81faa](https://github.com/infinidysk/infinidysk/commit/7a81faa9838f01b974c13bb3aa1658105eadfb5a))
+* **usenet:** release stalled transfers when playback is cancelled ([#1472](https://github.com/infinidysk/infinidysk/issues/1472)) ([9d0793e](https://github.com/infinidysk/infinidysk/commit/9d0793e149e136a051bb875cdf845db340a676db))
+* **webdav:** range requests after a flaky header probe no longer return bytes from the wrong offset ([#1455](https://github.com/infinidysk/infinidysk/issues/1455)) ([0868917](https://github.com/infinidysk/infinidysk/commit/08689171eaa270ffb20b013a2e8ef76ae883e062))
+* **webdav:** reduce unnecessary range read-ahead and improve seek diagnostics ([#1487](https://github.com/infinidysk/infinidysk/issues/1487)) ([1b11254](https://github.com/infinidysk/infinidysk/commit/1b11254d3ad03ffe123527df0b38689f6aa5ccaf))
+
+
+### UX
+
+* **ui:** group live overview metrics in the active reads card ([#1486](https://github.com/infinidysk/infinidysk/issues/1486)) ([3e89fb2](https://github.com/infinidysk/infinidysk/commit/3e89fb2c8c64c59fe9ce85c51db72b228f8dd5fc))
+
 ## [1.4.2](https://github.com/infinidysk/infinidysk/compare/v1.4.1...v1.4.2) (2026-09-17)
 
 
