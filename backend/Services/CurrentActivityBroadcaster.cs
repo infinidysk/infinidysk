@@ -46,8 +46,15 @@ public sealed class CurrentActivityBroadcaster(
         if (!websocketPublisher.HasSubscribers(WebsocketTopic.CurrentActivity))
             return;
 
-        var payload = JsonSerializer.Serialize(composer.Compose(), JsonOptions);
-        if (payload == _lastPayload)
+        var snapshot = composer.Compose();
+        var payload = JsonSerializer.Serialize(snapshot, JsonOptions);
+
+        // The frontend derives delivery rate from byte deltas between state samples.
+        // While a transport read exists, keep sampling at the normal one-second tick
+        // even when the counters are unchanged so a previously non-zero rate decays
+        // promptly to zero instead of remaining frozen until the 15-second read TTL.
+        // Stable playback-only/empty snapshots remain deduplicated.
+        if (payload == _lastPayload && snapshot.Reads.Count == 0)
             return;
 
         _lastPayload = payload;
