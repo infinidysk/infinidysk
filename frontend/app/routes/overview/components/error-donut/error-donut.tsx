@@ -123,19 +123,23 @@ export function ErrorBreakdown({ errors }: ErrorDonutProps) {
                   aria-label={`${hardTotal} hard fetch errors broken down by type`}
                 >
                   {hardSegments.map((s) => (
-                    <Tooltip
+                    <div
                       key={s.status}
-                      content={`${statusLabel(s.status)}: ${formatNumber(s.count)} (${formatPercent(s.fraction * 100, 1)})`}
+                      className={`${styles.stackSeg} ${hover && hover !== s.status ? styles.stackSegDim : ""}`}
+                      style={{
+                        flex: s.count,
+                        background: s.color,
+                        minWidth: 0,
+                      }}
+                      onMouseEnter={() => setHover(s.status)}
                     >
-                      <div
-                        className={`${styles.stackSeg} ${hover && hover !== s.status ? styles.stackSegDim : ""}`}
-                        style={{
-                          flex: s.count,
-                          background: s.color,
-                        }}
-                        onMouseEnter={() => setHover(s.status)}
-                      />
-                    </Tooltip>
+                      <Tooltip
+                        className="h-full w-full"
+                        content={`${statusLabel(s.status)}: ${formatNumber(s.count)} (${formatPercent(s.fraction * 100, 1)})`}
+                      >
+                        <div className="h-full w-full" />
+                      </Tooltip>
+                    </div>
                   ))}
                 </div>
 
