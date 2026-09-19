@@ -126,6 +126,66 @@ public class MediaPlaybackSessionSourceTests
     }
 
     [Fact]
+    public void EmbyJellyfinParser_PrefersExplicitActiveMediaSourceOverGenericItemPath()
+    {
+        using var document = JsonDocument.Parse("""
+        [{
+          "Id": "session-version-b",
+          "NowPlayingItem": {
+            "Id": "movie-versioned",
+            "Name": "Movie",
+            "Type": "Movie",
+            "Path": "/movies/default-version.mkv",
+            "MediaSources": [
+              {"Id": "source-a", "Path": "/movies/version-a.mkv"},
+              {"Id": "source-b", "Path": "/movies/version-b.mkv"}
+            ]
+          },
+          "PlayState": {
+            "PositionTicks": 12000000000,
+            "IsPaused": false,
+            "MediaSourceId": "source-b",
+            "PlayMethod": "DirectPlay"
+          }
+        }]
+        """);
+
+        var session = EmbyJellyfinPlaybackSessionSource.Parse(document.RootElement).Single();
+
+        Assert.Equal("source-b", session.MediaSourceId);
+        Assert.Equal("/movies/version-b.mkv", session.MediaSourcePath);
+    }
+
+    [Fact]
+    public void EmbyJellyfinParser_ExplicitUnknownMediaSourceDoesNotFallBackToGenericItemPath()
+    {
+        using var document = JsonDocument.Parse("""
+        [{
+          "Id": "session-missing-version",
+          "NowPlayingItem": {
+            "Id": "movie-versioned",
+            "Name": "Movie",
+            "Type": "Movie",
+            "Path": "/movies/default-version.mkv",
+            "MediaSources": [
+              {"Id": "source-a", "Path": "/movies/version-a.mkv"}
+            ]
+          },
+          "PlayState": {
+            "PositionTicks": 12000000000,
+            "IsPaused": false,
+            "MediaSourceId": "source-missing"
+          }
+        }]
+        """);
+
+        var session = EmbyJellyfinPlaybackSessionSource.Parse(document.RootElement).Single();
+
+        Assert.Equal("source-missing", session.MediaSourceId);
+        Assert.Null(session.MediaSourcePath);
+    }
+
+    [Fact]
     public void EmbyJellyfinParser_DoesNotGuessAmongMultipleSourcesWithoutMediaSourceId()
     {
         using var document = JsonDocument.Parse("""
