@@ -1326,6 +1326,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     stream, segmentIndex, cancellationToken, lease, GetPlannedSegmentBytes(segmentIndex))
                 .ConfigureAwait(false);
         }
+        catch (SeekPositionNotFoundException)
+        {
+            await stream.DisposeAsync().ConfigureAwait(false);
+            return null;
+        }
         catch
         {
             await stream.DisposeAsync().ConfigureAwait(false);
@@ -1728,6 +1733,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 catch (UsenetCorruptArticleException)
                 {
                     // Corrupt fallback — try the next alternate MessageId.
+                }
+                catch (SeekPositionNotFoundException)
+                {
+                    // The positioned fallback had incompatible BODY geometry — try the next alternate MessageId.
                 }
                 catch (UsenetUnexpectedResponseException e)
                 {
