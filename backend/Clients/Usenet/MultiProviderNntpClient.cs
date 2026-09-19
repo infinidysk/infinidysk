@@ -456,7 +456,9 @@ public class MultiProviderNntpClient(
                 ContextualCancellationTokenSource? attemptCts = null;
 #pragma warning disable CA2000 // The returned scope owns and disposes the token-context registration.
                 using var admissionFailoverContext = SetTransferAdmissionFailoverContext(
-                    provider, NntpOperation.PipelinedBody, cancellationToken);
+                    NntpOperation.PipelinedBody,
+                    orderedProviders.Skip(providerIndex + 1),
+                    cancellationToken);
 #pragma warning restore CA2000
                 try
                 {
@@ -730,7 +732,18 @@ public class MultiProviderNntpClient(
                     lastAttemptedProvider = provider;
 #pragma warning disable CA2000 // The returned scope owns and disposes the token-context registration.
                     using var fallbackAdmissionContext = SetTransferAdmissionFailoverContext(
-                        provider, NntpOperation.PipelinedBody, cancellationToken);
+                        NntpOperation.PipelinedBody,
+                        retryProviders
+                            .SkipWhile(candidate => !ReferenceEquals(candidate, provider))
+                            .Skip(1)
+                            .Where(candidate =>
+                            {
+                                var candidateGroup = NormalizeStorageGroup(candidate.StorageGroup);
+                                return (candidateGroup.Length == 0 || !missingGroups.Contains(candidateGroup))
+                                    && !IsCachedMissing(
+                                        segmentId, candidate, NntpOperation.PipelinedBody);
+                            }),
+                        cancellationToken);
 #pragma warning restore CA2000
                     try
                     {
@@ -1041,7 +1054,17 @@ public class MultiProviderNntpClient(
             lastAttemptedProvider = provider;
 #pragma warning disable CA2000 // The returned scope owns and disposes the token-context registration.
             using var admissionFailoverContext = SetTransferAdmissionFailoverContext(
-                provider, operation, cancellationToken);
+                operation,
+                orderedProviders
+                    .SkipWhile(candidate => !ReferenceEquals(candidate, provider))
+                    .Skip(1)
+                    .Where(candidate =>
+                    {
+                        var candidateGroup = NormalizeStorageGroup(candidate.StorageGroup);
+                        return (candidateGroup.Length == 0 || !missingGroups.Contains(candidateGroup))
+                            && !IsCachedMissing(segmentId, candidate, operation);
+                    }),
+                cancellationToken);
 #pragma warning restore CA2000
             try
             {
@@ -1204,7 +1227,18 @@ public class MultiProviderNntpClient(
             var stopwatch = Stopwatch.StartNew();
 #pragma warning disable CA2000 // The returned scope owns and disposes the token-context registration.
             using var admissionFailoverContext = SetTransferAdmissionFailoverContext(
-                provider, operation, cancellationToken);
+                operation,
+                orderedProviders
+                    .SkipWhile(candidate => !ReferenceEquals(candidate, provider))
+                    .Skip(1)
+                    .Where(candidate =>
+                    {
+                        var candidateGroup = NormalizeStorageGroup(candidate.StorageGroup);
+                        return (candidateGroup.Length == 0 || !missingGroups.Contains(candidateGroup))
+                            && (articleId is not { } segmentId
+                                || !IsCachedMissing(segmentId, candidate, operation));
+                    }),
+                cancellationToken);
 #pragma warning restore CA2000
             try
             {
@@ -1879,8 +1913,8 @@ public class MultiProviderNntpClient(
     }
 
     private IDisposable SetTransferAdmissionFailoverContext(
-        MultiConnectionNntpClient currentProvider,
         NntpOperation operation,
+        IEnumerable<MultiConnectionNntpClient> candidateProviders,
         CancellationToken cancellationToken)
     {
         if (operation is not (NntpOperation.Body
@@ -1889,19 +1923,10 @@ public class MultiProviderNntpClient(
             or NntpOperation.PipelinedArticle))
             return ScopeReleaser.Empty;
 
-        var hasAlternativeCapacity = providers.Any(provider =>
-            !ReferenceEquals(provider, currentProvider)
-            && provider.ProviderType != ProviderType.Disabled
-            && provider.GetCircuitBreakerSnapshot().State != ProviderCircuitState.Open
-            && provider.UnreservedConnectionsFor(operation) > 0);
-        if (!hasAlternativeCapacity)
-            return ScopeReleaser.Empty;
-
     #pragma warning disable CA2000 // ScopeReleaser owns this registration and disposes it when the provider attempt ends.
         var context = cancellationToken.SetContext(new TransferAdmissionFailoverContext(
-            () => providers.Any(provider =>
-                !ReferenceEquals(provider, currentProvider)
-                && provider.ProviderType != ProviderType.Disabled
+            () => candidateProviders.Any(provider =>
+                provider.ProviderType != ProviderType.Disabled
                 && provider.GetCircuitBreakerSnapshot().State != ProviderCircuitState.Open
                 && provider.UnreservedConnectionsFor(operation) > 0),
             TransferAdmissionFailoverTimeout));

@@ -89,9 +89,10 @@ public class StreamingTimeoutTests
 
             async Task EnumerateAsync()
             {
-                await foreach (var _ in client.DecodedBodiesPipelinedAsync(
+                await foreach (var response in client.DecodedBodiesPipelinedAsync(
                                    ["seg"], depth: 1, callerCts.Token))
                 {
+                    _ = response;
                 }
             }
 
