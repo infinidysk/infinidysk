@@ -1966,7 +1966,16 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 Stopwatch.GetElapsedTime(drainStarted));
             var drained = buffer.Length;
             var shortPadded = false;
-            if (hasExactSize)
+            if (segmentIndex == 0
+                && _expectedFirstSegmentRangeWasClippedAtFileEnd
+                && _expectedFirstSegmentRange is { } expectedFirstSegmentRange)
+            {
+                shortPadded = AlignDrainedSegment(
+                    buffer, segmentIndex, drained, expectedFirstSegmentRange.Count);
+                if (!hasExactSize)
+                    _segmentSizes.RecordObservedSize(segmentIndex, buffer.Length);
+            }
+            else if (hasExactSize)
             {
                 shortPadded = AlignDrainedSegment(buffer, segmentIndex, drained, exactSize);
             }

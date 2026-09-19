@@ -229,6 +229,40 @@ public class MultiSegmentStreamCapacityHintTests
     }
 
     [Fact]
+    public async Task Drain_ClipsOverlongFirstBodyAtLogicalFileEndWithoutImportedSizes()
+    {
+        var client = new FakeNntpClient(
+            new Dictionary<string, byte[]>
+            {
+                ["seg-0"] = "aaaaaa"u8.ToArray(),
+                ["seg-1"] = "bbbbb"u8.ToArray(),
+            },
+            useCachedYencStreams: true,
+            segmentRanges: new Dictionary<string, LongRange>
+            {
+                ["seg-0"] = new(5, 11),
+                ["seg-1"] = new(11, 16),
+            });
+
+        await using var stream = MultiSegmentStream.Create(
+            new[] { "seg-0", "seg-1" }.AsMemory(),
+            client,
+            articleBufferSize: 2,
+            estimatedSegmentSize: 6,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: false,
+            CancellationToken.None,
+            fileName: "geometry.bin",
+            expectedFirstSegmentRange: new LongRange(5, 10),
+            expectedFirstSegmentRangeWasClippedAtFileEnd: true);
+
+        using var output = new MemoryStream();
+        await stream.CopyToAsync(output);
+
+        Assert.Equal("aaaaabbbbb"u8.ToArray(), output.ToArray());
+    }
+
+    [Fact]
     public void Create_RejectsClippedFlagWithoutExpectedFirstSegmentRange()
     {
         var client = new FakeNntpClient(new Dictionary<string, byte[]> { ["seg-0"] = [1] });
