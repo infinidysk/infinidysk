@@ -36,6 +36,38 @@ public class SevenZipUtilTests
         Assert.Equal(expectedEntryBytes, storedEntryBytes);
     }
 
+    [Fact]
+    public async Task GetSevenZipEntriesAsync_RetainsEmptyFilesWithoutPackedRanges()
+    {
+        var archivePath = Path.Join(
+            RepoPaths.FindRepoRoot(), "tests", "TestArchives", "Archives",
+            "7Zip.EmptyStream.7z");
+        await using var archiveStream = File.OpenRead(archivePath);
+
+        var entries = await SevenZipUtil.GetSevenZipEntriesAsync(
+            archiveStream, password: null, CancellationToken.None);
+
+        Assert.Equal(
+            new[] { "000", "001", "NewFolder/A", "NewFolder/B" },
+            entries.Select(entry => entry.PathWithinArchive)
+                .OrderBy(path => path, StringComparer.Ordinal).ToArray());
+        Assert.All(entries, entry =>
+        {
+            Assert.False(entry.Entry.IsDirectory);
+            Assert.False(entry.Entry.IsAnti);
+            Assert.Equal(0L, entry.Entry.Size);
+            Assert.Equal(CompressionType.None, entry.CompressionType);
+            Assert.False(entry.IsEncrypted);
+            Assert.Null(entry.AesParams);
+            Assert.False(entry.Entry.TryGetPackedByteRange(out _, out _));
+            var exception = Assert.Throws<InvalidOperationException>(
+                () => entry.ByteRangeWithinArchive);
+            Assert.Equal(
+                $"7z entry '{entry.PathWithinArchive}' has no packed byte range.",
+                exception.Message);
+        });
+    }
+
     [Theory]
     [InlineData("7Zip.LZMA.7z", null)]
     [InlineData("7Zip.solid.7z", null)]

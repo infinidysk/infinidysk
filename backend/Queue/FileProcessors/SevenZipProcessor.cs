@@ -71,10 +71,12 @@ public class SevenZipProcessor : BaseProcessor
                     PathWithinArchive = x.PathWithinArchive,
                     DavMultipartFileMeta = GetDavMultipartFileMeta(x, multipartFile),
                     ReleaseDate = _fileInfos.First().ReleaseDate,
-                    SniffedVideoExtension = VideoSignatureUtil.SniffMemberFromFirst16KB(
-                        first16KB,
-                        x.ByteRangeWithinArchive.StartInclusive,
-                        x.IsEncrypted),
+                    SniffedVideoExtension = IsEmptyRegularFile(x)
+                        ? null
+                        : VideoSignatureUtil.SniffMemberFromFirst16KB(
+                            first16KB,
+                            x.ByteRangeWithinArchive.StartInclusive,
+                            x.IsEncrypted),
                 }).ToList(),
             };
         }
@@ -156,6 +158,9 @@ public class SevenZipProcessor : BaseProcessor
         return withFileSizes.Concat(populatedFileSizes).ToList();
     }
 
+    private static bool IsEmptyRegularFile(SevenZipUtil.SevenZipEntry entry) =>
+        entry.Entry.Size == 0 && !entry.Entry.IsAnti;
+
     private async Task<GetFileInfosStep.FileInfo> PopulateMissingFileSize(GetFileInfosStep.FileInfo fileInfo)
     {
         return fileInfo with
@@ -208,6 +213,15 @@ public class SevenZipProcessor : BaseProcessor
         MultipartFile multipartFile
     )
     {
+        if (IsEmptyRegularFile(sevenZipEntry))
+        {
+            return new DavMultipartFile.Meta
+            {
+                AesParams = null,
+                FileParts = [],
+            };
+        }
+
         var (startIndexInclusive, startIndexByteRange) = InterpolationSearch.Find(
             sevenZipEntry.ByteRangeWithinArchive.StartInclusive,
             new LongRange(0, multipartFile.FileParts.Count),
