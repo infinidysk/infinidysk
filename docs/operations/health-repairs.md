@@ -1,5 +1,16 @@
 # Health and repairs
 
+## Attention summary [since 1.4.3](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.3){ .nzbdav-since }
+
+**Overview → Needs attention** links to files requiring action, open or recovering provider
+circuits, and degraded or offline Arr integrations. Unavailable status is shown separately
+from a successful check with no problems. The health count refreshes every minute while
+the page is visible.
+
+The **Health** page puts action-needed files first. Expand **Diagnostic details** to read
+the complete recovery message with touch, mouse, or keyboard. Small nonzero outcome
+percentages are preserved instead of rounding down to zero.
+
 ## Background repairs
 
 **Settings → Repairs** monitors mounted media, reconstructs missing segments from PAR2 parity, and
