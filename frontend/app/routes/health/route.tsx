@@ -13,7 +13,7 @@ import { useWebsocketTopics } from "~/utils/shared-websocket";
 import { Alert, Button, Icon, PageHeader } from "~/components/ui";
 import { useIsReadOnly } from "~/auth/authorization";
 import type {
-  HealthCheckQueueResponse,
+  HealthCheckQueueItem,
   HealthCheckScheduleStatus,
   HealthResult,
   RepairAction,
@@ -21,6 +21,7 @@ import type {
 import {
   completeHealthCheck,
   getVisibleHealthCheckItems,
+  mergeActiveHealthCheckItems,
   mergeHealthCheckQueue,
   parseHealthItemProgressMessage,
   parseHealthItemStatusMessage,
@@ -221,19 +222,13 @@ export default function Health({ loaderData }: Route.ComponentProps) {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const refetchData = async () => {
       try {
-        const response = await fetch(withUrlBase("/api/get-health-check-queue?pageSize=30"), {
+        const response = await fetch(withUrlBase("/api/get-active-health-checks"), {
           signal: controller.signal,
         });
         if (!response.ok) return;
-        const healthCheckQueue = (await response.json()) as HealthCheckQueueResponse;
+        const activeHealthChecks = (await response.json()) as { items: HealthCheckQueueItem[] };
         if (controller.signal.aborted) return;
-        setQueueState((state) =>
-          mergeHealthCheckQueue(state, {
-            items: healthCheckQueue.items,
-            uncheckedCount: healthCheckQueue.uncheckedCount,
-          }),
-        );
-        if (healthCheckQueue.schedule) setSchedule(healthCheckQueue.schedule);
+        setQueueState((state) => mergeActiveHealthCheckItems(state, activeHealthChecks.items));
       } catch {
         if (controller.signal.aborted) return;
       } finally {

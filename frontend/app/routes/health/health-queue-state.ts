@@ -28,6 +28,26 @@ export function mergeHealthCheckQueue(
   };
 }
 
+export function mergeActiveHealthCheckItems(
+  state: HealthQueueState,
+  activeItems: HealthCheckQueueItem[],
+): HealthQueueState {
+  const activeItemsById = new Map(activeItems.map((item) => [item.id, item]));
+  const items = state.items.map((item) => {
+    const activeItem = activeItemsById.get(item.id);
+    if (activeItem) return activeItem;
+    if (item.progress === undefined) return item;
+    const { progress: _progress, ...waitingItem } = item;
+    return waitingItem;
+  });
+
+  for (const activeItem of activeItems) {
+    if (!state.items.some((item) => item.id === activeItem.id)) items.push(activeItem);
+  }
+
+  return { ...state, items };
+}
+
 // Numeric values mirror the backend enums in backend-client.server, which cannot be
 // value-imported into this client module.
 const healthResultValues: readonly HealthResult[] = [0, 1, 2];

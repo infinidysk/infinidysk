@@ -3,6 +3,7 @@ import type { HealthCheckQueueItem } from "~/clients/backend-client.server";
 import {
   completeHealthCheck,
   getVisibleHealthCheckItems,
+  mergeActiveHealthCheckItems,
   mergeHealthCheckQueue,
   parseHealthItemProgressMessage,
   parseHealthItemStatusMessage,
@@ -146,6 +147,24 @@ describe("mergeHealthCheckQueue", () => {
       queueItem("waiting", null),
       { ...queueItem("active", null), progress: 45 },
     ]);
+  });
+});
+
+describe("mergeActiveHealthCheckItems", () => {
+  it("adds active workers and clears stale progress without changing the queue count", () => {
+    const current: HealthQueueState = {
+      items: [
+        { ...queueItem("finished", null), progress: 100 },
+        queueItem("waiting", null),
+      ],
+      uncheckedCount: 7,
+    };
+    const active = { ...queueItem("active", null), progress: 0 };
+
+    expect(mergeActiveHealthCheckItems(current, [active])).toEqual({
+      items: [queueItem("finished", null), queueItem("waiting", null), active],
+      uncheckedCount: 7,
+    });
   });
 });
 
