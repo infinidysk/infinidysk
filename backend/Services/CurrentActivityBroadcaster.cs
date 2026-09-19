@@ -59,7 +59,7 @@ public sealed class CurrentActivityBroadcaster(
         if (payload == _lastPayload && (!hasSubscribers || snapshot.Reads.Count == 0))
             return;
 
-        _lastPayload = payload;
         await websocketPublisher.SendMessage(WebsocketTopic.CurrentActivity, payload).ConfigureAwait(false);
+        _lastPayload = payload;
     }
 }
