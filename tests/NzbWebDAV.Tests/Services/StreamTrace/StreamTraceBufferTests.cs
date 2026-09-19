@@ -7,6 +7,27 @@ namespace NzbWebDAV.Tests.Services.StreamTrace;
 public class StreamTraceBufferTests
 {
     [Fact]
+    public void RangeOpen_ExportsFrozenStallTotalsBeforeRequestFinishes()
+    {
+        var buffer = new StreamTraceBuffer(100);
+        var session = Guid.NewGuid();
+        var range = buffer.RangeOpen(session, "/.ids/example", "GET", 0, 99, 1000, null, null,
+            fileName: "Example Movie.mkv");
+        buffer.AddStall(range, StreamStallKind.ProviderWait, TimeSpan.FromSeconds(12));
+        buffer.AddStall(range, StreamStallKind.BodyDrain, TimeSpan.FromSeconds(3));
+
+        var exported = Assert.Single(buffer.CaptureSnapshot().Events).FreezeForExport();
+        Assert.Equal("RangeOpen", exported.Kind);
+        Assert.Equal("Example Movie.mkv", exported.FileName);
+        Assert.Equal(12000, exported.ProviderWaitMs);
+        Assert.Equal(3000, exported.BodyDrainMs);
+
+        buffer.AddStall(range, StreamStallKind.ProviderWait, TimeSpan.FromSeconds(7));
+        Assert.Equal(12000, exported.ProviderWaitMs);
+        Assert.Equal(19000, Assert.Single(buffer.GetSessionEvents(session)).ProviderWaitMs);
+    }
+
+    [Fact]
     public void Record_PreservesPerSessionOrderingAndCapsBuffer()
     {
         var buffer = new StreamTraceBuffer(capacity: 100, maxSessions: 50);

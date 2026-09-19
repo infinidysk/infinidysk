@@ -319,10 +319,12 @@ public sealed class StreamTraceBuffer
         long? rangeEnd,
         long? fileSize,
         string? userAgent,
-        string? clientIp)
+        string? clientIp,
+        string? fileName = null)
     {
         if (!Enabled) return null;
         var generation = Interlocked.Increment(ref _nextRangeGeneration);
+        var stalls = new StreamTraceRangeStalls();
         var session = Record(new StreamTraceEvent
         {
             Sequence = 0,
@@ -330,6 +332,7 @@ public sealed class StreamTraceBuffer
             SessionId = sessionId,
             Kind = StreamTraceKind.RangeOpen.ToString(),
             Path = path,
+            FileName = fileName,
             Method = method,
             RangeStart = rangeStart,
             RangeEnd = rangeEnd,
@@ -337,10 +340,11 @@ public sealed class StreamTraceBuffer
             UserAgent = userAgent,
             ClientIp = clientIp,
             RangeGeneration = generation,
+            RangeStalls = stalls,
         });
         if (session is null)
             return null;
-        session.OpenGeneration(generation);
+        session.OpenGeneration(generation, stalls);
         return new StreamTraceRangeContext(sessionId, generation);
     }
 
@@ -792,11 +796,11 @@ public sealed class StreamTraceBuffer
         public bool EventCountKnown { get; set; } = true;
         public string? LastKind { get; set; }
 
-        public void OpenGeneration(long generation)
+        public void OpenGeneration(long generation, StreamTraceRangeStalls stalls)
         {
             lock (_generationGate)
             {
-                _buckets[generation] = new StreamTraceRangeStalls();
+                _buckets[generation] = stalls;
                 while (_buckets.Count > RetainedGenerations)
                     _buckets.Remove(_buckets.Keys.Min());
             }

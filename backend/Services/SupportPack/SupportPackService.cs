@@ -40,7 +40,8 @@ public sealed class SupportPackService(
     ConcurrentReadTracker? concurrentReadTracker = null,
     IQueueCoordinator? queueCoordinator = null,
     SegmentCacheStatistics? segmentCacheStatistics = null,
-    MemoryComponentSnapshotBuilder? memoryComponentSnapshotBuilder = null)
+    MemoryComponentSnapshotBuilder? memoryComponentSnapshotBuilder = null,
+    HealthCheckService? healthCheckService = null)
 {
     private const long MinuteMs = 60_000;
     private const long HourMs = 60 * MinuteMs;
@@ -307,6 +308,13 @@ public sealed class SupportPackService(
         budget: its effective limit, active operations, and queue/background waiters.
         Use it to distinguish a saturated health budget from provider latency.
 
+        environment.json → healthChecks identifies active background workers and the
+        last 32 finished attempts, with file IDs/names, phases, elapsed times, last
+        progress timestamps, and process-lifetime started/finished counts. Repeated
+        IDs in recent attempts can reveal rapid rechecks. History resets on restart;
+        Finished means the worker returned, not that the media was healthy. Outcome
+        and health-result history are separate. Missing progress is not zero progress.
+
         Prefer the cumulative GC counters (totalPauseDurationMs, totalAllocatedBytes,
         collection counts) over pauseTimePercentage, which reflects only the most
         recent collection.
@@ -318,6 +326,12 @@ public sealed class SupportPackService(
         and overflowed. When the ring wraps, stream-traces/OVERFLOW.txt explains how
         much of the reproduction was discarded; sessions.json reports eventsComplete
         per session because session summaries can outlive their retained events.
+        RangeOpen includes fileName to correlate opaque /.ids/ paths with media titles.
+        It also exports accumulated stall totals even before the request ends. These
+        counters include completed timing observations, not the unelapsed remainder
+        of a currently blocked operation. Do not add RangeOpen and RangeEnd totals
+        together: they refer to the same range. A missing RangeEnd may mean the request
+        is still open or that tracing stopped before it ended; check capture completeness.
         RangeEnd events carry stall attribution for the range that just finished:
         connWaitMs (waiting for an NNTP connection),
         providerWaitMs (waiting for provider response headers), bodyDrainMs (reading
@@ -554,6 +568,7 @@ public sealed class SupportPackService(
             },
             connections = BuildConnectionDiagnostics(),
             healthCheckGate = BuildHealthCheckGateDiagnostics(),
+            healthChecks = healthCheckService?.CaptureHealthCheckDiagnostics(),
             storage = new
             {
                 configPath,

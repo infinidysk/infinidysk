@@ -4,12 +4,14 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Models;
+using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Metrics;
@@ -146,6 +148,14 @@ public sealed class SupportPackContentsTests : IDisposable
         Assert.Equal(0, gate.GetProperty("active").GetInt32());
         Assert.Equal(0, gate.GetProperty("waitingQueue").GetInt32());
         Assert.Equal(0, gate.GetProperty("waitingBackground").GetInt32());
+
+        var workers = environment.RootElement.GetProperty("healthChecks");
+        Assert.Equal(1, workers.GetProperty("configuredWorkers").GetInt32());
+        Assert.Equal(0, workers.GetProperty("startedAttempts").GetInt64());
+        Assert.Equal(0, workers.GetProperty("finishedAttempts").GetInt64());
+        Assert.Equal(32, workers.GetProperty("recentCapacity").GetInt32());
+        Assert.Empty(workers.GetProperty("active").EnumerateArray());
+        Assert.Empty(workers.GetProperty("recent").EnumerateArray());
     }
 
     [Fact]
@@ -419,6 +429,42 @@ public sealed class SupportPackContentsTests : IDisposable
     }
 
     [Fact]
+    public async Task Pack_IncludesStallTotalsForUnfinishedPlayback()
+    {
+        var buffer = new StreamTraceBuffer(100);
+        var range = buffer.RangeOpen(Guid.NewGuid(), "/.ids/example", "GET", 0, 99, 1000, null, null,
+            fileName: "Example Movie.mkv");
+        buffer.AddStall(range, StreamStallKind.ProviderWait, TimeSpan.FromSeconds(12));
+        var entries = await ReadPackEntriesAsync(
+            new LogBufferSink(10), new WarningLogBuffer(new LogBufferSink(50)), buffer);
+
+        using var exported = JsonDocument.Parse(entries["stream-traces/events.jsonl"].Trim());
+        Assert.Equal("RangeOpen", exported.RootElement.GetProperty("kind").GetString());
+        Assert.Equal("Example Movie.mkv", exported.RootElement.GetProperty("fileName").GetString());
+        Assert.Equal(12000, exported.RootElement.GetProperty("providerWaitMs").GetInt64());
+        Assert.False(exported.RootElement.TryGetProperty("endReason", out _));
+    }
+
+    [Fact]
+    public async Task Pack_RedactsKnownSecretsFromPlaybackFileNames()
+    {
+        var buffer = new StreamTraceBuffer(100);
+        buffer.RangeOpen(Guid.NewGuid(), "/.ids/example", "GET", 0, 99, 1000, null, null,
+            fileName: "Example private-playback-sentinel.mkv");
+        var config = new ConfigManager();
+        config.UpdateValues([
+            new ConfigItem { ConfigName = ConfigKeys.ApiKey, ConfigValue = "private-playback-sentinel" },
+        ]);
+        var entries = await ReadPackEntriesAsync(
+            new LogBufferSink(10), new WarningLogBuffer(new LogBufferSink(50)), buffer,
+            configManager: config);
+
+        Assert.DoesNotContain("private-playback-sentinel", entries["stream-traces/events.jsonl"]);
+        using var exported = JsonDocument.Parse(entries["stream-traces/events.jsonl"].Trim());
+        Assert.Contains("Example", exported.RootElement.GetProperty("fileName").GetString());
+    }
+
+    [Fact]
     public async Task Pack_IncludesStreamTracesWhileTracingIsEnabled()
     {
         var disabled = await ReadPackEntriesAsync(
@@ -439,7 +485,8 @@ public sealed class SupportPackContentsTests : IDisposable
         var buffer = new StreamTraceBuffer(100, enabled: false);
         buffer.EnableFor(TimeSpan.FromMinutes(15), 100, StreamTraceBuffer.SourceUi);
         var session = Guid.NewGuid();
-        var range = buffer.RangeOpen(session, "/view/movie.mkv", "GET", 0, 99, 1000, "ua", "203.0.113.10");
+        var range = buffer.RangeOpen(session, "/view/movie.mkv", "GET", 0, 99, 1000, "ua", "203.0.113.10",
+            fileName: "Example Movie.mkv");
         buffer.Seek(session, 50);
         buffer.Segment(session, "provider-a", SegmentFetch.FetchStatus.Ok, 12, 0, "msgid@a");
         buffer.RangeEnd(session, range, ReadSession.EndReasonCode.Completed, 100);
@@ -458,6 +505,7 @@ public sealed class SupportPackContentsTests : IDisposable
 
         Assert.Contains("/view/movie.mkv", enabled["stream-traces/sessions.json"]);
         Assert.Contains("RangeOpen", enabled["stream-traces/events.jsonl"]);
+        Assert.Contains("Example Movie.mkv", enabled["stream-traces/events.jsonl"]);
         Assert.Contains("Seek", enabled["stream-traces/events.jsonl"]);
         Assert.Contains("[IP-", enabled["stream-traces/events.jsonl"]);
         Assert.DoesNotContain("203.0.113.10", enabled["stream-traces/events.jsonl"]);
@@ -1003,6 +1051,15 @@ public sealed class SupportPackContentsTests : IDisposable
         await repairPatchStore.EnsureCatalogLoadedAsync(CancellationToken.None);
         var par2RepairService = new Par2RepairService(configManager, usenet, repairPatchStore);
         using var healthCheckConnectionGate = new HealthCheckConnectionGate(configManager);
+        var benchmarkGate = new BenchmarkGate();
+        using var queue = QueueManager.CreateForTests(
+            usenet, configManager, websocketManager, new ProviderUsageTracker(),
+            new WatchdogLog(), new QueueItemSourceTracker(), benchmarkGate,
+            healthCheckConnectionGate: healthCheckConnectionGate);
+        using var healthChecks = new HealthCheckService(
+            configManager, usenet, websocketManager, benchmarkGate, new StreamingFailureTracker(),
+            queue, par2RepairService, repairPatchStore, new ArrReplacementSearchBudget(),
+            healthCheckConnectionGate);
         var budget = new InFlightArticleBudget(64 * 1024 * 1024);
         var cacheStatistics = segmentCacheStatistics ?? new SegmentCacheStatistics();
         var snapshotBuilder = new MemoryComponentSnapshotBuilder(
@@ -1030,7 +1087,8 @@ public sealed class SupportPackContentsTests : IDisposable
             concurrentReadTracker,
             queueCoordinator: null,
             cacheStatistics,
-            snapshotBuilder);
+            snapshotBuilder,
+            healthChecks);
 
         using var memory = new MemoryStream();
         await service.WriteAsync(memory, CancellationToken.None);

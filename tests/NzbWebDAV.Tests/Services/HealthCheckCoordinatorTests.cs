@@ -25,6 +25,51 @@ namespace NzbWebDAV.Tests.Services;
 public sealed class HealthCheckCoordinatorTests
 {
     [Fact]
+    public async Task Diagnostics_RetainBoundedAttemptsForRepeatedFileAfterWorkerFinishes()
+    {
+        using var harness = new Harness(workers: 1, fullySplit: false);
+        var id = Guid.NewGuid();
+        harness.Service.SelectCandidateOverride = (_, _, _) => Task.FromResult<Guid?>(id);
+        var blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Service.ProcessCandidateOverride = (_, ct) => blocker.Task.WaitAsync(ct);
+
+        await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+        harness.TimeProvider.Advance(TimeSpan.FromSeconds(7));
+        var running = harness.Service.CaptureHealthCheckDiagnostics();
+        var worker = Assert.Single(running.Active);
+        Assert.Equal(id, worker.DavItemId);
+        Assert.Equal("Loading", worker.Phase);
+        Assert.Null(worker.ProgressPercent);
+        Assert.Null(worker.FinishedAtUtc);
+        Assert.Equal(7, worker.ElapsedSeconds);
+        Assert.Equal(7, worker.PhaseElapsedSeconds);
+        Assert.Equal(1, running.StartedAttempts);
+        Assert.Equal(0, running.FinishedAttempts);
+
+        blocker.TrySetResult();
+        await ReapUntilAsync(harness.Service, () => harness.Service.InProgressHealthCheckIds.Count == 0);
+        harness.TimeProvider.Advance(TimeSpan.FromSeconds(12));
+        Assert.Equal(7, Assert.Single(harness.Service.CaptureHealthCheckDiagnostics().Recent).ElapsedSeconds);
+        for (var attempt = 0; attempt < 35; attempt++)
+        {
+            await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+            await ReapUntilAsync(harness.Service, () => harness.Service.InProgressHealthCheckIds.Count == 0);
+        }
+
+        var finished = harness.Service.CaptureHealthCheckDiagnostics();
+        Assert.Empty(finished.Active);
+        Assert.Equal(36, finished.StartedAttempts);
+        Assert.Equal(36, finished.FinishedAttempts);
+        Assert.Equal(finished.RecentCapacity, finished.Recent.Count);
+        Assert.All(finished.Recent, attempt =>
+        {
+            Assert.Equal(id, attempt.DavItemId);
+            Assert.Equal("Finished", attempt.Outcome);
+            Assert.NotNull(attempt.FinishedAtUtc);
+        });
+    }
+
+    [Fact]
     public async Task DefaultWorkerCount_StartsOnlyOneFile()
     {
         using var harness = new Harness(workers: null, fullySplit: false);
@@ -97,6 +142,9 @@ public sealed class HealthCheckCoordinatorTests
             () => !harness.Service.InProgressHealthCheckIds.Contains(failed));
 
         Assert.Contains(running, harness.Service.InProgressHealthCheckIds);
+        var fault = Assert.Single(harness.Service.CaptureHealthCheckDiagnostics().Recent);
+        Assert.Equal(failed, fault.DavItemId);
+        Assert.Equal("Faulted", fault.Outcome);
         blocker.TrySetResult();
         await ReapUntilAsync(
             harness.Service,
@@ -121,6 +169,8 @@ public sealed class HealthCheckCoordinatorTests
         await ReapUntilAsync(
             harness.Service,
             () => harness.Service.InProgressHealthCheckIds.Count == 0);
+        Assert.All(harness.Service.CaptureHealthCheckDiagnostics().Recent,
+            attempt => Assert.Equal("Cancelled", attempt.Outcome));
     }
 
     [Fact]
