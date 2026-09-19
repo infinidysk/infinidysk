@@ -1,4 +1,3 @@
-
 using NzbWebDAV.Config;
 using NzbWebDAV.Models.Playback;
 using NzbWebDAV.Services;
@@ -41,6 +40,78 @@ public class PlaybackSessionRegistryTests
         registry.ReconcileExternal(instance, [], now.AddSeconds(5));
         Assert.Empty(registry.Snapshot());
         Assert.True(registry.AuthoritySnapshot().Single().Available);
+    }
+
+    [Fact]
+    public void CaptureSnapshot_PublishesSessionsAndAuthorityFromOneRegistryVersion()
+    {
+        var registry = new PlaybackSessionRegistry();
+        var instance = PlexInstance();
+        var item = Guid.NewGuid();
+        var first = DateTimeOffset.UtcNow;
+        var second = first.AddSeconds(5);
+
+        registry.ReconcileExternal(instance, [Session("first", item, PlaybackState.Playing)], first);
+        var before = registry.CaptureSnapshot();
+        Assert.Equal("first", Assert.Single(before.Sessions).NativeSessionId);
+        Assert.Equal(first, Assert.Single(before.Authorities).LastSuccessfulPollAt);
+
+        registry.ReconcileExternal(
+            instance,
+            [
+                Session("second-a", item, PlaybackState.Playing),
+                Session("second-b", item, PlaybackState.Paused),
+            ],
+            second);
+        var after = registry.CaptureSnapshot();
+
+        Assert.Equal(new[] { "second-a", "second-b" }, after.Sessions.Select(session => session.NativeSessionId).ToArray());
+        Assert.Equal(second, Assert.Single(after.Authorities).LastSuccessfulPollAt);
+    }
+
+    [Fact]
+    public async Task ConcurrentReconciliation_CaptureSnapshotNeverPublishesPartialInstanceState()
+    {
+        var registry = new PlaybackSessionRegistry();
+        var instance = PlexInstance();
+        var item = Guid.NewGuid();
+        var first = DateTimeOffset.UtcNow;
+        var second = first.AddSeconds(1);
+        var stateA = Enumerable.Range(0, 64)
+            .Select(i => Session($"a-{i:D2}", item, PlaybackState.Playing))
+            .ToList();
+        var stateB = Enumerable.Range(0, 96)
+            .Select(i => Session($"b-{i:D2}", item, PlaybackState.Paused))
+            .ToList();
+        registry.ReconcileExternal(instance, stateA, first);
+
+        using var start = new ManualResetEventSlim();
+        var writer = Task.Run(() =>
+        {
+            start.Wait();
+            for (var i = 0; i < 500; i++)
+                registry.ReconcileExternal(instance, (i & 1) == 0 ? stateB : stateA, (i & 1) == 0 ? second : first);
+        });
+
+        start.Set();
+        for (var i = 0; i < 2_000; i++)
+        {
+            var snapshot = registry.CaptureSnapshot();
+            var authority = Assert.Single(snapshot.Authorities);
+            if (authority.LastSuccessfulPollAt == first)
+            {
+                Assert.Equal(64, snapshot.Sessions.Count);
+                Assert.All(snapshot.Sessions, session => Assert.StartsWith("a-", session.NativeSessionId));
+            }
+            else
+            {
+                Assert.Equal(second, authority.LastSuccessfulPollAt);
+                Assert.Equal(96, snapshot.Sessions.Count);
+                Assert.All(snapshot.Sessions, session => Assert.StartsWith("b-", session.NativeSessionId));
+            }
+        }
+
+        await writer;
     }
 
     [Fact]
