@@ -2,6 +2,7 @@ import type { HealthCheckResult } from "~/clients/backend-client.server";
 import { Badge, Button, Icon, RadioJoinFilter } from "~/components/ui";
 import { Pagination } from "~/components/pagination/pagination";
 import { Truncate } from "~/components/truncate/truncate";
+import { withUrlBase } from "~/utils/url-base";
 
 export type HealthHistoryFilter = "all" | "deleted" | "repaired" | "degraded";
 
@@ -138,10 +139,12 @@ export function HealthAttentionTable({
   canRequeueActionNeeded,
   requeueingActionNeeded,
   onRequeueActionNeeded,
+  onDelete,
 }: Omit<HealthHistoryTableProps, "filter" | "onFilterSelected"> & {
   canRequeueActionNeeded: boolean;
   requeueingActionNeeded: boolean;
   onRequeueActionNeeded: (davItemId?: string) => void;
+  onDelete?: ((item: HealthCheckResult) => void) | undefined;
 }) {
   return (
     <section aria-labelledby="health-attention-heading" className="min-w-0">
@@ -178,10 +181,11 @@ export function HealthAttentionTable({
             <thead>
               <tr>
                 <th className="pl-4 md:pl-6">NZB</th>
-                <th className={desktopHeaderClass}>Status</th>
-                <th className={desktopHeaderClass}>Reason</th>
+                <th className={desktopHeaderClass}>Status &amp; reason</th>
                 <th className={desktopHeaderClass}>Last checked</th>
-                {canRequeueActionNeeded && <th className={desktopHeaderClass}>Actions</th>}
+                {(canRequeueActionNeeded || onDelete) && (
+                  <th className={desktopHeaderClass}>Actions</th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -189,7 +193,9 @@ export function HealthAttentionTable({
                 <HistoryRow
                   key={item.id}
                   item={item}
+                  combineStatusReason
                   requeueing={requeueingActionNeeded}
+                  onDelete={onDelete ? () => onDelete(item) : undefined}
                   onRequeue={
                     canRequeueActionNeeded ? () => onRequeueActionNeeded(item.davItemId) : undefined
                   }
@@ -220,10 +226,14 @@ function HistoryRow({
   item,
   onRequeue,
   requeueing,
+  onDelete,
+  combineStatusReason = false,
 }: {
   item: HealthCheckResult;
+  combineStatusReason?: boolean;
   onRequeue?: (() => void) | undefined;
   requeueing?: boolean;
+  onDelete?: (() => void) | undefined;
 }) {
   const title = item.nzbFileName ?? basename(item.path);
   const timestamp = formatTimestamp(item.createdAt);
@@ -238,6 +248,36 @@ function HistoryRow({
       <Icon name="replay" />
       Re-check
     </Button>
+  );
+  const actions = (onRequeue || onDelete) && (
+    <div className="flex flex-wrap gap-2">
+      {requeueButton}
+      {onDelete && (
+        <>
+          <a
+            className="btn btn-outline btn-sm"
+            href={withUrlBase(
+              `/search?${new URLSearchParams({ q: (item.jobName || item.nzbFileName || basename(item.path)).replace(/\.nzb$/i, "") })}`,
+            )}
+            aria-label={`Search indexers for ${title}`}
+            title="Search configured indexers; does not request an Arr import"
+          >
+            <Icon name="search" />
+            Search indexers
+          </a>
+          <Button
+            variant="outline"
+            size="small"
+            onClick={onDelete}
+            disabled={requeueing}
+            aria-label={`Delete ${title}`}
+          >
+            <Icon name="delete" />
+            Delete file
+          </Button>
+        </>
+      )}
+    </div>
   );
 
   return (
@@ -260,13 +300,20 @@ function HistoryRow({
             <MetaChip label="When" value={timestamp.relative} title={timestamp.absolute} />
             {item.message && <MetaChip label="Reason" value={item.message} title={item.message} />}
           </div>
-          {requeueButton && <div className="mt-2 min-[900px]:hidden">{requeueButton}</div>}
+          {actions && <div className="mt-2 min-[900px]:hidden">{actions}</div>}
         </div>
       </td>
+      {!combineStatusReason && (
+        <td className={desktopCellClass}>
+          <StatusBadge item={item} />
+        </td>
+      )}
       <td className={desktopCellClass}>
-        <StatusBadge item={item} />
-      </td>
-      <td className={desktopCellClass}>
+        {combineStatusReason && (
+          <div className="mb-2">
+            <StatusBadge item={item} />
+          </div>
+        )}
         <div className="line-clamp-3 leading-snug" title={item.message ?? undefined}>
           {item.message ?? "—"}
         </div>
@@ -277,10 +324,8 @@ function HistoryRow({
       >
         <time dateTime={item.createdAt}>{timestamp.relative}</time>
       </td>
-      {onRequeue && (
-        <td className="hidden px-3 py-3 text-right align-top min-[900px]:table-cell">
-          {requeueButton}
-        </td>
+      {actions && (
+        <td className="hidden px-3 py-3 text-right align-top min-[900px]:table-cell">{actions}</td>
       )}
     </tr>
   );

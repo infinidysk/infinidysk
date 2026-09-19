@@ -10,10 +10,11 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { useRevalidator, useSearchParams } from "react-router";
 import { useWebsocketTopics } from "~/utils/shared-websocket";
-import { Alert, Button, Icon, PageHeader } from "~/components/ui";
+import { Alert, Button, Icon, Modal, PageHeader } from "~/components/ui";
 import { useIsReadOnly } from "~/auth/authorization";
 import type {
   HealthCheckQueueItem,
+  HealthCheckResult,
   HealthCheckScheduleStatus,
   HealthResult,
   RepairAction,
@@ -150,6 +151,78 @@ export default function Health({ loaderData }: Route.ComponentProps) {
   const { items: queueItems, uncheckedCount } = queueState;
   const [, setSearchParams] = useSearchParams();
   const revalidator = useRevalidator();
+  const [deleteItem, setDeleteItem] = useState<HealthCheckResult | null>(null);
+  const [deletePreviewReady, setDeletePreviewReady] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    if (!deleteItem) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch(
+          withUrlBase(
+            `/api/delete-webdav-item-preview?${new URLSearchParams({ path: deleteItem.path })}`,
+          ),
+          { signal: controller.signal },
+        );
+        const body = (await response.json()) as {
+          status?: boolean;
+          error?: string;
+          fileCount?: number;
+          dirCount?: number;
+        };
+        if (!response.ok || body.status !== true)
+          throw new Error(body.error || "Could not preview file deletion.");
+        if (body.fileCount !== 1 || body.dirCount !== 0)
+          throw new Error(
+            "This path no longer identifies a single file. Refresh Health before trying again.",
+          );
+        if (!controller.signal.aborted) setDeletePreviewReady(true);
+      } catch (error) {
+        if (!controller.signal.aborted)
+          setDeleteError(
+            error instanceof Error ? error.message : "Could not preview file deletion.",
+          );
+      }
+    })();
+    return () => controller.abort();
+  }, [deleteItem]);
+
+  const requestDelete = (item: HealthCheckResult) => {
+    if (isReadOnly || deleting) return;
+    setDeletePreviewReady(false);
+    setDeleteError(null);
+    setDeleteItem(item);
+  };
+
+  const deleteAttentionFile = async () => {
+    if (!deleteItem || !deletePreviewReady || deleting || isReadOnly) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const body = new FormData();
+      body.set("path", deleteItem.path);
+      const response = await fetch(withUrlBase("/api/delete-webdav-item"), {
+        method: "POST",
+        body,
+      });
+      const result = (await response.json()) as { status?: boolean; error?: string };
+      if (!response.ok || result.status !== true)
+        throw new Error(result.error || "Could not delete the file.");
+      setDeleteItem(null);
+      setRequeueFeedback({
+        variant: "success",
+        message: "WebDAV file deleted. No replacement search was requested.",
+      });
+      void revalidator.revalidate();
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "Could not delete the file.");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   useEffect(() => {
     setHistoryStats(loaderData.historyStats);
@@ -422,7 +495,8 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         pageSizeOptions={PAGE_SIZE_OPTIONS}
         refreshing={revalidator.state !== "idle"}
         canRequeueActionNeeded={isEnabled && !isReadOnly}
-        requeueingActionNeeded={requeueingActionNeeded}
+        requeueingActionNeeded={requeueingActionNeeded || deleting}
+        onDelete={!isReadOnly ? requestDelete : undefined}
         onPageSelected={(attentionPage) => setHistoryParams({ attentionPage })}
         onPageSizeSelected={(attentionPageSize) =>
           setHistoryParams({ attentionPageSize, attentionPage: 1 })
@@ -430,6 +504,48 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         onRefresh={() => void revalidator.revalidate()}
         onRequeueActionNeeded={(davItemId) => void onRequeueActionNeeded(davItemId)}
       />
+      <Modal
+        open={deleteItem !== null}
+        title="Delete WebDAV file?"
+        preventClose={deleting}
+        onClose={() => setDeleteItem(null)}
+        footer={
+          <>
+            <Button variant="outline" disabled={deleting} onClick={() => setDeleteItem(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              disabled={!deletePreviewReady || deleting || isReadOnly}
+              onClick={() => void deleteAttentionFile()}
+            >
+              <Icon
+                name={deleting ? "progress_activity" : "delete"}
+                className={deleting ? "animate-spin" : ""}
+              />
+              {deleting ? "Deleting..." : "Delete file"}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="break-all font-medium">{deleteItem?.nzbFileName ?? deleteItem?.jobName}</p>
+          <p className="break-all font-mono text-xs">{deleteItem?.path}</p>
+          <p>
+            This permanently removes this file from WebDAV and may prune its download history if no
+            files remain. Imported symlinks and STRM files are not removed and may stop playing. No
+            replacement will be fetched.
+          </p>
+          {!deletePreviewReady && !deleteError && (
+            <p role="status">Checking deletion eligibility...</p>
+          )}
+          {deleteError && (
+            <Alert variant="danger" role="alert">
+              {deleteError}
+            </Alert>
+          )}
+        </div>
+      </Modal>
       {requeueFeedback && (
         <Alert
           className="alert-soft py-3 text-sm"

@@ -2,6 +2,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
+import type { HealthCheckResult } from "~/clients/backend-client.server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { fetchMock, isReadOnlyMock, revalidateMock } = vi.hoisted(() => ({
@@ -37,12 +38,27 @@ vi.mock("./components/health-history-table/health-history-table", () => ({
     canRequeueActionNeeded,
     requeueingActionNeeded,
     onRequeueActionNeeded,
+    onDelete,
   }: {
     canRequeueActionNeeded: boolean;
     requeueingActionNeeded: boolean;
     onRequeueActionNeeded: (davItemId?: string) => void;
+    onDelete?: (item: HealthCheckResult) => void;
   }) => (
     <div data-testid="health-attention">
+      {onDelete && (
+        <button
+          onClick={() =>
+            onDelete({
+              path: "/content/example & file.mkv",
+              davItemId: "file-1",
+              nzbFileName: "Example.nzb",
+            } as HealthCheckResult)
+          }
+        >
+          Delete attention file
+        </button>
+      )}
       {canRequeueActionNeeded && (
         <button
           type="button"
@@ -66,6 +82,23 @@ vi.mock("./components/health-history-table/health-history-table", () => ({
 }));
 
 vi.mock("~/components/ui", () => ({
+  Modal: ({
+    open,
+    title,
+    children,
+    footer,
+  }: {
+    open: boolean;
+    title: string;
+    children: ReactNode;
+    footer: ReactNode;
+  }) =>
+    open ? (
+      <div role="dialog" aria-label={title}>
+        {children}
+        {footer}
+      </div>
+    ) : null,
   Alert: ({ children, ...props }: { children: ReactNode; [key: string]: unknown }) => (
     <div {...props}>{children}</div>
   ),
@@ -136,6 +169,75 @@ function mockActionResponse(response: Response | Error) {
 }
 
 describe("Health action-needed re-check", () => {
+  it("previews and confirms deletion even when background repairs are disabled", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ status: true, fileCount: 1, dirCount: 0 }))
+      .mockResolvedValueOnce(jsonResponse({ status: true }));
+    renderHealth({ isEnabled: false });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Delete attention file" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Delete file" })).toHaveProperty("disabled", false),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/delete-webdav-item-preview?path=%2Fcontent%2Fexample+%26+file.mkv",
+      expect.objectContaining({ signal: expect.any(AbortSignal) as unknown }),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Delete file" }));
+    const [, options] = fetchMock.mock.calls[1] as [string, { method: string; body: FormData }];
+    expect(options.method).toBe("POST");
+    expect(options.body.get("path")).toBe("/content/example & file.mkv");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(revalidateMock).toHaveBeenCalledOnce();
+    expect(screen.getByRole("status").textContent).toContain("No replacement search was requested");
+  });
+
+  it.each([
+    { status: false, error: "WebDAV is read-only." },
+    { status: true, fileCount: 2, dirCount: 1 },
+  ])("blocks deletion when the preview is not an eligible single file: %j", async (preview) => {
+    fetchMock.mockResolvedValue(jsonResponse(preview));
+    renderHealth({ isEnabled: false });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Delete attention file" }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete file" })).toHaveProperty("disabled", true);
+    expect(revalidateMock).not.toHaveBeenCalled();
+  });
+
+  it("does not delete after cancellation", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ status: true, fileCount: 1, dirCount: 0 }));
+    renderHealth({ isEnabled: false });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Delete attention file" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(revalidateMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps deletion failures visible without reporting success", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ status: true, fileCount: 1, dirCount: 0 }))
+      .mockResolvedValueOnce(jsonResponse({ status: false, error: "Download in progress." }, 409));
+    renderHealth({ isEnabled: false });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Delete attention file" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Delete file" })).toHaveProperty("disabled", false),
+    );
+    await user.click(screen.getByRole("button", { name: "Delete file" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Download in progress.");
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(revalidateMock).not.toHaveBeenCalled();
+  });
+
+  it("hides deletion for read-only users", () => {
+    isReadOnlyMock.mockReturnValue(true);
+    renderHealth({ isEnabled: false });
+    expect(screen.queryByRole("button", { name: "Delete attention file" })).toBeNull();
+  });
+
   it("places attention and its actions before the schedule and history", () => {
     renderHealth();
     const attention = screen.getByTestId("health-attention");
