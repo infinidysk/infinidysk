@@ -12,4 +12,5 @@ public enum StreamTraceKind
     PrefetchWidth = 7,
     StreamStartup = 8,
     BatchPlan = 9,
+    RequestEnd = 10,
 }

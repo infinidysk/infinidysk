@@ -6,6 +6,24 @@ namespace NzbWebDAV.Tests.Services.StreamTrace;
 
 public class StreamTraceBufferTests
 {
+    [Theory]
+    [InlineData(100L, 200L, 50L)]
+    [InlineData(null, null, null)]
+    public void RequestEnd_ExportsRequestAndCleanupTimings(
+        long? firstByteMs, long? transferEndedMs, long? cancelledAtMs)
+    {
+        var buffer = new StreamTraceBuffer(100);
+        var session = Guid.NewGuid();
+        var range = buffer.RangeOpen(session, "/content/a.mkv", "GET", 0, 99, 1000, null, null);
+        buffer.RequestEnd(range!.Value, firstByteMs, 250, transferEndedMs, cancelledAtMs);
+        var ended = Assert.Single(buffer.GetSessionEvents(session), entry => entry.Kind == "RequestEnd");
+        Assert.Equal(range.Value.Generation, ended.RangeGeneration);
+        Assert.Equal(firstByteMs, ended.FirstByteMs);
+        Assert.Equal(250, ended.RequestDurationMs);
+        Assert.Equal(250 - transferEndedMs, ended.CleanupMs);
+        Assert.Equal(250 - cancelledAtMs, ended.CancellationToCompletionMs);
+    }
+
     [Fact]
     public void RangeOpen_ExportsFrozenStallTotalsBeforeRequestFinishes()
     {

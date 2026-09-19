@@ -1,8 +1,10 @@
 using System.Net;
 using System.Xml.Linq;
+using Microsoft.Extensions.DependencyInjection;
 using NWebDav.Server;
 using NzbWebDAV.Api.Controllers.GetWebdavItem;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Tests.TestUtils;
 using NzbWebDAV.WebDav;
 
@@ -138,6 +140,57 @@ public sealed class DatabaseStoreHttpIntegrationTests(NzbDavWebApplicationFactor
         Assert.Contains(
             "Another.Movie.2025.mkv",
             response.Content.Headers.ContentDisposition?.ToString());
+    }
+
+    [Fact]
+    public async Task GetViewRanges_TraceRequestLocalBytesAndTimingsInSameSession()
+    {
+        var trace = factory.Services.GetRequiredService<StreamTraceBuffer>();
+        var wasEnabled = trace.Enabled;
+        trace.EnableFor(TimeSpan.Zero, 1000, StreamTraceBuffer.SourceEnv);
+        try
+        {
+            const string itemPath = "README";
+            var downloadKey = GetWebdavItemRequest.GenerateDownloadKey(
+                NzbDavWebApplicationFactory.ApiKey, itemPath);
+            var playerSession = Guid.NewGuid().ToString("N");
+            var userAgent = $"view-trace-test-{playerSession}";
+            using var client = factory.CreateClient();
+            foreach (var (start, end) in new[] { (0, 99), (100, 299) })
+            {
+                using var request = new HttpRequestMessage(
+                    HttpMethod.Get,
+                    $"/view/{itemPath}?downloadKey={downloadKey}&playerSession={playerSession}");
+                request.Headers.TryAddWithoutValidation("User-Agent", userAgent);
+                request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(start, end);
+                using var response = await client.SendAsync(request);
+                Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
+                Assert.Equal(end - start + 1, (await response.Content.ReadAsByteArrayAsync()).Length);
+            }
+
+            var events = trace.ListSessions(500)
+                .SelectMany(session => trace.GetSessionEvents(session.SessionId)).ToArray();
+            var ranges = events.Where(entry => entry.Kind == "RangeOpen" && entry.UserAgent == userAgent).ToArray();
+            Assert.Equal(2, ranges.Length);
+            Assert.Equal(ranges[0].SessionId, ranges[1].SessionId);
+            foreach (var range in ranges)
+            {
+                var ended = Assert.Single(events, entry =>
+                    entry.Kind == "RangeEnd" && entry.RangeGeneration == range.RangeGeneration);
+                Assert.Equal(range.RangeEnd - range.RangeStart + 1, ended.BytesServed);
+                var timing = Assert.Single(events, entry =>
+                    entry.Kind == "RequestEnd" && entry.RangeGeneration == range.RangeGeneration);
+                Assert.NotNull(timing.FirstByteMs);
+                Assert.True(timing.RequestDurationMs >= timing.FirstByteMs);
+                Assert.True(timing.CleanupMs >= 0);
+                Assert.Null(timing.CancelledAtMs);
+            }
+        }
+        finally
+        {
+            if (!wasEnabled)
+                trace.StopRecording();
+        }
     }
 
     private async Task<DavItem> AddIdsFileAsync(string name)

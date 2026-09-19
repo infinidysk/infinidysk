@@ -48,6 +48,14 @@ public sealed record StreamTraceEvent
 
     [JsonPropertyName("rangeGeneration")] public long? RangeGeneration { get; init; }
 
+    [JsonPropertyName("firstByteMs")] public long? FirstByteMs { get; init; }
+    [JsonPropertyName("requestDurationMs")] public long? RequestDurationMs { get; init; }
+    [JsonPropertyName("transferEndedMs")] public long? TransferEndedMs { get; init; }
+    [JsonPropertyName("cancelledAtMs")] public long? CancelledAtMs { get; init; }
+    [JsonPropertyName("cancellationTimingSource")] public string? CancellationTimingSource { get; init; }
+    [JsonPropertyName("cleanupMs")] public long? CleanupMs { get; init; }
+    [JsonPropertyName("cancellationToCompletionMs")] public long? CancellationToCompletionMs { get; init; }
+
     /// <summary>
     /// Live totals for this range generation. Kept after RangeEnd so late fetch
     /// completions still update exported JSON; ignored by the serializer.

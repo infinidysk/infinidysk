@@ -565,6 +565,29 @@ public sealed class StreamTraceBuffer
         });
     }
 
+    internal void RequestEnd(
+        StreamTraceRangeContext range, long? firstByteMs, long requestDurationMs,
+        long? transferEndedMs, long? cancelledAtMs, string? cancellationTimingSource = null)
+    {
+        if (!Enabled)
+            return;
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = range.SessionId,
+            Kind = StreamTraceKind.RequestEnd.ToString(),
+            RangeGeneration = range.Generation,
+            FirstByteMs = firstByteMs,
+            RequestDurationMs = requestDurationMs,
+            TransferEndedMs = transferEndedMs,
+            CancelledAtMs = cancelledAtMs,
+            CancellationTimingSource = cancellationTimingSource,
+            CleanupMs = requestDurationMs - transferEndedMs,
+            CancellationToCompletionMs = requestDurationMs - cancelledAtMs,
+        });
+    }
+
     public IReadOnlyList<StreamTraceSessionSummary> ListSessions(int limit = 50)
     {
         return _sessions.Values

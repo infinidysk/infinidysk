@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading;
 using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Services.StreamTrace;
 using Serilog;
 
 namespace NzbWebDAV.Middlewares;
@@ -22,7 +23,7 @@ namespace NzbWebDAV.Middlewares;
 /// Known limitation: response timing wraps Response.Body and does not observe
 /// IHttpResponseBodyFeature sendfile paths; the WebDAV GET path streams via Response.Body.
 /// </summary>
-public class WebDavObservabilityMiddleware(RequestDelegate next)
+public class WebDavObservabilityMiddleware(RequestDelegate next, StreamTraceBuffer? streamTrace = null)
 {
     private static readonly TimeSpan SlowThreshold = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan StallThreshold = TimeSpan.FromSeconds(60);
@@ -68,6 +69,10 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
         var method = context.Request.Method;
         var isGet = HttpMethods.IsGet(method);
         var stopwatch = Stopwatch.StartNew();
+        using var requestTiming = isGet && streamTrace?.Enabled == true
+            ? new StreamTraceRequestTiming(stopwatch, context.RequestAborted)
+            : null;
+        context.Features.Set(requestTiming);
 
         var originalBody = context.Response.Body;
 #pragma warning disable CA2000 // wrapper ownership transfers to the response for the duration of next(); it owns no resources and never disposes the wrapped body
@@ -90,6 +95,8 @@ public class WebDavObservabilityMiddleware(RequestDelegate next)
             var elapsedMs = stopwatch.ElapsedMilliseconds;
             var path = context.Request.Path.Value ?? context.Request.Path.ToUriComponent();
             var firstByteMs = recordingStream?.FirstByteElapsedMilliseconds;
+            requestTiming?.Complete(streamTrace!, firstByteMs);
+            context.Features.Set<StreamTraceRequestTiming>(null);
             var maxIdleMs = recordingStream?.GetMaxIdleElapsedMilliseconds(elapsedMs);
             var aborted = context.RequestAborted.IsCancellationRequested;
 
