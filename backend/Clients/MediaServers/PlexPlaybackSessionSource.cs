@@ -59,8 +59,9 @@ public sealed class PlexPlaybackSessionSource : IMediaPlaybackSessionSource
                 if (media.ValueKind == JsonValueKind.Object)
                 {
                     sourceId = MediaServerJson.String(media, "id");
-                    method = ParseMethod(MediaServerJson.String(media, "videoDecision")
-                                         ?? MediaServerJson.String(media, "audioDecision"));
+                    method = ParseMethod(
+                        MediaServerJson.String(media, "videoDecision"),
+                        MediaServerJson.String(media, "audioDecision"));
                     if (MediaServerJson.TryGet(media, "Part", out var parts)
                         && parts.ValueKind == JsonValueKind.Array)
                     {
@@ -109,7 +110,19 @@ public sealed class PlexPlaybackSessionSource : IMediaPlaybackSessionSource
         _ => PlaybackState.Unknown,
     };
 
-    private static PlaybackDeliveryMethod ParseMethod(string? value) =>
+    private static PlaybackDeliveryMethod ParseMethod(params string?[] values)
+    {
+        var decisions = values.Select(ParseDecision).ToList();
+        if (decisions.Contains(PlaybackDeliveryMethod.Transcode))
+            return PlaybackDeliveryMethod.Transcode;
+        if (decisions.Contains(PlaybackDeliveryMethod.DirectStream))
+            return PlaybackDeliveryMethod.DirectStream;
+        if (decisions.Contains(PlaybackDeliveryMethod.DirectPlay))
+            return PlaybackDeliveryMethod.DirectPlay;
+        return PlaybackDeliveryMethod.Unknown;
+    }
+
+    private static PlaybackDeliveryMethod ParseDecision(string? value) =>
         value?.Replace("_", "", StringComparison.Ordinal).Replace(" ", "", StringComparison.Ordinal)
             .ToLowerInvariant() switch
         {
