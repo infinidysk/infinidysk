@@ -25,7 +25,7 @@ internal sealed class StreamTraceRequestTiming : IDisposable
 
     internal void TransferEnded()
     {
-        _transferEndedMs = _stopwatch.ElapsedMilliseconds;
+        _transferEndedMs ??= _stopwatch.ElapsedMilliseconds;
         ObserveCancellation("transfer-end");
     }
 

@@ -329,6 +329,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                                 _activeReadRegistry.Touch(sessionId, bytes, position);
                             },
                             traceRange, readCts, path, ct).ConfigureAwait(false);
+                        requestTiming?.TransferEnded();
                         FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Completed, rangeBytesServed);
                         ClearStreamingFailureAfterCompletedRead(
                             _failureTracker,
@@ -341,6 +342,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                     }
                     catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
                     {
+                        requestTiming?.TransferEnded();
                         FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted, rangeBytesServed);
                         throw;
                     }
@@ -349,11 +351,13 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                         // Watchdog-fired write timeout: the client stopped reading but kept the
                         // connection open. Treat as a client abort so the response is a clean
                         // close, not a 500 with a stack trace.
+                        requestTiming?.TransferEnded();
                         FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted, rangeBytesServed);
                         throw;
                     }
                     catch (Exception ex) when (ex is not OutOfMemoryException)
                     {
+                        requestTiming?.TransferEnded();
                         FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Error, rangeBytesServed, ex.Message);
                         throw;
                     }

@@ -60,7 +60,9 @@ public class GetAndHeadHandlerRangeTests
             var requestEnd = Assert.Single(events, entry =>
                 entry.Kind == "RequestEnd" && entry.RangeGeneration == opened.RangeGeneration);
             Assert.NotNull(requestEnd.FirstByteMs);
-            Assert.True(requestEnd.RequestDurationMs >= requestEnd.FirstByteMs);
+            var requestDurationMs = requestEnd.RequestDurationMs;
+            var firstByteMs = requestEnd.FirstByteMs;
+            Assert.True(requestDurationMs >= firstByteMs);
             Assert.True(requestEnd.CleanupMs >= 0);
             Assert.Null(requestEnd.CancelledAtMs);
         }

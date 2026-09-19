@@ -11,6 +11,13 @@ namespace NzbWebDAV.Tests.Streams;
 [Collection(nameof(GlobalLoggerCollection))]
 public class MultiSegmentStreamPrefetchBudgetTests
 {
+    [Fact]
+    public void SaturatingMultiply_ClampsInitialPrefetchAndBatchWindows()
+    {
+        Assert.Equal(long.MaxValue, MultiSegmentStream.SaturatingMultiply(40, long.MaxValue));
+        Assert.Equal(long.MaxValue, MultiSegmentStream.SaturatingMultiply(4, long.MaxValue / 2 + 1));
+    }
+
     [Theory]
     [InlineData(false, 1000, 12, 2500)]
     [InlineData(true, 1000, 16, 2500)]

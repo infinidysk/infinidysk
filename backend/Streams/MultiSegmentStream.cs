@@ -765,13 +765,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         _taskWindowSize = CalculateTaskWindowSize(
             articleBufferSize, usePipelinedBodyRequests, _bodyPipelineBatchSize);
         _prefetchByteCeiling = _taskWindowSize > 0 && estimatedSegmentSize > 0
-            ? (long)_taskWindowSize * estimatedSegmentSize
+            ? SaturatingMultiply(_taskWindowSize, estimatedSegmentSize)
             : 0;
         if (_prefetchByteCeiling > 0 && _readBudget is > 0 && !_segmentSizes.TryGetExactSize(0, out _))
         {
             var rangeWindow = Math.Min(_readBudget.Value, long.MaxValue - estimatedSegmentSize)
                 + estimatedSegmentSize;
-            var batchWindow = (long)Math.Max(1, _bodyPipelineBatchSize) * estimatedSegmentSize;
+            var batchWindow = SaturatingMultiply(
+                Math.Max(1, _bodyPipelineBatchSize), estimatedSegmentSize);
             _prefetchByteCeiling = Math.Min(_prefetchByteCeiling, Math.Max(batchWindow, rangeWindow));
         }
         _batchSizer = usePipelinedBodyRequests
@@ -813,6 +814,16 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         return articleBufferSize > int.MaxValue / initialBatchWidth
             ? int.MaxValue
             : articleBufferSize * initialBatchWidth;
+    }
+
+    internal static long SaturatingMultiply(long multiplier, long multiplicand)
+    {
+        if (multiplier <= 0 || multiplicand <= 0)
+            return 0;
+
+        return multiplier > long.MaxValue / multiplicand
+            ? long.MaxValue
+            : multiplier * multiplicand;
     }
 
     private async Task DownloadSegments(

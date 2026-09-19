@@ -147,7 +147,8 @@ public sealed class DatabaseStoreHttpIntegrationTests(NzbDavWebApplicationFactor
     {
         var trace = factory.Services.GetRequiredService<StreamTraceBuffer>();
         var wasEnabled = trace.Enabled;
-        trace.EnableFor(TimeSpan.Zero, 1000, StreamTraceBuffer.SourceEnv);
+        if (!wasEnabled)
+            trace.EnableFor(TimeSpan.Zero, 1000, StreamTraceBuffer.SourceEnv);
         try
         {
             const string itemPath = "README";
@@ -181,7 +182,7 @@ public sealed class DatabaseStoreHttpIntegrationTests(NzbDavWebApplicationFactor
                 var timing = Assert.Single(events, entry =>
                     entry.Kind == "RequestEnd" && entry.RangeGeneration == range.RangeGeneration);
                 Assert.NotNull(timing.FirstByteMs);
-                Assert.True(timing.RequestDurationMs >= timing.FirstByteMs);
+                Assert.True(timing.RequestDurationMs - timing.FirstByteMs >= 0);
                 Assert.True(timing.CleanupMs >= 0);
                 Assert.Null(timing.CancelledAtMs);
             }

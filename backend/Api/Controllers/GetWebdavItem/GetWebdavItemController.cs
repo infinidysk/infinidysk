@@ -264,20 +264,24 @@ public class GetWebdavItemController(
                             response, Response.Body, sessionId, effectiveStart, traceRange,
                             bytes => rangeBytesServed += bytes, readCts, ct)
                         .ConfigureAwait(false);
+                    requestTiming?.TransferEnded();
                     FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Completed, rangeBytesServed);
                 }
                 catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
                 {
+                    requestTiming?.TransferEnded();
                     FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted, rangeBytesServed);
                     throw;
                 }
                 catch (StreamingWriteTimeoutException)
                 {
+                    requestTiming?.TransferEnded();
                     FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted, rangeBytesServed);
                     throw;
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
+                    requestTiming?.TransferEnded();
                     FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Error, rangeBytesServed, ex.Message);
                     throw;
                 }
@@ -290,6 +294,7 @@ public class GetWebdavItemController(
                 oce is not StreamingWriteTimeoutException
                 && !HttpContext.RequestAborted.IsCancellationRequested)
             {
+                HttpContext.Features.Get<StreamTraceRequestTiming>()?.TransferEnded();
                 FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Error, rangeBytesServed, "streaming-read-timeout");
                 throw new StreamingReadTimeoutException(
                     "WebDAV /view read exceeded the " +
