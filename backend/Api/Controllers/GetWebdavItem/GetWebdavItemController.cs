@@ -137,6 +137,7 @@ public class GetWebdavItemController(
         // .ids items expose the GUID as Name so symlink targets stay stable.
         // Use the human-readable name for response headers and active reads.
         var fileName = idFile?.FriendlyName ?? item.Name;
+        HttpContext.Items["playbackFileName"] = fileName;
 
         if (HttpContext.Items["readSessionId"] is Guid sid)
             activeReadRegistry.UpdateInfo(sid, fileName, fileSize, idFile?.DavItemId);
@@ -247,7 +248,8 @@ public class GetWebdavItemController(
                     rangeEnd,
                     response.CanSeek ? response.Length : null,
                     Request.Headers.UserAgent.ToString(),
-                    HttpContext.Connection.RemoteIpAddress?.ToString());
+                    HttpContext.Connection.RemoteIpAddress?.ToString(),
+                    HttpContext.Items["playbackFileName"] as string);
                 using var traceRangeScope = MultiProviderNntpClient.BeginStreamTraceRangeScope(traceRange);
                 try
                 {

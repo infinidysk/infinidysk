@@ -20,10 +20,32 @@ export function mergeHealthCheckQueue(
   );
   return {
     items: refreshed.items.map((item) =>
-      progressById.has(item.id) ? { ...item, progress: progressById.get(item.id)! } : item,
+      item.progress === undefined && progressById.has(item.id)
+        ? { ...item, progress: progressById.get(item.id)! }
+        : item,
     ),
     uncheckedCount: refreshed.uncheckedCount,
   };
+}
+
+export function mergeActiveHealthCheckItems(
+  state: HealthQueueState,
+  activeItems: HealthCheckQueueItem[],
+): HealthQueueState {
+  const activeItemsById = new Map(activeItems.map((item) => [item.id, item]));
+  const items = state.items.map((item) => {
+    const activeItem = activeItemsById.get(item.id);
+    if (activeItem) return activeItem;
+    if (item.progress === undefined) return item;
+    const { progress: _progress, ...waitingItem } = item;
+    return waitingItem;
+  });
+
+  for (const activeItem of activeItems) {
+    if (!state.items.some((item) => item.id === activeItem.id)) items.push(activeItem);
+  }
+
+  return { ...state, items };
 }
 
 // Numeric values mirror the backend enums in backend-client.server, which cannot be
@@ -114,7 +136,7 @@ export function getVisibleHealthCheckItems(
   items: HealthCheckQueueItem[],
   maximumCount = 10,
 ): HealthCheckQueueItem[] {
-  const progressing = items.filter((item) => (item.progress ?? 0) > 0);
-  const waiting = items.filter((item) => (item.progress ?? 0) <= 0);
+  const progressing = items.filter((item) => item.progress != null);
+  const waiting = items.filter((item) => item.progress == null);
   return [...progressing, ...waiting].slice(0, maximumCount);
 }

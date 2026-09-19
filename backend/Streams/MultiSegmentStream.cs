@@ -7,6 +7,7 @@ using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models;
 using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Services.StreamTrace;
@@ -30,6 +31,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly bool _failFastOnFirstSegment;
     private readonly bool _useContainerAwareFill;
     private readonly long? _firstSegmentFileOffset;
+    private readonly LongRange? _expectedFirstSegmentRange;
+    private readonly bool _expectedFirstSegmentRangeWasClippedAtFileEnd;
     private readonly string _fileName;
     private readonly Channel<Task<SegmentDownloadResult>> _streamTasks;
     private readonly int _bodyPipelineBatchSize;
@@ -157,14 +160,18 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         int bodyPipelineBatchWidth = BodyPipelineBatchSize,
         HashSet<string>? knownCorruptSegmentIds = null,
         IReadOnlySet<int>? knownMissingSegmentIndices = null,
-        InitialBodyBatchPlan? initialBatchPlan = null
+        InitialBodyBatchPlan? initialBatchPlan = null,
+        LongRange? expectedFirstSegmentRange = null,
+        bool expectedFirstSegmentRangeWasClippedAtFileEnd = false
     )
     {
         return articleBufferSize == 0
             ? new UnbufferedMultiSegmentStream(
                 segmentIds, usenetClient, estimatedSegmentSize, fileName, segmentFallbacks,
                 exactSegmentSizes, useContainerAwareFill, firstSegmentFileOffset,
-                failFastOnFirstSegment, knownCorruptSegmentIds, knownMissingSegmentIndices)
+                failFastOnFirstSegment, knownCorruptSegmentIds, knownMissingSegmentIndices,
+                expectedFirstSegmentRange,
+                expectedFirstSegmentRangeWasClippedAtFileEnd)
             : new MultiSegmentStream(
                 segmentIds,
                 usenetClient,
@@ -183,6 +190,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 knownCorruptSegmentIds,
                 knownMissingSegmentIndices,
                 initialBatchPlan,
+                expectedFirstSegmentRange,
+                expectedFirstSegmentRangeWasClippedAtFileEnd,
                 cancellationToken);
     }
 
@@ -204,7 +213,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         long? firstSegmentFileOffset = null,
         int bodyPipelineBatchWidth = BodyPipelineBatchSize,
         HashSet<string>? knownCorruptSegmentIds = null,
-        IReadOnlySet<int>? knownMissingSegmentIndices = null
+        IReadOnlySet<int>? knownMissingSegmentIndices = null,
+        LongRange? expectedFirstSegmentRange = null,
+        bool expectedFirstSegmentRangeWasClippedAtFileEnd = false
     )
     {
         return CreateWithInitialBatchPlan(
@@ -225,7 +236,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             bodyPipelineBatchWidth,
             knownCorruptSegmentIds,
             knownMissingSegmentIndices,
-            initialBatchPlan: null);
+            initialBatchPlan: null,
+            expectedFirstSegmentRange,
+            expectedFirstSegmentRangeWasClippedAtFileEnd);
     }
 
     internal sealed record FirstSegmentHybridOptions(
@@ -248,6 +261,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         CancellationToken CancellationToken)
     {
         internal InitialBodyBatchPlan? InitialBatchPlan { get; init; }
+        internal LongRange? ExpectedFirstSegmentRange { get; init; }
+        internal bool ExpectedFirstSegmentRangeWasClippedAtFileEnd { get; init; }
     }
 
     /// <summary>
@@ -375,7 +390,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 options.FirstSegmentFileOffset,
                 options.BodyPipelineBatchWidth,
                 options.KnownCorruptSegmentIds,
-                options.KnownMissingSegmentIndices);
+                options.KnownMissingSegmentIndices,
+                options.ExpectedFirstSegmentRange,
+                options.ExpectedFirstSegmentRangeWasClippedAtFileEnd);
 #pragma warning restore CA2000
             return await DiscardPrefixOrDisposeAsync(
                     stream, firstSegmentPrefixBytes, options.CancellationToken)
@@ -525,6 +542,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         var firstExactSizes = options.ExactSegmentSizes.Length == options.SegmentIds.Length
             ? options.ExactSegmentSizes[..1]
             : default;
+        var planningFirstExactSizes = firstExactSizes.Length == 1
+            ? firstExactSizes
+            : options.ExpectedFirstSegmentRange is { } expected
+                ? new[] { expected.Count }.AsMemory()
+                : default;
         var remainingExactSizes = options.ExactSegmentSizes.Length == options.SegmentIds.Length
             ? options.ExactSegmentSizes[1..]
             : default;
@@ -542,15 +564,15 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             .Select(index => index - 1)
             .ToHashSet();
         var remainingOffset = options.FirstSegmentFileOffset;
-        if (remainingOffset is not null && firstExactSizes.Length == 1)
+        if (remainingOffset is not null && planningFirstExactSizes.Length == 1)
         {
-            try { remainingOffset = checked(remainingOffset.Value + firstExactSizes.Span[0]); }
+            try { remainingOffset = checked(remainingOffset.Value + planningFirstExactSizes.Span[0]); }
             catch (OverflowException) { remainingOffset = null; }
         }
 
         var remainderPlan = PlanHybridRemainder(
             options.SegmentIds.Length,
-            firstExactSizes,
+            planningFirstExactSizes,
             firstSegmentPrefixBytes,
             effectiveReadBudget);
 
@@ -561,12 +583,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             options.EstimatedSegmentSize,
             options.FileName,
             firstFallbacks,
-            firstExactSizes,
+            planningFirstExactSizes,
             options.UseContainerAwareFill,
             options.FirstSegmentFileOffset,
             options.FailFastOnFirstSegment,
             options.KnownCorruptSegmentIds,
-            firstKnownMissing);
+            firstKnownMissing,
+            options.ExpectedFirstSegmentRange,
+            options.ExpectedFirstSegmentRangeWasClippedAtFileEnd);
 #pragma warning restore CA2000
 
         if (!remainderPlan.NeedsRemainder)
@@ -703,9 +727,24 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         HashSet<string>? knownCorruptSegmentIds,
         IReadOnlySet<int>? knownMissingSegmentIndices,
         InitialBodyBatchPlan? initialBatchPlan,
+        LongRange? expectedFirstSegmentRange,
+        bool expectedFirstSegmentRangeWasClippedAtFileEnd,
         CancellationToken cancellationToken
     )
     {
+        if (expectedFirstSegmentRangeWasClippedAtFileEnd && expectedFirstSegmentRange is null)
+        {
+            throw new ArgumentException(
+                "A clipped first-segment range requires an expected first-segment range.",
+                nameof(expectedFirstSegmentRangeWasClippedAtFileEnd));
+        }
+        if (expectedFirstSegmentRange is not null && segmentIds.Length == 0)
+        {
+            throw new ArgumentException(
+                "First-segment geometry cannot be validated without a first segment.",
+                nameof(expectedFirstSegmentRange));
+        }
+
         _segmentIds = segmentIds;
         _segmentFallbacks = segmentFallbacks;
         _usenetClient = usenetClient;
@@ -714,6 +753,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         _failFastOnFirstSegment = failFastOnFirstSegment;
         _useContainerAwareFill = useContainerAwareFill;
         _firstSegmentFileOffset = firstSegmentFileOffset;
+        _expectedFirstSegmentRange = expectedFirstSegmentRange;
+        _expectedFirstSegmentRangeWasClippedAtFileEnd =
+            expectedFirstSegmentRangeWasClippedAtFileEnd;
         _knownCorruptSegmentIds = knownCorruptSegmentIds;
         _knownMissingSegmentIndices = knownMissingSegmentIndices;
         _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
@@ -1099,7 +1141,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
                     await ThrowOnSegmentIdMismatchAsync(segmentId, bodyResponse).ConfigureAwait(false);
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
-                    var drained = await DrainSegmentAsync(
+                    var drained = await ValidateAndDrainSegmentAsync(
 #pragma warning restore CA2000
                             bodyResponse.Stream!, segmentIndex, cancellationToken, lease, estimate)
                         .ConfigureAwait(false);
@@ -1175,6 +1217,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 catch (OutOfMemoryException oom)
                 {
                     OomDiagnostics.LogHeapStateOnOom(oom, "segment body retry");
+                    throw;
+                }
+                catch (SeekPositionNotFoundException)
+                {
                     throw;
                 }
                 catch (Exception e) when (
@@ -1276,9 +1322,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 return null;
             }
 
-            return await DrainSegmentAsync(
+            return await ValidateAndDrainSegmentAsync(
                     stream, segmentIndex, cancellationToken, lease, GetPlannedSegmentBytes(segmentIndex))
                 .ConfigureAwait(false);
+        }
+        catch (SeekPositionNotFoundException)
+        {
+            await stream.DisposeAsync().ConfigureAwait(false);
+            return null;
         }
         catch
         {
@@ -1343,7 +1394,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
             await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
-            var drained = await DrainSegmentAsync(
+            var drained = await ValidateAndDrainSegmentAsync(
 #pragma warning restore CA2000
                     response.Stream!, segmentIndex, cancellationToken, lease, estimate)
                 .ConfigureAwait(false);
@@ -1401,6 +1452,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         catch (OutOfMemoryException oom)
         {
             OomDiagnostics.LogHeapStateOnOom(oom, "pipelined segment batch");
+            throw;
+        }
+        catch (SeekPositionNotFoundException)
+        {
             throw;
         }
         catch (Exception e) when (
@@ -1490,7 +1545,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     }
                     await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
-                    var rescued = await DrainSegmentAsync(
+                    var rescued = await ValidateAndDrainSegmentAsync(
 #pragma warning restore CA2000
                         response.Stream!, segmentIndex, cancellationToken, lease, GetPlannedSegmentBytes(segmentIndex))
                         .ConfigureAwait(false);
@@ -1514,6 +1569,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 catch (OutOfMemoryException oom)
                 {
                     OomDiagnostics.LogHeapStateOnOom(oom, "individual segment rescue");
+                    throw;
+                }
+                catch (SeekPositionNotFoundException)
+                {
                     throw;
                 }
                 catch (Exception e) when (
@@ -1580,7 +1639,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     }
                     await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
-                    var retried = await DrainSegmentAsync(
+                    var retried = await ValidateAndDrainSegmentAsync(
 #pragma warning restore CA2000
                         response.Stream!, segmentIndex, cancellationToken, lease, GetPlannedSegmentBytes(segmentIndex))
                         .ConfigureAwait(false);
@@ -1660,7 +1719,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                         "Segment {PrimaryIndex} recovered via fallback MessageId {FallbackId} while reading {FileName}.",
                         segmentIndex, fallbackId, _fileName);
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
-                    var drained = await DrainSegmentAsync(
+                    var drained = await ValidateAndDrainSegmentAsync(
 #pragma warning restore CA2000
                         bodyResponse.Stream!, segmentIndex, cancellationToken, lease, GetPlannedSegmentBytes(segmentIndex))
                         .ConfigureAwait(false);
@@ -1674,6 +1733,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 catch (UsenetCorruptArticleException)
                 {
                     // Corrupt fallback — try the next alternate MessageId.
+                }
+                catch (SeekPositionNotFoundException)
+                {
+                    // The positioned fallback had incompatible BODY geometry — try the next alternate MessageId.
                 }
                 catch (UsenetUnexpectedResponseException e)
                 {
@@ -1812,6 +1875,59 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         return new TransientSegmentExhaustionException(message, failure);
     }
 
+    private async Task<DrainedSegment> ValidateAndDrainSegmentAsync(
+        Stream source,
+        int segmentIndex,
+        CancellationToken cancellationToken,
+        ArticleByteLease? existingLease = null,
+        long? leasedEstimate = null)
+    {
+        try
+        {
+            if (!await MatchesPositioningGeometryAsync(
+                    source, segmentIndex, cancellationToken).ConfigureAwait(false))
+            {
+                throw new SeekPositionNotFoundException(
+                    $"BODY geometry for segment {segmentIndex} of {_fileName} does not match " +
+                    $"the expected positioning range {_expectedFirstSegmentRange}.");
+            }
+        }
+        catch
+        {
+            try
+            {
+                await source.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                Log.Debug(e, "Failed to dispose a BODY stream after positioning validation failed.");
+            }
+            throw;
+        }
+
+        return await DrainSegmentAsync(
+                source, segmentIndex, cancellationToken, existingLease, leasedEstimate)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<bool> MatchesPositioningGeometryAsync(
+        Stream stream,
+        int segmentIndex,
+        CancellationToken cancellationToken)
+    {
+        if (segmentIndex != 0 || _expectedFirstSegmentRange is not { } expected)
+            return true;
+        if (stream is not YencStream yenc)
+            return false;
+        var header = await yenc.GetYencHeadersAsync(cancellationToken).ConfigureAwait(false);
+        if (header is null)
+            return false;
+        var actual = new LongRange(header.PartOffset, header.PartOffset + header.PartSize);
+        if (_expectedFirstSegmentRangeWasClippedAtFileEnd && actual.EndExclusive > expected.EndExclusive)
+            actual = new LongRange(actual.StartInclusive, expected.EndExclusive);
+        return actual == expected;
+    }
+
     private async Task<DrainedSegment> DrainSegmentAsync(
         Stream source,
         int segmentIndex,
@@ -1850,7 +1966,16 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 Stopwatch.GetElapsedTime(drainStarted));
             var drained = buffer.Length;
             var shortPadded = false;
-            if (hasExactSize)
+            if (segmentIndex == 0
+                && _expectedFirstSegmentRangeWasClippedAtFileEnd
+                && _expectedFirstSegmentRange is { } expectedFirstSegmentRange)
+            {
+                shortPadded = AlignDrainedSegment(
+                    buffer, segmentIndex, drained, expectedFirstSegmentRange.Count);
+                if (!hasExactSize)
+                    _segmentSizes.RecordObservedSize(segmentIndex, buffer.Length);
+            }
+            else if (hasExactSize)
             {
                 shortPadded = AlignDrainedSegment(buffer, segmentIndex, drained, exactSize);
             }

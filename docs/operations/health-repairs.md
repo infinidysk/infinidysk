@@ -120,6 +120,24 @@ repair. Files leave this list while queued and return if the next check still re
 Re-checks pause while downloads are processing and follow the configured health-check and repair
 schedules. Existing check records remain stored until health-check retention removes them.
 
+### Manual resolution [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }
+
+Each attention row also offers **Search indexers** and **Delete file** to users with write access,
+even when Background Repairs is disabled:
+
+- **Search indexers** opens search with the release/NZB name prefilled. Adjust the query to find
+	another release. Mounting a result does not request a Radarr/Sonarr import, blocklist the old
+	release, or resolve the old attention item. For Arr-managed media, request the replacement in
+	Radarr/Sonarr instead.
+- **Delete file** previews eligibility and requires confirmation before permanently removing
+	the selected WebDAV file. It does not fetch a replacement or remove imported symlinks/STRMs;
+	those links may stop playing. Use it for confirmed unused files, or after arranging a replacement.
+	WebDAV read-only, protected-item, and in-progress-download restrictions still apply.
+
+A missing-library-link reason does not necessarily mean the configured paths are wrong. The file
+may never have been imported or may have been superseded. Re-check alone cannot resolve a persistently
+missing link. Verify the movie/episode's current file in Arr before deleting the old WebDAV file.
+
 ## Manual checks
 
 Use the Health UI / repairs flows in the app to inspect failures. Known transport issues should appear as clear warnings in logs rather than opaque crashes — see [Logs](logs-crash-dumps.md).

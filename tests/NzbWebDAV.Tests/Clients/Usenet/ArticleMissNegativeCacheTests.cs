@@ -319,6 +319,17 @@ public class ArticleMissNegativeCacheTests
     }
 
     [Fact]
+    public async Task StopAsync_AfterQueueWasDrained_DoesNotThrow()
+    {
+        var config = CreateConfig(ttlSeconds: 300, maxEntries: 100);
+        using var cache = new ArticleMissNegativeCache(config, () => throw new InvalidOperationException());
+        await cache.StartAsync(CancellationToken.None);
+
+        await cache.StopAsync(CancellationToken.None);
+        await cache.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
     public async Task ProviderConfigChange_ClearsPersistedEntries()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

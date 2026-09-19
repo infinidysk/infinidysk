@@ -38,6 +38,7 @@ function attentionTable(
     canRequeueActionNeeded?: boolean;
     requeueingActionNeeded?: boolean;
     onRequeueActionNeeded?: () => void;
+    onDelete?: (item: HealthCheckResult) => void;
   } = {},
 ) {
   return (
@@ -54,6 +55,7 @@ function attentionTable(
       canRequeueActionNeeded={options.canRequeueActionNeeded ?? false}
       requeueingActionNeeded={options.requeueingActionNeeded ?? false}
       onRequeueActionNeeded={options.onRequeueActionNeeded ?? vi.fn()}
+      onDelete={options.onDelete}
     />
   );
 }
@@ -61,6 +63,67 @@ function attentionTable(
 afterEach(cleanup);
 
 describe("HealthHistoryTable", () => {
+  it("combines status and reason only in the attention table", () => {
+    const item: HealthCheckResult = {
+      id: "result-1",
+      davItemId: "file-1",
+      path: "/content/example.mkv",
+      nzbFileName: null,
+      jobName: null,
+      createdAt: "2026-09-18T00:00:00Z",
+      result: 1,
+      repairStatus: 3,
+      message: "Missing library link",
+    };
+    const { unmount } = renderDom(attentionTable({ items: [item] }));
+    expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
+      "NZB",
+      "Status & reason",
+      "Last checked",
+    ]);
+    const cells = screen.getAllByRole("cell");
+    expect(cells).toHaveLength(3);
+    expect(cells[1]?.textContent).toContain("Action needed");
+    expect(cells[1]?.textContent).toContain("Missing library link");
+    unmount();
+    renderDom(table([item]));
+    expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
+      "NZB",
+      "Status",
+      "Reason",
+      "When",
+    ]);
+    expect(screen.getAllByRole("cell")).toHaveLength(4);
+  });
+
+  it("offers search and deletion independently of background re-checks", async () => {
+    const item: HealthCheckResult = {
+      id: "result-1",
+      davItemId: "file-1",
+      path: "/content/example.mkv",
+      nzbFileName: "Example & More.nzb",
+      jobName: null,
+      createdAt: "2026-09-18T00:00:00Z",
+      result: 1,
+      repairStatus: 3,
+      message: "Missing link",
+    };
+    const onDelete = vi.fn();
+    const { unmount } = renderDom(attentionTable({ items: [item], onDelete }));
+    expect(
+      screen.getAllByRole("link", { name: "Search indexers for Example & More.nzb" })[0],
+    ).toHaveProperty("href", expect.stringContaining("/search?q=Example+%26+More"));
+    await userEvent
+      .setup()
+      .click(screen.getAllByRole("button", { name: "Delete Example & More.nzb" })[0]!);
+    expect(onDelete).toHaveBeenCalledWith(item);
+    expect(screen.queryByRole("button", { name: "Re-check Example & More.nzb" })).toBeNull();
+    unmount();
+    renderDom(attentionTable({ items: [item] }));
+    expect(screen.queryByRole("button", { name: "Delete Example & More.nzb" })).toBeNull();
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
   it("shows the snapped NZB identity and deleted disposition", () => {
     const markup = render([
       {

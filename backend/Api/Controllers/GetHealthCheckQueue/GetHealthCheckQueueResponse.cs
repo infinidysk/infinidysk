@@ -25,5 +25,6 @@ public class GetHealthCheckQueueResponse : BaseApiResponse
         public required DateTimeOffset? ReleaseDate { get; init; }
         public required DateTimeOffset? LastHealthCheck { get; init; }
         public required DateTimeOffset? NextHealthCheck { get; init; }
+        public int? Progress { get; init; }
     }
 }

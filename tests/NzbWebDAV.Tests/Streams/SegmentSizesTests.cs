@@ -92,6 +92,30 @@ public class SegmentSizesTests
     }
 
     [Fact]
+    public void RecordExactSize_IsReturnedBeforeObservedSize()
+    {
+        var sizes = new SegmentSizes(default, segmentCount: 3);
+        sizes.RecordObservedSize(0, 128);
+        sizes.RecordExactSize(0, 101);
+
+        Assert.True(sizes.TryGetExactSize(0, out var size));
+        Assert.Equal(101, size);
+        Assert.True(sizes.TryGetFillLength(0, out var fill, out var isExact));
+        Assert.Equal(101, fill);
+        Assert.True(isExact);
+    }
+
+    [Fact]
+    public void RecordExactSize_RejectsInvalidAndConflictingValues()
+    {
+        var sizes = new SegmentSizes(default, segmentCount: 2);
+
+        Assert.Throws<InvalidDataException>(() => sizes.RecordExactSize(0, 0));
+        sizes.RecordExactSize(0, 101);
+        Assert.Throws<InvalidDataException>(() => sizes.RecordExactSize(0, 102));
+    }
+
+    [Fact]
     public async Task ConcurrentUniformObservations_ProduceTheObservedFillLength()
     {
         var sizes = new SegmentSizes(default, segmentCount: 102);

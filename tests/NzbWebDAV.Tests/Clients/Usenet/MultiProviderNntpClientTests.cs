@@ -599,8 +599,10 @@ public class MultiProviderNntpClientTests
         Assert.Equal(1, writer.Stats.QueuedFetches);
     }
 
-    [Fact]
-    public async Task DecodedBodyAsync_UnexpectedResponseType_RecordsMissingFetch()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DecodedBodyAsync_UnexpectedResponseType_RecordsProtocolFetch(bool streaming)
     {
         var writer = new MetricsWriter();
         var connection = new ScriptedNntpClient
@@ -611,10 +613,11 @@ public class MultiProviderNntpClientTests
         using var client = new MultiProviderNntpClient(
             [CreateProvider(connection)], metricsWriter: writer);
 
-        var response = await client.DecodedBodyAsync(
-            "segment", onConnectionReadyAgain: null, CancellationToken.None);
+        var response = streaming
+            ? await client.DecodedBodyAsync("segment", onConnectionReadyAgain: null, CancellationToken.None)
+            : await client.DecodedBodyAsync("segment", CancellationToken.None);
         Assert.False(response.Success);
-        Assert.Equal(1, writer.Stats.QueuedFetches);
+        Assert.Equal(SegmentFetch.FetchStatus.Protocol, Assert.Single(writer.SnapshotQueuedFetches()).Status);
     }
 
     [Fact]

@@ -1051,7 +1051,7 @@ public class MultiProviderNntpClient(
                 }
 
                 walk.UnexpectedResponses++;
-                RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Missing,
+                RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Protocol,
                     stopwatch.ElapsedMilliseconds, attemptIndex, fetchWorkload, traceRange);
                 ArticleBodyCompletion.InvokeContained(
                     onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
@@ -1210,7 +1210,7 @@ public class MultiProviderNntpClient(
                 {
                     // BODY/ARTICLE response with an unexpected (non-success, non-430) response type.
                     walk.UnexpectedResponses++;
-                    RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Missing,
+                    RecordFetch(provider.MetricsKey, SegmentFetch.FetchStatus.Protocol,
                         stopwatch.ElapsedMilliseconds, attemptIndex, fetchWorkload, traceRange);
                 }
                 // STAT/HEAD/DATE successes: intentionally no SegmentFetch row (not a segment transfer;

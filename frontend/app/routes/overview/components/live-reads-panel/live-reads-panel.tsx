@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { formatBytes, formatSessionAge } from "../../utils/format";
 import { displayNameForRead } from "../../utils/display-name";
 import { clientIdentityTooltip, clientLabelFromUserAgent } from "~/utils/client-label";
@@ -34,7 +34,13 @@ export type LiveReadRow = {
  * CurrentActivity's authoritative playback registry; transport rows remain
  * transport diagnostics and are never promoted to viewers by byte activity.
  */
-export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
+export function LiveReadsPanel({
+  paused = false,
+  summary,
+}: {
+  paused?: boolean;
+  summary?: ReactNode;
+}) {
   const [playback, setPlayback] = useState<CurrentPlaybackActivity[]>([]);
   const [rows, setRows] = useState<LiveReadRow[]>([]);
   const [authorities, setAuthorities] = useState<PlaybackAuthoritySnapshot[]>([]);
@@ -131,6 +137,7 @@ export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
       rows={rows}
       authorities={authorities}
       snapshotReady={snapshotReady}
+      summary={summary}
     />
   );
 }
@@ -140,11 +147,13 @@ export function LiveReadsPanelContent({
   rows,
   authorities = [],
   snapshotReady = true,
+  summary,
 }: {
   playback: CurrentPlaybackActivity[];
   rows: LiveReadRow[];
   authorities?: PlaybackAuthoritySnapshot[];
   snapshotReady?: boolean;
+  summary?: ReactNode;
 }) {
   const readById = new Map(rows.map((row) => [row.read.id, row]));
   const displayedPlayback = [...playback].sort(comparePlayback);
@@ -158,7 +167,7 @@ export function LiveReadsPanelContent({
   const playing = playback.filter(({ session }) => session.state === "Playing").length;
   const paused = playback.filter(({ session }) => session.state === "Paused").length;
   const buffering = playback.filter(({ session }) => session.state === "Buffering").length;
-  const summary = [
+  const activitySummary = [
     playing > 0 ? `${playing} playing` : null,
     paused > 0 ? `${paused} paused` : null,
     buffering > 0 ? `${buffering} buffering` : null,
@@ -205,12 +214,14 @@ export function LiveReadsPanelContent({
         <div className="flex shrink-0 items-center gap-2.5">
           <span className="status status-success animate-pulse" aria-hidden="true" />
           <h3 className="card-title m-0 text-base">Right now</h3>
-          {summary && (
+          {activitySummary && (
             <span className="badge badge-ghost badge-sm ml-auto font-mono tabular-nums">
-              {summary}
+              {activitySummary}
             </span>
           )}
         </div>
+
+        {summary && <div className="shrink-0 border-b border-base-content/10 pb-3">{summary}</div>}
 
         {unavailableAuthorities.length > 0 && (
           <div className="flex shrink-0 flex-wrap gap-1.5 text-xs text-warning">

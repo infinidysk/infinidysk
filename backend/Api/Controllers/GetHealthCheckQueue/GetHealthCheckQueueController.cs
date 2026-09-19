@@ -11,16 +11,27 @@ namespace NzbWebDAV.Api.Controllers.GetHealthCheckQueue;
 [Route("api/get-health-check-queue")]
 public class GetHealthCheckQueueController(
     DavDatabaseClient dbClient,
-    HealthWorkSchedulePolicy healthWorkSchedule
+    HealthWorkSchedulePolicy healthWorkSchedule,
+    HealthCheckService healthCheckService
 ) : BaseApiController
 {
     private async Task<GetHealthCheckQueueResponse> GetHealthCheckQueue(GetHealthCheckQueueRequest request)
     {
+        var activeProgress = healthCheckService.GetActiveHealthCheckProgress();
+        var activeIds = activeProgress.Keys.ToArray();
+        var davItems = await dbClient.Ctx.Items
+            .Where(item => activeIds.Contains(item.Id))
+            .OrderBy(item => item.Id)
+            .Take(Math.Max(0, request.PageSize))
+            .ToListAsync(request.CancellationToken)
+            .ConfigureAwait(false);
+
         // Stream the ordered queue and filter non-media files so the Health UI focuses on
         // playable media. Urgent and pending repairs are always included.
-        var davItems = new List<Database.Models.DavItem>();
         await foreach (var item in HealthCheckService.GetHealthCheckQueueItems(dbClient)
+            .Where(item => !activeIds.Contains(item.Id))
             .AsAsyncEnumerable()
+            .WithCancellation(request.CancellationToken)
             .ConfigureAwait(false))
         {
             if (davItems.Count >= request.PageSize) break;
@@ -75,6 +86,7 @@ public class GetHealthCheckQueueController(
                 ReleaseDate = x.ReleaseDate,
                 LastHealthCheck = x.LastHealthCheck,
                 NextHealthCheck = x.NextHealthCheck,
+                Progress = activeProgress.TryGetValue(x.Id, out var progress) ? progress : null,
             }).ToList(),
         };
     }

@@ -16,7 +16,7 @@ const RepairActionRepairedViaPar2: RepairAction = 4;
 
 export function HealthStats({ stats }: HealthStatsProps) {
   const totalChecked = stats.reduce((sum, stat) => sum + stat.count, 0);
-  const counts = { healthy: 0, repaired: 0, deleted: 0, degraded: 0, actionNeeded: 0 };
+  const counts = { healthy: 0, repaired: 0, deleted: 0, degraded: 0 };
   for (const stat of stats) {
     if (
       stat.repairStatus === RepairActionRepaired ||
@@ -26,26 +26,25 @@ export function HealthStats({ stats }: HealthStatsProps) {
     } else if (stat.repairStatus === RepairActionDeleted) {
       counts.deleted += stat.count;
     } else if (stat.repairStatus === RepairActionNeeded) {
-      counts.actionNeeded += stat.count;
+      continue;
     } else if (stat.result === HealthResultHealthy) {
       counts.healthy += stat.count;
     } else if (stat.result === HealthResultDegraded) {
       counts.degraded += stat.count;
-    } else {
-      counts.actionNeeded += stat.count;
     }
   }
 
+  const totalOutcomes = Object.values(counts).reduce((sum, count) => sum + count, 0);
   const percentages = { ...counts };
-  if (totalChecked > 0) {
+  if (totalOutcomes > 0) {
     const outcomes = Object.keys(counts) as (keyof typeof counts)[];
     for (const outcome of outcomes) {
-      percentages[outcome] = Math.floor((counts[outcome] * 100) / totalChecked);
+      percentages[outcome] = Math.floor((counts[outcome] * 100) / totalOutcomes);
     }
     const remaining = 100 - Object.values(percentages).reduce((sum, value) => sum + value, 0);
     const largestRemainders = outcomes.sort(
       (first, second) =>
-        ((counts[second] * 100) % totalChecked) - ((counts[first] * 100) % totalChecked),
+        ((counts[second] * 100) % totalOutcomes) - ((counts[first] * 100) % totalOutcomes),
     );
     for (const outcome of largestRemainders.slice(0, remaining)) {
       percentages[outcome] += 1;
@@ -62,7 +61,9 @@ export function HealthStats({ stats }: HealthStatsProps) {
           </div>
           <p className="text-xs leading-relaxed text-base-content/55">
             These are health-check results recorded during this period. A file can appear more than
-            once, and these totals do not verify the Library Directory setting.
+            once, and these totals do not verify the Library Directory setting. Total checked
+            includes all results; percentages cover only healthy, repaired, deleted, and degraded
+            results.
           </p>
         </div>
 
@@ -103,14 +104,6 @@ export function HealthStats({ stats }: HealthStatsProps) {
             iconFilled
             title={`Degraded (${percentages.degraded}%)`}
             value={counts.degraded}
-            valueClassName="text-warning"
-          />
-          <Stat
-            icon="error"
-            iconClassName="text-warning"
-            iconFilled
-            title={`Action needed (${percentages.actionNeeded}%)`}
-            value={counts.actionNeeded}
             valueClassName="text-warning"
           />
         </div>

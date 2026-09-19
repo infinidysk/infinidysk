@@ -137,6 +137,87 @@ public class NzbFileStreamExactIndexRecoveryTests
     }
 
     [Fact]
+    public async Task ExactIndexedSeek_LocalGeometryMismatchUsesLocalFallback()
+    {
+        var client = new FakeNntpClient(
+            new Dictionary<string, byte[]>
+            {
+                ["one"] = SegmentBytes[0],
+                ["three"] = SegmentBytes[2],
+            },
+            useCachedYencStreams: true,
+            new Dictionary<string, LongRange>
+            {
+                ["one"] = SegmentRanges[0],
+                ["two"] = LongRange.FromStartAndSize(0, 10),
+                ["two-fallback"] = SegmentRanges[1],
+                ["three"] = SegmentRanges[2],
+            },
+            localSegments: new Dictionary<string, byte[]>
+            {
+                ["two"] = SegmentBytes[1],
+                ["two-fallback"] = SegmentBytes[1],
+            });
+        using var _ = SetBudget(LargeBudget);
+        await using var stream = new NzbFileStream(
+            SegmentIds,
+            15,
+            client,
+            4,
+            SegmentRanges,
+            segmentFallbacks: [[], ["two-fallback"], []],
+            knownMissingSegmentIndices: new HashSet<int> { 1 },
+            segmentByteRangesTrusted: true);
+        stream.Seek(6, SeekOrigin.Begin);
+
+        var buffer = new byte[1];
+        Assert.Equal(1, await stream.ReadAsync(buffer));
+
+        Assert.Equal((byte)'g', buffer[0]);
+        Assert.DoesNotContain("two", client.RequestedSegmentIds);
+        Assert.DoesNotContain("two-fallback", client.RequestedSegmentIds);
+    }
+
+    [Fact]
+    public async Task ExactIndexedSeek_GeometryMismatchedFallbackContinuesToNextFallback()
+    {
+        var client = new FakeNntpClient(
+            new Dictionary<string, byte[]>
+            {
+                ["one"] = SegmentBytes[0],
+                ["two-fallback-1"] = SegmentBytes[1],
+                ["two-fallback-2"] = SegmentBytes[1],
+                ["three"] = SegmentBytes[2],
+            },
+            useCachedYencStreams: true,
+            new Dictionary<string, LongRange>
+            {
+                ["one"] = SegmentRanges[0],
+                ["two-fallback-1"] = LongRange.FromStartAndSize(0, 10),
+                ["two-fallback-2"] = SegmentRanges[1],
+                ["three"] = SegmentRanges[2],
+            });
+        using var _ = SetBudget(LargeBudget);
+        await using var stream = new NzbFileStream(
+            SegmentIds,
+            15,
+            client,
+            4,
+            SegmentRanges,
+            segmentFallbacks: [[], ["two-fallback-1", "two-fallback-2"], []],
+            segmentByteRangesTrusted: true);
+        stream.Seek(6, SeekOrigin.Begin);
+
+        var buffer = new byte[1];
+        Assert.Equal(1, await stream.ReadAsync(buffer));
+
+        Assert.Equal((byte)'g', buffer[0]);
+        Assert.Equal(1, client.BodyRequestCounts["two"]);
+        Assert.Equal(1, client.BodyRequestCounts["two-fallback-1"]);
+        Assert.Equal(1, client.BodyRequestCounts["two-fallback-2"]);
+    }
+
+    [Fact]
     public async Task ExactIndexedSeek_LateFallbackCorruptionContinuesToNextFallback()
     {
         var client = new FakeNntpClient(
@@ -278,5 +359,48 @@ public class NzbFileStreamExactIndexRecoveryTests
         Assert.Equal((byte)'g', buffer[0]);
         Assert.Equal(2, client.BodyRequestCounts["two"]);
         await client.FirstBatchRequested.Task.WaitAsync(WaitTimeout);
+    }
+
+    [Fact]
+    public async Task ExactIndexedSeek_PrimaryGeometryMismatchUsesFallback()
+    {
+        var opens = 0;
+        var client = new FakeNntpClient(
+            new Dictionary<string, byte[]>
+            {
+                ["one"] = SegmentBytes[0],
+                ["two"] = SegmentBytes[1],
+                ["two-fallback"] = SegmentBytes[1],
+                ["three"] = SegmentBytes[2],
+            },
+            useCachedYencStreams: true,
+            new Dictionary<string, LongRange>
+            {
+                ["one"] = SegmentRanges[0],
+                ["two"] = LongRange.FromStartAndSize(0, 10),
+                ["two-fallback"] = SegmentRanges[1],
+                ["three"] = SegmentRanges[2],
+            },
+            decodedStreamFactory: (id, bytes) =>
+                id == "two" && Interlocked.Increment(ref opens) == 1
+                    ? new ThrowingPhaseStream(new IOException("transient body failure"))
+                    : new MemoryStream(bytes, writable: false));
+        using var _ = SetBudget(LargeBudget);
+        await using var stream = new NzbFileStream(
+            SegmentIds,
+            15,
+            client,
+            4,
+            SegmentRanges,
+            segmentFallbacks: [[], ["two-fallback"], []],
+            segmentByteRangesTrusted: true);
+        stream.Seek(6, SeekOrigin.Begin);
+
+        var buffer = new byte[1];
+        Assert.Equal(1, await stream.ReadAsync(buffer));
+
+        Assert.Equal((byte)'g', buffer[0]);
+        Assert.Equal(1, client.BodyRequestCounts["two"]);
+        Assert.Equal(1, client.BodyRequestCounts["two-fallback"]);
     }
 }

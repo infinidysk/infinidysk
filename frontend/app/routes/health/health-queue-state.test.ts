@@ -3,6 +3,7 @@ import type { HealthCheckQueueItem } from "~/clients/backend-client.server";
 import {
   completeHealthCheck,
   getVisibleHealthCheckItems,
+  mergeActiveHealthCheckItems,
   mergeHealthCheckQueue,
   parseHealthItemProgressMessage,
   parseHealthItemStatusMessage,
@@ -94,6 +95,25 @@ describe("updateHealthCheckProgress", () => {
 });
 
 describe("mergeHealthCheckQueue", () => {
+  it("uses authoritative snapshot progress and clears completed checks", () => {
+    const current: HealthQueueState = {
+      items: [
+        { ...queueItem("active", null), progress: 45 },
+        { ...queueItem("finished", null), progress: 100 },
+      ],
+      uncheckedCount: 2,
+    };
+    const refreshed: HealthQueueState = {
+      items: [
+        { ...queueItem("active", null), progress: 60 },
+        { ...queueItem("finished", "2026-09-19T12:00:00Z"), progress: null },
+      ],
+      uncheckedCount: 1,
+    };
+
+    expect(mergeHealthCheckQueue(current, refreshed)).toEqual(refreshed);
+  });
+
   it("preserves live progress while applying refreshed queue data", () => {
     const current: HealthQueueState = {
       items: [{ ...queueItem("active", null), progress: 45 }, queueItem("removed", null)],
@@ -127,6 +147,21 @@ describe("mergeHealthCheckQueue", () => {
       queueItem("waiting", null),
       { ...queueItem("active", null), progress: 45 },
     ]);
+  });
+});
+
+describe("mergeActiveHealthCheckItems", () => {
+  it("adds active workers and clears stale progress without changing the queue count", () => {
+    const current: HealthQueueState = {
+      items: [{ ...queueItem("finished", null), progress: 100 }, queueItem("waiting", null)],
+      uncheckedCount: 7,
+    };
+    const active = { ...queueItem("active", null), progress: 0 };
+
+    expect(mergeActiveHealthCheckItems(current, [active])).toEqual({
+      items: [queueItem("finished", null), queueItem("waiting", null), active],
+      uncheckedCount: 7,
+    });
   });
 });
 
@@ -171,6 +206,13 @@ describe("health websocket payload parsing", () => {
 });
 
 describe("getVisibleHealthCheckItems", () => {
+  it("surfaces active zero-percent checks before waiting rows", () => {
+    const items = Array.from({ length: 12 }, (_, index) => queueItem(`item-${index}`, null));
+    items[11] = { ...items[11]!, progress: 0 };
+
+    expect(getVisibleHealthCheckItems(items)[0]).toEqual(items[11]);
+  });
+
   it("surfaces progressing checks while retaining API rows without progress", () => {
     const items = Array.from({ length: 12 }, (_, index) => queueItem(`item-${index}`, null));
     items[11] = { ...items[11]!, progress: 35 };

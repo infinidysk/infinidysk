@@ -1,7 +1,11 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using NzbWebDAV.Api.Controllers.GetActiveHealthChecks;
+using NzbWebDAV.Api.Controllers.GetHealthCheckQueue;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Config;
@@ -24,6 +28,163 @@ namespace NzbWebDAV.Tests.Services;
 [Collection(nameof(ConfigPathCollection))]
 public sealed class HealthCheckCoordinatorTests
 {
+    [Fact]
+    public async Task QueueSnapshot_PrioritizesActiveWorkerAndPreservesLastCheck()
+    {
+        using var harness = new Harness(workers: 1, fullySplit: false);
+        await using var connection = await harness.ConfigureEmptyDatabaseAsync();
+        await using var context = harness.Service.CreateDbContextOverride!();
+        var waiting = NewCandidate("waiting.mkv", null);
+        var active = NewCandidate("active.mkv", DateTimeOffset.UtcNow.AddDays(1));
+        active.LastHealthCheck = DateTimeOffset.UtcNow.AddDays(-1);
+        context.Items.AddRange(waiting, active);
+        await context.SaveChangesAsync();
+
+        var blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Service.SelectCandidateOverride = (_, _, _) => Task.FromResult<Guid?>(active.Id);
+        harness.Service.ProcessCandidateOverride = (_, ct) => blocker.Task.WaitAsync(ct);
+        await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+
+        var controller = new QueueSnapshotController(
+            new DavDatabaseClient(context), harness.HealthSchedule, harness.Service)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
+        };
+        controller.HttpContext.Request.QueryString = new QueryString("?pageSize=1");
+
+        try
+        {
+            var result = Assert.IsType<OkObjectResult>(await controller.HandleApiRequest());
+            var response = Assert.IsType<GetHealthCheckQueueResponse>(result.Value);
+            var item = Assert.Single(response.Items);
+            Assert.Equal(active.Id.ToString(), item.Id);
+            Assert.Equal(0, item.Progress);
+            Assert.Equal(active.LastHealthCheck, item.LastHealthCheck);
+
+            controller.HttpContext.Request.QueryString = new QueryString("?pageSize=2");
+            result = Assert.IsType<OkObjectResult>(await controller.HandleApiRequest());
+            response = Assert.IsType<GetHealthCheckQueueResponse>(result.Value);
+            Assert.Equal([active.Id.ToString(), waiting.Id.ToString()], response.Items.Select(row => row.Id));
+            Assert.Null(response.Items[1].Progress);
+
+            blocker.TrySetResult();
+            await ReapUntilAsync(harness.Service, () => harness.Service.InProgressHealthCheckIds.Count == 0);
+
+            controller.HttpContext.Request.QueryString = new QueryString("?pageSize=1");
+            result = Assert.IsType<OkObjectResult>(await controller.HandleApiRequest());
+            response = Assert.IsType<GetHealthCheckQueueResponse>(result.Value);
+            item = Assert.Single(response.Items);
+            Assert.Equal(waiting.Id.ToString(), item.Id);
+            Assert.Null(item.Progress);
+        }
+        finally
+        {
+            blocker.TrySetResult();
+            await ReapUntilAsync(harness.Service, () => harness.Service.InProgressHealthCheckIds.Count == 0);
+        }
+    }
+
+    [Fact]
+    public async Task ActiveProgress_IncludesWorkerBeforeFirstStatAndExcludesCompletedWorker()
+    {
+        using var harness = new Harness(workers: 1, fullySplit: false);
+        var id = Guid.NewGuid();
+        var blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Service.SelectCandidateOverride = (_, _, _) => Task.FromResult<Guid?>(id);
+        harness.Service.ProcessCandidateOverride = (_, ct) => blocker.Task.WaitAsync(ct);
+
+        await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+
+        var progress = Assert.Single(harness.Service.GetActiveHealthCheckProgress());
+        Assert.Equal(id, progress.Key);
+        Assert.Equal(0, progress.Value);
+
+        blocker.TrySetResult();
+        await ReapUntilAsync(harness.Service, () => harness.Service.InProgressHealthCheckIds.Count == 0);
+        Assert.Empty(harness.Service.GetActiveHealthCheckProgress());
+    }
+
+    [Fact]
+    public async Task ActiveSnapshot_ReturnsOnlyActiveWorkers()
+    {
+        using var harness = new Harness(workers: 1, fullySplit: false);
+        await using var connection = await harness.ConfigureEmptyDatabaseAsync();
+        await using var context = harness.Service.CreateDbContextOverride!();
+        var active = NewCandidate("active.mkv", DateTimeOffset.UtcNow.AddDays(1));
+        var inactive = NewCandidate("inactive.mkv", null);
+        context.Items.AddRange(active, inactive);
+        await context.SaveChangesAsync();
+
+        var blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Service.SelectCandidateOverride = (_, _, _) => Task.FromResult<Guid?>(active.Id);
+        harness.Service.ProcessCandidateOverride = (_, ct) => blocker.Task.WaitAsync(ct);
+        await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+
+        var controller = new ActiveSnapshotController(new DavDatabaseClient(context), harness.Service)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
+        };
+
+        try
+        {
+            var result = Assert.IsType<OkObjectResult>(await controller.HandleApiRequest());
+            var response = Assert.IsType<GetActiveHealthChecksResponse>(result.Value);
+            var item = Assert.Single(response.Items);
+            Assert.Equal(active.Id.ToString(), item.Id);
+            Assert.Equal(0, item.Progress);
+        }
+        finally
+        {
+            blocker.TrySetResult();
+            await ReapUntilAsync(harness.Service, () => harness.Service.InProgressHealthCheckIds.Count == 0);
+        }
+    }
+
+    [Fact]
+    public async Task Diagnostics_RetainBoundedAttemptsForRepeatedFileAfterWorkerFinishes()
+    {
+        using var harness = new Harness(workers: 1, fullySplit: false);
+        var id = Guid.NewGuid();
+        harness.Service.SelectCandidateOverride = (_, _, _) => Task.FromResult<Guid?>(id);
+        var blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Service.ProcessCandidateOverride = (_, ct) => blocker.Task.WaitAsync(ct);
+
+        await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+        harness.TimeProvider.Advance(TimeSpan.FromSeconds(7));
+        var running = harness.Service.CaptureHealthCheckDiagnostics();
+        var worker = Assert.Single(running.Active);
+        Assert.Equal(id, worker.DavItemId);
+        Assert.Equal("Loading", worker.Phase);
+        Assert.Null(worker.ProgressPercent);
+        Assert.Null(worker.FinishedAtUtc);
+        Assert.Equal(7, worker.ElapsedSeconds);
+        Assert.Equal(7, worker.PhaseElapsedSeconds);
+        Assert.Equal(1, running.StartedAttempts);
+        Assert.Equal(0, running.FinishedAttempts);
+
+        blocker.TrySetResult();
+        await ReapUntilAsync(harness.Service, () => harness.Service.InProgressHealthCheckIds.Count == 0);
+        harness.TimeProvider.Advance(TimeSpan.FromSeconds(12));
+        Assert.Equal(7, Assert.Single(harness.Service.CaptureHealthCheckDiagnostics().Recent).ElapsedSeconds);
+        for (var attempt = 0; attempt < 35; attempt++)
+        {
+            await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+            await ReapUntilAsync(harness.Service, () => harness.Service.InProgressHealthCheckIds.Count == 0);
+        }
+
+        var finished = harness.Service.CaptureHealthCheckDiagnostics();
+        Assert.Empty(finished.Active);
+        Assert.Equal(36, finished.StartedAttempts);
+        Assert.Equal(36, finished.FinishedAttempts);
+        Assert.Equal(finished.RecentCapacity, finished.Recent.Count);
+        Assert.All(finished.Recent, attempt =>
+        {
+            Assert.Equal(id, attempt.DavItemId);
+            Assert.Equal("Finished", attempt.Outcome);
+            Assert.NotNull(attempt.FinishedAtUtc);
+        });
+    }
+
     [Fact]
     public async Task DefaultWorkerCount_StartsOnlyOneFile()
     {
@@ -97,6 +258,9 @@ public sealed class HealthCheckCoordinatorTests
             () => !harness.Service.InProgressHealthCheckIds.Contains(failed));
 
         Assert.Contains(running, harness.Service.InProgressHealthCheckIds);
+        var fault = Assert.Single(harness.Service.CaptureHealthCheckDiagnostics().Recent);
+        Assert.Equal(failed, fault.DavItemId);
+        Assert.Equal("Faulted", fault.Outcome);
         blocker.TrySetResult();
         await ReapUntilAsync(
             harness.Service,
@@ -121,6 +285,8 @@ public sealed class HealthCheckCoordinatorTests
         await ReapUntilAsync(
             harness.Service,
             () => harness.Service.InProgressHealthCheckIds.Count == 0);
+        Assert.All(harness.Service.CaptureHealthCheckDiagnostics().Recent,
+            attempt => Assert.Equal("Cancelled", attempt.Outcome));
     }
 
     [Fact]
@@ -702,6 +868,20 @@ public sealed class HealthCheckCoordinatorTests
 
             return base.SaveChangesAsync(cancellationToken);
         }
+    }
+
+    private sealed class QueueSnapshotController(
+        DavDatabaseClient dbClient,
+        HealthWorkSchedulePolicy schedule,
+        HealthCheckService service) : GetHealthCheckQueueController(dbClient, schedule, service)
+    {
+        protected override bool RequiresAuthentication => false;
+    }
+
+    private sealed class ActiveSnapshotController(DavDatabaseClient dbClient, HealthCheckService service)
+        : GetActiveHealthChecksController(dbClient, service)
+    {
+        protected override bool RequiresAuthentication => false;
     }
 
     private sealed class Harness : IDisposable

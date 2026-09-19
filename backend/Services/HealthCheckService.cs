@@ -168,6 +168,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     private readonly HealthWorkSchedulePolicy? _healthWorkSchedule;
     private readonly HealthCheckConnectionGate _healthCheckConnectionGate;
     private readonly ConcurrentDictionary<Guid, InProgressHealthCheck> _inProgress = new();
+    private const int RecentHealthCheckCapacity = 32;
+    private readonly ConcurrentQueue<HealthCheckAttemptSnapshot> _recentHealthChecks = new();
+    private readonly object _recentHealthChecksLock = new();
+    private long _startedHealthCheckAttempts;
+    private long _finishedHealthCheckAttempts;
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _workerFailureCooldowns = new();
     private readonly SemaphoreSlim _workerAdmissionGate = new(1, 1);
     private TaskCompletionSource _workerStateChanged = CreateWorkerStateSignal();
@@ -188,6 +193,30 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     internal Func<ArrClient[]>? CreateRepairArrClientsOverride { get; set; }
     internal Func<Guid, Task>? BeforeHealthyFinalizationOverride { get; set; }
     internal IReadOnlyCollection<Guid> InProgressHealthCheckIds => _inProgress.Keys.ToArray();
+
+    public IReadOnlyDictionary<Guid, int> GetActiveHealthCheckProgress() => _inProgress
+        .Where(entry => entry.Value.ProcessingTask?.IsCompleted != true)
+        .ToDictionary(entry => entry.Key, entry => entry.Value.Progress);
+
+    public HealthCheckDiagnosticsSnapshot CaptureHealthCheckDiagnostics()
+    {
+        var now = _timeProvider.GetUtcNow();
+        return new HealthCheckDiagnosticsSnapshot(
+            now,
+            _configManager.GetHealthCheckWorkers(),
+            Interlocked.Read(ref _startedHealthCheckAttempts),
+            Interlocked.Read(ref _finishedHealthCheckAttempts),
+            RecentHealthCheckCapacity,
+            _inProgress.Values.Select(worker => worker.GetDiagnosticSnapshot(now))
+                .Where(attempt => attempt.FinishedAtUtc is null).ToArray(),
+            GetRecentHealthChecks());
+    }
+
+    private HealthCheckAttemptSnapshot[] GetRecentHealthChecks()
+    {
+        lock (_recentHealthChecksLock)
+            return _recentHealthChecks.ToArray();
+    }
 
     public HealthCheckService
     (
@@ -398,7 +427,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     {
 #pragma warning disable CA2000 // cancellation ownership transfers to the registered worker and is disposed by the coordinator reaper
         var worker = new InProgressHealthCheck(
-            ContextualCancellationTokenSource.CreateLinkedTokenSource(ct));
+            ContextualCancellationTokenSource.CreateLinkedTokenSource(ct), id, _timeProvider.GetUtcNow());
 #pragma warning restore CA2000
         if (!_inProgress.TryAdd(id, worker))
         {
@@ -408,6 +437,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 
         try
         {
+            Interlocked.Increment(ref _startedHealthCheckAttempts);
 #pragma warning disable CA2025 // the coordinator owns this task, observes it in ReapCompletedWorkersAsync, and only then disposes the worker
             worker.ProcessingTask = RunHealthCheckWorkerAsync(id, worker);
 #pragma warning restore CA2025
@@ -479,11 +509,13 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         InProgressHealthCheck worker)
     {
         var workerToken = worker.Cancellation.Token;
+        var outcome = "Faulted";
         try
         {
             if (ProcessCandidateOverride is { } processCandidate)
             {
                 await processCandidate(davItemId, workerToken).ConfigureAwait(false);
+                outcome = "Finished";
                 return;
             }
 
@@ -492,7 +524,13 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             var davItem = await dbContext.Items
                 .SingleOrDefaultAsync(item => item.Id == davItemId, workerToken)
                 .ConfigureAwait(false);
-            if (davItem is null) return;
+            if (davItem is null)
+            {
+                outcome = "ItemRemoved";
+                return;
+            }
+
+            worker.SetDiagnosticFile(davItem.Name, davItem.Path);
 
             var concurrency = _configManager.GetHealthCheckConcurrency();
             await PerformHealthCheck(
@@ -501,9 +539,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     concurrency,
                     workerToken)
                 .ConfigureAwait(false);
+            outcome = "Finished";
         }
         catch (OperationCanceledException) when (workerToken.IsCancellationRequested)
         {
+            outcome = "Cancelled";
             // Normal hosted-service shutdown.
         }
         catch (Exception e) when (e is not OutOfMemoryException)
@@ -529,6 +569,15 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         }
         finally
         {
+            var finishedAt = _timeProvider.GetUtcNow();
+            worker.FinishDiagnostics(finishedAt, outcome);
+            lock (_recentHealthChecksLock)
+            {
+                _recentHealthChecks.Enqueue(worker.GetDiagnosticSnapshot(finishedAt));
+                while (_recentHealthChecks.Count > RecentHealthCheckCapacity)
+                    _recentHealthChecks.TryDequeue(out _);
+            }
+            Interlocked.Increment(ref _finishedHealthCheckAttempts);
             SignalWorkerStateChanged();
         }
     }
@@ -860,7 +909,9 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     }
 
     private sealed class InProgressHealthCheck(
-        ContextualCancellationTokenSource cancellation) : IDisposable
+        ContextualCancellationTokenSource cancellation,
+        Guid davItemId,
+        DateTimeOffset startedAtUtc) : IDisposable
     {
         private const int ProgressStartedFlag = 1;
         private const int ProgressClosedFlag = 2;
@@ -869,9 +920,74 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         private Task? _cancellationTask;
         private int _disposed;
         private int _progressState;
+        private int _progress;
+        private readonly Lock _diagnosticLock = new();
+        private string? _fileName;
+        private string? _path;
+        private string _phase = "Loading";
+        private readonly DateTimeOffset _startedAtUtc = startedAtUtc;
+        private DateTimeOffset _phaseStartedAtUtc = startedAtUtc;
+        private DateTimeOffset? _lastProgressAtUtc;
+        private int? _progressPercent;
+        private DateTimeOffset? _finishedAtUtc;
+        private string? _outcome;
 
         public ContextualCancellationTokenSource Cancellation { get; } = cancellation;
         public Task? ProcessingTask { get; set; }
+        public int Progress => Volatile.Read(ref _progress);
+
+        public void SetDiagnosticFile(string fileName, string path)
+        {
+            lock (_diagnosticLock)
+            {
+                _fileName = fileName;
+                _path = path;
+            }
+        }
+
+        public void SetDiagnosticPhase(string phase, DateTimeOffset now)
+        {
+            lock (_diagnosticLock)
+            {
+                if (_finishedAtUtc is not null) return;
+                _phase = phase;
+                _phaseStartedAtUtc = now;
+            }
+        }
+
+        public void RecordDiagnosticProgress(int progress, DateTimeOffset now)
+        {
+            lock (_diagnosticLock)
+            {
+                if (_finishedAtUtc is not null || _phase != "Checking") return;
+                _progressPercent = Math.Clamp(progress, 0, 100);
+                _lastProgressAtUtc = now;
+            }
+        }
+
+        public void FinishDiagnostics(DateTimeOffset now, string outcome)
+        {
+            lock (_diagnosticLock)
+            {
+                _finishedAtUtc = now;
+                _outcome = outcome;
+            }
+        }
+
+        public HealthCheckAttemptSnapshot GetDiagnosticSnapshot(DateTimeOffset now)
+        {
+            lock (_diagnosticLock)
+            {
+                var end = _finishedAtUtc ?? now;
+                return new HealthCheckAttemptSnapshot(
+                    davItemId, _fileName, _path, _phase, _startedAtUtc, _phaseStartedAtUtc,
+                    _lastProgressAtUtc, _progressPercent, _finishedAtUtc, _outcome,
+                    Math.Max(0, (end - _startedAtUtc).TotalSeconds),
+                    Math.Max(0, (end - _phaseStartedAtUtc).TotalSeconds),
+                    _lastProgressAtUtc is { } lastProgress
+                        ? Math.Max(0, (end - lastProgress).TotalSeconds) : null);
+            }
+        }
 
         public bool TryStartProgress()
         {
@@ -883,11 +999,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             }
         }
 
-        public bool TryPublishProgress(Action publish)
+        public bool TryPublishProgress(int progress, Action publish)
         {
             lock (_progressLock)
             {
                 if ((_progressState & ProgressClosedFlag) != 0) return false;
+                Volatile.Write(ref _progress, Math.Clamp(progress, 0, 100));
                 publish();
                 return true;
             }
@@ -1055,6 +1172,8 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         CancellationToken ct
     )
     {
+        _inProgress.TryGetValue(davItem.Id, out var diagnosticWorker);
+        diagnosticWorker?.SetDiagnosticPhase("Preparing", _timeProvider.GetUtcNow());
         var providerGeneration = _configManager.GetUsenetProviderSnapshot().Generation;
         // Urgent sentinel set by ExceptionMiddleware when streaming confirms a permanent failure.
         // Skip the STAT-only recheck and repair immediately: STAT can pass while BODY returns 430
@@ -1086,6 +1205,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     return;
                 }
                 Log.Information("Performing urgent dynamic repair for {FilePath}", davItem.Path);
+                diagnosticWorker?.SetDiagnosticPhase("Repairing", _timeProvider.GetUtcNow());
                 await HandleUrgentRepair(davItem, dbClient, repairsAdmitted, ct).ConfigureAwait(false);
                 return;
             }
@@ -1167,6 +1287,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 
             // setup progress tracking
             var progressHook = new Progress<int>();
+            diagnosticWorker?.SetDiagnosticPhase("Checking", _timeProvider.GetUtcNow());
             var debounce = DebounceUtil.CreateDebounce(TimeSpan.FromMilliseconds(200));
             _inProgress.TryGetValue(davItem.Id, out var progressWorker);
             progressHook.ProgressChanged += (_, progress) =>
@@ -1177,6 +1298,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     // statCts may already be disposed when a progress event races teardown.
                 }
                 if (!MarkHealthProgressStarted(davItem.Id, progressWorker)) return;
+                diagnosticWorker?.RecordDiagnosticProgress(progress, _timeProvider.GetUtcNow());
                 var message = $"{davItem.Id}|{progress}";
                 debounce(() =>
                 {
@@ -1186,6 +1308,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                         return;
 
                     _ = progressWorker.TryPublishProgress(
+                        progress,
                         () => _ = _websocketManager.SendMessage(
                             WebsocketTopic.HealthItemProgress,
                             message));
@@ -1229,6 +1352,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             }
             CompleteHealthProgress(davItem.Id);
 
+            diagnosticWorker?.SetDiagnosticPhase("Finalizing", _timeProvider.GetUtcNow());
             var statHoles = confirmedHoles ?? [];
             List<int> remainingCorrupt = [];
             // canClassify is only true when SegmentByteRanges materialized from this nzbFile.
@@ -1242,6 +1366,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 
             if (canClassify && (statHoles.Count > 0 || remainingCorrupt.Count > 0))
             {
+                diagnosticWorker?.SetDiagnosticPhase("Repairing", _timeProvider.GetUtcNow());
                 await HandleConfirmedHolesAsync(
                         davItem, dbClient, nzbFile!, segments, segmentRanges!,
                     statHoles, remainingCorrupt, repairsAdmitted, providerGeneration,
@@ -1330,6 +1455,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         }
         catch (UsenetArticleNotFoundException e)
         {
+            diagnosticWorker?.SetDiagnosticPhase("Repairing", _timeProvider.GetUtcNow());
             CompleteHealthProgress(davItem.Id);
             if (FilenameUtil.IsImportantFileType(davItem.Name))
             {

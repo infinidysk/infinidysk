@@ -101,6 +101,19 @@ because the backend process exits on failure.
 - Overview **Active Reads**: unexpected traffic → rclone VFS or media-server scans.
 - Try disabling segment cache or adjusting Max Download Connections — [WebDAV](../configuration/webdav.md).
 
+## Activity totals [since 1.4.3](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.3){ .nzbdav-since }
+
+The Overview Activity summary uses the selected time window:
+
+- **Successful reads** counts article retrievals reported successful, including segment-cache hits. It excludes recorded misses and errors, but is not a count of unique articles, completed files, or successful playback sessions.
+- **Peak download** is the highest average Usenet download rate among the displayed buckets: downloaded bytes divided by bucket duration. It is not an instantaneous peak. Older folded all-time history is excluded, and **N/A** means no chart data. This metric works with or without segment caching, including rclone installations.
+- **Errors** counts attempt errors other than provider misses. A retry or fallback can still recover the request.
+- **Served** counts bytes served by client read sessions ending in the window.
+
+The client/app chart lines and legend count **attempts**, including recorded misses and errors. Their totals therefore need not match Successful reads. Historical availability probes contribute failures but not successful checks, so these totals must not be used to calculate an availability rate.
+
+**Provider miss attempts** remain in Error breakdown and bucket details. Retries and multiple providers can produce several misses for one article that is eventually retrieved. Negative-cache skips do not add misses. Unexpected BODY responses are recorded as protocol errors going forward; existing history is not rewritten.
+
 ## Playback slowed but nothing failed
 
 When streams buffer without hard errors, read support-pack latency phases first

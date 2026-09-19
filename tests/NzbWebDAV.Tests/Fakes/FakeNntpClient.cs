@@ -16,13 +16,16 @@ internal sealed class FakeNntpClient(
     Func<string, byte[], Stream>? decodedStreamFactory = null,
     IReadOnlyDictionary<string, byte[]>? localSegments = null,
     IReadOnlyDictionary<string, UsenetYencHeader>? yencHeaders = null,
-    long? providerGeneration = 0) : NntpClient
+    long? providerGeneration = 0,
+    Func<string, int, Exception?>? headerProbeFailure = null,
+    Func<string, int, UsenetYencHeader?>? responseHeaderFactory = null) : NntpClient
 {
     // Copied at construction so tests can add/restore articles via Serve() without
     // mutating the caller's dictionary.
     private readonly Dictionary<string, byte[]> _segments = new(segments, StringComparer.Ordinal);
     private readonly IReadOnlyDictionary<string, byte[]> _localSegments =
         localSegments ?? new Dictionary<string, byte[]>(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _headerProbeAttempts = new(StringComparer.Ordinal);
 
     public int BatchRequestCount { get; private set; }
     public int BodyRequestCount { get; private set; }
@@ -97,6 +100,10 @@ internal sealed class FakeNntpClient(
     public override Task<UsenetYencHeader> GetYencHeadersAsync(string segmentId, CancellationToken ct)
     {
         HeaderProbeCount++;
+        var key = segmentId;
+        var attempt = _headerProbeAttempts[key] = _headerProbeAttempts.GetValueOrDefault(key) + 1;
+        if (headerProbeFailure?.Invoke(key, attempt) is { } failure)
+            return Task.FromException<UsenetYencHeader>(failure);
         return base.GetYencHeadersAsync(segmentId, ct);
     }
 
@@ -220,21 +227,26 @@ internal sealed class FakeNntpClient(
             };
         var range = default(LongRange);
         var hasRange = segmentRanges is not null && segmentRanges.TryGetValue(key, out range);
-
-        YencStream stream = useCachedYencStreams
-            ? new CachedYencStream(
-                yencHeaders is not null && yencHeaders.TryGetValue(key, out var exactHeader) ? exactHeader : new UsenetYencHeader
+        var scriptedHeader = responseHeaderFactory?.Invoke(key, BodyRequestCounts.GetValueOrDefault(key));
+        var header = scriptedHeader
+            ?? (yencHeaders is not null && yencHeaders.TryGetValue(key, out var exactHeader)
+                ? exactHeader
+                : new UsenetYencHeader
                 {
                     FileName = "fake.bin",
                     FileSize = segmentRanges is { Count: > 0 }
-                        ? segmentRanges.Values.Max(range => range.EndExclusive)
+                        ? segmentRanges.Values.Max(value => value.EndExclusive)
                         : bytes.Length,
                     LineLength = 128,
                     PartNumber = 1,
                     TotalParts = segments.Count,
                     PartOffset = hasRange ? range!.StartInclusive : 0,
                     PartSize = hasRange ? range!.Count : bytes.Length,
-                },
+                });
+
+        YencStream stream = useCachedYencStreams
+            ? new CachedYencStream(
+                header,
                 decodedStreamFactory?.Invoke(key, bytes)
                     ?? new MemoryStream(bytes, writable: false))
             : new YencStream(new MemoryStream(EncodeYenc(bytes), writable: false));

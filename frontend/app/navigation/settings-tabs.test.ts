@@ -61,4 +61,11 @@ describe("settings tabs", () => {
       label: "Media Servers",
     });
   });
+
+  it("keeps the migration navigation label concise", () => {
+    expect(getSettingsTabItem("migration")).toMatchObject({
+      id: "migration",
+      label: "Migration",
+    });
+  });
 });

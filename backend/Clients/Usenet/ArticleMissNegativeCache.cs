@@ -212,6 +212,10 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
             await barrier.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             await _persistenceLoop.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
+        catch (ChannelClosedException)
+        {
+            // Another teardown path has already drained and completed the queue.
+        }
         catch (OperationCanceledException)
         {
             if (_persistenceLoopCts is not null)

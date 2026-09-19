@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace NzbWebDAV.Streams;
 
 /// <summary>
@@ -6,12 +8,20 @@ namespace NzbWebDAV.Streams;
 /// known precisely: any other length shifts every following byte in the file, which
 /// corrupts playback far beyond the segment that actually failed.
 /// </summary>
-internal sealed class SegmentSizes(ReadOnlyMemory<long> exactSizes, int segmentCount)
+internal sealed class SegmentSizes
 {
     private const long NonUniform = -1;
 
-    private readonly ReadOnlyMemory<long> _exactSizes = Validate(exactSizes, segmentCount);
+    private readonly ReadOnlyMemory<long> _exactSizes;
+    private readonly int _segmentCount;
+    private readonly ConcurrentDictionary<int, long> _discoveredSizes = new();
     private long _observedSize;
+
+    public SegmentSizes(ReadOnlyMemory<long> exactSizes, int segmentCount)
+    {
+        _exactSizes = Validate(exactSizes, segmentCount);
+        _segmentCount = segmentCount;
+    }
 
     /// <summary>
     /// Per-segment sizes recorded at import time, or empty when this file has none.
@@ -31,14 +41,35 @@ internal sealed class SegmentSizes(ReadOnlyMemory<long> exactSizes, int segmentC
 
     public bool TryGetExactSize(int segmentIndex, out long size)
     {
-        if (_exactSizes.IsEmpty || segmentIndex < 0 || segmentIndex >= _exactSizes.Length)
+        if (segmentIndex < 0 || segmentIndex >= _segmentCount)
         {
             size = 0;
             return false;
         }
 
-        size = _exactSizes.Span[segmentIndex];
-        return true;
+        if (!_exactSizes.IsEmpty)
+        {
+            size = _exactSizes.Span[segmentIndex];
+            return true;
+        }
+
+        return _discoveredSizes.TryGetValue(segmentIndex, out size);
+    }
+
+    public void RecordExactSize(int segmentIndex, long size)
+    {
+        if (size <= 0 || segmentIndex < 0 || segmentIndex >= _segmentCount)
+            throw new InvalidDataException($"Invalid exact size {size} for segment index {segmentIndex}.");
+        if (!_exactSizes.IsEmpty)
+        {
+            if (_exactSizes.Span[segmentIndex] != size)
+                throw new InvalidDataException($"Conflicting exact size for segment index {segmentIndex}.");
+            return;
+        }
+
+        var existing = _discoveredSizes.GetOrAdd(segmentIndex, size);
+        if (existing != size)
+            throw new InvalidDataException($"Conflicting exact size for segment index {segmentIndex}.");
     }
 
     /// <summary>
@@ -86,5 +117,5 @@ internal sealed class SegmentSizes(ReadOnlyMemory<long> exactSizes, int segmentC
         return false;
     }
 
-    private bool IsFinalSegment(int segmentIndex) => segmentIndex == segmentCount - 1;
+    private bool IsFinalSegment(int segmentIndex) => segmentIndex == _segmentCount - 1;
 }
