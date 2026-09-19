@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Data;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -38,15 +39,6 @@ public class DeleteWebdavItemController(
             .ConfigureAwait(false);
         if (item is null) return NotFound(new BaseApiResponse { Status = false, Error = "Item not found." });
 
-        if (healthCheckResultId is not null &&
-            !await DeleteWebdavItemSupport.IsCurrentAttentionFileAsync(dbClient, item, healthCheckResultId, ct)
-                .ConfigureAwait(false))
-            return Conflict(new BaseApiResponse
-            {
-                Status = false,
-                Error = "This file no longer matches the selected needs-attention result. Refresh Health before trying again."
-            });
-
         var rootError = DeleteWebdavItemSupport.ValidateDeletableRoot(item.Path);
         if (rootError is not null)
             return BadRequest(new BaseApiResponse { Status = false, Error = rootError });
@@ -74,9 +66,20 @@ public class DeleteWebdavItemController(
             .ToList();
         DeletionAuditLog.RecordBatch("api-delete", auditItems, "admin delete-webdav-item", item.Id);
 
-        await using var transaction = await dbClient.Ctx.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+        await using var transaction = await dbClient.Ctx.Database
+            .BeginTransactionAsync(IsolationLevel.Serializable, ct)
+            .ConfigureAwait(false);
         try
         {
+            if (healthCheckResultId is not null &&
+                !await DeleteWebdavItemSupport.IsCurrentAttentionFileAsync(dbClient, item, healthCheckResultId, ct)
+                    .ConfigureAwait(false))
+                return Conflict(new BaseApiResponse
+                {
+                    Status = false,
+                    Error = "This file no longer matches the selected needs-attention result. Refresh Health before trying again."
+                });
+
             var subtreeIds = subtree.Select(x => x.Id).ToList();
             foreach (var batch in subtreeIds.ToBatches(500))
             {
