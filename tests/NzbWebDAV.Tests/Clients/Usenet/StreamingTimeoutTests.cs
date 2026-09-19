@@ -23,6 +23,46 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 public class StreamingTimeoutTests
 {
     [Fact]
+    public async Task TransferAdmissionFailoverTimeoutRemovesWaiterWithoutPenalizingProvider()
+    {
+        var inner = new LateBodyCompletionClient();
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ => ValueTask.FromResult<INntpClient>(inner));
+        var breaker = new ProviderCircuitBreaker("admission-timeout");
+        using var client = new MultiConnectionNntpClient(
+            pool,
+            ProviderType.Pooled,
+            breaker,
+            "admission-timeout",
+            maxTransferConnections: 1);
+
+        UsenetDecodedBodyResponse? held = null;
+        try
+        {
+            held = await client.DecodedBodyAsync("seg", CancellationToken.None);
+            using var callerCts = new CancellationTokenSource();
+            using var failoverContext = callerCts.Token.SetContext(
+                new TransferAdmissionFailoverContext(
+                    () => true,
+                    TimeSpan.FromMilliseconds(50)));
+
+            await Assert.ThrowsAsync<ProviderTransferAdmissionTimeoutException>(() =>
+                client.DecodedBodyAsync("seg", callerCts.Token));
+        }
+        finally
+        {
+            inner.Complete(ArticleBodyResult.Cancelled);
+            if (held?.Stream is not null)
+                await held.Stream.DisposeAsync();
+        }
+
+        var snapshot = client.GetConnectionAdmissionSnapshot()!;
+        Assert.Equal(0, snapshot.WaitingTransferOperations);
+        Assert.Equal(0, breaker.GetSnapshot().FailureCount);
+    }
+
+    [Fact]
     public async Task RunWithConnection_CancellationAfterBodyReturn_ReleasesTransfer()
     {
         var inner = new LateBodyCompletionClient();

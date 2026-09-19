@@ -245,6 +245,9 @@ public class ProviderConnectionAdmissionTests
         Assert.Equal(4, snapshot.ActiveMetadataOperations);
         Assert.Equal(1, snapshot.WaitingTransferOperations);
         Assert.Equal(1, snapshot.WaitingMetadataOperations);
+        Assert.Single(snapshot.ActiveTransferLeaseAges);
+        Assert.True(snapshot.ActiveTransferLeaseAges[0] >= TimeSpan.Zero);
+        Assert.True(snapshot.OldestWaitingTransferAge >= TimeSpan.Zero);
 
         metadata1.Dispose();
         using var transfer2 = await waitingTransfer.WaitAsync(TestTimeout);

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 using NzbWebDAV.Clients.Usenet.Concurrency;
 
 namespace NzbWebDAV.Clients.Usenet.Connections;
@@ -34,6 +36,7 @@ internal sealed class ProviderConnectionAdmission : IDisposable
     private readonly LinkedList<Waiter> _transferLowWaiters = [];
     private readonly LinkedList<Waiter> _metadataHighWaiters = [];
     private readonly LinkedList<Waiter> _metadataLowWaiters = [];
+    private readonly HashSet<Lease> _activeTransferLeases = [];
 
     private CachedBudget _cachedBudget;
     private SemaphorePriorityOdds _priorityOdds;
@@ -80,7 +83,10 @@ internal sealed class ProviderConnectionAdmission : IDisposable
             if (CanEnterImmediately(kind))
             {
                 Enter(kind);
-                return Task.FromResult(new Lease(this, kind));
+                var lease = new Lease(this, kind);
+                if (kind == ProviderConnectionKind.Transfer)
+                    _activeTransferLeases.Add(lease);
+                return Task.FromResult(lease);
             }
 
             var waiter = new Waiter(kind, priority);
@@ -117,6 +123,16 @@ internal sealed class ProviderConnectionAdmission : IDisposable
         lock (_lock)
         {
             var budget = GetBudget();
+            var now = Stopwatch.GetTimestamp();
+            var activeTransferLeaseAges = _activeTransferLeases
+                .Select(lease => Stopwatch.GetElapsedTime(lease.AcquiredTimestamp, now))
+                .OrderByDescending(age => age)
+                .ToArray();
+            var oldestWaitingTransferAge = _transferHighWaiters
+                .Concat(_transferLowWaiters)
+                .Select(waiter => Stopwatch.GetElapsedTime(waiter.EnqueuedTimestamp, now))
+                .OrderByDescending(age => age)
+                .FirstOrDefault();
             return new ProviderConnectionAdmissionSnapshot(
                 _configuredTransferLimit,
                 budget.EffectiveTransferLimit,
@@ -126,7 +142,11 @@ internal sealed class ProviderConnectionAdmission : IDisposable
                 _activeTransfers,
                 _activeMetadata,
                 _transferHighWaiters.Count + _transferLowWaiters.Count,
-                _metadataHighWaiters.Count + _metadataLowWaiters.Count);
+                _metadataHighWaiters.Count + _metadataLowWaiters.Count,
+                activeTransferLeaseAges,
+                _transferHighWaiters.Count + _transferLowWaiters.Count > 0
+                    ? oldestWaitingTransferAge
+                    : null);
         }
     }
 
@@ -178,11 +198,13 @@ internal sealed class ProviderConnectionAdmission : IDisposable
             Interlocked.Increment(ref _activeMetadata);
     }
 
-    private void Release(ProviderConnectionKind kind)
+    private void Release(Lease lease, ProviderConnectionKind kind)
     {
         List<(TaskCompletionSource<Lease> Completion, Lease Lease)> ready;
         lock (_lock)
         {
+            if (kind == ProviderConnectionKind.Transfer)
+                _activeTransferLeases.Remove(lease);
             if (kind == ProviderConnectionKind.Transfer)
                 Interlocked.Decrement(ref _activeTransfers);
             else
@@ -279,7 +301,10 @@ internal sealed class ProviderConnectionAdmission : IDisposable
             else if (selectedKind == ProviderConnectionKind.Metadata || !metadataWaiting)
                 _consecutiveTransferGrants = 0;
             Enter(selectedKind);
-            ready.Add((waiter.Completion, new Lease(this, selectedKind)));
+            var lease = new Lease(this, selectedKind);
+            if (selectedKind == ProviderConnectionKind.Transfer)
+                _activeTransferLeases.Add(lease);
+            ready.Add((waiter.Completion, lease));
         }
 
         return ready;
@@ -379,6 +404,7 @@ internal sealed class ProviderConnectionAdmission : IDisposable
     {
         public ProviderConnectionKind Kind { get; } = kind;
         public SemaphorePriority Priority { get; } = priority;
+        public long EnqueuedTimestamp { get; } = Stopwatch.GetTimestamp();
         public TaskCompletionSource<Lease> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
@@ -391,6 +417,7 @@ internal sealed class ProviderConnectionAdmission : IDisposable
     {
         private ProviderConnectionAdmission? _owner;
         private readonly ProviderConnectionKind _kind;
+        internal long AcquiredTimestamp { get; } = Stopwatch.GetTimestamp();
 
         internal Lease(ProviderConnectionAdmission owner, ProviderConnectionKind kind)
         {
@@ -400,7 +427,8 @@ internal sealed class ProviderConnectionAdmission : IDisposable
 
         public void Dispose()
         {
-            Interlocked.Exchange(ref _owner, null)?.Release(_kind);
+            var owner = Interlocked.Exchange(ref _owner, null);
+            owner?.Release(this, _kind);
         }
     }
 }

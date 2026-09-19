@@ -839,6 +839,10 @@ public sealed class SupportPackService(
                             snapshot.Admission.ActiveMetadataOperations,
                             snapshot.Admission.WaitingTransferOperations,
                             snapshot.Admission.WaitingMetadataOperations,
+                            activeTransferLeaseAgesMs = snapshot.Admission.ActiveTransferLeaseAges
+                                .Select(age => age.TotalMilliseconds)
+                                .ToArray(),
+                            oldestWaitingTransferAgeMs = snapshot.Admission.OldestWaitingTransferAge?.TotalMilliseconds,
                         },
                     churn = new
                     {

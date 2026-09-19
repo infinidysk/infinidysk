@@ -467,6 +467,11 @@ public class MultiConnectionNntpClient(
                     "Timeout executing pipelined nntp BODY commands after " +
                     $"{streamingTimeout.MaxRetries + 1} attempts.");
             }
+            catch (ProviderTransferAdmissionTimeoutException)
+            {
+                circuitBreaker.ReleaseProbe(probeLease);
+                throw;
+            }
             catch (Exception e) when (e.IsCancellationException(ct) && e is not OutOfMemoryException)
             {
                 deferredCallback.Discard();
@@ -600,6 +605,11 @@ public class MultiConnectionNntpClient(
                 if (connectionLock is null)
                     throw new InvalidOperationException("Connection acquisition returned no lock.");
                 freshConnection = !connectionLock.WasReused;
+            }
+            catch (ProviderTransferAdmissionTimeoutException)
+            {
+                circuitBreaker.ReleaseProbe(probeLease);
+                throw;
             }
             catch (Exception e) when (e.IsCancellationException(ct) && e is not OutOfMemoryException)
             {
@@ -1049,6 +1059,7 @@ public class MultiConnectionNntpClient(
         var started = Stopwatch.GetTimestamp();
         ConnectionLock<INntpClient>? connectionLock = null;
         OperationLeaseGroup? operationLeases = null;
+        ContextualCancellationTokenSource? admissionTimeoutCts = null;
         var returnConnectionLock = false;
         var latencyRecorded = false;
         try
@@ -1065,10 +1076,29 @@ public class MultiConnectionNntpClient(
             if (_connectionAdmission is not null)
             {
                 operationLeases ??= new OperationLeaseGroup();
-                operationLeases.Add(
-                    await _connectionAdmission.AcquireAsync(
-                            ClassifyConnectionKind(operation), priority, ct)
-                        .ConfigureAwait(false));
+                var admissionKind = ClassifyConnectionKind(operation);
+                var admissionCt = ct;
+                var failoverContext = ct.GetContext<TransferAdmissionFailoverContext>();
+                if (admissionKind == ProviderConnectionKind.Transfer
+                    && failoverContext?.HasAlternativeCapacity() == true)
+                {
+                    admissionTimeoutCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(ct);
+                    admissionTimeoutCts.CancelAfter(failoverContext.WaitTimeout);
+                    admissionCt = admissionTimeoutCts.Token;
+                }
+
+                try
+                {
+                    operationLeases.Add(
+                        await _connectionAdmission.AcquireAsync(
+                                admissionKind, priority, admissionCt)
+                            .ConfigureAwait(false));
+                }
+                catch (OperationCanceledException) when (
+                    admissionTimeoutCts is not null && !ct.IsCancellationRequested)
+                {
+                    throw new ProviderTransferAdmissionTimeoutException(Host, failoverContext!.WaitTimeout);
+                }
             }
 
             connectionLock = circuitBreaker.RequiresFreshConnectionProbe
@@ -1111,6 +1141,7 @@ public class MultiConnectionNntpClient(
             }
             finally
             {
+                admissionTimeoutCts?.Dispose();
                 operationLeases?.Dispose();
             }
         }
