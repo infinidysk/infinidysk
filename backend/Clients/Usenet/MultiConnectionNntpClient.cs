@@ -1247,6 +1247,12 @@ public class MultiConnectionNntpClient(
         if (ct.IsCancellationRequested)
             return;
 
+        if (exception is ConnectionOpenTimeoutException { FactoryStarted: false })
+        {
+            circuitBreaker.ReleaseProbe(probeLease);
+            return;
+        }
+
         var reason = $"{operation}-{exception.GetType().Name}";
         if (exception.TryGetKnownErrorMessage(out var knownReason))
             reason = $"{reason}: {knownReason}";

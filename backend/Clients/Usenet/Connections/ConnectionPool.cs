@@ -384,8 +384,6 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         var openTimeout = _connectionOpenTimeout?.Invoke();
         var openStarted = Stopwatch.GetTimestamp();
         long? factoryStarted = null;
-        if (openTimeout is { } timeout)
-            linked.CancelAfter(timeout);
         var openPhase = "HandshakeQueue";
         var factoryCleanupPending = false;
         Task<T>? factoryTask = null;
@@ -492,6 +490,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
                 openPhase = "Factory";
                 factoryStarted = Stopwatch.GetTimestamp();
+                if (openTimeout is { } timeout)
+                    linked.CancelAfter(timeout);
                 factoryTask = _factory(linked.Token).AsTask();
                 conn = _connectionOpenTimeout is null
                     ? await factoryTask.ConfigureAwait(false)
@@ -649,8 +649,6 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         using var openDeadline = warmOpenTimeout is not null
             ? CancellationTokenSource.CreateLinkedTokenSource(linked.Token)
             : null;
-        if (openDeadline is not null)
-            openDeadline.CancelAfter(warmTimeout);
         var openToken = openDeadline?.Token ?? linked.Token;
         var openPhase = "HandshakeQueue";
         var factoryCleanupPending = false;
@@ -696,6 +694,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                     CommitReplacementPacing(pacingReservation);
                     openPhase = "Factory";
                     factoryStarted = Stopwatch.GetTimestamp();
+                    if (openDeadline is not null)
+                        openDeadline.CancelAfter(warmTimeout);
 #pragma warning disable CA2025 // The late-completion observer retains cleanup ownership until the factory stops.
                     factoryTask = _factory(openToken).AsTask();
 #pragma warning restore CA2025
