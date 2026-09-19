@@ -47,6 +47,61 @@ public class MediaPlaybackSessionSourceTests
     }
 
     [Fact]
+    public void PlexParser_UsesStrongestVideoAndAudioDeliveryDecision()
+    {
+        using var document = JsonDocument.Parse("""
+        {
+          "MediaContainer": {
+            "Metadata": [{
+              "ratingKey": "mixed-1",
+              "type": "movie",
+              "title": "Mixed decisions",
+              "Player": {"state": "playing"},
+              "Session": {"id": "plex-mixed"},
+              "Media": [{
+                "id": "media-mixed",
+                "videoDecision": "directplay",
+                "audioDecision": "transcode",
+                "Part": [{"id": "part-mixed", "file": "/movies/mixed.mkv"}]
+              }]
+            }]
+          }
+        }
+        """);
+
+        var session = PlexPlaybackSessionSource.Parse(document.RootElement).Single();
+
+        Assert.Equal(PlaybackDeliveryMethod.Transcode, session.DeliveryMethod);
+    }
+
+    [Fact]
+    public void PlexParser_UsesAudioDecisionWhenVideoDecisionIsAbsent()
+    {
+        using var document = JsonDocument.Parse("""
+        {
+          "MediaContainer": {
+            "Metadata": [{
+              "ratingKey": "audio-1",
+              "type": "track",
+              "title": "Audio",
+              "Player": {"state": "playing"},
+              "Session": {"id": "plex-audio"},
+              "Media": [{
+                "id": "media-audio",
+                "audioDecision": "directplay",
+                "Part": [{"id": "part-audio", "file": "/music/audio.flac"}]
+              }]
+            }]
+          }
+        }
+        """);
+
+        var session = PlexPlaybackSessionSource.Parse(document.RootElement).Single();
+
+        Assert.Equal(PlaybackDeliveryMethod.DirectPlay, session.DeliveryMethod);
+    }
+
+    [Fact]
     public void EmbyJellyfinParser_MissingPauseFlag_RemainsUnknown()
     {
         using var document = JsonDocument.Parse("""
