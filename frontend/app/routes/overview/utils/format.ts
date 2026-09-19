@@ -21,6 +21,10 @@ export function formatNumber(n: number): string {
 }
 
 export function formatPercent(p: number, digits = 1): string {
+  if (!Number.isFinite(p)) return "—";
+  const smallest = 10 ** -digits;
+  if (p > 0 && p < smallest) return `<${smallest.toFixed(digits)}%`;
+  if (p > 100 - smallest && p < 100) return `>${(100 - smallest).toFixed(digits)}%`;
   return `${p.toFixed(digits)}%`;
 }
 

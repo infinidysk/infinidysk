@@ -234,7 +234,7 @@ function HistoryRow({
   requeueing?: boolean;
   onDelete?: (() => void) | undefined;
 }) {
-  const title = item.nzbFileName ?? basename(item.path);
+  const title = item.jobName || item.nzbFileName || basename(item.path);
   const timestamp = formatTimestamp(item.createdAt);
   const libraryLinkBadge = combineStatusReason &&
     item.message?.includes(
@@ -281,20 +281,24 @@ function HistoryRow({
           <div className="break-all text-sm font-medium leading-snug text-base-content">
             <Truncate>{title}</Truncate>
           </div>
-          {item.jobName && item.jobName !== title && (
+          {item.nzbFileName && item.nzbFileName !== title && (
             <div className="break-all text-xs text-base-content/60">
-              <Truncate>{item.jobName}</Truncate>
+              <Truncate>{item.nzbFileName}</Truncate>
             </div>
           )}
-          <div className="break-all text-xs leading-snug text-base-content/45">
+          <div className="break-all text-xs leading-snug text-base-content/70">
             <Truncate>{item.path}</Truncate>
           </div>
           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 min-[900px]:hidden">
             <StatusBadge item={item} />
             {libraryLinkBadge}
             <MetaChip label="When" value={timestamp.relative} title={timestamp.absolute} />
-            {item.message && <MetaChip label="Reason" value={item.message} title={item.message} />}
           </div>
+          {item.message && (
+            <div className="min-[900px]:hidden">
+              <ReasonDetails message={item.message} />
+            </div>
+          )}
           {actions && <div className="mt-2 min-[900px]:hidden">{actions}</div>}
         </div>
       </td>
@@ -310,9 +314,7 @@ function HistoryRow({
             {libraryLinkBadge}
           </div>
         )}
-        <div className="line-clamp-3 leading-snug" title={item.message ?? undefined}>
-          {item.message ?? "—"}
-        </div>
+        {item.message ? <ReasonDetails message={item.message} /> : "—"}
       </td>
       <td
         className={`${desktopCellClass} pr-4 font-mono tabular-nums md:pr-6`}
@@ -324,6 +326,17 @@ function HistoryRow({
         <td className="hidden px-3 py-3 text-right align-top min-[900px]:table-cell">{actions}</td>
       )}
     </tr>
+  );
+}
+
+function ReasonDetails({ message }: { message: string }) {
+  return (
+    <details className="group text-xs leading-relaxed text-base-content/70">
+      <summary className="cursor-pointer py-1 font-medium text-base-content focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
+        Diagnostic details
+      </summary>
+      <p className="whitespace-pre-wrap break-words pt-1">{message}</p>
+    </details>
   );
 }
 

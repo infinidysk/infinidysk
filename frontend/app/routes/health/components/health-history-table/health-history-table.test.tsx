@@ -63,6 +63,32 @@ function attentionTable(
 afterEach(cleanup);
 
 describe("HealthHistoryTable", () => {
+  it("offers native diagnostic disclosure and prioritizes the job title", async () => {
+    renderDom(
+      attentionTable({
+        items: [
+          {
+            id: "diagnostic-1",
+            davItemId: "file-1",
+            path: "/content/release/obfuscated.mkv",
+            nzbFileName: "obfuscated.mkv",
+            jobName: "Recognizable release",
+            createdAt: "2026-09-18T00:00:00Z",
+            result: 1,
+            repairStatus: 3,
+            message: "Verify Library Directory before removing files.",
+          },
+        ],
+      }),
+    );
+    const disclosure = screen.getAllByText("Diagnostic details")[0]!;
+    expect(disclosure.tagName).toBe("SUMMARY");
+    await userEvent.setup().click(disclosure);
+    expect(disclosure.closest("details")?.open).toBe(true);
+    expect(screen.getAllByRole("cell")[0]?.textContent).toMatch(/^Recognizable release/);
+    expect(screen.getAllByText("Verify Library Directory before removing files.")).toHaveLength(2);
+  });
+
   it.each([
     [
       "File failed health validation. No corresponding imported symlink or .strm file was found in Library Directory. ",

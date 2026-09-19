@@ -232,12 +232,21 @@ function ClickCard({ group }: { group: ClickGroup }) {
       ? "loss"
       : "inflight";
   const winner = group.attempts.find((a) => a.isWinner);
+  const [expanded, setExpanded] = useState(status === "inflight");
 
   return (
-    <div className="card min-w-0 border border-base-content/10 bg-base-100 shadow-sm">
-      <div className="card-body gap-3 p-4 md:p-5">
+    <details
+      className="min-w-0 border-b border-base-content/10 py-3"
+      open={expanded}
+      onToggle={(event) => setExpanded(event.currentTarget.open)}
+    >
+      <summary className="cursor-pointer list-none rounded-sm p-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
         <div className="flex flex-wrap items-center justify-between gap-3 max-[899px]:gap-2">
           <div className="flex min-w-0 flex-1 items-center gap-2.5 max-[899px]:basis-full">
+            <Icon
+              name={expanded ? "expand_more" : "chevron_right"}
+              className="shrink-0 !text-[20px]"
+            />
             <StatusPill status={status} />
             <div
               className="min-w-0 truncate text-[13px] font-semibold text-base-content max-[899px]:overflow-visible max-[899px]:whitespace-normal max-[899px]:break-words"
@@ -252,7 +261,7 @@ function ClickCard({ group }: { group: ClickGroup }) {
               {group.attempts.length} attempt{group.attempts.length === 1 ? "" : "s"}
             </Badge>
             <span
-              className="font-mono text-[11px] tabular-nums text-base-content/50"
+              className="font-mono text-xs tabular-nums text-base-content/70"
               title={new Date(group.firstAt * 1000).toLocaleString()}
             >
               {formatAge(group.firstAt)}
@@ -261,12 +270,15 @@ function ClickCard({ group }: { group: ClickGroup }) {
         </div>
 
         {winner && (
-          <div className="alert alert-soft flex min-h-0 flex-wrap items-center gap-2 py-2 text-xs">
-            <span className="text-base-content/60">Resolved via</span>
-            <span className="font-semibold text-base-content">{winner.indexerName}</span>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-base-content/70">
+            <span>
+              {winner.indexerName?.trim() && winner.indexerName.trim() !== "—"
+                ? `Resolved via ${winner.indexerName}`
+                : "Resolved · indexer unavailable"}
+            </span>
             <span className="text-base-content/30">·</span>
             <span className="font-mono tabular-nums text-base-content/70">
-              {winner.durationMs}ms
+              {formatAttemptDuration(winner.durationMs)}
             </span>
             {winner.size > 0 && (
               <>
@@ -278,128 +290,61 @@ function ClickCard({ group }: { group: ClickGroup }) {
             )}
           </div>
         )}
-
-        <div className="-mx-4 -mb-4 border-t border-base-content/10 md:-mx-5 md:-mb-5">
-          <div className="hidden min-[900px]:block overflow-x-auto">
-            <table className="table table-xs w-full text-xs">
-              <thead>
-                <tr>
-                  <th className="w-8 px-2.5 py-2 text-left text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-base-content/50 tabular-nums first:pl-4 last:pr-4 last:text-right">
-                    #
-                  </th>
-                  <th className="max-w-60 px-2.5 py-2 text-left text-[10px] font-medium uppercase tracking-wider whitespace-nowrap text-base-content/50 first:pl-4 last:pr-4 last:text-right">
-                    Candidate
-                  </th>
-                  <th className="max-w-[110px] px-2.5 py-2 text-left text-[10px] font-medium uppercase tracking-wider whitespace-nowrap text-base-content/50 first:pl-4 last:pr-4 last:text-right">
-                    Indexer
-                  </th>
-                  <th className="max-w-[140px] px-2.5 py-2 text-left text-[10px] font-medium uppercase tracking-wider whitespace-nowrap text-base-content/50 first:pl-4 last:pr-4 last:text-right">
-                    Provider
-                  </th>
-                  <th className="w-[72px] px-2.5 py-2 text-left text-[10px] font-medium uppercase tracking-wider whitespace-nowrap text-base-content/50 first:pl-4 last:pr-4 last:text-right">
-                    Size
-                  </th>
-                  <th className="w-[120px] px-2.5 py-2 text-left text-[10px] font-medium uppercase tracking-wider whitespace-nowrap text-base-content/50 first:pl-4 last:pr-4 last:text-right">
-                    Outcome
-                  </th>
-                  <th className="max-w-[180px] px-2.5 py-2 text-left text-[10px] font-medium uppercase tracking-wider whitespace-nowrap text-base-content/50 first:pl-4 last:pr-4 last:text-right">
-                    Reason
-                  </th>
-                  <th className="w-16 px-2.5 py-2 text-left text-[10px] font-medium uppercase tracking-wider whitespace-nowrap text-base-content/50 first:pl-4 last:pr-4 last:text-right">
-                    Took
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {group.attempts.map((a, i) => (
-                  <tr key={i} className={a.isWinner ? "bg-success/5" : undefined}>
-                    <td className="w-8 px-2.5 py-2 align-middle font-semibold tabular-nums text-base-content/50 first:pl-4">
-                      {a.rankIndex + 1}
-                    </td>
-                    <td
-                      className="max-w-60 truncate px-2.5 py-2 align-middle text-base-content"
-                      title={a.candidateTitle}
-                    >
-                      {a.candidateTitle || "—"}
-                    </td>
-                    <td className="max-w-[110px] truncate whitespace-nowrap px-2.5 py-2 align-middle text-base-content/70">
-                      {a.indexerName || "—"}
-                    </td>
-                    <td
-                      className="max-w-[140px] truncate whitespace-nowrap px-2.5 py-2 align-middle text-base-content/70"
-                      title={a.providerHost ?? undefined}
-                    >
-                      {a.providerNickname?.trim() || formatProviderShort(a.providerHost)}
-                    </td>
-                    <td className="w-[72px] whitespace-nowrap px-2.5 py-2 align-middle tabular-nums text-base-content/50">
-                      {formatBytes(a.size)}
-                    </td>
-                    <td className="w-[120px] whitespace-nowrap px-2.5 py-2 align-middle text-base-content/70">
-                      <OutcomeBadge outcome={a.outcome} winner={a.isWinner} />
-                    </td>
-                    <td
-                      className="max-w-[180px] truncate whitespace-nowrap px-2.5 py-2 align-middle text-base-content/50"
-                      title={a.failReason ?? undefined}
-                    >
-                      {a.failReason ?? "—"}
-                    </td>
-                    <td className="w-16 whitespace-nowrap px-2.5 py-2 align-middle text-right tabular-nums text-base-content/50 last:pr-4">
-                      {a.durationMs}ms
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="flex flex-col gap-2 px-3.5 pt-3 pb-4 min-[900px]:hidden">
-            {group.attempts.map((a, i) => (
-              <div
-                key={i}
-                className={`card card-compact border border-base-content/10 bg-base-200 ${a.isWinner ? "border-success/30 bg-success/5" : ""}`}
-              >
-                <div className="card-body gap-1 p-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-[11px] font-semibold tabular-nums text-base-content/50">
-                      #{a.rankIndex + 1}
-                    </span>
-                    <span
-                      className="min-w-0 flex-1 truncate text-xs font-semibold text-base-content"
-                      title={a.indexerName}
-                    >
-                      {a.indexerName || "—"}
-                    </span>
-                    <OutcomeBadge outcome={a.outcome} winner={a.isWinner} />
-                  </div>
-                  <div
-                    className="mb-1 text-xs leading-snug break-words text-base-content/70"
-                    title={a.candidateTitle}
-                  >
-                    {a.candidateTitle || "—"}
-                  </div>
-                  <div className="flex gap-1.5 text-[11px] tabular-nums text-base-content/50">
-                    <span title={a.providerHost ?? undefined}>
-                      <Icon name="cell_tower" className="!text-[14px] align-middle" />{" "}
-                      {a.providerNickname?.trim() || formatProviderShort(a.providerHost)}
-                    </span>
-                    <span className="text-base-content/40">·</span>
-                    <span>{formatBytes(a.size)}</span>
-                    <span className="text-base-content/40">·</span>
-                    <span>{a.durationMs}ms</span>
-                  </div>
-                  {a.failReason && (
-                    <div className="mt-1 rounded-box border border-base-content/10 bg-base-100 px-2 py-1 text-[11px] text-base-content/60 break-words">
-                      {a.failReason}
-                    </div>
-                  )}
-                </div>
+      </summary>
+      <ol
+        className="ml-4 mt-3 border-l border-base-content/20 pl-5"
+        aria-label={`Attempts for ${group.requestedTitle}`}
+      >
+        {group.attempts.map((attempt, index) => (
+          <li key={`${attempt.rankIndex}-${index}`} className="relative min-w-0 pb-5 last:pb-2">
+            <span
+              aria-hidden="true"
+              className={`absolute -left-[25px] top-1.5 h-2 w-2 rounded-full ${attempt.isWinner ? "bg-success" : "bg-base-content/60"}`}
+            />
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="font-mono tabular-nums">#{attempt.rankIndex + 1}</span>
+              <OutcomeBadge outcome={attempt.outcome} winner={attempt.isWinner} />
+              <span className="font-mono tabular-nums">
+                {formatAttemptDuration(attempt.durationMs)}
+              </span>
+              <span className="font-mono tabular-nums">{formatBytes(attempt.size)}</span>
+            </div>
+            <p className="mt-2 break-words font-medium text-base-content [overflow-wrap:anywhere]">
+              {attempt.candidateTitle || "Candidate unavailable"}
+            </p>
+            <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-base-content/70">
+              <div>
+                <dt className="inline font-medium">Indexer: </dt>
+                <dd className="inline break-all">
+                  {attempt.indexerName?.trim() && attempt.indexerName.trim() !== "—"
+                    ? attempt.indexerName
+                    : "Unavailable"}
+                </dd>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
+              <div>
+                <dt className="inline font-medium">Provider: </dt>
+                <dd className="inline break-all">
+                  {attempt.providerNickname?.trim() ||
+                    (attempt.providerHost
+                      ? formatProviderShort(attempt.providerHost)
+                      : "Unavailable")}
+                </dd>
+              </div>
+            </dl>
+            {attempt.failReason && (
+              <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-relaxed text-base-content/80 [overflow-wrap:anywhere]">
+                {attempt.failReason}
+              </p>
+            )}
+          </li>
+        ))}
+      </ol>
+    </details>
   );
+}
+
+function formatAttemptDuration(durationMs: number): string {
+  return durationMs >= 1000 ? `${(durationMs / 1000).toFixed(1)}s` : `${durationMs}ms`;
 }
 
 function Stat({

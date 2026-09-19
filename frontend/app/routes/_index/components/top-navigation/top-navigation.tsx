@@ -78,7 +78,7 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
           />
           <span className="flex flex-col items-start leading-none">
             <span className="text-xl font-bold tracking-tight text-primary">InfiniDysk</span>
-            <span className="mt-1 text-[10px] font-medium tracking-wide text-base-content/60">
+            <span className="mt-1 hidden text-[10px] font-medium tracking-wide text-base-content/60 sm:block">
               The NzbDAV SuperFork
             </span>
           </span>
@@ -95,7 +95,7 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
             className={
               hasUpdate
                 ? `btn btn-primary h-10 min-h-10 max-sm:btn-square shrink-0 list-none gap-2 rounded-box border border-base-content/10 bg-clip-padding px-4 max-sm:px-0 whitespace-nowrap ${styles.updateAvailable}`
-                : "btn h-10 min-h-10 shrink-0 list-none gap-2 rounded-box border border-base-content/10 bg-base-200 px-4 whitespace-nowrap hover:bg-base-200"
+                : "btn h-10 min-h-10 max-sm:btn-square shrink-0 list-none gap-2 rounded-box border border-base-content/10 bg-base-200 px-4 max-sm:px-0 whitespace-nowrap hover:bg-base-200"
             }
             aria-label={hasUpdate ? "Update available" : "App menu"}
           >
@@ -106,7 +106,8 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
               </>
             ) : (
               <>
-                <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                <Icon name="more_horiz" className="!text-[20px] sm:hidden" />
+                <span className="hidden items-center gap-2 whitespace-nowrap sm:inline-flex">
                   <span className="hidden text-[10px] font-semibold uppercase tracking-[0.14em] text-base-content/40 sm:inline">
                     {channelLabel}
                   </span>
@@ -118,7 +119,10 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
                     {displayVersion}
                   </span>
                 </span>
-                <Icon name="expand_more" className="!text-[18px] text-base-content/50" />
+                <Icon
+                  name="expand_more"
+                  className="hidden !text-[18px] text-base-content/70 sm:inline"
+                />
               </>
             )}
           </summary>

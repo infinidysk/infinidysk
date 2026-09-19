@@ -34,8 +34,8 @@ export function ListToolbar({
   onClear: () => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 border-t border-base-content/10 pt-4">
-      <label className="input input-sm flex min-w-48 flex-1 items-center gap-2">
+    <div className="grid grid-cols-2 items-center gap-2 border-t border-base-content/10 pt-3 lg:grid-cols-[minmax(12rem,1fr)_repeat(3,minmax(0,10rem))_auto]">
+      <label className="input input-sm col-span-2 flex w-full min-w-0 items-center gap-2 lg:col-span-1">
         <Icon name="search" className="!text-[18px] text-base-content/50" />
         <Input
           type="search"
@@ -47,7 +47,7 @@ export function ListToolbar({
         />
       </label>
       <Select
-        className="select-sm"
+        className="select-sm w-full min-w-0"
         value={category}
         onChange={(event) => onCategoryChange(event.target.value)}
         aria-label={`Filter ${label.toLowerCase()} by category`}
@@ -60,7 +60,7 @@ export function ListToolbar({
         ))}
       </Select>
       <Select
-        className="select-sm"
+        className="select-sm w-full min-w-0"
         value={status}
         onChange={(event) => onStatusChange(event.target.value)}
         aria-label={`Filter ${label.toLowerCase()} by status`}
@@ -73,7 +73,7 @@ export function ListToolbar({
         ))}
       </Select>
       <Select
-        className="select-sm max-[899px]:flex"
+        className="select-sm col-span-2 w-full min-w-0 lg:col-span-1"
         value={sort}
         onChange={(event) => onSortChange(event.target.value)}
         aria-label={`Sort ${label.toLowerCase()}`}

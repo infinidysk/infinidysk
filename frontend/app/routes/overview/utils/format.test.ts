@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { formatDurationMs, formatSessionAge, formatTimeLeft } from "./format";
+import { formatDurationMs, formatPercent, formatSessionAge, formatTimeLeft } from "./format";
+
+describe("formatPercent", () => {
+  it.each([
+    [0, "0.0%"],
+    [0.0018, "<0.1%"],
+    [1.25, "1.3%"],
+    [99.99, ">99.9%"],
+    [100, "100.0%"],
+    [Number.NaN, "—"],
+  ])("formats %s without hiding nonzero outcomes", (value, expected) => {
+    expect(formatPercent(value)).toBe(expected);
+  });
+});
 
 describe("formatDurationMs", () => {
   it("renders em dash for missing or invalid values", () => {

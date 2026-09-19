@@ -492,7 +492,6 @@ export default function Health({ loaderData }: Route.ComponentProps) {
           </>
         }
       />
-      <HealthStats stats={historyStats} />
       <HealthAttentionTable
         items={loaderData.attentionItems}
         totalCount={loaderData.attentionTotalCount}
@@ -510,6 +509,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         onRefresh={() => void revalidator.revalidate()}
         onRequeueActionNeeded={(davItemId) => void onRequeueActionNeeded(davItemId)}
       />
+      <HealthStats stats={historyStats} />
       <Modal
         open={deleteItem !== null}
         title="Remove from InfiniDysk?"

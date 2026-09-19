@@ -11,7 +11,7 @@ export type PageTableProps = {
 export function PageSection({ title, subTitle, badgeText, children }: PageTableProps) {
   return (
     <section className="card card-border bg-base-100 w-full shadow-md">
-      <div className="card-body gap-4 pb-0 sm:pb-0">
+      <div className="card-body gap-3 p-4 pb-0 sm:px-6 sm:pb-0">
         <div>
           <div className="mb-2.5 flex flex-wrap items-center justify-between gap-4">
             {title}
