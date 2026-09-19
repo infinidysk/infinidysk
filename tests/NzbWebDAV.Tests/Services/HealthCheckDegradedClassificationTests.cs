@@ -799,6 +799,42 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.DoesNotContain(item.Id, selected);
     }
 
+    [Theory]
+    [InlineData(ArrRepairOutcome.RemoveAndBlocklistSucceeded)]
+    [InlineData(ArrRepairOutcome.RemoveAndBlocklistSucceededSearchWithheld)]
+    public async Task SuccessfulArrRepair_DuringCancellation_DeletesLocalItemAndPersistsResult(
+        ArrRepairOutcome outcome)
+    {
+        var segments = NewSegmentIds(3);
+        var sizes = Enumerable.Repeat(10_000L, segments.Length).ToArray();
+        var (item, _) = await AddVideoFileAsync("successful-arr-repair.mkv", segments, sizes);
+        item.ArrDownloadId = Guid.NewGuid();
+        item.NextHealthCheck = DateTimeOffset.UnixEpoch;
+        item.HealthRepairPending = true;
+        await _context.SaveChangesAsync();
+
+        var libraryPath = Path.Join(_configRoot, "library", "successful-arr-repair.strm");
+        await File.WriteAllTextAsync(
+            libraryPath,
+            $"http://localhost:3000/view/.ids/{item.Id}.mkv");
+        var fake = NewFakeClient(segments, missing: [0]);
+        var (service, _) = await NewServiceAsync(fake, par2Outcome: false);
+        using var cancellation = new CancellationTokenSource();
+        var arrClient = new PartialRepairArrClient(cancellation, libraryPath, outcome);
+        service.CreateRepairArrClientsOverride = () => [arrClient];
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, cancellation.Token);
+
+        _context.ChangeTracker.Clear();
+        Assert.True(cancellation.IsCancellationRequested);
+        Assert.False(await _context.Items.AnyAsync(candidate => candidate.Id == item.Id));
+        Assert.False(File.Exists(libraryPath));
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
+        Assert.Equal(HealthCheckResult.RepairAction.Repaired, row.RepairStatus);
+        Assert.Equal(1, arrClient.RemoveCalls);
+    }
+
     [Fact]
     public async Task PartialSample_UsesLegacyAbortOnFirstMissPath()
     {
@@ -1699,7 +1735,8 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
 
     private sealed class PartialRepairArrClient(
         CancellationTokenSource cancellation,
-        string externallyRemovedPath)
+        string externallyRemovedPath,
+        ArrRepairOutcome outcome = ArrRepairOutcome.MediaRemovedBlocklistUnconfirmed)
         : ArrClient("http://radarr.test", "test-key")
     {
         public int RemoveCalls { get; private set; }
@@ -1722,7 +1759,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             RemoveCalls++;
             File.Delete(externallyRemovedPath);
             cancellation.Cancel();
-            return Task.FromResult(ArrRepairOutcome.MediaRemovedBlocklistUnconfirmed);
+            return Task.FromResult(outcome);
         }
     }
 

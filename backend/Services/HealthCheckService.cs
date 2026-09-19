@@ -3565,7 +3565,16 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 or ArrLinkedRepairDecision.RemoveAndBlocklistSucceededSearchWithheld)
             {
                 RecordRepairRemoval(linkedPath, DateTimeOffset.UtcNow);
-                await SeedRejectedReleaseSegmentsAsync(davItem, dbClient, ct, providerGeneration).ConfigureAwait(false);
+                if (!ct.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await SeedRejectedReleaseSegmentsAsync(davItem, dbClient, ct, providerGeneration).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                    }
+                }
                 DeletionAuditLog.Record(
                     "health-repair",
                     davItem,
@@ -3585,7 +3594,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                         $"Corresponding {linkType} found within Library Dir.",
                         "Removed the Arr media file and blocklisted its original download.",
                         searchClause
-                    ]), ct).ConfigureAwait(false);
+                    ]), CancellationToken.None).ConfigureAwait(false);
                 return;
             }
 
