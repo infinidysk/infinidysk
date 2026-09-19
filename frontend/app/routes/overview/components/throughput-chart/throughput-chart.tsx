@@ -492,7 +492,7 @@ function Total({
       content={description}
       placement="bottom"
       className={`min-w-0 ${alignStart ? "tooltip-start sm:tooltip-end" : "tooltip-end"}`}
-      contentClassName="max-w-[min(16rem,80vw)]! whitespace-normal text-left"
+      contentClassName="!max-w-[min(16rem,80vw)] whitespace-normal text-left"
     >
       <div
         tabIndex={0}
