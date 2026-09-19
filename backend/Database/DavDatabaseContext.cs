@@ -349,6 +349,9 @@ public class DavDatabaseContext : DbContext
                 .IsRequired()
                 .HasDefaultValue(false);
 
+            e.Property(i => i.UrgentRepairFailures)
+                .IsRequired(false);
+
             e.HasIndex(i => new { i.HealthRepairPending, i.NextHealthCheck });
 
             e.Property(i => i.FileBlobId)

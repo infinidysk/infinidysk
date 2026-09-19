@@ -138,6 +138,9 @@ namespace NzbWebDAV.Database.PostgresMigrations
                         .HasColumnType("boolean")
                         .HasDefaultValue(false);
 
+                    b.Property<int?>("UrgentRepairFailures")
+                        .HasColumnType("integer");
+
                     b.Property<Guid?>("HistoryItemId")
                         .HasColumnType("uuid");
 

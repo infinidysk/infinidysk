@@ -20,6 +20,13 @@ public class DavItem
     public DateTimeOffset? LastHealthCheck { get; set; }
     public DateTimeOffset? NextHealthCheck { get; set; }
     public bool HealthRepairPending { get; set; }
+    /// <summary>
+    /// Streaming-failure count that satisfied <c>repair.auto-remove-after-failures</c> when
+    /// this item was durably scheduled for urgent repair (<see cref="NextHealthCheck"/> ==
+    /// UnixEpoch). Null when no threshold-qualified urgent repair is pending. Survives
+    /// restarts so the in-memory tracker reset cannot demote an already-qualified repair.
+    /// </summary>
+    public int? UrgentRepairFailures { get; set; }
     public Guid? HistoryItemId { get; set; }
     public Guid? FileBlobId { get; set; }
     public Guid? NzbBlobId { get; set; }
