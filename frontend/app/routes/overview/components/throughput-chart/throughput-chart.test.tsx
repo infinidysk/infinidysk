@@ -58,7 +58,7 @@ describe("ThroughputChart", () => {
   it("uses a solid blue swatch for app reads in the legend", () => {
     const markup = renderMarkup([point(3, 1)]);
 
-    expect(markup).toContain("App reads · 2");
+    expect(markup).toContain("App attempts · 2");
     expect(markup).toContain("border-t-2 border-info");
     expect(markup).not.toContain("border-dashed");
   });
@@ -91,9 +91,10 @@ describe("ThroughputChart", () => {
       />,
     );
 
-    expect(markup).toContain("Client reads · 10");
+    expect(markup).toContain("Client attempts · 10");
     expect(markup).toContain("Peak download");
-    expect(markup).not.toContain("App reads · 0 · peak");
+    expect(markup).not.toContain("bg-base-content/40");
+    expect(markup).not.toContain("App attempts · 0 · peak");
   });
 
   it("skips idle stretches but anchors each run to leading and trailing zeros", () => {
@@ -145,7 +146,7 @@ describe("ThroughputChart", () => {
     fireEvent.keyDown(chart!, { key: "ArrowRight" });
 
     const status = container.querySelector("#overview-throughput-keyboard-status");
-    expect(status?.textContent).toMatch(/8 articles/);
+    expect(status?.textContent).toMatch(/8 attempts/);
     expect(status?.textContent).toMatch(/2 errors/);
 
     const updated = [points[0]!, { ...points[1]!, articles: 12, errors: 4 }];
@@ -161,7 +162,7 @@ describe("ThroughputChart", () => {
         window="24h"
       />,
     );
-    expect(status?.textContent).toMatch(/12 articles/);
+    expect(status?.textContent).toMatch(/12 attempts/);
     expect(status?.textContent).toMatch(/4 errors/);
   });
 
@@ -190,7 +191,7 @@ describe("ThroughputChart", () => {
     fireEvent.keyDown(chart!, { key: "ArrowRight" });
 
     const status = container.querySelector("#overview-throughput-keyboard-status");
-    expect(status?.textContent).toMatch(/8 articles/);
+    expect(status?.textContent).toMatch(/8 attempts/);
 
     const shifted = [{ ...point(1), bucket: 0 }, points[0]!, points[1]!];
     rerender(
@@ -206,11 +207,68 @@ describe("ThroughputChart", () => {
       />,
     );
 
-    expect(status?.textContent).toMatch(/8 articles/);
+    expect(status?.textContent).toMatch(/8 attempts/);
     expect(status?.textContent).toMatch(/2 errors/);
 
     fireEvent.keyDown(chart!, { key: "ArrowLeft" });
-    expect(status?.textContent).toMatch(/3 articles/);
-    expect(status?.textContent).not.toMatch(/8 articles/);
+    expect(status?.textContent).toMatch(/3 attempts/);
+    expect(status?.textContent).not.toMatch(/8 attempts/);
   });
+
+  it.each([
+    { articles: 100, misses: 30, errors: 10, success: "60" },
+    { articles: 0, misses: 0, errors: 0, success: "0" },
+    { articles: 10, misses: 8, errors: 2, success: "0" },
+  ])(
+    "shows successful reads $success excluding misses and errors",
+    ({ articles, misses, errors, success }) => {
+      const { getByText, queryByText } = render(
+        <ThroughputChart
+          points={[]}
+          totalArticles={articles}
+          totalClientArticles={0}
+          totalMisses={misses}
+          totalErrors={errors}
+          totalBytesServed={0}
+          bucketSizeMs={60_000}
+          window="24h"
+        />,
+      );
+
+      expect(getByText("Successful reads").parentElement?.textContent).toBe(
+        `Successful reads${success}`,
+      );
+      expect(getByText("Peak download").parentElement?.textContent).toBe("Peak downloadN/A");
+      expect(queryByText("Cache share")).toBeNull();
+      expect(queryByText("Misses")).toBeNull();
+      expect(queryByText("Articles")).toBeNull();
+      fireEvent.focus(getByText("Peak download").parentElement!);
+      expect(getByText(/Highest average Usenet download rate/).getAttribute("aria-hidden")).toBe(
+        "false",
+      );
+    },
+  );
+
+  it.each([60_000, 3_600_000, 86_400_000])(
+    "normalizes peak download for %d ms buckets without a duplicate legend item",
+    (bucketSizeMs) => {
+      const { getByText, getAllByText } = render(
+        <ThroughputChart
+          points={[
+            { ...point(3), bytesFetched: (1_000_000 * bucketSizeMs) / 1000 },
+            { ...point(5), bucket: bucketSizeMs, bytesFetched: (2_000_000 * bucketSizeMs) / 1000 },
+          ]}
+          totalArticles={8}
+          totalClientArticles={0}
+          totalMisses={0}
+          totalErrors={0}
+          totalBytesServed={0}
+          bucketSizeMs={bucketSizeMs}
+          window={bucketSizeMs === 60_000 ? "24h" : bucketSizeMs === 3_600_000 ? "7d" : "all"}
+        />,
+      );
+      expect(getAllByText("Peak download")).toHaveLength(1);
+      expect(getByText("Peak download").parentElement?.textContent).toBe("Peak download2.0 MB/s");
+    },
+  );
 });

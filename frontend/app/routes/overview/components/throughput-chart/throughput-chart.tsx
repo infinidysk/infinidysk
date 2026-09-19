@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import styles from "./throughput-chart.module.css";
 import type { OverviewWindow, ThroughputPoint } from "~/clients/backend-client.server";
 import { formatBytes, formatNumber } from "../../utils/format";
+import { Tooltip } from "~/components/ui";
 
 export type ThroughputChartProps = {
   points: ThroughputPoint[];
@@ -162,6 +163,7 @@ export function ThroughputChart({
   const hasData = points.length > 0;
   const safeTotalClientArticles = Math.min(totalArticles, Math.max(0, totalClientArticles ?? 0));
   const totalAppArticles = totalArticles - safeTotalClientArticles;
+  const successfulReads = Math.max(0, totalArticles - totalMisses - totalErrors);
   const bucketLabel =
     window === "1h" || window === "24h" ? "min" : window === "all" ? "day" : "hour";
   const hover = cursorIdx !== null ? (points[cursorIdx] ?? null) : null;
@@ -189,18 +191,33 @@ export function ThroughputChart({
           <div>
             <h3 className="card-title text-base">Activity</h3>
             <p className="text-xs text-base-content/50">
-              Article reads per {bucketLabel}, last {window}
+              Article attempts per {bucketLabel}, {window === "all" ? "all time" : `last ${window}`}
             </p>
           </div>
-          <div className="flex gap-[18px]">
-            <Total label="Articles" value={formatNumber(totalArticles)} />
-            <Total label="Misses" value={formatNumber(totalMisses)} />
+          <div className="grid w-full grid-cols-2 gap-x-[18px] gap-y-3 sm:flex sm:w-auto sm:flex-wrap">
+            <Total
+              label="Successful reads"
+              alignStart
+              value={formatNumber(successfulReads)}
+              description="Article retrievals reported successful in this window, including cache hits. Excludes recorded misses and errors; not unique articles or completed playback."
+            />
+            <Total
+              label="Peak download"
+              value={hasData ? `${formatBytes(maxNetworkRate)}/s` : "N/A"}
+              description="Highest average Usenet download rate among the displayed buckets, not an instantaneous peak. Each bucket's downloaded bytes are divided by its duration. Older folded all-time history is excluded."
+            />
             <Total
               label="Errors"
+              alignStart
               value={formatNumber(totalErrors)}
+              description="Recorded attempt errors in this window, excluding provider misses. Retries may recover them; this is not a count of failed client reads."
               accent={totalErrors > 0 ? "danger" : undefined}
             />
-            <Total label="Served" value={formatBytes(totalBytesServed)} />
+            <Total
+              label="Served"
+              value={formatBytes(totalBytesServed)}
+              description="Bytes served by client read sessions ending in this window."
+            />
           </div>
         </div>
 
@@ -216,7 +233,7 @@ export function ThroughputChart({
                 className={styles.chartArea}
                 tabIndex={0}
                 role="img"
-                aria-label={`${formatNumber(safeTotalClientArticles)} client reads, ${formatNumber(totalAppArticles)} app reads, ${formatNumber(totalArticles)} articles total, ${formatNumber(totalErrors)} errors, ${formatBytes(totalBytesServed)} served. Use arrow keys for bucket details.`}
+                aria-label={`${formatNumber(safeTotalClientArticles)} client attempts, ${formatNumber(totalAppArticles)} app attempts, ${formatNumber(totalArticles)} attempts total, ${formatNumber(successfulReads)} successful reads, ${formatNumber(totalErrors)} errors, ${formatBytes(totalBytesServed)} served. Use arrow keys for bucket details.`}
                 aria-describedby="overview-throughput-keyboard-status"
                 onMouseMove={handleMouseMove}
                 onMouseLeave={handleMouseLeave}
@@ -285,14 +302,14 @@ export function ThroughputChart({
                           <div className="font-semibold">
                             {formatBucketTime(hover.bucket, window)}
                           </div>
-                          <div>{formatNumber(hoverClientArticles)} client reads</div>
-                          <div>{formatNumber(hoverAppArticles)} app reads</div>
-                          <div>{formatNumber(hover.articles)} articles total</div>
+                          <div>{formatNumber(hoverClientArticles)} client attempts</div>
+                          <div>{formatNumber(hoverAppArticles)} app attempts</div>
+                          <div>{formatNumber(hover.articles)} attempts total</div>
                           {hoverNetworkRate > 0 && (
                             <div>{formatBytes(hoverNetworkRate)}/s downloaded</div>
                           )}
                           {(hover.misses ?? 0) > 0 && (
-                            <div>{formatNumber(hover.misses)} misses</div>
+                            <div>{formatNumber(hover.misses)} provider miss attempts</div>
                           )}
                           {hover.errors > 0 && (
                             <div className="text-error">{formatNumber(hover.errors)} errors</div>
@@ -342,18 +359,12 @@ export function ThroughputChart({
             <div className="mt-2 flex flex-wrap items-center gap-3.5 text-[11px] text-base-content/50">
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block h-0.5 w-2.5 bg-success" />
-                Client reads · {formatNumber(safeTotalClientArticles)}
+                Client attempts · {formatNumber(safeTotalClientArticles)}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block w-2.5 border-t-2 border-info" />
-                App reads · {formatNumber(totalAppArticles)}
+                App attempts · {formatNumber(totalAppArticles)}
               </span>
-              {maxNetworkRate > 0 && (
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="inline-block h-0.5 w-2.5 bg-base-content/40" />
-                  Peak download · {formatBytes(maxNetworkRate)}/s
-                </span>
-              )}
               {totalErrors > 0 && (
                 <span className="inline-flex items-center gap-1.5">
                   <span className="inline-block h-0.5 w-2.5 bg-error" />
@@ -361,7 +372,7 @@ export function ThroughputChart({
                 </span>
               )}
               <span className="ml-auto tabular-nums">
-                Peak {formatNumber(maxArticles)} / {bucketLabel} · hover or use arrow keys
+                Peak attempts {formatNumber(maxArticles)} / {bucketLabel} · hover or use arrow keys
               </span>
             </div>
           </>
@@ -467,22 +478,34 @@ function Total({
   label,
   value,
   accent,
+  description,
+  alignStart = false,
 }: {
   label: string;
   value: string;
   accent?: "danger" | undefined;
+  description: string;
+  alignStart?: boolean;
 }) {
   return (
-    <div className="text-right">
-      <div className="text-[10px] font-medium tracking-wide text-base-content/50 uppercase">
-        {label}
-      </div>
+    <Tooltip
+      content={description}
+      placement="bottom"
+      className={`min-w-0 ${alignStart ? "tooltip-start sm:tooltip-end" : "tooltip-end"}`}
+      contentClassName="max-w-[min(16rem,80vw)]! whitespace-normal text-left"
+    >
       <div
-        className={`text-lg font-semibold tracking-tight tabular-nums ${accent === "danger" ? "text-error" : "text-base-content"}`}
+        tabIndex={0}
+        className="rounded-sm text-right focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       >
-        {value}
+        <div className="text-[10px] font-medium text-base-content/50 uppercase">{label}</div>
+        <div
+          className={`break-words text-lg font-semibold tabular-nums ${accent === "danger" ? "text-error" : "text-base-content"}`}
+        >
+          {value}
+        </div>
       </div>
-    </div>
+    </Tooltip>
   );
 }
 
@@ -499,13 +522,13 @@ function describeThroughputBucket(
 ): string {
   const parts = [
     formatBucketTime(point.bucket, window),
-    `${formatNumber(clientArticles(point))} client reads`,
-    `${formatNumber(appArticles(point))} app reads`,
-    `${formatNumber(point.articles)} articles total`,
+    `${formatNumber(clientArticles(point))} client attempts`,
+    `${formatNumber(appArticles(point))} app attempts`,
+    `${formatNumber(point.articles)} attempts total`,
   ];
   const rate = (point.bytesFetched ?? 0) / bucketSeconds;
   if (rate > 0) parts.push(`${formatBytes(rate)}/s downloaded`);
-  if ((point.misses ?? 0) > 0) parts.push(`${formatNumber(point.misses)} misses`);
+  if ((point.misses ?? 0) > 0) parts.push(`${formatNumber(point.misses)} provider miss attempts`);
   if (point.errors > 0) parts.push(`${formatNumber(point.errors)} errors`);
   if (point.bytesServed > 0) parts.push(`${formatBytes(point.bytesServed)} served`);
   return parts.join(", ");

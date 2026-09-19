@@ -108,7 +108,7 @@ export function ErrorBreakdown({ errors }: ErrorDonutProps) {
                     {formatNumber(missTotal)}
                   </span>
                   <span className="text-[11px] font-medium tracking-wide text-base-content/50 uppercase">
-                    provider misses
+                    provider miss attempts
                   </span>
                 </div>
               )}
@@ -163,7 +163,7 @@ export function ErrorBreakdown({ errors }: ErrorDonutProps) {
               </>
             ) : (
               <div className="mb-3 text-xs leading-snug text-base-content/50">
-                No hard fetch failures — misses above are expected failover.
+                No hard fetch failures recorded. Provider misses may be recovered by failover.
               </div>
             )}
 
@@ -174,8 +174,9 @@ export function ErrorBreakdown({ errors }: ErrorDonutProps) {
                   style={{ background: COLORS["Missing"] }}
                 />
                 <span>
-                  Provider misses are articles not found on the first provider tried; failover
-                  usually recovers them.
+                  Provider miss attempts include availability probes, retries, and fallback
+                  providers. One article can count more than once and still be retrieved
+                  successfully.
                 </span>
               </div>
             )}
