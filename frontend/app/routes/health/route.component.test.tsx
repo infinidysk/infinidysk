@@ -127,6 +127,14 @@ function jsonResponse(body: object, status = 200) {
   });
 }
 
+function mockActionResponse(response: Response | Error) {
+  fetchMock.mockImplementation((input: unknown) => {
+    if (String(input).includes("/api/get-active-health-checks"))
+      return Promise.resolve(jsonResponse({ items: [] }));
+    return response instanceof Error ? Promise.reject(response) : Promise.resolve(response);
+  });
+}
+
 describe("Health action-needed re-check", () => {
   it("places attention and its actions before the schedule and history", () => {
     renderHealth();
@@ -145,7 +153,7 @@ describe("Health action-needed re-check", () => {
   });
 
   it("queues current action-needed items and revalidates the page", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ status: true, requeuedCount: 2 }));
+    mockActionResponse(jsonResponse({ status: true, requeuedCount: 2 }));
     renderHealth();
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Re-check action needed" }));
@@ -160,7 +168,7 @@ describe("Health action-needed re-check", () => {
   });
 
   it("reports when no current action-needed items remain", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ status: true, requeuedCount: 0 }));
+    mockActionResponse(jsonResponse({ status: true, requeuedCount: 0 }));
     renderHealth();
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Re-check action needed" }));
@@ -172,7 +180,7 @@ describe("Health action-needed re-check", () => {
   });
 
   it("sends a selected file ID for a per-item re-check", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ status: true, requeuedCount: 1 }));
+    mockActionResponse(jsonResponse({ status: true, requeuedCount: 1 }));
     renderHealth();
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Re-check file" }));
@@ -187,7 +195,7 @@ describe("Health action-needed re-check", () => {
   });
 
   it("shows the backend conflict reason without revalidating", async () => {
-    fetchMock.mockResolvedValueOnce(
+    mockActionResponse(
       jsonResponse({ status: false, error: "Enable Background Repairs is off" }, 409),
     );
     renderHealth();
@@ -201,7 +209,7 @@ describe("Health action-needed re-check", () => {
   });
 
   it("shows a recoverable message when the request fails", async () => {
-    fetchMock.mockRejectedValueOnce(new TypeError("network unavailable"));
+    mockActionResponse(new TypeError("network unavailable"));
     renderHealth();
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Re-check action needed" }));

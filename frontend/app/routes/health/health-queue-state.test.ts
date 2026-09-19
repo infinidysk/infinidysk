@@ -153,10 +153,7 @@ describe("mergeHealthCheckQueue", () => {
 describe("mergeActiveHealthCheckItems", () => {
   it("adds active workers and clears stale progress without changing the queue count", () => {
     const current: HealthQueueState = {
-      items: [
-        { ...queueItem("finished", null), progress: 100 },
-        queueItem("waiting", null),
-      ],
+      items: [{ ...queueItem("finished", null), progress: 100 }, queueItem("waiting", null)],
       uncheckedCount: 7,
     };
     const active = { ...queueItem("active", null), progress: 0 };
