@@ -4,6 +4,93 @@ import { Pagination } from "~/components/pagination/pagination";
 import { Truncate } from "~/components/truncate/truncate";
 import { withUrlBase } from "~/utils/url-base";
 
+const SEARCH_FILENAME_SUFFIXES = [
+  ".nzb.gz",
+  ".nzb",
+  ".webm",
+  ".m4v",
+  ".3gp",
+  ".nsv",
+  ".ty",
+  ".strm",
+  ".rm",
+  ".rmvb",
+  ".m3u",
+  ".ifo",
+  ".mov",
+  ".qt",
+  ".divx",
+  ".xvid",
+  ".bivx",
+  ".nrg",
+  ".pva",
+  ".wmv",
+  ".asf",
+  ".asx",
+  ".ogm",
+  ".ogv",
+  ".m2v",
+  ".avi",
+  ".bin",
+  ".dat",
+  ".dvr-ms",
+  ".mpg",
+  ".mpeg",
+  ".mp4",
+  ".avc",
+  ".vp3",
+  ".svq3",
+  ".nuv",
+  ".viv",
+  ".dv",
+  ".fli",
+  ".flv",
+  ".wpl",
+  ".img",
+  ".iso",
+  ".vob",
+  ".mkv",
+  ".mk3d",
+  ".ts",
+  ".wtv",
+  ".m2ts",
+  ".mp3",
+  ".flac",
+  ".aac",
+  ".ogg",
+  ".opus",
+  ".wav",
+  ".wma",
+  ".m4a",
+  ".alac",
+  ".ape",
+  ".wv",
+  ".dsd",
+  ".dsf",
+  ".dff",
+  ".mka",
+  ".m4b",
+  ".ac3",
+  ".eac3",
+  ".dts",
+  ".aiff",
+  ".aif",
+  ".rar",
+  ".7z",
+] as const;
+
+function stripSearchFilenameSuffix(value: string): string {
+  const lowerValue = value.toLowerCase();
+  const volumeSuffix = /(?:\.part\d+\.rar|\.r\d+|\.7z\.\d+)$/i;
+  const suffix = SEARCH_FILENAME_SUFFIXES.find((candidate) => lowerValue.endsWith(candidate));
+
+  if (volumeSuffix.test(value)) {
+    return value.replace(volumeSuffix, "");
+  }
+
+  return suffix ? value.slice(0, -suffix.length) : value;
+}
+
 export type HealthHistoryFilter = "all" | "deleted" | "repaired" | "degraded";
 
 export type HealthHistoryTableProps = {
@@ -257,7 +344,7 @@ function HistoryRow({
           <a
             className="btn btn-outline btn-sm"
             href={withUrlBase(
-              `/search?${new URLSearchParams({ q: (item.jobName || item.nzbFileName || basename(item.path)).replace(/\.(?:nzb|mkv|mp4|avi|mov|m4v|wmv|webm|mpg|mpeg|ts|m2ts|strm|mp3|flac|m4a|aac|ogg|wav)$/i, "") })}`,
+              `/search?${new URLSearchParams({ q: stripSearchFilenameSuffix(item.jobName || item.nzbFileName || basename(item.path)) })}`,
             )}
             aria-label={`Search for ${title}`}
             title="Search configured indexers; does not request an Arr import"

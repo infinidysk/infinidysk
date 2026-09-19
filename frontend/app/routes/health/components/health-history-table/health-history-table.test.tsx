@@ -144,6 +144,36 @@ describe("HealthHistoryTable", () => {
       query: "Example.Release",
     },
     {
+      jobName: "Example.Release.MK3D",
+      nzbFileName: null,
+      path: "/content/other.mkv",
+      query: "Example.Release",
+    },
+    {
+      jobName: "Example.Release.OPUS",
+      nzbFileName: null,
+      path: "/content/other.mkv",
+      query: "Example.Release",
+    },
+    {
+      jobName: "Example.Release.part01.RAR",
+      nzbFileName: null,
+      path: "/content/other.mkv",
+      query: "Example.Release",
+    },
+    {
+      jobName: "Example.Release.7z.001",
+      nzbFileName: null,
+      path: "/content/other.mkv",
+      query: "Example.Release",
+    },
+    {
+      jobName: null,
+      nzbFileName: "Example.Release.NZB.GZ",
+      path: "/content/other.mkv",
+      query: "Example.Release",
+    },
+    {
       jobName: null,
       nzbFileName: null,
       path: "/content/Example & More.mp4",
