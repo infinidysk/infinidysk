@@ -1,5 +1,7 @@
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Exceptions;
+using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
 using UsenetSharp.Models;
@@ -174,6 +176,74 @@ public class MultiSegmentStreamCapacityHintTests
         await stream.CopyToAsync(output);
         Assert.Equal(bytes, output.ToArray());
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Drain_RejectsMismatchedExpectedFirstSegmentGeometryBeforeReading(
+        bool usePipelinedBodyRequests)
+    {
+        var bytes = Enumerable.Repeat((byte)7, 5).ToArray();
+        var client = new FakeNntpClient(
+            new Dictionary<string, byte[]> { ["seg-0"] = bytes },
+            useCachedYencStreams: true,
+            segmentRanges: new Dictionary<string, LongRange> { ["seg-0"] = new(4, 9) });
+
+        await using var stream = MultiSegmentStream.Create(
+            new[] { "seg-0" }.AsMemory(),
+            client,
+            articleBufferSize: 1,
+            estimatedSegmentSize: bytes.Length,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests,
+            CancellationToken.None,
+            fileName: "geometry.bin",
+            expectedFirstSegmentRange: new LongRange(5, 10));
+
+        await Assert.ThrowsAsync<SeekPositionNotFoundException>(
+            async () => await stream.ReadAsync(new byte[1]));
+    }
+
+    [Fact]
+    public async Task Drain_AcceptsExpectedFirstSegmentGeometryClippedAtFileEnd()
+    {
+        var bytes = Enumerable.Repeat((byte)7, 6).ToArray();
+        var client = new FakeNntpClient(
+            new Dictionary<string, byte[]> { ["seg-0"] = bytes },
+            useCachedYencStreams: true,
+            segmentRanges: new Dictionary<string, LongRange> { ["seg-0"] = new(5, 11) });
+
+        await using var stream = MultiSegmentStream.Create(
+            new[] { "seg-0" }.AsMemory(),
+            client,
+            articleBufferSize: 1,
+            estimatedSegmentSize: bytes.Length,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: false,
+            CancellationToken.None,
+            fileName: "geometry.bin",
+            expectedFirstSegmentRange: new LongRange(5, 10),
+            expectedFirstSegmentRangeWasClippedAtFileEnd: true);
+
+        Assert.Equal(1, await stream.ReadAsync(new byte[1]));
+    }
+
+    [Fact]
+    public void Create_RejectsClippedFlagWithoutExpectedFirstSegmentRange()
+    {
+        var client = new FakeNntpClient(new Dictionary<string, byte[]> { ["seg-0"] = [1] });
+
+        Assert.Throws<ArgumentException>(() => MultiSegmentStream.Create(
+            new[] { "seg-0" }.AsMemory(),
+            client,
+            articleBufferSize: 1,
+            estimatedSegmentSize: 1,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: false,
+            CancellationToken.None,
+            expectedFirstSegmentRangeWasClippedAtFileEnd: true));
+    }
+
 }
 
 /// <summary>
