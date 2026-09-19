@@ -710,6 +710,11 @@ public class ExceptionMiddleware(
                 var urgent = DateTimeOffset.UnixEpoch;
                 if (item.NextHealthCheck == urgent)
                 {
+                    if (item.UrgentRepairFailures is null || item.UrgentRepairFailures < failureCount)
+                    {
+                        item.UrgentRepairFailures = failureCount;
+                        await dbContext.SaveChangesAsync().ConfigureAwait(false);
+                    }
                     RecentRepairTriggers.TryUpdate(
                         davItemId,
                         reservation with { Committed = true },
@@ -718,10 +723,13 @@ public class ExceptionMiddleware(
                 }
 
                 item.NextHealthCheck = urgent;
+                item.UrgentRepairFailures = failureCount;
                 await dbContext.SaveChangesAsync().ConfigureAwait(false);
                 RecentRepairTriggers.TryUpdate(
                     davItemId, reservation with { Committed = true }, reservation);
-                Log.Information("Scheduled dynamic repair for {FilePath}", item.Path);
+                Log.Information(
+                    "Scheduled dynamic repair for {FilePath} (streaming failures {FailureCount}/{FailureThreshold})",
+                    item.Path, failureCount, threshold);
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {

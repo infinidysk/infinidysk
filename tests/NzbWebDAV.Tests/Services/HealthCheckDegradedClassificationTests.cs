@@ -9,6 +9,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
+using NzbWebDAV.Config.Scheduling;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.MigrationHelpers;
@@ -24,6 +25,7 @@ using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Tests.Clients.Usenet;
 using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Tests.Fakes;
+using NzbWebDAV.Tests.TestUtils;
 using NzbWebDAV.Websocket;
 using Serilog;
 using Serilog.Core;
@@ -110,6 +112,138 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             new QueueItemSourceTracker(),
             new BenchmarkGate(),
             healthCheckConnectionGate: _healthCheckConnectionGate);
+    }
+
+    [Fact]
+    public async Task UrgentRepair_AfterRestart_PersistedQualificationIsHonoured()
+    {
+        ConfigureAutoRemove(threshold: 3, unlinkedOnly: true);
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync("movie.mkv", segments, [10_000, 10_000, 10_000]);
+        item = await MakeUrgentAsync(item, qualifyingFailures: 3);
+        Assert.Equal(0, _failureTracker.GetFailureCount(item.Id));
+        var (service, _) = await NewServiceAsync(NewFakeClient(segments, missing: []), par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.DoesNotContain("Streaming failure count: 0/3", row.Message, StringComparison.Ordinal);
+        Assert.Equal(HealthCheckResult.RepairAction.Deleted, row.RepairStatus);
+        Assert.Throws<InvalidOperationException>(() => ReloadItem(item.Id));
+    }
+
+    [Fact]
+    public async Task UrgentRepair_ThresholdRaisedAfterScheduling_DefersAndClearsQualification()
+    {
+        ConfigureAutoRemove(threshold: 3, unlinkedOnly: true);
+        var segments = NewSegmentIds(3);
+        var (item, blobId) = await AddVideoFileAsync("movie.mkv", segments, [10_000, 10_000, 10_000]);
+        item = await MakeUrgentAsync(item, qualifyingFailures: 1);
+        var (service, _) = await NewServiceAsync(NewFakeClient(segments, missing: []), par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+        Assert.Contains("Streaming failure count: 1/3", row.Message, StringComparison.Ordinal);
+        var reloaded = ReloadItem(item.Id);
+        Assert.NotNull(reloaded);
+        Assert.NotEqual(DateTimeOffset.UnixEpoch, reloaded.NextHealthCheck);
+        Assert.Null(reloaded.UrgentRepairFailures);
+        Assert.Equal(blobId, reloaded.FileBlobId);
+    }
+
+    [Fact]
+    public async Task UrgentRepair_ThresholdLoweredAfterScheduling_Proceeds()
+    {
+        ConfigureAutoRemove(threshold: 2, unlinkedOnly: true);
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync("movie.mkv", segments, [10_000, 10_000, 10_000]);
+        item = await MakeUrgentAsync(item, qualifyingFailures: 3);
+        var (service, _) = await NewServiceAsync(NewFakeClient(segments, missing: []), par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        Assert.Equal(HealthCheckResult.RepairAction.Deleted, Assert.Single(GetHealthRows(item.Id)).RepairStatus);
+    }
+
+    [Fact]
+    public async Task UrgentRepair_LiveCountBelowThresholdWithoutPersistedQualification_StillDefers()
+    {
+        ConfigureAutoRemove(threshold: 3, unlinkedOnly: true);
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync("movie.mkv", segments, [10_000, 10_000, 10_000]);
+        item = await MakeUrgentAsync(item, qualifyingFailures: null);
+        _failureTracker.RecordUnattributedFailure(item.Id);
+        var (service, _) = await NewServiceAsync(NewFakeClient(segments, missing: []), par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+        Assert.Contains("1/3", row.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task UrgentRepair_Par2VerifiedClean_ClearsQualification()
+    {
+        ConfigureAutoRemove(threshold: 3, unlinkedOnly: true);
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync("movie.mkv", segments, [10_000, 10_000, 10_000]);
+        item = await MakeUrgentAsync(item, qualifyingFailures: 3);
+        var (service, _) = await NewServiceAsync(
+            NewFakeClient(segments, missing: []), Par2RepairOutcome.VerifiedClean);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        Assert.Equal(HealthCheckResult.HealthResult.Healthy, Assert.Single(GetHealthRows(item.Id)).Result);
+        Assert.Null(ReloadItem(item.Id).UrgentRepairFailures);
+    }
+
+    [Fact]
+    public async Task UrgentRepair_RepairWindowClosed_KeepsQualification()
+    {
+        ConfigureAutoRemove(threshold: 3, unlinkedOnly: true);
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync("movie.mkv", segments, [10_000, 10_000, 10_000]);
+        item = await MakeUrgentAsync(item, qualifyingFailures: 3);
+        var now = new DateTimeOffset(2026, 9, 16, 12, 0, 0, TimeSpan.Zero);
+        var localNow = TimeZoneInfo.ConvertTime(now, TimeZoneInfo.Local);
+        var closedDay = ((int)localNow.DayOfWeek + 1) % 7;
+        _configManager.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.RepairActionSchedule,
+                ConfigValue = JsonSerializer.Serialize(new WeeklyWindowSchedule
+                {
+                    Enabled = true,
+                    Windows =
+                    [
+                        new WeeklyWindow
+                        {
+                            Days = [closedDay],
+                            StartMinute = 0,
+                            EndMinute = 1,
+                        },
+                    ],
+                }),
+            },
+        ]);
+        var timeProvider = new ControllableTimeProvider(now);
+        var schedule = new HealthWorkSchedulePolicy(_configManager);
+        Assert.False(schedule.Evaluate(now).RepairsOpen);
+        var (service, _) = await NewServiceAsync(
+            NewFakeClient(segments, missing: []),
+            Par2RepairOutcome.NotRepaired,
+            timeProvider,
+            schedule);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var reloaded = ReloadItem(item.Id);
+        Assert.Equal(DateTimeOffset.UnixEpoch, reloaded.NextHealthCheck);
+        Assert.Equal(3, reloaded.UrgentRepairFailures);
     }
 
     [Fact]
@@ -1592,9 +1726,37 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         }
     }
 
+    private void ConfigureAutoRemove(int threshold, bool unlinkedOnly)
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.RepairAutoRemoveAfterFailures,
+                ConfigValue = threshold.ToString(),
+            },
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.RepairAutoRemoveUnlinkedOnly,
+                ConfigValue = unlinkedOnly ? "true" : "false",
+            },
+        ]);
+    }
+
+    private async Task<DavItem> MakeUrgentAsync(DavItem item, int? qualifyingFailures)
+    {
+        var tracked = await _context.Items.SingleAsync(x => x.Id == item.Id);
+        tracked.NextHealthCheck = DateTimeOffset.UnixEpoch;
+        tracked.UrgentRepairFailures = qualifyingFailures;
+        await _context.SaveChangesAsync();
+        return tracked;
+    }
+
     private async Task<(HealthCheckService Service, ScriptedPar2RepairService Par2)> NewServiceAsync(
         INntpClient fake,
-        Par2RepairOutcome par2Outcome)
+        Par2RepairOutcome par2Outcome,
+        TimeProvider? timeProvider = null,
+        HealthWorkSchedulePolicy? healthWorkSchedule = null)
     {
         await _usenet.ReplaceUnderlyingClientForTestsAsync(fake);
         var par2 = new ScriptedPar2RepairService(_configManager, _patchStore, par2Outcome);
@@ -1608,7 +1770,9 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             par2,
             _patchStore,
             new ArrReplacementSearchBudget(),
-            _healthCheckConnectionGate);
+            _healthCheckConnectionGate,
+            timeProvider: timeProvider,
+            healthWorkSchedule: healthWorkSchedule);
         return (service, par2);
     }
 
