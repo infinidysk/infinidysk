@@ -234,7 +234,16 @@ export function SupportSettings() {
     <SettingsPage>
       <SettingsIntro>
         Generate a technical support pack to help diagnose an InfiniDysk problem. It is generated in
-        memory and is not saved on the server.
+        memory and is not saved on the server.{" "}
+        <a
+          href="https://discord.gg/DAya7W6QMa"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="link link-primary inline-flex items-center gap-1"
+        >
+          Join our Discord
+          <Icon name="open_in_new" className="!text-[14px]" />
+        </a>
       </SettingsIntro>
 
       <Alert variant="warning" className="items-start text-sm">

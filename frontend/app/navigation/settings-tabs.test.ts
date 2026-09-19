@@ -57,4 +57,11 @@ describe("settings tabs", () => {
       label: "Arr Apps",
     });
   });
+
+  it("keeps the migration navigation label concise", () => {
+    expect(getSettingsTabItem("migration")).toMatchObject({
+      id: "migration",
+      label: "Migration",
+    });
+  });
 });

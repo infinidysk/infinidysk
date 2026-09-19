@@ -39,7 +39,7 @@ export const SETTINGS_TAB_GROUPS: SettingsTabGroup[] = [
       { id: "maintenance", label: "Maintenance", icon: "settings_suggest" },
       { id: "backup", label: "Backup & Restore", icon: "settings_backup_restore" },
       { id: "support", label: "Support", icon: "support_agent" },
-      { id: "migration", label: "Migration (experimental)", icon: "moving" },
+      { id: "migration", label: "Migration", icon: "moving" },
     ],
   },
   {
