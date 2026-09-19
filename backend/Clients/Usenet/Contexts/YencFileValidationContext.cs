@@ -48,6 +48,24 @@ internal sealed class YencFileValidationContext : IDisposable
         || (header.HasTotalParts == false && header.TotalParts == 0)
         || header.TotalParts == expectedTotalParts;
 
+    public static bool MatchesExpectedFile(UsenetYencHeader header, string requestedId) =>
+        MatchesExpectedFile(header) || (Current?.MatchesRequestedPosition(header, requestedId) ?? false);
+
+    // Some obfuscated uploads put random numbers in the yEnc total= field, so the total alone
+    // can't tell a decoy from a wrong article. The part number and byte offset can: a wrong
+    // article points at a different position, a decoy points at the one we asked for.
+    private bool MatchesRequestedPosition(UsenetYencHeader header, string requestedId)
+    {
+        var (_, position, _) = GetRequestDetails(requestedId);
+        if (position is not { } requestedPosition || header.PartNumber != requestedPosition)
+            return false;
+
+        if (requestedPosition == ExpectedTotalParts)
+            return true;
+
+        return header.PartSize > 0 && header.PartOffset == (long)(requestedPosition - 1) * header.PartSize;
+    }
+
     public static IDisposable Begin(int expectedTotalParts) =>
         new YencFileValidationContext(expectedTotalParts);
 

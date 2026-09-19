@@ -1386,7 +1386,7 @@ public class MultiProviderNntpClient(
             throw;
         }
 
-        if (header is null || YencFileValidationContext.MatchesExpectedFile(header))
+        if (header is null || YencFileValidationContext.MatchesExpectedFile(header, segmentId.ToString()))
             return;
 
         YencFileValidationContext.Current?.ReportMismatch(

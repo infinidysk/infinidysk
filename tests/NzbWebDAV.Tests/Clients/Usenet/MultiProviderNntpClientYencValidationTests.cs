@@ -154,6 +154,38 @@ public sealed class MultiProviderNntpClientYencValidationTests
     }
 
     [Theory]
+    // Decoy total, but the part number and byte offset match the requested segment: accept.
+    [InlineData("second", 2, 3, true)]
+    [InlineData("third", 3, 6, true)]
+    // Last segment may be shorter, so only the part number is checked there.
+    [InlineData("third", 3, 100, true)]
+    // Wrong part number for the requested position: reject.
+    [InlineData("second", 1, 0, false)]
+    [InlineData("second", 3, 6, false)]
+    // Right part number but the byte offset belongs to another file layout: reject.
+    [InlineData("second", 2, 4, false)]
+    // Unknown segment id, so no position to compare against: reject.
+    [InlineData("unknown", 2, 3, false)]
+    public void MatchesExpectedFile_DecoyTotalIsAcceptedWhenPartAndOffsetMatchTheRequest(
+        string requestedId, int partNumber, long partOffset, bool expected)
+    {
+        using var validation = YencFileValidationContext.BeginStreaming(["first", "second", "third"], null);
+        var header = CreateHeader(partNumber, totalParts: 931) with { PartOffset = partOffset };
+
+        Assert.False(YencFileValidationContext.MatchesExpectedFile(header));
+        Assert.Equal(expected, YencFileValidationContext.MatchesExpectedFile(header, requestedId));
+    }
+
+    [Fact]
+    public void MatchesExpectedFile_WithRequestedId_StillAcceptsMatchingTotal()
+    {
+        using var validation = YencFileValidationContext.Begin(3);
+        var header = CreateHeader(partNumber: 7, totalParts: 3);
+
+        Assert.True(YencFileValidationContext.MatchesExpectedFile(header, "unknown"));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task OmittedTotal_SizeProbeAndStreaming_UsePrimaryProvider(bool pipelined)
