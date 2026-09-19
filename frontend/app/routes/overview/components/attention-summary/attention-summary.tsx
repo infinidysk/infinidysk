@@ -6,6 +6,8 @@ import { Icon } from "~/components/ui";
 import { settingsPath } from "~/navigation/settings-tabs";
 import { withUrlBase } from "~/utils/url-base";
 
+const HEALTH_CHECK_TIMEOUT_MS = 5_000;
+
 export function AttentionSummary({
   providers,
   arrHealth,
@@ -24,12 +26,16 @@ export function AttentionSummary({
     const refresh = async () => {
       if (pending || document.hidden) return;
       pending = true;
+      const requestController = new AbortController();
+      const abortRequest = () => requestController.abort();
+      const timeout = setTimeout(abortRequest, HEALTH_CHECK_TIMEOUT_MS);
+      controller.signal.addEventListener("abort", abortRequest, { once: true });
       try {
         const response = await fetch(
           withUrlBase(
             `${adminApi.getHealthCheckHistory}?page=1&pageSize=1&currentActionNeeded=true`,
           ),
-          { signal: controller.signal },
+          { signal: requestController.signal },
         );
         if (!response.ok) throw new Error("Health status unavailable");
         const data = (await response.json()) as { totalCount?: number };
@@ -49,6 +55,8 @@ export function AttentionSummary({
           setHealthError(true);
         }
       } finally {
+        clearTimeout(timeout);
+        controller.signal.removeEventListener("abort", abortRequest);
         pending = false;
       }
     };
