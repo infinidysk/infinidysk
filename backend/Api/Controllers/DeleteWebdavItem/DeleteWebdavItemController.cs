@@ -22,7 +22,8 @@ public class DeleteWebdavItemController(
 {
     protected override async Task<IActionResult> HandleRequest()
     {
-        if (configManager.IsEnforceReadonlyWebdavEnabled())
+        var healthCheckResultId = HttpContext.Request.Form["healthCheckResultId"].FirstOrDefault();
+        if (configManager.IsEnforceReadonlyWebdavEnabled() && healthCheckResultId is null)
             return StatusCode(403, new BaseApiResponse
             {
                 Status = false,
@@ -36,6 +37,15 @@ public class DeleteWebdavItemController(
         var item = await DeleteWebdavItemSupport.ResolvePathAsync(dbClient, path, ct)
             .ConfigureAwait(false);
         if (item is null) return NotFound(new BaseApiResponse { Status = false, Error = "Item not found." });
+
+        if (healthCheckResultId is not null &&
+            !await DeleteWebdavItemSupport.IsCurrentAttentionFileAsync(dbClient, item, healthCheckResultId, ct)
+                .ConfigureAwait(false))
+            return Conflict(new BaseApiResponse
+            {
+                Status = false,
+                Error = "This file no longer matches the selected needs-attention result. Refresh Health before trying again."
+            });
 
         var rootError = DeleteWebdavItemSupport.ValidateDeletableRoot(item.Path);
         if (rootError is not null)

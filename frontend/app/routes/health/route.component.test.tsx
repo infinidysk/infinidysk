@@ -180,7 +180,9 @@ describe("Health action-needed re-check", () => {
       expect(screen.getByRole("button", { name: "Remove" })).toHaveProperty("disabled", false),
     );
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/delete-webdav-item-preview?path=%2Fcontent%2Fexample+%26+file.mkv",
+      expect.stringMatching(
+        /^\/api\/delete-webdav-item-preview\?path=%2Fcontent%2Fexample\+%26\+file.mkv&healthCheckResultId=.+$/,
+      ),
       expect.objectContaining({ signal: expect.any(AbortSignal) as unknown }),
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -188,6 +190,10 @@ describe("Health action-needed re-check", () => {
     const [, options] = fetchMock.mock.calls[1] as [string, { method: string; body: FormData }];
     expect(options.method).toBe("POST");
     expect(options.body.get("path")).toBe("/content/example & file.mkv");
+    const previewUrl = new URL(String(fetchMock.mock.calls[0]?.[0]), "http://localhost");
+    expect(options.body.get("healthCheckResultId")).toBe(
+      previewUrl.searchParams.get("healthCheckResultId"),
+    );
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(revalidateMock).toHaveBeenCalledOnce();
     expect(screen.getByRole("status").textContent).toContain("No replacement search was requested");
