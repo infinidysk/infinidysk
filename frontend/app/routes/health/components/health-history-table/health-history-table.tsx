@@ -2,94 +2,6 @@ import type { HealthCheckResult } from "~/clients/backend-client.server";
 import { Badge, Button, Icon, RadioJoinFilter } from "~/components/ui";
 import { Pagination } from "~/components/pagination/pagination";
 import { Truncate } from "~/components/truncate/truncate";
-import { withUrlBase } from "~/utils/url-base";
-
-const SEARCH_FILENAME_SUFFIXES = [
-  ".nzb.gz",
-  ".nzb",
-  ".webm",
-  ".m4v",
-  ".3gp",
-  ".nsv",
-  ".ty",
-  ".strm",
-  ".rm",
-  ".rmvb",
-  ".m3u",
-  ".ifo",
-  ".mov",
-  ".qt",
-  ".divx",
-  ".xvid",
-  ".bivx",
-  ".nrg",
-  ".pva",
-  ".wmv",
-  ".asf",
-  ".asx",
-  ".ogm",
-  ".ogv",
-  ".m2v",
-  ".avi",
-  ".bin",
-  ".dat",
-  ".dvr-ms",
-  ".mpg",
-  ".mpeg",
-  ".mp4",
-  ".avc",
-  ".vp3",
-  ".svq3",
-  ".nuv",
-  ".viv",
-  ".dv",
-  ".fli",
-  ".flv",
-  ".wpl",
-  ".img",
-  ".iso",
-  ".vob",
-  ".mkv",
-  ".mk3d",
-  ".ts",
-  ".wtv",
-  ".m2ts",
-  ".mp3",
-  ".flac",
-  ".aac",
-  ".ogg",
-  ".opus",
-  ".wav",
-  ".wma",
-  ".m4a",
-  ".alac",
-  ".ape",
-  ".wv",
-  ".dsd",
-  ".dsf",
-  ".dff",
-  ".mka",
-  ".m4b",
-  ".ac3",
-  ".eac3",
-  ".dts",
-  ".aiff",
-  ".aif",
-  ".rar",
-  ".7z",
-] as const;
-
-function stripSearchFilenameSuffix(value: string): string {
-  const lowerValue = value.toLowerCase();
-  const volumeSuffix = /(?:\.part\d+\.rar|\.r\d+|\.7z\.\d+)$/i;
-  const suffix = SEARCH_FILENAME_SUFFIXES.find((candidate) => lowerValue.endsWith(candidate));
-
-  if (volumeSuffix.test(value)) {
-    return value.replace(volumeSuffix, "");
-  }
-
-  return suffix ? value.slice(0, -suffix.length) : value;
-}
 
 export type HealthHistoryFilter = "all" | "deleted" | "repaired" | "degraded";
 
@@ -324,6 +236,14 @@ function HistoryRow({
 }) {
   const title = item.nzbFileName ?? basename(item.path);
   const timestamp = formatTimestamp(item.createdAt);
+  const libraryLinkBadge = combineStatusReason &&
+    item.message?.includes(
+      "No corresponding imported symlink or .strm file was found in Library Directory.",
+    ) && (
+      <Badge className="badge-sm border-orange-400 bg-orange-400 text-black">
+        Not library linked
+      </Badge>
+    );
   const requeueButton = onRequeue && (
     <Button
       variant="outline"
@@ -340,29 +260,16 @@ function HistoryRow({
     <div className="flex flex-wrap gap-2">
       {requeueButton}
       {onDelete && (
-        <>
-          <a
-            className="btn btn-outline btn-sm"
-            href={withUrlBase(
-              `/search?${new URLSearchParams({ q: stripSearchFilenameSuffix(item.jobName || item.nzbFileName || basename(item.path)) })}`,
-            )}
-            aria-label={`Search for ${title}`}
-            title="Search configured indexers; does not request an Arr import"
-          >
-            <Icon name="search" />
-            Search
-          </a>
-          <Button
-            variant="outline"
-            size="small"
-            onClick={onDelete}
-            disabled={requeueing}
-            aria-label={`Remove ${title}`}
-          >
-            <Icon name="delete" />
-            Remove
-          </Button>
-        </>
+        <Button
+          variant="outline"
+          size="small"
+          onClick={onDelete}
+          disabled={requeueing}
+          aria-label={`Remove ${title}`}
+        >
+          <Icon name="delete" />
+          Remove
+        </Button>
       )}
     </div>
   );
@@ -384,6 +291,7 @@ function HistoryRow({
           </div>
           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 min-[900px]:hidden">
             <StatusBadge item={item} />
+            {libraryLinkBadge}
             <MetaChip label="When" value={timestamp.relative} title={timestamp.absolute} />
             {item.message && <MetaChip label="Reason" value={item.message} title={item.message} />}
           </div>
@@ -397,8 +305,9 @@ function HistoryRow({
       )}
       <td className={desktopCellClass}>
         {combineStatusReason && (
-          <div className="mb-2">
+          <div className="mb-2 flex flex-wrap gap-2">
             <StatusBadge item={item} />
+            {libraryLinkBadge}
           </div>
         )}
         <div className="line-clamp-3 leading-snug" title={item.message ?? undefined}>

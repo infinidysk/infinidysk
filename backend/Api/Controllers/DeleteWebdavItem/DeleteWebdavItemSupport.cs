@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue;
@@ -6,6 +7,27 @@ namespace NzbWebDAV.Api.Controllers.DeleteWebdavItem;
 
 internal static class DeleteWebdavItemSupport
 {
+    public static Task<bool> IsCurrentAttentionFileAsync(
+        DavDatabaseClient dbClient,
+        DavItem item,
+        string healthCheckResultId,
+        CancellationToken cancellationToken)
+    {
+        if (item.Type != DavItem.ItemType.UsenetFile ||
+            !Guid.TryParse(healthCheckResultId, out var resultId))
+            return Task.FromResult(false);
+
+        return dbClient.Ctx.HealthCheckResults.AnyAsync(result =>
+            result.Id == resultId && result.DavItemId == item.Id &&
+            result.RepairStatus == HealthCheckResult.RepairAction.ActionNeeded &&
+            !dbClient.Ctx.HealthCheckResults.Any(newer =>
+                newer.DavItemId == item.Id &&
+                (newer.CreatedAt > result.CreatedAt ||
+                 (newer.CreatedAt == result.CreatedAt &&
+                  newer.RepairStatus != HealthCheckResult.RepairAction.ActionNeeded))),
+            cancellationToken);
+    }
+
     /// <summary>
     /// Resolves a WebDAV item from an Explore/API path. Literal names are tried first so
     /// files that actually contain <c>%2C</c> (or other percent sequences) are found;

@@ -1043,9 +1043,9 @@ public class StreamingTimeoutTests
                 {
                     using var connection = await borrower.WaitAsync(safetyTimeout);
                 }
-                catch (ConnectionOpenTimeoutException)
+                catch (ConnectionOpenTimeoutException ex)
                 {
-                    Debug.WriteLine("Connection cleanup timed out while awaiting a borrower.");
+                    Debug.WriteLine($"Streaming timeout cleanup timed out while awaiting a borrower: {ex}");
                 }
             }
         }
@@ -1102,9 +1102,9 @@ public class StreamingTimeoutTests
                 {
                     using var connection = await queued.WaitAsync(safetyTimeout);
                 }
-                catch (ConnectionOpenTimeoutException)
+                catch (ConnectionOpenTimeoutException ex)
                 {
-                    // The late factory is intentionally allowed to finish during teardown.
+                    Debug.WriteLine($"Connection pool cleanup timed out while awaiting the queued borrower: {ex}");
                 }
             }
         }
@@ -1168,9 +1168,9 @@ public class StreamingTimeoutTests
                 {
                     using var connection = await holder.WaitAsync(safetyTimeout);
                 }
-                catch (OperationCanceledException) when (caller.IsCancellationRequested)
+                catch (OperationCanceledException ex) when (caller.IsCancellationRequested)
                 {
-                    Debug.WriteLine("Expected caller cancellation while cleaning up a holder.");
+                    Debug.WriteLine($"Connection holder cleanup was cancelled by the caller: {ex}");
                 }
             }
             if (queued is not null)
@@ -1179,9 +1179,9 @@ public class StreamingTimeoutTests
                 {
                     using var connection = await queued.WaitAsync(safetyTimeout);
                 }
-                catch (OperationCanceledException) when (caller.IsCancellationRequested)
+                catch (OperationCanceledException ex) when (caller.IsCancellationRequested)
                 {
-                    Debug.WriteLine("Expected caller cancellation while cleaning up the queued borrower.");
+                    Debug.WriteLine($"Queued connection cleanup was cancelled by the caller: {ex}");
                 }
             }
         }

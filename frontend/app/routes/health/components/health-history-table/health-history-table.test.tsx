@@ -63,6 +63,34 @@ function attentionTable(
 afterEach(cleanup);
 
 describe("HealthHistoryTable", () => {
+  it.each([
+    [
+      "File failed health validation. No corresponding imported symlink or .strm file was found in Library Directory. ",
+      2,
+    ],
+    ["Streaming payload missing.", 0],
+    [null, 0],
+  ])("flags missing library links for desktop and mobile: %s", (message, count) => {
+    const item: HealthCheckResult = {
+      id: "result-1",
+      davItemId: "file-1",
+      path: "/content/example.mkv",
+      nzbFileName: null,
+      jobName: null,
+      createdAt: "2026-09-18T00:00:00Z",
+      result: 1,
+      repairStatus: 3,
+      message,
+    };
+    const { unmount } = renderDom(attentionTable({ items: [item] }));
+    const badges = screen.queryAllByText("Not library linked");
+    expect(badges).toHaveLength(count);
+    for (const badge of badges) expect(badge.className).toContain("bg-orange-400");
+    unmount();
+    renderDom(table([item]));
+    expect(screen.queryByText("Not library linked")).toBeNull();
+  });
+
   it("combines status and reason only in the attention table", () => {
     const item: HealthCheckResult = {
       id: "result-1",
@@ -96,7 +124,7 @@ describe("HealthHistoryTable", () => {
     expect(screen.getAllByRole("cell")).toHaveLength(4);
   });
 
-  it("offers search and deletion independently of background re-checks", async () => {
+  it("offers deletion without search independently of background re-checks", async () => {
     const item: HealthCheckResult = {
       id: "result-1",
       davItemId: "file-1",
@@ -110,9 +138,7 @@ describe("HealthHistoryTable", () => {
     };
     const onDelete = vi.fn();
     const { unmount } = renderDom(attentionTable({ items: [item], onDelete }));
-    expect(
-      screen.getAllByRole("link", { name: "Search for Example & More.nzb" })[0],
-    ).toHaveProperty("href", expect.stringContaining("/search?q=Example+%26+More"));
+    expect(screen.queryByRole("link")).toBeNull();
     await userEvent
       .setup()
       .click(screen.getAllByRole("button", { name: "Remove Example & More.nzb" })[0]!);
@@ -186,7 +212,7 @@ describe("HealthHistoryTable", () => {
       query: "Example.Release.1080p",
     },
     { jobName: "Example", nzbFileName: null, path: "/content/other.mkv", query: "Example" },
-  ])("prefills Search without a media or NZB extension: %j", ({ query, ...identity }) => {
+  ])("does not offer Search for any filename: %j", ({ jobName, nzbFileName, path }) => {
     renderDom(
       attentionTable({
         items: [
@@ -197,16 +223,15 @@ describe("HealthHistoryTable", () => {
             result: 1,
             repairStatus: 3,
             message: "Missing link",
-            ...identity,
+            jobName,
+            nzbFileName,
+            path,
           },
         ],
         onDelete: vi.fn(),
       }),
     );
-    const link = screen.getAllByRole("link", { name: /^Search for / })[0] as HTMLAnchorElement;
-    expect(link.textContent).toContain("Search");
-    expect(link.textContent).not.toContain("Search indexers");
-    expect(new URL(link.href).searchParams.get("q")).toBe(query);
+    expect(screen.queryByRole("link")).toBeNull();
   });
 
   it("shows the snapped NZB identity and deleted disposition", () => {
