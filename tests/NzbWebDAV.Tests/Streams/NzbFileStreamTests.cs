@@ -547,6 +547,29 @@ public class NzbFileStreamTests
     }
 
     [Fact]
+    public async Task LegacySeek_CorruptTargetProbe_UsesFallbackIdGeometry()
+    {
+        var (segments, ranges) = NonUniformGeometry();
+        segments["two-alt"] = segments["two"];
+        ranges["two-alt"] = ranges["two"];
+        var client = new FakeNntpClient(
+            segments, useCachedYencStreams: true, segmentRanges: ranges,
+            headerProbeFailure: (id, _) => id == "two"
+                ? new UsenetCorruptArticleException(id, "provider-a", new InvalidDataException("invalid yEnc"))
+                : null);
+        await using var stream = new NzbFileStream(
+            SegmentIds, 12, client, articleBufferSize: 2, segmentByteRanges: null,
+            usePipelinedBodyRequests: false, fileName: "nonuniform.bin",
+            segmentFallbacks: [[], ["two-alt"], []], readBudgetOverride: 3);
+        stream.Seek(6, SeekOrigin.Begin);
+        var buffer = new byte[3];
+
+        var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false);
+
+        Assert.Equal("ghi", Encoding.ASCII.GetString(buffer, 0, read));
+    }
+
+    [Fact]
     public async Task LegacySeek_MissingTargetWithoutFallback_FailsWithMissingArticleCause()
     {
         var (segments, ranges) = NonUniformGeometry();
@@ -912,7 +935,7 @@ public class NzbFileStreamTests
     }
 
     [Fact]
-    public async Task Seek_WhenIndexedSegmentEndsBeforeOffset_ThrowsAndDisposesBodies()
+    public async Task Seek_WhenIndexedSegmentEndsBeforeOffset_PadsAndDisposesBodies()
     {
         string[] segmentIds = ["short"];
         var segments = new Dictionary<string, byte[]> { ["short"] = [1, 2, 3, 4, 5] };
@@ -938,13 +961,9 @@ public class NzbFileStreamTests
             fileName: "short.bin");
         stream.Seek(4, SeekOrigin.Begin);
 
-        var exception = await Assert.ThrowsAsync<SeekPositionNotFoundException>(
-            async () => await stream.ReadAtLeastAsync(
-                new byte[1], 1, throwOnEndOfStream: false));
-
-        Assert.Contains("Byte position 4", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("segment 1", exception.Message, StringComparison.Ordinal);
-        Assert.IsType<EndOfStreamException>(exception.InnerException);
+        var buffer = new byte[1];
+        Assert.Equal(1, await stream.ReadAtLeastAsync(buffer, 1, throwOnEndOfStream: false));
+        Assert.Equal(0, buffer[0]);
         Assert.NotEmpty(openedBodies);
         Assert.All(openedBodies, body => Assert.True(body.Disposed));
     }

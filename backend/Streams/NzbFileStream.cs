@@ -377,13 +377,35 @@ public class NzbFileStream(
         CancellationToken ct)
     {
         var header = await usenetClient.GetYencHeadersAsync(segmentId, ct).ConfigureAwait(false);
-        var range = new LongRange(header.PartOffset, header.PartOffset + header.PartSize);
+        if (header.PartOffset < 0 || header.PartSize <= 0)
+        {
+            throw new InvalidDataException(
+                $"Segment {index} reported invalid yEnc geometry {header.PartOffset}+{header.PartSize}.");
+        }
+
+        long endExclusive;
+        try
+        {
+            endExclusive = checked(header.PartOffset + header.PartSize);
+        }
+        catch (OverflowException e)
+        {
+            throw new InvalidDataException(
+                $"Segment {index} reported overflowing yEnc geometry {header.PartOffset}+{header.PartSize}.", e);
+        }
+
+        var range = new LongRange(header.PartOffset, endExclusive);
         var wasClippedAtFileEnd = false;
         if (index == fileSegmentIds.Length - 1 &&
             range.StartInclusive >= 0 && range.StartInclusive < fileSize && range.EndExclusive > fileSize)
         {
             range = new LongRange(range.StartInclusive, fileSize);
             wasClippedAtFileEnd = true;
+        }
+        else if (range.EndExclusive > fileSize)
+        {
+            throw new InvalidDataException(
+                $"Segment {index} reported yEnc geometry {range} outside file size {fileSize}.");
         }
         return (range, wasClippedAtFileEnd);
     }
@@ -408,7 +430,7 @@ public class NzbFileStream(
         {
             missing = e;
         }
-        catch (Exception e) when (!ct.IsCancellationRequested && e.IsTransientTransportException())
+        catch (Exception e) when (IsFallbackEligibleProbeFailure(e, ct))
         {
             transientProbeFailure = e;
             e.LogWarningKnownOrStack(
@@ -428,7 +450,7 @@ public class NzbFileStream(
                     firstNonContaining ??= fallback;
                 }
                 catch (UsenetArticleNotFoundException e) { missing = e; }
-                catch (Exception e) when (!ct.IsCancellationRequested && e.IsTransientTransportException())
+                catch (Exception e) when (IsFallbackEligibleProbeFailure(e, ct))
                 {
                     transientProbeFailure = e;
                     e.LogWarningKnownOrStack(
@@ -442,13 +464,28 @@ public class NzbFileStream(
             return nonContaining;
 
         if (transientProbeFailure is not null)
+        {
+            if (transientProbeFailure is InvalidDataException invalidGeometry)
+            {
+                throw new SeekPositionNotFoundException(
+                    $"Cannot establish exact geometry for segment {index} of " +
+                    $"{(string.IsNullOrEmpty(fileName) ? "unknown" : fileName)}; refusing to position from invalid geometry.",
+                    invalidGeometry);
+            }
+
             ExceptionDispatchInfo.Capture(transientProbeFailure).Throw();
+        }
 
         throw new SeekPositionNotFoundException(
             $"Cannot establish exact geometry for segment {index} of " +
             $"{(string.IsNullOrEmpty(fileName) ? "unknown" : fileName)}; refusing to position from an estimate.",
             missing);
     }
+
+    private static bool IsFallbackEligibleProbeFailure(Exception exception, CancellationToken ct) =>
+        !ct.IsCancellationRequested &&
+        (exception is UsenetCorruptArticleException or InvalidDataException ||
+         exception.IsTransientTransportException());
 
     private static LongRange[]? ValidateAndCloneSegmentByteRanges(
         LongRange[]? ranges,
@@ -577,7 +614,7 @@ public class NzbFileStream(
             prefixBytes,
             rangeStart,
             foundSegment.FoundByteRange,
-            foundSegment.FoundIndex == fileSegmentIds.Length - 1,
+            foundSegment.FoundByteRangeWasClippedAtFileEnd,
             cancellationToken);
     }
 

@@ -456,8 +456,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         if (hasExactSize)
             remaining = Math.Max(0, exact - _openSegmentBytes);
 
-        if (_expectedFirstSegmentRangeWasClippedAtFileEnd &&
-            _openSegmentIndex == 0 &&
+        if (_openSegmentIndex == 0 &&
             _expectedFirstSegmentRange is { } expected)
         {
             var clippedRemaining = Math.Max(0, expected.Count - _openSegmentBytes);
