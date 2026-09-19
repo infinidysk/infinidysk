@@ -163,7 +163,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
       try {
         const response = await fetch(
           withUrlBase(
-            `/api/delete-webdav-item-preview?${new URLSearchParams({ path: deleteItem.path })}`,
+            `/api/delete-webdav-item-preview?${new URLSearchParams({ path: deleteItem.path, healthCheckResultId: deleteItem.id })}`,
           ),
           { signal: controller.signal },
         );
@@ -205,6 +205,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
     try {
       const body = new FormData();
       body.set("path", deleteItem.path);
+      body.set("healthCheckResultId", deleteItem.id);
       const response = await fetch(withUrlBase("/api/delete-webdav-item"), {
         method: "POST",
         body,

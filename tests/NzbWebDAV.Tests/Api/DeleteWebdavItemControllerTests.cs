@@ -405,6 +405,52 @@ public sealed class DeleteWebdavItemControllerTests : IAsyncLifetime
         Assert.Equal(1, response.LinkedHistoryCount);
     }
 
+    [Theory]
+    [InlineData("current", 200)]
+    [InlineData("stale", 409)]
+    [InlineData("tied", 409)]
+    [InlineData("other-file", 409)]
+    [InlineData("directory", 409)]
+    [InlineData("invalid", 409)]
+    [InlineData("ordinary", 403)]
+    public async Task HealthRemoval_ReadonlySetting_RequiresCurrentAttentionFile(string scenario, int expectedStatus)
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.WebdavEnforceReadonly, ConfigValue = "true" },
+        ]);
+        var (directory, file, _) = await SeedContentReleaseAsync();
+        var resultId = Guid.NewGuid();
+        var createdAt = DateTimeOffset.UtcNow;
+        _context.HealthCheckResults.Add(new HealthCheckResult
+        {
+            Id = resultId,
+            DavItemId = scenario == "other-file" ? Guid.NewGuid() : scenario == "directory" ? directory.Id : file.Id,
+            Path = file.Path,
+            CreatedAt = createdAt,
+            Result = HealthCheckResult.HealthResult.Unhealthy,
+            RepairStatus = HealthCheckResult.RepairAction.ActionNeeded,
+        });
+        if (scenario is "stale" or "tied")
+            _context.HealthCheckResults.Add(new HealthCheckResult
+            {
+                Id = Guid.NewGuid(),
+                DavItemId = file.Id,
+                Path = file.Path,
+                CreatedAt = scenario == "tied" ? createdAt : createdAt.AddSeconds(1),
+                Result = HealthCheckResult.HealthResult.Healthy,
+                RepairStatus = HealthCheckResult.RepairAction.None,
+            });
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var path = scenario == "directory" ? directory.Path : file.Path;
+        var selectedId = scenario == "ordinary" ? null : scenario == "invalid" ? "invalid" : resultId.ToString();
+        Assert.Equal(expectedStatus, GetStatusCode(await InvokePreviewAsync(path, selectedId)));
+        Assert.Equal(expectedStatus, GetStatusCode(await InvokeDeleteAsync(path, selectedId)));
+        Assert.Equal(expectedStatus != 200, await _context.Items.AnyAsync(item => item.Id == file.Id));
+    }
+
     [Fact]
     public async Task PruneUnreferencedHistoryItemsAsync_EnqueuesHistoryCleanupAndNzbBlobCleanup()
     {
@@ -527,21 +573,23 @@ public sealed class DeleteWebdavItemControllerTests : IAsyncLifetime
         return httpContext;
     }
 
-    private async Task<IActionResult> InvokeDeleteAsync(string path)
+    private async Task<IActionResult> InvokeDeleteAsync(string path, string? healthCheckResultId = null)
     {
         var controller = CreateDeleteController();
         controller.HttpContext.Request.Method = HttpMethods.Post;
         controller.HttpContext.Request.ContentType = "application/x-www-form-urlencoded";
-        controller.HttpContext.Request.Form = new FormCollection(
-            new Dictionary<string, StringValues> { ["path"] = path });
+        var fields = new Dictionary<string, StringValues> { ["path"] = path };
+        if (healthCheckResultId is not null) fields["healthCheckResultId"] = healthCheckResultId;
+        controller.HttpContext.Request.Form = new FormCollection(fields);
         return await controller.HandleApiRequest();
     }
 
-    private async Task<IActionResult> InvokePreviewAsync(string path)
+    private async Task<IActionResult> InvokePreviewAsync(string path, string? healthCheckResultId = null)
     {
         var controller = CreatePreviewController();
         controller.HttpContext.Request.Method = HttpMethods.Get;
-        controller.HttpContext.Request.QueryString = new QueryString($"?path={Uri.EscapeDataString(path)}");
+        controller.HttpContext.Request.QueryString = new QueryString($"?path={Uri.EscapeDataString(path)}" +
+            (healthCheckResultId is null ? "" : $"&healthCheckResultId={Uri.EscapeDataString(healthCheckResultId)}"));
         return await controller.HandleApiRequest();
     }
 

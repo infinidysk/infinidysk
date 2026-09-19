@@ -50,6 +50,7 @@ vi.mock("./components/health-history-table/health-history-table", () => ({
         <button
           onClick={() =>
             onDelete({
+              id: "11111111-1111-4111-8111-111111111111",
               path: "/content/example & file.mkv",
               davItemId: "file-1",
               nzbFileName: "Example.nzb",
@@ -170,6 +171,7 @@ function mockActionResponse(response: Response | Error) {
 
 describe("Health action-needed re-check", () => {
   it("previews and confirms deletion even when background repairs are disabled", async () => {
+    const healthCheckResultId = "11111111-1111-4111-8111-111111111111";
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ status: true, fileCount: 1, dirCount: 0 }))
       .mockResolvedValueOnce(jsonResponse({ status: true }));
@@ -179,8 +181,10 @@ describe("Health action-needed re-check", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Remove" })).toHaveProperty("disabled", false),
     );
+    const previewUrl = new URL(String(fetchMock.mock.calls[0]?.[0]), "http://localhost");
+    expect(previewUrl.searchParams.get("healthCheckResultId")).toBe(healthCheckResultId);
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/delete-webdav-item-preview?path=%2Fcontent%2Fexample+%26+file.mkv",
+      expect.stringContaining("/api/delete-webdav-item-preview?"),
       expect.objectContaining({ signal: expect.any(AbortSignal) as unknown }),
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -188,6 +192,9 @@ describe("Health action-needed re-check", () => {
     const [, options] = fetchMock.mock.calls[1] as [string, { method: string; body: FormData }];
     expect(options.method).toBe("POST");
     expect(options.body.get("path")).toBe("/content/example & file.mkv");
+    expect(options.body.get("healthCheckResultId")).toBe(
+      healthCheckResultId,
+    );
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(revalidateMock).toHaveBeenCalledOnce();
     expect(screen.getByRole("status").textContent).toContain("No replacement search was requested");
