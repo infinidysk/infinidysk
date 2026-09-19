@@ -47,6 +47,59 @@ public class MediaPlaybackSessionSourceTests
     }
 
     [Fact]
+    public void EmbyJellyfinParser_MissingPauseFlag_RemainsUnknown()
+    {
+        using var document = JsonDocument.Parse("""
+        [{
+          "Id": "session-unknown",
+          "NowPlayingItem": {
+            "Id": "movie-1",
+            "Name": "Movie",
+            "Type": "Movie",
+            "Path": "/movies/Movie.mkv"
+          },
+          "PlayState": {
+            "PositionTicks": 12000000000
+          }
+        }]
+        """);
+
+        var session = EmbyJellyfinPlaybackSessionSource.Parse(document.RootElement).Single();
+
+        Assert.Equal(PlaybackState.Unknown, session.State);
+        Assert.Equal("/movies/Movie.mkv", session.MediaSourcePath);
+    }
+
+    [Fact]
+    public void EmbyJellyfinParser_DoesNotGuessAmongMultipleSourcesWithoutMediaSourceId()
+    {
+        using var document = JsonDocument.Parse("""
+        [{
+          "Id": "session-ambiguous",
+          "NowPlayingItem": {
+            "Id": "movie-2",
+            "Name": "Movie",
+            "Type": "Movie",
+            "MediaSources": [
+              {"Id": "source-a", "Path": "/movies/version-a.mkv"},
+              {"Id": "source-b", "Path": "/movies/version-b.mkv"}
+            ]
+          },
+          "PlayState": {
+            "PositionTicks": 12000000000,
+            "IsPaused": false
+          }
+        }]
+        """);
+
+        var session = EmbyJellyfinPlaybackSessionSource.Parse(document.RootElement).Single();
+
+        Assert.Equal(PlaybackState.Playing, session.State);
+        Assert.Null(session.MediaSourceId);
+        Assert.Null(session.MediaSourcePath);
+    }
+
+    [Fact]
     public void EmbyJellyfinParser_NormalizesPausedTicksAndMediaSource()
     {
         using var document = JsonDocument.Parse("""
