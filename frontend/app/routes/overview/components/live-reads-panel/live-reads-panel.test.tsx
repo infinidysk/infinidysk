@@ -144,8 +144,17 @@ describe("LiveReadsPanel", () => {
       getByRole("list").closest("section"),
     );
     expect(container.textContent).toContain("1 MB/s");
-    expect(container.textContent).toContain("1 other reads");
+    expect(container.textContent).not.toContain("1 other reads");
     expect(container.textContent).not.toContain("5 active");
+
+    rerender(
+      <LiveReadsPanelContent
+        playback={[playback("plex-live", "Live Movie")]}
+        rows={[liveRead]}
+        summary={<LiveTiles tiles={tiles} />}
+      />,
+    );
+    expect(container.textContent).toContain("1 playing · 1 other reads");
 
     rerender(
       <LiveReadsPanelContent

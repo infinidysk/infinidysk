@@ -167,11 +167,14 @@ export function LiveReadsPanelContent({
   const playing = playback.filter(({ session }) => session.state === "Playing").length;
   const paused = playback.filter(({ session }) => session.state === "Paused").length;
   const buffering = playback.filter(({ session }) => session.state === "Buffering").length;
+  const includeOtherReadCount = summary == null || playback.length > 0;
   const activitySummary = [
     playing > 0 ? `${playing} playing` : null,
     paused > 0 ? `${paused} paused` : null,
     buffering > 0 ? `${buffering} buffering` : null,
-    transportOnlyRows.length > 0 ? `${transportOnlyRows.length} other reads` : null,
+    includeOtherReadCount && transportOnlyRows.length > 0
+      ? `${transportOnlyRows.length} other reads`
+      : null,
   ]
     .filter(Boolean)
     .join(" · ");
