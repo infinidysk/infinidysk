@@ -358,7 +358,6 @@ export function useMediaPlayer({
       log("waiting");
     },
     onStalled: () => {
-      reportPlayback("Buffering", true);
       log("stalled");
     },
     onEnded: () => {
