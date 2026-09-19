@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Exceptions;
@@ -67,8 +68,9 @@ public class ConnectionPoolReplacementTests
                     using var connection = await borrower;
                 }
             }
-            catch (ConnectionOpenTimeoutException)
+            catch (ConnectionOpenTimeoutException ex)
             {
+                Debug.WriteLine($"Replacement cleanup timed out while awaiting the pending connection: {ex}");
             }
         }
     }
