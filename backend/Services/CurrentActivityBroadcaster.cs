@@ -43,18 +43,20 @@ public sealed class CurrentActivityBroadcaster(
         playbackRegistry.PruneNative(now, NativeSessionTtl);
         playbackRegistry.ExpireStaleExternal(now, MediaServerSessionPoller.StaleGrace);
 
-        if (!websocketPublisher.HasSubscribers(WebsocketTopic.CurrentActivity))
-            return;
-
+        var hasSubscribers = websocketPublisher.HasSubscribers(WebsocketTopic.CurrentActivity);
         var snapshot = composer.Compose();
         var payload = JsonSerializer.Serialize(snapshot, JsonOptions);
 
+        // Send changed snapshots even with zero subscribers: WebsocketManager stores
+        // State messages before checking connected subscribers, keeping replay state
+        // current for the next browser that subscribes.
+        //
         // The frontend derives delivery rate from byte deltas between state samples.
-        // While a transport read exists, keep sampling at the normal one-second tick
-        // even when the counters are unchanged so a previously non-zero rate decays
-        // promptly to zero instead of remaining frozen until the 15-second read TTL.
-        // Stable playback-only/empty snapshots remain deduplicated.
-        if (payload == _lastPayload && snapshot.Reads.Count == 0)
+        // While a subscriber is present and a transport read exists, also keep sampling
+        // an unchanged snapshot at the normal one-second tick so a previously non-zero
+        // rate decays promptly to zero instead of remaining frozen until the 15-second
+        // read TTL. Stable playback-only/empty snapshots remain deduplicated.
+        if (payload == _lastPayload && (!hasSubscribers || snapshot.Reads.Count == 0))
             return;
 
         _lastPayload = payload;
