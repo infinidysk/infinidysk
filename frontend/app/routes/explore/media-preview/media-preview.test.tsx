@@ -369,6 +369,34 @@ describe("MediaPreview", () => {
     );
   });
 
+  it("does not report buffering for stalled until playback actually waits", () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = renderPreview();
+    const video = container.querySelector("video")!;
+    Object.defineProperty(video, "currentTime", { configurable: true, value: 18 });
+    Object.defineProperty(video, "duration", { configurable: true, value: 120 });
+    fireEvent(video, new Event("play"));
+
+    const beforeStalled = nativePlaybackBodies(fetchMock).filter(
+      (body) => body["event"] === "Report",
+    ).length;
+    fireEvent(video, new Event("stalled"));
+    const afterStalled = nativePlaybackBodies(fetchMock).filter(
+      (body) => body["event"] === "Report",
+    );
+    expect(afterStalled).toHaveLength(beforeStalled);
+    expect(afterStalled.at(-1)).toEqual(expect.objectContaining({ state: "Playing" }));
+
+    fireEvent(video, new Event("waiting"));
+    const afterWaiting = nativePlaybackBodies(fetchMock).filter(
+      (body) => body["event"] === "Report",
+    );
+    expect(afterWaiting).toHaveLength(beforeStalled + 1);
+    expect(afterWaiting.at(-1)).toEqual(expect.objectContaining({ state: "Buffering" }));
+  });
+
   it("heartbeats a paused native session while transport may be idle", () => {
     vi.useFakeTimers();
     try {
