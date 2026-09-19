@@ -35,7 +35,8 @@ public class ActiveReadRegistry
         long? fileSize,
         string? clientUserAgent = null,
         string? clientIp = null,
-        string? playerSession = null)
+        string? playerSession = null,
+        Guid? davItemId = null)
     {
         var key = BuildKey(path, clientKey, playerSession);
         var now = DateTimeOffset.UtcNow;
@@ -49,6 +50,7 @@ public class ActiveReadRegistry
                 if (fileSize is { } size) existing.FileSize = size;
                 if (!string.IsNullOrEmpty(clientUserAgent)) existing.ClientUserAgent = clientUserAgent;
                 if (!string.IsNullOrEmpty(clientIp)) existing.ClientIp = clientIp;
+                if (davItemId is { } resolvedId) existing.DavItemId = resolvedId;
                 return existingId;
             }
 
@@ -63,6 +65,7 @@ public class ActiveReadRegistry
                 ClientUserAgent = clientUserAgent,
                 ClientIp = clientIp,
                 PlayerSession = playerSession,
+                DavItemId = davItemId,
                 StartedAt = now,
                 LastActivityAt = now,
             };
@@ -113,11 +116,36 @@ public class ActiveReadRegistry
     /// real filename/size are resolved from the dav store (the path passed to
     /// GetOrCreate is usually an opaque GUID for .ids/-style paths).
     /// </summary>
-    public void UpdateInfo(Guid id, string? fileName, long? fileSize)
+    public void UpdateInfo(Guid id, string? fileName, long? fileSize, Guid? davItemId = null)
     {
         if (!_entries.TryGetValue(id, out var entry)) return;
         if (!string.IsNullOrWhiteSpace(fileName)) entry.FileName = fileName;
         if (fileSize is { } size) entry.FileSize = size;
+        if (davItemId is { } resolvedId) entry.DavItemId = resolvedId;
+    }
+
+    public bool TryResolveDavItemIdForPlayerSession(string playerSession, out Guid davItemId)
+    {
+        davItemId = Guid.Empty;
+        if (string.IsNullOrWhiteSpace(playerSession))
+            return false;
+
+        var cutoff = DateTimeOffset.UtcNow - ActivityWindow;
+        var matches = _entries.Values
+            .Where(entry =>
+                entry.LastActivityAt >= cutoff
+                && entry.DavItemId.HasValue
+                && string.Equals(entry.PlayerSession, playerSession, StringComparison.Ordinal))
+            .Select(entry => entry.DavItemId!.Value)
+            .Distinct()
+            .Take(2)
+            .ToList();
+
+        if (matches.Count != 1)
+            return false;
+
+        davItemId = matches[0];
+        return true;
     }
 
     public IReadOnlyList<Entry> Snapshot()
@@ -179,16 +207,16 @@ public class ActiveReadRegistry
         public string? ClientUserAgent { get; set; }
         public string? ClientIp { get; set; }
         public string? PlayerSession { get; init; }
+        public Guid? DavItemId { get; set; }
         public DateTimeOffset StartedAt { get; init; }
         public DateTimeOffset LastActivityAt { get; set; }
         public long BytesRead;
         public long BytesFetched;
         public ReadSession.EndReasonCode EndReason { get; set; } = ReadSession.EndReasonCode.Completed;
         /// <summary>
-        /// Most recent absolute file offset the player has been served (i.e. the
-        /// "where the read head is" position). Updated after every chunk so the
-        /// Right Now panel can show genuine playback position, not cumulative
-        /// transferred bytes (which over-counts on seek/rewind).
+        /// Most recent absolute file offset served by InfiniDysk. This is a
+        /// transport/source read head, not an authoritative viewer position: rclone
+        /// read-ahead may move it well ahead of an actual media-server player.
         /// </summary>
         public long CurrentOffset;
     }

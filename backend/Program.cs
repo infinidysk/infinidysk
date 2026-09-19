@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -338,6 +338,15 @@ public sealed partial class Program
                 .AddSingleton<NzbWebDAV.Services.Benchmark.BenchmarkRunControl>()
                 .AddHostedService<LogBroadcaster>()
                 .AddSingleton<ActiveReadRegistry>()
+                .AddSingleton<PlaybackSessionRegistry>()
+                .AddSingleton<NativePlaybackSessionService>()
+                .AddSingleton<PlaybackDavItemResolver>()
+                .AddSingleton<NzbWebDAV.Clients.MediaServers.IMediaPlaybackSessionSource, NzbWebDAV.Clients.MediaServers.PlexPlaybackSessionSource>()
+                .AddSingleton<NzbWebDAV.Clients.MediaServers.IMediaPlaybackSessionSource, NzbWebDAV.Clients.MediaServers.EmbyPlaybackSessionSource>()
+                .AddSingleton<NzbWebDAV.Clients.MediaServers.IMediaPlaybackSessionSource, NzbWebDAV.Clients.MediaServers.JellyfinPlaybackSessionSource>()
+                .AddSingleton<CurrentActivityComposer>()
+                .AddHostedService<MediaServerSessionPoller>()
+                .AddHostedService<CurrentActivityBroadcaster>()
                 .AddSingleton(sp => new ConcurrentReadTracker(
                     configManager: sp.GetRequiredService<ConfigManager>()))
                 .AddSingleton<SharedStreamRegistry>()

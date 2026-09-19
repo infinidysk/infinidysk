@@ -106,6 +106,21 @@ public class SupportPackRedactorTests
     }
 
     [Fact]
+    public void RedactConfigurationValue_RedactsMediaServerTokens()
+    {
+        var redactor = new SupportPackRedactor([]);
+        var result = redactor.RedactConfigurationValue(
+            ConfigKeys.MediaServersInstances,
+            "{\"Instances\":[{\"Name\":\"Plex\",\"BaseUrl\":\"http://plex.test\",\"Token\":\"media-secret\"}]}");
+
+        Assert.DoesNotContain("media-secret", result, StringComparison.Ordinal);
+        using var document = JsonDocument.Parse(result);
+        Assert.Equal(
+            "[REDACTED]",
+            document.RootElement.GetProperty("Instances")[0].GetProperty("Token").GetString());
+    }
+
+    [Fact]
     public void RedactText_StillRedactsSentinelSecretsInsideAllowlistedJson()
     {
         var redactor = new SupportPackRedactor(["sentinel-api-key"]);

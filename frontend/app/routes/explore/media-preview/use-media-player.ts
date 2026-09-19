@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { NativePlaybackActivity, NativePlaybackState } from "./use-native-playback-reporter";
 import {
   backoffMs,
   classifyMediaError,
@@ -40,7 +41,15 @@ const RECOVERY_STABLE_MS = 10_000;
  * (fresh range request) and resumes from the last good position when the
  * backend aborts a stream after exhausted transient retries.
  */
-export function useMediaPlayer({ src }: { src: string }) {
+export function useMediaPlayer({
+  src,
+  onPlaybackActivity,
+  onPlaybackEnd,
+}: {
+  src: string;
+  onPlaybackActivity?: (activity: NativePlaybackActivity, force?: boolean) => void;
+  onPlaybackEnd?: () => void;
+}) {
   const mediaRef = useRef<HTMLMediaElement | null>(null);
   const [status, setStatus] = useState<PlayerStatus>("loading");
   const [buffering, setBuffering] = useState(false);
@@ -76,6 +85,16 @@ export function useMediaPlayer({ src }: { src: string }) {
     }
   }, []);
 
+  const reportPlayback = useCallback(
+    (state: NativePlaybackState, force = false) => {
+      const el = mediaRef.current;
+      const positionSeconds = finiteMediaTime(el?.currentTime);
+      const durationSeconds = finiteMediaTime(el?.duration);
+      onPlaybackActivity?.({ state, positionSeconds, durationSeconds }, force);
+    },
+    [onPlaybackActivity],
+  );
+
   const reload = useCallback(() => {
     const el = mediaRef.current;
     if (!el) return;
@@ -92,6 +111,7 @@ export function useMediaPlayer({ src }: { src: string }) {
       if (attemptsRef.current >= MAX_AUTO_ATTEMPTS) {
         setStatus("failed");
         log("failed", reason);
+        onPlaybackEnd?.();
         return;
       }
       const attempt = attemptsRef.current;
@@ -100,6 +120,7 @@ export function useMediaPlayer({ src }: { src: string }) {
       setAttempts(attempt + 1);
       setStatus("recovering");
       setError(null);
+      reportPlayback("Buffering", true);
       log("recovering", `attempt ${attempt + 1}/${MAX_AUTO_ATTEMPTS}: ${reason}`);
 
       const el = mediaRef.current;
@@ -109,7 +130,7 @@ export function useMediaPlayer({ src }: { src: string }) {
       clearRecoveryTimer();
       recoveryTimerRef.current = setTimeout(reload, backoffMs(attempt));
     },
-    [clearRecoveryTimer, log, reload],
+    [clearRecoveryTimer, log, onPlaybackEnd, reload, reportPlayback],
   );
 
   /** Manual retry from the failed state — resets the automatic attempt budget. */
@@ -224,6 +245,7 @@ export function useMediaPlayer({ src }: { src: string }) {
   const handleUnsupported = (code: number | null) => {
     if (code !== 4) {
       setStatus("unsupported");
+      onPlaybackEnd?.();
       return;
     }
     const generation = generationRef.current;
@@ -233,17 +255,20 @@ export function useMediaPlayer({ src }: { src: string }) {
         case "served":
           // Bytes were served; the browser rejected them.
           setStatus("unsupported");
+          onPlaybackEnd?.();
           break;
         case "missing-payload":
           // Local file metadata is gone — re-downloading won't help
           // it, so surface a terminal state instead of retry loops.
           log("source-check", "backend reports the file data is missing");
           setStatus("missing-payload");
+          onPlaybackEnd?.();
           break;
         case "denied":
           log("source-check", `media request refused with HTTP ${outcome.status}`);
           setUnavailableStatus(outcome.status);
           setStatus("unavailable");
+          onPlaybackEnd?.();
           break;
         case "server-error":
           log(
@@ -263,6 +288,7 @@ export function useMediaPlayer({ src }: { src: string }) {
     onLoadedMetadata: () => {
       const el = mediaRef.current;
       log("loadedmetadata");
+      if (el?.paused) reportPlayback("Paused", true);
       if (el && pendingSeekRef.current !== null && Number.isFinite(el.duration)) {
         el.currentTime = Math.min(pendingSeekRef.current, Math.max(0, el.duration - 0.25));
         pendingSeekRef.current = null;
@@ -275,6 +301,7 @@ export function useMediaPlayer({ src }: { src: string }) {
       // Recovered/loaded while paused: leave the recover/loading banner
       // even though no play event will follow.
       setStatus((prev) => (prev === "recovering" || prev === "loading" ? "ready" : prev));
+      if (el) reportPlayback(el.paused ? "Paused" : "Playing");
       if (el && wasPlayingRef.current) {
         // play() may return undefined in non-standard environments.
         void Promise.resolve(el.play()).catch(() => {
@@ -284,14 +311,18 @@ export function useMediaPlayer({ src }: { src: string }) {
     },
     onPlay: () => {
       setStatus("playing");
+      reportPlayback("Playing");
       log("play");
     },
     onPlaying: () => {
       setStatus("playing");
       setBuffering(false);
+      reportPlayback("Playing");
     },
     onPause: () => {
+      const el = mediaRef.current;
       setStatus((prev) => (prev === "playing" ? "ready" : prev));
+      if (!el?.ended) reportPlayback("Paused", true);
       log("pause");
     },
     onTimeUpdate: () => {
@@ -300,6 +331,7 @@ export function useMediaPlayer({ src }: { src: string }) {
       lastGoodTimeRef.current = el.currentTime;
       lastProgressAtRef.current = Date.now();
       setBuffering(false);
+      reportPlayback(el.paused ? "Paused" : "Playing");
       // A recovery that sustains playback re-arms the attempt budget.
       if (
         attemptsRef.current > 0 &&
@@ -316,14 +348,23 @@ export function useMediaPlayer({ src }: { src: string }) {
       if (!el) return;
       lastGoodTimeRef.current = el.currentTime;
       lastProgressAtRef.current = Date.now();
+      reportPlayback(el.paused ? "Paused" : "Playing", true);
       log("seeked", formatSeekDetail(el.currentTime));
     },
     onSeeking: () => log("seeking"),
     onWaiting: () => {
       setBuffering(true);
+      reportPlayback("Buffering", true);
       log("waiting");
     },
-    onStalled: () => log("stalled"),
+    onStalled: () => {
+      reportPlayback("Buffering", true);
+      log("stalled");
+    },
+    onEnded: () => {
+      onPlaybackEnd?.();
+      log("ended");
+    },
     onEmptied: () => log("emptied"),
     onError: () => {
       const el = mediaRef.current;
@@ -379,3 +420,7 @@ function totalVideoFrames(el: HTMLMediaElement | null): number | null {
 }
 
 export type MediaPlayer = ReturnType<typeof useMediaPlayer>;
+
+function finiteMediaTime(value: number | undefined): number | null {
+  return value !== undefined && Number.isFinite(value) && value >= 0 ? value : null;
+}
