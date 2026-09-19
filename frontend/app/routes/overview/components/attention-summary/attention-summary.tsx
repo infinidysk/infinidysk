@@ -86,7 +86,7 @@ export function AttentionSummary({
       <h2 id="attention-heading" className="mb-2 text-sm font-semibold text-base-content">
         Needs attention
       </h2>
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid items-start gap-2 sm:grid-cols-2 xl:grid-cols-3">
         <AttentionLink
           to="/health"
           icon="health_and_safety"
@@ -111,16 +111,55 @@ export function AttentionSummary({
               ? `${affectedProviders.length} provider circuits open or recovering`
               : "No provider circuits open"}
         </AttentionLink>
-        {hasConfiguredArrs && (
-          <AttentionLink to={settingsPath("arrs")} icon="sync_alt" warning={!!affectedArrs?.length}>
-            {affectedArrs == null
-              ? "Arr status unavailable"
-              : affectedArrs.length > 0
-                ? `${affectedArrs.length} Arr integrations degraded or offline`
+        {hasConfiguredArrs && !!affectedArrs?.length ? (
+          <details className="group min-w-0 self-start">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-sm px-2 py-2 text-sm text-warning hover:bg-base-content/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
+              <Icon name="sync_alt" className="shrink-0 !text-[18px]" />
+              <span className="min-w-0 flex-1">
+                {affectedArrs.length} Arr{" "}
+                {affectedArrs.length === 1 ? "integration" : "integrations"} degraded or offline
+              </span>
+              <Icon name="expand_more" className="shrink-0 !text-[18px] group-open:rotate-180" />
+            </summary>
+            <ul className="space-y-3 px-2 pb-2 text-sm">
+              {affectedArrs.map((instance) => (
+                <li key={instance.key} className="min-w-0 [overflow-wrap:anywhere]">
+                  <p className="font-semibold text-base-content">
+                    <span className="capitalize">{instance.appType}</span>: {instance.name}
+                  </p>
+                  <p className="text-base-content/80">
+                    {instance.status === "offline"
+                      ? "InfiniDysk could not poll this instance. Check its availability and connection settings."
+                      : instance.hasWarnings && instance.hasErrors
+                        ? "This app reports queue warnings and errors. Check Activity > Queue in the Arr app."
+                        : instance.hasErrors
+                          ? "This app reports queue errors. Check Activity > Queue in the Arr app."
+                          : instance.hasWarnings
+                            ? "This app reports queue warnings. Check Activity > Queue in the Arr app."
+                            : "Imports are taking longer than expected. Check Activity > Queue in the Arr app."}
+                  </p>
+                  {instance.status === "offline" && instance.lastError && (
+                    <p className="mt-1 whitespace-pre-wrap text-base-content/80">
+                      {instance.lastError}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <Link to={settingsPath("arrs")} className="link mx-2 text-sm text-base-content/80">
+              Arr connection settings
+            </Link>
+          </details>
+        ) : (
+          hasConfiguredArrs && (
+            <AttentionLink to={settingsPath("arrs")} icon="sync_alt" warning={false}>
+              {affectedArrs == null
+                ? "Arr status unavailable"
                 : pendingArrs
                   ? "Arr status pending"
                   : "No degraded Arr integrations"}
-          </AttentionLink>
+            </AttentionLink>
+          )
         )}
       </div>
     </section>
