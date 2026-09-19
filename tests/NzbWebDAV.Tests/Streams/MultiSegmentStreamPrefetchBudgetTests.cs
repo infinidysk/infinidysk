@@ -11,6 +11,36 @@ namespace NzbWebDAV.Tests.Streams;
 [Collection(nameof(GlobalLoggerCollection))]
 public class MultiSegmentStreamPrefetchBudgetTests
 {
+    [Theory]
+    [InlineData(false, 1000, 12, 2500)]
+    [InlineData(true, 1000, 16, 2500)]
+    [InlineData(true, 100, 40, 2500)]
+    [InlineData(true, 10000, 16, 2500)]
+    [InlineData(true, 10000, 36, 25000)]
+    public async Task LegacyFiniteRange_BoundsSpeculationWithoutTruncating(
+        bool pipelined, int estimatedSize, int maximumFetches, int readBudget)
+    {
+        const int segmentSize = 1000;
+        var segments = Enumerable.Range(0, 256).ToDictionary(
+            index => $"bounded-{index}",
+            index => Enumerable.Repeat((byte)index, segmentSize).ToArray());
+        var client = new FakeNntpClient(segments, useCachedYencStreams: true);
+        var budget = new InFlightArticleBudget(8 * 1024 * 1024);
+        await using var stream = MultiSegmentStream.Create(
+            segments.Keys.ToArray().AsMemory(), client, articleBufferSize: 40,
+            estimatedSegmentSize: estimatedSize, failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: pipelined, CancellationToken.None,
+            fileName: "bounded.bin", readBudget: readBudget, inFlightArticleBudget: budget);
+        var bytes = new byte[readBudget];
+
+        await stream.ReadExactlyAsync(bytes);
+        await stream.DisposeAsync();
+
+        Assert.Equal(segments.Values.SelectMany(segment => segment).Take(readBudget).ToArray(), bytes);
+        Assert.InRange(client.RequestedSegmentIds.Count, 3, maximumFetches);
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
     [Fact]
     public async Task ReadBudget_WithoutExactSizes_DeliversFullConsumerRange()
     {

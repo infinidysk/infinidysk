@@ -767,6 +767,13 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         _prefetchByteCeiling = _taskWindowSize > 0 && estimatedSegmentSize > 0
             ? (long)_taskWindowSize * estimatedSegmentSize
             : 0;
+        if (_prefetchByteCeiling > 0 && _readBudget is > 0 && !_segmentSizes.TryGetExactSize(0, out _))
+        {
+            var rangeWindow = Math.Min(_readBudget.Value, long.MaxValue - estimatedSegmentSize)
+                + estimatedSegmentSize;
+            var batchWindow = (long)Math.Max(1, _bodyPipelineBatchSize) * estimatedSegmentSize;
+            _prefetchByteCeiling = Math.Min(_prefetchByteCeiling, Math.Max(batchWindow, rangeWindow));
+        }
         _batchSizer = usePipelinedBodyRequests
             ? new AdaptiveBodyBatchSizer(
                 _bodyPipelineBatchSize,
