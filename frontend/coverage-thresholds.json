@@ -3,7 +3,7 @@
     "branches": 30,
     "functions": 30,
     "lines": 37,
-    "statements": 33
+    "statements": 36
   },
   "globs": {
     "app/clients/**": {
