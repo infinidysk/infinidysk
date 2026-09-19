@@ -16,7 +16,8 @@ public sealed class CurrentActivityComposer(
 {
     public CurrentActivitySnapshot Compose()
     {
-        var playback = playbackRegistry.Snapshot();
+        var playbackSnapshot = playbackRegistry.CaptureSnapshot();
+        var playback = playbackSnapshot.Sessions;
         var reads = activeReadRegistry.Snapshot();
         var playbackByDav = playback
             .GroupBy(session => session.DavItemId)
@@ -119,7 +120,7 @@ public sealed class CurrentActivityComposer(
         {
             Playback = playbackRows,
             Reads = transport,
-            Authorities = playbackRegistry.AuthoritySnapshot(),
+            Authorities = playbackSnapshot.Authorities,
         };
     }
 }
