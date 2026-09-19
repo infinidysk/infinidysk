@@ -446,6 +446,18 @@ public sealed class SupportPackContentsTests : IDisposable
     }
 
     [Fact]
+    public async Task Pack_OmitsMissingPlaybackFileName()
+    {
+        var buffer = new StreamTraceBuffer(100);
+        buffer.RangeOpen(Guid.NewGuid(), "/.ids/example", "GET", 0, 99, 1000, null, null);
+        var entries = await ReadPackEntriesAsync(
+            new LogBufferSink(10), new WarningLogBuffer(new LogBufferSink(50)), buffer);
+
+        using var exported = JsonDocument.Parse(entries["stream-traces/events.jsonl"].Trim());
+        Assert.False(exported.RootElement.TryGetProperty("fileName", out _));
+    }
+
+    [Fact]
     public async Task Pack_RedactsKnownSecretsFromPlaybackFileNames()
     {
         var buffer = new StreamTraceBuffer(100);
@@ -469,6 +481,8 @@ public sealed class SupportPackContentsTests : IDisposable
     [InlineData("movie Basic credential-value.mkv")]
     [InlineData("movie token=\"token-value\".mkv")]
     [InlineData("movie 'authToken': 'auth-token-value'.mkv")]
+    [InlineData("movie token=token-value, episode.mkv")]
+    [InlineData("movie authToken: auth-token-value (1080p).mkv")]
     public async Task Pack_RedactsCredentialFormsFromPlaybackFileNames(string fileName)
     {
         var buffer = new StreamTraceBuffer(100);

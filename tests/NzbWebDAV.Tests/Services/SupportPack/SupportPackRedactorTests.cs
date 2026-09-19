@@ -19,6 +19,23 @@ public class SupportPackRedactorTests
         Assert.DoesNotContain("value", result);
     }
 
+    [Theory]
+    [InlineData(
+        "movie token=token-value, episode.mkv",
+        "movie token=[REDACTED], episode.mkv")]
+    [InlineData(
+        "movie authToken: auth-token-value (1080p).mkv",
+        "movie authToken: [REDACTED] (1080p).mkv")]
+    public void RedactText_RedactsUnquotedTokenAssignmentsWithinFilenameBounds(
+        string fileName,
+        string expected)
+    {
+        var result = new SupportPackRedactor([]).RedactText(fileName);
+
+        Assert.Equal(expected, result);
+        Assert.DoesNotContain("token-value", result);
+    }
+
     [Fact]
     public void RedactText_RedactsLiteralEncodedUrlSecretsAndPseudonymizesAddresses()
     {
