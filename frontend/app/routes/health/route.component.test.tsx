@@ -192,9 +192,7 @@ describe("Health action-needed re-check", () => {
     const [, options] = fetchMock.mock.calls[1] as [string, { method: string; body: FormData }];
     expect(options.method).toBe("POST");
     expect(options.body.get("path")).toBe("/content/example & file.mkv");
-    expect(options.body.get("healthCheckResultId")).toBe(
-      healthCheckResultId,
-    );
+    expect(options.body.get("healthCheckResultId")).toBe(healthCheckResultId);
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(revalidateMock).toHaveBeenCalledOnce();
     expect(screen.getByRole("status").textContent).toContain("No replacement search was requested");
