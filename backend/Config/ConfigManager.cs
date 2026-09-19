@@ -690,6 +690,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                 case ConfigKeys.QueueProcessingSchedule:
                 case ConfigKeys.RepairHealthcheckSchedule:
                 case ConfigKeys.RepairActionSchedule:
+                case ConfigKeys.WatchtowerSchedule:
                     RequireWeeklyWindowSchedule(item.ConfigName, value, jsonOptions);
                     break;
             }
@@ -2086,6 +2087,17 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.WatchtowerAutoThroughput));
         return v != null && bool.Parse(v);
     }
+
+    public WeeklyWindowSchedule GetWatchtowerSchedule() =>
+        ReadWeeklyWindowSchedule(ConfigKeys.WatchtowerSchedule);
+
+    /// <summary>
+    /// Whether Watchtower may resolve and keep-fresh verify right now. Unrestricted (empty or disabled
+    /// schedule) is always open. List sync and series expansion are cheap and ignore the window.
+    /// </summary>
+    public bool IsWatchtowerWindowOpen(DateTimeOffset? utcNow = null) =>
+        WeeklyWindowEvaluator.Evaluate(
+            GetWatchtowerSchedule(), utcNow ?? DateTimeOffset.UtcNow, TimeZoneInfo.Local).IsOpen;
 
     public bool IsWatchtowerVerboseLoggingEnabled()
     {

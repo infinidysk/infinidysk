@@ -218,6 +218,7 @@ const defaultConfig = {
   "watchtower.active-set-cap": "100",
   "watchtower.daily-resolve-budget": "60",
   "watchtower.auto-throughput": "false",
+  "watchtower.schedule": "",
   "watchtower.sync-interval-seconds": "3600",
   "watchtower.list-source-max-response-bytes": "8388608",
   "watchtower.series-scope": "latest-season",

@@ -44,6 +44,8 @@ public partial class WatchtowerService(
     private static readonly TimeSpan NoProfileLogInterval = TimeSpan.FromMinutes(60);
     private const string CycleStartLogKey = "cycle-starting";
     private const string NoProfileLogKey = "no-search-profile";
+    private const string ScheduleClosedLogKey = "schedule-closed";
+    private static readonly TimeSpan ScheduleClosedLogInterval = TimeSpan.FromMinutes(60);
     private readonly LogThrottle _logThrottle = new();
     private const int ResolvesPerTick = 3;
     private const int AutoResolveBatch = 25;
@@ -161,8 +163,26 @@ public partial class WatchtowerService(
     {
         await SyncDueSourcesAsync(ct).ConfigureAwait(false);
         await ExpandDueExpandersAsync(ct).ConfigureAwait(false);
-        await ResolveDueItemsAsync(ct).ConfigureAwait(false);
-        await KeepFreshDueItemsAsync(ct).ConfigureAwait(false);
+        // Resolving and keep-fresh verification are the expensive stages (indexer searches, NZB fetches,
+        // article sampling). Outside the Watchtower schedule they wait for the next window; list sync and
+        // expansion above stay live so the wanted set is current when the window opens.
+        if (configManager.IsWatchtowerWindowOpen(_timeProvider.GetUtcNow()))
+        {
+            _logThrottle.Reset(ScheduleClosedLogKey);
+            await ResolveDueItemsAsync(ct).ConfigureAwait(false);
+            await KeepFreshDueItemsAsync(ct).ConfigureAwait(false);
+        }
+        else if (_logThrottle.ShouldLog(ScheduleClosedLogKey, ScheduleClosedLogInterval, out var skippedCycles))
+        {
+            if (skippedCycles > 0)
+                LogActivity(
+                    "Watchtower: outside the schedule window; resolve and keep-fresh paused " +
+                    "({Skipped:n0} cycles skipped since the last log)",
+                    skippedCycles);
+            else
+                LogActivity("Watchtower: outside the schedule window; resolve and keep-fresh paused");
+        }
+
         await LogCycleHeartbeatAsync(cycleWatch, ct).ConfigureAwait(false);
     }
 
