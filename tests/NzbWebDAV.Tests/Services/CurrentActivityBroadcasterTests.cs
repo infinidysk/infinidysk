@@ -70,10 +70,31 @@ public class CurrentActivityBroadcasterTests
         Assert.Single(publisher.Messages);
     }
 
+    [Fact]
+    public async Task FailedPublish_RetriesSameUnchangedSnapshot()
+    {
+        var playback = new PlaybackSessionRegistry();
+        var active = new ActiveReadRegistry();
+        var publisher = new FakePublisher { FailuresRemaining = 1 };
+        var composer = new CurrentActivityComposer(
+            playback,
+            active,
+            new ProviderUsageTracker(active),
+            new ConfigManager());
+        var broadcaster = new CurrentActivityBroadcaster(playback, composer, publisher);
+        var now = DateTimeOffset.UtcNow;
+
+        await Assert.ThrowsAsync<IOException>(() => broadcaster.BroadcastTickAsync(now));
+        await broadcaster.BroadcastTickAsync(now.AddSeconds(1));
+
+        Assert.Single(publisher.Messages);
+    }
+
     private sealed class FakePublisher : IWebsocketPublisher
     {
         public List<string> Messages { get; } = [];
         public bool Subscribers { get; init; } = true;
+        public int FailuresRemaining { get; set; }
 
         public bool HasSubscribers(WebsocketTopic topic) =>
             Subscribers && ReferenceEquals(topic, WebsocketTopic.CurrentActivity);
@@ -81,6 +102,11 @@ public class CurrentActivityBroadcasterTests
         public Task SendMessage(WebsocketTopic topic, string message)
         {
             Assert.Same(WebsocketTopic.CurrentActivity, topic);
+            if (FailuresRemaining > 0)
+            {
+                FailuresRemaining--;
+                return Task.FromException(new IOException("synthetic publication failure"));
+            }
             Messages.Add(message);
             return Task.CompletedTask;
         }
