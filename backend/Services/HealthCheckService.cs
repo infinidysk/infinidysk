@@ -3234,29 +3234,39 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             return;
         }
 
-        var threshold = _configManager.GetAutoRemoveAfterFailures();
-        var failureSnapshot = _failureTracker.GetSnapshot(davItem.Id);
-        var failureCount = ResolveUrgentRepairFailureCount(
-            failureSnapshot.Count, davItem.UrgentRepairFailures);
-        var unlinkedOnly = _configManager.IsAutoRemoveUnlinkedOnly();
-        var disposition = GetUrgentRepairDisposition(threshold, failureCount, unlinkedOnly);
-
-        if (disposition == UrgentRepairDisposition.Defer)
+        StreamingFailureSnapshot failureSnapshot;
+        int failureCount;
+        UrgentRepairDisposition disposition;
+        int threshold;
+        await using (await _failureTracker
+            .AcquireMutationGateAsync(davItem.Id, ct)
+            .ConfigureAwait(false))
         {
-            var utcNow = DateTimeOffset.UtcNow;
-            davItem.LastHealthCheck = utcNow;
-            davItem.NextHealthCheck = utcNow + TimeSpan.FromHours(1);
-            davItem.UrgentRepairFailures = null;
-            await RecordHealthResult(
-                dbClient, davItem,
-                HealthCheckResult.HealthResult.Unhealthy,
-                HealthCheckResult.RepairAction.ActionNeeded,
-                string.Join(" ", [
-                    "File failed during streaming.",
-                    $"Streaming failure count: {failureCount}/{threshold}.",
-                    "Repair and replacement deferred until the failure threshold is reached."
-                ]), ct).ConfigureAwait(false);
-            return;
+            await dbClient.Ctx.Entry(davItem).ReloadAsync(ct).ConfigureAwait(false);
+            threshold = _configManager.GetAutoRemoveAfterFailures();
+            failureSnapshot = _failureTracker.GetSnapshot(davItem.Id);
+            failureCount = ResolveUrgentRepairFailureCount(
+                failureSnapshot.Count, davItem.UrgentRepairFailures);
+            var unlinkedOnly = _configManager.IsAutoRemoveUnlinkedOnly();
+            disposition = GetUrgentRepairDisposition(threshold, failureCount, unlinkedOnly);
+
+            if (disposition == UrgentRepairDisposition.Defer)
+            {
+                var utcNow = DateTimeOffset.UtcNow;
+                davItem.LastHealthCheck = utcNow;
+                davItem.NextHealthCheck = utcNow + TimeSpan.FromHours(1);
+                davItem.UrgentRepairFailures = null;
+                await RecordHealthResult(
+                    dbClient, davItem,
+                    HealthCheckResult.HealthResult.Unhealthy,
+                    HealthCheckResult.RepairAction.ActionNeeded,
+                    string.Join(" ", [
+                        "File failed during streaming.",
+                        $"Streaming failure count: {failureCount}/{threshold}.",
+                        "Repair and replacement deferred until the failure threshold is reached."
+                    ]), ct).ConfigureAwait(false);
+                return;
+            }
         }
 
         var par2Outcome = ShouldAttemptPar2Repair()

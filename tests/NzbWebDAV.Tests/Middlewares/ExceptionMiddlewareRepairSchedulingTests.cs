@@ -1,4 +1,5 @@
 using System.Globalization;
+using Xunit.Abstractions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
@@ -14,10 +15,16 @@ namespace NzbWebDAV.Tests.Middlewares;
 [Collection(nameof(ConfigPathCollection))]
 public sealed class ExceptionMiddlewareRepairSchedulingTests : IAsyncLifetime
 {
+    private readonly ITestOutputHelper _output;
     private readonly string _root = Path.Join(
         Path.GetTempPath(), $"infinidysk-repair-schedule-{Guid.NewGuid():N}");
     private string? _previousConfigPath;
     private DbContextOptions<DavDatabaseContext> _options = null!;
+
+    public ExceptionMiddlewareRepairSchedulingTests(ITestOutputHelper output)
+    {
+        _output = output;
+    }
 
     public async Task InitializeAsync()
     {
@@ -34,7 +41,14 @@ public sealed class ExceptionMiddlewareRepairSchedulingTests : IAsyncLifetime
     public Task DisposeAsync()
     {
         Environment.SetEnvironmentVariable("CONFIG_PATH", _previousConfigPath);
-        try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
+        try
+        {
+            Directory.Delete(_root, recursive: true);
+        }
+        catch (IOException exception)
+        {
+            _output.WriteLine($"Test cleanup could not delete {_root}: {exception.Message}");
+        }
         return Task.CompletedTask;
     }
 

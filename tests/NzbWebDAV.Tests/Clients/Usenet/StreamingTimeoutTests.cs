@@ -1045,6 +1045,7 @@ public class StreamingTimeoutTests
                 }
                 catch (ConnectionOpenTimeoutException)
                 {
+                    Debug.WriteLine("Connection cleanup timed out while awaiting a borrower.");
                 }
             }
         }
@@ -1103,6 +1104,7 @@ public class StreamingTimeoutTests
                 }
                 catch (ConnectionOpenTimeoutException)
                 {
+                    // The late factory is intentionally allowed to finish during teardown.
                 }
             }
         }
@@ -1168,6 +1170,7 @@ public class StreamingTimeoutTests
                 }
                 catch (OperationCanceledException) when (caller.IsCancellationRequested)
                 {
+                    Debug.WriteLine("Expected caller cancellation while cleaning up a holder.");
                 }
             }
             if (queued is not null)
@@ -1178,6 +1181,7 @@ public class StreamingTimeoutTests
                 }
                 catch (OperationCanceledException) when (caller.IsCancellationRequested)
                 {
+                    Debug.WriteLine("Expected caller cancellation while cleaning up the queued borrower.");
                 }
             }
         }

@@ -69,6 +69,7 @@ public class ConnectionPoolReplacementTests
             }
             catch (ConnectionOpenTimeoutException)
             {
+                // The cleanup timeout is expected when the replacement remains blocked.
             }
         }
     }
