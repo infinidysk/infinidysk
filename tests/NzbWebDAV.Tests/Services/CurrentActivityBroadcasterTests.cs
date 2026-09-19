@@ -28,6 +28,29 @@ public class CurrentActivityBroadcasterTests
     }
 
     [Fact]
+    public async Task ChangedState_RefreshesReplayEvenWithoutSubscribers()
+    {
+        var playback = new PlaybackSessionRegistry();
+        var active = new ActiveReadRegistry();
+        var publisher = new FakePublisher { Subscribers = false };
+        var composer = new CurrentActivityComposer(
+            playback,
+            active,
+            new ProviderUsageTracker(active),
+            new ConfigManager());
+        var broadcaster = new CurrentActivityBroadcaster(playback, composer, publisher);
+        var now = DateTimeOffset.UtcNow;
+
+        await broadcaster.BroadcastTickAsync(now);
+        active.GetOrCreate("/.ids/movie", "rclone", "movie.mkv", 100);
+        await broadcaster.BroadcastTickAsync(now.AddSeconds(1));
+        await broadcaster.BroadcastTickAsync(now.AddSeconds(2));
+
+        Assert.Equal(2, publisher.Messages.Count);
+        Assert.Contains("\"movie.mkv\"", publisher.Messages[1]);
+    }
+
+    [Fact]
     public async Task StableEmptySnapshot_RemainsDeduplicated()
     {
         var playback = new PlaybackSessionRegistry();
@@ -50,9 +73,10 @@ public class CurrentActivityBroadcasterTests
     private sealed class FakePublisher : IWebsocketPublisher
     {
         public List<string> Messages { get; } = [];
+        public bool Subscribers { get; init; } = true;
 
         public bool HasSubscribers(WebsocketTopic topic) =>
-            ReferenceEquals(topic, WebsocketTopic.CurrentActivity);
+            Subscribers && ReferenceEquals(topic, WebsocketTopic.CurrentActivity);
 
         public Task SendMessage(WebsocketTopic topic, string message)
         {
