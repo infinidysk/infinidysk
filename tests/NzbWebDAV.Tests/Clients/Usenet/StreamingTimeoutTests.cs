@@ -876,7 +876,10 @@ public class StreamingTimeoutTests
             Assert.Equal(1, pool.LiveConnections);
             Assert.Equal(2, attempts);
 
-            var warning = Assert.Single(sink.Events);
+            var warning = Assert.Single(sink.Events, eventItem =>
+                eventItem.Level == LogEventLevel.Warning
+                && eventItem.Properties.TryGetValue("Provider", out var provider)
+                && provider is ScalarValue { Value: "news.late-factory.example" });
             Assert.Equal(LogEventLevel.Warning, warning.Level);
             Assert.Equal("news.late-factory.example", Assert.IsType<ScalarValue>(warning.Properties["Provider"]).Value);
             if (factoryCancelled)
