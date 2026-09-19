@@ -7,6 +7,10 @@ import {
   SettingsPage,
   Tooltip,
 } from "~/components/ui";
+import {
+  WeeklyWindowEditor,
+  isWeeklyWindowScheduleJsonValid,
+} from "~/components/weekly-window-editor/weekly-window-editor";
 
 const GB = 1024 * 1024 * 1024;
 
@@ -74,6 +78,7 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
           "watchtower.active-set-cap",
           "watchtower.daily-resolve-budget",
           "watchtower.auto-throughput",
+          "watchtower.schedule",
           "watchtower.sync-interval-seconds",
           "watchtower.series-scope",
           "watchtower.season-bundles",
@@ -450,6 +455,16 @@ export function WatchtowerSettings({ config, setNewConfig }: WatchtowerSettingsP
             </p>
           </Form.Group>
 
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-base-content">Resolve window</p>
+            <WeeklyWindowEditor
+              id="watchtower-schedule"
+              value={config["watchtower.schedule"] ?? ""}
+              onChange={(next) => set("watchtower.schedule", next)}
+              description="When closed, Watchtower pauses resolving and keep-fresh verification (indexer searches, NZB fetches, article sampling) so it doesn't compete with playback. List sync and series expansion keep running. In-flight work finishes if a window closes."
+            />
+          </div>
+
           <Form.Group className="flex flex-col gap-2">
             <Form.Label>Shortlist depth</Form.Label>
             <Form.Control
@@ -652,6 +667,7 @@ export function isWatchtowerSettingsUpdated(
     "watchtower.active-set-cap",
     "watchtower.daily-resolve-budget",
     "watchtower.auto-throughput",
+    "watchtower.schedule",
     "watchtower.sync-interval-seconds",
     "watchtower.series-scope",
     "watchtower.season-bundles",
@@ -687,7 +703,9 @@ export function isWatchtowerListSourceMaxResponseBytesValid(raw: string): boolea
 }
 
 export function isWatchtowerSettingsValid(newConfig: Record<string, string>): boolean {
-  return isWatchtowerListSourceMaxResponseBytesValid(
-    newConfig["watchtower.list-source-max-response-bytes"] ?? "8388608",
+  return (
+    isWatchtowerListSourceMaxResponseBytesValid(
+      newConfig["watchtower.list-source-max-response-bytes"] ?? "8388608",
+    ) && isWeeklyWindowScheduleJsonValid(newConfig["watchtower.schedule"] ?? "")
   );
 }
