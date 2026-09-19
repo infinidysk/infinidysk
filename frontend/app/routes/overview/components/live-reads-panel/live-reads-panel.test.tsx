@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ActiveRead } from "~/clients/backend-client.server";
 import { LiveReadsPanel, LiveReadsPanelContent, type LiveReadRow } from "./live-reads-panel";
+import { LiveTiles } from "../live-tiles/live-tiles";
 
 function fixtureRead(
   id: string,
@@ -160,6 +161,34 @@ describe("LiveReadsPanel", () => {
     expect(markup).toContain("Eweka");
     expect(markup).not.toContain("Copy session id");
     expect(markup).not.toContain("a1b2c3d4");
+  });
+
+  it("groups live totals and read rows in one card and updates the totals", () => {
+    const tiles = {
+      activeReads: 5,
+      articlesPerMinute: 120,
+      errorsPerMinute: 0,
+      bytesServedPerMinute: 60_000_000,
+    };
+    const { container, getByRole, rerender } = render(
+      <LiveReadsPanelContent rows={fixtureRows} summary={<LiveTiles tiles={tiles} />} />,
+    );
+
+    expect(container.querySelectorAll("section.card")).toHaveLength(1);
+    expect(getByRole("region", { name: "Live status" }).closest("section")).toBe(
+      getByRole("list").closest("section"),
+    );
+    expect(container.textContent).toContain("1 MB/s");
+    expect(container.textContent).not.toContain("5 active");
+
+    rerender(
+      <LiveReadsPanelContent
+        rows={[]}
+        summary={<LiveTiles tiles={{ ...tiles, activeReads: 0, bytesServedPerMinute: 0 }} />}
+      />,
+    );
+    expect(container.textContent).toContain("0 B/s");
+    expect(container.textContent).toContain("No files are being read right now.");
   });
 
   it("places the newest read first", () => {

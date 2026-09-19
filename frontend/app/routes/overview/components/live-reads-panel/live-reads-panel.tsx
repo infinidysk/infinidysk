@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { ActiveRead, ActiveReadsMessage } from "~/clients/backend-client.server";
 import { formatBytes, formatSessionAge, formatTimeLeft } from "../../utils/format";
 import { displayNameForRead } from "../../utils/display-name";
@@ -27,7 +27,13 @@ const HISTORY_LIMIT = 60;
  * the next page load so later sessions scroll instead of stretching the card.
  * When `paused`, the subscription is disabled so layout edit borders stay stable.
  */
-export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
+export function LiveReadsPanel({
+  paused = false,
+  summary,
+}: {
+  paused?: boolean;
+  summary?: ReactNode;
+}) {
   const [rows, setRows] = useState<LiveReadRow[]>([]);
   const [mockCount, setMockCount] = useState<number | null>(null);
   const [snapshotReady, setSnapshotReady] = useState(false);
@@ -84,15 +90,17 @@ export function LiveReadsPanel({ paused = false }: { paused?: boolean }) {
     { enabled: !paused && mockCount == null },
   );
 
-  return <LiveReadsPanelContent rows={rows} snapshotReady={snapshotReady} />;
+  return <LiveReadsPanelContent rows={rows} snapshotReady={snapshotReady} summary={summary} />;
 }
 
 export function LiveReadsPanelContent({
   rows,
   snapshotReady = true,
+  summary,
 }: {
   rows: LiveReadRow[];
   snapshotReady?: boolean;
+  summary?: ReactNode;
 }) {
   const displayedRows = [...rows].sort((a, b) => b.read.startedAt - a.read.startedAt);
   const cardRef = useRef<HTMLElement>(null);
@@ -132,12 +140,14 @@ export function LiveReadsPanelContent({
         <div className="flex shrink-0 items-center gap-2.5">
           <span className="status status-success animate-pulse" aria-hidden="true" />
           <h3 className="card-title m-0 text-base">Right now</h3>
-          {rows.length > 0 && (
+          {!summary && rows.length > 0 && (
             <span className="badge badge-ghost badge-sm ml-auto font-mono tabular-nums">
               {rows.length} active
             </span>
           )}
         </div>
+
+        {summary && <div className="shrink-0 border-b border-base-content/10 pb-3">{summary}</div>}
 
         {rows.length === 0 ? (
           <p className="m-0 text-sm text-base-content/50">
