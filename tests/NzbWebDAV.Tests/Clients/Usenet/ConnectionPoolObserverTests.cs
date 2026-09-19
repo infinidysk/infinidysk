@@ -2,6 +2,8 @@ using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Tests.TestUtils;
+using Serilog;
+using Serilog.Events;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
 
@@ -15,6 +17,49 @@ public sealed class ConnectionPoolObserverTests : IDisposable
 
     public void Dispose()
         => SynchronousObserverInvoker.ResetFailureLogThrottleForTests();
+
+    [Fact]
+    public async Task Return_DebugSummaryIsBoundedAndCountsSuppressedReturns()
+    {
+        var sink = new CollectingLogEventSink();
+        using var logger = new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger();
+        var previousLogger = Log.Logger;
+        Log.Logger = logger;
+        try
+        {
+            var clock = new ReturnLogClock();
+            await using var pool = new ConnectionPool<object>(1,
+                _ => ValueTask.FromResult(new object()), timeProvider: clock);
+            for (var index = 0; index < 100; index++)
+            {
+                using var borrowed = await pool.GetConnectionLockAsync(SemaphorePriority.High);
+            }
+
+            var first = Assert.Single(sink.Events, entry => entry.MessageTemplate.Text.StartsWith(
+                "NNTP pool returns", StringComparison.Ordinal));
+            Assert.Equal(1L, Assert.IsType<ScalarValue>(first.Properties["Returns"]).Value);
+
+            clock.ElapsedMilliseconds = 30_000;
+            using (await pool.GetConnectionLockAsync(SemaphorePriority.High)) { }
+
+            var summaries = sink.Events.Where(entry => entry.MessageTemplate.Text.StartsWith(
+                "NNTP pool returns", StringComparison.Ordinal)).ToArray();
+            Assert.Equal(2, summaries.Length);
+            Assert.Equal(100L, Assert.IsType<ScalarValue>(summaries[1].Properties["Returns"]).Value);
+            Assert.Equal(1, pool.IdleConnections);
+        }
+        finally
+        {
+            Log.Logger = previousLogger;
+        }
+    }
+
+    private sealed class ReturnLogClock : TimeProvider
+    {
+        internal long ElapsedMilliseconds { get; set; }
+        public override long TimestampFrequency => 1000;
+        public override long GetTimestamp() => ElapsedMilliseconds;
+    }
 
     [Fact]
     public async Task Borrow_ThrowingFirstStatsSubscriber_ReturnsLockAndInvokesLaterSubscriber()

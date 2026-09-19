@@ -105,6 +105,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private long _replacementPacingUntilMs;
     private readonly Dictionary<long, ReplacementPacingReservation> _cancelledPacingReservations = [];
     private int _consecutiveHandshakeFailures;
+    private long _nextReturnSummaryAtMs;
+    private long _returnsSinceSummary;
 
     // Lifetime churn counters. A pool that keeps destroying and re-opening connections
     // pays the handshake cost repeatedly and can never reach its configured width, which
@@ -954,6 +956,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         var returnedLive = 0;
         var returnedIdle = 0;
         var returnedMax = 0;
+        var summarizedReturns = 0L;
         lock (_lifecycleLock)
         {
             if (_disposed == 1)
@@ -970,14 +973,25 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 returnedLive = _live;
                 returnedIdle = _idleConnections.Count;
                 returnedMax = EffectiveMaxConnections;
+                if (Log.IsEnabled(Serilog.Events.LogEventLevel.Debug))
+                {
+                    _returnsSinceSummary++;
+                    var now = GetTimestampMilliseconds();
+                    if (now >= _nextReturnSummaryAtMs)
+                    {
+                        summarizedReturns = _returnsSinceSummary;
+                        _returnsSinceSummary = 0;
+                        _nextReturnSummaryAtMs = now + 30_000;
+                    }
+                }
             }
         }
 
-        if (notify)
+        if (summarizedReturns > 0)
         {
             Log.Debug(
-                "NNTP connection returned to pool for {Provider}; connectionHash={ConnectionHash} live={Live} idle={Idle} active={Active} max={Max}",
-                _diagnosticName, ConnectionHash(connection), returnedLive, returnedIdle,
+                "NNTP pool returns for {Provider}: returns={Returns} live={Live} idle={Idle} active={Active} max={Max}",
+                _diagnosticName, summarizedReturns, returnedLive, returnedIdle,
                 returnedLive - returnedIdle, returnedMax);
         }
 
