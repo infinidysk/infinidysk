@@ -157,6 +157,33 @@ public class MediaPlaybackSessionSourceTests
     }
 
     [Fact]
+    public void EmbyJellyfinParser_AllowsItemPathWhenMediaSourceMatchesNowPlayingItem()
+    {
+        using var document = JsonDocument.Parse("""
+        [{
+          "Id": "session-normal",
+          "NowPlayingItem": {
+            "Id": "source-normal",
+            "Name": "Movie",
+            "Type": "Movie",
+            "Path": "/movies/current-version.mkv"
+          },
+          "PlayState": {
+            "PositionTicks": 12000000000,
+            "IsPaused": false,
+            "MediaSourceId": "source-normal",
+            "PlayMethod": "DirectPlay"
+          }
+        }]
+        """);
+
+        var session = EmbyJellyfinPlaybackSessionSource.Parse(document.RootElement).Single();
+
+        Assert.Equal("source-normal", session.MediaSourceId);
+        Assert.Equal("/movies/current-version.mkv", session.MediaSourcePath);
+    }
+
+    [Fact]
     public void EmbyJellyfinParser_ExplicitUnknownMediaSourceDoesNotFallBackToGenericItemPath()
     {
         using var document = JsonDocument.Parse("""
