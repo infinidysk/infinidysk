@@ -170,6 +170,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     private readonly ConcurrentDictionary<Guid, InProgressHealthCheck> _inProgress = new();
     private const int RecentHealthCheckCapacity = 32;
     private readonly ConcurrentQueue<HealthCheckAttemptSnapshot> _recentHealthChecks = new();
+    private readonly object _recentHealthChecksLock = new();
     private long _startedHealthCheckAttempts;
     private long _finishedHealthCheckAttempts;
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _workerFailureCooldowns = new();
@@ -204,8 +205,14 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             RecentHealthCheckCapacity,
             _inProgress.Values.Select(worker => worker.GetDiagnosticSnapshot(now))
                 .Where(attempt => attempt.FinishedAtUtc is null).ToArray(),
-            _recentHealthChecks.ToArray());
+                GetRecentHealthChecks());
     }
+
+            private HealthCheckAttemptSnapshot[] GetRecentHealthChecks()
+            {
+            lock (_recentHealthChecksLock)
+                return _recentHealthChecks.ToArray();
+            }
 
     public HealthCheckService
     (
@@ -560,9 +567,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         {
             var finishedAt = _timeProvider.GetUtcNow();
             worker.FinishDiagnostics(finishedAt, outcome);
-            _recentHealthChecks.Enqueue(worker.GetDiagnosticSnapshot(finishedAt));
-            while (_recentHealthChecks.Count > RecentHealthCheckCapacity)
-                _recentHealthChecks.TryDequeue(out _);
+            lock (_recentHealthChecksLock)
+            {
+                _recentHealthChecks.Enqueue(worker.GetDiagnosticSnapshot(finishedAt));
+                while (_recentHealthChecks.Count > RecentHealthCheckCapacity)
+                    _recentHealthChecks.TryDequeue(out _);
+            }
             Interlocked.Increment(ref _finishedHealthCheckAttempts);
             SignalWorkerStateChanged();
         }

@@ -105,6 +105,16 @@ internal sealed partial class SupportPackRedactor
             SecretsRedacted++;
             return $"{match.Groups[1].Value}[REDACTED]";
         });
+        redacted = CredentialSchemeRegex().Replace(redacted, match =>
+        {
+            SecretsRedacted++;
+            return $"{match.Groups[1].Value} [REDACTED]";
+        });
+        redacted = QuotedTokenAssignmentRegex().Replace(redacted, match =>
+        {
+            SecretsRedacted++;
+            return $"{match.Groups[1].Value}[REDACTED]{match.Groups[2].Value}";
+        });
         redacted = MaskTokenRegex().Replace(redacted, _ =>
         {
             SecretsRedacted++;
@@ -192,6 +202,12 @@ internal sealed partial class SupportPackRedactor
 
     [GeneratedRegex(@"(Authorization:\s*(?:Bearer|Basic)\s+)\S+", RegexOptions.IgnoreCase)]
     private static partial Regex AuthorizationRegex();
+
+    [GeneratedRegex(@"\b((?:Bearer|Basic))\s+[^\s""']+", RegexOptions.IgnoreCase)]
+    private static partial Regex CredentialSchemeRegex();
+
+    [GeneratedRegex(@"((?:(?:\\)?""|')?(?:authToken|token)(?:(?:\\)?""|')?\s*[:=]\s*((?:\\)?[""']))[^'""\\]+(?:\\)?[""']", RegexOptions.IgnoreCase)]
+    private static partial Regex QuotedTokenAssignmentRegex();
 
     [GeneratedRegex(@"__NZBDAV_SECRET_MASK_V1__:[A-Za-z0-9_.-]+")]
     private static partial Regex MaskTokenRegex();

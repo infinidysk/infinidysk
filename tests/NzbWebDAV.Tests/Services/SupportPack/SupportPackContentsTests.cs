@@ -464,6 +464,23 @@ public sealed class SupportPackContentsTests : IDisposable
         Assert.Contains("Example", exported.RootElement.GetProperty("fileName").GetString());
     }
 
+    [Theory]
+    [InlineData("movie Bearer secret-value.mkv")]
+    [InlineData("movie Basic credential-value.mkv")]
+    [InlineData("movie token=\"token-value\".mkv")]
+    [InlineData("movie 'authToken': 'auth-token-value'.mkv")]
+    public async Task Pack_RedactsCredentialFormsFromPlaybackFileNames(string fileName)
+    {
+        var buffer = new StreamTraceBuffer(100);
+        buffer.RangeOpen(Guid.NewGuid(), "/.ids/example", "GET", 0, 99, 1000, null, null, fileName);
+        var entries = await ReadPackEntriesAsync(
+            new LogBufferSink(10), new WarningLogBuffer(new LogBufferSink(50)), buffer);
+
+        var traceEvents = entries["stream-traces/events.jsonl"];
+        Assert.Contains("[REDACTED]", traceEvents);
+        Assert.DoesNotContain("value", traceEvents);
+    }
+
     [Fact]
     public async Task Pack_IncludesStreamTracesWhileTracingIsEnabled()
     {

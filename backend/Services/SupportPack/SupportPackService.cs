@@ -1327,7 +1327,10 @@ public sealed class SupportPackService(
         foreach (var evt in events)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var frozen = evt.FreezeForExport();
+            var frozen = evt.FreezeForExport() with
+            {
+                FileName = redactor.RedactText(evt.FileName),
+            };
             var line = JsonSerializer.Serialize(frozen, CompactJsonOptions);
             await writer.WriteLineAsync(redactor.RedactText(line)).ConfigureAwait(false);
         }

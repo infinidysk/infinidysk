@@ -6,6 +6,19 @@ namespace NzbWebDAV.Tests.Services.SupportPack;
 
 public class SupportPackRedactorTests
 {
+    [Theory]
+    [InlineData("movie Bearer secret-value.mkv")]
+    [InlineData("movie Basic credential-value.mkv")]
+    [InlineData("movie token=\"token-value\".mkv")]
+    [InlineData("movie 'authToken': 'auth-token-value'.mkv")]
+    public void RedactText_RedactsCredentialFormsEmbeddedInFilenames(string fileName)
+    {
+        var result = new SupportPackRedactor([]).RedactText(fileName);
+
+        Assert.Contains("[REDACTED]", result);
+        Assert.DoesNotContain("value", result);
+    }
+
     [Fact]
     public void RedactText_RedactsLiteralEncodedUrlSecretsAndPseudonymizesAddresses()
     {
