@@ -63,6 +63,53 @@ public class StreamingTimeoutTests
     }
 
     [Fact]
+    public async Task PipelinedTransferAdmissionFailoverTimeoutDoesNotPenalizeProvider()
+    {
+        var inner = new LateBodyCompletionClient();
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ => ValueTask.FromResult<INntpClient>(inner));
+        var breaker = new ProviderCircuitBreaker("pipelined-admission-timeout");
+        using var client = new MultiConnectionNntpClient(
+            pool,
+            ProviderType.Pooled,
+            breaker,
+            "pipelined-admission-timeout",
+            maxTransferConnections: 1);
+
+        UsenetDecodedBodyResponse? held = null;
+        try
+        {
+            held = await client.DecodedBodyAsync("seg", CancellationToken.None);
+            using var callerCts = new CancellationTokenSource();
+            using var failoverContext = callerCts.Token.SetContext(
+                new TransferAdmissionFailoverContext(
+                    () => true,
+                    TimeSpan.FromMilliseconds(50)));
+
+            async Task EnumerateAsync()
+            {
+                await foreach (var _ in client.DecodedBodiesPipelinedAsync(
+                                   ["seg"], depth: 1, callerCts.Token))
+                {
+                }
+            }
+
+            await Assert.ThrowsAsync<ProviderTransferAdmissionTimeoutException>(EnumerateAsync);
+        }
+        finally
+        {
+            inner.Complete(ArticleBodyResult.Cancelled);
+            if (held?.Stream is not null)
+                await held.Stream.DisposeAsync();
+        }
+
+        var snapshot = client.GetConnectionAdmissionSnapshot()!;
+        Assert.Equal(0, snapshot.WaitingTransferOperations);
+        Assert.Equal(0, breaker.GetSnapshot().FailureCount);
+    }
+
+    [Fact]
     public async Task RunWithConnection_CancellationAfterBodyReturn_ReleasesTransfer()
     {
         var inner = new LateBodyCompletionClient();

@@ -1099,6 +1099,7 @@ public class MultiProviderNntpClient(
                 stopwatch.Stop();
                 deferredCallback.Discard();
                 lastException = ExceptionDispatchInfo.Capture(e);
+                lastOutcomeWasException = true;
                 attemptIndex++;
             }
             catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
@@ -1267,6 +1268,7 @@ public class MultiProviderNntpClient(
             {
                 stopwatch.Stop();
                 lastException = ExceptionDispatchInfo.Capture(e);
+                lastOutcomeWasException = true;
                 attemptIndex++;
             }
             catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
