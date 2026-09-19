@@ -4,7 +4,7 @@ Add multiple NNTP accounts under **Settings → Usenet**.
 
 ## Routing
 
-- **Pool (default)** — connections shared across enabled providers.
+- **Pool (default)** - connections shared across enabled providers. Within the same provider type and recovery state, routing prefers remaining data cap (uncapped first), then unreserved connections as a fraction of the configured Provider Connection Limit, then estimated delivery score. Pending requests and transfer/metadata admission limits count against spare capacity. A larger configured pool no longer wins solely because its raw free-connection count is higher. The same comparison orders backup peers after routing reaches their tier. This is not round-robin scheduling and does not guarantee equal traffic or a fixed byte ratio; fully idle ties can keep favoring the same provider. Learned connection limits and transfer caps reduce the available fraction without changing its configured denominator.
 - **Cascade** — prefer providers in drag order; fail over down the list. Among providers that still have spare capacity, a thinly-spared primary (at most 25% of its pool free) can yield to an idle same-tier peer. Fully saturated providers are still skipped. Absolute pool width does not outrank configured priority while both providers are healthy.
 
 Optional **Re-probe primary after article miss** (`usenet.cascade.retry-primary-on-miss`, default on) retries the primary once after a clean 430/451 before cascading — useful when providers route across spool nodes. Turn it off to go straight to backups after the first miss.

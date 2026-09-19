@@ -1811,15 +1811,10 @@ public class MultiProviderNntpClient(
                     EffectivePriority(x, selectionStates[x].UnreservedConnections))
                 : byRecovery;
             var byUsage = prioritized.ThenByDescending(x => GetRemainingBytes(x));
-            // Prefer providers with more spare capacity. In cascade mode this is a
-            // tie-break after EffectivePriority and uses spare *fraction* so unequal
-            // MaxConnections cannot outweigh Priority. In pool mode absolute spare
-            // outranks learned speed so a full pool cannot monopolize.
-            var capacityBalanced = cascade
-                ? byUsage.ThenByDescending(x =>
-                    (double)selectionStates[x].UnreservedConnections
-                    / Math.Max(1, x.MaxConnections))
-                : byUsage.ThenByDescending(x => selectionStates[x].UnreservedConnections);
+            // Compare spare capacity on the same scale for unequal configured pool widths.
+            var capacityBalanced = byUsage.ThenByDescending(provider =>
+                (double)selectionStates[provider].UnreservedConnections
+                / Math.Max(1, provider.MaxConnections));
             var ordered = capacityBalanced
                 .ThenBy(EstimatedDeliveryScore)
                 .ToList();
