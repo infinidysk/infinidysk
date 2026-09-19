@@ -107,9 +107,11 @@ public abstract class EmbyJellyfinPlaybackSessionSource : IMediaPlaybackSessionS
                 }
             }
 
+            var itemId = MediaServerJson.String(item, "Id");
             if (string.IsNullOrWhiteSpace(path)
-                && mediaSourceId is null
-                && candidateCount == 0)
+                && candidateCount == 0
+                && (mediaSourceId is null
+                    || string.Equals(mediaSourceId, itemId, StringComparison.Ordinal)))
             {
                 path = itemPath;
             }
