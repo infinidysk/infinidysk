@@ -59,7 +59,27 @@ public abstract class EmbyJellyfinPlaybackSessionSource : IMediaPlaybackSessionS
 
             MediaServerJson.TryGet(session, "PlayState", out var playState);
             var mediaSourceId = MediaServerJson.String(playState, "MediaSourceId");
-            var path = MediaServerJson.String(item, "Path");
+            var itemPath = MediaServerJson.String(item, "Path");
+            string? path = null;
+            var candidateCount = 0;
+
+            // PlayerStateInfo identifies the active media version. Prefer its
+            // embedded MediaSource when present, then its MediaSourceId against
+            // NowPlayingItem.MediaSources. Never let a generic item Path override
+            // an explicit active-version identity.
+            if (MediaServerJson.TryGet(playState, "MediaSource", out var activeSource)
+                && activeSource.ValueKind == JsonValueKind.Object)
+            {
+                var activeId = MediaServerJson.String(activeSource, "Id");
+                if (mediaSourceId is null
+                    || activeId is null
+                    || string.Equals(activeId, mediaSourceId, StringComparison.Ordinal))
+                {
+                    path = MediaServerJson.String(activeSource, "Path");
+                    mediaSourceId ??= activeId;
+                }
+            }
+
             if (string.IsNullOrWhiteSpace(path)
                 && MediaServerJson.TryGet(item, "MediaSources", out var sources)
                 && sources.ValueKind == JsonValueKind.Array)
@@ -73,6 +93,7 @@ public abstract class EmbyJellyfinPlaybackSessionSource : IMediaPlaybackSessionS
                     })
                     .Where(candidate => !string.IsNullOrWhiteSpace(candidate.Path))
                     .ToList();
+                candidateCount = candidates.Count;
 
                 if (mediaSourceId is not null)
                 {
@@ -84,6 +105,13 @@ public abstract class EmbyJellyfinPlaybackSessionSource : IMediaPlaybackSessionS
                     mediaSourceId = candidates[0].Id;
                     path = candidates[0].Path;
                 }
+            }
+
+            if (string.IsNullOrWhiteSpace(path)
+                && mediaSourceId is null
+                && candidateCount == 0)
+            {
+                path = itemPath;
             }
 
             var paused = MediaServerJson.Bool(playState, "IsPaused");
