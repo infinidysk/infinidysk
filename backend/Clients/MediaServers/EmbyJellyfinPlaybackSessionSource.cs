@@ -47,7 +47,8 @@ public abstract class EmbyJellyfinPlaybackSessionSource : IMediaPlaybackSessionS
 
     internal static IReadOnlyList<PlaybackObservation> Parse(JsonElement root)
     {
-        if (root.ValueKind != JsonValueKind.Array) return [];
+        if (root.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("Emby/Jellyfin session response must be a JSON array.");
         var result = new List<PlaybackObservation>();
         foreach (var session in root.EnumerateArray())
         {
