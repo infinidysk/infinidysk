@@ -143,7 +143,7 @@ describe("LiveReadsPanel", () => {
     expect(getByRole("region", { name: "Live status" }).closest("section")).toBe(
       getByRole("list").closest("section"),
     );
-    expect(container.textContent).toContain("1 MB/s");
+    expect(container.textContent).toContain("1.0 MB/s");
     expect(container.textContent).not.toContain("1 other reads");
     expect(container.textContent).not.toContain("5 active");
 
