@@ -56,6 +56,18 @@ public class SupportPackRedactorTests
     }
 
     [Fact]
+    public void RedactText_KnownShortSecretsAreRedactedWithoutBroadeningGenericLiteralMatching()
+    {
+        var redactor = new SupportPackRedactor(["abc"], ["q7!"]);
+
+        var result = redactor.RedactText("generic abc configured q7!");
+
+        Assert.Contains("abc", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("q7!", result, StringComparison.Ordinal);
+        Assert.Contains("configured [REDACTED]", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RedactText_KeepsVersionStringsThatLookLikeAddresses()
     {
         var redactor = new SupportPackRedactor([]);
