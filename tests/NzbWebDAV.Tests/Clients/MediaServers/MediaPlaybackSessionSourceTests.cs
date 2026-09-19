@@ -16,6 +16,45 @@ public class MediaPlaybackSessionSourceTests
     }
 
     [Fact]
+    public void PlexParser_ValidEmptyContainer_ReturnsNoSessions()
+    {
+        using var document = JsonDocument.Parse("""{"MediaContainer":{"size":0}}""");
+
+        Assert.Empty(PlexPlaybackSessionSource.Parse(document.RootElement));
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"MediaContainer\":[]}")]
+    [InlineData("{\"MediaContainer\":{\"Metadata\":{}}}")]
+    public void PlexParser_InvalidEnvelope_FailsClosed(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+
+        Assert.Throws<InvalidDataException>(
+            () => PlexPlaybackSessionSource.Parse(document.RootElement));
+    }
+
+    [Fact]
+    public void EmbyJellyfinParser_ValidEmptyArray_ReturnsNoSessions()
+    {
+        using var document = JsonDocument.Parse("[]");
+
+        Assert.Empty(EmbyJellyfinPlaybackSessionSource.Parse(document.RootElement));
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"Sessions\":[]}")]
+    public void EmbyJellyfinParser_InvalidEnvelope_FailsClosed(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+
+        Assert.Throws<InvalidDataException>(
+            () => EmbyJellyfinPlaybackSessionSource.Parse(document.RootElement));
+    }
+
+    [Fact]
     public void PlexParser_NormalizesSessionStateProgressAndPath()
     {
         using var document = JsonDocument.Parse("""

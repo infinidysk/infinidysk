@@ -31,12 +31,17 @@ public sealed class PlexPlaybackSessionSource : IMediaPlaybackSessionSource
 
     internal static IReadOnlyList<PlaybackObservation> Parse(JsonElement root)
     {
-        var container = root;
-        if (MediaServerJson.TryGet(root, "MediaContainer", out var wrapped))
-            container = wrapped;
-        if (!MediaServerJson.TryGet(container, "Metadata", out var metadata)
-            || metadata.ValueKind != JsonValueKind.Array)
+        if (!MediaServerJson.TryGet(root, "MediaContainer", out var container)
+            || container.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidDataException(
+                "Plex session response did not contain a MediaContainer object.");
+        }
+
+        if (!MediaServerJson.TryGet(container, "Metadata", out var metadata))
             return [];
+        if (metadata.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("Plex session response Metadata must be a JSON array.");
 
         var result = new List<PlaybackObservation>();
         foreach (var item in metadata.EnumerateArray())
