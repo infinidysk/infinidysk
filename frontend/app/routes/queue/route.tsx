@@ -292,7 +292,7 @@ export default function Queue(props: Route.ComponentProps) {
 
   // view
   return (
-    <div className="flex min-h-full min-w-full flex-col gap-8 px-4 py-4 text-sm text-base-content/70 md:px-8">
+    <div className="flex min-h-full min-w-full flex-col gap-4 px-4 py-4 text-sm text-base-content/70 md:px-8">
       <PageHeader
         title="Queue"
         subtitle="Jobs from Sonarr, Radarr, or a manual NZB upload. Active items stay at the top; finished jobs remain in this list as history."

@@ -5,6 +5,51 @@ namespace NzbWebDAV.Tests.Services;
 public class UrgentRepairDispositionTests
 {
     [Theory]
+    [InlineData(0, null, 0)]
+    [InlineData(0, 3, 3)]
+    [InlineData(2, 3, 3)]
+    [InlineData(4, 3, 4)]
+    [InlineData(1, null, 1)]
+    public void ResolveUrgentRepairFailureCount_TakesTheLargerEvidence(
+        int liveFailureCount, int? persistedQualifyingCount, int expected)
+    {
+        Assert.Equal(
+            expected,
+            HealthCheckService.ResolveUrgentRepairFailureCount(
+                liveFailureCount, persistedQualifyingCount));
+    }
+
+    [Fact]
+    public void RestartWithPersistedQualification_KeepsForceDeleteDisposition()
+    {
+        var count = HealthCheckService.ResolveUrgentRepairFailureCount(0, 3);
+
+        Assert.Equal(
+            HealthCheckService.UrgentRepairDisposition.ForceDeleteIfUnlinked,
+            HealthCheckService.GetUrgentRepairDisposition(3, count, autoRemoveUnlinkedOnly: true));
+    }
+
+    [Fact]
+    public void ThresholdRaisedAfterScheduling_Defers()
+    {
+        var count = HealthCheckService.ResolveUrgentRepairFailureCount(0, 1);
+
+        Assert.Equal(
+            HealthCheckService.UrgentRepairDisposition.Defer,
+            HealthCheckService.GetUrgentRepairDisposition(3, count, autoRemoveUnlinkedOnly: true));
+    }
+
+    [Fact]
+    public void ThresholdLoweredAfterScheduling_Proceeds()
+    {
+        var count = HealthCheckService.ResolveUrgentRepairFailureCount(0, 3);
+
+        Assert.Equal(
+            HealthCheckService.UrgentRepairDisposition.ForceDelete,
+            HealthCheckService.GetUrgentRepairDisposition(2, count, autoRemoveUnlinkedOnly: false));
+    }
+
+    [Theory]
     [InlineData(0, 0, true, HealthCheckService.UrgentRepairDisposition.RepairNormally)]
     [InlineData(0, 5, true, HealthCheckService.UrgentRepairDisposition.RepairNormally)]
     [InlineData(0, 5, false, HealthCheckService.UrgentRepairDisposition.RepairNormally)]

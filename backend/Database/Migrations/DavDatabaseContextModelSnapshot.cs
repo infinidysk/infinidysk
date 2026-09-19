@@ -133,6 +133,9 @@ namespace NzbWebDAV.Database.Migrations
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(false);
 
+                    b.Property<int?>("UrgentRepairFailures")
+                        .HasColumnType("INTEGER");
+
                     b.Property<Guid?>("HistoryItemId")
                         .HasColumnType("TEXT");
 

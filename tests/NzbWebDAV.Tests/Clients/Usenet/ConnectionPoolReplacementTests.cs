@@ -1,12 +1,80 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Tests.TestUtils;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
 
 public class ConnectionPoolReplacementTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReplacementPacing_DoesNotConsumeOpenBudget(bool warm)
+    {
+        var safetyTimeout = TimeSpan.FromSeconds(5);
+        var clock = new SignalingTimeProvider();
+        var attempts = 0;
+        var warmFailures = 0;
+        using var pool = new ConnectionPool<DisposableProbe>(
+            maxConnections: 1,
+            connectionFactory: _ =>
+            {
+                Interlocked.Increment(ref attempts);
+                return ValueTask.FromResult(new DisposableProbe(() => { }));
+            },
+            replacementHandshakeSpacing: TimeSpan.FromSeconds(1),
+            timeProvider: clock,
+            connectionOpenTimeout: () => TimeSpan.FromMilliseconds(250),
+            onWarmConnectionFailure: (_, _) => Interlocked.Increment(ref warmFailures));
+        using (var original = await pool.GetConnectionLockAsync(SemaphorePriority.High))
+            original.Replace("read-timeout-BODY");
+
+        var pacingStarted = clock.WaitForNextTimerAsync();
+        Task<ConnectionLock<DisposableProbe>>? borrower = null;
+        Task pending = warm
+            ? pool.WarmToAsync(1)
+            : borrower = pool.GetConnectionLockAsync(SemaphorePriority.High);
+
+        try
+        {
+            await pacingStarted.WaitAsync(safetyTimeout);
+            var observation = Task.Delay(TimeSpan.FromSeconds(1));
+            Assert.Same(observation, await Task.WhenAny(pending, observation));
+            Assert.False(pending.IsCompleted);
+            Assert.Equal(1, Volatile.Read(ref attempts));
+            Assert.Equal(1, pool.PendingConnectionCreations);
+            Assert.Equal(0, Volatile.Read(ref warmFailures));
+
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await pending.WaitAsync(safetyTimeout);
+            Assert.Equal(2, Volatile.Read(ref attempts));
+            Assert.Equal(1, pool.LiveConnections);
+            Assert.Equal(0, pool.PendingConnectionCreations);
+            Assert.Equal(0, Volatile.Read(ref warmFailures));
+            if (warm)
+                Assert.Equal(1, pool.IdleConnections);
+        }
+        finally
+        {
+            clock.Advance(TimeSpan.FromMinutes(1));
+            try
+            {
+                await pending.WaitAsync(safetyTimeout);
+                if (borrower is not null)
+                {
+                    using var connection = await borrower;
+                }
+            }
+            catch (ConnectionOpenTimeoutException ex)
+            {
+                Debug.WriteLine($"Replacement cleanup timed out while awaiting the pending connection: {ex}");
+            }
+        }
+    }
+
     [Fact]
     public async Task RepeatedReplacement_DisposesBeforeReconnectWithoutExceedingLimit()
     {

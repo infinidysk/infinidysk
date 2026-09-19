@@ -1402,6 +1402,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
+            davItem.UrgentRepairFailures = null;
 
             // A previously degraded file that now sweeps clean has recovered (provider-side
             // restoration): drop the stale hole and corrupt records. The probed container
@@ -1518,6 +1519,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 var utcNow = DateTimeOffset.UtcNow;
                 davItem.LastHealthCheck = utcNow;
                 davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
+                davItem.UrgentRepairFailures = null;
                 ExceptionMiddleware.InvalidateRepairSchedulingDedup(davItem.Id);
                 await RecordHealthResult(
                     dbClient, davItem,
@@ -1688,6 +1690,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
+            davItem.UrgentRepairFailures = null;
             // The patched segments are served locally now; any earlier hole/corrupt record is obsolete.
             if (par2Outcome is Par2RepairOutcome.Repaired
                 && (nzbFile.MissingSegmentIndices != null || nzbFile.CorruptSegmentIndices != null))
@@ -2789,6 +2792,10 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             : UrgentRepairDisposition.ForceDelete;
     }
 
+    /// <summary>Live tracker count wins when it is newer/larger; otherwise the persisted qualification.</summary>
+    public static int ResolveUrgentRepairFailureCount(int liveFailureCount, int? persistedQualifyingCount) =>
+        Math.Max(liveFailureCount, persistedQualifyingCount ?? 0);
+
     /// <summary>
     /// How repair should treat the result of the organized-library lookup.
     /// </summary>
@@ -3227,27 +3234,39 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             return;
         }
 
-        var threshold = _configManager.GetAutoRemoveAfterFailures();
-        var failureSnapshot = _failureTracker.GetSnapshot(davItem.Id);
-        var failureCount = failureSnapshot.Count;
-        var unlinkedOnly = _configManager.IsAutoRemoveUnlinkedOnly();
-        var disposition = GetUrgentRepairDisposition(threshold, failureCount, unlinkedOnly);
-
-        if (disposition == UrgentRepairDisposition.Defer)
+        StreamingFailureSnapshot failureSnapshot;
+        int failureCount;
+        UrgentRepairDisposition disposition;
+        int threshold;
+        await using (await _failureTracker
+            .AcquireMutationGateAsync(davItem.Id, ct)
+            .ConfigureAwait(false))
         {
-            var utcNow = DateTimeOffset.UtcNow;
-            davItem.LastHealthCheck = utcNow;
-            davItem.NextHealthCheck = utcNow + TimeSpan.FromHours(1);
-            await RecordHealthResult(
-                dbClient, davItem,
-                HealthCheckResult.HealthResult.Unhealthy,
-                HealthCheckResult.RepairAction.ActionNeeded,
-                string.Join(" ", [
-                    "File failed during streaming.",
-                    $"Streaming failure count: {failureCount}/{threshold}.",
-                    "Repair and replacement deferred until the failure threshold is reached."
-                ]), ct).ConfigureAwait(false);
-            return;
+            await dbClient.Ctx.Entry(davItem).ReloadAsync(ct).ConfigureAwait(false);
+            threshold = _configManager.GetAutoRemoveAfterFailures();
+            failureSnapshot = _failureTracker.GetSnapshot(davItem.Id);
+            failureCount = ResolveUrgentRepairFailureCount(
+                failureSnapshot.Count, davItem.UrgentRepairFailures);
+            var unlinkedOnly = _configManager.IsAutoRemoveUnlinkedOnly();
+            disposition = GetUrgentRepairDisposition(threshold, failureCount, unlinkedOnly);
+
+            if (disposition == UrgentRepairDisposition.Defer)
+            {
+                var utcNow = DateTimeOffset.UtcNow;
+                davItem.LastHealthCheck = utcNow;
+                davItem.NextHealthCheck = utcNow + TimeSpan.FromHours(1);
+                davItem.UrgentRepairFailures = null;
+                await RecordHealthResult(
+                    dbClient, davItem,
+                    HealthCheckResult.HealthResult.Unhealthy,
+                    HealthCheckResult.RepairAction.ActionNeeded,
+                    string.Join(" ", [
+                        "File failed during streaming.",
+                        $"Streaming failure count: {failureCount}/{threshold}.",
+                        "Repair and replacement deferred until the failure threshold is reached."
+                    ]), ct).ConfigureAwait(false);
+                return;
+            }
         }
 
         var par2Outcome = ShouldAttemptPar2Repair()
@@ -3269,6 +3288,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             var utcNow = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
+            davItem.UrgentRepairFailures = null;
             ExceptionMiddleware.InvalidateRepairSchedulingDedup(davItem.Id);
             await RecordHealthResult(
                 dbClient, davItem,
@@ -3552,6 +3572,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     "health validation failed; Arr media removed and original download blocklisted");
                 RemoveDavItemWithGeneratedSidecars(dbClient, davItem);
                 _failureTracker.ClearFailure(davItem.Id);
+                davItem.UrgentRepairFailures = null;
                 var searchClause = arrDecision is ArrLinkedRepairDecision.RemoveAndBlocklistSucceededSearchWithheld
                     ? "The automatic replacement search was withheld because the per-media search limit was reached."
                     : "Arr was notified to search for a replacement.";
@@ -3792,6 +3813,9 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         davItem.NextHealthCheck = reachedThreshold
             ? DateTimeOffset.UnixEpoch
             : ComputeFailureNextHealthCheck(utcNow, knownFailure: true);
+        davItem.UrgentRepairFailures = reachedThreshold
+            ? currentFailure.Count
+            : null;
 
         CompleteHealthProgress(davItem.Id);
         await RecordHealthResult(

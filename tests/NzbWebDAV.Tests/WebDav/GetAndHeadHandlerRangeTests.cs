@@ -4,15 +4,171 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Middlewares;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.StreamTrace;
+using NzbWebDAV.Tests.TestUtils;
 using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav.Base;
 
 namespace NzbWebDAV.Tests.WebDav;
 
+[Collection(nameof(GlobalLoggerCollection))]
 public class GetAndHeadHandlerRangeTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Get_RangeTraceCountsOnlyItsOwnWrites(bool overlap)
+    {
+        var trace = new StreamTraceBuffer(100);
+        var registry = new ActiveReadRegistry();
+        var config = new ConfigManager();
+        using var firstBody = new GatedWriteStream(overlap);
+        using var secondBody = new MemoryStream();
+        using var shared = new SharedStreamRegistry(config, new ConcurrentReadTracker());
+        var handler = new GetAndHeadHandlerPatch(
+            new SingleItemStore(new MemoryStoreItem()), config, new ProviderUsageTracker(),
+            registry, new ConcurrentReadTracker(), trace, new StreamingFailureTracker(), shared);
+        var middleware = new WebDavObservabilityMiddleware(async context =>
+            await handler.HandleRequestAsync(context), trace);
+        var first = NewGetContext("bytes=0-99", firstBody);
+        var second = NewGetContext("bytes=100-299", secondBody);
+
+        var firstRequest = middleware.InvokeAsync(first);
+        try
+        {
+            if (overlap)
+                await firstBody.WriteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            else
+                await firstRequest;
+            await middleware.InvokeAsync(second);
+        }
+        finally
+        {
+            firstBody.Release.TrySetResult();
+            await firstRequest;
+        }
+
+        var session = Assert.Single(trace.ListSessions());
+        var events = trace.GetSessionEvents(session.SessionId);
+        foreach (var opened in events.Where(entry => entry.Kind == "RangeOpen"))
+        {
+            var ended = Assert.Single(events, entry =>
+                entry.Kind == "RangeEnd" && entry.RangeGeneration == opened.RangeGeneration);
+            Assert.Equal(opened.RangeEnd - opened.RangeStart + 1, ended.BytesServed);
+            var requestEnd = Assert.Single(events, entry =>
+                entry.Kind == "RequestEnd" && entry.RangeGeneration == opened.RangeGeneration);
+            Assert.NotNull(requestEnd.FirstByteMs);
+            var requestDurationMs = requestEnd.RequestDurationMs;
+            var firstByteMs = requestEnd.FirstByteMs;
+            Assert.True(requestDurationMs >= firstByteMs);
+            Assert.True(requestEnd.CleanupMs >= 0);
+            Assert.Null(requestEnd.CancelledAtMs);
+        }
+        Assert.Equal(300, registry.GetBytesRead(session.SessionId));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Get_InterruptedWriteCountsOnlySuccessfulBytes(bool cancelled)
+    {
+        var trace = new StreamTraceBuffer(100);
+        var config = new ConfigManager();
+        using var cancellation = new CancellationTokenSource();
+        using var body = new InterruptedWriteStream(cancelled, cancellation);
+        using var shared = new SharedStreamRegistry(config, new ConcurrentReadTracker());
+        var handler = new GetAndHeadHandlerPatch(
+            new SingleItemStore(new MemoryStoreItem(128)), config, new ProviderUsageTracker(),
+            new ActiveReadRegistry(), new ConcurrentReadTracker(), trace, new StreamingFailureTracker(), shared);
+        var middleware = new WebDavObservabilityMiddleware(async context =>
+            await handler.HandleRequestAsync(context), trace);
+        var context = NewGetContext("bytes=0-511", body);
+        context.RequestAborted = cancellation.Token;
+
+        var exception = await Record.ExceptionAsync(() => middleware.InvokeAsync(context));
+
+        Assert.NotNull(exception);
+        var events = trace.GetSessionEvents(Assert.Single(trace.ListSessions()).SessionId);
+        var ended = Assert.Single(events, entry => entry.Kind == "RangeEnd");
+        Assert.Equal(128, ended.BytesServed);
+        Assert.Equal(cancelled ? "Aborted" : "Error", ended.EndReason);
+        var requestEnd = Assert.Single(events, entry => entry.Kind == "RequestEnd");
+        Assert.NotNull(requestEnd.FirstByteMs);
+        Assert.True(requestEnd.CleanupMs >= 0);
+        if (cancelled)
+        {
+            Assert.IsAssignableFrom<OperationCanceledException>(exception);
+            Assert.NotNull(requestEnd.CancelledAtMs);
+            Assert.True(requestEnd.CancellationToCompletionMs >= 0);
+        }
+        else
+        {
+            Assert.IsType<IOException>(exception);
+            Assert.Null(requestEnd.CancelledAtMs);
+        }
+    }
+
+    private static DefaultHttpContext NewGetContext(string range, Stream body)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Scheme = "http";
+        context.Request.Host = new HostString("localhost");
+        context.Request.Path = "/content/movie.mkv";
+        context.Request.Headers.Range = range;
+        context.Response.Body = body;
+        return context;
+    }
+
+    private sealed class MemoryStoreItem(int chunkSize = 1024) : BaseStoreReadonlyItem
+    {
+        public override string Name => "movie.mkv";
+        public override string UniqueKey => "movie";
+        public override long FileSize => 1024;
+        public override DateTime CreatedAt => DateTime.UnixEpoch;
+        public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
+            => Task.FromResult<Stream>(new ChunkedReadStream(chunkSize));
+    }
+
+    private sealed class ChunkedReadStream(int chunkSize) : MemoryStream(new byte[1024])
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            => base.ReadAsync(buffer[..Math.Min(buffer.Length, chunkSize)], cancellationToken);
+    }
+
+    private sealed class InterruptedWriteStream(bool cancelled, CancellationTokenSource cancellation) : MemoryStream
+    {
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Length > 0)
+            {
+                if (cancelled)
+                {
+                    await cancellation.CancelAsync();
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+                throw new IOException("Test response write failure.");
+            }
+            await base.WriteAsync(buffer, cancellationToken);
+        }
+    }
+
+    private sealed class GatedWriteStream(bool gated) : MemoryStream
+    {
+        public TaskCompletionSource WriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            WriteStarted.TrySetResult();
+            if (gated)
+                await Release.Task.WaitAsync(cancellationToken);
+            await base.WriteAsync(buffer, cancellationToken);
+        }
+    }
+
     [Theory]
     [InlineData("npt=0.000-")]
     [InlineData("bytes=99999999999999999999-")]

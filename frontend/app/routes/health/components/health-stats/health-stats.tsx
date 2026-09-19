@@ -35,21 +35,12 @@ export function HealthStats({ stats }: HealthStatsProps) {
   }
 
   const totalOutcomes = Object.values(counts).reduce((sum, count) => sum + count, 0);
-  const percentages = { ...counts };
-  if (totalOutcomes > 0) {
-    const outcomes = Object.keys(counts) as (keyof typeof counts)[];
-    for (const outcome of outcomes) {
-      percentages[outcome] = Math.floor((counts[outcome] * 100) / totalOutcomes);
-    }
-    const remaining = 100 - Object.values(percentages).reduce((sum, value) => sum + value, 0);
-    const largestRemainders = outcomes.sort(
-      (first, second) =>
-        ((counts[second] * 100) % totalOutcomes) - ((counts[first] * 100) % totalOutcomes),
-    );
-    for (const outcome of largestRemainders.slice(0, remaining)) {
-      percentages[outcome] += 1;
-    }
-  }
+  const percentage = (count: number) => {
+    const value = totalOutcomes > 0 ? (count * 100) / totalOutcomes : 0;
+    if (value > 0 && value < 0.1) return "<0.1%";
+    if (value > 99.9 && value < 100) return ">99.9%";
+    return `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
+  };
 
   return (
     <section className="card w-full border border-base-content/10 bg-base-100 shadow-sm">
@@ -59,15 +50,18 @@ export function HealthStats({ stats }: HealthStatsProps) {
             <h2 className="card-title text-xl">Overview</h2>
             <Badge className="badge-ghost badge-sm">Last 30 days</Badge>
           </div>
-          <p className="text-xs leading-relaxed text-base-content/55">
-            These are health-check results recorded during this period. A file can appear more than
-            once, and these totals do not verify the Library Directory setting. Total checked
-            includes all results; percentages cover only healthy, repaired, deleted, and degraded
-            results.
-          </p>
+          <details className="text-xs leading-relaxed text-base-content/70">
+            <summary className="cursor-pointer">About these results</summary>
+            <p className="mt-2 max-w-prose">
+              These are health-check results recorded during this period. A file can appear more
+              than once, and these totals do not verify the Library Directory setting. Total checked
+              includes all results; percentages cover only healthy, repaired, deleted, and degraded
+              results.
+            </p>
+          </details>
         </div>
 
-        <div className="stats stats-vertical w-full bg-base-200/40 xl:stats-horizontal">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
           <Stat
             icon="fact_check"
             iconClassName="text-base-content/50"
@@ -78,7 +72,7 @@ export function HealthStats({ stats }: HealthStatsProps) {
             icon="check_circle"
             iconClassName="text-success"
             iconFilled
-            title={`Healthy (${percentages.healthy}%)`}
+            title={`Healthy (${percentage(counts.healthy)})`}
             value={counts.healthy}
             valueClassName="text-success"
           />
@@ -86,7 +80,7 @@ export function HealthStats({ stats }: HealthStatsProps) {
             icon="build_circle"
             iconClassName="text-info"
             iconFilled
-            title={`Repaired (${percentages.repaired}%)`}
+            title={`Repaired (${percentage(counts.repaired)})`}
             value={counts.repaired}
             valueClassName="text-info"
           />
@@ -94,7 +88,7 @@ export function HealthStats({ stats }: HealthStatsProps) {
             icon="delete"
             iconClassName="text-error"
             iconFilled
-            title={`Deleted (${percentages.deleted}%)`}
+            title={`Deleted (${percentage(counts.deleted)})`}
             value={counts.deleted}
             valueClassName="text-error"
           />
@@ -102,7 +96,7 @@ export function HealthStats({ stats }: HealthStatsProps) {
             icon="warning"
             iconClassName="text-warning"
             iconFilled
-            title={`Degraded (${percentages.degraded}%)`}
+            title={`Degraded (${percentage(counts.degraded)})`}
             value={counts.degraded}
             valueClassName="text-warning"
           />
@@ -128,17 +122,17 @@ function Stat({
   valueClassName?: string;
 }) {
   return (
-    <div className="stat place-items-center py-4">
-      <div className={`stat-figure ${iconClassName}`}>
+    <div className="min-w-0 py-2">
+      <div className={`mb-1 ${iconClassName}`}>
         <Icon
           name={icon}
           {...(iconFilled !== undefined ? { filled: iconFilled } : {})}
           className="!text-[22px]"
         />
       </div>
-      <div className="stat-title text-xs">{title}</div>
-      <div className={`stat-value font-mono text-3xl tabular-nums md:text-4xl ${valueClassName}`}>
-        {value}
+      <div className="text-xs text-base-content/70">{title}</div>
+      <div className={`font-mono text-2xl font-semibold tabular-nums ${valueClassName}`}>
+        {value.toLocaleString()}
       </div>
     </div>
   );

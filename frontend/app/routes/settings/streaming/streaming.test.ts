@@ -65,6 +65,24 @@ function StreamingHarness({
 }
 
 describe("Streaming settings", () => {
+  it("describes fresh-open timing without local queue waits", () => {
+    render(createElement(StreamingHarness));
+
+    const input = screen.getByRole<HTMLInputElement>("textbox", {
+      name: "Fresh Connection Open Timeout",
+    });
+    expect(input.value).toBe("15");
+    expect(input.getAttribute("aria-describedby")).toBe("connection-open-timeout-help");
+
+    const help = document.getElementById("connection-open-timeout-help");
+    const text = help?.textContent?.replace(/\s+/g, " ").trim();
+    expect(text).toContain("bounds fresh TCP/TLS/AUTHINFO connection creation");
+    expect(text).toContain(
+      "Local admission, handshake queueing, replacement pacing, and BODY/ARTICLE transfer time are excluded.",
+    );
+    expect(text).toContain("Queue waits still honor caller cancellation and shutdown.");
+  });
+
   it("warns about rclone read-ahead only for symlink libraries with Segment Cache on", () => {
     expect(
       shouldWarnSegmentCacheReadAhead({ ...validConfig, "api.import-strategy": "symlinks" }),

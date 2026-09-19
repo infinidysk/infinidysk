@@ -8,7 +8,7 @@ import { PageSection } from "../page-section/page-section";
 import { Pagination } from "~/components/pagination/pagination";
 import { EmptyQueue } from "../empty-queue/empty-queue";
 import { SimpleDropdown } from "~/components/simple-dropdown/simple-dropdown";
-import { Badge, Button, Tooltip } from "~/components/ui";
+import { Badge, Button, Icon, Tooltip } from "~/components/ui";
 import { useIsReadOnly } from "~/auth/authorization";
 import type { JobsListParams } from "../../list-params";
 import { sortValue } from "../../list-params";
@@ -371,46 +371,63 @@ export function QueueTable({
           {totalHistoryCount} history
         </Badge>
       )}
-      {!isReadOnly && totalQueueCount > 0 && (
-        <>
-          <Button variant="secondary" size="xsmall" onClick={() => setIsConfirmingClearAll(true)}>
-            Clear queue
-          </Button>
-          {categories.length > 0 && (
-            <>
-              <SimpleDropdown
-                options={categories}
-                value={clearCategory}
-                onChange={setClearCategory}
-              />
-              <Button
-                variant="secondary"
-                size="xsmall"
-                onClick={() => setIsConfirmingClearCategory(true)}
-              >
-                Clear category
-              </Button>
-            </>
-          )}
-        </>
-      )}
-      {!isReadOnly && totalHistoryCount > 0 && (
-        <>
-          <Button
-            variant="secondary"
-            size="xsmall"
-            onClick={() => setIsConfirmingClearFailed(true)}
+      {!isReadOnly && (totalQueueCount > 0 || totalHistoryCount > 0) && (
+        <details className="dropdown dropdown-end ml-auto">
+          <summary
+            className="btn btn-ghost btn-sm list-none"
+            aria-label="Queue maintenance"
+            title="Queue maintenance"
           >
-            Clear failed
-          </Button>
-          <Button
-            variant="secondary"
-            size="xsmall"
-            onClick={() => setIsConfirmingClearAllHistory(true)}
-          >
-            Clear history
-          </Button>
-        </>
+            <Icon name="more_horiz" />
+          </summary>
+          <div className="dropdown-content z-20 mt-2 flex w-56 flex-col gap-2 rounded-box border border-base-content/10 bg-base-200 p-3 shadow-lg">
+            {totalQueueCount > 0 && (
+              <>
+                <Button
+                  variant="secondary"
+                  size="xsmall"
+                  onClick={() => setIsConfirmingClearAll(true)}
+                >
+                  Clear queue
+                </Button>
+                {categories.length > 0 && (
+                  <>
+                    <SimpleDropdown
+                      options={categories}
+                      value={clearCategory}
+                      onChange={setClearCategory}
+                    />
+                    <Button
+                      variant="secondary"
+                      size="xsmall"
+                      onClick={() => setIsConfirmingClearCategory(true)}
+                    >
+                      Clear category
+                    </Button>
+                  </>
+                )}
+              </>
+            )}
+            {totalHistoryCount > 0 && (
+              <>
+                <Button
+                  variant="secondary"
+                  size="xsmall"
+                  onClick={() => setIsConfirmingClearFailed(true)}
+                >
+                  Clear failed
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="xsmall"
+                  onClick={() => setIsConfirmingClearAllHistory(true)}
+                >
+                  Clear history
+                </Button>
+              </>
+            )}
+          </div>
+        </details>
       )}
       {!isReadOnly && headerCheckboxState !== "none" && (
         <>

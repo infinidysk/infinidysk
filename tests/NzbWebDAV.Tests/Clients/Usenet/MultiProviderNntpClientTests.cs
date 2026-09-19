@@ -1,5 +1,6 @@
 using System.IO;
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
@@ -1655,7 +1656,7 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
-    public async Task PoolMode_PrefersProviderWithMostUnreservedConnections()
+    public async Task PoolMode_IdlePoolsTieOnSpareFractionRegardlessOfWidth()
     {
         var bytesTracker = new ProviderBytesTracker();
         bytesTracker.RecordSegmentThroughput("small.example", 1_000_000, 1);
@@ -1671,15 +1672,236 @@ public class MultiProviderNntpClientTests
         };
         using var client = new MultiProviderNntpClient(
         [
-            CreateProvider(smallConnection, host: "small.example", maxConnections: 1),
             CreateProvider(largeConnection, host: "large.example", maxConnections: 4),
+            CreateProvider(smallConnection, host: "small.example", maxConnections: 1),
         ], bytesTracker: bytesTracker, cascadeEnabled: () => false);
 
         var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
         await response.Stream!.DisposeAsync();
 
-        Assert.Equal(0, smallConnection.SingularRequests);
-        Assert.Equal(1, largeConnection.SingularRequests);
+        Assert.Equal(1, smallConnection.SingularRequests);
+        Assert.Equal(0, largeConnection.SingularRequests);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PoolMode_OnePendingSelectionOnWiderPoolYieldsToIdlePeer(bool pipelined)
+    {
+        var operation = pipelined ? NntpOperation.PipelinedBody : NntpOperation.Body;
+        var bytesTracker = new ProviderBytesTracker();
+        bytesTracker.RecordSegmentThroughput("wide.example", 1_000_000, 1);
+        var wide = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            host: "wide.example",
+            maxConnections: 100);
+        var narrow = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            host: "narrow.example",
+            maxConnections: 50);
+        using var client = new MultiProviderNntpClient(
+            [wide, narrow], bytesTracker: bytesTracker, cascadeEnabled: () => false);
+
+        wide.ReservePending(operation);
+        try
+        {
+            Assert.Equal(99, wide.UnreservedConnectionsFor(operation));
+            Assert.Equal(50, narrow.UnreservedConnectionsFor(operation));
+            Assert.Same(narrow, client.SelectProviderForBenchmark(operation));
+            Assert.Equal(1, wide.PendingSelections);
+            Assert.Equal(0, narrow.PendingSelections);
+            Assert.Equal(0, wide.LiveConnections);
+            Assert.Equal(0, narrow.LiveConnections);
+        }
+        finally
+        {
+            wide.ReleasePending(operation);
+        }
+
+        Assert.Equal(0, wide.PendingSelections);
+    }
+
+    [Fact]
+    public void PoolMode_FractionalSpareOutranksSpeedWhenBothPoolsAreBusy()
+    {
+        var bytesTracker = new ProviderBytesTracker();
+        bytesTracker.RecordSegmentThroughput("narrow.example", 1_000_000, 1);
+        var wide = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            host: "wide.example",
+            maxConnections: 100);
+        var narrow = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            host: "narrow.example",
+            maxConnections: 50);
+        using var client = new MultiProviderNntpClient(
+            [narrow, wide], bytesTracker: bytesTracker, cascadeEnabled: () => false);
+
+        wide.ReservePending(NntpOperation.Body);
+        narrow.ReservePending(NntpOperation.Body);
+        try
+        {
+            Assert.Same(wide, client.SelectProviderForBenchmark(NntpOperation.Body));
+            Assert.Equal(1, wide.PendingSelections);
+            Assert.Equal(1, narrow.PendingSelections);
+        }
+        finally
+        {
+            narrow.ReleasePending(NntpOperation.Body);
+            wide.ReleasePending(NntpOperation.Body);
+        }
+    }
+
+    [Fact]
+    public async Task PoolMode_OneActiveConnectionOnWiderPoolYieldsToIdlePeer()
+    {
+        var bytesTracker = new ProviderBytesTracker();
+        bytesTracker.RecordSegmentThroughput("wide.example", 1_000_000, 1);
+        var wideConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+            DeferSingularCompletion = true,
+        };
+        var narrowConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        var wide = CreateProvider(wideConnection, host: "wide.example", maxConnections: 100);
+        var narrow = CreateProvider(narrowConnection, host: "narrow.example", maxConnections: 50);
+        using var client = new MultiProviderNntpClient(
+            [wide, narrow], bytesTracker: bytesTracker, cascadeEnabled: () => false);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
+        UsenetDecodedBodyResponse? heldResponse = null;
+        try
+        {
+            heldResponse = await client.DecodedBodyAsync("held-segment", timeout.Token);
+            Assert.Equal(1, wide.ActiveConnections);
+            Assert.Equal(0, wide.PendingSelections);
+            var nextResponse = await client.DecodedBodyAsync("next-segment", timeout.Token);
+            await nextResponse.Stream!.DisposeAsync();
+
+            Assert.Equal(1, wideConnection.SingularRequests);
+            Assert.Equal(1, narrowConnection.SingularRequests);
+        }
+        finally
+        {
+            wideConnection.CompletePendingSingularRequests();
+            if (heldResponse?.Stream is not null)
+                await heldResponse.Stream.DisposeAsync();
+        }
+
+        Assert.Equal(0, wide.ActiveConnections);
+        Assert.Equal(0, narrow.ActiveConnections);
+        Assert.Equal(0, wide.PendingSelections);
+        Assert.Equal(0, narrow.PendingSelections);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ProviderSelection_TransferCapDoesNotRenormalizeSpareFraction(bool cascade)
+    {
+        var bytesTracker = new ProviderBytesTracker();
+        bytesTracker.RecordSegmentThroughput("capped.example", 1_000_000, 1);
+        var capped = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            host: "capped.example",
+            maxConnections: 8,
+            maxTransferConnections: 4);
+        var peer = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            host: "peer.example",
+            maxConnections: 4);
+        using var client = new MultiProviderNntpClient(
+            [capped, peer], bytesTracker: bytesTracker, cascadeEnabled: () => cascade);
+
+        Assert.Equal(4, capped.UnreservedConnectionsFor(NntpOperation.Body));
+        Assert.Equal(4, peer.UnreservedConnectionsFor(NntpOperation.Body));
+        Assert.Same(peer, client.SelectProviderForBenchmark(NntpOperation.Body));
+        Assert.Equal(0, capped.PendingSelections);
+        Assert.Equal(0, peer.PendingSelections);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ProviderSelection_LearnedLimitDoesNotRenormalizeSpareFraction(bool cascade)
+    {
+        var bytesTracker = new ProviderBytesTracker();
+        bytesTracker.RecordSegmentThroughput("limited.example", 1_000_000, 1);
+        var limitedPool = new ConnectionPool<INntpClient>(
+            maxConnections: 20,
+            _ => throw new CouldNotLoginToUsenetException(
+                "502 connection limit (10) reached", responseCode: 502),
+            connectionLimitDetector: exception =>
+                UsenetConnectionLimitDetector.TryLearn(exception, out var learned) ? learned : null);
+        var limited = new MultiConnectionNntpClient(
+            limitedPool,
+            ProviderType.Pooled,
+            new ProviderCircuitBreaker("limited.example"),
+            "limited.example");
+        var peer = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            host: "peer.example",
+            maxConnections: 8);
+        using var client = new MultiProviderNntpClient(
+            [limited, peer], bytesTracker: bytesTracker, cascadeEnabled: () => cascade);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
+        await Assert.ThrowsAsync<CouldNotLoginToUsenetException>(async () =>
+        {
+            using var unexpectedConnection = await limitedPool.GetConnectionLockAsync(
+                SemaphorePriority.High, timeout.Token);
+        });
+
+        Assert.Equal(20, limited.MaxConnections);
+        Assert.Equal(8, limited.EffectiveMaxConnections);
+        Assert.Equal(8, limited.UnreservedConnectionsFor(NntpOperation.Body));
+        Assert.Equal(ProviderCircuitState.Closed, limited.GetCircuitBreakerSnapshot().State);
+        Assert.Same(peer, client.SelectProviderForBenchmark(NntpOperation.Body));
+        Assert.Equal(0, limited.PendingSelections);
+        Assert.Equal(0, peer.PendingSelections);
+        Assert.Equal(0, limited.LiveConnections);
+        Assert.Equal(0, peer.LiveConnections);
+    }
+
+    [Fact]
+    public void PoolMode_NormalizesSpareWithinBackupTierWithoutChangingTierPrecedence()
+    {
+        var primary = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            host: "primary.example",
+            maxConnections: 1);
+        var wideBackup = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            host: "wide-backup.example",
+            providerType: ProviderType.BackupOnly,
+            maxConnections: 100);
+        var narrowBackup = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            host: "narrow-backup.example",
+            providerType: ProviderType.BackupOnly,
+            maxConnections: 50);
+        using var client = new MultiProviderNntpClient(
+            [primary, wideBackup, narrowBackup], cascadeEnabled: () => false);
+
+        wideBackup.ReservePending(NntpOperation.Body);
+        try
+        {
+            var ordered = client.GetPar2VerificationProviders();
+
+            Assert.Equal(new[] { primary, narrowBackup, wideBackup }, ordered);
+            Assert.Equal(1, wideBackup.PendingSelections);
+            Assert.Equal(0, primary.PendingSelections);
+            Assert.Equal(0, narrowBackup.PendingSelections);
+        }
+        finally
+        {
+            wideBackup.ReleasePending(NntpOperation.Body);
+        }
     }
 
     [Fact]
@@ -1795,14 +2017,15 @@ public class MultiProviderNntpClientTests
             host: "primary.example",
             maxConnections: 4,
             maxTransferConnections: 1);
+        var peerProvider = CreateProvider(
+            peerConnection,
+            host: "peer.example",
+            maxConnections: 4,
+            maxTransferConnections: 4);
         using var client = new MultiProviderNntpClient(
         [
             primaryProvider,
-            CreateProvider(
-                peerConnection,
-                host: "peer.example",
-                maxConnections: 1,
-                maxTransferConnections: 1),
+            peerProvider,
         ], cascadeEnabled: () => false);
 
         UsenetDecodedBodyResponse? heldResponse = null;
@@ -1811,6 +2034,9 @@ public class MultiProviderNntpClientTests
             heldResponse = await primaryProvider.DecodedBodyAsync(
                 "held-segment",
                 CancellationToken.None);
+            Assert.Equal(0, primaryProvider.UnreservedConnectionsFor(NntpOperation.Body));
+            Assert.Equal(3, primaryProvider.UnreservedConnectionsFor(NntpOperation.Stat));
+            Assert.Equal(2, peerProvider.UnreservedConnectionsFor(NntpOperation.Stat));
             var stat = await client.StatAsync("metadata-segment", CancellationToken.None);
 
             Assert.True(stat.ArticleExists);

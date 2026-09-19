@@ -13,4 +13,32 @@ public sealed record ProviderConnectionAdmissionSnapshot(
     int ActiveTransferOperations,
     int ActiveMetadataOperations,
     int WaitingTransferOperations,
-    int WaitingMetadataOperations);
+    int WaitingMetadataOperations,
+    IReadOnlyList<TimeSpan> ActiveTransferLeaseAges,
+    TimeSpan? OldestWaitingTransferAge)
+{
+    public ProviderConnectionAdmissionSnapshot(
+        int ConfiguredTransferLimit,
+        int EffectiveTransferLimit,
+        int BaseMetadataCapacity,
+        int MetadataBurstAllowance,
+        int MaxMetadataCapacity,
+        int ActiveTransferOperations,
+        int ActiveMetadataOperations,
+        int WaitingTransferOperations,
+        int WaitingMetadataOperations)
+        : this(
+            ConfiguredTransferLimit,
+            EffectiveTransferLimit,
+            BaseMetadataCapacity,
+            MetadataBurstAllowance,
+            MaxMetadataCapacity,
+            ActiveTransferOperations,
+            ActiveMetadataOperations,
+            WaitingTransferOperations,
+            WaitingMetadataOperations,
+            [],
+            null)
+    {
+    }
+}

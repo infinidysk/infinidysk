@@ -1,13 +1,81 @@
 using Microsoft.AspNetCore.Http;
 using NzbWebDAV.Middlewares;
+using NzbWebDAV.Services.StreamTrace;
+using NzbWebDAV.Tests.TestUtils;
 
 namespace NzbWebDAV.Tests.Middlewares;
 
+[Collection(nameof(GlobalLoggerCollection))]
 public class WebDavObservabilityMiddlewareTests : IDisposable
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RequestTiming_OnlyAllocatedWhileTracing(bool enabled)
+    {
+        var trace = new StreamTraceBuffer(100, enabled: enabled);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/content/movie.mkv";
+        var middleware = new WebDavObservabilityMiddleware(ctx =>
+        {
+            Assert.Equal(enabled, ctx.Features.Get<StreamTraceRequestTiming>() is not null);
+            return Task.CompletedTask;
+        }, trace);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Null(context.Features.Get<StreamTraceRequestTiming>());
+        Assert.Empty(trace.ListSessions());
+    }
+
     public WebDavObservabilityMiddlewareTests()
     {
         WebDavObservabilityMiddleware.Reset();
+    }
+
+    [Theory]
+    [InlineData(true, "transfer-end")]
+    [InlineData(false, "request-end")]
+    public void RequestTiming_CancellationDuringTeardownIsNotLost(bool transferEnded, string expectedSource)
+    {
+        var trace = new StreamTraceBuffer(100);
+        using var cancellation = new CancellationTokenSource();
+        using var timing = new StreamTraceRequestTiming(System.Diagnostics.Stopwatch.StartNew(), cancellation.Token);
+        var sessionId = Guid.NewGuid();
+        timing.Range = trace.RangeOpen(sessionId, "/view/movie.mkv", "GET", 0, 99, 1000, null, null);
+        using var teardown = cancellation.Token.Register(() =>
+        {
+            if (transferEnded)
+                timing.TransferEnded();
+            timing.Complete(trace, null);
+        });
+
+        cancellation.Cancel();
+
+        var ended = Assert.Single(trace.GetSessionEvents(sessionId), entry => entry.Kind == "RequestEnd");
+        Assert.NotNull(ended.CancelledAtMs);
+        Assert.True(ended.CancellationToCompletionMs >= 0);
+        Assert.Equal(expectedSource, ended.CancellationTimingSource);
+    }
+
+    [Fact]
+    public void RequestTiming_CancellationCallbackKeepsItsOriginalObservation()
+    {
+        var trace = new StreamTraceBuffer(100);
+        using var cancellation = new CancellationTokenSource();
+        using var timing = new StreamTraceRequestTiming(System.Diagnostics.Stopwatch.StartNew(), cancellation.Token);
+        var sessionId = Guid.NewGuid();
+        timing.Range = trace.RangeOpen(sessionId, "/view/movie.mkv", "GET", 0, 99, 1000, null, null);
+
+        cancellation.Cancel();
+        timing.TransferEnded();
+        timing.Complete(trace, null);
+
+        var ended = Assert.Single(trace.GetSessionEvents(sessionId), entry => entry.Kind == "RequestEnd");
+        Assert.NotNull(ended.CancelledAtMs);
+        Assert.True(ended.CancellationToCompletionMs >= 0);
+        Assert.Equal("callback", ended.CancellationTimingSource);
     }
 
     public void Dispose()

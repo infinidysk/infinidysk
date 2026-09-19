@@ -23,6 +23,94 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 public class StreamingTimeoutTests
 {
     [Fact]
+    public async Task TransferAdmissionFailoverTimeoutRemovesWaiterWithoutPenalizingProvider()
+    {
+        var inner = new LateBodyCompletionClient();
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ => ValueTask.FromResult<INntpClient>(inner));
+        var breaker = new ProviderCircuitBreaker("admission-timeout");
+        using var client = new MultiConnectionNntpClient(
+            pool,
+            ProviderType.Pooled,
+            breaker,
+            "admission-timeout",
+            maxTransferConnections: 1);
+
+        UsenetDecodedBodyResponse? held = null;
+        try
+        {
+            held = await client.DecodedBodyAsync("seg", CancellationToken.None);
+            using var callerCts = new CancellationTokenSource();
+            using var failoverContext = callerCts.Token.SetContext(
+                new TransferAdmissionFailoverContext(
+                    () => true,
+                    TimeSpan.FromMilliseconds(50)));
+
+            await Assert.ThrowsAsync<ProviderTransferAdmissionTimeoutException>(() =>
+                client.DecodedBodyAsync("seg", callerCts.Token));
+        }
+        finally
+        {
+            inner.Complete(ArticleBodyResult.Cancelled);
+            if (held?.Stream is not null)
+                await held.Stream.DisposeAsync();
+        }
+
+        var snapshot = client.GetConnectionAdmissionSnapshot()!;
+        Assert.Equal(0, snapshot.WaitingTransferOperations);
+        Assert.Equal(0, breaker.GetSnapshot().FailureCount);
+    }
+
+    [Fact]
+    public async Task PipelinedTransferAdmissionFailoverTimeoutDoesNotPenalizeProvider()
+    {
+        var inner = new LateBodyCompletionClient();
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ => ValueTask.FromResult<INntpClient>(inner));
+        var breaker = new ProviderCircuitBreaker("pipelined-admission-timeout");
+        using var client = new MultiConnectionNntpClient(
+            pool,
+            ProviderType.Pooled,
+            breaker,
+            "pipelined-admission-timeout",
+            maxTransferConnections: 1);
+
+        UsenetDecodedBodyResponse? held = null;
+        try
+        {
+            held = await client.DecodedBodyAsync("seg", CancellationToken.None);
+            using var callerCts = new CancellationTokenSource();
+            using var failoverContext = callerCts.Token.SetContext(
+                new TransferAdmissionFailoverContext(
+                    () => true,
+                    TimeSpan.FromMilliseconds(50)));
+
+            async Task EnumerateAsync()
+            {
+                await foreach (var response in client.DecodedBodiesPipelinedAsync(
+                                   ["seg"], depth: 1, callerCts.Token))
+                {
+                    _ = response;
+                }
+            }
+
+            await Assert.ThrowsAsync<ProviderTransferAdmissionTimeoutException>(EnumerateAsync);
+        }
+        finally
+        {
+            inner.Complete(ArticleBodyResult.Cancelled);
+            if (held?.Stream is not null)
+                await held.Stream.DisposeAsync();
+        }
+
+        var snapshot = client.GetConnectionAdmissionSnapshot()!;
+        Assert.Equal(0, snapshot.WaitingTransferOperations);
+        Assert.Equal(0, breaker.GetSnapshot().FailureCount);
+    }
+
+    [Fact]
     public async Task RunWithConnection_CancellationAfterBodyReturn_ReleasesTransfer()
     {
         var inner = new LateBodyCompletionClient();
@@ -894,6 +982,386 @@ public class StreamingTimeoutTests
         finally
         {
             Log.Logger = previous;
+        }
+    }
+
+    [Fact]
+    public async Task ConnectionPool_HandshakeQueue_DoesNotConsumeOpenBudget()
+    {
+        var safetyTimeout = TimeSpan.FromSeconds(5);
+        var budget = TimeSpan.FromSeconds(30);
+        var started = 0;
+        var firstThreeStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFactories = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var pool = new ConnectionPool<object>(
+            maxConnections: 4,
+            connectionFactory: async cancellationToken =>
+            {
+                var attempt = Interlocked.Increment(ref started);
+                if (attempt <= 3)
+                {
+                    if (attempt == 3)
+                        firstThreeStarted.TrySetResult();
+                    await releaseFactories.Task.WaitAsync(cancellationToken);
+                }
+                return new object();
+            },
+            connectionOpenTimeout: () => budget);
+        var borrowers = new List<Task<ConnectionLock<object>>>();
+
+        try
+        {
+            for (var index = 0; index < 3; index++)
+                borrowers.Add(pool.GetConnectionLockAsync(SemaphorePriority.High));
+            await firstThreeStarted.Task.WaitAsync(safetyTimeout);
+
+            budget = TimeSpan.FromMilliseconds(250);
+            var queued = pool.GetConnectionLockAsync(SemaphorePriority.High);
+            borrowers.Add(queued);
+            var observation = Task.Delay(TimeSpan.FromSeconds(1));
+            Assert.Same(observation, await Task.WhenAny(queued, observation));
+            Assert.False(queued.IsCompleted);
+            Assert.Equal(3, Volatile.Read(ref started));
+            Assert.Equal(3, pool.PendingConnectionCreations);
+
+            releaseFactories.TrySetResult();
+            var acquired = await Task.WhenAll(borrowers).WaitAsync(safetyTimeout);
+            Assert.All(acquired, connection => Assert.False(connection.WasReused));
+            Assert.Equal(4, Volatile.Read(ref started));
+            Assert.Equal(4, pool.LiveConnections);
+            Assert.Equal(0, pool.PendingConnectionCreations);
+            Assert.Equal(0, pool.GetChurn().HandshakeFailures);
+        }
+        finally
+        {
+            releaseFactories.TrySetResult();
+            foreach (var borrower in borrowers)
+            {
+                try
+                {
+                    using var connection = await borrower.WaitAsync(safetyTimeout);
+                }
+                catch (ConnectionOpenTimeoutException ex)
+                {
+                    Debug.WriteLine($"Streaming timeout cleanup timed out while awaiting a borrower: {ex}");
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ConnectionPool_CreationCapacity_DoesNotConsumeOpenBudget()
+    {
+        var safetyTimeout = TimeSpan.FromSeconds(5);
+        var lateFactory = new TaskCompletionSource<INntpClient>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var lateConnection = new HangingNntpClient();
+        var attempts = 0;
+        await using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            connectionFactory: _ => Interlocked.Increment(ref attempts) == 1
+                ? new ValueTask<INntpClient>(lateFactory.Task)
+                : ValueTask.FromResult<INntpClient>(
+                    new FakeNntpClient(new Dictionary<string, byte[]>())),
+            connectionOpenTimeout: () => TimeSpan.FromMilliseconds(250));
+        Task<ConnectionLock<INntpClient>>? queued = null;
+
+        try
+        {
+            var first = pool.GetConnectionLockAsync(SemaphorePriority.High);
+            var timeout = await Assert.ThrowsAsync<ConnectionOpenTimeoutException>(
+                () => first.WaitAsync(safetyTimeout));
+            Assert.True(timeout.FactoryStarted);
+            Assert.Equal("Factory", timeout.Phase);
+            Assert.Equal(1, pool.PendingConnectionCreations);
+            Assert.Equal(0, pool.LiveConnections);
+
+            queued = pool.GetConnectionLockAsync(SemaphorePriority.High);
+            var observation = Task.Delay(TimeSpan.FromSeconds(1));
+            Assert.Same(observation, await Task.WhenAny(queued, observation));
+            Assert.False(queued.IsCompleted);
+            Assert.Equal(1, Volatile.Read(ref attempts));
+            Assert.Equal(1, pool.PendingConnectionCreations);
+
+            lateFactory.TrySetResult(lateConnection);
+            using var recovered = await queued.WaitAsync(safetyTimeout);
+            Assert.True(lateConnection.Disposed);
+            Assert.Equal(2, Volatile.Read(ref attempts));
+            Assert.Equal(0, pool.PendingConnectionCreations);
+            Assert.Equal(1, pool.LiveConnections);
+            Assert.False(recovered.WasReused);
+        }
+        finally
+        {
+            lateFactory.TrySetResult(lateConnection);
+            if (queued is not null)
+            {
+                try
+                {
+                    using var connection = await queued.WaitAsync(safetyTimeout);
+                }
+                catch (ConnectionOpenTimeoutException ex)
+                {
+                    Debug.WriteLine($"Connection pool cleanup timed out while awaiting the queued borrower: {ex}");
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ConnectionPool_QueuedCallerCancellation_DoesNotStartFactory()
+    {
+        var safetyTimeout = TimeSpan.FromSeconds(5);
+        var started = 0;
+        var firstThreeStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFactories = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var pool = new ConnectionPool<object>(
+            maxConnections: 4,
+            connectionFactory: async cancellationToken =>
+            {
+                var attempt = Interlocked.Increment(ref started);
+                if (attempt <= 3)
+                {
+                    if (attempt == 3)
+                        firstThreeStarted.TrySetResult();
+                    await releaseFactories.Task.WaitAsync(cancellationToken);
+                }
+                return new object();
+            },
+            connectionOpenTimeout: () => TimeSpan.FromMilliseconds(250));
+        var holders = new List<Task<ConnectionLock<object>>>();
+        using var caller = new CancellationTokenSource();
+        Task<ConnectionLock<object>>? queued = null;
+
+        try
+        {
+            for (var index = 0; index < 3; index++)
+                holders.Add(pool.GetConnectionLockAsync(SemaphorePriority.High));
+            await firstThreeStarted.Task.WaitAsync(safetyTimeout);
+
+            queued = pool.GetConnectionLockAsync(SemaphorePriority.High, caller.Token);
+            await caller.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => queued.WaitAsync(safetyTimeout));
+            Assert.Equal(3, Volatile.Read(ref started));
+            Assert.Equal(3, pool.PendingConnectionCreations);
+
+            releaseFactories.TrySetResult();
+            var acquired = await Task.WhenAll(holders).WaitAsync(safetyTimeout);
+            var fourth = pool.GetConnectionLockAsync(SemaphorePriority.High);
+            using var recovered = await fourth.WaitAsync(safetyTimeout);
+            Assert.Equal(4, Volatile.Read(ref started));
+            Assert.Equal(0, pool.PendingConnectionCreations);
+            foreach (var holder in acquired)
+                holder.Dispose();
+        }
+        finally
+        {
+            releaseFactories.TrySetResult();
+            foreach (var holder in holders)
+            {
+                try
+                {
+                    using var connection = await holder.WaitAsync(safetyTimeout);
+                }
+                catch (OperationCanceledException ex) when (caller.IsCancellationRequested)
+                {
+                    Debug.WriteLine($"Connection holder cleanup was cancelled by the caller: {ex}");
+                }
+            }
+            if (queued is not null)
+            {
+                try
+                {
+                    using var connection = await queued.WaitAsync(safetyTimeout);
+                }
+                catch (OperationCanceledException ex) when (caller.IsCancellationRequested)
+                {
+                    Debug.WriteLine($"Queued connection cleanup was cancelled by the caller: {ex}");
+                }
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("body", false, false)]
+    [InlineData("body", true, false)]
+    [InlineData("body", false, true)]
+    [InlineData("body", true, true)]
+    [InlineData("batch", false, false)]
+    [InlineData("batch", true, false)]
+    [InlineData("batch", false, true)]
+    [InlineData("batch", true, true)]
+    [InlineData("pipeline", false, false)]
+    [InlineData("pipeline", true, false)]
+    [InlineData("pipeline", false, true)]
+    [InlineData("pipeline", true, true)]
+    public async Task ConnectionAcquisition_PreFactoryTimeout_DoesNotRecordFailureOrStrandProbe(
+        string operation,
+        bool retainLiveConnection,
+        bool halfOpen)
+    {
+        const string provider = "news.admission.example";
+        var breaker = new ProviderCircuitBreaker(provider) { Clock = () => 100_000L };
+        if (halfOpen)
+        {
+            breaker.RecordConnectionFailure("initial", requiresFreshConnectionProbe: true);
+            breaker.ExpireCooldownForTests();
+        }
+
+        var failure = new ConnectionOpenTimeoutException(
+            provider, "HandshakeQueue", TimeSpan.FromSeconds(3), factoryStarted: false);
+        var attempts = 0;
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 2,
+            connectionFactory: _ =>
+            {
+                var attempt = Interlocked.Increment(ref attempts);
+                if (retainLiveConnection && attempt == 1)
+                    return ValueTask.FromResult<INntpClient>(
+                        new FakeNntpClient(new Dictionary<string, byte[]>()));
+                throw failure;
+            });
+        using var retained = retainLiveConnection
+            ? await pool.GetConnectionLockAsync(SemaphorePriority.High)
+            : null;
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, provider);
+        using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var timeoutScope = caller.Token.SetContext(new StreamingTimeoutContext
+        {
+            PerSegmentTimeout = TimeSpan.FromSeconds(5),
+            MaxRetries = 0,
+        });
+        var recorder = new ArticleBodyCompletionRecorder();
+        var before = breaker.GetSnapshot();
+        var cooldown = breaker.CurrentCooldown;
+        var freshProbeRequired = breaker.RequiresFreshConnectionProbe;
+
+        var actual = await Assert.ThrowsAsync<ConnectionOpenTimeoutException>(ExecuteAsync);
+
+        Assert.Same(failure, actual);
+        Assert.False(caller.IsCancellationRequested);
+        var after = breaker.GetSnapshot();
+        Assert.Equal(before.State, after.State);
+        Assert.Equal(before.FailureCount, after.FailureCount);
+        Assert.Equal(before.TripCount, after.TripCount);
+        Assert.Equal(before.ArticleMissCount, after.ArticleMissCount);
+        Assert.Equal(before.LastFailureReason, after.LastFailureReason);
+        Assert.Equal(cooldown, breaker.CurrentCooldown);
+        Assert.Equal(freshProbeRequired, breaker.RequiresFreshConnectionProbe);
+        Assert.Equal(retainLiveConnection ? 2 : 1, Volatile.Read(ref attempts));
+        Assert.Equal(0, pool.PendingConnectionCreations);
+        Assert.Equal(retainLiveConnection ? 1 : 0, pool.ActiveConnections);
+        Assert.Equal(operation == "pipeline" ? 0 : 1, recorder.Count);
+        if (operation != "pipeline")
+            Assert.Equal(ArticleBodyResult.NotRetrieved, recorder.Result);
+
+        Assert.True(breaker.TryAdmit(out var nextProbe));
+        try
+        {
+            Assert.Equal(!halfOpen, nextProbe.IsNone);
+        }
+        finally
+        {
+            breaker.ReleaseProbe(nextProbe);
+        }
+
+        async Task ExecuteAsync()
+        {
+            switch (operation)
+            {
+                case "body":
+                    await client.DecodedBodyAsync("synthetic-segment", recorder.Invoke, caller.Token);
+                    break;
+                case "batch":
+                    await client.DecodedBodiesAsync(["synthetic-segment"], recorder.Invoke, caller.Token);
+                    break;
+                case "pipeline":
+                    await using (var enumerator = client.DecodedBodiesPipelinedAsync(
+                        ["synthetic-segment"], depth: 1, caller.Token).GetAsyncEnumerator(caller.Token))
+                    {
+                        await enumerator.MoveNextAsync();
+                    }
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(operation));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RunWithConnection_FactoryOpenTimeout_StillTripsAndLogsWithoutStack()
+    {
+        const string provider = "news.factory.example";
+        var sink = new CollectingSink();
+        var previous = Log.Logger;
+        using var logger = new LoggerConfiguration()
+            .MinimumLevel.Warning()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        var factory = new TaskCompletionSource<INntpClient>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var attempts = 0;
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            connectionFactory: _ => Interlocked.Increment(ref attempts) == 1
+                ? new ValueTask<INntpClient>(factory.Task)
+                : ValueTask.FromResult<INntpClient>(
+                    new FakeNntpClient(new Dictionary<string, byte[]>())),
+            diagnosticName: provider,
+            connectionOpenProvider: provider,
+            connectionOpenTimeout: () => TimeSpan.FromMilliseconds(250));
+        var breaker = new ProviderCircuitBreaker(provider);
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, provider);
+        using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var timeoutScope = caller.Token.SetContext(new StreamingTimeoutContext
+        {
+            PerSegmentTimeout = TimeSpan.FromSeconds(5),
+            MaxRetries = 0,
+        });
+        var recorder = new ArticleBodyCompletionRecorder();
+        Log.Logger = logger;
+
+        try
+        {
+            var timeout = await Assert.ThrowsAsync<ConnectionOpenTimeoutException>(() =>
+                client.DecodedBodyAsync("synthetic-segment", recorder.Invoke, caller.Token));
+            Assert.True(timeout.FactoryStarted);
+            Assert.Equal("Factory", timeout.Phase);
+            Assert.False(caller.IsCancellationRequested);
+            Assert.Equal(ProviderCircuitState.Open, breaker.GetSnapshot().State);
+            Assert.Equal(1, breaker.GetSnapshot().FailureCount);
+            Assert.Equal(1, breaker.GetSnapshot().TripCount);
+            Assert.True(breaker.RequiresFreshConnectionProbe);
+            Assert.Equal(1, recorder.Count);
+            Assert.Equal(ArticleBodyResult.NotRetrieved, recorder.Result);
+
+            var warning = Assert.Single(sink.Events, logEvent =>
+                logEvent.Level == LogEventLevel.Warning
+                && logEvent.MessageTemplate.Text.StartsWith(
+                    "Error getting connection-lock", StringComparison.Ordinal));
+            Assert.Null(warning.Exception);
+            Assert.Equal(provider, Assert.IsType<ScalarValue>(warning.Properties["Provider"]).Value);
+            Assert.Equal(timeout.Message, Assert.IsType<ScalarValue>(warning.Properties["Reason"]).Value);
+        }
+        finally
+        {
+            factory.TrySetCanceled();
+            try
+            {
+                using var recovered = await pool.GetConnectionLockAsync(SemaphorePriority.High)
+                    .WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            finally
+            {
+                Log.Logger = previous;
+            }
         }
     }
 

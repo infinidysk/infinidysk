@@ -63,6 +63,60 @@ function attentionTable(
 afterEach(cleanup);
 
 describe("HealthHistoryTable", () => {
+  it("offers native diagnostic disclosure and prioritizes the job title", async () => {
+    renderDom(
+      attentionTable({
+        items: [
+          {
+            id: "diagnostic-1",
+            davItemId: "file-1",
+            path: "/content/release/obfuscated.mkv",
+            nzbFileName: "obfuscated.mkv",
+            jobName: "Recognizable release",
+            createdAt: "2026-09-18T00:00:00Z",
+            result: 1,
+            repairStatus: 3,
+            message: "Verify Library Directory before removing files.",
+          },
+        ],
+      }),
+    );
+    const disclosure = screen.getAllByText("Diagnostic details")[0]!;
+    expect(disclosure.tagName).toBe("SUMMARY");
+    await userEvent.setup().click(disclosure);
+    expect(disclosure.closest("details")?.open).toBe(true);
+    expect(screen.getAllByRole("cell")[0]?.textContent).toMatch(/^Recognizable release/);
+    expect(screen.getAllByText("Verify Library Directory before removing files.")).toHaveLength(2);
+  });
+
+  it.each([
+    [
+      "File failed health validation. No corresponding imported symlink or .strm file was found in Library Directory. ",
+      2,
+    ],
+    ["Streaming payload missing.", 0],
+    [null, 0],
+  ])("flags missing library links for desktop and mobile: %s", (message, count) => {
+    const item: HealthCheckResult = {
+      id: "result-1",
+      davItemId: "file-1",
+      path: "/content/example.mkv",
+      nzbFileName: null,
+      jobName: null,
+      createdAt: "2026-09-18T00:00:00Z",
+      result: 1,
+      repairStatus: 3,
+      message,
+    };
+    const { unmount } = renderDom(attentionTable({ items: [item] }));
+    const badges = screen.queryAllByText("Not library linked");
+    expect(badges).toHaveLength(count);
+    for (const badge of badges) expect(badge.className).toContain("bg-orange-400");
+    unmount();
+    renderDom(table([item]));
+    expect(screen.queryByText("Not library linked")).toBeNull();
+  });
+
   it("combines status and reason only in the attention table", () => {
     const item: HealthCheckResult = {
       id: "result-1",
@@ -96,7 +150,7 @@ describe("HealthHistoryTable", () => {
     expect(screen.getAllByRole("cell")).toHaveLength(4);
   });
 
-  it("offers search and deletion independently of background re-checks", async () => {
+  it("offers deletion without search independently of background re-checks", async () => {
     const item: HealthCheckResult = {
       id: "result-1",
       davItemId: "file-1",
@@ -110,17 +164,99 @@ describe("HealthHistoryTable", () => {
     };
     const onDelete = vi.fn();
     const { unmount } = renderDom(attentionTable({ items: [item], onDelete }));
-    expect(
-      screen.getAllByRole("link", { name: "Search indexers for Example & More.nzb" })[0],
-    ).toHaveProperty("href", expect.stringContaining("/search?q=Example+%26+More"));
+    expect(screen.queryByRole("link")).toBeNull();
     await userEvent
       .setup()
-      .click(screen.getAllByRole("button", { name: "Delete Example & More.nzb" })[0]!);
+      .click(screen.getAllByRole("button", { name: "Remove Example & More.nzb" })[0]!);
     expect(onDelete).toHaveBeenCalledWith(item);
     expect(screen.queryByRole("button", { name: "Re-check Example & More.nzb" })).toBeNull();
     unmount();
     renderDom(attentionTable({ items: [item] }));
-    expect(screen.queryByRole("button", { name: "Delete Example & More.nzb" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove Example & More.nzb" })).toBeNull();
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it.each([
+    {
+      jobName: "Example.Release.mkv",
+      nzbFileName: null,
+      path: "/content/other.mkv",
+      query: "Example.Release",
+    },
+    {
+      jobName: null,
+      nzbFileName: "Example.Release.MKV",
+      path: "/content/other.mkv",
+      query: "Example.Release",
+    },
+    {
+      jobName: null,
+      nzbFileName: "Example.Release.NZB",
+      path: "/content/other.mkv",
+      query: "Example.Release",
+    },
+    {
+      jobName: "Example.Release.MK3D",
+      nzbFileName: null,
+      path: "/content/other.mkv",
+      query: "Example.Release",
+    },
+    {
+      jobName: "Example.Release.OPUS",
+      nzbFileName: null,
+      path: "/content/other.mkv",
+      query: "Example.Release",
+    },
+    {
+      jobName: "Example.Release.part01.RAR",
+      nzbFileName: null,
+      path: "/content/other.mkv",
+      query: "Example.Release",
+    },
+    {
+      jobName: "Example.Release.7z.001",
+      nzbFileName: null,
+      path: "/content/other.mkv",
+      query: "Example.Release",
+    },
+    {
+      jobName: null,
+      nzbFileName: "Example.Release.NZB.GZ",
+      path: "/content/other.mkv",
+      query: "Example.Release",
+    },
+    {
+      jobName: null,
+      nzbFileName: null,
+      path: "/content/Example & More.mp4",
+      query: "Example & More",
+    },
+    {
+      jobName: "Example.Release.1080p",
+      nzbFileName: "Other.nzb",
+      path: "/content/other.mkv",
+      query: "Example.Release.1080p",
+    },
+    { jobName: "Example", nzbFileName: null, path: "/content/other.mkv", query: "Example" },
+  ])("does not offer Search for any filename: %j", ({ jobName, nzbFileName, path }) => {
+    renderDom(
+      attentionTable({
+        items: [
+          {
+            id: "result-1",
+            davItemId: "file-1",
+            createdAt: "2026-09-18T00:00:00Z",
+            result: 1,
+            repairStatus: 3,
+            message: "Missing link",
+            jobName,
+            nzbFileName,
+            path,
+          },
+        ],
+        onDelete: vi.fn(),
+      }),
+    );
     expect(screen.queryByRole("link")).toBeNull();
   });
 

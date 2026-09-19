@@ -49,6 +49,7 @@ public class MultiProviderNntpClient(
     /// consumers cannot deadlock on an unbounded fan-out (see AGENTS.md).
     /// </summary>
     private const int MaxConcurrentFallbackStarts = 4;
+    private static readonly TimeSpan TransferAdmissionFailoverTimeout = TimeSpan.FromSeconds(15);
     private readonly SemaphoreSlim _batchFallbackStartGate = new(MaxConcurrentFallbackStarts);
     public int InFlightConnections => providers.Sum(p => p.InFlightConnections);
 
@@ -235,6 +236,8 @@ public class MultiProviderNntpClient(
 
     private sealed class ScopeReleaser(Action onDispose) : IDisposable
     {
+        public static IDisposable Empty { get; } = new ScopeReleaser(static () => { });
+
         public void Dispose() => onDispose();
     }
 
@@ -451,6 +454,12 @@ public class MultiProviderNntpClient(
                 var deferredCallback = new DeferredArticleBodyCallback();
                 UsenetDecodedBodyBatch? primaryBatch = null;
                 ContextualCancellationTokenSource? attemptCts = null;
+#pragma warning disable CA2000 // The returned scope owns and disposes the token-context registration.
+                using var admissionFailoverContext = SetTransferAdmissionFailoverContext(
+                    NntpOperation.PipelinedBody,
+                    orderedProviders.Skip(providerIndex + 1),
+                    cancellationToken);
+#pragma warning restore CA2000
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -522,6 +531,12 @@ public class MultiProviderNntpClient(
                     ArticleBodyCompletion.InvokeContained(
                         CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
                     throw;
+                }
+                catch (ProviderTransferAdmissionTimeoutException e)
+                {
+                    deferredCallback.Discard();
+                    await AbandonProviderAttemptAsync(primaryBatch, attemptCts).ConfigureAwait(false);
+                    lastException = ExceptionDispatchInfo.Capture(e);
                 }
                 catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _) && e is not OutOfMemoryException)
                 {
@@ -715,6 +730,21 @@ public class MultiProviderNntpClient(
                     var traceRange = CurrentStreamTraceRange;
                     var stopwatch = Stopwatch.StartNew();
                     lastAttemptedProvider = provider;
+#pragma warning disable CA2000 // The returned scope owns and disposes the token-context registration.
+                    using var fallbackAdmissionContext = SetTransferAdmissionFailoverContext(
+                        NntpOperation.PipelinedBody,
+                        retryProviders
+                            .SkipWhile(candidate => !ReferenceEquals(candidate, provider))
+                            .Skip(1)
+                            .Where(candidate =>
+                            {
+                                var candidateGroup = NormalizeStorageGroup(candidate.StorageGroup);
+                                return (candidateGroup.Length == 0 || !missingGroups.Contains(candidateGroup))
+                                    && !IsCachedMissing(
+                                        segmentId, candidate, NntpOperation.PipelinedBody);
+                            }),
+                        cancellationToken);
+#pragma warning restore CA2000
                     try
                     {
                         walk.Attempts++;
@@ -770,6 +800,14 @@ public class MultiProviderNntpClient(
                         deferredCallback.Discard();
                         coordinator.CompleteAttempt();
                         throw;
+                    }
+                    catch (ProviderTransferAdmissionTimeoutException e)
+                    {
+                        stopwatch.Stop();
+                        deferredCallback.Discard();
+                        coordinator.CompleteAttempt();
+                        lastException = ExceptionDispatchInfo.Capture(e);
+                        continue;
                     }
                     catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
                     {
@@ -1014,6 +1052,20 @@ public class MultiProviderNntpClient(
             var traceRange = CurrentStreamTraceRange;
             var stopwatch = Stopwatch.StartNew();
             lastAttemptedProvider = provider;
+#pragma warning disable CA2000 // The returned scope owns and disposes the token-context registration.
+            using var admissionFailoverContext = SetTransferAdmissionFailoverContext(
+                operation,
+                orderedProviders
+                    .SkipWhile(candidate => !ReferenceEquals(candidate, provider))
+                    .Skip(1)
+                    .Where(candidate =>
+                    {
+                        var candidateGroup = NormalizeStorageGroup(candidate.StorageGroup);
+                        return (candidateGroup.Length == 0 || !missingGroups.Contains(candidateGroup))
+                            && !IsCachedMissing(segmentId, candidate, operation);
+                    }),
+                cancellationToken);
+#pragma warning restore CA2000
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -1064,6 +1116,14 @@ public class MultiProviderNntpClient(
                 ArticleBodyCompletion.InvokeContained(
                     onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
                 throw;
+            }
+            catch (ProviderTransferAdmissionTimeoutException e)
+            {
+                stopwatch.Stop();
+                deferredCallback.Discard();
+                lastException = ExceptionDispatchInfo.Capture(e);
+                lastOutcomeWasException = true;
+                attemptIndex++;
             }
             catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
             {
@@ -1165,6 +1225,21 @@ public class MultiProviderNntpClient(
             lastAttemptedProvider = provider;
             var traceRange = CurrentStreamTraceRange;
             var stopwatch = Stopwatch.StartNew();
+#pragma warning disable CA2000 // The returned scope owns and disposes the token-context registration.
+            using var admissionFailoverContext = SetTransferAdmissionFailoverContext(
+                operation,
+                orderedProviders
+                    .SkipWhile(candidate => !ReferenceEquals(candidate, provider))
+                    .Skip(1)
+                    .Where(candidate =>
+                    {
+                        var candidateGroup = NormalizeStorageGroup(candidate.StorageGroup);
+                        return (candidateGroup.Length == 0 || !missingGroups.Contains(candidateGroup))
+                            && (articleId is not { } segmentId
+                                || !IsCachedMissing(segmentId, candidate, operation));
+                    }),
+                cancellationToken);
+#pragma warning restore CA2000
             try
             {
                 walk.Attempts++;
@@ -1222,6 +1297,13 @@ public class MultiProviderNntpClient(
             {
                 walk.Retired = true;
                 throw;
+            }
+            catch (ProviderTransferAdmissionTimeoutException e)
+            {
+                stopwatch.Stop();
+                lastException = ExceptionDispatchInfo.Capture(e);
+                lastOutcomeWasException = true;
+                attemptIndex++;
             }
             catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
             {
@@ -1811,15 +1893,10 @@ public class MultiProviderNntpClient(
                     EffectivePriority(x, selectionStates[x].UnreservedConnections))
                 : byRecovery;
             var byUsage = prioritized.ThenByDescending(x => GetRemainingBytes(x));
-            // Prefer providers with more spare capacity. In cascade mode this is a
-            // tie-break after EffectivePriority and uses spare *fraction* so unequal
-            // MaxConnections cannot outweigh Priority. In pool mode absolute spare
-            // outranks learned speed so a full pool cannot monopolize.
-            var capacityBalanced = cascade
-                ? byUsage.ThenByDescending(x =>
-                    (double)selectionStates[x].UnreservedConnections
-                    / Math.Max(1, x.MaxConnections))
-                : byUsage.ThenByDescending(x => selectionStates[x].UnreservedConnections);
+            // Compare spare capacity on the same scale for unequal configured pool widths.
+            var capacityBalanced = byUsage.ThenByDescending(provider =>
+                (double)selectionStates[provider].UnreservedConnections
+                / Math.Max(1, provider.MaxConnections));
             var ordered = capacityBalanced
                 .ThenBy(EstimatedDeliveryScore)
                 .ToList();
@@ -1828,6 +1905,28 @@ public class MultiProviderNntpClient(
             reserved?.ReservePending(operation);
             return ordered;
         }
+    }
+
+    private IDisposable SetTransferAdmissionFailoverContext(
+        NntpOperation operation,
+        IEnumerable<MultiConnectionNntpClient> candidateProviders,
+        CancellationToken cancellationToken)
+    {
+        if (operation is not (NntpOperation.Body
+            or NntpOperation.Article
+            or NntpOperation.PipelinedBody
+            or NntpOperation.PipelinedArticle))
+            return ScopeReleaser.Empty;
+
+    #pragma warning disable CA2000 // ScopeReleaser owns this registration and disposes it when the provider attempt ends.
+        var context = cancellationToken.SetContext(new TransferAdmissionFailoverContext(
+            () => candidateProviders.Any(provider =>
+                provider.ProviderType != ProviderType.Disabled
+                && provider.GetCircuitBreakerSnapshot().State != ProviderCircuitState.Open
+                && provider.UnreservedConnectionsFor(operation) > 0),
+            TransferAdmissionFailoverTimeout));
+    #pragma warning restore CA2000
+        return new ScopeReleaser(context.Dispose);
     }
 
     internal MultiConnectionNntpClient? SelectProviderForBenchmark(NntpOperation operation)

@@ -349,6 +349,25 @@ public sealed class SupportPackService(
         billed to the next range. Pair RangeOpen and RangeEnd by rangeGeneration when
         requests overlap or finish out of order.
 
+        RangeEnd.bytesServed counts successful response writes for that request only,
+        not the session total. RequestEnd follows handler cleanup and shares its
+        rangeGeneration. firstByteMs measures from entry to WebDAV observability
+        middleware through the first successful nonempty response write, including
+        store lookup and stream opening. requestDurationMs includes handler cleanup;
+        transferEndedMs marks the end of body copying, and cleanupMs is the difference.
+        cancelledAtMs marks the first observed client cancellation relative to request
+        entry. cancellationTimingSource is callback, transfer-end, or request-end;
+        teardown observations cover cancellation callbacks superseded by request
+        completion. These are not transport-level disconnect timestamps.
+        cancellationToCompletionMs measures from that observation through handler
+        cleanup and can understate the full cancellation delay, especially for
+        transfer-end or request-end observations. cleanupMs does not include the
+        remaining lifetime of a shared upstream stream retained after reader detachment.
+        Missing firstByteMs means no successful body write. RequestEnd is available
+        only when tracing was active at request entry and a range was opened. Shared
+        upstream fetches are not attributed to individual ranges: absent fetch/provider
+        totals on shared reads do not mean zero upstream work or zero provider latency.
+
         Trace connWaitMs and the connection pool's GateWaitMs are not comparable. Trace
         stalls are scoped to read sessions captured while tracing was active; pool churn
         counters are process-wide and cumulative, so they also include queue imports and
@@ -839,6 +858,10 @@ public sealed class SupportPackService(
                             snapshot.Admission.ActiveMetadataOperations,
                             snapshot.Admission.WaitingTransferOperations,
                             snapshot.Admission.WaitingMetadataOperations,
+                            activeTransferLeaseAgesMs = snapshot.Admission.ActiveTransferLeaseAges
+                                .Select(age => age.TotalMilliseconds)
+                                .ToArray(),
+                            oldestWaitingTransferAgeMs = snapshot.Admission.OldestWaitingTransferAge?.TotalMilliseconds,
                         },
                     churn = new
                     {

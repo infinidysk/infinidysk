@@ -47,10 +47,10 @@ describe("HealthStats", () => {
       { result: 1, repairStatus: 3, count: 9279 },
     ]);
 
-    expect(markup).toContain("Healthy (96%)");
-    expect(markup).toContain("Repaired (4%)");
-    expect(markup).toContain("Deleted (0%)");
-    expectOverviewTotals(markup, [21484, 11741, 455, 9, 0], [96, 4, 0, 0]);
+    expect(markup).toContain("Healthy (96.2%)");
+    expect(markup).toContain("Repaired (3.7%)");
+    expect(markup).toContain("Deleted (&lt;0.1%)");
+    expectOverviewTotals(markup, [21484, 11741, 455, 9, 0], [96.2, 3.7, "&lt;0.1", 0]);
   });
 
   it("counts PAR2 repairs only as repaired, alongside Arr repairs", () => {
@@ -73,7 +73,7 @@ describe("HealthStats", () => {
     expectOverviewTotals(markup, [2, 0, 0, 0, 0], [0, 0, 0, 0]);
   });
 
-  it("rounds visible outcomes to 100 percent without allocating a share to hidden failures", () => {
+  it("shows independent decimal shares without allocating a share to hidden failures", () => {
     const markup = render([
       { result: 0, repairStatus: 0, count: 1 },
       { result: 1, repairStatus: 1, count: 1 },
@@ -81,9 +81,26 @@ describe("HealthStats", () => {
       { result: 1, repairStatus: 3, count: 1 },
     ]);
 
-    expect(markup).toContain("Healthy (34%)");
-    expect(markup).toContain("Repaired (33%)");
-    expectOverviewTotals(markup, [4, 1, 1, 0, 1], [34, 33, 0, 33]);
+    expect(markup).toContain("Healthy (33.3%)");
+    expect(markup).toContain("Repaired (33.3%)");
+    expectOverviewTotals(markup, [4, 1, 1, 0, 1], [33.3, 33.3, 0, 33.3]);
+  });
+
+  it("does not hide rare repaired or degraded outcomes behind 100 percent healthy", () => {
+    const markup = render([
+      { result: 0, repairStatus: 0, count: 11474 },
+      { result: 1, repairStatus: 1, count: 29 },
+      { result: 2, repairStatus: 0, count: 27 },
+    ]);
+    expect(markup).toContain("Healthy (99.5%)");
+    expect(markup).toContain("Repaired (0.3%)");
+    expect(markup).toContain("Degraded (0.2%)");
+    expect(
+      render([
+        { result: 0, repairStatus: 0, count: 10000 },
+        { result: 2, repairStatus: 0, count: 1 },
+      ]),
+    ).toContain("Healthy (&gt;99.9%)");
   });
 
   it("shows zero percentages when every result needs attention", () => {
@@ -103,17 +120,14 @@ describe("HealthStats", () => {
 function expectOverviewTotals(
   markup: string,
   expectedCounts: number[],
-  expectedPercentages: number[],
+  expectedPercentages: (number | string)[],
 ) {
-  const counts = [...markup.matchAll(/class="stat-value[^"]*">(\d+)</g)].map((match) =>
-    Number(match[1]),
+  const counts = [...markup.matchAll(/class="font-mono[^"]*">([\d,]+)</g)].map((match) =>
+    Number(match[1]!.replaceAll(",", "")),
   );
-  const percentages = [...markup.matchAll(/\((\d+)%\)/g)].map((match) => Number(match[1]));
+  const percentages = [...markup.matchAll(/\(([^()]+)%\)/g)].map((match) => match[1]);
 
   expect(counts).toEqual(expectedCounts);
-  expect(percentages).toEqual(expectedPercentages);
-  expect(percentages.reduce((sum, percentage) => sum + percentage, 0)).toBe(
-    expectedCounts.slice(1).some((count) => count > 0) ? 100 : 0,
-  );
+  expect(percentages).toEqual(expectedPercentages.map(String));
   expect(markup).not.toContain("Action needed");
 }

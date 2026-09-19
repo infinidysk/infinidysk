@@ -17,7 +17,7 @@ import {
   shouldAcceptRetryClick,
 } from "./history-retry";
 import { useIsReadOnly } from "~/auth/authorization";
-import { Button, Tooltip } from "~/components/ui";
+import { Button, Icon, Tooltip } from "~/components/ui";
 import type { HistoryListParams } from "../../list-params";
 import { sortValue } from "../../list-params";
 import { ListToolbar } from "../list-toolbar/list-toolbar";
@@ -457,20 +457,30 @@ export function Actions({
       {!isReadOnly && showRetry && (
         <ActionButton
           type="retry"
+          ariaLabel={`Retry ${slot.name}`}
           disabled={!!slot.isRemoving || isRetrying}
           onClick={onRetryClick}
         />
       )}
       {!isFolderDisabled && folderLink && (
-        <Link to={folderLink} discover="none">
-          <ActionButton type="explore" />
+        <Link
+          to={folderLink}
+          discover="none"
+          className="btn btn-ghost btn-sm max-sm:min-h-11"
+          aria-label={`Explore files for ${slot.name}`}
+          title={`Explore files for ${slot.name}`}
+        >
+          <Icon name="folder" className="!text-[16px]" />
         </Link>
       )}
-      {(isFolderDisabled || !folderLink) && <ActionButton type="explore" disabled />}
+      {(isFolderDisabled || !folderLink) && (
+        <ActionButton type="explore" ariaLabel={`Files unavailable for ${slot.name}`} disabled />
+      )}
       {(!isReadOnly || !!nzbDownloadUrl) && (
         <div className={`dropdown dropdown-end ${isMenuOpen ? "dropdown-open" : ""}`}>
           <ActionButton
             type="menu"
+            ariaLabel={`Actions for ${slot.name}`}
             disabled={!!slot.isRemoving || isRetrying}
             selected={isMenuOpen}
             onClick={onMenuClick}

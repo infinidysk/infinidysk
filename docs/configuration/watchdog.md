@@ -2,6 +2,14 @@
 
 Playback failover, stall failover, and size-variant retention when a release cannot be served.
 
+## Playback timeline [since 1.4.3](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.3){ .nzbdav-since }
+
+The **Watchdog** page groups attempts by playback click, not by title. Separate requests
+for the same title remain separate. Completed groups start collapsed; expand a group
+to inspect candidate outcomes, durations, sizes, indexers, providers, and full failure
+reasons. In-flight groups start expanded. Missing indexer information is explicitly
+shown as unavailable.
+
 !!! tip "Headless ENV"
 
     Map config keys below to `NZBDAV_CONFIG__...` with the

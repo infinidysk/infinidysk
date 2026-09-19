@@ -469,50 +469,69 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
 
           {!isReadOnly && (
             <>
-              <addFetcher.Form method="post" className="flex flex-wrap items-center gap-2">
+              <addFetcher.Form method="post" className="flex flex-wrap items-end gap-3">
                 <input type="hidden" name="action" value="add-source" />
-                <Form.Select
-                  name="kind"
-                  defaultValue="stremio-catalog"
-                  className="select-sm max-w-[170px]"
-                >
-                  <option value="stremio-catalog">Stremio catalog</option>
-                  <option value="url-list">URL list</option>
-                </Form.Select>
-                <Form.Control
-                  name="name"
-                  placeholder="Name (optional)"
-                  className="input-sm max-w-[170px]"
-                />
-                <Form.Control
-                  name="url"
-                  placeholder="https://addon/catalog/movie/xyz.json"
-                  className="input-sm min-w-[220px] flex-1"
-                />
-                <Form.Control
-                  name="cap"
-                  type="number"
-                  min={0}
-                  placeholder="cap"
-                  className="input-sm max-w-[100px]"
-                  title="Per-list active cap (0 = use default)"
-                />
-                <Form.Select
-                  name="seriesScope"
-                  defaultValue=""
-                  className="select-sm max-w-[170px]"
-                  title="Series scope for this list"
-                >
-                  {SCOPE_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </Form.Select>
+                <label className="grid gap-1 text-xs text-base-content/70">
+                  List type
+                  <Form.Select
+                    name="kind"
+                    defaultValue="stremio-catalog"
+                    className="select-sm max-w-[170px]"
+                  >
+                    <option value="stremio-catalog">Stremio catalog</option>
+                    <option value="url-list">URL list</option>
+                  </Form.Select>
+                </label>
+                <label className="grid gap-1 text-xs text-base-content/70">
+                  Name (optional)
+                  <Form.Control
+                    name="name"
+                    placeholder="Name (optional)"
+                    className="input-sm max-w-[170px]"
+                  />
+                </label>
+                <label className="grid min-w-0 basis-full gap-1 text-xs text-base-content/70 sm:basis-64 sm:flex-1">
+                  List URL
+                  <Form.Control
+                    name="url"
+                    placeholder="https://addon/catalog/movie/xyz.json"
+                    className="input-sm w-full"
+                  />
+                </label>
+                <label className="grid gap-1 text-xs text-base-content/70">
+                  Active cap
+                  <Form.Control
+                    name="cap"
+                    type="number"
+                    min={0}
+                    placeholder="cap"
+                    className="input-sm max-w-[100px]"
+                    title="Per-list active cap (0 = use default)"
+                    aria-describedby="watchtower-cap-help"
+                  />
+                </label>
+                <label className="grid gap-1 text-xs text-base-content/70">
+                  Series scope
+                  <Form.Select
+                    name="seriesScope"
+                    defaultValue=""
+                    className="select-sm max-w-[170px]"
+                    title="Series scope for this list"
+                  >
+                    {SCOPE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </Form.Select>
+                </label>
                 <Button type="submit" variant="primary" disabled={addFetcher.state !== "idle"}>
                   Add list
                 </Button>
               </addFetcher.Form>
+              <p id="watchtower-cap-help" className="text-xs text-base-content/70">
+                Active cap: 0 uses the default limit.
+              </p>
 
               <div className="flex flex-col gap-3 border-t border-dashed border-base-content/10 pt-4">
                 <p className="text-xs leading-relaxed text-base-content/50">
@@ -523,13 +542,16 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
                   URL to see its catalogs and pick the ones you want. Each catalog you add becomes
                   its own list.
                 </p>
-                <discoverFetcher.Form method="post" className="flex flex-wrap items-center gap-2">
+                <discoverFetcher.Form method="post" className="flex flex-wrap items-end gap-3">
                   <input type="hidden" name="action" value="discover-catalogs" />
-                  <Form.Control
-                    name="url"
-                    placeholder="https://addon.example.com/.../manifest.json"
-                    className="input-sm min-w-[220px] flex-1"
-                  />
+                  <label className="grid min-w-0 basis-full gap-1 text-xs text-base-content/70 sm:basis-64 sm:flex-1">
+                    Addon manifest URL
+                    <Form.Control
+                      name="url"
+                      placeholder="https://addon.example.com/.../manifest.json"
+                      className="input-sm w-full"
+                    />
+                  </label>
                   <Button type="submit" disabled={discoverFetcher.state !== "idle"}>
                     <Icon
                       name={
@@ -678,22 +700,31 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
           </div>
 
           {!isReadOnly && (
-            <addFetcher.Form method="post" className="flex flex-wrap items-center gap-2">
+            <addFetcher.Form method="post" className="flex flex-wrap items-end gap-3">
               <input type="hidden" name="action" value="add-item" />
-              <Form.Select name="type" defaultValue="movie" className="select-sm max-w-[170px]">
-                <option value="movie">movie</option>
-                <option value="series">series</option>
-              </Form.Select>
-              <Form.Control
-                name="id"
-                placeholder="tt0111161  (or tt0903747:1:2 for an episode)"
-                className="input-sm min-w-[220px] flex-1"
-              />
-              <Form.Control
-                name="title"
-                placeholder="Title (optional)"
-                className="input-sm max-w-[170px]"
-              />
+              <label className="grid gap-1 text-xs text-base-content/70">
+                Media type
+                <Form.Select name="type" defaultValue="movie" className="select-sm max-w-[170px]">
+                  <option value="movie">movie</option>
+                  <option value="series">series</option>
+                </Form.Select>
+              </label>
+              <label className="grid min-w-0 basis-full gap-1 text-xs text-base-content/70 sm:basis-64 sm:flex-1">
+                IMDb ID or episode ID
+                <Form.Control
+                  name="id"
+                  placeholder="tt0111161  (or tt0903747:1:2 for an episode)"
+                  className="input-sm w-full"
+                />
+              </label>
+              <label className="grid gap-1 text-xs text-base-content/70">
+                Title (optional)
+                <Form.Control
+                  name="title"
+                  placeholder="Title (optional)"
+                  className="input-sm max-w-[170px]"
+                />
+              </label>
               <Button type="submit" variant="primary" disabled={addFetcher.state !== "idle"}>
                 Add item
               </Button>
@@ -721,6 +752,7 @@ export default function Watchtower({ loaderData }: Route.ComponentProps) {
                 value={queryInput}
                 onChange={(e) => setQueryInput(e.target.value)}
                 placeholder="Search title or id…"
+                aria-label="Search wanted titles or IDs"
                 className="input-sm min-w-[200px] max-w-xs flex-1"
               />
               <Form.Select

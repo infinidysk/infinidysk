@@ -13,6 +13,7 @@ export type ActionButtonProps = {
     | "pause"
     | "resume";
   text?: string;
+  ariaLabel?: string;
   disabled?: boolean;
   selected?: boolean;
   onClick?: (e: React.MouseEvent) => void;
@@ -21,11 +22,12 @@ export type ActionButtonProps = {
 export function ActionButton({
   type,
   text,
+  ariaLabel,
   disabled,
   selected,
   onClick,
 }: ActionButtonProps): ReactNode {
-  const variant = type === "delete" ? "danger" : type === "explore" ? "warning" : "secondary";
+  const variant = type === "delete" ? "danger" : "secondary";
   const icon =
     type === "delete"
       ? "delete"
@@ -52,7 +54,8 @@ export function ActionButton({
       disabled={disabled}
       aria-pressed={type === "menu" ? selected : undefined}
       aria-label={
-        !text
+        ariaLabel ??
+        (!text
           ? type === "move-top"
             ? "Move to top"
             : type === "move-up"
@@ -66,7 +69,7 @@ export function ActionButton({
                     : type === "resume"
                       ? "Resume"
                       : type
-          : undefined
+          : undefined)
       }
       className={`${type === "menu" ? "w-[30px] px-1" : ""} ${selected ? "bg-base-content/20 text-base-content" : ""}`}
       onClick={onClick}

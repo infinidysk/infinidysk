@@ -232,6 +232,7 @@ public class GetWebdavItemController(
             var ct = readCts.Token;
 
             StreamTraceRangeContext? traceRange = null;
+            long rangeBytesServed = 0;
             try
             {
                 await using var response = await GetWebdavItem(request, ct).ConfigureAwait(false);
@@ -250,6 +251,9 @@ public class GetWebdavItemController(
                     Request.Headers.UserAgent.ToString(),
                     HttpContext.Connection.RemoteIpAddress?.ToString(),
                     HttpContext.Items["playbackFileName"] as string);
+                var requestTiming = HttpContext.Features.Get<StreamTraceRequestTiming>();
+                if (requestTiming is not null)
+                    requestTiming.Range = traceRange;
                 using var traceRangeScope = MultiProviderNntpClient.BeginStreamTraceRangeScope(traceRange);
                 try
                 {
@@ -257,31 +261,41 @@ public class GetWebdavItemController(
                     // deadline and rely on per-segment mid-stream timeouts.
                     readCts.CancelAfter(Timeout.InfiniteTimeSpan);
                     await CopyAndReportAsync(
-                            response, Response.Body, sessionId, effectiveStart, traceRange, readCts, ct)
+                            response, Response.Body, sessionId, effectiveStart, traceRange,
+                            bytes => rangeBytesServed += bytes, readCts, ct)
                         .ConfigureAwait(false);
-                    FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Completed);
+                    requestTiming?.TransferEnded();
+                    FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Completed, rangeBytesServed);
                 }
                 catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
                 {
-                    FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted);
+                    requestTiming?.TransferEnded();
+                    FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted, rangeBytesServed);
                     throw;
                 }
                 catch (StreamingWriteTimeoutException)
                 {
-                    FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted);
+                    requestTiming?.TransferEnded();
+                    FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted, rangeBytesServed);
                     throw;
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
-                    FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Error, ex.Message);
+                    requestTiming?.TransferEnded();
+                    FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Error, rangeBytesServed, ex.Message);
                     throw;
+                }
+                finally
+                {
+                    requestTiming?.TransferEnded();
                 }
             }
             catch (OperationCanceledException oce) when (
                 oce is not StreamingWriteTimeoutException
                 && !HttpContext.RequestAborted.IsCancellationRequested)
             {
-                FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Error, "streaming-read-timeout");
+                HttpContext.Features.Get<StreamTraceRequestTiming>()?.TransferEnded();
+                FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Error, rangeBytesServed, "streaming-read-timeout");
                 throw new StreamingReadTimeoutException(
                     "WebDAV /view read exceeded the " +
                     $"{configManager.GetStreamingReadTimeout().TotalSeconds:0}s streaming-read-timeout " +
@@ -308,11 +322,12 @@ public class GetWebdavItemController(
         Guid sessionId,
         StreamTraceRangeContext? traceRange,
         ReadSession.EndReasonCode reason,
+        long bytesServed,
         string? message = null)
     {
         activeReadRegistry.SetEndReason(sessionId, reason);
         streamTrace.RangeEnd(
-            sessionId, traceRange, reason, activeReadRegistry.GetBytesRead(sessionId), message);
+            sessionId, traceRange, reason, bytesServed, message);
     }
 
     private async Task CopyAndReportAsync(
@@ -321,6 +336,7 @@ public class GetWebdavItemController(
         Guid sessionId,
         long startOffset,
         StreamTraceRangeContext? traceRange,
+        Action<int> onBytesServed,
         CancellationTokenSource readCts,
         CancellationToken ct)
     {
@@ -359,6 +375,7 @@ public class GetWebdavItemController(
             if (read <= 0) break;
             var writeStarted = Stopwatch.GetTimestamp();
             await writeWatchdog.WriteAsync(dest, buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+            onBytesServed(read);
             streamTrace.AddStall(
                 traceRange, StreamStallKind.ClientWrite, Stopwatch.GetElapsedTime(writeStarted));
             position += read;

@@ -310,18 +310,27 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                     var traceRange = _streamTrace.RangeOpen(
                         sessionId, path, request.Method, copyStart, copyEnd,
                         stream.CanSeek ? stream.Length : null, userAgent, clientIp, fileName);
+                    var requestTiming = httpContext.Features.Get<StreamTraceRequestTiming>();
+                    if (requestTiming is not null)
+                        requestTiming.Range = traceRange;
                     using var scope = _providerUsageTracker.BeginScope(sessionId);
                     using var metricsScope = MultiProviderNntpClient.BeginReadSessionScope(sessionId);
                     using var traceRangeScope = MultiProviderNntpClient.BeginStreamTraceRangeScope(traceRange);
+                    long rangeBytesServed = 0;
                     try
                     {
                         // Body transfer can run for minutes; drop the admission/open
                         // deadline and rely on per-segment mid-stream timeouts.
                         readCts.CancelAfter(Timeout.InfiniteTimeSpan);
                         await CopyToAsync(stream, response.Body, copyStart, copyEnd,
-                            (n, pos) => _activeReadRegistry.Touch(sessionId, n, pos),
+                            (bytes, position) =>
+                            {
+                                rangeBytesServed += bytes;
+                                _activeReadRegistry.Touch(sessionId, bytes, position);
+                            },
                             traceRange, readCts, path, ct).ConfigureAwait(false);
-                        FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Completed);
+                        requestTiming?.TransferEnded();
+                        FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Completed, rangeBytesServed);
                         ClearStreamingFailureAfterCompletedRead(
                             _failureTracker,
                             httpContext.Items["DavItem"],
@@ -333,7 +342,8 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                     }
                     catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
                     {
-                        FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted);
+                        requestTiming?.TransferEnded();
+                        FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted, rangeBytesServed);
                         throw;
                     }
                     catch (StreamingWriteTimeoutException)
@@ -341,13 +351,19 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                         // Watchdog-fired write timeout: the client stopped reading but kept the
                         // connection open. Treat as a client abort so the response is a clean
                         // close, not a 500 with a stack trace.
-                        FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted);
+                        requestTiming?.TransferEnded();
+                        FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Aborted, rangeBytesServed);
                         throw;
                     }
                     catch (Exception ex) when (ex is not OutOfMemoryException)
                     {
-                        FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Error, ex.Message);
+                        requestTiming?.TransferEnded();
+                        FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Error, rangeBytesServed, ex.Message);
                         throw;
+                    }
+                    finally
+                    {
+                        requestTiming?.TransferEnded();
                     }
                 }
             }
@@ -497,11 +513,12 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         Guid sessionId,
         StreamTraceRangeContext? traceRange,
         ReadSession.EndReasonCode reason,
+        long bytesServed,
         string? message = null)
     {
         _activeReadRegistry.SetEndReason(sessionId, reason);
         _streamTrace.RangeEnd(
-            sessionId, traceRange, reason, _activeReadRegistry.GetBytesRead(sessionId), message);
+            sessionId, traceRange, reason, bytesServed, message);
     }
 
     private async Task CopyToAsync(

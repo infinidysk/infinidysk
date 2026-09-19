@@ -105,6 +105,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private long _replacementPacingUntilMs;
     private readonly Dictionary<long, ReplacementPacingReservation> _cancelledPacingReservations = [];
     private int _consecutiveHandshakeFailures;
+    private long _nextReturnSummaryAtMs;
+    private long _returnsSinceSummary;
 
     // Lifetime churn counters. A pool that keeps destroying and re-opening connections
     // pays the handshake cost repeatedly and can never reach its configured width, which
@@ -382,8 +384,6 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         var openTimeout = _connectionOpenTimeout?.Invoke();
         var openStarted = Stopwatch.GetTimestamp();
         long? factoryStarted = null;
-        if (openTimeout is { } timeout)
-            linked.CancelAfter(timeout);
         var openPhase = "HandshakeQueue";
         var factoryCleanupPending = false;
         Task<T>? factoryTask = null;
@@ -490,6 +490,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
                 openPhase = "Factory";
                 factoryStarted = Stopwatch.GetTimestamp();
+                if (openTimeout is { } timeout)
+                    linked.CancelAfter(timeout);
                 factoryTask = _factory(linked.Token).AsTask();
                 conn = _connectionOpenTimeout is null
                     ? await factoryTask.ConfigureAwait(false)
@@ -647,8 +649,6 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         using var openDeadline = warmOpenTimeout is not null
             ? CancellationTokenSource.CreateLinkedTokenSource(linked.Token)
             : null;
-        if (openDeadline is not null)
-            openDeadline.CancelAfter(warmTimeout);
         var openToken = openDeadline?.Token ?? linked.Token;
         var openPhase = "HandshakeQueue";
         var factoryCleanupPending = false;
@@ -694,6 +694,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                     CommitReplacementPacing(pacingReservation);
                     openPhase = "Factory";
                     factoryStarted = Stopwatch.GetTimestamp();
+                    if (openDeadline is not null)
+                        openDeadline.CancelAfter(warmTimeout);
 #pragma warning disable CA2025 // The late-completion observer retains cleanup ownership until the factory stops.
                     factoryTask = _factory(openToken).AsTask();
 #pragma warning restore CA2025
@@ -954,6 +956,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         var returnedLive = 0;
         var returnedIdle = 0;
         var returnedMax = 0;
+        var summarizedReturns = 0L;
         lock (_lifecycleLock)
         {
             if (_disposed == 1)
@@ -970,14 +973,25 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 returnedLive = _live;
                 returnedIdle = _idleConnections.Count;
                 returnedMax = EffectiveMaxConnections;
+                if (Log.IsEnabled(Serilog.Events.LogEventLevel.Debug))
+                {
+                    _returnsSinceSummary++;
+                    var now = GetTimestampMilliseconds();
+                    if (now >= _nextReturnSummaryAtMs)
+                    {
+                        summarizedReturns = _returnsSinceSummary;
+                        _returnsSinceSummary = 0;
+                        _nextReturnSummaryAtMs = now + 30_000;
+                    }
+                }
             }
         }
 
-        if (notify)
+        if (summarizedReturns > 0)
         {
             Log.Debug(
-                "NNTP connection returned to pool for {Provider}; connectionHash={ConnectionHash} live={Live} idle={Idle} active={Active} max={Max}",
-                _diagnosticName, ConnectionHash(connection), returnedLive, returnedIdle,
+                "NNTP pool returns for {Provider}: returns={Returns} live={Live} idle={Idle} active={Active} max={Max}",
+                _diagnosticName, summarizedReturns, returnedLive, returnedIdle,
                 returnedLive - returnedIdle, returnedMax);
         }
 

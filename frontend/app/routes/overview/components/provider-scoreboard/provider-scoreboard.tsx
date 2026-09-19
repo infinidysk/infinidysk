@@ -41,7 +41,7 @@ export function ProviderScoreboard({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="card-title text-base">Providers</h3>
-            <p className="text-xs text-base-content/50">
+            <p className="text-xs text-base-content/70">
               Per-provider fetches, {window === "all" ? "all time" : `last ${window}`}
             </p>
           </div>
@@ -57,7 +57,7 @@ export function ProviderScoreboard({
         )}
 
         {providers.length === 0 ? (
-          <p className="py-6 text-center text-xs text-base-content/50">No providers configured.</p>
+          <p className="py-6 text-center text-xs text-base-content/70">No providers configured.</p>
         ) : (
           <>
             <div className="w-full min-w-0 overflow-x-auto lg:overflow-x-hidden">
@@ -162,7 +162,7 @@ export function ProviderScoreboard({
                             >
                               {formatNumber(p.errors)}
                               {p.errorRate > 0 && (
-                                <span className="text-base-content/50">
+                                <span className="text-base-content/70">
                                   {" "}
                                   ({formatPercent(p.errorRate * 100, 1)})
                                 </span>

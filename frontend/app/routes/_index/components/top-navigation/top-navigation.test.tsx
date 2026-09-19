@@ -54,6 +54,9 @@ describe("TopNavigation version summary", () => {
     expect(versionInButton?.className).toContain("sm:text-sm");
 
     const appMenu = screen.getByLabelText("App menu");
+    expect(appMenu.className).toContain("max-sm:btn-square");
+    expect(versionInButton?.parentElement?.className).toContain("hidden");
+    expect(versionInButton?.parentElement?.className).toContain("sm:inline-flex");
     expect(appMenu.className).toContain("border-base-content/10");
     expect(appMenu.className).toContain("bg-base-200");
     expect(appMenu.className).not.toContain("from-primary");

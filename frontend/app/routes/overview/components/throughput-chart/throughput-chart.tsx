@@ -190,7 +190,7 @@ export function ThroughputChart({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="card-title text-base">Activity</h3>
-            <p className="text-xs text-base-content/50">
+            <p className="text-xs text-base-content/70">
               Article attempts per {bucketLabel}, {window === "all" ? "all time" : `last ${window}`}
             </p>
           </div>
@@ -224,7 +224,7 @@ export function ThroughputChart({
         {hasData ? (
           <>
             <div className={styles.plot}>
-              <div className="flex h-40 w-9 shrink-0 flex-col items-end justify-between text-[10px] text-base-content/50 tabular-nums select-none">
+              <div className="flex h-40 w-9 shrink-0 flex-col items-end justify-between text-[10px] text-base-content/70 tabular-nums select-none">
                 <span>{formatNumber(scaleMax)}</span>
                 <span>{formatNumber(Math.round(scaleMax / 2))}</span>
                 <span>0</span>
@@ -344,7 +344,7 @@ export function ThroughputChart({
               {keyboardStatus}
             </div>
 
-            <div className="relative mt-1.5 ml-[46px] h-4 text-[10px] text-base-content/50 tabular-nums select-none">
+            <div className="relative mt-1.5 ml-[46px] h-4 text-[10px] text-base-content/70 tabular-nums select-none">
               {xTicks.map((t) => (
                 <span
                   key={t.idx}
@@ -356,7 +356,7 @@ export function ThroughputChart({
               ))}
             </div>
 
-            <div className="mt-2 flex flex-wrap items-center gap-3.5 text-[11px] text-base-content/50">
+            <div className="mt-2 flex flex-wrap items-center gap-3.5 text-[11px] text-base-content/70">
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block h-0.5 w-2.5 bg-success" />
                 Client attempts · {formatNumber(safeTotalClientArticles)}
@@ -377,7 +377,7 @@ export function ThroughputChart({
             </div>
           </>
         ) : (
-          <div className="py-12 text-center text-[13px] text-base-content/50">
+          <div className="py-12 text-center text-[13px] text-base-content/70">
             No activity in this window yet.
             <div className="mt-1.5 text-[11px] text-base-content/40">
               Articles you fetch will appear here.
@@ -498,7 +498,7 @@ function Total({
         tabIndex={0}
         className="rounded-sm text-right focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       >
-        <div className="text-[10px] font-medium text-base-content/50 uppercase">{label}</div>
+        <div className="text-[10px] font-medium text-base-content/70 uppercase">{label}</div>
         <div
           className={`break-words text-lg font-semibold tabular-nums ${accent === "danger" ? "text-error" : "text-base-content"}`}
         >

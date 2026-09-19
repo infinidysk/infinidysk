@@ -458,8 +458,9 @@ export function StreamingSettings({
               className="text-[11px] leading-relaxed text-base-content/45"
               id="connection-open-timeout-help"
             >
-              Advanced: bounds fresh handshake queueing, pacing, and connection creation (1–15s).
-              Normal admission waits and BODY transfer time are excluded.
+              Advanced: bounds fresh TCP/TLS/AUTHINFO connection creation (1-15s). Local admission,
+              handshake queueing, replacement pacing, and BODY/ARTICLE transfer time are excluded.
+              Queue waits still honor caller cancellation and shutdown.
             </p>
           </div>
         </ManagedSetting>

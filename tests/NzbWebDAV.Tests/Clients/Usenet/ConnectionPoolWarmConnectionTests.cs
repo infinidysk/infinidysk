@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
+using NzbWebDAV.Exceptions;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
 
@@ -24,9 +25,78 @@ public class ConnectionPoolWarmConnectionTests
         await pool.WarmToAsync(1);
         var exception = await failure.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        Assert.IsType<NzbWebDAV.Exceptions.ConnectionOpenTimeoutException>(exception);
+        var timeout = Assert.IsType<ConnectionOpenTimeoutException>(exception);
+        Assert.True(timeout.FactoryStarted);
+        Assert.Equal("Factory", timeout.Phase);
         Assert.Contains("during Factory.", exception.Message, StringComparison.Ordinal);
         Assert.Matches(@"BeforeFactory=\d+ms, Factory=\d+ms\.", exception.Message);
+    }
+
+    [Fact]
+    public async Task WarmToAsync_HandshakeQueue_DoesNotConsumeOpenBudget()
+    {
+        var safetyTimeout = TimeSpan.FromSeconds(5);
+        var budget = TimeSpan.FromSeconds(30);
+        var started = 0;
+        var failures = 0;
+        var firstThreeStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFactories = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var pool = new ConnectionPool<TestConnection>(
+            maxConnections: 4,
+            connectionFactory: async cancellationToken =>
+            {
+                var attempt = Interlocked.Increment(ref started);
+                if (attempt <= 3)
+                {
+                    if (attempt == 3)
+                        firstThreeStarted.TrySetResult();
+                    await releaseFactories.Task.WaitAsync(cancellationToken);
+                }
+                return new TestConnection(attempt);
+            },
+            idleTimeout: TimeSpan.FromMinutes(1),
+            connectionOpenTimeout: () => budget,
+            onWarmConnectionFailure: (_, _) => Interlocked.Increment(ref failures));
+        var holders = new List<Task<ConnectionLock<TestConnection>>>();
+        Task? warming = null;
+
+        try
+        {
+            for (var index = 0; index < 3; index++)
+                holders.Add(pool.GetConnectionLockAsync(SemaphorePriority.High));
+            await firstThreeStarted.Task.WaitAsync(safetyTimeout);
+
+            budget = TimeSpan.FromMilliseconds(250);
+            warming = pool.WarmToAsync(4);
+            var observation = Task.Delay(TimeSpan.FromSeconds(1));
+            Assert.Same(observation, await Task.WhenAny(warming, observation));
+            Assert.False(warming.IsCompleted);
+            Assert.Equal(3, Volatile.Read(ref started));
+            Assert.Equal(0, Volatile.Read(ref failures));
+
+            releaseFactories.TrySetResult();
+            var acquired = await Task.WhenAll(holders).WaitAsync(safetyTimeout);
+            await warming.WaitAsync(safetyTimeout);
+            Assert.Equal(4, Volatile.Read(ref started));
+            Assert.Equal(0, Volatile.Read(ref failures));
+            Assert.Equal(4, pool.LiveConnections);
+            Assert.Equal(1, pool.IdleConnections);
+            Assert.Equal(0, pool.PendingConnectionCreations);
+            foreach (var holder in acquired)
+                holder.Dispose();
+        }
+        finally
+        {
+            releaseFactories.TrySetResult();
+            foreach (var holder in holders)
+            {
+                using var connection = await holder.WaitAsync(safetyTimeout);
+            }
+            if (warming is not null)
+                await warming.WaitAsync(safetyTimeout);
+        }
     }
 
     [Fact]
