@@ -730,6 +730,47 @@ public sealed class SupportPackContentsTests : IDisposable
     }
 
     [Fact]
+    public async Task Pack_RedactsShortConfiguredMediaServerTokenFromLogs()
+    {
+        const string shortToken = "q7!";
+        var configManager = new ConfigManager();
+        configManager.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.MediaServersInstances,
+                ConfigValue = JsonSerializer.Serialize(new MediaServerConfig
+                {
+                    Instances =
+                    [
+                        new MediaServerInstance
+                        {
+                            Id = Guid.NewGuid(),
+                            Type = MediaServerType.Plex,
+                            Name = "Short-token Plex",
+                            BaseUrl = "http://plex.test",
+                            Token = shortToken,
+                            Enabled = true,
+                        },
+                    ],
+                }),
+            },
+        ]);
+
+        var logBuffer = new LogBufferSink(10);
+        using var logger = new LoggerConfiguration().WriteTo.Sink(logBuffer).CreateLogger();
+        logger.Information("Media server authentication failed for {Token}", shortToken);
+
+        var entries = await ReadPackEntriesAsync(
+            logBuffer,
+            new WarningLogBuffer(new LogBufferSink(50)),
+            configManager: configManager);
+
+        Assert.DoesNotContain(shortToken, entries["logs/backend.log"], StringComparison.Ordinal);
+        Assert.Contains("[REDACTED]", entries["logs/backend.log"], StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Pack_JsonArtifacts_RemainValidWithPathologicalSecrets()
     {
         var configManager = new ConfigManager();
