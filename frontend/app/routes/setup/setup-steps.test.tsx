@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ManagedEnvProvider } from "~/components/ui";
 import { SETUP_DEFAULT_CONFIG, createInitialDraft } from "./setup-model";
@@ -75,8 +75,62 @@ describe("setup wizard controls", () => {
     expect(screen.getByText("Step 3 of 6")).toBeTruthy();
   });
 
-  it("shows rclone sidecar configuration expanded by default", () => {
+  it("offers to run rclone inside InfiniDysk by default", () => {
+    // The built-in daemon needs no second container, so it is the path a new
+    // install starts on, and none of the sidecar wiring applies to it.
     const draft = createInitialDraft(SETUP_DEFAULT_CONFIG, {}, ["manual"]);
+    render(
+      <ManagedEnvProvider value={{}}>
+        <PlaybackStep draft={draft} updateDraft={vi.fn()} />
+      </ManagedEnvProvider>,
+    );
+
+    expect(screen.getByRole("radio", { name: /run rclone inside infinidysk/i })).toHaveProperty(
+      "checked",
+      true,
+    );
+    expect(screen.queryByText("Rclone sidecar configuration")).toBeNull();
+    expect(screen.queryByLabelText(/rclone rc host/i)).toBeNull();
+  });
+
+  it("turns RC notifications off when the operator switches to the built-in daemon", () => {
+    // Those notifications address a separate rclone container, and the host field
+    // is hidden with it. Left on, setup submits notifications enabled with an
+    // empty host, which the server refuses over a setting no longer on screen.
+    const draft = createInitialDraft(
+      {
+        ...SETUP_DEFAULT_CONFIG,
+        "rclone.builtin.enabled": "false",
+        "rclone.rc-enabled": "true",
+      },
+      {},
+      ["manual"],
+    );
+
+    let updated = draft;
+    render(
+      <ManagedEnvProvider value={{}}>
+        <PlaybackStep
+          draft={draft}
+          updateDraft={(fn) => {
+            updated = typeof fn === "function" ? fn(draft) : fn;
+          }}
+        />
+      </ManagedEnvProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("radio", { name: /run rclone inside infinidysk/i }));
+
+    expect(updated.config["rclone.builtin.enabled"]).toBe("true");
+    expect(updated.config["rclone.rc-enabled"]).toBe("false");
+  });
+
+  it("shows rclone sidecar configuration expanded when the operator brings their own", () => {
+    const draft = createInitialDraft(
+      { ...SETUP_DEFAULT_CONFIG, "rclone.builtin.enabled": "false" },
+      {},
+      ["manual"],
+    );
     render(
       <ManagedEnvProvider value={{}}>
         <PlaybackStep draft={draft} updateDraft={vi.fn()} />

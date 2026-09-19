@@ -57,6 +57,17 @@ public class VfsOptions
     [JsonPropertyName("CacheMaxAge")]
     public long CacheMaxAge { get; set; }
 
+    /// <summary>Cache size ceiling in bytes. rclone reports -1 for unlimited.</summary>
+    [JsonPropertyName("CacheMaxSize")]
+    public long CacheMaxSize { get; set; }
+
+    /// <summary>
+    /// Whether --links is in effect. Symlink imports depend on it, so it has to
+    /// survive an import from an external instance.
+    /// </summary>
+    [JsonPropertyName("Links")]
+    public bool Links { get; set; }
+
     [JsonPropertyName("CachePollInterval")]
     public long CachePollInterval { get; set; }
 
