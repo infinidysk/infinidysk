@@ -64,19 +64,29 @@ public abstract class EmbyJellyfinPlaybackSessionSource : IMediaPlaybackSessionS
                 && MediaServerJson.TryGet(item, "MediaSources", out var sources)
                 && sources.ValueKind == JsonValueKind.Array)
             {
-                foreach (var source in sources.EnumerateArray())
+                var candidates = sources.EnumerateArray()
+                    .Where(source => source.ValueKind == JsonValueKind.Object)
+                    .Select(source => new
+                    {
+                        Id = MediaServerJson.String(source, "Id"),
+                        Path = MediaServerJson.String(source, "Path"),
+                    })
+                    .Where(candidate => !string.IsNullOrWhiteSpace(candidate.Path))
+                    .ToList();
+
+                if (mediaSourceId is not null)
                 {
-                    var candidateId = MediaServerJson.String(source, "Id");
-                    if (mediaSourceId is not null
-                        && !string.Equals(candidateId, mediaSourceId, StringComparison.Ordinal))
-                        continue;
-                    path = MediaServerJson.String(source, "Path");
-                    mediaSourceId ??= candidateId;
-                    if (!string.IsNullOrWhiteSpace(path)) break;
+                    path = candidates.FirstOrDefault(candidate =>
+                        string.Equals(candidate.Id, mediaSourceId, StringComparison.Ordinal))?.Path;
+                }
+                else if (candidates.Count == 1)
+                {
+                    mediaSourceId = candidates[0].Id;
+                    path = candidates[0].Path;
                 }
             }
 
-            var paused = MediaServerJson.Bool(playState, "IsPaused") == true;
+            var paused = MediaServerJson.Bool(playState, "IsPaused");
             result.Add(new PlaybackObservation
             {
                 NativeSessionId = sessionId,
@@ -89,7 +99,12 @@ public abstract class EmbyJellyfinPlaybackSessionSource : IMediaPlaybackSessionS
                 SeriesName = MediaServerJson.String(item, "SeriesName"),
                 SeasonNumber = MediaServerJson.Int32(item, "ParentIndexNumber"),
                 EpisodeNumber = MediaServerJson.Int32(item, "IndexNumber"),
-                State = paused ? PlaybackState.Paused : PlaybackState.Playing,
+                State = paused switch
+                {
+                    true => PlaybackState.Paused,
+                    false => PlaybackState.Playing,
+                    null => PlaybackState.Unknown,
+                },
                 PositionMs = MediaServerJson.TicksToMilliseconds(MediaServerJson.Int64(playState, "PositionTicks")),
                 DurationMs = MediaServerJson.TicksToMilliseconds(MediaServerJson.Int64(item, "RunTimeTicks")),
                 DeliveryMethod = ParseMethod(MediaServerJson.String(playState, "PlayMethod")),
