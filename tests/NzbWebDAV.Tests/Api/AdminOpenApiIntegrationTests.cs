@@ -105,6 +105,80 @@ public sealed class AdminOpenApiIntegrationTests(NzbDavWebApplicationFactory fac
                 .GetProperty("schema")
                 .GetProperty("additionalProperties")
                 .GetBoolean());
+            var nativePlayback = paths.GetProperty("/api/playback/native").GetProperty("post");
+            var nativeRequestBody = nativePlayback.GetProperty("requestBody");
+            Assert.True(nativeRequestBody.GetProperty("required").GetBoolean());
+            var nativeContent = nativeRequestBody.GetProperty("content");
+            Assert.False(nativeContent.TryGetProperty("multipart/form-data", out _));
+            var nativeSchema = nativeContent
+                .GetProperty("application/json")
+                .GetProperty("schema");
+            var nativeProperties = nativeSchema.GetProperty("properties");
+            foreach (var property in new[]
+                     {
+                         "playerSession", "event", "state", "positionMs", "durationMs", "title", "mediaType",
+                     })
+            {
+                Assert.True(nativeProperties.TryGetProperty(property, out _), property);
+            }
+
+            var nativeRequired = nativeSchema.GetProperty("required")
+                .EnumerateArray()
+                .Select(item => item.GetString())
+                .ToHashSet();
+            Assert.Equal(new HashSet<string?> { "playerSession" }, nativeRequired);
+            Assert.Equal(
+                "string",
+                nativeProperties.GetProperty("playerSession").GetProperty("type").GetString());
+            Assert.Equal(
+                "string",
+                nativeProperties.GetProperty("event").GetProperty("type").GetString());
+            Assert.Equal(
+                "string",
+                nativeProperties.GetProperty("state").GetProperty("type").GetString());
+            Assert.Equal(
+                new HashSet<string?> { "integer", "null" },
+                nativeProperties.GetProperty("positionMs").GetProperty("type")
+                    .EnumerateArray().Select(item => item.GetString()).ToHashSet());
+            Assert.Equal(
+                new HashSet<string?> { "integer", "null" },
+                nativeProperties.GetProperty("durationMs").GetProperty("type")
+                    .EnumerateArray().Select(item => item.GetString()).ToHashSet());
+            Assert.Equal(
+                new HashSet<string?> { "string", "null" },
+                nativeProperties.GetProperty("title").GetProperty("type")
+                    .EnumerateArray().Select(item => item.GetString()).ToHashSet());
+            Assert.Equal(
+                new HashSet<string?> { "string", "null" },
+                nativeProperties.GetProperty("mediaType").GetProperty("type")
+                    .EnumerateArray().Select(item => item.GetString()).ToHashSet());
+
+            var mediaServerTest = paths
+                .GetProperty("/api/test-media-server-connection")
+                .GetProperty("post");
+            var mediaServerBody = mediaServerTest.GetProperty("requestBody");
+            Assert.True(mediaServerBody.GetProperty("required").GetBoolean());
+            var mediaServerContent = mediaServerBody.GetProperty("content");
+            Assert.False(mediaServerContent.TryGetProperty("application/json", out _));
+            var mediaServerSchema = mediaServerContent
+                .GetProperty("multipart/form-data")
+                .GetProperty("schema");
+            var mediaServerProperties = mediaServerSchema.GetProperty("properties");
+            foreach (var property in new[] { "type", "baseUrl", "token" })
+            {
+                Assert.True(mediaServerProperties.TryGetProperty(property, out _), property);
+                Assert.Equal("string", mediaServerProperties.GetProperty(property).GetProperty("type").GetString());
+            }
+
+            var mediaServerRequired = mediaServerSchema.GetProperty("required")
+                .EnumerateArray()
+                .Select(item => item.GetString())
+                .ToHashSet();
+            Assert.Equal(
+                new HashSet<string?> { "type", "baseUrl", "token" },
+                mediaServerRequired);
+            Assert.False(mediaServerSchema.GetProperty("additionalProperties").GetBoolean());
+
             Assert.Equal(
                 "#/components/schemas/CompleteSetupWizardResponse",
                 setupComplete.GetProperty("responses")
