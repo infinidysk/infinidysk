@@ -309,7 +309,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                         userAgent, clientIp);
                     var traceRange = _streamTrace.RangeOpen(
                         sessionId, path, request.Method, copyStart, copyEnd,
-                        stream.CanSeek ? stream.Length : null, userAgent, clientIp);
+                        stream.CanSeek ? stream.Length : null, userAgent, clientIp, fileName);
                     using var scope = _providerUsageTracker.BeginScope(sessionId);
                     using var metricsScope = MultiProviderNntpClient.BeginReadSessionScope(sessionId);
                     using var traceRangeScope = MultiProviderNntpClient.BeginStreamTraceRangeScope(traceRange);

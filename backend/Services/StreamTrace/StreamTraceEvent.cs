@@ -11,6 +11,7 @@ public sealed record StreamTraceEvent
     [JsonPropertyName("kind")] public required string Kind { get; init; }
 
     [JsonPropertyName("path")] public string? Path { get; init; }
+    [JsonPropertyName("fileName")] public string? FileName { get; init; }
     [JsonPropertyName("method")] public string? Method { get; init; }
     [JsonPropertyName("rangeStart")] public long? RangeStart { get; init; }
     [JsonPropertyName("rangeEnd")] public long? RangeEnd { get; init; }

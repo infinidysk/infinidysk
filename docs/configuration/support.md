@@ -28,6 +28,24 @@ Percentiles are **bucket upper bounds**, not exact sample percentiles. Only
 successful responses are counted — misses, errors, and cancellations stay in
 existing status metrics. Body-drain time is never folded into `response`.
 
+## Health and playback diagnostics [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }
+
+`environment.json` includes `healthChecks`: active background workers and the last
+32 finished attempts, including file IDs and names, phase, elapsed time, progress,
+and the time of the last progress report. Process-lifetime started and finished
+counts help show whether work is advancing even after the debug log buffer wraps.
+Repeated file IDs in the recent history can reveal repeated checks. This history
+is bounded and resets on restart. `Finished` means the worker returned, not that
+the media was healthy; consult health-result history for the verdict.
+
+With stream tracing enabled, `stream-traces/events.jsonl` includes friendly
+filenames on `RangeOpen` events, so an opaque `/.ids/` URL can be matched to a movie.
+Range-open events also export accumulated stall counters before a request ends.
+They reflect completed timing observations; a currently blocked operation may not
+have reported its duration yet. Do not sum range-open and range-end totals for the
+same generation. A missing range-end event can also mean tracing stopped or the
+capture was truncated, rather than proving a request is still active.
+
 ## Privacy
 
 The pack redacts passwords, API keys, tokens, URL credentials, sensitive URL
@@ -36,5 +54,5 @@ file names, filesystem paths, account usernames, DNS names, or non-secret URL
 paths. Review the ZIP before sharing it.
 
 The pack never includes databases, database backups, NZBs, blobs, environment
-files, session or API-key files, crash dumps, stream traces, or segment-cache
-data.
+files, session or API-key files, crash dumps, or segment-cache data. Opt-in stream
+traces are included while tracing is enabled or a stopped capture is retained.
