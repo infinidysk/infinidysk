@@ -177,14 +177,14 @@ describe("Health action-needed re-check", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Delete attention file" }));
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Delete file" })).toHaveProperty("disabled", false),
+      expect(screen.getByRole("button", { name: "Remove" })).toHaveProperty("disabled", false),
     );
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/delete-webdav-item-preview?path=%2Fcontent%2Fexample+%26+file.mkv",
       expect.objectContaining({ signal: expect.any(AbortSignal) as unknown }),
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    await user.click(screen.getByRole("button", { name: "Delete file" }));
+    await user.click(screen.getByRole("button", { name: "Remove" }));
     const [, options] = fetchMock.mock.calls[1] as [string, { method: string; body: FormData }];
     expect(options.method).toBe("POST");
     expect(options.body.get("path")).toBe("/content/example & file.mkv");
@@ -201,7 +201,24 @@ describe("Health action-needed re-check", () => {
     renderHealth({ isEnabled: false });
     await userEvent.setup().click(screen.getByRole("button", { name: "Delete attention file" }));
     expect(await screen.findByRole("alert")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Delete file" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Remove" })).toHaveProperty("disabled", true);
+    expect(revalidateMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      status: 403,
+      detail: "WebDAV is read-only. Disable 'Enforce Read-Only' in Settings > WebDAV.",
+    },
+    { status: 404, detail: "Item not found." },
+    { status: 409, detail: "Cannot delete while a matching download is in progress." },
+  ])("shows the backend problem detail when removal preview is rejected: %j", async (problem) => {
+    fetchMock.mockResolvedValue(jsonResponse(problem, problem.status));
+    renderHealth({ isEnabled: false });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Delete attention file" }));
+    expect((await screen.findByRole("alert")).textContent).toBe(problem.detail);
+    expect(screen.getByRole("button", { name: "Remove" })).toHaveProperty("disabled", true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(revalidateMock).not.toHaveBeenCalled();
   });
 
@@ -216,17 +233,20 @@ describe("Health action-needed re-check", () => {
     expect(revalidateMock).not.toHaveBeenCalled();
   });
 
-  it("keeps deletion failures visible without reporting success", async () => {
+  it.each([
+    { status: false, error: "Download in progress." },
+    { status: 409, detail: "Download in progress." },
+  ])("keeps deletion failures visible without reporting success: %j", async (problem) => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ status: true, fileCount: 1, dirCount: 0 }))
-      .mockResolvedValueOnce(jsonResponse({ status: false, error: "Download in progress." }, 409));
+      .mockResolvedValueOnce(jsonResponse(problem, 409));
     renderHealth({ isEnabled: false });
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Delete attention file" }));
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Delete file" })).toHaveProperty("disabled", false),
+      expect(screen.getByRole("button", { name: "Remove" })).toHaveProperty("disabled", false),
     );
-    await user.click(screen.getByRole("button", { name: "Delete file" }));
+    await user.click(screen.getByRole("button", { name: "Remove" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Download in progress.");
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(revalidateMock).not.toHaveBeenCalled();

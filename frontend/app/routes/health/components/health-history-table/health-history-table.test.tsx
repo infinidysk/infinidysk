@@ -111,17 +111,72 @@ describe("HealthHistoryTable", () => {
     const onDelete = vi.fn();
     const { unmount } = renderDom(attentionTable({ items: [item], onDelete }));
     expect(
-      screen.getAllByRole("link", { name: "Search indexers for Example & More.nzb" })[0],
+      screen.getAllByRole("link", { name: "Search for Example & More.nzb" })[0],
     ).toHaveProperty("href", expect.stringContaining("/search?q=Example+%26+More"));
     await userEvent
       .setup()
-      .click(screen.getAllByRole("button", { name: "Delete Example & More.nzb" })[0]!);
+      .click(screen.getAllByRole("button", { name: "Remove Example & More.nzb" })[0]!);
     expect(onDelete).toHaveBeenCalledWith(item);
     expect(screen.queryByRole("button", { name: "Re-check Example & More.nzb" })).toBeNull();
     unmount();
     renderDom(attentionTable({ items: [item] }));
-    expect(screen.queryByRole("button", { name: "Delete Example & More.nzb" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove Example & More.nzb" })).toBeNull();
     expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it.each([
+    {
+      jobName: "Example.Release.mkv",
+      nzbFileName: null,
+      path: "/content/other.mkv",
+      query: "Example.Release",
+    },
+    {
+      jobName: null,
+      nzbFileName: "Example.Release.MKV",
+      path: "/content/other.mkv",
+      query: "Example.Release",
+    },
+    {
+      jobName: null,
+      nzbFileName: "Example.Release.NZB",
+      path: "/content/other.mkv",
+      query: "Example.Release",
+    },
+    {
+      jobName: null,
+      nzbFileName: null,
+      path: "/content/Example & More.mp4",
+      query: "Example & More",
+    },
+    {
+      jobName: "Example.Release.1080p",
+      nzbFileName: "Other.nzb",
+      path: "/content/other.mkv",
+      query: "Example.Release.1080p",
+    },
+    { jobName: "Example", nzbFileName: null, path: "/content/other.mkv", query: "Example" },
+  ])("prefills Search without a media or NZB extension: %j", ({ query, ...identity }) => {
+    renderDom(
+      attentionTable({
+        items: [
+          {
+            id: "result-1",
+            davItemId: "file-1",
+            createdAt: "2026-09-18T00:00:00Z",
+            result: 1,
+            repairStatus: 3,
+            message: "Missing link",
+            ...identity,
+          },
+        ],
+        onDelete: vi.fn(),
+      }),
+    );
+    const link = screen.getAllByRole("link", { name: /^Search for / })[0] as HTMLAnchorElement;
+    expect(link.textContent).toContain("Search");
+    expect(link.textContent).not.toContain("Search indexers");
+    expect(new URL(link.href).searchParams.get("q")).toBe(query);
   });
 
   it("shows the snapped NZB identity and deleted disposition", () => {

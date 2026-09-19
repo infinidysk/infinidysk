@@ -257,23 +257,23 @@ function HistoryRow({
           <a
             className="btn btn-outline btn-sm"
             href={withUrlBase(
-              `/search?${new URLSearchParams({ q: (item.jobName || item.nzbFileName || basename(item.path)).replace(/\.nzb$/i, "") })}`,
+              `/search?${new URLSearchParams({ q: (item.jobName || item.nzbFileName || basename(item.path)).replace(/\.(?:nzb|mkv|mp4|avi|mov|m4v|wmv|webm|mpg|mpeg|ts|m2ts|strm|mp3|flac|m4a|aac|ogg|wav)$/i, "") })}`,
             )}
-            aria-label={`Search indexers for ${title}`}
+            aria-label={`Search for ${title}`}
             title="Search configured indexers; does not request an Arr import"
           >
             <Icon name="search" />
-            Search indexers
+            Search
           </a>
           <Button
             variant="outline"
             size="small"
             onClick={onDelete}
             disabled={requeueing}
-            aria-label={`Delete ${title}`}
+            aria-label={`Remove ${title}`}
           >
             <Icon name="delete" />
-            Delete file
+            Remove
           </Button>
         </>
       )}

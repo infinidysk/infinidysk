@@ -168,13 +168,14 @@ export default function Health({ loaderData }: Route.ComponentProps) {
           { signal: controller.signal },
         );
         const body = (await response.json()) as {
-          status?: boolean;
+          status?: boolean | number;
           error?: string;
+          detail?: string;
           fileCount?: number;
           dirCount?: number;
         };
         if (!response.ok || body.status !== true)
-          throw new Error(body.error || "Could not preview file deletion.");
+          throw new Error(body.detail || body.error || "Could not preview file removal.");
         if (body.fileCount !== 1 || body.dirCount !== 0)
           throw new Error(
             "This path no longer identifies a single file. Refresh Health before trying again.",
@@ -183,7 +184,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
       } catch (error) {
         if (!controller.signal.aborted)
           setDeleteError(
-            error instanceof Error ? error.message : "Could not preview file deletion.",
+            error instanceof Error ? error.message : "Could not preview file removal.",
           );
       }
     })();
@@ -208,17 +209,21 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         method: "POST",
         body,
       });
-      const result = (await response.json()) as { status?: boolean; error?: string };
+      const result = (await response.json()) as {
+        status?: boolean | number;
+        error?: string;
+        detail?: string;
+      };
       if (!response.ok || result.status !== true)
-        throw new Error(result.error || "Could not delete the file.");
+        throw new Error(result.detail || result.error || "Could not remove the file.");
       setDeleteItem(null);
       setRequeueFeedback({
         variant: "success",
-        message: "WebDAV file deleted. No replacement search was requested.",
+        message: "File removed from InfiniDysk. No replacement search was requested.",
       });
       void revalidator.revalidate();
     } catch (error) {
-      setDeleteError(error instanceof Error ? error.message : "Could not delete the file.");
+      setDeleteError(error instanceof Error ? error.message : "Could not remove the file.");
     } finally {
       setDeleting(false);
     }
@@ -506,7 +511,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
       />
       <Modal
         open={deleteItem !== null}
-        title="Delete WebDAV file?"
+        title="Remove from InfiniDysk?"
         preventClose={deleting}
         onClose={() => setDeleteItem(null)}
         footer={
@@ -523,7 +528,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
                 name={deleting ? "progress_activity" : "delete"}
                 className={deleting ? "animate-spin" : ""}
               />
-              {deleting ? "Deleting..." : "Delete file"}
+              {deleting ? "Removing..." : "Remove"}
             </Button>
           </>
         }
@@ -537,7 +542,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
             replacement will be fetched.
           </p>
           {!deletePreviewReady && !deleteError && (
-            <p role="status">Checking deletion eligibility...</p>
+            <p role="status">Checking removal eligibility...</p>
           )}
           {deleteError && (
             <Alert variant="danger" role="alert">
