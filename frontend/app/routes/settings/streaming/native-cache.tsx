@@ -21,7 +21,9 @@ type CacheStatus = {
   configuredMode: string;
   restartRequired: boolean;
   initializationError?: string;
+  initializationPending?: boolean;
   reservedBufferBytes: number;
+  counters?: { hitBlocks: number; missBlocks: number; committedBytes: number; fallbacks: number; ioTimeouts: number };
   folders: {
     id: string;
     online: boolean;
@@ -37,6 +39,7 @@ type CacheStatus = {
     state: string;
     result?: number;
     error?: string;
+    probe?: { fileSystem: string; capability: string; readable: boolean; writable: boolean; durableWriteVerified: boolean; availableBytes: number; error?: string };
   }[];
 };
 
@@ -176,8 +179,14 @@ export function NativeCacheSettings({
           Running: {status.activeMode}; saved: {status.configuredMode}
           {status.restartRequired ? " — restart required" : ""}. Buffer reservations:{" "}
           {(status.reservedBufferBytes / 1048576).toFixed(0)} MiB.
+          {status.initializationPending ? " Storage initialization pending; source playback remains available." : ""}
         </p>
       )}
+      {status?.counters && <p className="text-xs">
+        Verified block hits: {status.counters.hitBlocks}; misses: {status.counters.missBlocks};
+        committed this process: {(status.counters.committedBytes / 1e9).toFixed(2)} GB;
+        source fallbacks: {status.counters.fallbacks} ({status.counters.ioTimeouts} storage timeouts).
+      </p>}
       {(error || validation || status?.initializationError) && (
         <Alert variant="warning">{error ?? validation ?? status?.initializationError}</Alert>
       )}
@@ -284,6 +293,16 @@ export function NativeCacheSettings({
                         />
                       </label>
                       <label>
+                        Start eviction at quota (%)
+                        <Input type="number" min={2} max={100} value={folder.highWaterPercent ?? 90}
+                          onChange={event => edit(folder.id, { highWaterPercent: Number(event.target.value) })} />
+                      </label>
+                      <label>
+                        Evict down to quota (%)
+                        <Input type="number" min={1} max={99} value={folder.lowWaterPercent ?? 80}
+                          onChange={event => edit(folder.id, { lowWaterPercent: Number(event.target.value) })} />
+                      </label>
+                      <label>
                         Storage type
                         <Select
                           value={folder.storageType}
@@ -385,6 +404,11 @@ export function NativeCacheSettings({
               <p key={job.id} className="text-xs">
                 {job.operation} / {job.folderId}: {job.state}
                 {job.result !== undefined ? ` (${job.result})` : ""} {job.error}
+                {job.probe && <span> — {job.probe.fileSystem} / {job.probe.capability};
+                  readable: {job.probe.readable ? "yes" : "no"}; writable: {job.probe.writable ? "yes" : "no"};
+                  durable write verified: {job.probe.durableWriteVerified ? "yes" : "no"};
+                  available: {(job.probe.availableBytes / 1e9).toFixed(1)} GB. {job.probe.error}
+                </span>}
                 {["queued", "running"].includes(job.state) && (
                   <Button
                     disabled={busy}

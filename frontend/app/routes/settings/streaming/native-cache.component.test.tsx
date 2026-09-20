@@ -37,6 +37,18 @@ describe("native cache folder editor", () => {
     expect(screen.getByLabelText("Cache mode (restart required)").closest("fieldset")?.disabled).toBe(true);
   });
 
+  it("shows measured probe capabilities separately from the storage hint and aggregate counters", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      activeMode: "native", configuredMode: "native", reservedBufferBytes: 0, folders: [],
+      counters: { hitBlocks: 12, missBlocks: 2, committedBytes: 1e9, fallbacks: 3, ioTimeouts: 1 },
+      jobs: [{ id: "probe", folderId: "disk", operation: "probe", state: "completed",
+        probe: { fileSystem: "nfs", capability: "nfs", readable: true, writable: true, durableWriteVerified: true, availableBytes: 2e12 } }],
+    }), { status: 200 })));
+    render(<Harness native />);
+    await screen.findByText(/Verified block hits: 12/);
+    expect(screen.getByText(/nfs \/ nfs/).textContent).toContain("durable write verified: yes");
+  });
+
   it("browses bounded cache pages and pins media without changing folder configuration", async () => {
     const key = "a".repeat(64);
     const fetcher = vi.fn().mockImplementation((url: string) => Promise.resolve(new Response(JSON.stringify(url.includes("/entries")

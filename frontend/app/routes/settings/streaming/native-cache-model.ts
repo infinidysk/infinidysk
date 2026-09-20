@@ -6,6 +6,8 @@ export type NativeFolder = {
   minFreeBytes: number;
   maxAgeDays: number;
   priority: number;
+  highWaterPercent?: number;
+  lowWaterPercent?: number;
   enabled: boolean;
   readOnly: boolean;
   storageType: "hdd" | "nas" | "ssd";
@@ -61,6 +63,10 @@ export function validateNativeFolders(folders: NativeFolder[]): string | null {
     )
       return "Age and priority must be integers; age cannot be negative.";
     if (!["hdd", "nas", "ssd"].includes(folder.storageType)) return "Choose a storage type.";
+    const high = folder.highWaterPercent ?? 90;
+    const low = folder.lowWaterPercent ?? 80;
+    if (!Number.isInteger(high) || !Number.isInteger(low) || low < 1 || low >= high || high > 100)
+      return "Watermarks must be integers with 1 ≤ low < high ≤ 100.";
   }
   return null;
 }

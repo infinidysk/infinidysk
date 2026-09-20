@@ -9,6 +9,8 @@ public sealed record NativeCacheFolder
     public long MinFreeBytes { get; init; } = 10_000_000_000;
     public int MaxAgeDays { get; init; } = 30;
     public int Priority { get; init; }
+    public int HighWaterPercent { get; init; } = 90;
+    public int LowWaterPercent { get; init; } = 80;
     public bool Enabled { get; init; } = true;
     public bool ReadOnly { get; init; }
     public string StorageType { get; init; } = "hdd";
@@ -38,6 +40,8 @@ public sealed record NativeCacheFolder
                 throw new ArgumentException("Native cache folders must not overlap.");
             if (folder.MaxBytes <= 0 || folder.MinFreeBytes < 0 || folder.MaxAgeDays < 0)
                 throw new ArgumentException("Native cache quotas must be positive; reserve and age cannot be negative.");
+            if (folder.LowWaterPercent < 1 || folder.LowWaterPercent >= folder.HighWaterPercent || folder.HighWaterPercent > 100)
+                throw new ArgumentException("Native cache watermarks require 1 <= low < high <= 100 percent.");
             if (folder.StorageType is not ("hdd" or "nas" or "ssd"))
                 throw new ArgumentException("Native cache storage type must be hdd, nas or ssd.");
             paths.Add(path);
