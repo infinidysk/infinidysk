@@ -165,6 +165,9 @@ export function AttentionSummary({
           />
         )}
       </summary>
+      <span className="sr-only" role="status" aria-live="polite">
+        {label}
+      </span>
       <section
         aria-label="Alerts"
         className="dropdown-content z-50 mt-2 max-h-[min(32rem,calc(100dvh-5rem))] w-88 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-box border border-base-content/15 bg-base-200 text-base-content shadow-lg max-sm:fixed max-sm:left-4 max-sm:right-4 max-sm:w-auto"

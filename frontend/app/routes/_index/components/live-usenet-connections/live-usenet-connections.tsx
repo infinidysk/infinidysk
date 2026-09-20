@@ -71,7 +71,7 @@ export function LiveUsenetConnections({ hasUsenetProviders }: LiveUsenetConnecti
 
   const showConnecting = hasUsenetProviders && !connections;
   const showReconnecting = hasUsenetProviders && !!connections && transportDown;
-  const nearCapacity = hasUsenetProviders && !!connections && max > 0 && active >= max * 0.9;
+  const nearCapacity = hasUsenetProviders && !!connections && max > 0 && live >= max * 0.9;
   const description = !hasUsenetProviders
     ? "Usenet connections: no providers configured."
     : showConnecting
@@ -79,36 +79,41 @@ export function LiveUsenetConnections({ hasUsenetProviders }: LiveUsenetConnecti
       : `${live} open connections out of ${max} allowed. ${active} active; ${idle} warm and ready for playback.${showReconnecting ? " Reconnecting; counts may be stale." : ""}`;
 
   return (
-    <Tooltip content={description} placement="bottom" className="hidden shrink-0 sm:inline-block">
-      <div
-        role="group"
-        tabIndex={0}
-        aria-label="Usenet connections"
-        className="flex h-10 w-40 items-center gap-2 rounded-box px-3 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-      >
-        <Icon
-          name="sync_alt"
-          className={`shrink-0 !text-[20px] ${showReconnecting || nearCapacity ? "text-warning" : "text-base-content/60"}`}
-        />
-        <div className="min-w-0 flex-1 tabular-nums">
-          <div className="flex h-4 items-center font-mono text-xs leading-none text-base-content/80">
-            {!hasUsenetProviders && "—"}
-            {hasUsenetProviders && connections && `${live} / ${max}`}
-            {showConnecting && <span className="loading loading-spinner loading-xs" />}
-          </div>
-          <div
-            className={`mt-0.5 whitespace-nowrap text-[10px] leading-3 ${showReconnecting ? "text-warning" : "text-base-content/70"}`}
-          >
-            {!hasUsenetProviders && "No providers"}
-            {hasUsenetProviders &&
-              connections &&
-              !transportDown &&
-              `${active} active · ${idle} warm`}
-            {showReconnecting && "Reconnecting"}
-            {showConnecting && "Connecting"}
+    <>
+      <span className="sr-only" role="status" aria-live="polite">
+        {description}
+      </span>
+      <Tooltip content={description} placement="bottom" className="hidden shrink-0 sm:inline-block">
+        <div
+          role="group"
+          tabIndex={0}
+          aria-label="Usenet connections"
+          className="flex h-10 w-40 items-center gap-2 rounded-box px-3 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        >
+          <Icon
+            name="sync_alt"
+            className={`shrink-0 !text-[20px] ${showReconnecting || nearCapacity ? "text-warning" : "text-base-content/60"}`}
+          />
+          <div className="min-w-0 flex-1 tabular-nums">
+            <div className="flex h-4 items-center font-mono text-xs leading-none text-base-content/80">
+              {!hasUsenetProviders && "—"}
+              {hasUsenetProviders && connections && `${live} / ${max}`}
+              {showConnecting && <span className="loading loading-spinner loading-xs" />}
+            </div>
+            <div
+              className={`mt-0.5 whitespace-nowrap text-[10px] leading-3 ${showReconnecting ? "text-warning" : "text-base-content/70"}`}
+            >
+              {!hasUsenetProviders && "No providers"}
+              {hasUsenetProviders &&
+                connections &&
+                !transportDown &&
+                `${active} active · ${idle} warm`}
+              {showReconnecting && "Reconnecting"}
+              {showConnecting && "Connecting"}
+            </div>
           </div>
         </div>
-      </div>
-    </Tooltip>
+      </Tooltip>
+    </>
   );
 }

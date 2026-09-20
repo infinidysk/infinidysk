@@ -54,19 +54,24 @@ export function LiveReadCount() {
       : `${count.toLocaleString()} active file ${count === 1 ? "read" : "reads"}`;
 
   return (
-    <Tooltip content={label} placement="bottom" className="hidden shrink-0 lg:inline-block">
-      <Link
-        to="/overview#active-reads"
-        aria-label={`${label}. View active-read details`}
-        className={`btn btn-ghost h-10 min-h-10 w-24 gap-2 px-2 text-xs font-normal ${unavailable ? "text-warning" : count ? "text-base-content" : "text-base-content/60"}`}
-      >
-        <Icon name="readiness_score" className="shrink-0 !text-[18px]" />
-        <span className="min-w-0 truncate tabular-nums">
-          {count == null
-            ? "-- reads"
-            : `${count.toLocaleString()} ${count === 1 ? "read" : "reads"}`}
-        </span>
-      </Link>
-    </Tooltip>
+    <>
+      <span className="sr-only" role="status" aria-live="polite">
+        {label}
+      </span>
+      <Tooltip content={label} placement="bottom" className="hidden shrink-0 lg:inline-block">
+        <Link
+          to="/overview#active-reads"
+          aria-label={`${label}. View active-read details`}
+          className={`btn btn-ghost h-10 min-h-10 w-24 gap-2 px-2 text-xs font-normal ${unavailable ? "text-warning" : count ? "text-base-content" : "text-base-content/60"}`}
+        >
+          <Icon name="readiness_score" className="shrink-0 !text-[18px]" />
+          <span className="min-w-0 truncate tabular-nums">
+            {count == null
+              ? "-- reads"
+              : `${count.toLocaleString()} ${count === 1 ? "read" : "reads"}`}
+          </span>
+        </Link>
+      </Tooltip>
+    </>
   );
 }

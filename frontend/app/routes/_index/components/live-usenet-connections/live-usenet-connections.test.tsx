@@ -48,6 +48,7 @@ describe("LiveUsenetConnections", () => {
       "3 open connections out of 20 allowed",
     );
     expect(screen.getByRole("tooltip").textContent).toContain("1 active; 2 warm");
+    expect(screen.getByRole("status").textContent).toContain("3 open connections out of 20 allowed");
 
     act(() => {
       onMessage?.("0|2|1|4|20|2");
@@ -56,6 +57,21 @@ describe("LiveUsenetConnections", () => {
     expect(screen.getByText("4 / 20")).toBeTruthy();
     expect(widget.querySelector(".loading-spinner")).toBeNull();
     expect(screen.queryByText("Connecting")).toBeNull();
+  });
+
+  it("warns when warm connections bring the pool near capacity", () => {
+    let onMessage: ((message: string) => void) | undefined;
+    useWebsocketTopicMock.mockImplementation(
+      (_topic: string, _kind: string, handler: (message: string) => void) => {
+        onMessage = handler;
+      },
+    );
+
+    render(<LiveUsenetConnections hasUsenetProviders />);
+    act(() => onMessage?.("0|1|1|18|20|18"));
+
+    expect(screen.getByRole("status").textContent).toContain("18 open connections out of 20 allowed");
+    expect(screen.getByLabelText("Usenet connections").querySelector(".text-warning")).not.toBeNull();
   });
 
   it("shows a dash when no providers are configured", () => {
