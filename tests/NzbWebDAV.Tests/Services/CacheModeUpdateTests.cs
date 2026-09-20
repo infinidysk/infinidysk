@@ -21,6 +21,20 @@ public sealed class CacheModeUpdateTests : IDisposable
     public void Dispose() => Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", _previousApiKey);
 
     [Fact]
+    public async Task NativeMode_RequiresAnEnabledExistingFolderBeforeStaging()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var context = new DavDatabaseContext(new DbContextOptionsBuilder<DavDatabaseContext>().UseSqlite(connection).Options);
+        await context.Database.EnsureCreatedAsync();
+        var service = new ConfigUpdateService(new DavDatabaseClient(context), new ConfigManager());
+        await Assert.ThrowsAsync<ArgumentException>(() => service.StageAsync([
+            new ConfigItem { ConfigName = "cache.mode", ConfigValue = "native" }
+        ]));
+        Assert.False(context.ChangeTracker.HasChanges());
+    }
+
+    [Fact]
     public async Task ConcurrentSaves_PreserveDatabaseAndRuntimeParity()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

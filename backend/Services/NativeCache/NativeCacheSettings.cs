@@ -12,6 +12,20 @@ public sealed record NativeCacheSettings(NativeCacheFolder[] Folders, string Met
 
     public static NativeCacheSettings FromConfig(ConfigManager config) => FromValues(config.GetEffectiveConfigValue);
 
+    public static string RepairRevisionPath(ConfigManager config)
+    {
+        // Repair is shared by every cache mode. Resolving its optional revision
+        // ledger must not initialize or validate unrelated Native settings.
+        var path = config.GetEffectiveConfigValue(ConfigKeys.NativeCacheMetadataPath);
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(path) && Path.IsPathFullyQualified(path))
+                return Path.Combine(Path.GetFullPath(path), "repair-revisions.db");
+        }
+        catch (ArgumentException) { /* Invalid optional native settings cannot break repair DI. */ }
+        return Path.Combine(DavDatabaseContext.ConfigPath, "native-cache-metadata", "repair-revisions.db");
+    }
+
     public static void ValidateProposed(ConfigManager config, IReadOnlyCollection<ConfigItem> items)
     {
         if (!items.Any(item => item.ConfigName is ConfigKeys.CacheMode or ConfigKeys.NativeCacheFolders

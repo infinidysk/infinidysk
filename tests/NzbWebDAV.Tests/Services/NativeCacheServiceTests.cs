@@ -93,6 +93,21 @@ public sealed class NativeCacheServiceTests : IDisposable
     }
 
     [Theory]
+    [InlineData("off")]
+    [InlineData("segment")]
+    [InlineData("native")]
+    public void RepairRevisionPath_DoesNotParseUnrelatedInvalidNativeSettings(string mode)
+    {
+        var config = Config(mode);
+        config.UpdateValues([
+            new ConfigItem { ConfigName = ConfigKeys.NativeCacheFolders, ConfigValue = "invalid-json" },
+            new ConfigItem { ConfigName = ConfigKeys.NativeCacheWriterMb, ConfigValue = "invalid-budget" }
+        ]);
+        Assert.Equal(Path.Combine(_root, "index", "repair-revisions.db"), NativeCacheSettings.RepairRevisionPath(config));
+        Assert.False(Directory.Exists(Path.Combine(_root, "index")));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ReopenedNativeCache_HitDoesNotOpenUnderlyingMedia(bool unrelatedRepair)

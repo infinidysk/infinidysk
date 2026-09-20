@@ -470,6 +470,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         var jsonOptions = rejectUnknownJsonProperties ? RejectUnknownPropertiesJsonOptions : null;
         foreach (var item in configItems)
         {
+            if (NzbWebDAV.Services.NativeCache.NativeCacheSettings.ValidateItem(item)) continue;
             if (item.ConfigName == ConfigKeys.CacheMode)
             {
                 CacheModeResolver.Parse(item.ConfigValue);
