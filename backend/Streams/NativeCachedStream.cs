@@ -1,4 +1,5 @@
 using System.Buffers;
+using Microsoft.Data.Sqlite;
 using NzbWebDAV.Services.NativeCache;
 using UsenetSharp.Streams;
 
@@ -18,6 +19,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
     private long _bufferStart = -1;
     private int _bufferCount;
     private bool _bufferVerified;
+    private bool _bufferFromCache;
     private long _position;
     private bool _disposed;
 
@@ -46,12 +48,14 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
         cancellationToken.ThrowIfCancellationRequested();
         if (destination.IsEmpty || _position == Length) return 0;
         var blockStart = _position / NativeCacheStore.BlockSize * NativeCacheStore.BlockSize;
+        if (_bufferFromCache && !_generationIsCurrent()) _bufferStart = -1;
         if (_bufferStart != blockStart)
         {
             _buffer ??= ArrayPool<byte>.Shared.Rent(NativeCacheStore.BlockSize);
             _bufferStart = -1;
             _bufferCount = 0;
             _bufferVerified = false;
+            _bufferFromCache = false;
             var expected = (int)Math.Min(NativeCacheStore.BlockSize, Length - blockStart);
             if (_generationIsCurrent())
             {
@@ -60,12 +64,16 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
                     _bufferCount = await _store.ReadBlockAsync(_identity, blockStart,
                         _buffer.AsMemory(0, expected), cancellationToken).ConfigureAwait(false);
                     _bufferVerified = _bufferCount == expected;
+                    _bufferFromCache = _bufferVerified;
+                    if (!_generationIsCurrent()) _bufferCount = 0;
                 }
-                catch (IOException) { /* Cache storage failures never prevent source playback. */ }
+                catch (Exception exception) when (exception is IOException or SqliteException or UnauthorizedAccessException)
+                { /* Cache storage failures never prevent source playback. */ }
             }
             if (_bufferCount != expected)
             {
                 using var verifiedRead = new NativeCacheReadContext();
+                _bufferFromCache = false;
                 _source ??= await _openSource(cancellationToken).ConfigureAwait(false);
                 _source.Position = blockStart;
                 _bufferCount = 0;
@@ -85,11 +93,15 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
                         await _store.WriteBlockAsync(_identity, blockStart, _buffer.AsMemory(0, expected), cancellationToken)
                             .ConfigureAwait(false);
                     }
-                    catch (IOException) { }
-                    catch (UnauthorizedAccessException) { }
+                    catch (Exception exception) when (exception is IOException or SqliteException or UnauthorizedAccessException) { }
                 }
             }
             _bufferStart = blockStart;
+        }
+        if (_bufferFromCache && !_generationIsCurrent())
+        {
+            _bufferStart = -1;
+            return await ReadAsync(destination, cancellationToken).ConfigureAwait(false);
         }
         var bufferOffset = checked((int)(_position - _bufferStart));
         var count = Math.Min(destination.Length, _bufferCount - bufferOffset);

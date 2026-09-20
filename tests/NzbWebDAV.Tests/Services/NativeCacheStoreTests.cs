@@ -45,6 +45,9 @@ public sealed class NativeCacheStoreTests : IDisposable
         var file = Directory.GetFiles(folder.Path, "content.data", SearchOption.AllDirectories).Single();
         await File.WriteAllBytesAsync(file, new byte[] { 9, 2, 3 });
         Assert.Equal(0, await store.ReadBlockAsync(identity, 0, new byte[3]));
+        Assert.Equal(0, await store.GetCoverageAsync(identity));
+        Assert.True(await store.WriteBlockAsync(identity, 0, new byte[] { 1, 2, 3 }));
+        Assert.Equal(3, await store.ReadBlockAsync(identity, 0, new byte[3]));
     }
 
     [Fact]
@@ -113,6 +116,33 @@ public sealed class NativeCacheStoreTests : IDisposable
         await using var imported = new NativeCacheStore(Path.Combine(_root, "import.db"), [folder with { ReadOnly = true }]);
         Assert.Equal(1, await imported.ScanAsync(folder.Id));
         Assert.Equal(3, await imported.ReadBlockAsync(id, 0, new byte[3]));
+    }
+
+    [Fact]
+    public async Task Dispose_IsIdempotent()
+    {
+        var store = new NativeCacheStore(Path.Combine(_root, "catalogue.db"), [CreateFolder()]);
+        await store.DisposeAsync();
+        await store.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Scan_DoesNotMergeBlocksAcrossFolderReplicas()
+    {
+        var first = CreateFolder();
+        var secondPath = Path.Combine(_root, "replica");
+        Directory.CreateDirectory(secondPath);
+        var second = first with { Id = "replica", Path = secondPath };
+        var id = new NativeCacheIdentity("item", "generation", NativeCacheStore.BlockSize + 3);
+        await using (var a = new NativeCacheStore(Path.Combine(_root, "a.db"), [first]))
+            await a.WriteBlockAsync(id, 0, new byte[NativeCacheStore.BlockSize]);
+        await using (var b = new NativeCacheStore(Path.Combine(_root, "b.db"), [second]))
+            await b.WriteBlockAsync(id, NativeCacheStore.BlockSize, new byte[3]);
+        await using var combined = new NativeCacheStore(Path.Combine(_root, "combined.db"),
+            [first with { ReadOnly = true }, second with { ReadOnly = true }]);
+        await combined.ScanAsync(first.Id);
+        await combined.ScanAsync(second.Id);
+        Assert.Equal(NativeCacheStore.BlockSize, await combined.GetCoverageAsync(id));
     }
 
     private NativeCacheFolder CreateFolder()

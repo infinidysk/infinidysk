@@ -98,12 +98,22 @@ public sealed class NativeCacheStore : IAsyncDisposable
                     FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.Asynchronous | FileOptions.RandomAccess);
                 data.Position = offset;
             }
-            catch (IOException) { return 0; }
+            catch (IOException)
+            {
+                reader.Close();
+                Execute("DELETE FROM Blocks WHERE Key=$key AND Offset=$offset AND Hash=$hash",
+                    ("$key", identity.Key), ("$offset", offset), ("$hash", expected));
+                return 0;
+            }
             catch (UnauthorizedAccessException) { return 0; }
             reader.Close();
             // Coalesce access accounting to five-minute buckets rather than updating every read.
             var bucket = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 300;
-            Execute("UPDATE Entries SET Access=$access WHERE Key=$key AND Access<>$access", ("$access", bucket), ("$key", identity.Key));
+            try
+            {
+                Execute("UPDATE Entries SET Access=$access WHERE Key=$key AND Access<>$access", ("$access", bucket), ("$key", identity.Key));
+            }
+            catch (SqliteException) { /* Access telemetry cannot invalidate an otherwise usable open handle. */ }
         }
         finally { _gate.Release(); }
 
@@ -112,10 +122,18 @@ public sealed class NativeCacheStore : IAsyncDisposable
             try
             {
                 await data.ReadExactlyAsync(destination[..count], cancellationToken).ConfigureAwait(false);
-                if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(destination.Span[..count]), expected)) return 0;
+                if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(destination.Span[..count]), expected))
+                {
+                    await InvalidateBlockAsync(identity.Key, offset, expected, cancellationToken).ConfigureAwait(false);
+                    return 0;
+                }
                 return count;
             }
-            catch (IOException) { return 0; }
+            catch (IOException)
+            {
+                await InvalidateBlockAsync(identity.Key, offset, expected, cancellationToken).ConfigureAwait(false);
+                return 0;
+            }
         }
     }
 
@@ -246,8 +264,9 @@ public sealed class NativeCacheStore : IAsyncDisposable
                     var info = new FileInfo(manifestPath);
                     if (!info.Exists || info.Length > 64 * 1024) continue;
                     var manifest = JsonSerializer.Deserialize<Manifest>(await File.ReadAllTextAsync(manifestPath, cancellationToken).ConfigureAwait(false));
-                    if (manifest is not { Version: 1 } || manifest.Identity.Length <= 0
+                    if (manifest is not { Version: 1, Identity: not null } || manifest.Identity.Length <= 0
                         || !string.Equals(directory, EntryPath(folder, manifest.Identity.Key), StringComparison.Ordinal)) continue;
+                    using var lease = AcquireLease(manifest.Identity);
                     await using var data = new FileStream(dataPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
                         4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
                     await using var journal = new FileStream(journalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite,
@@ -256,6 +275,8 @@ public sealed class NativeCacheStore : IAsyncDisposable
                     await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                     try
                     {
+                        using var owner = Command("SELECT Folder FROM Entries WHERE Key=$key", ("$key", manifest.Identity.Key));
+                        if (owner.ExecuteScalar() is string existingFolder && existingFolder != folder.Id) continue;
                         Execute("INSERT OR IGNORE INTO Entries(Key,Folder,Length,Bytes,Access) VALUES($key,$folder,$length,$bytes,$access)",
                             ("$key", manifest.Identity.Key), ("$folder", folder.Id), ("$length", manifest.Identity.Length),
                             ("$bytes", EntryOverhead), ("$access", DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 300));
@@ -268,7 +289,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                         catch (JsonException) { continue; } // Includes incomplete trailing writes.
                         if (block is null || block.Offset < 0 || block.Offset >= manifest.Identity.Length
                             || block.Offset % BlockSize != 0 || block.Count != Math.Min(BlockSize, manifest.Identity.Length - block.Offset)
-                            || block.Hash.Length != 64) continue;
+                            || block.Hash is not { Length: 64 }) continue;
                         data.Position = block.Offset;
                         try { await data.ReadExactlyAsync(buffer.AsMemory(0, block.Count), cancellationToken).ConfigureAwait(false); }
                         catch (EndOfStreamException) { continue; }
@@ -334,6 +355,18 @@ public sealed class NativeCacheStore : IAsyncDisposable
         catch (UnauthorizedAccessException) { return false; }
     }
 
+    private async Task InvalidateBlockAsync(string key, long offset, byte[] hash, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Execute("DELETE FROM Blocks WHERE Key=$key AND Offset=$offset AND Hash=$hash",
+                ("$key", key), ("$offset", offset), ("$hash", hash));
+            // Allocated bytes remain reserved until whole-file eviction/reconciliation.
+        }
+        finally { _gate.Release(); }
+    }
+
     private static long RoundAllocation(int bytes) => ((bytes + 65535L) / 65536 * 65536) + 4096;
 
     public IDisposable AcquireLease(NativeCacheIdentity identity)
@@ -373,6 +406,10 @@ public sealed class NativeCacheStore : IAsyncDisposable
                 {
                     if (_leases.ContainsKey(key)) continue;
                     var directory = EntryPath(folder, key);
+                    if (new DirectoryInfo(folder.Path).LinkTarget is not null
+                        || new DirectoryInfo(Path.Combine(folder.Path, "v1")).LinkTarget is not null
+                        || new DirectoryInfo(Path.Combine(folder.Path, "v1", key[..2])).LinkTarget is not null
+                        || new DirectoryInfo(directory).LinkTarget is not null) continue;
                     // No arbitrary recursive deletion: remove our three known files only.
                     try
                     {
@@ -432,6 +469,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (Volatile.Read(ref _disposed)) return;
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -441,7 +479,8 @@ public sealed class NativeCacheStore : IAsyncDisposable
             await _database.DisposeAsync().ConfigureAwait(false);
         }
         finally { _gate.Release(); }
-        _gate.Dispose();
+        // Do not dispose the managed-only gate: already queued operations must wake
+        // and observe _disposed, and repeated disposal is supported. No WaitHandle is used.
     }
 
     private sealed record Manifest(int Version, NativeCacheIdentity Identity);
