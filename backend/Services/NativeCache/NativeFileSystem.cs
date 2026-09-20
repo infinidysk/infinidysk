@@ -183,6 +183,16 @@ public static class NativeFileSystem
                 throw new IOException("Cannot remove native cache file.");
         }
 
+        public void ReplaceFile(string source, string destination)
+        {
+            Leaf(source);
+            Leaf(destination);
+            using var sourceFile = OpenFile(source, FileMode.Open, FileAccess.Read);
+            using var destinationFile = OpenFile(destination, FileMode.Open, FileAccess.Read);
+            if (RenameAt(_handle, source, _handle, destination) != 0)
+                throw new IOException("Cannot replace native cache journal.");
+        }
+
         public void DeleteDirectory(string name)
         {
             Leaf(name);
@@ -290,6 +300,10 @@ public static class NativeFileSystem
     [DllImport("libc", EntryPoint = "mkdirat", SetLastError = true, CharSet = CharSet.Ansi, BestFitMapping = false, ThrowOnUnmappableChar = true)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
     private static extern int MkdirAt(SafeFileHandle directory, string path, uint mode);
+    [DllImport("libc", EntryPoint = "renameat", SetLastError = true, CharSet = CharSet.Ansi, BestFitMapping = false, ThrowOnUnmappableChar = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    private static extern int RenameAt(SafeFileHandle oldDirectory, string oldName, SafeFileHandle newDirectory, string newName);
+
     [DllImport("libc", EntryPoint = "unlinkat", SetLastError = true, CharSet = CharSet.Ansi, BestFitMapping = false, ThrowOnUnmappableChar = true)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
     private static extern int UnlinkAt(SafeFileHandle directory, string path, int flags);

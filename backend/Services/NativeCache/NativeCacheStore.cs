@@ -26,6 +26,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
     private readonly HashSet<string> _scanning = new(StringComparer.Ordinal);
     private readonly Dictionary<(string Folder, bool Clear, bool Pressure), (long Access, string Key)> _evictionCursors = [];
     private readonly HashSet<string> _pressuredFolders = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _pendingCheckpoints = new(StringComparer.Ordinal);
     private readonly Dictionary<(string Key, long Offset), FillState> _fills = [];
     private readonly Dictionary<string, WarmReservation> _reservations = new(StringComparer.Ordinal);
     private readonly Lock _leaseLock = new();
@@ -33,6 +34,30 @@ public sealed class NativeCacheStore : IAsyncDisposable
     internal Func<string, CancellationToken, Task>? BeforeScanReadAsync { get; init; }
     internal Func<string, long>? AvailableBytesOverride { get; init; }
     internal Func<NativeFileSystem.PinnedDirectory, string, CancellationToken, Task>? BeforeProbeReadAsync { get; init; }
+    internal Func<string, CancellationToken, Task>? CheckpointPhaseAsync { get; init; }
+    internal Func<CancellationToken, Task>? BeforeWriteReserveAsync { get; init; }
+    internal int PendingCheckpointCount { get { lock (_leaseLock) return _pendingCheckpoints.Count; } }
+
+    private void QueueCheckpoint(string key, string folder)
+    {
+        lock (_leaseLock)
+            if (_pendingCheckpoints.Count < 128) _pendingCheckpoints.TryAdd(key, folder);
+    }
+
+    public async Task<int> ProcessOneCheckpointAsync(CancellationToken cancellationToken = default)
+    {
+        KeyValuePair<string, string> next;
+        lock (_leaseLock)
+        {
+            if (_pendingCheckpoints.Count == 0) return 0;
+            next = _pendingCheckpoints.First();
+            _pendingCheckpoints.Remove(next.Key);
+        }
+        return await ScanCoreAsync(next.Value, next.Key, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static long JournalSoftLimit(long length)
+        => (long)Math.Min(long.MaxValue - 65536m, Math.Max(4096m, decimal.Ceiling((decimal)length / BlockSize) * 256));
 
     public async Task<NativeCacheProbeResult> ProbeAsync(string folderId, CancellationToken cancellationToken = default)
     {
@@ -261,6 +286,8 @@ public sealed class NativeCacheStore : IAsyncDisposable
             var folder = candidates.FirstOrDefault(candidate => CanUseFolder(candidate.Folder, candidate.FreeRequired)).Folder;
             if (folder is null) return false;
 
+            if (BeforeWriteReserveAsync is { } beforeReserve) await beforeReserve(cancellationToken).ConfigureAwait(false);
+
             using var directory = OpenEntry(folder, identity.Key, create: true);
             if (folderId is null)
             {
@@ -272,6 +299,9 @@ public sealed class NativeCacheStore : IAsyncDisposable
             }
             await using var journal = directory.OpenFile("ranges.journal", FileMode.OpenOrCreate, FileAccess.ReadWrite);
             await RepairJournalTailAsync(journal, cancellationToken).ConfigureAwait(false);
+            var softLimit = JournalSoftLimit(identity.Length);
+            if (journal.Length >= softLimit) QueueCheckpoint(identity.Key, folder.Id);
+            if (journal.Length > softLimit + 65536 - 256) return false;
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             catalogueHeld = true;
             // Writers/eviction are serialized separately; readers need only this
@@ -304,12 +334,12 @@ public sealed class NativeCacheStore : IAsyncDisposable
             await journal.WriteAsync(record, cancellationToken).ConfigureAwait(false);
             await journal.WriteAsync("\n"u8.ToArray(), cancellationToken).ConfigureAwait(false);
             journal.Flush(flushToDisk: true);
+            if (journal.Length >= softLimit) QueueCheckpoint(identity.Key, folder.Id);
             directory.Flush();
             using (var shard = _roots[folder.Id].OpenDirectory($"v1/{identity.Key[..2]}")) shard.Flush();
             using (var version = _roots[folder.Id].OpenDirectory("v1")) version.Flush();
             _roots[folder.Id].Flush();
-            var allocated = checked(directory.AllocatedBytes("content.data")
-                + directory.AllocatedBytes("manifest.json") + directory.AllocatedBytes("ranges.journal") + EntryOverhead);
+            var allocated = PhysicalEntryBytes(directory);
             if (!IsVolumeCurrent(folder)) return false;
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             catalogueHeld = true;
@@ -515,7 +545,10 @@ public sealed class NativeCacheStore : IAsyncDisposable
     }
 
     /// <summary>Explicit, streaming reconciliation; never enumerates the NAS during normal startup.</summary>
-    public async Task<int> ScanAsync(string folderId, CancellationToken cancellationToken = default)
+    public Task<int> ScanAsync(string folderId, CancellationToken cancellationToken = default)
+        => ScanCoreAsync(folderId, null, cancellationToken);
+
+    private async Task<int> ScanCoreAsync(string folderId, string? onlyKey, CancellationToken cancellationToken)
     {
         var folder = _folders.FirstOrDefault(folder => folder.Id == folderId && folder.Enabled)
             ?? throw new ArgumentException("Unknown or disabled native cache folder.", nameof(folderId));
@@ -526,14 +559,14 @@ public sealed class NativeCacheStore : IAsyncDisposable
         using var rootLease = root;
         var imported = 0;
         var buffer = new byte[BlockSize];
-        foreach (var shardName in root.EnumerateDirectoryNames())
+        foreach (var shardName in onlyKey is null ? root.EnumerateDirectoryNames() : [onlyKey[..2]])
         {
             if (shardName.Length != 2 || !shardName.All(char.IsAsciiHexDigit)) continue;
             NativeFileSystem.PinnedDirectory shard;
             try { shard = root.OpenDirectory(shardName); }
             catch (IOException) { continue; }
             using var shardLease = shard;
-            foreach (var key in shard.EnumerateDirectoryNames())
+            foreach (var key in onlyKey is null ? shard.EnumerateDirectoryNames() : [onlyKey])
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (key.Length != 64 || !key.All(char.IsAsciiHexDigit) || !key.StartsWith(shardName, StringComparison.Ordinal)) continue;
@@ -566,8 +599,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                         || !string.Equals(key, manifest.Identity.Key, StringComparison.Ordinal) || !IsVolumeCurrent(folder)) continue;
                     await using var data = directory.OpenFile("content.data", FileMode.Open, FileAccess.Read);
                     await using var journal = directory.OpenFile("ranges.journal", FileMode.Open, FileAccess.Read);
-                    var physicalBytes = checked(directory.AllocatedBytes("content.data") + directory.AllocatedBytes("manifest.json")
-                        + directory.AllocatedBytes("ranges.journal") + EntryOverhead);
+                    var physicalBytes = PhysicalEntryBytes(directory);
                     await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                     try
                     {
@@ -616,8 +648,9 @@ public sealed class NativeCacheStore : IAsyncDisposable
                     }
                     cancellationToken.ThrowIfCancellationRequested();
                     if (!IsVolumeCurrent(folder)) continue;
-                    physicalBytes = checked(directory.AllocatedBytes("content.data") + directory.AllocatedBytes("manifest.json")
-                        + directory.AllocatedBytes("ranges.journal") + EntryOverhead);
+                    if (!folder.ReadOnly)
+                        await CheckpointJournalAsync(folder, key, directory, cancellationToken).ConfigureAwait(false);
+                    physicalBytes = PhysicalEntryBytes(directory);
                     await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
                     writerHeld = true;
                     await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -633,6 +666,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                 catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
                 catch (JsonException) { }
+                catch (InvalidDataException) { }
                 finally
                 {
                     lock (_leaseLock)
@@ -645,6 +679,87 @@ public sealed class NativeCacheStore : IAsyncDisposable
             }
         }
         return imported;
+    }
+
+    private async Task CheckpointJournalAsync(NativeCacheFolder folder, string key,
+        NativeFileSystem.PinnedDirectory directory, CancellationToken cancellationToken)
+    {
+        const string temporary = "ranges.checkpoint.tmp";
+        long scratch;
+        long freeRequired;
+        await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                using var count = Command("SELECT COUNT(*) FROM Blocks WHERE Key=$key", ("$key", key));
+                scratch = RoundAllocation(Math.Max(4096, checked((long)count.ExecuteScalar()! * 256)));
+                if (!HasQuota(folder, scratch)) return;
+                freeRequired = FreeSpaceRequirement(folder, scratch);
+            }
+            finally { _gate.Release(); }
+            if (!CanUseFolder(folder, freeRequired)) throw new IOException("No unreserved checkpoint scratch space.");
+            // Reserve scratch before any filesystem mutation, including across folders
+            // sharing this device. Failures retain conservative debt until reconciliation.
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                Execute("UPDATE Entries SET Bytes=Bytes+$bytes,PendingBytes=PendingBytes+$bytes WHERE Key=$key",
+                    ("$bytes", scratch), ("$key", key));
+            }
+            finally { _gate.Release(); }
+        }
+        finally { _writer.Release(); }
+        var created = false;
+        try
+        {
+            await using (var output = directory.OpenFile(temporary, FileMode.Create, FileAccess.Write))
+            {
+                created = true;
+                long after = -1;
+                while (true)
+                {
+                    var records = new List<JournalBlock>(128);
+                    await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        using var page = Command("SELECT Offset,Count,Hash FROM Blocks WHERE Key=$key AND Offset>$after ORDER BY Offset LIMIT 128",
+                            ("$key", key), ("$after", after));
+                        using var reader = page.ExecuteReader();
+                        while (reader.Read()) records.Add(new(reader.GetInt64(0), reader.GetInt32(1), Convert.ToHexString((byte[])reader[2])));
+                    }
+                    finally { _gate.Release(); }
+                    if (records.Count == 0) break;
+                    foreach (var record in records)
+                    {
+                        await output.WriteAsync(JsonSerializer.SerializeToUtf8Bytes(record), cancellationToken).ConfigureAwait(false);
+                        await output.WriteAsync("\n"u8.ToArray(), cancellationToken).ConfigureAwait(false);
+                        after = record.Offset;
+                    }
+                }
+                output.Flush(flushToDisk: true);
+            }
+            if (CheckpointPhaseAsync is { } phase) await phase("before-rename", cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsVolumeCurrent(folder)) throw new IOException("Checkpoint storage identity changed.");
+            directory.ReplaceFile(temporary, "ranges.journal");
+            created = false;
+            directory.Flush();
+            if (CheckpointPhaseAsync is { } completed) await completed("after-rename", cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (created) { directory.DeleteFile(temporary); directory.Flush(); }
+        }
+    }
+
+    private static long PhysicalEntryBytes(NativeFileSystem.PinnedDirectory directory)
+    {
+        var bytes = checked(directory.AllocatedBytes("content.data") + directory.AllocatedBytes("manifest.json")
+            + directory.AllocatedBytes("ranges.journal") + EntryOverhead);
+        try { return checked(bytes + directory.AllocatedBytes("ranges.checkpoint.tmp")); }
+        catch (IOException exception) when (NativeFileSystem.IsMissing(exception)) { return bytes; }
     }
 
     private static async Task<string?> ReadJournalLineAsync(StreamReader reader, CancellationToken cancellationToken)
@@ -736,7 +851,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         finally { _gate.Release(); }
     }
 
-    private static long RoundAllocation(int bytes) => ((bytes + 65535L) / 65536 * 65536) + 4096;
+    private static long RoundAllocation(long bytes) => checked((bytes + 65535L) / 65536 * 65536 + 4096);
 
     public IDisposable AcquireLease(NativeCacheIdentity identity)
         => AcquireKeyLease(identity.Key);
@@ -884,6 +999,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                                 directory.DeleteFile("content.data");
                                 directory.DeleteFile("ranges.journal");
                                 directory.DeleteFile("manifest.json");
+                                directory.DeleteFile("ranges.checkpoint.tmp");
                                 shard.DeleteDirectory(key);
                                 shard.Flush();
                             }

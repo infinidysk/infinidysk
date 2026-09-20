@@ -69,6 +69,12 @@ public sealed class NativeCacheOperations : BackgroundService
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
             if (_pending.Reader.TryRead(out var id)) await RunAsync(id, stoppingToken).ConfigureAwait(false);
+            else if (_native.Store is { } store)
+            {
+                try { await store.ProcessOneCheckpointAsync(stoppingToken).ConfigureAwait(false); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException)
+                { /* Bounded idle maintenance never stops source playback. */ }
+            }
             if (++tick % 30 != 0 || _native.Store is null || _native.ActiveSettings is null) continue;
             foreach (var folder in _native.ActiveSettings.Folders.Where(folder => folder.Enabled && !folder.ReadOnly))
             {
