@@ -9,6 +9,28 @@ public sealed class NativeCacheStoreTests : IDisposable
     public NativeCacheStoreTests() => Directory.CreateDirectory(_root);
 
     [Fact]
+    public async Task VerifiedRanges_UseBoundedOffsetPages_WithoutInventingSparseCoverage()
+    {
+        var folder = CreateFolder();
+        await using var store = new NativeCacheStore(Path.Combine(_root, "catalogue.db"), [folder]);
+        var identity = new NativeCacheIdentity("range-pages", "generation-one", NativeCacheStore.BlockSize * 2L + 3);
+        Assert.True(await store.WriteBlockAsync(identity, 0, new byte[NativeCacheStore.BlockSize]));
+        Assert.True(await store.WriteBlockAsync(identity, NativeCacheStore.BlockSize * 2L, new byte[3]));
+        var first = await store.ListVerifiedRangesAsync(identity.Key, -1, 1);
+        Assert.Single(first);
+        Assert.Equal(0, first[0].Offset);
+        Assert.Equal(NativeCacheStore.BlockSize, first[0].Count);
+        var second = await store.ListVerifiedRangesAsync(identity.Key, first[0].Offset, 1);
+        Assert.Single(second);
+        Assert.Equal(NativeCacheStore.BlockSize * 2L, second[0].Offset);
+        Assert.Equal(3, second[0].Count);
+        Assert.Empty(await store.ListVerifiedRangesAsync(identity.Key, second[0].Offset, 100));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.ListVerifiedRangesAsync(identity.Key, -1, 101));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.ListVerifiedRangesAsync("../unsafe", -1, 1));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.ListVerifiedRangesAsync(identity.Key, -2, 1));
+    }
+
+    [Fact]
     public async Task CataloguePages_AreBoundedAndExposePinnedEntries()
     {
         var folder = CreateFolder();

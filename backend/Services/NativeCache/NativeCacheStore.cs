@@ -423,6 +423,25 @@ public sealed class NativeCacheStore : IAsyncDisposable
         finally { _gate.Release(); }
     }
 
+    public async Task<IReadOnlyList<NativeCacheVerifiedRange>> ListVerifiedRangesAsync(string key, long afterOffset, int limit,
+        CancellationToken ct = default)
+    {
+        if (key is not { Length: 64 } || !key.All(char.IsAsciiHexDigit) || afterOffset < -1 || limit is < 1 or > 100)
+            throw new ArgumentException("Select a valid entry key, offset cursor and page size between 1 and 100.");
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            using var command = Command("SELECT Offset,Count FROM Blocks WHERE Key=$key AND Offset>$after ORDER BY Offset LIMIT $limit",
+                ("$key", key), ("$after", afterOffset), ("$limit", limit));
+            using var reader = command.ExecuteReader();
+            var ranges = new List<NativeCacheVerifiedRange>();
+            while (reader.Read()) ranges.Add(new(reader.GetInt64(0), reader.GetInt32(1)));
+            return ranges;
+        }
+        finally { _gate.Release(); }
+    }
+
     public async Task SetPinnedKeyAsync(string key, bool pinned, CancellationToken ct = default)
     {
         if (key.Length != 64 || !key.All(char.IsAsciiHexDigit)) throw new ArgumentException("Invalid cache entry key.");
@@ -1193,3 +1212,5 @@ public sealed class NativeCacheStore : IAsyncDisposable
 
 public sealed record NativeCacheProbeResult(string FileSystem, string Capability, bool Readable, bool Writable,
     bool DurableWriteVerified, long AvailableBytes, string? Error);
+
+public sealed record NativeCacheVerifiedRange(long Offset, int Count);
