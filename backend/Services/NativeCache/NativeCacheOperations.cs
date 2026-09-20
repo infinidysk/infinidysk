@@ -28,7 +28,11 @@ public sealed class NativeCacheOperations : BackgroundService
             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         try { return await pending.WaitAsync(timeout, cancellationToken).ConfigureAwait(false); }
         catch (TimeoutException) { throw new IOException("Storage probe exceeded its deadline."); }
+        // Request cancellation before disposing the linked source; do not await the
+        // isolated NAS operation after its deadline. Its eventual fault is observed above.
+#pragma warning disable CA1849 // Synchronous cancellation request must precede linked-source teardown.
         finally { if (!pending.IsCompleted) work.Cancel(); }
+#pragma warning restore CA1849
     }
 
     public NativeCacheOperation Enqueue(string folderId, string operation, string? confirmFolderId = null)

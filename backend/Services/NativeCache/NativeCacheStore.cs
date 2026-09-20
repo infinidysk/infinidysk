@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
@@ -14,8 +15,13 @@ public sealed class NativeCacheStore : IAsyncDisposable
 {
     public const int BlockSize = 4 * 1024 * 1024;
     private const long EntryOverhead = 64 * 1024;
+    // FlushAsync only flushes managed buffers; publication requires durable fsync.
+    private static void FlushToDisk(FileStream stream) => stream.Flush(flushToDisk: true);
+    private const string LocalSqliteReason = "Microsoft.Data.Sqlite async APIs execute synchronously; bounded local catalogue operations intentionally remain under the short catalogue gate.";
     private readonly SqliteConnection _database;
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Managed-only semaphore: no WaitHandle is created. Retained so queued waiters can observe disposal and release safely.")]
     private readonly SemaphoreSlim _gate = new(1, 1);
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Managed-only semaphore: no WaitHandle is created. Retained so queued waiters can observe disposal and release safely.")]
     private readonly SemaphoreSlim _writer = new(1, 1);
     private readonly NativeCacheFolder[] _folders;
     private readonly Dictionary<string, FileStream> _owners = new(StringComparer.Ordinal);
@@ -70,9 +76,9 @@ public sealed class NativeCacheStore : IAsyncDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (!IsVolumeCurrent(folder)) return result with { Error = "Registered storage is unavailable or its identity changed." };
             var root = _roots[folder.Id];
-            var filesystem = root.FileSystem;
+            var filesystem = root.GetFileSystem();
             result = result with { FileSystem = filesystem.FileSystem, Capability = filesystem.Capability, Readable = true,
-                AvailableBytes = AvailableBytesOverride?.Invoke(folder.Id) ?? root.AvailableBytes };
+                AvailableBytes = AvailableBytesOverride?.Invoke(folder.Id) ?? root.GetAvailableBytes() };
             if (folder.ReadOnly) return result;
             if (!_owners.ContainsKey(folderId)) return result with { Error = "Folder is not exclusively owned for writes." };
             long freeRequired;
@@ -99,7 +105,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
             await using var file = root.OpenFile(name, FileMode.CreateNew, FileAccess.ReadWrite);
             created = true;
             await file.WriteAsync(expected, cancellationToken).ConfigureAwait(false);
-            file.Flush(flushToDisk: true);
+            FlushToDisk(file);
             root.Flush();
             if (BeforeProbeReadAsync is { } beforeRead) await beforeRead(root, name, cancellationToken).ConfigureAwait(false);
             file.Position = 0;
@@ -182,13 +188,13 @@ public sealed class NativeCacheStore : IAsyncDisposable
         }
     }
 
+    [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
     public async Task<int> ReadBlockAsync(NativeCacheIdentity identity, long offset, Memory<byte> destination,
         CancellationToken cancellationToken = default)
     {
         ValidateOffset(identity, offset);
         using var lease = AcquireLease(identity);
         lock (_leaseLock) if (_evicting.Contains(identity.Key)) return 0;
-        FileStream? data = null;
         NativeCacheFolder? folder = null;
         byte[]? expected = null;
         var count = 0;
@@ -222,8 +228,15 @@ public sealed class NativeCacheStore : IAsyncDisposable
         try
         {
             using var directory = OpenEntry(folder, identity.Key);
-            data = directory.OpenFile("content.data", FileMode.Open, FileAccess.Read);
+            await using var data = directory.OpenFile("content.data", FileMode.Open, FileAccess.Read);
             data.Position = offset;
+            await data.ReadExactlyAsync(destination[..count], cancellationToken).ConfigureAwait(false);
+            if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(destination.Span[..count]), expected))
+            {
+                await InvalidateBlockAsync(identity.Key, offset, expected, cancellationToken).ConfigureAwait(false);
+                return 0;
+            }
+            return count;
         }
         catch (IOException)
         {
@@ -232,28 +245,11 @@ public sealed class NativeCacheStore : IAsyncDisposable
         }
         catch (UnauthorizedAccessException) { return 0; }
 
-        await using (data.ConfigureAwait(false))
-        {
-            try
-            {
-                await data.ReadExactlyAsync(destination[..count], cancellationToken).ConfigureAwait(false);
-                if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(destination.Span[..count]), expected))
-                {
-                    await InvalidateBlockAsync(identity.Key, offset, expected, cancellationToken).ConfigureAwait(false);
-                    return 0;
-                }
-                return count;
-            }
-            catch (IOException)
-            {
-                await InvalidateBlockAsync(identity.Key, offset, expected, cancellationToken).ConfigureAwait(false);
-                return 0;
-            }
-        }
     }
 
+    [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
     public async Task<bool> WriteBlockAsync(NativeCacheIdentity identity, long offset, ReadOnlyMemory<byte> data,
-        CancellationToken cancellationToken = default, bool waitForWriter = false)
+        bool waitForWriter = false, CancellationToken cancellationToken = default)
     {
         ValidateOffset(identity, offset);
         if (data.Length != Math.Min(BlockSize, identity.Length - offset))
@@ -294,7 +290,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                 await using (var manifest = directory.OpenFile("manifest.json", FileMode.Create, FileAccess.Write))
                 {
                     await manifest.WriteAsync(JsonSerializer.SerializeToUtf8Bytes(new Manifest(1, identity)), cancellationToken).ConfigureAwait(false);
-                    manifest.Flush(flushToDisk: true);
+                    FlushToDisk(manifest);
                 }
             }
             await using var journal = directory.OpenFile("ranges.journal", FileMode.OpenOrCreate, FileAccess.ReadWrite);
@@ -328,13 +324,13 @@ public sealed class NativeCacheStore : IAsyncDisposable
             {
                 stream.Position = offset;
                 await stream.WriteAsync(data, cancellationToken).ConfigureAwait(false);
-                stream.Flush(flushToDisk: true);
+                FlushToDisk(stream);
             }
             // The colocated journal makes explicit scans/imports possible without the local catalogue.
             var record = JsonSerializer.SerializeToUtf8Bytes(new JournalBlock(offset, data.Length, Convert.ToHexString(hash)));
             await journal.WriteAsync(record, cancellationToken).ConfigureAwait(false);
             await journal.WriteAsync("\n"u8.ToArray(), cancellationToken).ConfigureAwait(false);
-            journal.Flush(flushToDisk: true);
+            FlushToDisk(journal);
             if (journal.Length >= softLimit) QueueCheckpoint(identity.Key, folder.Id);
             directory.Flush();
             using (var shard = _roots[folder.Id].OpenDirectory($"v1/{identity.Key[..2]}")) shard.Flush();
@@ -372,6 +368,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         }
     }
 
+    [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
     public async Task<IReadOnlyList<NativeCacheFolderStatus>> GetStatusAsync(CancellationToken cancellationToken = default)
     {
         var result = new List<NativeCacheFolderStatus>();
@@ -396,6 +393,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         }).ToArray();
     }
 
+    [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
     public async Task<long> GetCoverageAsync(NativeCacheIdentity identity, CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -407,6 +405,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         finally { _gate.Release(); }
     }
 
+    [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
     public async Task<IReadOnlyList<NativeCacheEntry>> ListEntriesAsync(string folderId, string? after, int limit, CancellationToken ct = default)
     {
         if (!_folders.Any(folder => folder.Id == folderId) || limit is < 1 or > 200 || after?.Length > 64)
@@ -425,6 +424,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         finally { _gate.Release(); }
     }
 
+    [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
     public async Task<IReadOnlyList<NativeCacheVerifiedRange>> ListVerifiedRangesAsync(string key, long afterOffset, int limit,
         CancellationToken ct = default)
     {
@@ -444,6 +444,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         finally { _gate.Release(); }
     }
 
+    [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
     public async Task SetPinnedKeyAsync(string key, bool pinned, CancellationToken ct = default)
     {
         if (key.Length != 64 || !key.All(char.IsAsciiHexDigit)) throw new ArgumentException("Invalid cache entry key.");
@@ -482,6 +483,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         }
     }
 
+    [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
     public async Task<IDisposable?> ReserveWarmAsync(NativeCacheIdentity identity, long bytesToFetch, CancellationToken cancellationToken = default)
     {
         if (bytesToFetch < 0 || bytesToFetch > identity.Length) throw new ArgumentOutOfRangeException(nameof(bytesToFetch));
@@ -505,13 +507,21 @@ public sealed class NativeCacheStore : IAsyncDisposable
             finally { _gate.Release(); }
             var selected = candidates.FirstOrDefault(candidate => CanUseFolder(candidate.Folder, candidate.FreeRequired)).Folder;
             if (selected is null) return null;
-            var reservation = new WarmReservation(this, identity.Key, selected.Id, required, AcquireLease(identity));
-            lock (_leaseLock) _reservations.Add(identity.Key, reservation);
-            return reservation;
+            IDisposable? lease = null;
+            try
+            {
+                lease = AcquireLease(identity);
+                var reservation = new WarmReservation(this, identity.Key, selected.Id, required, lease);
+                lock (_leaseLock) _reservations.Add(identity.Key, reservation);
+                lease = null; // The published reservation now owns the activity lease.
+                return reservation;
+            }
+            finally { lease?.Dispose(); }
         }
         finally { _writer.Release(); }
     }
 
+    [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
     public async Task<long> FindNextMissingOffsetAsync(NativeCacheIdentity identity, long start, long end, CancellationToken cancellationToken = default)
     {
         if (start < 0 || end < start || end > identity.Length || start % BlockSize != 0)
@@ -533,6 +543,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         finally { _gate.Release(); }
     }
 
+    [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
     public async Task<long> GetMissingRangeBytesAsync(NativeCacheIdentity identity, long start, long end, CancellationToken cancellationToken = default)
     {
         if (start < 0 || end < start || end > identity.Length || start % BlockSize != 0 || (end != identity.Length && end % BlockSize != 0))
@@ -570,13 +581,16 @@ public sealed class NativeCacheStore : IAsyncDisposable
     public Task<int> ScanAsync(string folderId, CancellationToken cancellationToken = default)
         => ScanCoreAsync(folderId, null, cancellationToken);
 
+    [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
     private async Task<int> ScanCoreAsync(string folderId, string? onlyKey, CancellationToken cancellationToken)
     {
         var folder = _folders.FirstOrDefault(folder => folder.Id == folderId && folder.Enabled)
             ?? throw new ArgumentException("Unknown or disabled native cache folder.", nameof(folderId));
         if (!IsVolumeCurrent(folder)) return 0;
         NativeFileSystem.PinnedDirectory root;
+#pragma warning disable CA2000 // Successful open immediately enters rootLease's using scope; a failed open returns no handle.
         try { root = _roots[folder.Id].OpenDirectory("v1"); }
+#pragma warning restore CA2000
         catch (IOException) { return 0; }
         using var rootLease = root;
         var imported = 0;
@@ -585,7 +599,9 @@ public sealed class NativeCacheStore : IAsyncDisposable
         {
             if (shardName.Length != 2 || !shardName.All(char.IsAsciiHexDigit)) continue;
             NativeFileSystem.PinnedDirectory shard;
+#pragma warning disable CA2000 // Successful open immediately enters shardLease's per-iteration using scope.
             try { shard = root.OpenDirectory(shardName); }
+#pragma warning restore CA2000
             catch (IOException) { continue; }
             using var shardLease = shard;
             foreach (var key in onlyKey is null ? shard.EnumerateDirectoryNames() : [onlyKey])
@@ -606,12 +622,16 @@ public sealed class NativeCacheStore : IAsyncDisposable
                     {
                         if (!_scanning.Add(key)) continue;
                         scanning = true;
+#pragma warning disable CA2000 // The enclosing per-key finally unconditionally disposes scanLease, including continue/cancellation paths.
                         scanLease = AcquireKeyLease(key);
+#pragma warning restore CA2000
                     }
                     _writer.Release();
                     writerHeld = false;
                     if (BeforeScanReadAsync is { } beforeRead) await beforeRead(key, cancellationToken).ConfigureAwait(false);
+#pragma warning disable CA2000 // This using declaration disposes the directory on every exit from the per-key try scope.
                     using var directory = shard.OpenDirectory(key);
+#pragma warning restore CA2000
                     await using var manifestStream = directory.OpenFile("manifest.json", FileMode.Open, FileAccess.Read);
                     if (manifestStream.Length > 64 * 1024) continue;
                     var manifestBytes = new byte[checked((int)manifestStream.Length)];
@@ -704,6 +724,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         return imported;
     }
 
+    [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
     private async Task CheckpointJournalAsync(NativeCacheFolder folder, string key,
         NativeFileSystem.PinnedDirectory directory, CancellationToken cancellationToken)
     {
@@ -761,7 +782,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                         after = record.Offset;
                     }
                 }
-                output.Flush(flushToDisk: true);
+                FlushToDisk(output);
             }
             if (CheckpointPhaseAsync is { } phase) await phase("before-rename", cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
@@ -819,7 +840,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         if (newline < 0 && start > 0) throw new InvalidDataException("Native cache journal tail exceeds bounded recovery.");
         var committedLength = start + newline + 1;
         journal.SetLength(committedLength);
-        journal.Flush(flushToDisk: true);
+        FlushToDisk(journal);
         journal.Position = committedLength;
     }
 
@@ -835,7 +856,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         if (!folder.Enabled || folder.ReadOnly || !_owners.ContainsKey(folder.Id) || !IsVolumeCurrent(folder)) return false;
         try
         {
-            return requested <= (AvailableBytesOverride?.Invoke(folder.Id) ?? _roots[folder.Id].AvailableBytes);
+            return requested <= (AvailableBytesOverride?.Invoke(folder.Id) ?? _roots[folder.Id].GetAvailableBytes());
         }
         catch (IOException) { return false; }
         catch (UnauthorizedAccessException) { return false; }
@@ -879,7 +900,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
     public IDisposable AcquireLease(NativeCacheIdentity identity)
         => AcquireKeyLease(identity.Key);
 
-    private IDisposable AcquireKeyLease(string key)
+    private ActivityLease AcquireKeyLease(string key)
     {
         lock (_leaseLock) _leases[key] = _leases.GetValueOrDefault(key) + 1;
         return new ActivityLease(this, key);
@@ -943,6 +964,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
     internal void ResetClearCursor(string folderId)
     { lock (_leaseLock) _evictionCursors.Remove((folderId, true, false)); }
 
+    [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
     private async Task<int> EvictCoreAsync(string folderId, bool clear, bool pressure, CancellationToken cancellationToken)
     {
         var cursorId = (folderId, clear, pressure);
@@ -1017,7 +1039,9 @@ public sealed class NativeCacheStore : IAsyncDisposable
                         {
                             try
                             {
+#pragma warning disable CA2000 // This using declaration owns the anchored shard through unlink/flush, including exceptions.
                                 using var shard = _roots[folder.Id].OpenDirectory($"v1/{key[..2]}");
+#pragma warning restore CA2000
                                 using var directory = shard.OpenDirectory(key);
                                 directory.DeleteFile("content.data");
                                 directory.DeleteFile("ranges.journal");
@@ -1074,6 +1098,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         return 0;
     }
 
+    [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
     private async Task<bool> NeedsPressureAsync(NativeCacheFolder folder, bool lowWater, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -1096,10 +1121,10 @@ public sealed class NativeCacheStore : IAsyncDisposable
 
     private bool RegisterVolume(NativeCacheFolder folder)
     {
-        var root = NativeFileSystem.PinDirectory(folder.Path);
-        var registered = false;
+        NativeFileSystem.PinnedDirectory? root = null;
         try
         {
+            root = NativeFileSystem.PinDirectory(folder.Path);
             using var lookup = Command("SELECT Volume FROM FolderIdentity WHERE Folder=$folder", ("$folder", folder.Id));
             var expected = lookup.ExecuteScalar() as string;
             using var identityLookup = Command("SELECT RootIdentity FROM FolderIdentity WHERE Folder=$folder", ("$folder", folder.Id));
@@ -1125,10 +1150,10 @@ public sealed class NativeCacheStore : IAsyncDisposable
                 ("$folder", folder.Id), ("$identity", root.RegistrationIdentity));
             _volumes[folder.Id] = actual;
             _roots[folder.Id] = root;
-            registered = true;
+            root = null; // Ownership transferred to the store's root registry.
             return true;
         }
-        finally { if (!registered) root.Dispose(); }
+        finally { root?.Dispose(); }
     }
 
     private bool IsVolumeCurrent(NativeCacheFolder folder)

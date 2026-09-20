@@ -64,23 +64,17 @@ public static class NativeFileSystem
         // closed until the administrator explicitly registers a new folder ID.
         public string RegistrationIdentity => $"{DeviceIdentity}:{_identity.Inode}";
 
-        public (string FileSystem, string Capability) FileSystem
+        public (string FileSystem, string Capability) GetFileSystem()
         {
-            get
-            {
-                if (StatFs(_handle, out var result) != 0) throw new IOException("Cannot identify native cache filesystem.");
-                return ClassifyFileSystem(result.Type);
-            }
+            if (StatFs(_handle, out var result) != 0) throw new IOException("Cannot identify native cache filesystem.");
+            return ClassifyFileSystem(result.Type);
         }
 
-        public long AvailableBytes
+        public long GetAvailableBytes()
         {
-            get
-            {
-                if (StatVfs(_handle, out var result) != 0) throw new IOException("Cannot inspect native cache free space.");
-                var bytes = (UInt128)result.FragmentSize * result.AvailableBlocks;
-                return bytes > long.MaxValue ? long.MaxValue : (long)bytes;
-            }
+            if (StatVfs(_handle, out var result) != 0) throw new IOException("Cannot inspect native cache free space.");
+            var bytes = (UInt128)result.FragmentSize * result.AvailableBlocks;
+            return bytes > long.MaxValue ? long.MaxValue : (long)bytes;
         }
 
         public bool IsCurrent(string path)
@@ -134,26 +128,27 @@ public static class NativeFileSystem
                 FileMode.Create or FileMode.OpenOrCreate or FileMode.Append => 0x40,
                 _ => 0
             };
-            var handle = Own(OpenAt(_handle, name, flags, 0x180));
+            SafeFileHandle? handle = null;
+            FileStream? stream = null;
             try
             {
+                handle = Own(OpenAt(_handle, name, flags, 0x180));
                 var info = Stat(handle);
                 if ((info.Mode & 0xf000) != 0x8000 || info.Links != 1)
                     throw new IOException("Native cache leaves must be regular, unlinked files.");
                 if (info.DeviceMajor != _identity.DeviceMajor || info.DeviceMinor != _identity.DeviceMinor || info.MountId != _identity.MountId)
                     throw new IOException("Native cache files cannot cross filesystem or mount boundaries.");
                 if (exclusive && Flock(handle, 2 | 4) != 0) throw new IOException("Native cache folder already has an owner.");
-                var stream = new FileStream(handle, access, 4096, isAsync: false);
-                try
-                {
-                    // Never truncate before validating the descriptor's type.
-                    if (mode is FileMode.Create or FileMode.Truncate) stream.SetLength(0);
-                    if (mode == FileMode.Append) stream.Position = stream.Length;
-                    return stream;
-                }
-                catch { stream.Dispose(); throw; }
+                stream = new FileStream(handle, access, 4096, isAsync: false);
+                handle = null; // FileStream now owns the descriptor.
+                // Never truncate before validating the descriptor's type.
+                if (mode is FileMode.Create or FileMode.Truncate) stream.SetLength(0);
+                if (mode == FileMode.Append) stream.Position = stream.Length;
+                var result = stream;
+                stream = null; // Ownership transfers to the caller only after setup succeeds.
+                return result;
             }
-            catch { handle.Dispose(); throw; }
+            finally { stream?.Dispose(); handle?.Dispose(); }
         }
 
         public long AllocatedBytes(string name)
@@ -209,7 +204,7 @@ public static class NativeFileSystem
         }
         private static void Leaf(string name)
         {
-            if (string.IsNullOrEmpty(name) || name is "." or ".." || name.Contains('/') || name.Contains('\0'))
+            if (string.IsNullOrEmpty(name) || name is "." or ".." || name.Contains('/', StringComparison.Ordinal) || name.Contains('\0', StringComparison.Ordinal))
                 throw new ArgumentException("Native cache paths must contain only relative, non-traversing components.");
         }
         public void Dispose() => _handle.Dispose();
