@@ -419,7 +419,15 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             await _gate.WaitAsync(priority, waitToken).ConfigureAwait(false);
         }
         Interlocked.Add(ref _gateWaitTicks, Stopwatch.GetElapsedTime(gateWaitStarted).Ticks);
-        acquisition?.ThrowIfRejected();
+        try
+        {
+            acquisition?.ThrowIfRejected();
+        }
+        catch
+        {
+            ReleaseGateIfActive();
+            throw;
+        }
 
         // Claim an idle connection atomically with respect to disposal. Once popped,
         // it is active and disposal leaves it for the borrower to return or destroy.
@@ -454,7 +462,10 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             return BuildLock(reused!, wasReused: true);
         }
         if (acquisition?.IdleOnly == true)
+        {
+            ReleaseGateIfActive();
             throw new CircuitAdmissionRejectedException();
+        }
 
         // Need a fresh connection. Pace handshakes so a cold burst of borrowers
         // does not open dozens of TLS sessions in parallel. While waiting, other

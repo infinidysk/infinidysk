@@ -1072,6 +1072,9 @@ public class MultiConnectionNntpClient(
         OperationLeaseGroup? operationLeases = null;
         CancellationTokenSource? acquisitionWait = null;
         TimeSpan? waitTimeout = null;
+        var acquisition = circuitBreaker.BeginAcquisition(
+            probeLease, allowIdleReuse: connectionPool.HasIdleConnections);
+        var waitPhase = "ProviderAdmission";
         var returnConnectionLock = false;
         var latencyRecorded = false;
         try
@@ -1082,10 +1085,6 @@ public class MultiConnectionNntpClient(
                 && failoverContext?.HasAlternativeCapacity() == true
                     ? failoverContext.WaitTimeout
                     : null;
-            var acquisition = circuitBreaker.BeginAcquisition(
-                probeLease, allowIdleReuse: connectionPool.HasIdleConnections);
-            var waitPhase = "ProviderAdmission";
-
             CancellationToken GetOrCreateWaitToken(string phase)
             {
                 waitPhase = phase;
@@ -1174,10 +1173,13 @@ public class MultiConnectionNntpClient(
             && !connectionPool.IsDisposed
             && _connectionAdmission?.IsDisposed != true)
         {
+            acquisition.ThrowIfRejected();
+            if (waitTimeout is not { } timeout)
+                throw;
             throw new ProviderTransferAdmissionTimeoutException(
                 Host,
-                waitTimeout ?? TransferAdmissionFailoverContext.DefaultWaitTimeout,
-                "ProviderAdmission");
+                timeout,
+                waitPhase);
         }
         catch (Exception e) when (IsRetiredPoolAcquisitionFailure(e) && e is not OutOfMemoryException)
         {
