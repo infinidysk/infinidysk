@@ -2,6 +2,7 @@
 # non-project files #
 #####################
 
+/AGENTS.md
 bin/
 obj/
 /packages/
