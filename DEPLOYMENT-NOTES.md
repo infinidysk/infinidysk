@@ -48,6 +48,92 @@ The administrator username is `admin`; its password is stored only in
 replacement account was created. WebDAV, PostgreSQL, and provider
 credentials must not be copied into issues, logs, commits, or support packs.
 
+## Current deployed configuration
+
+The following is the sanitized configuration observed on nuc-1 on September 20,
+2026. Values marked as secrets live only on the host and are intentionally not
+reproduced here.
+
+### Application Compose project
+
+The Compose project in `/opt/docker/infinidysk` contains two services:
+
+| Setting | `infinidysk` | `infinidysk-postgres` |
+| --- | --- | --- |
+| Image | pinned InfiniDysk digest above | `postgres:17-alpine` |
+| Container name | `infinidysk` | `infinidysk-postgres` |
+| Restart policy | `unless-stopped` | `unless-stopped` |
+| Published ports | host `3004` to container `3000` | none |
+| Persistent bind | `/opt/infinidysk/config:/config` | `/opt/infinidysk/postgres:/var/lib/postgresql/data` |
+| Health check | `curl -fsSL http://localhost:3000/healthz` | `pg_isready -U infinidysk -d infinidysk` |
+| Dependency | waits for PostgreSQL health | none |
+
+The application loads `secrets/app.env`, `secrets/webdav.env`, and
+`secrets/providers.env`; PostgreSQL loads `secrets/postgres.env`. The deployed
+files and their variable names are:
+
+| File | Variables (values are not committed) |
+| --- | --- |
+| `app.env` | `INFINIDYSK_IMAGE`, `DATABASE_PROVIDER`, `DATABASE_CONNECTION_STRING`, `PUID`, `PGID`, `TZ`, `NZBDAV_CONFIG__USENET__SEGMENT_CACHE__ENABLED` |
+| `postgres.env` | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` |
+| `webdav.env` | `WEBDAV_USER`, `WEBDAV_PASSWORD` |
+| `providers.env` | `NZBDAV_CONFIG__USENET__PROVIDERS`, `NZBDAV_CONFIG__API__CATEGORIES` |
+| `admin.env` | `ADMIN_USERNAME`, `ADMIN_PASSWORD`; operator record only, not loaded by Compose |
+
+The secrets directory is mode `0700` and each `.env` file is mode `0600`, owned
+by `root:root`. Always include the protected environment file when operating the
+application project:
+
+```bash
+cd /opt/docker/infinidysk
+sudo docker compose --env-file secrets/app.env config --quiet
+sudo docker compose --env-file secrets/app.env up -d
+```
+
+`RESET_ADMIN_PASSWORD` is deliberately absent from the running container. Add it
+only as a temporary one-shot override for the documented recovery flow, then
+recreate from the base Compose file immediately afterward.
+
+### Isolated rclone project
+
+`rclone-infinidysk` uses `sakhter86/rclone:latest`, restart policy
+`unless-stopped`, `/dev/fuse`, `SYS_ADMIN`, and `apparmor:unconfined`. Its
+configuration is read-only at `/config`; cache and logs are isolated beneath
+`/opt/docker/rclone-infinidysk`. The mount bind uses `rshared` propagation.
+
+The active mount command is equivalent to:
+
+```text
+rclone mount infinidysk: /mnt/remote/infinidysk
+  --config=/config/rclone.conf
+  --allow-other --allow-non-empty --links
+  --vfs-cache-mode=full --vfs-cache-max-size=10G --vfs-cache-max-age=24h
+  --vfs-read-chunk-size=128M --vfs-read-ahead=128M --buffer-size=64M
+  --cache-dir=/cache --dir-cache-time=1m --attr-timeout=1m
+  --vfs-fast-fingerprint --timeout=10m --contimeout=2m
+  --low-level-retries=3 --retries=2 --retries-sleep=1s
+  --rc --rc-addr=:5574 --rc-no-auth
+  --log-level=INFO --log-file=/logs/rclone.log
+```
+
+RC is published only on `127.0.0.1:5574`. The container has no Docker socket,
+restart sidecar, or dependency on Plex, Arr, or the production NzbDav mount.
+
+### Reverse proxy
+
+Nginx Proxy Manager proxy host ID `61` currently has this non-secret
+configuration:
+
+| Setting | Value |
+| --- | --- |
+| Domain | `infin.sakhter.org` |
+| Upstream | `http://192.168.20.65:3004` |
+| Certificate | ID `7` |
+| Force SSL / HTTP2 / WebSockets | enabled |
+| Block common exploits | enabled |
+| Asset caching | disabled |
+| Access list | public (`0`) |
+
 ## Configuration decisions
 
 - PostgreSQL 17 is private to the InfiniDysk Compose network.
@@ -72,8 +158,8 @@ credentials must not be copied into issues, logs, commits, or support packs.
 - The pilot produced two leaves with the same combined size as the source
   (`31,371,214` bytes).
 - A 1 MiB read through the new mount completed successfully.
-- The existing NzbDav containers retained their container IDs and restart counts;
-  `/mnt/remote/nzbdav` remained mounted and readable.
+- The existing NzbDav endpoint and `/mnt/remote/nzbdav` remained mounted and
+  readable; no Plex or Arr consumer was switched to the parallel mount.
 
 The container currently emits a non-fatal Alpine warning that
 `libgssapi_krb5.so.2` is missing. Database maintenance and both health checks finish
