@@ -458,10 +458,11 @@ export function StreamingSettings({
               className="text-[11px] leading-relaxed text-base-content/45"
               id="connection-open-timeout-help"
             >
-              Advanced: bounds fresh TCP/TLS/AUTHINFO connection creation (1-15s, default 3). Local admission,
-              handshake queueing, creation-capacity waits, replacement pacing, and BODY/ARTICLE transfer time
-              are excluded. Transfers have a separate 15s acquisition budget when another provider has capacity.
-              A provider trip cancels pending acquisition, not active transfers. Changes apply to subsequent fresh opens.
+              Advanced: bounds fresh TCP/TLS/AUTHINFO connection creation (1-15s, default 3). Local
+              admission, handshake queueing, creation-capacity waits, replacement pacing, and
+              BODY/ARTICLE transfer time are excluded. Transfers have a separate 15s acquisition
+              budget when another provider has capacity. A provider trip cancels pending
+              acquisition, not active transfers. Changes apply to subsequent fresh opens.
             </p>
           </div>
         </ManagedSetting>
