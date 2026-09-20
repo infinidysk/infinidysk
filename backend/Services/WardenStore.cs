@@ -95,6 +95,46 @@ public partial class WardenStore
         }
     }
 
+    /// <summary>
+    /// Marks many fingerprints dead in one transaction. <see cref="MarkDead"/> opens a connection
+    /// per call, which is fine for the one-at-a-time verdicts Watchtower and playback produce but
+    /// not for a history import that can mint thousands at once.
+    /// </summary>
+    public void MarkDeadMany(IReadOnlyCollection<string> fps)
+    {
+        if (fps.Count == 0) return;
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var backbones = MergeBackbones("", CurrentBackbones());
+        try
+        {
+            using var conn = Open();
+            using var tx = conn.BeginTransaction();
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText =
+                "INSERT INTO warden_entries (source_id, fp, dead_at, n, backbones) VALUES ('local', $fp, $t, 1, $bk) " +
+                "ON CONFLICT(source_id, fp) DO UPDATE SET dead_at = $t, n = n + 1, " +
+                "backbones = CASE WHEN backbones IS NULL OR backbones = '' THEN $bk ELSE backbones END";
+            var fpParam = cmd.CreateParameter();
+            fpParam.ParameterName = "$fp";
+            cmd.Parameters.Add(fpParam);
+            cmd.Parameters.AddWithValue("$t", now);
+            cmd.Parameters.AddWithValue("$bk", backbones);
+            foreach (var fp in fps)
+            {
+                if (!IsValidFp(fp)) continue;
+                fpParam.Value = fp;
+                cmd.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+        }
+        catch (SqliteException e)
+        {
+            Log.Debug(e, "Warden: bulk mark failed");
+        }
+    }
+
     public bool IsDeadAnywhere(string? fp)
     {
         if (string.IsNullOrEmpty(fp)) return false;

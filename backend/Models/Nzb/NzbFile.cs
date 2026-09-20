@@ -12,6 +12,18 @@ public readonly record struct SegmentByteRangeIndex(
 public class NzbFile
 {
     public required string Subject { get; init; }
+
+    /// <summary>
+    /// The nzb's <c>poster</c> attribute, when present. Kept because a release's poster and
+    /// post date identify it across indexers (see <see cref="Utils.WardenFingerprint"/>).
+    /// </summary>
+    public string? Poster { get; init; }
+
+    /// <summary>
+    /// The nzb's <c>date</c> attribute (unix seconds) as a timestamp, when present and valid.
+    /// </summary>
+    public DateTimeOffset? PostedAt { get; init; }
+
     public List<NzbSegment> Segments { get; } = [];
     public Par2FileProof? VerificationProof { get; set; }
     private bool _rejectInferredSegmentByteRanges;

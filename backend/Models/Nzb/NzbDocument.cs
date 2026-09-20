@@ -93,13 +93,33 @@ public class NzbDocument
         }
     }
 
+    /// <summary>
+    /// The nzb <c>date</c> attribute is unix seconds. Indexers occasionally emit junk or zero,
+    /// which must read as "unknown" rather than 1970.
+    /// </summary>
+    private static DateTimeOffset? ParsePostedAt(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        if (!long.TryParse(raw.Trim(), out var seconds) || seconds <= 0) return null;
+        try
+        {
+            return DateTimeOffset.FromUnixTimeSeconds(seconds);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
     private static async Task<NzbFile> ReadFileAsync(XmlReader reader, NzbReadOptions? options, int count, CancellationToken ct)
     {
         var subject = reader.GetAttribute("subject") ?? string.Empty;
         options?.AddFile(count, subject);
         var file = new NzbFile
         {
-            Subject = subject
+            Subject = subject,
+            Poster = reader.GetAttribute("poster"),
+            PostedAt = ParsePostedAt(reader.GetAttribute("date"))
         };
 
         if (reader.IsEmptyElement)

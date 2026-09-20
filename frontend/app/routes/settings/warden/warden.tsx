@@ -81,6 +81,17 @@ type WardenSourceMutateResponse = {
   removed: number;
 };
 
+type WardenImportHistoryResponse = {
+  dryRun: boolean;
+  scanned: number;
+  eligible: number;
+  distinct: number;
+  added: number;
+  skippedMissingNzb: number;
+  skippedUnparsableNzb: number;
+  skippedNoFingerprint: number;
+};
+
 type WardenSourcesImportResponse = {
   added: number;
   skipped: number;
@@ -162,6 +173,9 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
   const [bulkInterval, setBulkInterval] = useState("24");
   const bulkFileRef = useRef<HTMLInputElement>(null);
 
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyScan, setHistoryScan] = useState<WardenImportHistoryResponse | null>(null);
+
   const [confirm, setConfirm] = useState<{ kind: "remove" | "clear"; source: Source } | null>(null);
 
   const [backup, setBackup] = useState<BackupStatus | null>(null);
@@ -241,6 +255,38 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
     } finally {
       setBusy(null);
       if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  // The scan always dry-runs first: the modal reports what it found, and only a second,
+  // explicit click writes the fingerprints to your own list.
+  const runHistoryImport = async (dryRun: boolean) => {
+    setBusy(dryRun ? "history-scan" : "history-import");
+    setMessage(null);
+    try {
+      const res = await fetch(
+        withUrlBase(`/api/warden-import-history?dryRun=${dryRun ? "true" : "false"}`),
+        { method: "POST" },
+      );
+      const data: unknown = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(apiError(data) || "Request failed.");
+      const result = data as WardenImportHistoryResponse;
+      if (dryRun) {
+        setHistoryScan(result);
+        return;
+      }
+      setShowHistory(false);
+      setHistoryScan(null);
+      setMessage({
+        text: `Added ${result.added.toLocaleString()} fingerprint${result.added === 1 ? "" : "s"} from your own failed imports.`,
+        variant: "success",
+      });
+      await refresh();
+    } catch (err: unknown) {
+      setShowHistory(false);
+      setMessage({ text: errorText(err, "Could not scan your history."), variant: "danger" });
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -544,6 +590,18 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
             <Button size="xsmall" onClick={() => setShowAddRemote(true)}>
               <Icon name="add_link" className="!text-[16px]" />
               Add remote backup
+            </Button>
+            <Button
+              size="xsmall"
+              disabled={busy !== null}
+              onClick={() => {
+                setHistoryScan(null);
+                setShowHistory(true);
+                void runHistoryImport(true);
+              }}
+            >
+              <Icon name="history" className="!text-[16px]" />
+              Scan history
             </Button>
             <Button size="xsmall" disabled={busy !== null} onClick={() => setShowBulk(true)}>
               <Icon name="playlist_add" className="!text-[16px]" />
@@ -1007,6 +1065,71 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
             Save a file you can share or re-import.
           </span>
         </div>
+      </Modal>
+
+      <Modal
+        open={showHistory}
+        title="Scan your failed imports"
+        onClose={() => setShowHistory(false)}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setShowHistory(false)}>
+              {historyScan && historyScan.distinct === 0 ? "Close" : "Cancel"}
+            </Button>
+            {(!historyScan || historyScan.distinct > 0) && (
+              <Button
+                variant="primary"
+                disabled={busy !== null || !historyScan}
+                onClick={() => void runHistoryImport(false)}
+              >
+                {busy === "history-import" ? (
+                  <>
+                    <Spinner size="sm" /> Adding…
+                  </>
+                ) : (
+                  "Add to my list"
+                )}
+              </Button>
+            )}
+          </>
+        }
+      >
+        {busy === "history-scan" || !historyScan ? (
+          <div className={"flex items-center gap-2.5 text-[13px] text-base-content/80"}>
+            <Spinner size="sm" /> Reading your download history…
+          </div>
+        ) : (
+          <>
+            <p className={"m-0 text-[13px] leading-relaxed text-base-content/80"}>
+              {historyScan.distinct === 0
+                ? `Nothing to add. Of ${historyScan.scanned.toLocaleString()} failed imports, none could be fingerprinted as a dead release.`
+                : `Of ${historyScan.scanned.toLocaleString()} failed imports, ${historyScan.eligible.toLocaleString()} failed because their articles were gone. That is ${historyScan.distinct.toLocaleString()} distinct fingerprint${historyScan.distinct === 1 ? "" : "s"} to add to your own list.`}
+            </p>
+            <p className={"mb-0 mt-3 text-[11px] leading-relaxed text-base-content/45"}>
+              Only missing-article failures count. Imports that failed for any other reason (broken
+              archives, no media, encryption) arrived fine and are left alone, so nothing healthy is
+              hidden from future searches.
+            </p>
+            {(historyScan.skippedMissingNzb > 0 ||
+              historyScan.skippedUnparsableNzb > 0 ||
+              historyScan.skippedNoFingerprint > 0) && (
+              <p className={"mb-0 mt-2 text-[11px] leading-relaxed text-base-content/45"}>
+                Skipped:{" "}
+                {[
+                  historyScan.skippedMissingNzb > 0 &&
+                    `${historyScan.skippedMissingNzb.toLocaleString()} with no stored nzb`,
+                  historyScan.skippedUnparsableNzb > 0 &&
+                    `${historyScan.skippedUnparsableNzb.toLocaleString()} unreadable`,
+                  historyScan.skippedNoFingerprint > 0 &&
+                    `${historyScan.skippedNoFingerprint.toLocaleString()} without a poster or post date`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+                .
+              </p>
+            )}
+          </>
+        )}
       </Modal>
 
       <Modal

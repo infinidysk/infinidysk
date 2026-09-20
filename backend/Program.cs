@@ -399,6 +399,7 @@ public sealed partial class Program
                     return sink;
                 })
                 .AddSingleton<WardenStore>()
+                .AddSingleton<WardenHistoryImporter>()
                 .AddSingleton<WardenRemoteSourceService>()
                 .AddHostedService(sp => sp.GetRequiredService<WardenRemoteSourceService>())
                 .AddSingleton<WardenBackupService>()
