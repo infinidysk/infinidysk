@@ -74,7 +74,7 @@ public sealed class NativeCacheService : IAsyncDisposable
                     var identity = new NativeCacheIdentity(item.Id.ToString("N"),
                         $"v2:{blobId:N}:{Convert.ToHexString(hash)}:{repairRevision.Fingerprint}", item.FileSize.Value);
                     var stream = new NativeCachedStream(Store, identity, open,
-                        () => watch.IsCurrent && repairRevision.IsCurrent, admission);
+                        () => watch.IsCurrent && repairRevision.IsCurrent, admission, background: requireNative);
                     admission = null; // The returned stream owns the watch and buffer admission.
                     return stream;
                 }

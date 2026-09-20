@@ -8,6 +8,86 @@ public sealed class NativeCachedStreamTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "native-stream-tests-" + Guid.NewGuid().ToString("N"));
     public NativeCachedStreamTests() => Directory.CreateDirectory(_root);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StalledCacheIo_FallsBackButRetainsBufferAdmissionUntilIoEnds(bool write)
+    {
+        await using var store = CreateStore();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var admission = new TrackingAdmission();
+        await using var stream = new NativeCachedStream(store, new("slow", "v1", 3),
+            _ => Task.FromResult<Stream>(new EvidenceStream(true)), () => true, admission)
+        {
+            CacheIoTimeout = TimeSpan.FromMilliseconds(50),
+            BeforeCacheIo = async (isWrite, _) =>
+            {
+                if (isWrite != write) return;
+                entered.TrySetResult();
+                await release.Task;
+            }
+        };
+        var bytes = new byte[3];
+        var read = stream.ReadAsync(bytes).AsTask();
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(3, await read.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal(new byte[] { 1, 2, 3 }, bytes);
+            Assert.False(stream.LastReadCacheable);
+            await stream.DisposeAsync();
+            Assert.False(admission.Disposed.Task.IsCompleted);
+        }
+        finally { release.TrySetResult(); }
+        await admission.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    private sealed class TrackingAdmission : IDisposable
+    {
+        public TaskCompletionSource Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void Dispose() => Disposed.TrySetResult();
+    }
+
+    [Fact]
+    public async Task CancelledBackgroundIo_RetainsAdmissionUntilUncancellableIoCompletes()
+    {
+        await using var store = CreateStore();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var admission = new TrackingAdmission();
+        using var cancellation = new CancellationTokenSource();
+        await using var stream = new NativeCachedStream(store, new("cancel", "v1", 3),
+            _ => throw new InvalidOperationException("Cancelled warming opened source"), () => true, admission, background: true)
+        {
+            BeforeCacheIo = async (_, _) => { entered.TrySetResult(); await release.Task; }
+        };
+        var read = stream.ReadAsync(new byte[3], cancellation.Token).AsTask();
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => read.WaitAsync(TimeSpan.FromSeconds(5)));
+            await stream.DisposeAsync();
+            Assert.False(admission.Disposed.Task.IsCompleted);
+        }
+        finally { release.TrySetResult(); }
+        await admission.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task StalledFillOwner_DoesNotBlockAnotherForegroundReader()
+    {
+        await using var store = CreateStore();
+        var id = new NativeCacheIdentity("fill", "v1", 3);
+        using var held = await store.AcquireFillAsync(id, 0, CancellationToken.None);
+        await using var stream = new NativeCachedStream(store, id,
+            _ => Task.FromResult<Stream>(new EvidenceStream(true)), () => true)
+        { CacheIoTimeout = TimeSpan.FromMilliseconds(50) };
+        Assert.Equal(3, await stream.ReadAsync(new byte[3]).AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.False(stream.LastReadCacheable);
+    }
+
     [Fact]
     public async Task VerifiedFill_SubsequentReadNeedsNoSourceOpen()
     {

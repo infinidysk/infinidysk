@@ -13,7 +13,8 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
     private readonly Func<CancellationToken, Task<Stream>> _openSource;
     private readonly Func<bool> _generationIsCurrent;
     private readonly IDisposable _lease;
-    private readonly IDisposable? _bufferAdmission;
+    private IDisposable? _bufferAdmission;
+    private readonly bool _background;
     private Stream? _source;
     private byte[]? _buffer;
     private long _bufferStart = -1;
@@ -23,10 +24,12 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
     private long _position;
     private bool _disposed;
     private bool _bypassFill;
+    internal TimeSpan CacheIoTimeout { get; init; } = TimeSpan.FromSeconds(1);
+    internal Func<bool, CancellationToken, Task>? BeforeCacheIo { get; init; }
 
     public NativeCachedStream(NativeCacheStore store, NativeCacheIdentity identity,
         Func<CancellationToken, Task<Stream>> openSource, Func<bool> generationIsCurrent,
-        IDisposable? bufferAdmission = null)
+        IDisposable? bufferAdmission = null, bool background = false)
     {
         _store = store;
         _identity = identity;
@@ -34,6 +37,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
         _generationIsCurrent = generationIsCurrent;
         _lease = store.AcquireLease(identity);
         _bufferAdmission = bufferAdmission;
+        _background = background;
     }
 
     public bool LastReadCacheable { get; private set; }
@@ -55,7 +59,8 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
         if (_bufferFromCache && !_generationIsCurrent()) _bufferStart = -1;
         if (_bufferStart != blockStart)
         {
-            using var fill = await _store.AcquireFillAsync(_identity, blockStart, cancellationToken).ConfigureAwait(false);
+            using var fill = await AcquireFillAsync(blockStart, cancellationToken).ConfigureAwait(false);
+            if (fill is null) return await ReadSourceRangeAsync(destination, cancellationToken).ConfigureAwait(false);
             _buffer ??= ArrayPool<byte>.Shared.Rent(NativeCacheStore.BlockSize);
             _bufferStart = -1;
             _bufferCount = 0;
@@ -66,14 +71,19 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
             {
                 try
                 {
-                    _bufferCount = await _store.ReadBlockAsync(_identity, blockStart,
-                        _buffer.AsMemory(0, expected), cancellationToken).ConfigureAwait(false);
+                    var buffer = _buffer;
+                    _bufferCount = await CacheIoAsync(false, token => _store.ReadBlockAsync(_identity, blockStart,
+                        buffer.AsMemory(0, expected), token), cancellationToken).ConfigureAwait(false);
                     _bufferVerified = _bufferCount == expected;
                     _bufferFromCache = _bufferVerified;
                     if (!_generationIsCurrent()) _bufferCount = 0;
                 }
                 catch (Exception exception) when (exception is IOException or SqliteException or UnauthorizedAccessException)
                 { /* Cache storage failures never prevent source playback. */ }
+                catch (TimeoutException)
+                {
+                    return await ReadSourceRangeAsync(destination, cancellationToken).ConfigureAwait(false);
+                }
             }
             if (_bufferCount != expected)
             {
@@ -97,7 +107,9 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
                 {
                     try
                     {
-                        await _store.WriteBlockAsync(_identity, blockStart, _buffer.AsMemory(0, expected), cancellationToken)
+                        var buffer = _buffer;
+                        await CacheIoAsync(true, token => _store.WriteBlockAsync(_identity, blockStart, buffer.AsMemory(0, expected), token,
+                            waitForWriter: _background), cancellationToken)
                             .ConfigureAwait(false);
                     }
                     catch (Exception exception) when (exception is IOException or SqliteException or UnauthorizedAccessException) { }
@@ -133,6 +145,61 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
         _position += count;
         LastReadCacheable = _bufferVerified && _generationIsCurrent();
         return count;
+    }
+
+    private async Task<IDisposable?> AcquireFillAsync(long blockStart, CancellationToken cancellationToken)
+    {
+        if (_background) return await _store.AcquireFillAsync(_identity, blockStart, cancellationToken).ConfigureAwait(false);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(CacheIoTimeout);
+        try { return await _store.AcquireFillAsync(_identity, blockStart, deadline.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _bypassFill = true;
+            return null;
+        }
+    }
+
+    private async Task<T> CacheIoAsync<T>(bool write, Func<CancellationToken, Task<T>> operation, CancellationToken cancellationToken)
+    {
+        // NAS syscalls can block synchronously and ignore cancellation. Admission
+        // bounds both these operations and their buffers; never recycle either
+        // until a detached operation has really stopped touching the memory.
+        var io = Task.Run(async () =>
+        {
+            if (BeforeCacheIo is not null) await BeforeCacheIo(write, cancellationToken).ConfigureAwait(false);
+            return await operation(cancellationToken).ConfigureAwait(false);
+        }, CancellationToken.None);
+        try
+        {
+            return _background
+                ? await io.WaitAsync(cancellationToken).ConfigureAwait(false)
+                : await io.WaitAsync(CacheIoTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is TimeoutException or OperationCanceledException)
+        {
+            var buffer = _buffer;
+            var admission = _bufferAdmission;
+            _buffer = null;
+            _bufferAdmission = null;
+            _bufferStart = -1;
+            _bufferCount = 0;
+            _bufferVerified = false;
+            _bypassFill = true;
+            _ = ReleaseAfterIoAsync(io, buffer, admission);
+            throw;
+        }
+    }
+
+    private static async Task ReleaseAfterIoAsync(Task io, byte[]? buffer, IDisposable? admission)
+    {
+        try { await io.ConfigureAwait(false); }
+        catch (Exception exception) when (exception is not OutOfMemoryException) { /* Request already fell back or cancelled. */ }
+        finally
+        {
+            if (buffer is not null) ArrayPool<byte>.Shared.Return(buffer);
+            admission?.Dispose();
+        }
     }
 
     private async ValueTask<int> ReadSourceRangeAsync(Memory<byte> destination, CancellationToken cancellationToken)
