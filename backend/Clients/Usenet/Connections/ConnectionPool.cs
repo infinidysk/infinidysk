@@ -408,6 +408,16 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
         acquisition?.ThrowIfRejected();
 
+        void ThrowIfAcquisitionWaitCancelled(string phase)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _sweepCts.Token.ThrowIfCancellationRequested();
+            acquisition?.ThrowIfRejected();
+            if (waitToken.IsCancellationRequested && acquisitionWaitTimeout is { } timeout)
+                throw new ProviderTransferAdmissionTimeoutException(
+                    _connectionOpenProvider, timeout, phase);
+        }
+
         var gateWaitStarted = Stopwatch.GetTimestamp();
         if (acquisition?.IdleOnly == true)
         {
@@ -416,7 +426,15 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         }
         else
         {
-            await _gate.WaitAsync(priority, waitToken).ConfigureAwait(false);
+            try
+            {
+                await _gate.WaitAsync(priority, waitToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                ThrowIfAcquisitionWaitCancelled("PoolGate");
+                throw;
+            }
         }
         Interlocked.Add(ref _gateWaitTicks, Stopwatch.GetElapsedTime(gateWaitStarted).Ticks);
         try
@@ -491,12 +509,12 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             acquisition?.ThrowIfRejected();
             Interlocked.Add(ref _handshakeWaitTicks, Stopwatch.GetElapsedTime(handshakeWaitStarted).Ticks);
         }
-        catch
+        catch (Exception exception)
         {
-            if (!handshakeOwned)
-                CompleteHandshakeOperation(gateAcquired: false);
+            CompleteHandshakeOperation(gateAcquired: handshakeOwned);
             ReleaseGateIfActive();
-            ThrowIfLocalOpenTimeout(openTimeout, openPhase, openStarted, factoryStarted, cancellationToken);
+            if (exception is OperationCanceledException)
+                ThrowIfAcquisitionWaitCancelled(openPhase);
             throw;
         }
 
@@ -613,13 +631,9 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                     CompleteConnectionCreation(created: false);
                 ReleaseGateIfActive();
                 if (openPhase != "Factory")
-                    acquisition?.ThrowIfRejected();
-                if (acquisitionWaitTimeout is { } timeout
-                    && !cancellationToken.IsCancellationRequested
-                    && waitToken.IsCancellationRequested)
-                    throw new ProviderTransferAdmissionTimeoutException(
-                        _connectionOpenProvider, timeout, openPhase);
-                ThrowIfLocalOpenTimeout(openTimeout, openPhase, openStarted, factoryStarted, cancellationToken);
+                    ThrowIfAcquisitionWaitCancelled(openPhase);
+                else
+                    ThrowIfLocalOpenTimeout(openTimeout, openPhase, openStarted, factoryStarted, cancellationToken);
                 throw;
             }
             catch (Exception factoryError) when (factoryError is not OutOfMemoryException)
