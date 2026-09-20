@@ -101,6 +101,30 @@ recreate from the base Compose file immediately afterward.
 configuration is read-only at `/config`; cache and logs are isolated beneath
 `/opt/docker/rclone-infinidysk`. The mount bind uses `rshared` propagation.
 
+| Setting | Deployed value |
+| --- | --- |
+| Container | `rclone-infinidysk` |
+| Image | `sakhter86/rclone:latest` |
+| Compose file | `/opt/docker/rclone-infinidysk/docker-compose.yml` |
+| rclone remote | `infinidysk:` (`webdav`, vendor `other`) |
+| WebDAV target | `http://192.168.20.65:3004` |
+| Credentials | protected in `/opt/docker/rclone-infinidysk/config/rclone.conf` |
+| Host mount | `/mnt/remote/infinidysk` |
+| VFS cache | `/opt/docker/rclone-infinidysk/cache`, maximum `10G` |
+| Logs | `/opt/docker/rclone-infinidysk/logs/rclone.log` |
+| RC endpoint | `127.0.0.1:5574`, unauthenticated but loopback-only |
+
+The sanitized remote definition is:
+
+```ini
+[infinidysk]
+type = webdav
+url = http://192.168.20.65:3004
+vendor = other
+user = <stored only on host>
+pass = <stored only on host>
+```
+
 The active mount command is equivalent to:
 
 ```text
