@@ -20,6 +20,11 @@ public sealed record NativeCacheFolder
         var paths = new List<string>();
         foreach (var folder in folders)
         {
+            if (folder is null) throw new ArgumentException("Native cache folders cannot contain null records.");
+            if (string.IsNullOrWhiteSpace(folder.Name) || folder.Id is null || folder.Path is null)
+                throw new ArgumentException("Native cache folders need a name, ID and path.");
+            if (folder.Name.Length > 128 || folder.Id.Length > 128 || folder.Path.Length > 4096)
+                throw new ArgumentException("Native cache folder name, ID or path is too long.");
             if (string.IsNullOrWhiteSpace(folder.Id) || !ids.Add(folder.Id))
                 throw new ArgumentException("Native cache folder IDs must be unique and nonempty.");
             if (!System.IO.Path.IsPathFullyQualified(folder.Path))
@@ -47,3 +52,5 @@ public sealed record NativeCacheIdentity(string ItemId, string Generation, long 
 }
 
 public sealed record NativeCacheFolderStatus(string Id, bool Online, bool Writable, long CommittedBytes, long Entries, string? Error);
+
+public sealed record NativeCacheEntry(string Key, string FolderId, string ItemId, long Length, long AllocatedBytes, long VerifiedBytes, bool Pinned);

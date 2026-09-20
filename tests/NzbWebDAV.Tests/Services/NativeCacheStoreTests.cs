@@ -9,6 +9,23 @@ public sealed class NativeCacheStoreTests : IDisposable
     public NativeCacheStoreTests() => Directory.CreateDirectory(_root);
 
     [Fact]
+    public async Task CataloguePages_AreBoundedAndExposePinnedEntries()
+    {
+        var folder = CreateFolder();
+        await using var store = new NativeCacheStore(Path.Combine(_root, "index", "catalogue.db"), [folder]);
+        var identities = Enumerable.Range(0, 3).Select(index => new NativeCacheIdentity("movie-" + index, "v1", 3)).ToArray();
+        foreach (var identity in identities) Assert.True(await store.WriteBlockAsync(identity, 0, new byte[] { 1, 2, 3 }));
+        var first = await store.ListEntriesAsync(folder.Id, null, 2);
+        Assert.Equal(2, first.Count);
+        var last = await store.ListEntriesAsync(folder.Id, first[^1].Key, 2);
+        Assert.Single(last);
+        Assert.Empty(first.Select(entry => entry.Key).Intersect(last.Select(entry => entry.Key)));
+        await store.SetPinnedKeyAsync(first[0].Key, true);
+        Assert.True((await store.ListEntriesAsync(folder.Id, null, 2))[0].Pinned);
+        Assert.All(first, entry => Assert.Equal(3, entry.VerifiedBytes));
+    }
+
+    [Fact]
     public async Task CommittedBlock_SurvivesReopen_AndOtherGenerationMisses()
     {
         var folder = CreateFolder();
@@ -36,6 +53,19 @@ public sealed class NativeCacheStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task WarmReservation_ProtectsSpaceFromOtherFiles()
+    {
+        var folder = CreateFolder() with { MaxBytes = 200_000 };
+        await using var store = new NativeCacheStore(Path.Combine(_root, "catalogue.db"), [folder]);
+        var identity = new NativeCacheIdentity("warm", "v1", 60_000);
+        using var reservation = await store.ReserveWarmAsync(identity, identity.Length);
+        Assert.NotNull(reservation);
+        Assert.False(await store.WriteBlockAsync(new("other", "v1", 3), 0, new byte[3]));
+        Assert.True(await store.WriteBlockAsync(identity, 0, new byte[60_000]));
+        Assert.Equal(identity.Length, await store.FindNextMissingOffsetAsync(identity, 0, identity.Length));
+    }
+
+    [Fact]
     public async Task CorruptedBlock_IsAMiss_NotReturnedToPlayback()
     {
         var folder = CreateFolder();
@@ -59,6 +89,32 @@ public sealed class NativeCacheStoreTests : IDisposable
         Assert.False(await store.WriteBlockAsync(new NativeCacheIdentity("item", "generation", 3), 0, new byte[3]));
         Assert.Empty(Directory.EnumerateFileSystemEntries(folder.Path));
         Assert.False(Directory.Exists(missing.Path));
+    }
+
+    [Fact]
+    public async Task ReplacedMountpoint_IsNotClaimedOnRestart()
+    {
+        var folder = CreateFolder();
+        var catalogue = Path.Combine(_root, "catalogue.db");
+        await using (var store = new NativeCacheStore(catalogue, [folder]))
+            Assert.True(await store.WriteBlockAsync(new("old", "v1", 3), 0, new byte[3]));
+        Directory.Move(folder.Path, folder.Path + "-detached");
+        Directory.CreateDirectory(folder.Path);
+        await using var restarted = new NativeCacheStore(catalogue, [folder]);
+        Assert.False(await restarted.WriteBlockAsync(new("new", "v1", 3), 0, new byte[3]));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(folder.Path));
+    }
+
+    [Fact]
+    public async Task PressureEviction_RetainsPinnedAndActiveFiles()
+    {
+        var folder = CreateFolder() with { MaxBytes = 160_000, MaxAgeDays = 0 };
+        await using var store = new NativeCacheStore(Path.Combine(_root, "catalogue.db"), [folder]);
+        var first = new NativeCacheIdentity("first", "v1", 3);
+        Assert.True(await store.WriteBlockAsync(first, 0, new byte[3]));
+        await store.SetPinnedAsync(first, true);
+        Assert.Equal(0, await store.EvictPressureAsync(folder.Id));
+        Assert.Equal(3, await store.GetCoverageAsync(first));
     }
 
     [Fact]
