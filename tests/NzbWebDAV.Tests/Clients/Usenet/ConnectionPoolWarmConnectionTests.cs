@@ -8,6 +8,44 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 public class ConnectionPoolWarmConnectionTests
 {
     [Fact]
+    public async Task WarmToAsync_HandshakeAdmissionExpiryDoesNotReportOpenFailure()
+    {
+        var started = 0;
+        var failures = 0;
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var pool = new ConnectionPool<TestConnection>(
+            maxConnections: 4,
+            connectionFactory: async cancellationToken =>
+            {
+                if (Interlocked.Increment(ref started) == 3)
+                    ready.TrySetResult();
+                await release.Task.WaitAsync(cancellationToken);
+                return new TestConnection(started);
+            },
+            connectionOpenTimeout: () => TimeSpan.FromSeconds(30),
+            onWarmConnectionFailure: (_, _) => Interlocked.Increment(ref failures));
+        var holders = Enumerable.Range(0, 3)
+            .Select(_ => pool.GetConnectionLockAsync(SemaphorePriority.High)).ToArray();
+        try
+        {
+            await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await pool.WarmToAsync(4).WaitAsync(TimeSpan.FromSeconds(20));
+            Assert.Equal(0, Volatile.Read(ref failures));
+            Assert.Equal(3, Volatile.Read(ref started));
+        }
+        finally
+        {
+            release.TrySetResult();
+            foreach (var holder in holders)
+                (await holder.WaitAsync(TimeSpan.FromSeconds(5))).Dispose();
+        }
+        await pool.WarmToAsync(4).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(4, pool.IdleConnections);
+        Assert.Equal(0, pool.PendingConnectionCreations);
+    }
+
+    [Fact]
     public async Task WarmToAsync_OpenTimeoutReportsTimingBreakdown()
     {
         var failure = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);

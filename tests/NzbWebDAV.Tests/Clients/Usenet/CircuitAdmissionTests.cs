@@ -11,6 +11,38 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 public class CircuitAdmissionTests
 {
     [Fact]
+    public async Task IdleReuse_CircuitTripBeforeCommit_ReturnsConnectionAndPermit()
+    {
+        var connection = new object();
+        var breaker = new ProviderCircuitBreaker("idle-commit-race");
+        using var pool = new ConnectionPool<object>(1, _ => ValueTask.FromResult(connection));
+        (await pool.GetConnectionLockAsync(SemaphorePriority.High)).Dispose();
+        var acquisition = breaker.BeginAcquisition(CircuitProbeLease.None);
+        var tripped = false;
+        pool.OnConnectionPoolChanged += (_, _) =>
+        {
+            if (tripped)
+                return;
+            tripped = true;
+            breaker.RecordFailure();
+            breaker.RecordFailure();
+            breaker.RecordFailure();
+        };
+
+        await Assert.ThrowsAsync<CircuitAdmissionRejectedException>(() =>
+            pool.GetConnectionLockAsync(
+                SemaphorePriority.High, CancellationToken.None, null,
+                System.Diagnostics.Stopwatch.GetTimestamp(), null, acquisition));
+
+        Assert.Equal(1, pool.LiveConnections);
+        Assert.Equal(1, pool.IdleConnections);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var recovered = await pool.GetConnectionLockAsync(SemaphorePriority.High, deadline.Token);
+        Assert.Same(connection, recovered.Connection);
+        Assert.True(recovered.WasReused);
+    }
+
+    [Fact]
     public async Task DateAsync_OpenCircuit_DoesNotSendCommand()
     {
         var inner = new CountingDateClient();

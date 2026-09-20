@@ -476,7 +476,15 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             TriggerConnectionPoolChangedEvent();
         if (reusedConnection)
         {
-            acquisition?.Commit();
+            try
+            {
+                acquisition?.Commit();
+            }
+            catch
+            {
+                Return(reused!);
+                throw;
+            }
             return BuildLock(reused!, wasReused: true);
         }
         if (acquisition?.IdleOnly == true)
@@ -764,8 +772,26 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         linked.CancelAfter(TransferAdmissionFailoverContext.DefaultWaitTimeout);
         acquisition?.ThrowIfRejected();
 
+        void ThrowIfWarmAdmissionCancelled(string phase)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _sweepCts.Token.ThrowIfCancellationRequested();
+            acquisition?.ThrowIfRejected();
+            if (linked.IsCancellationRequested)
+                throw new ProviderTransferAdmissionTimeoutException(
+                    _connectionOpenProvider, TransferAdmissionFailoverContext.DefaultWaitTimeout, phase);
+        }
+
         var gateWaitStarted = Stopwatch.GetTimestamp();
-        await _gate.WaitAsync(SemaphorePriority.Low, linked.Token).ConfigureAwait(false);
+        try
+        {
+            await _gate.WaitAsync(SemaphorePriority.Low, linked.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            ThrowIfWarmAdmissionCancelled("PoolGate");
+            throw;
+        }
         Interlocked.Add(ref _gateWaitTicks, Stopwatch.GetElapsedTime(gateWaitStarted).Ticks);
         var gateHeld = true;
         var warmOpenTimeout = _connectionOpenTimeout?.Invoke();
@@ -795,11 +821,14 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 handshakeOwned = true;
                 acquisition?.ThrowIfRejected();
             }
-            catch (OperationCanceledException) when (openToken.IsCancellationRequested)
+            catch (Exception exception)
             {
-                if (!handshakeOwned)
-                    CompleteHandshakeOperation(gateAcquired: false);
-                ThrowIfLocalOpenTimeout(warmOpenTimeout, openPhase, openStarted, factoryStarted, cancellationToken);
+                CompleteHandshakeOperation(gateAcquired: handshakeOwned);
+                if (exception is OperationCanceledException && openToken.IsCancellationRequested)
+                {
+                    ThrowIfWarmAdmissionCancelled(openPhase);
+                    ThrowIfLocalOpenTimeout(warmOpenTimeout, openPhase, openStarted, factoryStarted, cancellationToken);
+                }
                 throw;
             }
             Interlocked.Add(ref _handshakeWaitTicks, Stopwatch.GetElapsedTime(handshakeWaitStarted).Ticks);
@@ -853,7 +882,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                         CompleteConnectionCreation(created: false);
                     }
                     if (openPhase != "Factory")
-                        acquisition?.ThrowIfRejected();
+                        ThrowIfWarmAdmissionCancelled(openPhase);
                     ThrowIfLocalOpenTimeout(warmOpenTimeout, openPhase, openStarted, factoryStarted, cancellationToken);
                     throw;
                 }
