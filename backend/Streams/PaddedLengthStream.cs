@@ -32,13 +32,14 @@ public sealed class PaddedLengthStream(
     string partId,
     string? fileName = null,
     MultipartPartContext? context = null,
-    Action<int>? onBytesRead = null) : FastReadOnlyNonSeekableStream
+    Action<int>? onBytesRead = null) : FastReadOnlyNonSeekableStream, ICacheReadEvidence
 {
     private readonly string _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
     private long _position;
     private bool _underlyingEnded;
     private bool _shortfallReported;
     private bool _disposed;
+    public bool LastReadCacheable { get; private set; }
 
     public override long Length => length;
     public override long Position => _position;
@@ -59,6 +60,7 @@ public sealed class PaddedLengthStream(
         Memory<byte> buffer,
         CancellationToken cancellationToken = default)
     {
+        LastReadCacheable = false;
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (buffer.IsEmpty || _position >= length)
             return 0;
@@ -72,6 +74,7 @@ public sealed class PaddedLengthStream(
             {
                 _position += bytesRead;
                 onBytesRead?.Invoke(bytesRead);
+                LastReadCacheable = stream is ICacheReadEvidence { LastReadCacheable: true };
                 return bytesRead;
             }
 

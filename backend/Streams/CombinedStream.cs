@@ -2,12 +2,13 @@
 
 namespace NzbWebDAV.Streams;
 
-public class CombinedStream(IEnumerable<Task<Stream>> streams) : FastReadOnlyNonSeekableStream
+public class CombinedStream(IEnumerable<Task<Stream>> streams) : FastReadOnlyNonSeekableStream, ICacheReadEvidence
 {
     private readonly IEnumerator<Task<Stream>> _streams = streams.GetEnumerator();
     private Stream? _currentStream;
     private long _position;
     private bool _isDisposed;
+    public bool LastReadCacheable { get; private set; }
 
     public override long Position
     {
@@ -17,6 +18,7 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams) : FastReadOnlyNon
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
+        LastReadCacheable = false;
         if (buffer.Length == 0) return 0;
         while (true)
         {
@@ -32,7 +34,11 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams) : FastReadOnlyNon
             // read from our current stream
             var readCount = await _currentStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
             _position += readCount;
-            if (readCount > 0) return readCount;
+            if (readCount > 0)
+            {
+                LastReadCacheable = _currentStream is ICacheReadEvidence { LastReadCacheable: true };
+                return readCount;
+            }
 
             // If we couldn't read anything from our current stream,
             // it's time to advance to the next stream.

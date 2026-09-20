@@ -12,9 +12,14 @@ public interface ICacheReadEvidence
 
 internal sealed class NativeCacheReadContext : IDisposable
 {
-    private static readonly AsyncLocal<bool> Current = new();
-    private readonly bool _previous = Current.Value;
-    public static bool IsActive => Current.Value;
-    public NativeCacheReadContext() => Current.Value = true;
+    private static readonly AsyncLocal<long?> Current = new();
+    private readonly long? _previous = Current.Value;
+    public static bool IsActive => Current.Value is not null;
+    public static long? ReadBudget => Current.Value;
+    public NativeCacheReadContext(long readBudget = 4L * 1024 * 1024)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(readBudget);
+        Current.Value = readBudget;
+    }
     public void Dispose() => Current.Value = _previous;
 }

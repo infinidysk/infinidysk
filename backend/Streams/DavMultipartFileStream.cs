@@ -12,7 +12,7 @@ namespace NzbWebDAV.Streams;
 // FastReadOnlyStream retains a synchronous Read fallback for out-of-repo
 // compatibility only. In-repo nested-RAR expansion and WebDAV GET/range handlers
 // use the Memory<byte> async path below.
-public class DavMultipartFileStream : FastReadOnlyStream
+public class DavMultipartFileStream : FastReadOnlyStream, ICacheReadEvidence
 {
     private readonly DavMultipartFile _mpf;
     private readonly INntpClient _usenetClient;
@@ -28,6 +28,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
     private CombinedStream? _innerStream;
     private long? _expectedReadEndExclusive;
     private bool _disposed;
+    public bool LastReadCacheable { get; private set; }
     // Teardown of the inner stream a Seek replaced is started non-blocking (Seek is
     // synchronous); the next ReadAsync joins it before opening a new inner stream so
     // rapid scrubbing cannot overlap generations and pin the article budget.
@@ -104,6 +105,8 @@ public class DavMultipartFileStream : FastReadOnlyStream
         Memory<byte> buffer,
         CancellationToken cancellationToken = default)
     {
+        LastReadCacheable = false;
+        if (buffer.IsEmpty) return 0;
         if (_pendingInnerDispose is { } pendingDispose)
         {
             _pendingInnerDispose = null;
@@ -124,6 +127,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
         }
 
         _position += read;
+        LastReadCacheable = read > 0 && _innerStream.LastReadCacheable;
         return read;
     }
 
@@ -148,7 +152,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
         if (absoluteOffset < 0 || absoluteOffset > Length)
             throw new ArgumentOutOfRangeException(nameof(offset), offset, "Seek position is outside stream bounds.");
 
-        if (_position == absoluteOffset) return _position;
+        if (_position == absoluteOffset && !NativeCacheReadContext.IsActive) return _position;
         _position = absoluteOffset;
         _expectedReadEndExclusive = null;
         if (_innerStream is { } replaced)
@@ -225,10 +229,10 @@ public class DavMultipartFileStream : FastReadOnlyStream
         var meta = await EnsureCoveringAsync(rangeStart, ct).ConfigureAwait(false);
         // AES maps logical response bytes to packed volume bytes non-linearly; retain
         // legacy scheduling until that mapping has a tested exact contract.
-        var finiteBudget = _mpf.Metadata.AesParams is null &&
+        var finiteBudget = NativeCacheReadContext.ReadBudget ?? (_mpf.Metadata.AesParams is null &&
                            ct.GetContext<StreamingSchedulingContext>() is not null
             ? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget()
-            : null;
+            : null);
         var budget = finiteBudget is > 0 ? new FiniteMultipartBudget(finiteBudget.Value) : null;
         _expectedReadEndExclusive = budget is null
             ? null

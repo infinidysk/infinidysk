@@ -17,7 +17,7 @@ using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
 
-public class MultiSegmentStream : FastReadOnlyNonSeekableStream
+public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ICacheReadEvidence
 {
     private const int BodyPipelineBatchSize = 4;
     private const int MaxBodyRetries = 2;
@@ -34,6 +34,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly bool _failFastOnFirstSegment;
     private readonly bool _useContainerAwareFill;
     private readonly long? _firstSegmentFileOffset;
+    private readonly bool _nativeCacheRead = NativeCacheReadContext.IsActive;
     private readonly LongRange? _expectedFirstSegmentRange;
     private readonly bool _expectedFirstSegmentRangeWasClippedAtFileEnd;
     private readonly string _fileName;
@@ -49,6 +50,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private TaskCompletionSource _prefetchSpace =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Stream? _stream;
+    private bool _currentSegmentCacheable;
+    public bool LastReadCacheable { get; private set; }
     private int _consecutiveZeroFills;
     private int _deliveredSegments;
     private bool _disposed;
@@ -80,7 +83,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         DrainedSegment drained,
         long estimate,
         string segmentId) =>
-        SegmentDownloadResult.Success(drained.Stream, estimate, drained.ShortPadded, segmentId);
+        SegmentDownloadResult.Success(drained.Stream, estimate, drained.ShortPadded, segmentId,
+            drained.CacheGeometryMatches);
 
     /// <summary>
     /// Optional per-instance test hook invoked with the segment-boundary readiness sample,
@@ -1971,6 +1975,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         var sourceDisposeAttempted = false;
         try
         {
+            var cacheGeometryMatches = !_nativeCacheRead ||
+                await MatchesCacheGeometryAsync(source, segmentIndex, cancellationToken).ConfigureAwait(false);
             var hasExactSize = _segmentSizes.TryGetExactSize(segmentIndex, out var exactSize);
             var expected = hasExactSize ? exactSize : _estimatedSegmentSize;
             var estimate = leasedEstimate
@@ -2027,7 +2033,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 : new BudgetedStream(buffer, lease);
             ownsLease = false;
             buffer = null;
-            return new DrainedSegment(result, shortPadded);
+            return new DrainedSegment(result, shortPadded, cacheGeometryMatches);
         }
         catch
         {
@@ -2041,6 +2047,32 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         {
             if (!sourceDisposeAttempted)
                 await source.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async Task<bool> MatchesCacheGeometryAsync(
+        Stream source, int segmentIndex, CancellationToken cancellationToken)
+    {
+        // CRC authenticates the article's bytes, not their placement in the final file.
+        // Every native segment must also match the trusted map, not just the seek head.
+        if (source is not YencStream yenc || _firstSegmentFileOffset is not { } start ||
+            !_segmentSizes.TryGetExactSize(segmentIndex, out var size))
+            return false;
+        try
+        {
+            for (var i = 0; i < segmentIndex; i++)
+            {
+                if (!_segmentSizes.TryGetExactSize(i, out var precedingSize)) return false;
+                start = checked(start + precedingSize);
+            }
+            var header = await yenc.GetYencHeadersAsync(cancellationToken).ConfigureAwait(false);
+            if (header is null || header.PartOffset != start) return false;
+            return header.PartSize == size ||
+                (segmentIndex == 0 && _expectedFirstSegmentRangeWasClippedAtFileEnd && header.PartSize > size);
+        }
+        catch (OverflowException)
+        {
+            return false;
         }
     }
 
@@ -2141,7 +2173,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
+        LastReadCacheable = false;
         ThrowIfDisposed();
+        if (buffer.IsEmpty) return 0;
 
         while (true)
         {
@@ -2180,11 +2214,18 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 if (_deliveredSegments++ > 0)
                     ObserveBatchReadiness(readyWhenNeeded);
                 _stream = AcceptSegment(result);
+                // Every accepted buffer has been drained through CRC validation. Synthetic
+                // gaps and short-body padding remain unsafe, including their real prefix bytes.
+                _currentSegmentCacheable = !result.IsZeroFill && !result.IsShortPad && result.CacheGeometryMatches;
             }
 
             // read from the stream
             var read = await _stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-            if (read > 0) return read;
+            if (read > 0)
+            {
+                LastReadCacheable = _currentSegmentCacheable;
+                return read;
+            }
 
             // if the stream ended, continue to the next stream.
             await _stream.DisposeAsync().ConfigureAwait(false);
@@ -2349,7 +2390,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         }
     }
 
-    private readonly record struct DrainedSegment(Stream Stream, bool ShortPadded);
+    private readonly record struct DrainedSegment(Stream Stream, bool ShortPadded, bool CacheGeometryMatches);
 
     private sealed record SegmentDownloadResult(
         Stream Stream,
@@ -2358,7 +2399,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         string? SegmentId = null,
         long Bytes = 0,
         Exception? Failure = null,
-        bool IsShortPad = false)
+        bool IsShortPad = false,
+        bool CacheGeometryMatches = false)
     {
         public bool IsZeroFill => Failure is not null;
 
@@ -2366,8 +2408,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             Stream stream,
             long plannedBytes = 0,
             bool isShortPad = false,
-            string? segmentId = null) =>
-            new(stream, plannedBytes, SegmentId: segmentId, IsShortPad: isShortPad);
+            string? segmentId = null,
+            bool cacheGeometryMatches = false) =>
+            new(stream, plannedBytes, SegmentId: segmentId, IsShortPad: isShortPad,
+                CacheGeometryMatches: cacheGeometryMatches);
 
         public static SegmentDownloadResult ZeroFill(
             Stream stream,

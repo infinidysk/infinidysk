@@ -7,6 +7,69 @@ namespace NzbWebDAV.Tests.Streams;
 public class AesDecoderStreamTests
 {
     [Fact]
+    public async Task NativeReadBudget_IncludesThePreviousCipherBlockUsedForSeekIv()
+    {
+        const int block = 4 * 1024 * 1024;
+        var plaintext = Enumerable.Range(0, 2 * block).Select(index => (byte)(index % 251)).ToArray();
+        var (ciphertext, parameters) = Encrypt(plaintext);
+        var ranges = new LongRange[] { new(0, block - 16), new(block - 16, block),
+            new(block, 2L * block - 16), new(2L * block - 16, 2L * block) };
+        var ids = new[] { "head", "iv", "body", "tail" };
+        using var client = new NzbWebDAV.Tests.Fakes.FakeNntpClient(ids.Select((id, index) =>
+                (id, bytes: ciphertext[(int)ranges[index].StartInclusive..(int)ranges[index].EndExclusive]))
+            .ToDictionary(item => item.id, item => item.bytes), useCachedYencStreams: true,
+            segmentRanges: ids.Select((id, index) => (id, range: ranges[index]))
+                .ToDictionary(item => item.id, item => item.range));
+        await using var source = new NzbFileStream(ids, ciphertext.Length, client, 4, ranges,
+            segmentByteRangesTrusted: true);
+        await using var stream = new AesDecoderStream(source, parameters);
+        using var native = new NativeCacheReadContext();
+        stream.Position = block;
+        var result = new byte[block];
+        await stream.ReadExactlyAsync(result);
+        Assert.Equal(plaintext.AsSpan(block).ToArray(), result);
+        Assert.True(Assert.IsAssignableFrom<ICacheReadEvidence>(stream).LastReadCacheable);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task CacheEvidence_UnsafeCiphertextAndSeekIvRemainTainted(bool unsafeFirstRead, bool seek)
+    {
+        var plaintext = Enumerable.Range(0, 64).Select(index => (byte)index).ToArray();
+        var (ciphertext, parameters) = Encrypt(plaintext);
+        await using var stream = new AesDecoderStream(new EvidenceCiphertextStream(ciphertext, unsafeFirstRead), parameters);
+        if (seek) stream.Seek(17, SeekOrigin.Begin);
+        var evidence = Assert.IsAssignableFrom<ICacheReadEvidence>(stream);
+        Assert.Equal(1, await stream.ReadAsync(new byte[1]));
+        Assert.Equal(!unsafeFirstRead, evidence.LastReadCacheable);
+        // This read may return already-decrypted bytes without reading any ciphertext.
+        Assert.Equal(1, await stream.ReadAsync(new byte[1]));
+        Assert.Equal(!unsafeFirstRead, evidence.LastReadCacheable);
+        stream.Seek(32, SeekOrigin.Begin);
+        Assert.Equal(1, await stream.ReadAsync(new byte[1]));
+        Assert.Equal(!unsafeFirstRead, evidence.LastReadCacheable);
+        Assert.Equal(0, await stream.ReadAsync(Memory<byte>.Empty));
+        Assert.False(evidence.LastReadCacheable);
+    }
+
+    private sealed class EvidenceCiphertextStream(byte[] bytes, bool unsafeFirstRead)
+        : MemoryStream(bytes), ICacheReadEvidence
+    {
+        private int _reads;
+        public bool LastReadCacheable { get; private set; }
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            LastReadCacheable = false;
+            // Force a mixed-evidence IV/block assembly, rather than only testing the last read.
+            var read = await base.ReadAsync(buffer[..Math.Min(buffer.Length, 7)], ct);
+            LastReadCacheable = read > 0 && !(unsafeFirstRead && _reads++ == 0);
+            return read;
+        }
+    }
+
+    [Fact]
     public async Task ReadAsync_DecryptsAndHonorsDecodedLength()
     {
         var plaintext = Enumerable.Range(0, 37).Select(index => (byte)index).ToArray();

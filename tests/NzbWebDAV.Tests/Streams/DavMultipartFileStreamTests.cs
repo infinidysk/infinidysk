@@ -17,6 +17,43 @@ namespace NzbWebDAV.Tests.Streams;
 [Collection(nameof(ConfigPathCollection))]
 public class DavMultipartFileStreamTests
 {
+    [Fact]
+    public async Task NativeReads_PropagateVerifiedEvidenceAcrossTrustedParts()
+    {
+        using var httpBudget = NzbFileStreamExactIndexTestSupport.SetBudget(1);
+        using var native = new NativeCacheReadContext();
+        using var client = new FakeNntpClient(new Dictionary<string, byte[]>
+        {
+            ["one"] = [1, 2, 3, 4], ["two"] = [5, 6, 7, 8],
+        }, useCachedYencStreams: true);
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta
+            {
+                FileParts = new[] { "one", "two" }.Select(id => new DavMultipartFile.FilePart
+                {
+                    SegmentIds = [id], SegmentIdByteRange = new LongRange(0, 4),
+                    FilePartByteRange = new LongRange(0, 4),
+                    SegmentByteRanges = [new LongRange(0, 4)], SegmentByteRangesTrusted = true,
+                }).ToArray(),
+            },
+        };
+        await using var stream = new DavMultipartFileStream(multipart, client, 0, resolver: null,
+            usePipelinedBodyRequests: true);
+        var evidence = Assert.IsAssignableFrom<ICacheReadEvidence>(stream);
+        var result = new List<byte>();
+        var buffer = new byte[8];
+        int read;
+        while ((read = await stream.ReadAsync(buffer)) > 0)
+        {
+            Assert.True(evidence.LastReadCacheable);
+            result.AddRange(buffer.AsSpan(0, read).ToArray());
+        }
+        Assert.Equal(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, result);
+        Assert.False(evidence.LastReadCacheable);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
