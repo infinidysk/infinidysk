@@ -12,6 +12,51 @@ public class ConnectionPoolReplacementTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task CircuitRejectionBeforeFactory_RollsBackReservationsWithoutHandshakeFailure(bool warm)
+    {
+        var clock = new SignalingTimeProvider();
+        var breaker = new ProviderCircuitBreaker("pacing-rejection");
+        var attempts = 0;
+        using var pool = new ConnectionPool<DisposableProbe>(
+            maxConnections: 1,
+            connectionFactory: _ =>
+            {
+                attempts++;
+                return ValueTask.FromResult(new DisposableProbe(() => { }));
+            },
+            replacementHandshakeSpacing: TimeSpan.FromSeconds(1),
+            timeProvider: clock,
+            circuitBreaker: breaker);
+        using (var original = await pool.GetConnectionLockAsync(SemaphorePriority.High))
+            original.Replace("test-replacement");
+        clock.Advance(TimeSpan.FromSeconds(1));
+        clock.OnNextTimestamp = () =>
+        {
+            breaker.RecordFailure();
+            breaker.RecordFailure();
+            breaker.RecordFailure();
+        };
+
+        if (warm)
+            await pool.WarmToAsync(1).WaitAsync(TimeSpan.FromSeconds(2));
+        else
+            await Assert.ThrowsAsync<CircuitAdmissionRejectedException>(() =>
+                pool.GetConnectionLockAsync(SemaphorePriority.High));
+
+        Assert.Equal(0, pool.GetChurn().HandshakeFailures);
+        Assert.Equal(0, pool.PendingConnectionCreations);
+        Assert.Equal(1, attempts);
+        var recoveryBreaker = new ProviderCircuitBreaker("pacing-recovery");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var recovered = await pool.GetConnectionLockAsync(
+            SemaphorePriority.High, deadline.Token, null, Stopwatch.GetTimestamp(), null,
+            recoveryBreaker.BeginAcquisition(CircuitProbeLease.None));
+        Assert.Equal(2, attempts);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task ReplacementPacing_DoesNotConsumeOpenBudget(bool warm)
     {
         var safetyTimeout = TimeSpan.FromSeconds(5);
@@ -625,8 +670,16 @@ public class ConnectionPoolReplacementTests
         private readonly ControllableTimeProvider _inner = new();
         private readonly ConcurrentQueue<TaskCompletionSource> _timerWaiters = new();
 
+        public Action? OnNextTimestamp { get; set; }
+
         public override DateTimeOffset GetUtcNow() => _inner.GetUtcNow();
-        public override long GetTimestamp() => _inner.GetTimestamp();
+        public override long GetTimestamp()
+        {
+            var callback = OnNextTimestamp;
+            OnNextTimestamp = null;
+            callback?.Invoke();
+            return _inner.GetTimestamp();
+        }
         public override long TimestampFrequency => _inner.TimestampFrequency;
 
         public override ITimer CreateTimer(

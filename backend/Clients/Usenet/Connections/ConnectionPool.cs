@@ -598,7 +598,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 }
 
                 openPhase = "ReplacementPacing";
-                    pacingReservation = await PaceReplacementHandshakeAsync(waitToken)
+                pacingReservation = await PaceReplacementHandshakeAsync(waitToken)
                     .ConfigureAwait(false);
 
                 acquisition?.Commit();
@@ -644,6 +644,13 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                     ThrowIfLocalOpenTimeout(openTimeout, openPhase, openStarted, factoryStarted, cancellationToken);
                 throw;
             }
+            catch (Exception) when (openPhase != "Factory")
+            {
+                if (creationReserved)
+                    CompleteConnectionCreation(created: false);
+                ReleaseGateIfActive();
+                throw;
+            }
             catch (Exception factoryError) when (factoryError is not OutOfMemoryException)
             {
                 if (creationReserved)
@@ -661,6 +668,10 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                     CompleteConnectionCreation(created: false);
                 ReleaseGateIfActive();
                 throw;
+            }
+            finally
+            {
+                RollBackReplacementPacing(pacingReservation);
             }
 
             Interlocked.Exchange(ref _consecutiveHandshakeFailures, 0);
@@ -841,16 +852,17 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                     if (!TryReserveConnectionCreationUnderLock(targetConnections))
                         return null;
                 }
-                acquisition?.ThrowIfRejected();
-
                 T connection;
+                ReplacementPacingReservation? pacingReservation = null;
                 try
                 {
+                    acquisition?.ThrowIfRejected();
                     openPhase = "ReplacementPacing";
-                    var pacingReservation = await PaceReplacementHandshakeAsync(openToken)
+                    pacingReservation = await PaceReplacementHandshakeAsync(openToken)
                         .ConfigureAwait(false);
                     acquisition?.Commit();
                     CommitReplacementPacing(pacingReservation);
+                    pacingReservation = null;
                     openPhase = "Factory";
                     factoryStarted = Stopwatch.GetTimestamp();
                     factoryLifetime = CancellationTokenSource.CreateLinkedTokenSource(
@@ -886,6 +898,11 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                     ThrowIfLocalOpenTimeout(warmOpenTimeout, openPhase, openStarted, factoryStarted, cancellationToken);
                     throw;
                 }
+                catch (Exception) when (openPhase != "Factory")
+                {
+                    CompleteConnectionCreation(created: false);
+                    throw;
+                }
                 catch (Exception factoryError) when (factoryError is not OutOfMemoryException)
                 {
                     CompleteConnectionCreation(created: false);
@@ -899,6 +916,10 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 {
                     CompleteConnectionCreation(created: false);
                     throw;
+                }
+                finally
+                {
+                    RollBackReplacementPacing(pacingReservation);
                 }
 
                 Interlocked.Exchange(ref _consecutiveHandshakeFailures, 0);
