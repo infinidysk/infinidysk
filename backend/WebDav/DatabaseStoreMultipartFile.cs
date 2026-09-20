@@ -28,40 +28,12 @@ public class DatabaseStoreMultipartFile(
     public override DateTime CreatedAt => davMultipartFile.CreatedAt;
     public override Guid? NzbBlobId => davMultipartFile.NzbBlobId;
 
-    protected override async Task<Stream> GetStreamAsync(CancellationToken ct)
+    protected override Task<Stream> GetStreamAsync(CancellationToken ct)
     {
         // store the DavItem being accessed in the http context
         Context.Items["DavItem"] = davMultipartFile;
 
-        var multipartFile = await dbClient.GetDavMultipartFileAsync(davMultipartFile, ct).ConfigureAwait(false);
-        if (multipartFile is null)
-            throw new MissingFilePayloadException(davMultipartFile, DavItem.ItemSubType.MultipartFile);
-
-        if (multipartFile.Metadata.AesParams != null
-            && multipartFile.Metadata.IsLazy
-            && (multipartFile.Metadata.PendingParts?.Length ?? 0) > 0)
-        {
-            await lazyRarResolver.EnsureResolvedThroughAsync(multipartFile, long.MaxValue, ct).ConfigureAwait(false);
-        }
-
-        return GetStream(multipartFile);
-    }
-
-    private Stream GetStream(DavMultipartFile multipartFile)
-    {
-        var packedStream = new DavMultipartFileStream(
-            multipartFile,
-            usenetClient,
-            Config.GetArticleBufferSize(),
-            lazyRarResolver,
-            Config.IsPipelinedBodyRequestsEnabled(),
-            davMultipartFile.Path,
-            inFlightArticleBudget,
-            streamingBodyBatchWidth: Config.GetStreamingBodyBatchWidth()
-        );
-
-        return multipartFile.Metadata.AesParams != null
-            ? new AesDecoderStream(packedStream, multipartFile.Metadata.AesParams)
-            : packedStream;
+        return DavContentStreamFactory.OpenMultipartAsync(davMultipartFile, dbClient, usenetClient, Config,
+            lazyRarResolver, inFlightArticleBudget, ct);
     }
 }

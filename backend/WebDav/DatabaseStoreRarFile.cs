@@ -26,37 +26,12 @@ public class DatabaseStoreRarFile(
     public override DateTime CreatedAt => davRarFile.CreatedAt;
     public override Guid? NzbBlobId => davRarFile.NzbBlobId;
 
-    protected override async Task<Stream> GetStreamAsync(CancellationToken ct)
+    protected override Task<Stream> GetStreamAsync(CancellationToken ct)
     {
         // store the DavItem being accessed in the http context
         Context.Items["DavItem"] = davRarFile;
 
-        var rarFile = await dbClient.GetDavRarFileAsync(davRarFile, ct).ConfigureAwait(false);
-        if (rarFile is null)
-            throw new MissingFilePayloadException(davRarFile, DavItem.ItemSubType.RarFile);
-        return GetStream(rarFile);
-    }
-
-    private DavMultipartFileStream GetStream(DavRarFile rarFile)
-    {
-        // Legacy DavRarFile records are always fully resolved (no lazy
-        // PendingParts), so we wrap them in a transient DavMultipartFile
-        // and pass a null resolver.
-        var transient = new DavMultipartFile
-        {
-            Id = rarFile.Id,
-            Metadata = rarFile.ToDavMultipartFileMeta(),
-        };
-        return new DavMultipartFileStream
-        (
-            transient,
-            usenetClient,
-            Config.GetArticleBufferSize(),
-            resolver: null,
-            usePipelinedBodyRequests: Config.IsPipelinedBodyRequestsEnabled(),
-            fileName: davRarFile.Path,
-            inFlightArticleBudget: inFlightArticleBudget,
-            streamingBodyBatchWidth: Config.GetStreamingBodyBatchWidth()
-        );
+        return DavContentStreamFactory.OpenRarAsync(davRarFile, dbClient, usenetClient, Config,
+            inFlightArticleBudget, ct);
     }
 }

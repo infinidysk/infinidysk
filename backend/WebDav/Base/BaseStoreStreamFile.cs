@@ -67,12 +67,19 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
     /// Each call allocates fresh instances so the response-registered path and
     /// the entry-owned path never share disposables.
     /// </summary>
-    private StreamingScope CreateStreamingScope(CancellationToken token)
+    private IAsyncDisposable CreateStreamingScope(CancellationToken token) =>
+        BeginReadScope(configManager, Context.RequestServices, token, SemaphorePriority.High);
+
+    /// <summary>Shared ownership for response, detached playback, and bounded low-priority warming.</summary>
+    public static IAsyncDisposable BeginReadScope(ConfigManager configManager, IServiceProvider services,
+        CancellationToken token, SemaphorePriority priority, int? connectionLimit = null)
     {
-        var streamSemaphore = CreatePerStreamSemaphore();
+        var streamSemaphore = connectionLimit is { } limit
+            ? new PrioritizedSemaphore(limit, limit, configManager.GetStreamingPriority())
+            : CreatePerStreamSemaphore(configManager);
         var downloadPriorityContext = new DownloadPriorityContext()
         {
-            Priority = SemaphorePriority.High,
+            Priority = priority,
             StreamSemaphore = streamSemaphore,
         };
 #pragma warning disable CA2000 // ownership handle disposes the token-keyed context
@@ -91,7 +98,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
         IDisposable? scopedSchedulingContext = null;
         if (configManager.IsFiniteRangeSchedulerEnabled())
         {
-            var capacityProvider = Context.RequestServices
+            var capacityProvider = services
                 .GetRequiredService<StreamingCapacitySnapshotProvider>();
 #pragma warning disable CA2000 // ownership handle is disposed by StreamingScope
             scopedSchedulingContext = token.SetContext(new StreamingSchedulingContext
@@ -107,7 +114,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
         // and (in auto mode) the provider pool. The per-stream enable toggle is
         // intentionally excluded: the mode is decided once per stream at start.
         EventHandler<ConfigManager.ConfigEventArgs>? onConfigChanged = null;
-        if (streamSemaphore is { } perStreamSemaphore)
+        if (connectionLimit is null && streamSemaphore is { } perStreamSemaphore)
         {
             onConfigChanged = (_, e) =>
             {
@@ -137,7 +144,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
     // so concurrent streams don't share a single global budget. Returns null when
     // the mode is disabled — the shared global semaphore in DownloadingNntpClient
     // is used instead. The provider connection pool still caps real connections.
-    private PrioritizedSemaphore? CreatePerStreamSemaphore()
+    private static PrioritizedSemaphore? CreatePerStreamSemaphore(ConfigManager configManager)
     {
         if (!configManager.IsMaxDownloadConnectionsPerStream()) return null;
         var max = configManager.GetMaxDownloadConnectionsPerStreamCount();
