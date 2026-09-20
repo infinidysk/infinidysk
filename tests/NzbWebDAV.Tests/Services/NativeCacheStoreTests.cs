@@ -9,6 +9,42 @@ public sealed class NativeCacheStoreTests : IDisposable
     public NativeCacheStoreTests() => Directory.CreateDirectory(_root);
 
     [Fact]
+    public async Task EntryGeneration_SurvivesReopen_AndExplicitCatalogueRecovery()
+    {
+        var folder = CreateFolder();
+        var identity = new NativeCacheIdentity("generation-diagnostics", "source:revision:repair-epoch", 3);
+        var catalogue = Path.Combine(_root, "catalogue.db");
+        await using (var store = new NativeCacheStore(catalogue, [folder]))
+            Assert.True(await store.WriteBlockAsync(identity, 0, new byte[3]));
+        await using (var reopened = new NativeCacheStore(catalogue, [folder]))
+            Assert.Equal(identity.Generation, Assert.Single(await reopened.ListEntriesAsync(folder.Id, null, 1)).Generation);
+        await using var recovered = new NativeCacheStore(Path.Combine(_root, "recovered.db"), [folder]);
+        Assert.Equal(1, await recovered.ScanAsync(folder.Id));
+        Assert.Equal(identity.Generation, Assert.Single(await recovered.ListEntriesAsync(folder.Id, null, 1)).Generation);
+    }
+
+    [Fact]
+    public async Task LegacyEntryGeneration_RemainsUnknownUntilExplicitScan()
+    {
+        var folder = CreateFolder();
+        var identity = new NativeCacheIdentity("legacy-generation", "original-generation", 3);
+        var catalogue = Path.Combine(_root, "catalogue.db");
+        await using (var store = new NativeCacheStore(catalogue, [folder]))
+            Assert.True(await store.WriteBlockAsync(identity, 0, new byte[3]));
+        using (var database = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={catalogue};Pooling=False"))
+        {
+            database.Open();
+            using var command = database.CreateCommand();
+            command.CommandText = "ALTER TABLE Entries DROP COLUMN Generation";
+            command.ExecuteNonQuery();
+        }
+        await using var reopened = new NativeCacheStore(catalogue, [folder]);
+        Assert.Null(Assert.Single(await reopened.ListEntriesAsync(folder.Id, null, 1)).Generation);
+        Assert.Equal(1, await reopened.ScanAsync(folder.Id));
+        Assert.Equal(identity.Generation, Assert.Single(await reopened.ListEntriesAsync(folder.Id, null, 1)).Generation);
+    }
+
+    [Fact]
     public async Task VerifiedRanges_UseBoundedOffsetPages_WithoutInventingSparseCoverage()
     {
         var folder = CreateFolder();

@@ -308,11 +308,12 @@ public sealed class NativeCacheStore : IAsyncDisposable
             // short local transaction, even while another folder is stalled.
             if (folderId is null)
             {
-                Execute("INSERT INTO Entries(Key,Folder,Length,Bytes,Access,Dirty,ItemId) VALUES($key,$folder,$length,$bytes,$access,1,$item)",
+                Execute("INSERT INTO Entries(Key,Folder,Length,Bytes,Access,Dirty,ItemId,Generation) VALUES($key,$folder,$length,$bytes,$access,1,$item,$generation)",
                     ("$key", identity.Key), ("$folder", folder.Id), ("$length", identity.Length),
-                    ("$bytes", EntryOverhead), ("$access", DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 300), ("$item", identity.ItemId));
+                    ("$bytes", EntryOverhead), ("$access", DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 300), ("$item", identity.ItemId),
+                    ("$generation", identity.Generation));
             }
-            else Execute("UPDATE Entries SET Dirty=1 WHERE Key=$key", ("$key", identity.Key));
+            else Execute("UPDATE Entries SET Dirty=1,Generation=$generation WHERE Key=$key", ("$key", identity.Key), ("$generation", identity.Generation));
 
             // Reserve before disk IO. Failed writes deliberately retain their reservation until
             // reconciliation/eviction, so interrupted writes cannot silently exceed the quota.
@@ -413,11 +414,12 @@ public sealed class NativeCacheStore : IAsyncDisposable
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            using var command = Command("SELECT Key,Folder,ItemId,Length,Bytes,VerifiedBytes,Pinned FROM Entries WHERE Folder=$folder AND Key>$after ORDER BY Key LIMIT $limit",
+            using var command = Command("SELECT Key,Folder,ItemId,Length,Bytes,VerifiedBytes,Pinned,Generation FROM Entries WHERE Folder=$folder AND Key>$after ORDER BY Key LIMIT $limit",
                 ("$folder", folderId), ("$after", after ?? ""), ("$limit", limit));
             using var reader = command.ExecuteReader();
             var entries = new List<NativeCacheEntry>();
-            while (reader.Read()) entries.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5), reader.GetInt64(6) != 0));
+            while (reader.Read()) entries.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5), reader.GetInt64(6) != 0,
+                reader.IsDBNull(7) ? null : reader.GetString(7)));
             return entries;
         }
         finally { _gate.Release(); }
@@ -472,6 +474,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
             while (reader.Read()) columns.Add(reader.GetString(1));
         if (!columns.Contains("ItemId")) Execute("ALTER TABLE Entries ADD COLUMN ItemId TEXT NOT NULL DEFAULT ''");
         if (!columns.Contains("PendingBytes")) Execute("ALTER TABLE Entries ADD COLUMN PendingBytes INTEGER NOT NULL DEFAULT 0");
+        if (!columns.Contains("Generation")) Execute("ALTER TABLE Entries ADD COLUMN Generation TEXT");
         if (!columns.Contains("VerifiedBytes"))
         {
             Execute("ALTER TABLE Entries ADD COLUMN VerifiedBytes INTEGER NOT NULL DEFAULT 0");
@@ -634,7 +637,8 @@ public sealed class NativeCacheStore : IAsyncDisposable
                         Execute("INSERT OR IGNORE INTO Entries(Key,Folder,Length,Bytes,Access,ItemId,Dirty) VALUES($key,$folder,$length,$bytes,$access,$item,1)",
                             ("$key", manifest.Identity.Key), ("$folder", folder.Id), ("$length", manifest.Identity.Length),
                             ("$bytes", physicalBytes), ("$access", DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 300), ("$item", manifest.Identity.ItemId));
-                        Execute("UPDATE Entries SET Bytes=MAX(Bytes,$bytes),Dirty=1 WHERE Key=$key", ("$key", key), ("$bytes", physicalBytes));
+                        Execute("UPDATE Entries SET Bytes=MAX(Bytes,$bytes),Dirty=1,Generation=$generation WHERE Key=$key",
+                            ("$key", key), ("$bytes", physicalBytes), ("$generation", manifest.Identity.Generation));
                         // Rebuild coverage from this scan's verified bytes; stale catalogue
                         // blocks must not survive a failed checksum or a truncated data file.
                         Execute("DELETE FROM Blocks WHERE Key=$key", ("$key", key));

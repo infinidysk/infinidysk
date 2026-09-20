@@ -53,4 +53,5 @@ public sealed record NativeCacheIdentity(string ItemId, string Generation, long 
 
 public sealed record NativeCacheFolderStatus(string Id, bool Online, bool Writable, long CommittedBytes, long Entries, string? Error);
 
-public sealed record NativeCacheEntry(string Key, string FolderId, string ItemId, long Length, long AllocatedBytes, long VerifiedBytes, bool Pinned);
+public sealed record NativeCacheEntry(string Key, string FolderId, string ItemId, long Length, long AllocatedBytes, long VerifiedBytes, bool Pinned,
+    string? Generation = null);
