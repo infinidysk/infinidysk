@@ -2,6 +2,7 @@
 # non-project files #
 #####################
 
+/AGENTS.md
 bin/
 obj/
 /packages/
@@ -10,6 +11,7 @@ riderModule.iml
 *.DotSettings.user
 nuget
 BenchmarkDotNet.Artifacts/
+.worktrees/
 
 ##############
 # IDE config #
@@ -59,4 +61,3 @@ frontend/reports/
 quality/mutation-reports/
 tests/NzbWebDAV.Tests/stryker-config.ci.json
 mutate-globs.txt
-
