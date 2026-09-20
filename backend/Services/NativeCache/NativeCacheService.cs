@@ -13,6 +13,7 @@ public sealed class NativeCacheService : IAsyncDisposable
 {
     private readonly IBlobStore _blobs;
     private readonly RepairPatchStore _repairs;
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2213", Justification = "Managed-only semaphore: detached filesystem operations retain admissions after shutdown and must still release them. AvailableWaitHandle is never used.")]
     private readonly SemaphoreSlim? _bufferSlots;
     private readonly int _capacity;
     private readonly object _lifetimeGate = new();

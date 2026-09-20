@@ -121,8 +121,8 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
                     try
                     {
                         var buffer = _buffer;
-                        if (await CacheIoAsync(true, token => _store.WriteBlockAsync(_identity, blockStart, buffer.AsMemory(0, expected), token,
-                            waitForWriter: _background), cancellationToken)
+                        if (await CacheIoAsync(true, token => _store.WriteBlockAsync(_identity, blockStart, buffer.AsMemory(0, expected),
+                            waitForWriter: _background, cancellationToken: token), cancellationToken)
                             .ConfigureAwait(false)) _statistics?.Committed(expected);
                     }
                     catch (Exception exception) when (exception is IOException or SqliteException or UnauthorizedAccessException) { }
@@ -262,11 +262,16 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
 
     public override async ValueTask DisposeAsync()
     {
-        if (_disposed) return;
-        _disposed = true;
-        try { if (_source is not null) await _source.DisposeAsync().ConfigureAwait(false); }
-        finally { Release(); }
-        GC.SuppressFinalize(this);
+        try
+        {
+            if (!_disposed)
+            {
+                _disposed = true;
+                try { if (_source is not null) await _source.DisposeAsync().ConfigureAwait(false); }
+                finally { Release(); }
+            }
+        }
+        finally { await base.DisposeAsync().ConfigureAwait(false); }
     }
 
     private void Release()

@@ -81,11 +81,11 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
     /// the entry-owned path never share disposables.
     /// </summary>
     private IAsyncDisposable CreateStreamingScope(CancellationToken token) =>
-        BeginReadScope(configManager, Context.RequestServices, token, SemaphorePriority.High);
+        BeginReadScope(configManager, Context.RequestServices, SemaphorePriority.High, null, token);
 
     /// <summary>Shared ownership for response, detached playback, and bounded low-priority warming.</summary>
     public static IAsyncDisposable BeginReadScope(ConfigManager configManager, IServiceProvider services,
-        CancellationToken token, SemaphorePriority priority, int? connectionLimit = null)
+        SemaphorePriority priority, int? connectionLimit, CancellationToken token)
     {
         var streamSemaphore = connectionLimit is { } limit
             ? new PrioritizedSemaphore(limit, limit, configManager.GetStreamingPriority())

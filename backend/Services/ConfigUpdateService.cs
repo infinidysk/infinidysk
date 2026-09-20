@@ -16,6 +16,23 @@ public sealed class ConfigUpdateService(
     // ConfigManager is the process singleton; services/DbContexts are scoped. A weak key also
     // keeps isolated managers independent in tests. Only async waits are used, never WaitHandle.
     private static readonly ConditionalWeakTable<ConfigManager, SemaphoreSlim> WriteGates = new();
+    private static readonly ConditionalWeakTable<ConfigManager, SemaphoreSlim> NativeValidationGates = new();
+
+    internal static async Task ValidateNativeStorageAsync(ConfigManager config, Action validate, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var admission = NativeValidationGates.GetValue(config, static _ => new SemaphoreSlim(1, 1));
+        if (!admission.Wait(0, cancellationToken)) throw new ArgumentException("A previous native storage validation is still waiting on the filesystem. Restore the mount before retrying.");
+        var pending = Task.Run(() =>
+        {
+            try { validate(); }
+            finally { admission.Release(); }
+        }, CancellationToken.None);
+        _ = pending.ContinueWith(static completed => { _ = completed.Exception; }, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        try { await pending.WaitAsync(timeout, cancellationToken).ConfigureAwait(false); }
+        catch (TimeoutException) { throw new ArgumentException("Native storage validation timed out. Check mounts and local metadata storage before retrying."); }
+    }
 
     public Task<ConfigUpdateBatch> StageAsync(
         IReadOnlyCollection<ConfigItem> configItems,

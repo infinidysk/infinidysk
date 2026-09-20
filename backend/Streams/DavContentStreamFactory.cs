@@ -17,6 +17,7 @@ public sealed class DavContentStreamFactory(
     DavDatabaseClient database, UsenetStreamingClient usenet, ConfigManager config,
     LazyRarResolver lazyResolver, InFlightArticleBudget articleBudget) : IDavContentStreamFactory
 {
+#pragma warning disable CA2000 // The returned task transfers stream ownership to the caller.
     public Task<Stream> OpenAsync(DavItem item, CancellationToken cancellationToken) => item.SubType switch
     {
         DavItem.ItemSubType.NzbFile => OpenNzbAsync(item, database, usenet, config, articleBudget, cancellationToken),
@@ -24,6 +25,7 @@ public sealed class DavContentStreamFactory(
         DavItem.ItemSubType.MultipartFile => OpenMultipartAsync(item, database, usenet, config, lazyResolver, articleBudget, cancellationToken),
         _ => throw new ArgumentException("Only streamable media items can be opened.", nameof(item))
     };
+#pragma warning restore CA2000
 
     public static async Task<Stream> OpenNzbAsync(DavItem item, DavDatabaseClient database, INntpClient usenet,
         ConfigManager config, InFlightArticleBudget budget, CancellationToken cancellationToken)
