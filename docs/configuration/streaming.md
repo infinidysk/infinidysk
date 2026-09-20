@@ -47,7 +47,7 @@ is saturated.
 | Idle connection timeout | `usenet.idle-connection-timeout-seconds` | `60` | Close unused connections after 15–300 seconds; also sets the [connection warming](../features/connection-warming.md) sweep and keepalive cadence |
 | Read-start warm-up [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.read-start-warmup.enabled` | on | Expand pooled-provider connections in parallel when a long buffered WebDAV read starts; captured when each stream opens |
 | NNTP response timeout [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.nntp-read-timeout-seconds` | `30` | Stalled-read inactivity deadline for BODY, ARTICLE, STAT, authentication, and other NNTP responses, 5–120 seconds. This is not a total transfer deadline. Streaming segment/read budgets and the 15-second connect/auth ceiling can expire first. Takes effect on the next provider-pool rebuild or restart. |
-| Fresh connection open timeout [since 1.4.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.0){ .nzbdav-since } | `usenet.connection-open-timeout-seconds` | `15` | Advanced budget for fresh TCP/TLS/AUTHINFO connection creation, 1-15 seconds. Starts after local admission, handshake queueing, and replacement pacing finish. Those waits and BODY/ARTICLE transfer time are excluded. Applies to subsequent attempts without rebuilding live pools. |
+| Fresh connection open timeout [since 1.4.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.0){ .nzbdav-since } | `usenet.connection-open-timeout-seconds` | `3` | Advanced budget for fresh TCP/TLS/AUTHINFO connection creation, 1-15 seconds. Applies to subsequent attempts without rebuilding live pools. |
 | Replacement reconnect spacing [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.reconnect-delay-milliseconds` | `500` | Minimum spacing between replacement handshakes after a poisoned connection is closed, 0–5000 milliseconds. Zero disables ordinary replacement spacing; TCP/TLS/AUTHINFO factory failures still back off from a 500ms floor, doubling up to 60 seconds. Takes effect on the next provider-pool rebuild or restart. |
 | Batched article downloads | `usenet.pipelined-body-requests` | on | Fetch WebDAV BODY requests in small batches |
 | Streaming batch width [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `usenet.streaming-body-batch-width` | `4` | Maximum articles per BODY batch (1–8) |
@@ -58,9 +58,34 @@ connection-open timeout, and idle connection timeout are separate deadlines. The
 clock starts when TCP/TLS/AUTHINFO connection creation begins, after local capacity admission,
 handshake queueing, and replacement pacing. Those waits and BODY/ARTICLE transfer time are
 outside this budget. Queue waits still honor caller cancellation and shutdown; the fresh
-connection-open setting is not a total acquisition deadline. The fresh connection-open timeout
+connection-open setting is not a total acquisition deadline. See [provider acquisition waits](#provider-acquisition-waits)
+for the conditional failover budget and circuit-trip behavior. The fresh connection-open timeout
 is read by subsequent attempts without rebuilding live pools; the other captured pool settings
 require a provider-pool rebuild or restart before they change.
+
+### Provider acquisition waits [since 1.4.3](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.3){ .nzbdav-since } { #provider-acquisition-waits }
+
+When another eligible provider has capacity, BODY/ARTICLE acquisition has one
+15-second wait budget across local admission, pool queueing, handshake queueing,
+creation-capacity waits, and replacement pacing. The budget ends when an idle
+socket is claimed or a fresh connection starts opening. Expiry tries the next
+provider; it does not mark the waiting provider unhealthy. Without an eligible
+alternative, foreground waits remain subject to caller cancellation and shutdown.
+
+A circuit trip stops pending acquisitions, including queued warm-up work. It does
+not cancel factories or transfers that have already started. If the trip was
+caused by a fresh-connection open timeout, immediately available established
+sockets can still serve requests. They do not clear the circuit: recovery needs
+a successful fresh-connection probe after cooldown. Command-failure circuits do
+not have this idle-socket exception. Warm-up does not open new sockets while the
+circuit is open or half-open.
+
+The fresh TCP/TLS/AUTHINFO budget defaults to 3 seconds, with the same supported
+1-15 second range. Valid saved or environment-managed values are unchanged; an
+explicit 15 remains 15. An absent or unparsable value now resolves to 3 instead
+of 15. The value applies to subsequent opens without a pool rebuild. It does not
+change transfer deadlines, and the acquisition and socket-open budgets are
+separate, not one total timeout.
 
 ### Segment-cache storage
 

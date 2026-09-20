@@ -2,6 +2,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models;
 using UsenetSharp.Models;
 
@@ -446,6 +447,63 @@ public class ProviderCircuitBreakerConnectionFailureTests
         Assert.Equal(1, breaker.GetSnapshot().FailureCount);
         Assert.Equal(0, breaker.GetSnapshot().ArticleMissCount);
         Assert.Equal(1, pool.GetChurn().ConnectionsDestroyed);
+    }
+
+    [Fact]
+    public async Task Trip_RotatesEpochAndRejectsUncommittedLease()
+    {
+        var breaker = new ProviderCircuitBreaker("waiting");
+        var acquisition = breaker.BeginAcquisition(CircuitProbeLease.None);
+        var cancellationObserved = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = acquisition.CircuitCancellationToken.Register(
+            () => cancellationObserved.TrySetResult());
+
+        breaker.RecordConnectionFailure("open-timeout", requiresFreshConnectionProbe: true);
+
+        await cancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(acquisition.CircuitCancellationToken.IsCancellationRequested);
+        Assert.Throws<CircuitAdmissionRejectedException>(acquisition.Commit);
+        Assert.Equal(1, breaker.GetSnapshot().TripCount);
+        Assert.Equal(1, breaker.GetSnapshot().FailureCount);
+    }
+
+    [Fact]
+    public async Task Trip_DoesNotCancelTransportAfterAcquisitionCommit()
+    {
+        var breaker = new ProviderCircuitBreaker("factory-started");
+        var acquisition = breaker.BeginAcquisition(CircuitProbeLease.None);
+        using var caller = new CancellationTokenSource();
+        using var transportLifetime = CancellationTokenSource.CreateLinkedTokenSource(caller.Token);
+        var epochCancelled = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = acquisition.CircuitCancellationToken.Register(
+            () => epochCancelled.TrySetResult());
+        acquisition.Commit();
+
+        breaker.RecordConnectionFailure("open-timeout", requiresFreshConnectionProbe: true);
+        await epochCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.False(transportLifetime.IsCancellationRequested);
+        Assert.Equal(ProviderCircuitState.Open, breaker.GetSnapshot().State);
+    }
+
+    [Fact]
+    public void Recovery_DoesNotReadmitLeaseFromRetiredEpoch()
+    {
+        var clock = 1L;
+        var breaker = new ProviderCircuitBreaker("recovery") { Clock = () => clock };
+        var rejected = breaker.BeginAcquisition(CircuitProbeLease.None);
+        breaker.RecordConnectionFailure("open-timeout", requiresFreshConnectionProbe: true);
+        clock += 60_000;
+        Assert.True(breaker.TryAdmit(out var probe));
+        breaker.RecordSuccess(probe: probe, freshConnection: true);
+
+        Assert.Equal(ProviderCircuitState.Closed, breaker.GetSnapshot().State);
+        Assert.Throws<CircuitAdmissionRejectedException>(rejected.Commit);
+        var replacement = breaker.BeginAcquisition(CircuitProbeLease.None);
+        replacement.Commit();
+        Assert.False(replacement.CircuitCancellationToken.IsCancellationRequested);
     }
 
     private sealed class ReasonReportingBodyClient : NntpClient

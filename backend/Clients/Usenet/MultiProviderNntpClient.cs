@@ -49,7 +49,6 @@ public class MultiProviderNntpClient(
     /// consumers cannot deadlock on an unbounded fan-out (see AGENTS.md).
     /// </summary>
     private const int MaxConcurrentFallbackStarts = 4;
-    private static readonly TimeSpan TransferAdmissionFailoverTimeout = TimeSpan.FromSeconds(15);
     private readonly SemaphoreSlim _batchFallbackStartGate = new(MaxConcurrentFallbackStarts);
     public int InFlightConnections => providers.Sum(p => p.InFlightConnections);
 
@@ -532,11 +531,12 @@ public class MultiProviderNntpClient(
                         CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
                     throw;
                 }
-                catch (ProviderTransferAdmissionTimeoutException e)
+                catch (Exception exception) when (exception is ProviderTransferAdmissionTimeoutException
+                    or CircuitAdmissionRejectedException)
                 {
                     deferredCallback.Discard();
                     await AbandonProviderAttemptAsync(primaryBatch, attemptCts).ConfigureAwait(false);
-                    lastException = ExceptionDispatchInfo.Capture(e);
+                    lastException = ExceptionDispatchInfo.Capture(exception);
                 }
                 catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? _) && e is not OutOfMemoryException)
                 {
@@ -801,12 +801,13 @@ public class MultiProviderNntpClient(
                         coordinator.CompleteAttempt();
                         throw;
                     }
-                    catch (ProviderTransferAdmissionTimeoutException e)
+                    catch (Exception exception) when (exception is ProviderTransferAdmissionTimeoutException
+                        or CircuitAdmissionRejectedException)
                     {
                         stopwatch.Stop();
                         deferredCallback.Discard();
                         coordinator.CompleteAttempt();
-                        lastException = ExceptionDispatchInfo.Capture(e);
+                        lastException = ExceptionDispatchInfo.Capture(exception);
                         continue;
                     }
                     catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
@@ -1117,11 +1118,12 @@ public class MultiProviderNntpClient(
                     onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
                 throw;
             }
-            catch (ProviderTransferAdmissionTimeoutException e)
+            catch (Exception exception) when (exception is ProviderTransferAdmissionTimeoutException
+                or CircuitAdmissionRejectedException)
             {
                 stopwatch.Stop();
                 deferredCallback.Discard();
-                lastException = ExceptionDispatchInfo.Capture(e);
+                lastException = ExceptionDispatchInfo.Capture(exception);
                 lastOutcomeWasException = true;
                 attemptIndex++;
             }
@@ -1298,10 +1300,11 @@ public class MultiProviderNntpClient(
                 walk.Retired = true;
                 throw;
             }
-            catch (ProviderTransferAdmissionTimeoutException e)
+            catch (Exception exception) when (exception is ProviderTransferAdmissionTimeoutException
+                or CircuitAdmissionRejectedException)
             {
                 stopwatch.Stop();
-                lastException = ExceptionDispatchInfo.Capture(e);
+                lastException = ExceptionDispatchInfo.Capture(exception);
                 lastOutcomeWasException = true;
                 attemptIndex++;
             }
@@ -1835,7 +1838,8 @@ public class MultiProviderNntpClient(
     {
         var ordered = SelectOrderedProviders(NntpOperation.Body, out var reserved);
         reserved?.ReleasePending(NntpOperation.Body);
-        return ordered.Where(provider => provider.GetCircuitBreakerSnapshot().State != ProviderCircuitState.Open)
+        return ordered.Where(provider => provider.GetCircuitBreakerSnapshot().State != ProviderCircuitState.Open
+            || provider.CanReuseIdleConnection)
             .ToArray();
     }
 
@@ -1850,7 +1854,8 @@ public class MultiProviderNntpClient(
                 .Where(x => !IsOverLimit(x))
                 .Where(x => Par2VerificationReadContext.PreferredProvider is not { } preferred
                     || ReferenceEquals(x, preferred)
-                    && x.GetCircuitBreakerSnapshot().State != ProviderCircuitState.Open)
+                    && (x.GetCircuitBreakerSnapshot().State != ProviderCircuitState.Open
+                        || x.CanReuseIdleConnection))
                 .ToList();
 
             // Reading state here must not claim the half-open probe slot. IsTripped claims
@@ -1869,7 +1874,8 @@ public class MultiProviderNntpClient(
             }
 
             var selectable = enabled
-                .Where(x => selectionStates[x].CircuitState != ProviderCircuitState.Open)
+                .Where(x => selectionStates[x].CircuitState != ProviderCircuitState.Open
+                    || x.CanReuseIdleConnection)
                 .ToList();
             var pool = selectable.Count > 0 ? selectable : enabled;
             foreach (var provider in pool)
@@ -1886,7 +1892,7 @@ public class MultiProviderNntpClient(
             // completes resets the breaker.
             var byTier = pool.OrderBy(x => x.ProviderType);
             var byRecovery = byTier.ThenBy(x =>
-                selectionStates[x].CircuitState == ProviderCircuitState.HalfOpen ? 1 : 0);
+                selectionStates[x].CircuitState == ProviderCircuitState.Closed ? 0 : 1);
             var cascade = cascadeEnabled?.Invoke() == true;
             var prioritized = cascade
                 ? byRecovery.ThenBy(x =>
@@ -1922,9 +1928,10 @@ public class MultiProviderNntpClient(
         var context = cancellationToken.SetContext(new TransferAdmissionFailoverContext(
             () => candidateProviders.Any(provider =>
                 provider.ProviderType != ProviderType.Disabled
-                && provider.GetCircuitBreakerSnapshot().State != ProviderCircuitState.Open
+                && (provider.GetCircuitBreakerSnapshot().State != ProviderCircuitState.Open
+                    || provider.CanReuseIdleConnection)
                 && provider.UnreservedConnectionsFor(operation) > 0),
-            TransferAdmissionFailoverTimeout));
+            TransferAdmissionFailoverContext.DefaultWaitTimeout));
     #pragma warning restore CA2000
         return new ScopeReleaser(context.Dispose);
     }

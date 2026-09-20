@@ -2,9 +2,13 @@ namespace NzbWebDAV.Exceptions;
 
 internal sealed class ProviderTransferAdmissionTimeoutException(
     string providerName,
-    TimeSpan timeout)
-    : Exception($"Provider {providerName} had no transfer capacity for {timeout.TotalSeconds:0.#} seconds.")
+    TimeSpan timeout,
+    string phase = "ProviderAdmission")
+    : RetryableDownloadException(
+        $"Provider '{providerName}' waited {timeout.TotalSeconds:0.#}s " +
+        $"for an NNTP connection during {phase}.")
 {
     public string ProviderName { get; } = providerName;
     public TimeSpan Timeout { get; } = timeout;
+    public string Phase { get; } = phase;
 }

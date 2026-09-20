@@ -1345,7 +1345,10 @@ public class StreamingTimeoutTests
             var warning = Assert.Single(sink.Events, logEvent =>
                 logEvent.Level == LogEventLevel.Warning
                 && logEvent.MessageTemplate.Text.StartsWith(
-                    "Error getting connection-lock", StringComparison.Ordinal));
+                    "Error getting connection-lock", StringComparison.Ordinal)
+                && logEvent.Properties.TryGetValue("Provider", out var warningProvider)
+                && warningProvider is ScalarValue { Value: var value }
+                && Equals(value, provider));
             Assert.Null(warning.Exception);
             Assert.Equal(provider, Assert.IsType<ScalarValue>(warning.Properties["Provider"]).Value);
             Assert.Equal(timeout.Message, Assert.IsType<ScalarValue>(warning.Properties["Reason"]).Value);

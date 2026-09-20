@@ -278,6 +278,47 @@ public class ProviderConnectionAdmissionTests
     }
 
     [Fact]
+    public void TryAcquire_UsesTransferAndMetadataBudgetsWithoutEnqueueing()
+    {
+        using var admission = CreateAdmission(providerLimit: 3, transferLimit: 1);
+        using var transfer = admission.TryAcquire(ProviderConnectionKind.Transfer)!;
+        using var metadata = admission.TryAcquire(ProviderConnectionKind.Metadata)!;
+        using var metadata2 = admission.TryAcquire(ProviderConnectionKind.Metadata)!;
+
+        Assert.Null(admission.TryAcquire(ProviderConnectionKind.Transfer));
+        Assert.Null(admission.TryAcquire(ProviderConnectionKind.Metadata));
+        var snapshot = admission.GetSnapshot();
+        Assert.Equal(1, snapshot.ActiveTransferOperations);
+        Assert.Equal(2, snapshot.ActiveMetadataOperations);
+        Assert.Equal(0, snapshot.WaitingTransferOperations);
+        Assert.Equal(0, snapshot.WaitingMetadataOperations);
+        Assert.NotEmpty(snapshot.ActiveTransferLeaseAges);
+    }
+
+    [Fact]
+    public async Task TryAcquire_DoesNotOvertakeQueuedTransfers()
+    {
+        using var admission = CreateAdmission(providerLimit: 1, transferLimit: 1);
+        using var held = admission.TryAcquire(ProviderConnectionKind.Transfer)!;
+        var queued = AcquireTransfer(admission);
+
+        Assert.Null(admission.TryAcquire(ProviderConnectionKind.Transfer));
+        Assert.Equal(1, admission.GetSnapshot().WaitingTransferOperations);
+        held.Dispose();
+        using var released = await queued.WaitAsync(TestTimeout);
+    }
+
+    [Fact]
+    public void TryAcquire_DisposedAdmissionThrows()
+    {
+        var admission = CreateAdmission(providerLimit: 1, transferLimit: 1);
+        admission.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(
+            () => admission.TryAcquire(ProviderConnectionKind.Transfer));
+    }
+
+    [Fact]
     public async Task RoutingStateUsesCachedBudgetAndVolatileActivityCounts()
     {
         var providerLimit = 5;

@@ -1,3 +1,11 @@
+# Provider circuit acquisition
+
+`ProviderCircuitBreakerAcquisitionBenchmarks` guards the allocation-free breaker
+lease/commit path. It measures only the closed-circuit acquisition path and does
+not include the unavoidable wait `CancellationTokenSource` allocated by a
+contended end-to-end acquisition. `BeginAndCommitClosedCircuit` must report
+`0 B/op`; timing is recorded for comparison but has no machine-specific threshold.
+
 # Backend benchmarks
 
 BenchmarkDotNet timing runs stay manual: they are sensitive to runner

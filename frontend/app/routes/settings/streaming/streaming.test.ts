@@ -23,7 +23,7 @@ const validConfig = {
   "usenet.streaming-priority": "80",
   "usenet.streaming-segment-timeout-seconds": "8",
   "usenet.streaming-read-timeout-seconds": "30",
-  "usenet.connection-open-timeout-seconds": "15",
+  "usenet.connection-open-timeout-seconds": "3",
   "usenet.streaming-write-timeout-seconds": "60",
   "usenet.streaming-segment-retries": "3",
   "usenet.article-buffer-size": "40",
@@ -71,16 +71,49 @@ describe("Streaming settings", () => {
     const input = screen.getByRole<HTMLInputElement>("textbox", {
       name: "Fresh Connection Open Timeout",
     });
-    expect(input.value).toBe("15");
+    expect(input.value).toBe("3");
     expect(input.getAttribute("aria-describedby")).toBe("connection-open-timeout-help");
 
     const help = document.getElementById("connection-open-timeout-help");
     const text = help?.textContent?.replace(/\s+/g, " ").trim();
     expect(text).toContain("bounds fresh TCP/TLS/AUTHINFO connection creation");
     expect(text).toContain(
-      "Local admission, handshake queueing, replacement pacing, and BODY/ARTICLE transfer time are excluded.",
+      "Local admission, handshake queueing, creation-capacity waits, replacement pacing, and BODY/ARTICLE transfer time are excluded.",
     );
-    expect(text).toContain("Queue waits still honor caller cancellation and shutdown.");
+    expect(text).toContain("separate 15s acquisition budget when another provider has capacity.");
+    expect(text).toContain("A provider trip cancels pending acquisition, not active transfers.");
+    expect(text).toContain("Changes apply to subsequent fresh opens.");
+  });
+
+  it("preserves an explicit fresh-open timeout of 15 seconds", () => {
+    render(
+      createElement(StreamingHarness, {
+        initialConfig: { ...validConfig, "usenet.connection-open-timeout-seconds": "15" },
+      }),
+    );
+
+    const input = screen.getByRole<HTMLInputElement>("textbox", {
+      name: "Fresh Connection Open Timeout",
+    });
+    expect(input.value).toBe("15");
+    expect(input.classList.contains("input-error")).toBe(false);
+  });
+
+  it.each([
+    ["1", true],
+    ["3", true],
+    ["15", true],
+    ["0", false],
+    ["16", false],
+    ["1.5", false],
+    ["invalid", false],
+  ])("keeps the fresh-open timeout validation range at 1 through 15", (value, valid) => {
+    expect(
+      isStreamingSettingsValid({
+        ...validConfig,
+        "usenet.connection-open-timeout-seconds": value,
+      }),
+    ).toBe(valid);
   });
 
   it("warns about rclone read-ahead only for symlink libraries with Segment Cache on", () => {

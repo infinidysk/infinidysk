@@ -146,6 +146,33 @@ public class ConnectionPoolPriorityTests
         Assert.True(connection.IsDisposed);
     }
 
+    [Fact]
+    public async Task TryWait_ClaimsOnlyImmediateUnqueuedCapacity()
+    {
+        using var semaphore = new PrioritizedSemaphore(1, 1);
+        Assert.True(semaphore.TryWait());
+        Assert.False(semaphore.TryWait());
+
+        var high = semaphore.WaitAsync(SemaphorePriority.High);
+        var low = semaphore.WaitAsync(SemaphorePriority.Low);
+        semaphore.Release();
+        await high.WaitAsync(WaitBudget);
+        Assert.False(semaphore.TryWait());
+        semaphore.Release();
+        await low.WaitAsync(WaitBudget);
+        semaphore.Release();
+        Assert.True(semaphore.TryWait());
+    }
+
+    [Fact]
+    public void TryWait_DisposedSemaphoreThrows()
+    {
+        var semaphore = new PrioritizedSemaphore(1, 1);
+        semaphore.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => semaphore.TryWait());
+    }
+
     /// <summary>
     /// Saturates a one-connection pool, queues waiters in both lanes, then releases
     /// <paramref name="releases"/> times and reports which lane won each admission.

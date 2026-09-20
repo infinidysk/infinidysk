@@ -55,4 +55,16 @@ describe("pinManagedConfigKeys", () => {
       "webdav.show-hidden-files": "true",
     });
   });
+
+  it("pins and omits an environment-managed connection-open timeout", () => {
+    const managed: ManagedEnvMap = {
+      "usenet.connection-open-timeout-seconds":
+        "NZBDAV_CONFIG__USENET__CONNECTION_OPEN_TIMEOUT_SECONDS",
+    };
+    const baseline = { "usenet.connection-open-timeout-seconds": "15" };
+    const next = { "usenet.connection-open-timeout-seconds": "3" };
+
+    expect(pinManagedConfigKeys(next, baseline, managed)).toEqual(baseline);
+    expect(omitManagedConfigKeys(next, managed)).toEqual({});
+  });
 });
