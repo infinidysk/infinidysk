@@ -48,7 +48,9 @@ describe("LiveUsenetConnections", () => {
       "3 open connections out of 20 allowed",
     );
     expect(screen.getByRole("tooltip").textContent).toContain("1 active; 2 warm");
-    expect(screen.getByRole("status").textContent).toContain("3 open connections out of 20 allowed");
+    expect(screen.getByRole("status").textContent).toContain(
+      "3 open connections out of 20 allowed",
+    );
 
     act(() => {
       onMessage?.("0|2|1|4|20|2");
@@ -70,8 +72,12 @@ describe("LiveUsenetConnections", () => {
     render(<LiveUsenetConnections hasUsenetProviders />);
     act(() => onMessage?.("0|1|1|18|20|18"));
 
-    expect(screen.getByRole("status").textContent).toContain("18 open connections out of 20 allowed");
-    expect(screen.getByLabelText("Usenet connections").querySelector(".text-warning")).not.toBeNull();
+    expect(screen.getByRole("status").textContent).toContain(
+      "18 open connections out of 20 allowed",
+    );
+    expect(
+      screen.getByLabelText("Usenet connections").querySelector(".text-warning"),
+    ).not.toBeNull();
   });
 
   it("shows a dash when no providers are configured", () => {
