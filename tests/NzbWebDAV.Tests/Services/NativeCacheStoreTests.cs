@@ -41,6 +41,46 @@ public sealed class NativeCacheStoreTests : IDisposable
         Assert.Equal(0, await reopened.ReadBlockAsync(identity with { Generation = "generation-two" }, 0, buffer));
     }
 
+    [SkippableTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReplacedLiveRoot_EvenWithCopiedMarker_IsNeverWritten(bool symlink)
+    {
+        Skip.IfNot(OperatingSystem.IsLinux());
+        var folder = CreateFolder();
+        await using var store = new NativeCacheStore(Path.Combine(_root, "catalogue.db"), [folder]);
+        var moved = folder.Path + "-original";
+        Directory.Move(folder.Path, moved);
+        var target = symlink ? folder.Path + "-replacement" : folder.Path;
+        Directory.CreateDirectory(target);
+        File.Copy(Path.Combine(moved, ".infinidysk-volume"), Path.Combine(target, ".infinidysk-volume"));
+        if (symlink) Directory.CreateSymbolicLink(folder.Path, target);
+        Assert.False(await store.WriteBlockAsync(new("item", "generation", 3), 0, new byte[3]));
+        Assert.False((await store.GetStatusAsync()).Single().Online);
+        Assert.Equal([".infinidysk-volume"], Directory.GetFileSystemEntries(target).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public async Task ReplacedRootAfterRestart_CopiedMarkerRequiresExplicitNewRegistration()
+    {
+        var folder = CreateFolder();
+        var catalogue = Path.Combine(_root, "catalogue.db");
+        await using (var initial = new NativeCacheStore(catalogue, [folder]))
+            Assert.True(await initial.WriteBlockAsync(new("original", "v1", 3), 0, new byte[3]));
+        Directory.Move(folder.Path, folder.Path + "-original");
+        Directory.CreateDirectory(folder.Path);
+        File.Copy(Path.Combine(folder.Path + "-original", ".infinidysk-volume"), Path.Combine(folder.Path, ".infinidysk-volume"));
+        await using (var reopened = new NativeCacheStore(catalogue, [folder]))
+        {
+            Assert.False((await reopened.GetStatusAsync()).Single().Online);
+            Assert.False(await reopened.WriteBlockAsync(new("replacement", "v1", 3), 0, new byte[3]));
+            Assert.Equal(0, await reopened.EvictAsync(folder.Id, clear: true));
+            Assert.True((await reopened.GetStatusAsync()).Single().CommittedBytes > 0);
+        }
+        await using var explicitlyRegistered = new NativeCacheStore(catalogue, [folder with { Id = "replacement-root" }]);
+        Assert.True((await explicitlyRegistered.GetStatusAsync()).Single().Online);
+    }
+
     [Fact]
     public async Task SparseHole_IsNeverAHit()
     {
@@ -50,6 +90,19 @@ public sealed class NativeCacheStoreTests : IDisposable
         Assert.True(await store.WriteBlockAsync(identity, NativeCacheStore.BlockSize, new byte[] { 1, 2, 3 }));
         Assert.Equal(0, await store.ReadBlockAsync(identity, 0, new byte[NativeCacheStore.BlockSize]));
         Assert.Equal(3, await store.ReadBlockAsync(identity, NativeCacheStore.BlockSize, new byte[3]));
+    }
+
+    [Fact]
+    public async Task Clear_AlreadyRemovedEntry_ReclaimsCatalogueReservation()
+    {
+        var folder = CreateFolder();
+        await using var store = new NativeCacheStore(Path.Combine(_root, "catalogue.db"), [folder]);
+        var identity = new NativeCacheIdentity("missing-entry", "v1", 3);
+        Assert.True(await store.WriteBlockAsync(identity, 0, new byte[3]));
+        Directory.Delete(Path.Combine(folder.Path, "v1", identity.Key[..2], identity.Key), recursive: true);
+        Assert.Equal(1, await store.EvictAsync(folder.Id, clear: true));
+        Assert.Equal(0, (await store.GetStatusAsync()).Single().CommittedBytes);
+        Assert.Equal(0, await store.GetCoverageAsync(identity));
     }
 
     [Fact]

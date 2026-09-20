@@ -19,6 +19,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
     private readonly SemaphoreSlim _writer = new(1, 1);
     private readonly NativeCacheFolder[] _folders;
     private readonly Dictionary<string, FileStream> _owners = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, NativeFileSystem.PinnedDirectory> _roots = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _volumes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _leases = new(StringComparer.Ordinal);
     private readonly HashSet<string> _evicting = new(StringComparer.Ordinal);
@@ -81,11 +82,12 @@ public sealed class NativeCacheStore : IAsyncDisposable
             try
             {
                 if (!RegisterVolume(folder) || folder.ReadOnly) continue;
-                _owners[folder.Id] = new FileStream(Path.Combine(folder.Path, ".infinidysk-owner"),
-                    FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                _owners[folder.Id] = _roots[folder.Id].OpenFile(".infinidysk-owner",
+                    FileMode.OpenOrCreate, FileAccess.ReadWrite, exclusive: true);
             }
             catch (IOException) { /* Locked/offline folders remain readable but cannot accept writes. */ }
             catch (UnauthorizedAccessException) { }
+            catch (PlatformNotSupportedException) { /* Unsupported platforms fail closed. */ }
         }
     }
 
@@ -128,8 +130,8 @@ public sealed class NativeCacheStore : IAsyncDisposable
         if (!IsVolumeCurrent(folder)) return 0;
         try
         {
-            data = new FileStream(DataPath(folder, identity.Key), FileMode.Open, FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.Asynchronous | FileOptions.RandomAccess);
+            using var directory = OpenEntry(folder, identity.Key);
+            data = directory.OpenFile("content.data", FileMode.Open, FileAccess.Read);
             data.Position = offset;
         }
         catch (IOException)
@@ -190,13 +192,10 @@ public sealed class NativeCacheStore : IAsyncDisposable
             var folder = candidates.FirstOrDefault(candidate => CanUseFolder(candidate, required));
             if (folder is null) return false;
 
-            var directory = EntryPath(folder, identity.Key);
-            if (!HasSafeLayout(folder, identity.Key)) return false;
-            Directory.CreateDirectory(directory);
+            using var directory = OpenEntry(folder, identity.Key, create: true);
             if (folderId is null)
             {
-                await using (var manifest = new FileStream(Path.Combine(directory, "manifest.json"),
-                    FileMode.Create, FileAccess.Write, FileShare.Read, 4096, FileOptions.Asynchronous))
+                await using (var manifest = directory.OpenFile("manifest.json", FileMode.Create, FileAccess.Write))
                 {
                     await manifest.WriteAsync(JsonSerializer.SerializeToUtf8Bytes(new Manifest(1, identity)), cancellationToken).ConfigureAwait(false);
                     manifest.Flush(flushToDisk: true);
@@ -223,29 +222,27 @@ public sealed class NativeCacheStore : IAsyncDisposable
             // in other folders. The writer gate and activity lease protect publication.
             _gate.Release();
             catalogueHeld = false;
-            await using (var stream = new FileStream(DataPath(folder, identity.Key), FileMode.OpenOrCreate,
-                FileAccess.Write, FileShare.Read, 4096, FileOptions.Asynchronous | FileOptions.RandomAccess))
+            await using (var stream = directory.OpenFile("content.data", FileMode.OpenOrCreate, FileAccess.Write))
             {
                 stream.Position = offset;
                 await stream.WriteAsync(data, cancellationToken).ConfigureAwait(false);
                 stream.Flush(flushToDisk: true);
             }
             // The colocated journal makes explicit scans/imports possible without the local catalogue.
-            await using (var journal = new FileStream(Path.Combine(directory, "ranges.journal"), FileMode.Append,
-                FileAccess.Write, FileShare.Read, 4096, FileOptions.Asynchronous))
+            await using (var journal = directory.OpenFile("ranges.journal", FileMode.Append, FileAccess.Write))
             {
                 var record = JsonSerializer.SerializeToUtf8Bytes(new JournalBlock(offset, data.Length, Convert.ToHexString(hash)));
                 await journal.WriteAsync(record, cancellationToken).ConfigureAwait(false);
                 await journal.WriteAsync("\n"u8.ToArray(), cancellationToken).ConfigureAwait(false);
                 journal.Flush(flushToDisk: true);
             }
-            NativeFileSystem.FlushDirectory(directory);
-            NativeFileSystem.FlushDirectory(Path.GetDirectoryName(directory)!);
-            NativeFileSystem.FlushDirectory(Path.Combine(folder.Path, "v1"));
-            NativeFileSystem.FlushDirectory(folder.Path);
-            var allocated = checked(NativeFileSystem.GetAllocatedBytes(DataPath(folder, identity.Key))
-                + NativeFileSystem.GetAllocatedBytes(Path.Combine(directory, "manifest.json"))
-                + NativeFileSystem.GetAllocatedBytes(Path.Combine(directory, "ranges.journal")) + EntryOverhead);
+            directory.Flush();
+            using (var shard = _roots[folder.Id].OpenDirectory($"v1/{identity.Key[..2]}")) shard.Flush();
+            using (var version = _roots[folder.Id].OpenDirectory("v1")) version.Flush();
+            _roots[folder.Id].Flush();
+            var allocated = checked(directory.AllocatedBytes("content.data")
+                + directory.AllocatedBytes("manifest.json") + directory.AllocatedBytes("ranges.journal") + EntryOverhead);
+            if (!IsVolumeCurrent(folder)) return false;
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             catalogueHeld = true;
             using var transaction = _database.BeginTransaction();
@@ -266,6 +263,8 @@ public sealed class NativeCacheStore : IAsyncDisposable
                     reservation.Remaining = Math.Max(0, reservation.Remaining - required);
             return true;
         }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
         finally
         {
             if (catalogueHeld) _gate.Release();
@@ -293,7 +292,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
             var folder = _folders.First(folder => folder.Id == status.Id);
             var online = IsVolumeCurrent(folder);
             return status with { Online = online, Writable = online && _owners.ContainsKey(folder.Id),
-                Error = online ? null : "Folder is unavailable; no fallback directory will be created." };
+                Error = online ? null : "Folder is unavailable or its storage identity changed; no fallback directory will be created. Restore the original mount, or explicitly register the verified path with a new folder ID and scan it." };
         }).ToArray();
     }
 
@@ -344,6 +343,11 @@ public sealed class NativeCacheStore : IAsyncDisposable
 
     private void EnsureMetadataColumns()
     {
+        var identityColumns = new HashSet<string>(StringComparer.Ordinal);
+        using (var command = Command("PRAGMA table_info(FolderIdentity)"))
+        using (var reader = command.ExecuteReader())
+            while (reader.Read()) identityColumns.Add(reader.GetString(1));
+        if (!identityColumns.Contains("RootIdentity")) Execute("ALTER TABLE FolderIdentity ADD COLUMN RootIdentity TEXT");
         var columns = new HashSet<string>(StringComparer.Ordinal);
         using (var command = Command("PRAGMA table_info(Entries)"))
         using (var reader = command.ExecuteReader())
@@ -429,34 +433,38 @@ public sealed class NativeCacheStore : IAsyncDisposable
     {
         var folder = _folders.FirstOrDefault(folder => folder.Id == folderId && folder.Enabled)
             ?? throw new ArgumentException("Unknown or disabled native cache folder.", nameof(folderId));
-        var root = Path.Combine(folder.Path, "v1");
-        if (!IsVolumeCurrent(folder) || !Directory.Exists(root) || new DirectoryInfo(root).LinkTarget is not null) return 0;
+        if (!IsVolumeCurrent(folder)) return 0;
+        NativeFileSystem.PinnedDirectory root;
+        try { root = _roots[folder.Id].OpenDirectory("v1"); }
+        catch (IOException) { return 0; }
+        using var rootLease = root;
         var imported = 0;
         var buffer = new byte[BlockSize];
-        foreach (var shard in Directory.EnumerateDirectories(root))
+        foreach (var shardName in root.EnumerateDirectoryNames())
         {
-            if (new DirectoryInfo(shard).LinkTarget is not null) continue;
-            foreach (var directory in Directory.EnumerateDirectories(shard))
+            if (shardName.Length != 2 || !shardName.All(char.IsAsciiHexDigit)) continue;
+            NativeFileSystem.PinnedDirectory shard;
+            try { shard = root.OpenDirectory(shardName); }
+            catch (IOException) { continue; }
+            using var shardLease = shard;
+            foreach (var key in shard.EnumerateDirectoryNames())
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (new DirectoryInfo(directory).LinkTarget is not null) continue;
-                var manifestPath = Path.Combine(directory, "manifest.json");
-                var journalPath = Path.Combine(directory, "ranges.journal");
-                var dataPath = Path.Combine(directory, "content.data");
-                if (new[] { manifestPath, journalPath, dataPath }.Any(path => new FileInfo(path).LinkTarget is not null)) continue;
+                if (key.Length != 64 || !key.All(char.IsAsciiHexDigit) || !key.StartsWith(shardName, StringComparison.Ordinal)) continue;
                 await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    var info = new FileInfo(manifestPath);
-                    if (!info.Exists || info.Length > 64 * 1024) continue;
-                    var manifest = JsonSerializer.Deserialize<Manifest>(await File.ReadAllTextAsync(manifestPath, cancellationToken).ConfigureAwait(false));
+                    using var directory = shard.OpenDirectory(key);
+                    await using var manifestStream = directory.OpenFile("manifest.json", FileMode.Open, FileAccess.Read);
+                    if (manifestStream.Length > 64 * 1024) continue;
+                    var manifestBytes = new byte[checked((int)manifestStream.Length)];
+                    await manifestStream.ReadExactlyAsync(manifestBytes, cancellationToken).ConfigureAwait(false);
+                    var manifest = JsonSerializer.Deserialize<Manifest>(manifestBytes);
                     if (manifest is not { Version: 1, Identity: not null } || manifest.Identity.Length <= 0
-                        || !string.Equals(directory, EntryPath(folder, manifest.Identity.Key), StringComparison.Ordinal)) continue;
+                        || !string.Equals(key, manifest.Identity.Key, StringComparison.Ordinal) || !IsVolumeCurrent(folder)) continue;
                     using var lease = AcquireLease(manifest.Identity);
-                    await using var data = new FileStream(dataPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
-                        4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
-                    await using var journal = new FileStream(journalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite,
-                        4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                    await using var data = directory.OpenFile("content.data", FileMode.Open, FileAccess.Read);
+                    await using var journal = directory.OpenFile("ranges.journal", FileMode.Open, FileAccess.Read);
                     using var lines = new StreamReader(journal);
                     await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                     try
@@ -481,6 +489,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                         catch (EndOfStreamException) { continue; }
                         var hash = SHA256.HashData(buffer.AsSpan(0, block.Count));
                         if (!string.Equals(Convert.ToHexString(hash), block.Hash, StringComparison.Ordinal)) continue;
+                        if (!IsVolumeCurrent(folder)) break;
                         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                         try
                         {
@@ -537,10 +546,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         if (!folder.Enabled || folder.ReadOnly || !_owners.ContainsKey(folder.Id) || !IsVolumeCurrent(folder)) return false;
         try
         {
-            var drive = DriveInfo.GetDrives().Where(drive => folder.Path == drive.Name.TrimEnd(Path.DirectorySeparatorChar)
-                || folder.Path.StartsWith(drive.Name.EndsWith(Path.DirectorySeparatorChar) ? drive.Name : drive.Name + Path.DirectorySeparatorChar,
-                    StringComparison.Ordinal)).MaxBy(drive => drive.Name.Length);
-            return drive is not null && drive.AvailableFreeSpace >= requested + folder.MinFreeBytes;
+            return requested <= _roots[folder.Id].AvailableBytes - folder.MinFreeBytes;
         }
         catch (IOException) { return false; }
         catch (UnauthorizedAccessException) { return false; }
@@ -646,18 +652,23 @@ public sealed class NativeCacheStore : IAsyncDisposable
                 }
                 try
                 {
-                    var directory = EntryPath(folder, key);
-                    if (!IsVolumeCurrent(folder) || !HasSafeLayout(folder, key)) continue;
+                    if (!IsVolumeCurrent(folder)) continue;
                     // No arbitrary recursive deletion: remove our three known files only.
                     try
                     {
-                        if (Directory.Exists(directory))
+                        try
                         {
-                            File.Delete(Path.Combine(directory, "content.data"));
-                            File.Delete(Path.Combine(directory, "ranges.journal"));
-                            File.Delete(Path.Combine(directory, "manifest.json"));
-                            Directory.Delete(directory);
+                            using var shard = _roots[folder.Id].OpenDirectory($"v1/{key[..2]}");
+                            using var directory = shard.OpenDirectory(key);
+                            directory.DeleteFile("content.data");
+                            directory.DeleteFile("ranges.journal");
+                            directory.DeleteFile("manifest.json");
+                            shard.DeleteDirectory(key);
+                            shard.Flush();
                         }
+                        catch (IOException exception) when (NativeFileSystem.IsMissing(exception))
+                        { /* The anchored entry was already removed; its catalogue reservation can be reclaimed. */ }
+                        if (!IsVolumeCurrent(folder)) continue;
                         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                         try { Execute("DELETE FROM Entries WHERE Key=$key", ("$key", key)); }
                         finally { _gate.Release(); }
@@ -693,28 +704,39 @@ public sealed class NativeCacheStore : IAsyncDisposable
 
     private bool RegisterVolume(NativeCacheFolder folder)
     {
-        if (!HasSafeLayout(folder, new string('0', 64))) return false;
-        var path = Path.Combine(folder.Path, ".infinidysk-volume");
-        if (new FileInfo(path).LinkTarget is not null) return false;
-        using var lookup = Command("SELECT Volume FROM FolderIdentity WHERE Folder=$folder", ("$folder", folder.Id));
-        var expected = lookup.ExecuteScalar() as string;
-        var actual = ReadVolume(path);
-        // An already registered folder must never claim the empty directory left
-        // behind when a NAS is unmounted, including after an application restart.
-        if (expected is not null && actual != expected) return false;
-        if (actual is null)
+        var root = NativeFileSystem.PinDirectory(folder.Path);
+        var registered = false;
+        try
         {
-            if (folder.ReadOnly) return false;
-            actual = Guid.NewGuid().ToString("N");
-            using var marker = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
-            marker.Write(System.Text.Encoding.ASCII.GetBytes(actual));
-            marker.Flush(flushToDisk: true);
-            NativeFileSystem.FlushDirectory(folder.Path);
+            using var lookup = Command("SELECT Volume FROM FolderIdentity WHERE Folder=$folder", ("$folder", folder.Id));
+            var expected = lookup.ExecuteScalar() as string;
+            using var identityLookup = Command("SELECT RootIdentity FROM FolderIdentity WHERE Folder=$folder", ("$folder", folder.Id));
+            var registeredIdentity = identityLookup.ExecuteScalar() as string;
+            var actual = ReadVolume(root);
+            // An already registered folder must never claim the empty directory left
+            // behind when a NAS is unmounted, including after an application restart.
+            if (expected is not null && actual != expected) return false;
+            if (registeredIdentity is not null && registeredIdentity != root.RegistrationIdentity) return false;
+            if (actual is null)
+            {
+                if (folder.ReadOnly) return false;
+                actual = Guid.NewGuid().ToString("N");
+                using var marker = root.OpenFile(".infinidysk-volume", FileMode.CreateNew, FileAccess.Write);
+                marker.Write(System.Text.Encoding.ASCII.GetBytes(actual));
+                marker.Flush(flushToDisk: true);
+                root.Flush();
+            }
+            if (!root.IsCurrent(folder.Path)) return false;
+            Execute("INSERT OR IGNORE INTO FolderIdentity(Folder,Volume) VALUES($folder,$volume)",
+                ("$folder", folder.Id), ("$volume", actual));
+            Execute("UPDATE FolderIdentity SET RootIdentity=$identity WHERE Folder=$folder AND RootIdentity IS NULL",
+                ("$folder", folder.Id), ("$identity", root.RegistrationIdentity));
+            _volumes[folder.Id] = actual;
+            _roots[folder.Id] = root;
+            registered = true;
+            return true;
         }
-        Execute("INSERT OR IGNORE INTO FolderIdentity(Folder,Volume) VALUES($folder,$volume)",
-            ("$folder", folder.Id), ("$volume", actual));
-        _volumes[folder.Id] = actual;
-        return true;
+        finally { if (!registered) root.Dispose(); }
     }
 
     private bool IsVolumeCurrent(NativeCacheFolder folder)
@@ -722,18 +744,25 @@ public sealed class NativeCacheStore : IAsyncDisposable
         try
         {
             return _volumes.TryGetValue(folder.Id, out var expected)
-                && ReadVolume(Path.Combine(folder.Path, ".infinidysk-volume")) == expected;
+                && _roots.TryGetValue(folder.Id, out var root) && root.IsCurrent(folder.Path)
+                && ReadVolume(root) == expected;
         }
         catch (IOException) { return false; }
         catch (UnauthorizedAccessException) { return false; }
     }
 
-    private static string? ReadVolume(string path)
+    private static string? ReadVolume(NativeFileSystem.PinnedDirectory root)
     {
-        var info = new FileInfo(path);
-        if (!info.Exists || info.LinkTarget is not null || info.Length != 32) return null;
-        var text = File.ReadAllText(path);
-        return Guid.TryParseExact(text, "N", out _) ? text : null;
+        try
+        {
+            using var marker = root.OpenFile(".infinidysk-volume", FileMode.Open, FileAccess.Read);
+            if (marker.Length != 32) return null;
+            Span<byte> bytes = stackalloc byte[32];
+            marker.ReadExactly(bytes);
+            var text = System.Text.Encoding.ASCII.GetString(bytes);
+            return Guid.TryParseExact(text, "N", out _) ? text : null;
+        }
+        catch (IOException) { return null; }
     }
 
     private sealed class ActivityLease(NativeCacheStore store, string key) : IDisposable
@@ -749,15 +778,8 @@ public sealed class NativeCacheStore : IAsyncDisposable
             }
         }
     }
-    private static string EntryPath(NativeCacheFolder folder, string key) => Path.Combine(folder.Path, "v1", key[..2], key);
-    private static string DataPath(NativeCacheFolder folder, string key) => Path.Combine(EntryPath(folder, key), "content.data");
-    private static bool HasSafeLayout(NativeCacheFolder folder, string key)
-    {
-        for (var current = new DirectoryInfo(EntryPath(folder, key)); current is not null; current = current.Parent)
-            if (current.LinkTarget is not null) return false;
-        return new[] { "content.data", "manifest.json", "ranges.journal" }
-            .All(name => new FileInfo(Path.Combine(EntryPath(folder, key), name)).LinkTarget is null);
-    }
+    private NativeFileSystem.PinnedDirectory OpenEntry(NativeCacheFolder folder, string key, bool create = false)
+        => _roots[folder.Id].OpenDirectory($"v1/{key[..2]}/{key}", create);
     private static void ValidateOffset(NativeCacheIdentity identity, long offset)
     {
         if (identity.Length <= 0 || offset < 0 || offset >= identity.Length || offset % BlockSize != 0)
@@ -788,6 +810,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
             if (_disposed) return;
             _disposed = true;
             foreach (var owner in _owners.Values) await owner.DisposeAsync().ConfigureAwait(false);
+            foreach (var root in _roots.Values) root.Dispose();
             await _database.DisposeAsync().ConfigureAwait(false);
         }
         finally { _gate.Release(); _writer.Release(); }
