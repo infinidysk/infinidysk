@@ -2,8 +2,12 @@
 
 ## Attention summary [since 1.4.3](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.3){ .nzbdav-since }
 
-**Overview → Needs attention** links to files requiring action, open or recovering provider
-circuits, and degraded or offline Arr integrations. Unavailable status is shown separately
+**Overview → Needs attention** highlights files requiring action, open or recovering provider
+circuits, and degraded or offline Arr integrations. Expand an Arr warning to identify the
+affected instance and its reason. Queue warnings or errors come from the Arr app's queue;
+inspect **Activity → Queue** in that app. They do not mean the instance is offline.
+Connection settings remain available separately for unreachable instances.
+Unavailable status is shown separately
 from a successful check with no problems. The health count refreshes every minute while
 the page is visible.
 

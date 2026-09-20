@@ -10,12 +10,56 @@ using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Tests.TestUtils;
+using MemoryPack;
 
 namespace NzbWebDAV.Tests.Streams;
 
 [Collection(nameof(ConfigPathCollection))]
 public class DavMultipartFileStreamTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadAsync_EmptyPersistedMetadata_ReturnsEofWithoutNntpRequests(
+        bool usePipelinedBodyRequests)
+    {
+        var metadata = new DavMultipartFile.Meta
+        {
+            AesParams = null,
+            FileParts = [],
+        };
+        var serialized = MemoryPackSerializer.Serialize(metadata);
+        var restored = MemoryPackSerializer.Deserialize<DavMultipartFile.Meta>(serialized);
+        Assert.NotNull(restored);
+        Assert.Empty(restored.FileParts);
+        Assert.Null(restored.AesParams);
+        Assert.False(restored.IsLazy);
+
+        using var client = new FakeNntpClient(
+            new Dictionary<string, byte[]>(), useCachedYencStreams: true);
+        await using var stream = new DavMultipartFileStream(
+            new DavMultipartFile { Id = Guid.NewGuid(), Metadata = restored },
+            client,
+            articleBufferSize: 0,
+            resolver: null,
+            usePipelinedBodyRequests: usePipelinedBodyRequests,
+            fileName: "empty.txt");
+
+        Assert.Equal(0L, stream.Length);
+        Assert.Equal(0L, stream.Position);
+        Assert.Equal(0, await stream.ReadAsync(new byte[8]));
+        Assert.Equal(0, await stream.ReadAsync(Memory<byte>.Empty));
+        Assert.Equal(0L, stream.Seek(0, SeekOrigin.Begin));
+        Assert.Equal(0L, stream.Seek(0, SeekOrigin.End));
+        Assert.Equal(0, await stream.ReadAsync(new byte[1]));
+        Assert.Equal(0L, stream.Position);
+        Assert.Throws<ArgumentOutOfRangeException>(() => stream.Seek(1, SeekOrigin.Begin));
+        Assert.Equal(0, client.BodyRequestCount);
+        Assert.Equal(0, client.BatchRequestCount);
+        Assert.Equal(0, client.HeaderProbeCount);
+        Assert.Empty(client.RequestedSegmentIds);
+    }
+
     [Fact]
     public async Task ReadAsync_ProofBackedPendingPartsAreNotEagerlyOpened()
     {

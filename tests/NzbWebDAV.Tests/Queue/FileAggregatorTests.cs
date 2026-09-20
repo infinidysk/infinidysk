@@ -73,4 +73,62 @@ public class FileAggregatorTests : IDisposable
         Assert.Equal(historyItemId, leaf.NzbBlobId);
         Assert.NotEqual(leaf.NzbBlobId, leaf.ArrDownloadId);
     }
+
+    [Fact]
+    public void UpdateDatabase_SevenZipEmptyMember_PreservesNestedFileAndBlob()
+    {
+        var historyItemId = Guid.NewGuid();
+        var arrDownloadId = Guid.NewGuid();
+        var mount = DavItem.New(
+            Guid.NewGuid(),
+            DavItem.ContentFolder,
+            "release",
+            null,
+            DavItem.ItemType.Directory,
+            DavItem.ItemSubType.Directory,
+            null,
+            null,
+            historyItemId,
+            null,
+            arrDownloadId: arrDownloadId);
+        _context.Items.Add(mount);
+
+        new SevenZipAggregator(_dbClient, mount, checkedFullHealth: false).UpdateDatabase(
+        [
+            new SevenZipProcessor.Result
+            {
+                SevenZipFiles =
+                [
+                    new SevenZipProcessor.SevenZipFile
+                    {
+                        ArchiveSetId = "empty-sevenzip-regression",
+                        PathWithinArchive = "nested/marker.txt",
+                        DavMultipartFileMeta = new DavMultipartFile.Meta
+                        {
+                            AesParams = null,
+                            FileParts = [],
+                        },
+                        ReleaseDate = DateTimeOffset.UnixEpoch,
+                        SniffedVideoExtension = null,
+                    },
+                ],
+            },
+        ]);
+
+        var directory = Assert.Single(_context.Items.Local, item =>
+            item.ParentId == mount.Id && item.Type == DavItem.ItemType.Directory);
+        Assert.Equal("nested", directory.Name);
+        var leaf = Assert.Single(_context.Items.Local, item =>
+            item.ParentId == directory.Id && item.Type == DavItem.ItemType.UsenetFile);
+        Assert.Equal("marker.txt", leaf.Name);
+        Assert.Equal(DavItem.ItemSubType.MultipartFile, leaf.SubType);
+        Assert.Equal(0L, leaf.FileSize);
+        Assert.Equal(historyItemId, leaf.HistoryItemId);
+        Assert.Equal(historyItemId, leaf.NzbBlobId);
+        Assert.Equal(arrDownloadId, leaf.ArrDownloadId);
+        var blob = Assert.Single(_context.BlobMultipartFiles);
+        Assert.Equal(blob.Id, leaf.FileBlobId);
+        Assert.Empty(blob.Metadata.FileParts);
+        Assert.Null(blob.Metadata.AesParams);
+    }
 }

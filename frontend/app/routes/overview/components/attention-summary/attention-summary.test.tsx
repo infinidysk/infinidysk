@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttentionSummary } from "./attention-summary";
@@ -12,6 +12,49 @@ afterEach(() => {
 });
 
 describe("AttentionSummary", () => {
+  it.each([
+    ["degraded", true, false, "This app reports queue warnings."],
+    ["degraded", false, true, "This app reports queue errors."],
+    ["degraded", true, true, "This app reports queue warnings and errors."],
+    ["degraded", false, false, "Imports are taking longer than expected."],
+    ["offline", false, false, "InfiniDysk could not poll this instance."],
+  ] as const)(
+    "explains %s status with warnings=%s and errors=%s in place",
+    async (status, hasWarnings, hasErrors, reason) => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
+      const data = mockArrHealthData();
+      data.instances = [
+        {
+          ...data.instances[0]!,
+          name: "Home Radarr",
+          status,
+          hasWarnings,
+          hasErrors,
+          queueCount: 1,
+          awaitingCount: 0,
+          lastError: status === "offline" ? "Connection refused" : null,
+        },
+      ];
+      data.awaiting = [];
+      render(
+        <MemoryRouter>
+          <AttentionSummary providers={[]} arrHealth={data} hasConfiguredArrs />
+        </MemoryRouter>,
+      );
+      await screen.findByText("Health status unavailable");
+      const summary = screen.getByText("1 Arr integration degraded or offline").closest("summary")!;
+      expect(summary.closest("a")).toBeNull();
+      fireEvent.click(summary);
+      expect(summary.closest("details")?.open).toBe(true);
+      expect(screen.getByText("Home Radarr", { exact: false })).toBeTruthy();
+      expect(screen.getByText(reason, { exact: false })).toBeTruthy();
+      expect(
+        screen.getByRole("link", { name: "Arr connection settings" }).getAttribute("href"),
+      ).toBe("/settings?tab=arrs");
+      if (status === "offline") expect(screen.getByText("Connection refused")).toBeTruthy();
+    },
+  );
+
   it("links actionable health results to Health without claiming unavailable providers are healthy", async () => {
     const fetchMock = vi
       .fn()
