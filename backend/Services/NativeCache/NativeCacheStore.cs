@@ -23,10 +23,12 @@ public sealed class NativeCacheStore : IAsyncDisposable
     private readonly Dictionary<string, string> _volumes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _leases = new(StringComparer.Ordinal);
     private readonly HashSet<string> _evicting = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _scanning = new(StringComparer.Ordinal);
     private readonly Dictionary<(string Key, long Offset), FillState> _fills = [];
     private readonly Dictionary<string, WarmReservation> _reservations = new(StringComparer.Ordinal);
     private readonly Lock _leaseLock = new();
     private bool _disposed;
+    internal Func<string, CancellationToken, Task>? BeforeScanReadAsync { get; init; }
 
     public NativeCacheStore(string cataloguePath, IReadOnlyList<NativeCacheFolder> folders)
     {
@@ -162,16 +164,18 @@ public sealed class NativeCacheStore : IAsyncDisposable
     }
 
     public async Task<bool> WriteBlockAsync(NativeCacheIdentity identity, long offset, ReadOnlyMemory<byte> data,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool waitForWriter = false)
     {
         ValidateOffset(identity, offset);
         if (data.Length != Math.Min(BlockSize, identity.Length - offset))
             throw new ArgumentException("Only complete integrity blocks may be published.", nameof(data));
         using var lease = AcquireLease(identity);
-        await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (waitForWriter) await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
+        else if (!await _writer.WaitAsync(0, cancellationToken).ConfigureAwait(false)) return false;
         var catalogueHeld = false;
         try
         {
+            lock (_leaseLock) if (_scanning.Contains(identity.Key)) return false;
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             catalogueHeld = true;
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -410,6 +414,21 @@ public sealed class NativeCacheStore : IAsyncDisposable
         finally { _gate.Release(); }
     }
 
+    public async Task<long> GetMissingRangeBytesAsync(NativeCacheIdentity identity, long start, long end, CancellationToken cancellationToken = default)
+    {
+        if (start < 0 || end < start || end > identity.Length || start % BlockSize != 0 || (end != identity.Length && end % BlockSize != 0))
+            throw new ArgumentOutOfRangeException(nameof(start), "Missing-byte queries require complete integrity-block bounds.");
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            using var query = Command("SELECT COALESCE(SUM(Count),0) FROM Blocks WHERE Key=$key AND Offset>=$start AND Offset<$end",
+                ("$key", identity.Key), ("$start", start), ("$end", end));
+            return Math.Max(0, end - start - (long)query.ExecuteScalar()!);
+        }
+        finally { _gate.Release(); }
+    }
+
     private long ReservedBytes(string folder, string? except = null)
     {
         lock (_leaseLock) return _reservations.Where(pair => pair.Key != except && pair.Value.Folder == folder).Sum(pair => pair.Value.Remaining);
@@ -451,31 +470,59 @@ public sealed class NativeCacheStore : IAsyncDisposable
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (key.Length != 64 || !key.All(char.IsAsciiHexDigit) || !key.StartsWith(shardName, StringComparison.Ordinal)) continue;
-                await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
+                var writerHeld = false;
+                IDisposable? scanLease = null;
+                var scanning = false;
                 try
                 {
+                    // Admit by the validated directory key before touching manifest/data.
+                    // Eviction cannot unlink open-but-not-yet-leased scan handles, and a
+                    // first publication cannot race manifest parsing.
+                    await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    writerHeld = true;
+                    lock (_leaseLock)
+                    {
+                        if (!_scanning.Add(key)) continue;
+                        scanning = true;
+                        scanLease = AcquireKeyLease(key);
+                    }
+                    _writer.Release();
+                    writerHeld = false;
+                    if (BeforeScanReadAsync is { } beforeRead) await beforeRead(key, cancellationToken).ConfigureAwait(false);
                     using var directory = shard.OpenDirectory(key);
                     await using var manifestStream = directory.OpenFile("manifest.json", FileMode.Open, FileAccess.Read);
                     if (manifestStream.Length > 64 * 1024) continue;
                     var manifestBytes = new byte[checked((int)manifestStream.Length)];
                     await manifestStream.ReadExactlyAsync(manifestBytes, cancellationToken).ConfigureAwait(false);
                     var manifest = JsonSerializer.Deserialize<Manifest>(manifestBytes);
-                    if (manifest is not { Version: 1, Identity: not null } || manifest.Identity.Length <= 0
+                    if (manifest is not { Version: 1, Identity: { ItemId: not null, Generation: not null } } || manifest.Identity.Length <= 0
                         || !string.Equals(key, manifest.Identity.Key, StringComparison.Ordinal) || !IsVolumeCurrent(folder)) continue;
-                    using var lease = AcquireLease(manifest.Identity);
                     await using var data = directory.OpenFile("content.data", FileMode.Open, FileAccess.Read);
                     await using var journal = directory.OpenFile("ranges.journal", FileMode.Open, FileAccess.Read);
-                    using var lines = new StreamReader(journal);
+                    var physicalBytes = checked(directory.AllocatedBytes("content.data") + directory.AllocatedBytes("manifest.json")
+                        + directory.AllocatedBytes("ranges.journal") + EntryOverhead);
                     await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                     try
                     {
+                        ObjectDisposedException.ThrowIf(_disposed, this);
                         using var owner = Command("SELECT Folder FROM Entries WHERE Key=$key", ("$key", manifest.Identity.Key));
-                        if (owner.ExecuteScalar() is string existingFolder && existingFolder != folder.Id) continue;
-                        Execute("INSERT OR IGNORE INTO Entries(Key,Folder,Length,Bytes,Access,ItemId) VALUES($key,$folder,$length,$bytes,$access,$item)",
+                        if (owner.ExecuteScalar() is string existingFolder && existingFolder != folder.Id)
+                        {
+                            if (_folders.Any(candidate => candidate.Id == existingFolder)) continue;
+                            // Only an explicit scan may reassign an absent configuration owner.
+                            // Drop its local coverage before verifying the newly registered root.
+                            Execute("DELETE FROM Entries WHERE Key=$key", ("$key", key));
+                        }
+                        Execute("INSERT OR IGNORE INTO Entries(Key,Folder,Length,Bytes,Access,ItemId,Dirty) VALUES($key,$folder,$length,$bytes,$access,$item,1)",
                             ("$key", manifest.Identity.Key), ("$folder", folder.Id), ("$length", manifest.Identity.Length),
-                            ("$bytes", EntryOverhead), ("$access", DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 300), ("$item", manifest.Identity.ItemId));
+                            ("$bytes", physicalBytes), ("$access", DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 300), ("$item", manifest.Identity.ItemId));
+                        Execute("UPDATE Entries SET Bytes=MAX(Bytes,$bytes),Dirty=1 WHERE Key=$key", ("$key", key), ("$bytes", physicalBytes));
+                        // Rebuild coverage from this scan's verified bytes; stale catalogue
+                        // blocks must not survive a failed checksum or a truncated data file.
+                        Execute("DELETE FROM Blocks WHERE Key=$key", ("$key", key));
                     }
                     finally { _gate.Release(); }
+                    using var lines = new StreamReader(journal);
                     while (await ReadJournalLineAsync(lines, cancellationToken).ConfigureAwait(false) is { } line)
                     {
                         JournalBlock? block;
@@ -493,27 +540,41 @@ public sealed class NativeCacheStore : IAsyncDisposable
                         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                         try
                         {
-                            using var transaction = _database.BeginTransaction();
+                            ObjectDisposedException.ThrowIf(_disposed, this);
                             using var insert = Command("INSERT OR IGNORE INTO Blocks(Key,Offset,Count,Hash) VALUES($key,$offset,$count,$hash)",
                                 ("$key", manifest.Identity.Key), ("$offset", block.Offset), ("$count", block.Count), ("$hash", hash));
-                            insert.Transaction = transaction;
-                            if (insert.ExecuteNonQuery() > 0)
-                            {
-                                using var update = Command("UPDATE Entries SET Bytes=Bytes+$bytes WHERE Key=$key",
-                                    ("$key", manifest.Identity.Key), ("$bytes", RoundAllocation(block.Count)));
-                                update.Transaction = transaction;
-                                update.ExecuteNonQuery();
-                            }
-                            transaction.Commit();
+                            insert.ExecuteNonQuery();
                         }
                         finally { _gate.Release(); }
                     }
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!IsVolumeCurrent(folder)) continue;
+                    physicalBytes = checked(directory.AllocatedBytes("content.data") + directory.AllocatedBytes("manifest.json")
+                        + directory.AllocatedBytes("ranges.journal") + EntryOverhead);
+                    await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    writerHeld = true;
+                    await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        ObjectDisposedException.ThrowIf(_disposed, this);
+                        Execute("UPDATE Entries SET Bytes=$bytes,Dirty=0 WHERE Key=$key AND Folder=$folder",
+                            ("$bytes", physicalBytes), ("$key", key), ("$folder", folder.Id));
+                    }
+                    finally { _gate.Release(); }
                     imported++;
                 }
                 catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
                 catch (JsonException) { }
-                finally { _writer.Release(); }
+                finally
+                {
+                    lock (_leaseLock)
+                    {
+                        if (scanning) _scanning.Remove(key);
+                        scanLease?.Dispose();
+                    }
+                    if (writerHeld) _writer.Release();
+                }
             }
         }
         return imported;
@@ -567,8 +628,10 @@ public sealed class NativeCacheStore : IAsyncDisposable
     private static long RoundAllocation(int bytes) => ((bytes + 65535L) / 65536 * 65536) + 4096;
 
     public IDisposable AcquireLease(NativeCacheIdentity identity)
+        => AcquireKeyLease(identity.Key);
+
+    private IDisposable AcquireKeyLease(string key)
     {
-        var key = identity.Key;
         lock (_leaseLock) _leases[key] = _leases.GetValueOrDefault(key) + 1;
         return new ActivityLease(this, key);
     }
