@@ -88,11 +88,13 @@ public sealed class NativeCacheConcurrencyTests : IDisposable
         using var database = new SqliteConnection($"Data Source={catalogue};Pooling=False");
         database.Open();
         using var command = database.CreateCommand();
-        command.CommandText = "DELETE FROM Blocks; UPDATE Entries SET Bytes=Bytes+1000000,Dirty=1";
+        command.CommandText = "DELETE FROM Blocks; UPDATE Entries SET Bytes=Bytes+1000000,Dirty=1,PendingBytes=1000000";
         command.ExecuteNonQuery();
         Assert.Equal(1, await store.ScanAsync(folder.Id));
         Assert.Equal(exact, (await store.GetStatusAsync()).Single().CommittedBytes);
         command.CommandText = "SELECT Dirty FROM Entries";
+        Assert.Equal(0L, command.ExecuteScalar());
+        command.CommandText = "SELECT PendingBytes FROM Entries";
         Assert.Equal(0L, command.ExecuteScalar());
         Assert.Equal(1, await store.ScanAsync(folder.Id));
         Assert.Equal(exact, (await store.GetStatusAsync()).Single().CommittedBytes);

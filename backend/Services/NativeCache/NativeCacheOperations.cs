@@ -96,11 +96,12 @@ public sealed class NativeCacheOperations : BackgroundService
     private async Task<int> ClearAsync(string folderId, CancellationToken cancellationToken)
     {
         var total = 0;
+        _native.Store!.ResetClearCursor(folderId);
         while (true)
         {
             var count = await _native.Store!.EvictAsync(folderId, clear: true, cancellationToken).ConfigureAwait(false);
             total += count;
-            if (count == 0) return total;
+            if (count == 0 && !_native.Store.HasPendingClearPage(folderId)) return total;
             await Task.Yield();
         }
     }

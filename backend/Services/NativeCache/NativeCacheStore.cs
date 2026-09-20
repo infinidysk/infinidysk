@@ -24,11 +24,14 @@ public sealed class NativeCacheStore : IAsyncDisposable
     private readonly Dictionary<string, int> _leases = new(StringComparer.Ordinal);
     private readonly HashSet<string> _evicting = new(StringComparer.Ordinal);
     private readonly HashSet<string> _scanning = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string Folder, bool Clear, bool Pressure), (long Access, string Key)> _evictionCursors = [];
+    private readonly HashSet<string> _pressuredFolders = new(StringComparer.Ordinal);
     private readonly Dictionary<(string Key, long Offset), FillState> _fills = [];
     private readonly Dictionary<string, WarmReservation> _reservations = new(StringComparer.Ordinal);
     private readonly Lock _leaseLock = new();
     private bool _disposed;
     internal Func<string, CancellationToken, Task>? BeforeScanReadAsync { get; init; }
+    internal Func<string, long>? AvailableBytesOverride { get; init; }
 
     public NativeCacheStore(string cataloguePath, IReadOnlyList<NativeCacheFolder> folders)
     {
@@ -52,6 +55,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                 Pinned INTEGER NOT NULL DEFAULT 0, Dirty INTEGER NOT NULL DEFAULT 0,
                 ItemId TEXT NOT NULL DEFAULT '',VerifiedBytes INTEGER NOT NULL DEFAULT 0);
             CREATE INDEX IF NOT EXISTS EntryEviction ON Entries(Folder, Pinned, Access);
+            CREATE INDEX IF NOT EXISTS EntryEvictionCursor ON Entries(Folder, Pinned, Access, Key);
             CREATE INDEX IF NOT EXISTS EntryPage ON Entries(Folder,Key);
             CREATE TABLE IF NOT EXISTS FolderTotals(Folder TEXT PRIMARY KEY, Bytes INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS FolderIdentity(Folder TEXT PRIMARY KEY, Volume TEXT NOT NULL);
@@ -71,6 +75,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                 PRIMARY KEY(Key, Offset));
             """);
         EnsureMetadataColumns();
+        Execute("CREATE INDEX IF NOT EXISTS EntryPendingReservation ON Entries(Folder,PendingBytes) WHERE PendingBytes>0");
         Execute("""
             CREATE TRIGGER IF NOT EXISTS BlockAdded AFTER INSERT ON Blocks BEGIN
                 UPDATE Entries SET VerifiedBytes=VerifiedBytes+NEW.Count WHERE Key=NEW.Key;
@@ -190,10 +195,11 @@ public sealed class NativeCacheStore : IAsyncDisposable
             lock (_leaseLock) reservedFolder = _reservations.GetValueOrDefault(identity.Key)?.Folder;
             var candidates = _folders.Where(candidate => (folderId is null || candidate.Id == folderId)
                 && (reservedFolder is null || candidate.Id == reservedFolder)
-                && HasQuota(candidate, required, identity.Key)).ToArray();
+                && HasQuota(candidate, required, identity.Key))
+                .Select(candidate => (Folder: candidate, FreeRequired: FreeSpaceRequirement(candidate, required, identity.Key))).ToArray();
             _gate.Release();
             catalogueHeld = false;
-            var folder = candidates.FirstOrDefault(candidate => CanUseFolder(candidate, required));
+            var folder = candidates.FirstOrDefault(candidate => CanUseFolder(candidate.Folder, candidate.FreeRequired)).Folder;
             if (folder is null) return false;
 
             using var directory = OpenEntry(folder, identity.Key, create: true);
@@ -221,7 +227,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
 
             // Reserve before disk IO. Failed writes deliberately retain their reservation until
             // reconciliation/eviction, so interrupted writes cannot silently exceed the quota.
-            Execute("UPDATE Entries SET Bytes=Bytes+$bytes WHERE Key=$key", ("$bytes", allocation), ("$key", identity.Key));
+            Execute("UPDATE Entries SET Bytes=Bytes+$bytes,PendingBytes=PendingBytes+$bytes WHERE Key=$key", ("$bytes", allocation), ("$key", identity.Key));
 
             var hash = SHA256.HashData(data.Span);
             // A slow NAS write must not hold the local catalogue gate or stall hits
@@ -255,7 +261,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                 insert.Transaction = transaction;
                 insert.ExecuteNonQuery();
             }
-            using (var update = Command("UPDATE Entries SET Dirty=0,Bytes=$bytes WHERE Key=$key", ("$key", identity.Key), ("$bytes", allocated)))
+            using (var update = Command("UPDATE Entries SET Dirty=0,PendingBytes=0,Bytes=$bytes WHERE Key=$key", ("$key", identity.Key), ("$bytes", allocated)))
             {
                 update.Transaction = transaction;
                 update.ExecuteNonQuery();
@@ -357,6 +363,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         using (var reader = command.ExecuteReader())
             while (reader.Read()) columns.Add(reader.GetString(1));
         if (!columns.Contains("ItemId")) Execute("ALTER TABLE Entries ADD COLUMN ItemId TEXT NOT NULL DEFAULT ''");
+        if (!columns.Contains("PendingBytes")) Execute("ALTER TABLE Entries ADD COLUMN PendingBytes INTEGER NOT NULL DEFAULT 0");
         if (!columns.Contains("VerifiedBytes"))
         {
             Execute("ALTER TABLE Entries ADD COLUMN VerifiedBytes INTEGER NOT NULL DEFAULT 0");
@@ -370,7 +377,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            NativeCacheFolder[] candidates;
+            (NativeCacheFolder Folder, long FreeRequired)[] candidates;
             long required;
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
@@ -381,10 +388,11 @@ public sealed class NativeCacheStore : IAsyncDisposable
                 var existing = lookup.ExecuteScalar() as string;
                 required = checked(bytesToFetch + ((bytesToFetch + BlockSize - 1) / BlockSize) * (65536 + 4096)
                     + (existing is null ? EntryOverhead : 0));
-                candidates = _folders.Where(folder => (existing is null || folder.Id == existing) && HasQuota(folder, required)).ToArray();
+                candidates = _folders.Where(folder => (existing is null || folder.Id == existing) && HasQuota(folder, required))
+                    .Select(folder => (folder, FreeSpaceRequirement(folder, required))).ToArray();
             }
             finally { _gate.Release(); }
-            var selected = candidates.FirstOrDefault(folder => CanUseFolder(folder, required + ReservedBytes(folder.Id)));
+            var selected = candidates.FirstOrDefault(candidate => CanUseFolder(candidate.Folder, candidate.FreeRequired)).Folder;
             if (selected is null) return null;
             var reservation = new WarmReservation(this, identity.Key, selected.Id, required, AcquireLease(identity));
             lock (_leaseLock) _reservations.Add(identity.Key, reservation);
@@ -557,7 +565,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                     try
                     {
                         ObjectDisposedException.ThrowIf(_disposed, this);
-                        Execute("UPDATE Entries SET Bytes=$bytes,Dirty=0 WHERE Key=$key AND Folder=$folder",
+                        Execute("UPDATE Entries SET Bytes=$bytes,Dirty=0,PendingBytes=0 WHERE Key=$key AND Folder=$folder",
                             ("$bytes", physicalBytes), ("$key", key), ("$folder", folder.Id));
                     }
                     finally { _gate.Release(); }
@@ -630,10 +638,31 @@ public sealed class NativeCacheStore : IAsyncDisposable
         if (!folder.Enabled || folder.ReadOnly || !_owners.ContainsKey(folder.Id) || !IsVolumeCurrent(folder)) return false;
         try
         {
-            return requested <= _roots[folder.Id].AvailableBytes - folder.MinFreeBytes;
+            return requested <= (AvailableBytesOverride?.Invoke(folder.Id) ?? _roots[folder.Id].AvailableBytes);
         }
         catch (IOException) { return false; }
         catch (UnauthorizedAccessException) { return false; }
+    }
+
+    // Called under the local catalogue gate. Free space is already net of physical
+    // files, so only warm intent and uncertain pending allocation are added.
+    // Never charge an entire physically allocated file again just because it is dirty.
+    private long FreeSpaceRequirement(NativeCacheFolder folder, long requested, string? reservationKey = null)
+    {
+        var device = _roots[folder.Id].DeviceIdentity;
+        var peers = _folders.Where(candidate => candidate.Enabled && _roots.TryGetValue(candidate.Id, out var root)
+            && root.DeviceIdentity == device).ToArray();
+        var ids = peers.Select(candidate => candidate.Id).ToHashSet(StringComparer.Ordinal);
+        var required = (UInt128)(ulong)requested + (ulong)peers.Max(candidate => candidate.MinFreeBytes);
+        lock (_leaseLock)
+            foreach (var reservation in _reservations)
+                if (reservation.Key != reservationKey && ids.Contains(reservation.Value.Folder)) required += (ulong)reservation.Value.Remaining;
+        foreach (var id in ids)
+        {
+            using var dirty = Command("SELECT COALESCE(SUM(PendingBytes),0) FROM Entries WHERE PendingBytes>0 AND Folder=$folder", ("$folder", id));
+            required += (ulong)(long)dirty.ExecuteScalar()!;
+        }
+        return required >= long.MaxValue ? long.MaxValue : (long)required;
     }
 
     private async Task InvalidateBlockAsync(string key, long offset, byte[] hash, CancellationToken cancellationToken)
@@ -708,62 +737,120 @@ public sealed class NativeCacheStore : IAsyncDisposable
     }
 
     /// <summary>Deletes only indexed application-owned entries, in bounded pages. Active and pinned entries are retained.</summary>
-    public async Task<int> EvictAsync(string folderId, bool clear = false, CancellationToken cancellationToken = default)
+    public Task<int> EvictAsync(string folderId, bool clear = false, CancellationToken cancellationToken = default)
+        => EvictCoreAsync(folderId, clear, pressure: false, cancellationToken);
+
+    internal bool HasPendingClearPage(string folderId)
+    { lock (_leaseLock) return _evictionCursors.ContainsKey((folderId, true, false)); }
+
+    internal void ResetClearCursor(string folderId)
+    { lock (_leaseLock) _evictionCursors.Remove((folderId, true, false)); }
+
+    private async Task<int> EvictCoreAsync(string folderId, bool clear, bool pressure, CancellationToken cancellationToken)
     {
+        var cursorId = (folderId, clear, pressure);
         var folder = _folders.FirstOrDefault(folder => folder.Id == folderId);
-        if (folder is null || folder.ReadOnly || !_owners.ContainsKey(folder.Id) || !IsVolumeCurrent(folder)) return 0;
-        if (!clear && folder.MaxAgeDays == 0) return 0;
+        if (folder is null || folder.ReadOnly || !_owners.ContainsKey(folder.Id) || !IsVolumeCurrent(folder)
+            || (!clear && folder.MaxAgeDays == 0))
+        {
+            lock (_leaseLock) _evictionCursors.Remove(cursorId);
+            return 0;
+        }
         await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var cutoff = DateTimeOffset.UtcNow.AddDays(-folder.MaxAgeDays).ToUnixTimeSeconds() / 300;
-            var keys = new List<string>(64);
-            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-            using var query = Command("SELECT Key FROM Entries WHERE Folder=$folder AND Pinned=0 AND ($clear=1 OR Access<$cutoff) ORDER BY Access LIMIT 64",
-                ("$folder", folderId), ("$clear", clear ? 1 : 0), ("$cutoff", cutoff));
-            using var reader = query.ExecuteReader();
-            while (reader.Read()) keys.Add(reader.GetString(0));
-            }
-            finally { _gate.Release(); }
             var deleted = 0;
-            foreach (var key in keys)
+            (long Access, string Key) cursor;
+            lock (_leaseLock) cursor = _evictionCursors.GetValueOrDefault(cursorId, (long.MinValue, ""));
+            var afterAccess = cursor.Access;
+            var afterKey = cursor.Key;
+            var examined = 0;
+            while (deleted < 64 && examined < 256)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                lock (_leaseLock)
-                {
-                    if (_leases.ContainsKey(key)) continue;
-                    _evicting.Add(key);
-                }
+                var keys = new List<(string Key, long Access)>(64);
+                await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    if (!IsVolumeCurrent(folder)) continue;
-                    // No arbitrary recursive deletion: remove our three known files only.
+                    using var query = Command("""
+                        SELECT Key,Access FROM Entries WHERE Folder=$folder AND Pinned=0 AND ($clear=1 OR Access<$cutoff)
+                        AND (Access>$afterAccess OR (Access=$afterAccess AND Key>$afterKey)) ORDER BY Access,Key LIMIT 64
+                        """, ("$folder", folderId), ("$clear", clear ? 1 : 0), ("$cutoff", cutoff),
+                        ("$afterAccess", afterAccess), ("$afterKey", afterKey));
+                    using var reader = query.ExecuteReader();
+                    while (reader.Read()) keys.Add((reader.GetString(0), reader.GetInt64(1)));
+                }
+                finally { _gate.Release(); }
+                if (keys.Count == 0)
+                {
+                    lock (_leaseLock) _evictionCursors.Remove(cursorId);
+                    break;
+                }
+                foreach (var candidate in keys)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (pressure && !await NeedsPressureAsync(folder, lowWater: true, cancellationToken).ConfigureAwait(false))
+                    {
+                        lock (_leaseLock)
+                        {
+                            _evictionCursors.Remove(cursorId);
+                            _pressuredFolders.Remove(folderId);
+                        }
+                        return deleted;
+                    }
+                    examined++;
+                    afterAccess = candidate.Access;
+                    afterKey = candidate.Key;
+                    lock (_leaseLock) _evictionCursors[cursorId] = (afterAccess, afterKey);
+                    var key = candidate.Key;
+                    lock (_leaseLock)
+                    {
+                        if (_leases.ContainsKey(key)) continue;
+                        _evicting.Add(key);
+                    }
                     try
                     {
+                        if (!IsVolumeCurrent(folder))
+                        {
+                            lock (_leaseLock) _evictionCursors.Remove(cursorId);
+                            return deleted;
+                        }
+                        // No arbitrary recursive deletion: remove our three known files only.
                         try
                         {
-                            using var shard = _roots[folder.Id].OpenDirectory($"v1/{key[..2]}");
-                            using var directory = shard.OpenDirectory(key);
-                            directory.DeleteFile("content.data");
-                            directory.DeleteFile("ranges.journal");
-                            directory.DeleteFile("manifest.json");
-                            shard.DeleteDirectory(key);
-                            shard.Flush();
+                            try
+                            {
+                                using var shard = _roots[folder.Id].OpenDirectory($"v1/{key[..2]}");
+                                using var directory = shard.OpenDirectory(key);
+                                directory.DeleteFile("content.data");
+                                directory.DeleteFile("ranges.journal");
+                                directory.DeleteFile("manifest.json");
+                                shard.DeleteDirectory(key);
+                                shard.Flush();
+                            }
+                            catch (IOException exception) when (NativeFileSystem.IsMissing(exception))
+                            { /* Anchored payload was already removed; reclaim only while its root remains current. */ }
+                            if (!IsVolumeCurrent(folder))
+                            {
+                                lock (_leaseLock) _evictionCursors.Remove(cursorId);
+                                return deleted;
+                            }
+                            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                            try { Execute("DELETE FROM Entries WHERE Key=$key", ("$key", key)); }
+                            finally { _gate.Release(); }
+                            deleted++;
                         }
-                        catch (IOException exception) when (NativeFileSystem.IsMissing(exception))
-                        { /* The anchored entry was already removed; its catalogue reservation can be reclaimed. */ }
-                        if (!IsVolumeCurrent(folder)) continue;
-                        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-                        try { Execute("DELETE FROM Entries WHERE Key=$key", ("$key", key)); }
-                        finally { _gate.Release(); }
-                        deleted++;
+                        catch (IOException) { }
+                        catch (UnauthorizedAccessException) { }
                     }
-                    catch (IOException) { }
-                    catch (UnauthorizedAccessException) { }
+                    finally { lock (_leaseLock) _evicting.Remove(key); }
+                    if (deleted == 64) break;
                 }
-                finally { lock (_leaseLock) _evicting.Remove(key); }
+                if (keys.Count < 64 && deleted < 64)
+                {
+                    lock (_leaseLock) _evictionCursors.Remove(cursorId);
+                    break;
+                }
             }
             return deleted;
         }
@@ -773,19 +860,37 @@ public sealed class NativeCacheStore : IAsyncDisposable
     public async Task<int> EvictPressureAsync(string folderId, CancellationToken cancellationToken = default)
     {
         var folder = _folders.FirstOrDefault(candidate => candidate.Id == folderId);
-        if (folder is null) return 0;
+        if (folder is null || !_owners.ContainsKey(folder.Id)) return 0;
+        bool continuing;
+        lock (_leaseLock) continuing = _pressuredFolders.Contains(folderId);
+        if (await NeedsPressureAsync(folder, lowWater: continuing, cancellationToken).ConfigureAwait(false))
+        {
+            lock (_leaseLock) _pressuredFolders.Add(folderId);
+            return await EvictCoreAsync(folderId, clear: true, pressure: true, cancellationToken).ConfigureAwait(false);
+        }
+        lock (_leaseLock)
+        {
+            _evictionCursors.Remove((folderId, true, true));
+            _pressuredFolders.Remove(folderId);
+        }
+        return 0;
+    }
+
+    private async Task<bool> NeedsPressureAsync(NativeCacheFolder folder, bool lowWater, CancellationToken cancellationToken)
+    {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         bool pressure;
+        long freeRequired;
         try
         {
             using var total = Command("SELECT Bytes FROM FolderTotals WHERE Folder=$folder", ("$folder", folder.Id));
-            var bytes = total.ExecuteScalar() as long? ?? 0;
-            pressure = bytes >= folder.MaxBytes * 0.9 || !HasQuota(folder, BlockSize + EntryOverhead);
+            var bytes = (decimal)(total.ExecuteScalar() as long? ?? 0) + ReservedBytes(folder.Id);
+            var nextBlock = Math.Min(folder.MaxBytes, BlockSize + EntryOverhead);
+            pressure = (lowWater ? bytes > folder.MaxBytes * 0.8m : bytes >= folder.MaxBytes * 0.9m) || !HasQuota(folder, nextBlock);
+            freeRequired = FreeSpaceRequirement(folder, nextBlock);
         }
         finally { _gate.Release(); }
-        // One bounded page per maintenance tick; never a full-library sweep.
-        pressure |= !CanUseFolder(folder, BlockSize + EntryOverhead);
-        return pressure ? await EvictAsync(folderId, clear: true, cancellationToken).ConfigureAwait(false) : 0;
+        return pressure || !CanUseFolder(folder, freeRequired);
     }
 
     private bool RegisterVolume(NativeCacheFolder folder)
