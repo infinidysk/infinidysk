@@ -112,6 +112,37 @@ public class UsenetStreamingClientConfigChangeTests
     }
 
     [Fact]
+    public void ProviderSave_DoesNotActivatePendingCacheMode()
+    {
+        var cacheDirectory = Path.Combine(Path.GetTempPath(), "cache-mode-client-" + Guid.NewGuid().ToString("N"));
+        var config = new ConfigManager();
+        config.UpdateValues([
+            ProviderItem(),
+            new ConfigItem { ConfigName = ConfigKeys.UsenetWarmConnectionsEnabled, ConfigValue = "false" },
+            new ConfigItem { ConfigName = ConfigKeys.UsenetSegmentCachePath, ConfigValue = cacheDirectory },
+        ]);
+        using var metrics = new MetricsWriter();
+        var statistics = new SegmentCacheStatistics();
+        using var client = new UsenetStreamingClient(config, new WebsocketManager(),
+            new ProviderUsageTracker(), metrics, new ProviderBytesTracker(), new StreamTraceBuffer(100),
+            new ActiveReadRegistry(), segmentCacheStatistics: statistics);
+        Assert.False(statistics.GetSnapshot().Enabled);
+        config.UpdateValues([
+            new ConfigItem { ConfigName = ConfigKeys.UsenetSegmentCacheEnabled, ConfigValue = "true" },
+        ]);
+        config.UpdateValues([ProviderItem()]);
+        try
+        {
+            Assert.False(statistics.GetSnapshot().Enabled);
+        }
+        finally
+        {
+            client.Dispose();
+            if (Directory.Exists(cacheDirectory)) Directory.Delete(cacheDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void SavingTimeoutOrReconnectDelay_DoesNotRebuildPools_UntilProviderSave()
     {
         var config = new ConfigManager();

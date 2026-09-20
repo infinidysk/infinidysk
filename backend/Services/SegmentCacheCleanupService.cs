@@ -6,15 +6,16 @@ using Serilog;
 namespace NzbWebDAV.Services;
 
 /// <summary>
-/// Removes leftover on-disk segment-cache files at startup when the segment cache is
-/// disabled. The cache wrapper only prunes files while it is active, so a disabled
-/// cache would otherwise keep its last contents on disk indefinitely.
+/// Preserves legacy startup cleanup for installations without an explicit cache mode.
+/// Explicit mode selections retain inactive files for a later switch back.
 /// </summary>
 public sealed class SegmentCacheCleanupService(ConfigManager configManager) : BackgroundService
 {
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (configManager.IsSegmentCacheEnabled()) return Task.CompletedTask;
+        // Explicit modes retain inactive data so switching modes never deletes a user's cache.
+        if (configManager.HasExplicitCacheMode() || configManager.GetActiveCacheMode() == CacheMode.Segment)
+            return Task.CompletedTask;
 
         var cacheDir = configManager.GetSegmentCachePath();
         return Task.Run(() => Purge(cacheDir), stoppingToken);

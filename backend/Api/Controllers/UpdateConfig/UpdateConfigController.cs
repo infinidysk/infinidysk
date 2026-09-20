@@ -12,11 +12,17 @@ public class UpdateConfigController(
 {
     private async Task<UpdateConfigResponse> UpdateConfig(UpdateConfigRequest request)
     {
-        await configUpdateService
+        using var batch = await configUpdateService
             .ApplyAsync(request.ConfigItems, HttpContext.RequestAborted)
             .ConfigureAwait(false);
 
-        return new UpdateConfigResponse { Status = true };
+        return new UpdateConfigResponse
+        {
+            Status = true,
+            ActiveCacheMode = batch.ActiveCacheMode.ToString().ToLowerInvariant(),
+            ConfiguredCacheMode = batch.ConfiguredCacheMode.ToString().ToLowerInvariant(),
+            RestartRequired = batch.RestartRequired,
+        };
     }
 
     protected override async Task<IActionResult> HandleRequest()

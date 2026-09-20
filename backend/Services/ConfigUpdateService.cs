@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
@@ -12,16 +13,50 @@ public sealed class ConfigUpdateService(
     DavDatabaseClient dbClient,
     ConfigManager configManager)
 {
-    public async Task<ConfigUpdateBatch> StageAsync(
+    // ConfigManager is the process singleton; services/DbContexts are scoped. A weak key also
+    // keeps isolated managers independent in tests. Only async waits are used, never WaitHandle.
+    private static readonly ConditionalWeakTable<ConfigManager, SemaphoreSlim> WriteGates = new();
+
+    public Task<ConfigUpdateBatch> StageAsync(
         IReadOnlyCollection<ConfigItem> configItems,
+        CancellationToken cancellationToken = default) =>
+        StageAsync(() => configItems, cancellationToken);
+
+    /// <summary>Prepares and stages settings under a lease held until publish or batch disposal.</summary>
+    public async Task<ConfigUpdateBatch> StageAsync(
+        Func<IReadOnlyCollection<ConfigItem>> prepare,
         CancellationToken cancellationToken = default)
+    {
+        var gate = WriteGates.GetValue(configManager, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await StageCoreAsync(prepare(), () => gate.Release(), cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            gate.Release();
+            throw;
+        }
+    }
+
+    private async Task<ConfigUpdateBatch> StageCoreAsync(
+        IReadOnlyCollection<ConfigItem> configItems,
+        Action release,
+        CancellationToken cancellationToken)
     {
         RejectEnvironmentManagedItems(configItems);
         ConfigManager.ValidateConfigItems(configItems);
+        configItems = CacheModeResolver.NormalizeUpdate(configManager, configItems);
+        RejectEnvironmentManagedItems(configItems);
         configManager.ValidateQueueAdmissionSettings(configItems);
+        var activeMode = configManager.GetActiveCacheMode();
+        var submittedMode = configItems.FirstOrDefault(item => item.ConfigName == ConfigKeys.CacheMode);
+        var configuredMode = submittedMode is null ? configManager.GetCacheMode()
+            : CacheModeResolver.Parse(submittedMode.ConfigValue);
 
         if (configItems.Count == 0)
-            return new ConfigUpdateBatch([]);
+            return new ConfigUpdateBatch([], activeMode, configuredMode, release);
 
         var configNames = configItems
             .Select(item => item.ConfigName)
@@ -76,21 +111,30 @@ public sealed class ConfigUpdateService(
             }
         }
 
-        return new ConfigUpdateBatch(resolvedItems);
+        return new ConfigUpdateBatch(resolvedItems, activeMode, configuredMode, release);
     }
 
     public async Task<ConfigUpdateBatch> ApplyAsync(
         IReadOnlyCollection<ConfigItem> configItems,
         CancellationToken cancellationToken = default)
     {
-        var batch = await StageAsync(configItems, cancellationToken).ConfigureAwait(false);
+        using var batch = await StageAsync(configItems, cancellationToken).ConfigureAwait(false);
         await dbClient.Ctx.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         Publish(batch);
         return batch;
     }
 
-    public void Publish(ConfigUpdateBatch batch) =>
-        configManager.UpdateValues(batch.ResolvedItems.ToList());
+    public void Publish(ConfigUpdateBatch batch)
+    {
+        try
+        {
+            configManager.UpdateValues(batch.ResolvedItems.ToList());
+        }
+        finally
+        {
+            batch.Dispose();
+        }
+    }
 
     private void RejectEnvironmentManagedItems(IEnumerable<ConfigItem> configItems)
     {
@@ -135,7 +179,16 @@ public sealed class ConfigUpdateService(
 }
 
 
-public sealed class ConfigUpdateBatch(IReadOnlyList<ConfigItem> resolvedItems)
+public sealed class ConfigUpdateBatch(
+    IReadOnlyList<ConfigItem> resolvedItems,
+    CacheMode activeCacheMode,
+    CacheMode configuredCacheMode,
+    Action release) : IDisposable
 {
+    private Action? _release = release;
     public IReadOnlyList<ConfigItem> ResolvedItems { get; } = resolvedItems;
+    public CacheMode ActiveCacheMode { get; } = activeCacheMode;
+    public CacheMode ConfiguredCacheMode { get; } = configuredCacheMode;
+    public bool RestartRequired => ActiveCacheMode != ConfiguredCacheMode;
+    public void Dispose() => Interlocked.Exchange(ref _release, null)?.Invoke();
 }

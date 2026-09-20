@@ -21,6 +21,29 @@ public sealed class SetupWizardServiceTests : IDisposable
         Environment.SetEnvironmentVariable("FRONTEND_BACKEND_API_KEY", "setup-wizard-test-key");
     }
 
+    [Theory]
+    [InlineData("native")]
+    [InlineData("segment")]
+    public async Task CompleteAsync_RerunPreservesExplicitCacheMode(string mode)
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var context = new DavDatabaseContext(new DbContextOptionsBuilder<DavDatabaseContext>()
+            .UseSqlite(connection).Options);
+        await context.Database.EnsureCreatedAsync();
+        var service = CreateService(context, out var config);
+        config.UpdateValues([new ConfigItem { ConfigName = "cache.mode", ConfigValue = mode }]);
+        var result = await service.CompleteAsync(new CompleteSetupWizardCommand
+        {
+            Strategy = "symlinks",
+            IngestionMethods = ["manual"],
+            ConfigItems = [new ConfigItem { ConfigName = ConfigKeys.UsenetSegmentCacheEnabled, ConfigValue = "false" }],
+        });
+        Assert.False(result.RestartRequired);
+        Assert.Equal(mode == "segment", config.IsSegmentCacheEnabled());
+        Assert.DoesNotContain(await context.ConfigItems.ToListAsync(), item => item.ConfigName == ConfigKeys.UsenetSegmentCacheEnabled);
+    }
+
     [Fact]
     public async Task GetStateAsync_TracksPendingResolvedAndStaleVersions()
     {

@@ -122,7 +122,7 @@ public class UsenetStreamingClient : WrappingNntpClient
         var downloadingClient = new DownloadingNntpClient(multiProviderClient, configManager, latencyTracker);
 #pragma warning restore CA2000
         INntpClient inner = downloadingClient;
-        if (configManager.IsSegmentCacheEnabled())
+        if (configManager.GetActiveCacheMode() == CacheMode.Segment)
         {
             try
             {

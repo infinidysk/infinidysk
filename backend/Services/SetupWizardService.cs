@@ -18,6 +18,7 @@ public sealed class SetupWizardService(
     private static readonly HashSet<string> AllowedConfigKeys =
     [
         ConfigKeys.ApiImportStrategy,
+        ConfigKeys.CacheMode,
         ConfigKeys.UsenetSegmentCacheEnabled,
         ConfigKeys.RcloneMountDir,
         ConfigKeys.RcloneRcEnabled,
@@ -92,26 +93,22 @@ public sealed class SetupWizardService(
                 $"Setup cannot update unsupported setting(s): {string.Join(", ", unsupported)}.");
         }
 
-        SetEnforcedValue(requested, ConfigKeys.ApiImportStrategy, strategy);
-        SetEnforcedValue(
-            requested,
-            ConfigKeys.UsenetSegmentCacheEnabled,
-            strategy == "strm" ? "true" : "false");
-        ValidateBranch(strategy, requested);
-
-        var currentCacheEnabled = configManager.IsSegmentCacheEnabled();
-        var configItems = requested
-            .OrderBy(pair => pair.Key, StringComparer.Ordinal)
-            .Select(pair => new ConfigItem
+        using var batch = await configUpdateService.StageAsync(() =>
+        {
+            SetEnforcedValue(requested, ConfigKeys.ApiImportStrategy, strategy);
+            if (!requested.ContainsKey(ConfigKeys.CacheMode))
             {
-                ConfigName = pair.Key,
-                ConfigValue = pair.Value,
-            })
-            .ToList();
-
-        var batch = await configUpdateService
-            .StageAsync(configItems, cancellationToken)
-            .ConfigureAwait(false);
+                if (configManager.HasExplicitCacheMode())
+                    requested.Remove(ConfigKeys.UsenetSegmentCacheEnabled);
+                else
+                    SetEnforcedValue(requested, ConfigKeys.UsenetSegmentCacheEnabled,
+                        strategy == "strm" ? "true" : "false");
+            }
+            ValidateBranch(strategy, requested);
+            return requested.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                .Select(pair => new ConfigItem { ConfigName = pair.Key, ConfigValue = pair.Value })
+                .ToList();
+        }, cancellationToken).ConfigureAwait(false);
         var state = await GetTrackedStateAsync(cancellationToken).ConfigureAwait(false);
         state.WizardVersion = CurrentWizardVersion;
         state.Disposition = SetupWizardDisposition.Completed;
@@ -123,10 +120,10 @@ public sealed class SetupWizardService(
 
         return new CompleteSetupWizardResult
         {
-            ChangedConfigKeys = configItems
+            ChangedConfigKeys = batch.ResolvedItems
                 .Select(item => item.ConfigName)
                 .ToArray(),
-            RestartRequired = currentCacheEnabled != (strategy == "strm"),
+            RestartRequired = batch.RestartRequired,
         };
     }
 

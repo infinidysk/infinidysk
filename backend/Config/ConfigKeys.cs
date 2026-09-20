@@ -73,6 +73,7 @@ public static class ConfigKeys
     // Temporary canary control for the exact finite-range scheduler. No settings UI.
     public const string UsenetFiniteRangeSchedulerEnabled = "usenet.finite-range-scheduler";
     public const string UsenetProviders = "usenet.providers";
+    public const string CacheMode = "cache.mode";
     public const string UsenetSegmentCacheEnabled = "usenet.segment-cache.enabled";
     public const string UsenetSegmentCacheMaxGb = "usenet.segment-cache.max-gb";
     public const string UsenetSegmentCachePath = "usenet.segment-cache.path";
