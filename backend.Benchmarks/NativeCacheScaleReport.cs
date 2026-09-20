@@ -24,6 +24,11 @@ public sealed record NativeCacheScaleResult(string Shape, int Entries, long Logi
 /// <summary>Manual scale report using the real local catalogue schema, triggers and read APIs.</summary>
 public static class NativeCacheScaleReport
 {
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
     private const string CandidateSql = """
         SELECT Key,Access FROM Entries WHERE Folder=$folder AND Pinned=0 AND ($clear=1 OR Access<$cutoff)
         AND (Access>$afterAccess OR (Access=$afterAccess AND Key>$afterKey)) ORDER BY Access,Key LIMIT 64
@@ -53,7 +58,7 @@ public static class NativeCacheScaleReport
         try
         {
             var report = await RunAsync(shape, samples, cancellation.Token).ConfigureAwait(false);
-            var serialized = JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            var serialized = JsonSerializer.Serialize(report, JsonOptions);
             if (json is not null)
             {
                 await using var output = new FileStream(json, FileMode.CreateNew, FileAccess.Write);
@@ -128,9 +133,11 @@ public static class NativeCacheScaleReport
             measurements["pressure-candidates"] = await MeasureAsync(samples, () =>
             {
                 using var command = Command(database, CandidateSql, candidateParameters);
+#pragma warning disable CA1849 // Benchmark the bounded synchronous catalogue path; Microsoft.Data.Sqlite async APIs also execute synchronously.
                 using var reader = command.ExecuteReader();
                 var count = 0;
                 while (reader.Read()) count++;
+#pragma warning restore CA1849
                 if (count is 0 or > 64) throw new InvalidOperationException("Invalid pressure-candidate page.");
                 return Task.CompletedTask;
             }, cancellationToken).ConfigureAwait(false);
