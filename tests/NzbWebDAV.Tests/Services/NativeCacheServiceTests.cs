@@ -32,9 +32,20 @@ public sealed class NativeCacheServiceTests : IDisposable
             new InFlightArticleBudget(1000), config,
             new NzbWebDAV.Services.ConcurrentReadTracker(configManager: config), new NzbWebDAV.Services.ActiveReadRegistry(),
             new NzbWebDAV.Clients.Usenet.SegmentCacheStatistics(), native);
-        var snapshot = builder.Capture();
-        Assert.Equal(native.ReservedBufferBytes, snapshot.NativeCache!.ReservedBufferBytes);
-        Assert.Equal(native.ActiveSettings!.BufferMb * 1024L * 1024, snapshot.NativeCache.BufferBudgetBytes);
+        try
+        {
+            var snapshot = builder.Capture();
+            Assert.Equal(native.ReservedBufferBytes, snapshot.NativeCache!.ReservedBufferBytes);
+            Assert.Equal(native.ActiveSettings!.BufferMb * 1024L * 1024, snapshot.NativeCache.BufferBudgetBytes);
+        }
+        finally
+        {
+            // Snapshot capture intentionally does not wait for storage startup.
+            // Bounded host disposal may leave initialization running; the test owns
+            // its temporary directory until that background work has really ended.
+            await native.DisposeAsync();
+            await native.InitializationCompletion.WaitAsync(TimeSpan.FromSeconds(5));
+        }
     }
 
     [Fact]
