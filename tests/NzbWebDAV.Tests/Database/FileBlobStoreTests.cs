@@ -2,6 +2,7 @@ using MemoryPack;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Services.NativeCache;
 using ZstdSharp;
 
 namespace NzbWebDAV.Tests.Database;
@@ -26,6 +27,18 @@ public sealed class FileBlobStoreTests : IDisposable
         _store.Dispose();
         Environment.SetEnvironmentVariable("CONFIG_PATH", _previousConfigPath);
         try { Directory.Delete(_configRoot, recursive: true); } catch (IOException) { /* best effort */ }
+    }
+
+    [Fact]
+    public async Task SameIdReplacement_InvalidatesActiveNativeReaders()
+    {
+        var id = Guid.NewGuid();
+        await using var first = new MemoryStream(new byte[] { 1, 2, 3 });
+        await _store.WriteBlob(id, first);
+        using var watch = ContentRevisionTracker.Watch(id);
+        await using var second = new MemoryStream(new byte[] { 3, 2, 1 });
+        await _store.WriteBlob(id, second);
+        Assert.False(watch.IsCurrent);
     }
 
     [Fact]

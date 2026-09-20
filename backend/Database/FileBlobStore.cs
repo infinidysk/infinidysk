@@ -3,6 +3,7 @@ using MemoryPack;
 using Microsoft.Extensions.Caching.Memory;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Services.NativeCache;
 using ZstdSharp;
 
 namespace NzbWebDAV.Database;
@@ -63,9 +64,8 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
                 await stream.CopyToAsync(fileStream, cancellationToken).ConfigureAwait(false);
             }
 
-            CommitBlobWrite(blobPath, tempPath);
+            CommitBlobWrite(id, blobPath, tempPath);
             committed = true;
-            _metadataCache.Remove(id);
         }
         finally
         {
@@ -92,9 +92,8 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
             }
             cancellationToken.ThrowIfCancellationRequested();
 
-            CommitBlobWrite(blobPath, tempPath);
+            CommitBlobWrite(id, blobPath, tempPath);
             committed = true;
-            _metadataCache.Remove(id);
         }
         finally
         {
@@ -167,12 +166,14 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
         return blob;
     }
 
-    private void CommitBlobWrite(string blobPath, string tempPath)
+    private void CommitBlobWrite(Guid id, string blobPath, string tempPath)
     {
         lock (_lockObj)
         {
+            using var publication = ContentRevisionTracker.BeginPublication(id);
             Directory.CreateDirectory(Path.GetDirectoryName(blobPath)!);
             File.Move(tempPath, blobPath, overwrite: true);
+            _metadataCache.Remove(id);
         }
     }
 
@@ -199,6 +200,7 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
 
     public bool Delete(Guid id)
     {
+        using var publication = ContentRevisionTracker.BeginPublication(id);
         _metadataCache.Remove(id);
         var blobPath = GetBlobPath(id);
         var deleted = false;

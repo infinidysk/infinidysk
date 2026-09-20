@@ -9,6 +9,27 @@ namespace NzbWebDAV.Tests.Services.Repair;
 public sealed class RepairPatchStoreTests
 {
     [Fact]
+    public async Task PatchPublication_RotatesDurableNativeGeneration()
+    {
+        var directory = Path.Join(Path.GetTempPath(), "par2-native-generation-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new RepairPatchStore(directory, 100);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            var before = store.NativeCacheGeneration;
+            store.CommitPatch("segment", [1, 2], new UsenetYencHeader
+            {
+                FileName = "file.mkv", FileSize = 2, PartSize = 2, PartOffset = 0,
+                PartNumber = 1, TotalParts = 1, LineLength = 128,
+            });
+            Assert.NotEqual(before, store.NativeCacheGeneration);
+            var reopened = new RepairPatchStore(directory, 100);
+            Assert.Equal(store.NativeCacheGeneration, reopened.NativeCacheGeneration);
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Fact]
     public async Task FailedReplacementBatch_EvictsUnfinalizedOldEntriesToStayWithinCapacity()
     {
         var directory = Path.Join(Path.GetTempPath(), "par2-partial-cap-" + Guid.NewGuid().ToString("N"));

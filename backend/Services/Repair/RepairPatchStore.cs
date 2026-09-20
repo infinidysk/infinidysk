@@ -7,6 +7,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Services.Observability;
+using NzbWebDAV.Services.NativeCache;
 using NzbWebDAV.Utils;
 using Serilog;
 using UsenetSharp.Models;
@@ -17,6 +18,7 @@ public sealed class RepairPatchStore
 {
     private readonly string _dir;
     private readonly long _maxBytes;
+    private readonly PersistentCacheEpoch _nativeCacheEpoch;
     private readonly ConcurrentDictionary<string, CacheEntry> _index = new();
     private readonly object _evictLock = new();
     private readonly object _catalogLoadSync = new();
@@ -46,12 +48,14 @@ public sealed class RepairPatchStore
         _maxBytes = maxBytes;
         _beforeFinalize = beforeFinalize;
         Directory.CreateDirectory(_dir);
+        _nativeCacheEpoch = new PersistentCacheEpoch(Path.Combine(_dir, ".native-cache-generation"));
         _enumerateCacheFiles = enumerateCacheFiles
             ?? (_ => Directory.EnumerateFiles(_dir, "*", SearchOption.AllDirectories));
         Log.Information("PAR2 repair patch store path: {Path}", _dir);
     }
 
     public bool IsCatalogReady => Volatile.Read(ref _catalogReady) != 0;
+    public string NativeCacheGeneration => _nativeCacheEpoch.Value;
     internal long CurrentBytes => Interlocked.Read(ref _currentBytes);
     internal long MaxBytes => _maxBytes;
     internal int EntryCount => _index.Count;
@@ -213,6 +217,8 @@ public sealed class RepairPatchStore
 
             lock (_evictLock)
             {
+                // Invalidate before the first mutation, including partially failed batches.
+                _nativeCacheEpoch.Rotate();
                 var finalized = new HashSet<string>(StringComparer.Ordinal);
                 try
                 {
@@ -252,6 +258,7 @@ public sealed class RepairPatchStore
     {
         lock (_evictLock)
         {
+            _nativeCacheEpoch.Rotate();
             if (_index.TryRemove(hash, out var entry)) _currentBytes -= entry.Size;
             SafeDelete(BlobPath(hash));
             SafeDelete(BlobPath(hash) + ".h");
@@ -268,6 +275,7 @@ public sealed class RepairPatchStore
             {
                 if (_currentBytes <= _maxBytes) break;
                 if (protectedHashes?.Contains(kv.Key) == true) continue;
+                _nativeCacheEpoch.Rotate();
                 if (!_index.TryRemove(kv.Key, out var entry)) continue;
                 _currentBytes -= entry.Size;
                 Interlocked.Increment(ref _evictionCount);
