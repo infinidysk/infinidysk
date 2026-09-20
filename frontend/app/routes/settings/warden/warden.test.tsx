@@ -102,9 +102,7 @@ describe("WardenSettings history scan", () => {
         screen.getByText(/Added 850 fingerprints from your own failed imports\./),
       ).toBeTruthy();
     });
-    expect(
-      fetchMock.mock.calls.filter(([url]) => url.includes("dryRun=false")),
-    ).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => url.includes("dryRun=false"))).toHaveLength(1);
   });
 
   it("offers no write button when the scan found nothing", async () => {
