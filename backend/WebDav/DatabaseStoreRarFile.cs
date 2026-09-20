@@ -19,7 +19,7 @@ public class DatabaseStoreRarFile(
     InFlightArticleBudget inFlightArticleBudget
 ) : BaseStoreStreamFile(httpContext, configManager)
 {
-    public DavItem DavItem => davRarFile;
+    public override DavItem DavItem => davRarFile;
     public override string Name => davRarFile.Name;
     public override string UniqueKey => davRarFile.Id.ToString();
     public override long FileSize => davRarFile.FileSize!.Value;

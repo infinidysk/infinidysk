@@ -22,6 +22,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
     private bool _bufferFromCache;
     private long _position;
     private bool _disposed;
+    private bool _bypassFill;
 
     public NativeCachedStream(NativeCacheStore store, NativeCacheIdentity identity,
         Func<CancellationToken, Task<Stream>> openSource, Func<bool> generationIsCurrent,
@@ -36,6 +37,8 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
     }
 
     public bool LastReadCacheable { get; private set; }
+    public NativeCacheIdentity Identity => _identity;
+    public bool IsSourceCurrent => _generationIsCurrent();
     public override long Length => _identity.Length;
     public override bool CanSeek => true;
     public override long Position { get => _position; set => Seek(value, SeekOrigin.Begin); }
@@ -47,10 +50,12 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
         LastReadCacheable = false;
         cancellationToken.ThrowIfCancellationRequested();
         if (destination.IsEmpty || _position == Length) return 0;
+        if (_bypassFill) return await ReadSourceRangeAsync(destination, cancellationToken).ConfigureAwait(false);
         var blockStart = _position / NativeCacheStore.BlockSize * NativeCacheStore.BlockSize;
         if (_bufferFromCache && !_generationIsCurrent()) _bufferStart = -1;
         if (_bufferStart != blockStart)
         {
+            using var fill = await _store.AcquireFillAsync(_identity, blockStart, cancellationToken).ConfigureAwait(false);
             _buffer ??= ArrayPool<byte>.Shared.Rent(NativeCacheStore.BlockSize);
             _bufferStart = -1;
             _bufferCount = 0;
@@ -72,6 +77,8 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
             }
             if (_bufferCount != expected)
             {
+                try
+                {
                 using var verifiedRead = new NativeCacheReadContext();
                 _bufferFromCache = false;
                 _source ??= await _openSource(cancellationToken).ConfigureAwait(false);
@@ -95,6 +102,23 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
                     }
                     catch (Exception exception) when (exception is IOException or SqliteException or UnauthorizedAccessException) { }
                 }
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException and not OutOfMemoryException)
+                {
+                    // Read-ahead is speculative. A later missing article must not
+                    // break a readable prefix/range requested by the player. Reopen
+                    // without native proof/read-ahead context and use ordinary reads.
+                    if (_source is not null)
+                    {
+                        try { await _source.DisposeAsync().ConfigureAwait(false); }
+                        catch (Exception teardown) when (teardown is not OutOfMemoryException) { }
+                    }
+                    _source = null;
+                    _bufferCount = 0;
+                    _bufferVerified = false;
+                    _bypassFill = true;
+                    return await ReadSourceRangeAsync(destination, cancellationToken).ConfigureAwait(false);
+                }
             }
             _bufferStart = blockStart;
         }
@@ -108,6 +132,16 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
         _buffer!.AsMemory(bufferOffset, count).CopyTo(destination);
         _position += count;
         LastReadCacheable = _bufferVerified && _generationIsCurrent();
+        return count;
+    }
+
+    private async ValueTask<int> ReadSourceRangeAsync(Memory<byte> destination, CancellationToken cancellationToken)
+    {
+        _source ??= await _openSource(cancellationToken).ConfigureAwait(false);
+        if (_source.Position != _position) _source.Position = _position;
+        var count = await _source.ReadAsync(destination[..(int)Math.Min(destination.Length, Length - _position)], cancellationToken).ConfigureAwait(false);
+        _position += count;
+        LastReadCacheable = false;
         return count;
     }
 

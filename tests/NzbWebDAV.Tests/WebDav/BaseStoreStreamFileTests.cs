@@ -12,6 +12,14 @@ namespace NzbWebDAV.Tests.WebDav;
 public class BaseStoreStreamFileTests
 {
     [Fact]
+    public void ContentIdentity_UsesFilePayloadGeneration()
+    {
+        var (context, _) = NewContext();
+        var item = new DavItem { Id = Guid.NewGuid(), Name = "movie.mkv", FileBlobId = Guid.NewGuid(), NzbBlobId = Guid.NewGuid() };
+        var file = new TestStoreFile(context, new ConfigManager(), [1], item);
+        Assert.Equal(new NzbWebDAV.Streams.SharedContentIdentity("movie", item.FileBlobId, 1), file.ContentIdentity);
+    }
+    [Fact]
     public async Task GetReadableStreamAsync_DisposesScopeOnResponseCompleted()
     {
         var (context, response) = NewContext();
@@ -138,6 +146,7 @@ public class BaseStoreStreamFileTests
         byte[] payload,
         DavItem? davItem = null) : BaseStoreStreamFile(context, config)
     {
+        public override DavItem? DavItem => davItem;
         public override string Name => "movie.mkv";
         public override string UniqueKey => "movie";
         public override long FileSize => payload.Length;

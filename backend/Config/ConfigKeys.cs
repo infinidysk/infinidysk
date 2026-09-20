@@ -74,6 +74,12 @@ public static class ConfigKeys
     public const string UsenetFiniteRangeSchedulerEnabled = "usenet.finite-range-scheduler";
     public const string UsenetProviders = "usenet.providers";
     public const string CacheMode = "cache.mode";
+    public const string NativeCacheFolders = "cache.native.folders";
+    public const string NativeCacheMetadataPath = "cache.native.metadata-path";
+    public const string NativeCacheWriterMb = "cache.native.writer-mb";
+    public const string PlexServers = "plex.servers";
+    public const string PlexAccounts = "plex.accounts";
+    public const string SmartPrefetchSettings = "smart-prefetch.settings";
     public const string UsenetSegmentCacheEnabled = "usenet.segment-cache.enabled";
     public const string UsenetSegmentCacheMaxGb = "usenet.segment-cache.max-gb";
     public const string UsenetSegmentCachePath = "usenet.segment-cache.path";

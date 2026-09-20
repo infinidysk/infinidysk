@@ -7,6 +7,29 @@ namespace NzbWebDAV.Tests.Streams;
 
 public sealed class NativeFidelityIntegrationTests
 {
+    [Fact]
+    public async Task ThreeSpeculativeHoles_DoNotPoisonReadablePlayerPrefix()
+    {
+        var directory = Directory.CreateTempSubdirectory("native-prefix-");
+        try
+        {
+            var ranges = new LongRange[] { new(0, 5), new(5, 10), new(10, 15), new(15, 20), new(20, 25) };
+            using var client = new FakeNntpClient(new Dictionary<string, byte[]> { ["one"] = "abcde"u8.ToArray(), ["five"] = "uvwxy"u8.ToArray() },
+                useCachedYencStreams: true, segmentRanges: new Dictionary<string, LongRange> { ["one"] = ranges[0], ["five"] = ranges[4] });
+            await using var store = new NativeCacheStore(Path.Combine(directory.FullName, "index.db"),
+                [new NativeCacheFolder { Path = directory.FullName, MinFreeBytes = 0 }]);
+            var fileName = "/native-prefix-" + Guid.NewGuid().ToString("N");
+            await using var stream = new NativeCachedStream(store, new("file", "v1", 25),
+                _ => Task.FromResult<Stream>(new NzbFileStream(["one", "two", "three", "four", "five"], 25,
+                    client, 0, ranges, fileName: fileName, segmentByteRangesTrusted: true)), () => true);
+            var prefix = new byte[1];
+            Assert.Equal(1, await stream.ReadAsync(prefix));
+            Assert.Equal((byte)'a', prefix[0]);
+            Assert.False(PlaybackHoleTracker.ShouldFailFast(fileName, out _));
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
     [Theory]
     [InlineData("complete", 15)]
     [InlineData("missing", 0)]

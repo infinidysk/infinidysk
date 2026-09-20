@@ -7,14 +7,16 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Streams;
+using NzbWebDAV.Services.NativeCache;
 
 namespace NzbWebDAV.WebDav.Base;
 
 public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager configManager)
     : BaseStoreReadonlyItem, IDetachedStreamSource
 {
+    public virtual DavItem? DavItem => null;
     public virtual SharedContentIdentity ContentIdentity =>
-        new(UniqueKey, NzbBlobId, FileSize);
+        new(UniqueKey, DavItem?.FileBlobId, FileSize);
     // Derived stream files must use these properties instead of capturing
     // the primary-constructor parameters (CS9107 double-capture).
     protected HttpContext Context => context;
@@ -32,7 +34,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
 
         try
         {
-            return await GetStreamAsync(cancellationToken).ConfigureAwait(false);
+            return await OpenFinalStreamAsync(cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -46,7 +48,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
         var ownership = CreateStreamingScope(cancellationToken);
         try
         {
-            var stream = await GetStreamAsync(cancellationToken).ConfigureAwait(false);
+            var stream = await OpenFinalStreamAsync(cancellationToken).ConfigureAwait(false);
             return new DetachedStreamLease
             {
                 Stream = stream,
@@ -60,6 +62,17 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
             await ownership.DisposeAsync().ConfigureAwait(false);
             throw;
         }
+    }
+
+    private Task<Stream> OpenFinalStreamAsync(CancellationToken cancellationToken)
+    {
+        if (DavItem is not { } item) return GetStreamAsync(cancellationToken);
+        // Publish attribution before opening: a native hit deliberately never opens
+        // the source and must still participate in read/session accounting.
+        Context.Items["DavItem"] = item;
+        var native = Context.RequestServices?.GetService<NativeCacheService>();
+        return native is null ? GetStreamAsync(cancellationToken)
+            : native.WrapAsync(item, GetStreamAsync, cancellationToken);
     }
 
     /// <summary>

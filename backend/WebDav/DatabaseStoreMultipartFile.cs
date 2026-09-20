@@ -21,7 +21,7 @@ public class DatabaseStoreMultipartFile(
     InFlightArticleBudget inFlightArticleBudget
 ) : BaseStoreStreamFile(httpContext, configManager)
 {
-    public DavItem DavItem => davMultipartFile;
+    public override DavItem DavItem => davMultipartFile;
     public override string Name => davMultipartFile.Name;
     public override string UniqueKey => davMultipartFile.Id.ToString();
     public override long FileSize => davMultipartFile.FileSize!.Value;

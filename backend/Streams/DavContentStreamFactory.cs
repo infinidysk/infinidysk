@@ -7,10 +7,15 @@ using NzbWebDAV.Services;
 
 namespace NzbWebDAV.Streams;
 
+public interface IDavContentStreamFactory
+{
+    Task<Stream> OpenAsync(DavItem item, CancellationToken cancellationToken);
+}
+
 /// <summary>One final-content opening path for WebDAV and background warming, without synthetic HTTP requests.</summary>
 public sealed class DavContentStreamFactory(
     DavDatabaseClient database, UsenetStreamingClient usenet, ConfigManager config,
-    LazyRarResolver lazyResolver, InFlightArticleBudget articleBudget)
+    LazyRarResolver lazyResolver, InFlightArticleBudget articleBudget) : IDavContentStreamFactory
 {
     public Task<Stream> OpenAsync(DavItem item, CancellationToken cancellationToken) => item.SubType switch
     {

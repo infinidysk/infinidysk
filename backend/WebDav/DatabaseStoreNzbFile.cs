@@ -18,7 +18,7 @@ public class DatabaseStoreNzbFile(
     InFlightArticleBudget inFlightArticleBudget
 ) : BaseStoreStreamFile(httpContext, configManager)
 {
-    public DavItem DavItem => davNzbFile;
+    public override DavItem DavItem => davNzbFile;
     public override string Name => davNzbFile.Name;
     public override string UniqueKey => davNzbFile.Id.ToString();
     public override long FileSize => davNzbFile.FileSize!.Value;
