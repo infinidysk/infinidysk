@@ -2,13 +2,13 @@ import { memo, useEffect, useRef } from "react";
 import { Form, useNavigate } from "react-router";
 import type { RequiredTopNavProps } from "../page-layout/page-layout";
 import { LiveUsenetConnections } from "../live-usenet-connections/live-usenet-connections";
+import { HeaderAlerts } from "./header-alerts";
+import { LiveReadCount } from "./live-read-count";
 import { Icon } from "~/components/ui";
-import { isComparableVersion, type UpdateAvailable } from "~/utils/update-check";
+import type { UpdateAvailable } from "~/utils/update-check";
 import { withUrlBase } from "~/utils/url-base";
-import styles from "./top-navigation.module.css";
 
 export type TopNavigationProps = RequiredTopNavProps & {
-  version?: string;
   updateAvailable?: UpdateAvailable | null;
   isFrontendAuthDisabled?: boolean;
   username?: string | null;
@@ -19,7 +19,6 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
   const {
     isHamburgerMenuOpen,
     drawerToggleId,
-    version,
     updateAvailable,
     isFrontendAuthDisabled,
     username,
@@ -27,9 +26,6 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
   } = props;
   const navigate = useNavigate();
   const menusRef = useRef<HTMLDivElement>(null);
-  const displayVersion = version || "unknown";
-  const hasUpdate = Boolean(updateAvailable);
-  const channelLabel = isComparableVersion(version) ? "Stable" : "Dev";
   const showUserMenu = !isFrontendAuthDisabled && Boolean(username);
   const initial = username?.trim().charAt(0).toUpperCase() || "?";
 
@@ -89,98 +85,9 @@ export const TopNavigation = memo(function TopNavigation(props: TopNavigationPro
         ref={menusRef}
         className="navbar-end !w-auto ml-auto min-w-0 items-center gap-2 px-2 md:px-4"
       >
+        <LiveReadCount />
         <LiveUsenetConnections hasUsenetProviders={!!hasUsenetProviders} />
-        <details className="dropdown dropdown-end" name="top-nav">
-          <summary
-            className={
-              hasUpdate
-                ? `btn btn-primary h-10 min-h-10 max-sm:btn-square shrink-0 list-none gap-2 rounded-box border border-base-content/10 bg-clip-padding px-4 max-sm:px-0 whitespace-nowrap ${styles.updateAvailable}`
-                : "btn h-10 min-h-10 max-sm:btn-square shrink-0 list-none gap-2 rounded-box border border-base-content/10 bg-base-200 px-4 max-sm:px-0 whitespace-nowrap hover:bg-base-200"
-            }
-            aria-label={hasUpdate ? "Update available" : "App menu"}
-          >
-            {hasUpdate ? (
-              <>
-                <Icon name="arrow_circle_up" className="!text-[20px]" />
-                <span className="hidden text-sm font-semibold sm:inline">Update available</span>
-              </>
-            ) : (
-              <>
-                <Icon name="more_horiz" className="!text-[20px] sm:hidden" />
-                <span className="hidden items-center gap-2 whitespace-nowrap sm:inline-flex">
-                  <span className="hidden text-[10px] font-semibold uppercase tracking-[0.14em] text-base-content/40 sm:inline">
-                    {channelLabel}
-                  </span>
-                  <span
-                    className="hidden h-3 w-px bg-base-content/15 sm:block"
-                    aria-hidden="true"
-                  />
-                  <span className="font-mono text-xs tracking-tight text-base-content/80 sm:text-sm">
-                    {displayVersion}
-                  </span>
-                </span>
-                <Icon
-                  name="expand_more"
-                  className="hidden !text-[18px] text-base-content/70 sm:inline"
-                />
-              </>
-            )}
-          </summary>
-          <ul className="dropdown-content menu z-50 mt-2 w-64 rounded-box border border-base-content/10 bg-base-200 p-2 shadow-lg">
-            <li className="menu-title">
-              <span className="flex items-center justify-between gap-2">
-                <span>InfiniDysk {channelLabel}</span>
-                <span className="font-mono font-normal normal-case tracking-normal">
-                  {displayVersion}
-                </span>
-              </span>
-            </li>
-            {updateAvailable?.kind === "release" && (
-              <li>
-                <a
-                  href={updateAvailable.releaseUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="bg-primary/15 font-medium text-primary"
-                >
-                  <Icon name="arrow_circle_up" className="!text-[18px]" />
-                  Update to v{updateAvailable.latestVersion}
-                </a>
-              </li>
-            )}
-            {updateAvailable?.kind === "dev" && (
-              <li>
-                <a
-                  href={updateAvailable.compareUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="bg-primary/15 font-medium text-primary"
-                >
-                  <Icon name="arrow_circle_up" className="!text-[18px]" />
-                  {updateAvailable.commitsBehind === 1
-                    ? `1 new commit on ${updateAvailable.trackRef}`
-                    : `${updateAvailable.commitsBehind} new commits on ${updateAvailable.trackRef}`}
-                </a>
-              </li>
-            )}
-            <li>
-              <a href="https://github.com/infinidysk/infinidysk" target="_blank" rel="noreferrer">
-                <Icon name="code" className="!text-[18px]" />
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a
-                href="https://github.com/infinidysk/infinidysk/releases"
-                target="_blank"
-                rel="noreferrer"
-              >
-                <Icon name="history" className="!text-[18px]" />
-                Changelog
-              </a>
-            </li>
-          </ul>
-        </details>
+        <HeaderAlerts hasUsenetProviders={!!hasUsenetProviders} updateAvailable={updateAvailable} />
         {showUserMenu && (
           <>
             <Form method="post" action="/logout" id="top-nav-logout" className="hidden">

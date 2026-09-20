@@ -171,7 +171,6 @@ export default function App({ loaderData }: Route.ComponentProps) {
         topNavComponent={(navProps) => (
           <TopNavigation
             {...navProps}
-            {...(version !== undefined ? { version } : {})}
             {...(updateAvailable !== undefined ? { updateAvailable } : {})}
             {...(isFrontendAuthDisabled !== undefined ? { isFrontendAuthDisabled } : {})}
             {...(username !== undefined ? { username } : {})}
@@ -200,6 +199,8 @@ export default function App({ loaderData }: Route.ComponentProps) {
         leftNavChild={
           <LeftNavigation
             {...(isWatchdogEnabled !== undefined ? { isWatchdogEnabled } : {})}
+            {...(version !== undefined ? { version } : {})}
+            {...(updateAvailable !== undefined ? { updateAvailable } : {})}
             serviceProvider={serviceProvider}
           />
         }

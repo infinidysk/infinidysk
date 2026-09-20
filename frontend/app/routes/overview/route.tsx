@@ -40,7 +40,6 @@ import { LifetimeBlock } from "./components/lifetime-block/lifetime-block";
 import { RecordsBlock } from "./components/records-block/records-block";
 import { FailoverSaves } from "./components/failover-saves/failover-saves";
 import { ArrHealth } from "./components/arr-health/arr-health";
-import { AttentionSummary } from "./components/attention-summary/attention-summary";
 import { mockArrHealthData, mockArrHealthRequested } from "./components/arr-health/arr-health.mock";
 import { SortableRow } from "./components/sortable-row/sortable-row";
 import { SectionLoadError } from "./components/section-load-error/section-load-error";
@@ -684,11 +683,6 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
         </div>
       )}
 
-      <AttentionSummary
-        providers={windowLoaded && !windowError && !liveStatsStale ? stats.providers : null}
-        arrHealth={mockArrHealth ?? (arrHealthLoaded && !arrHealthError ? arrHealth : null)}
-        hasConfiguredArrs={loaderData.hasConfiguredArrs || mockArrHealth != null}
-      />
       <div id="overview-dashboard" className="flex min-w-0 flex-col gap-4">
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
           <SortableContext items={visibleOrder} strategy={verticalListSortingStrategy}>

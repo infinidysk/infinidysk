@@ -1,5 +1,6 @@
 import { withUrlBase } from "~/utils/url-base";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import type { UpdateAvailable } from "~/utils/update-check";
 import {
   Alert,
   Button,
@@ -8,7 +9,6 @@ import {
   Label,
   Select,
   SettingsCard,
-  SettingsIntro,
   SettingsPage,
   Spinner,
   Toggle,
@@ -41,7 +41,10 @@ function formatUtcWindow(unixMs: number): string | null {
   return new Date(unixMs).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-export function SupportSettings() {
+export function SupportSettings({
+  version,
+  updateAvailable,
+}: { version?: string | undefined; updateAvailable?: UpdateAvailable | null | undefined } = {}) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message>(null);
   const [packQuality, setPackQuality] = useState<string[]>([]);
@@ -232,33 +235,113 @@ export function SupportSettings() {
 
   return (
     <SettingsPage>
-      <SettingsIntro>
-        Generate a technical support pack to help diagnose an InfiniDysk problem. It is generated in
-        memory and is not saved on the server.{" "}
-        <a
-          href="https://discord.gg/DAya7W6QMa"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="link link-primary inline-flex items-center gap-1"
-        >
-          Join our Discord
-          <Icon name="open_in_new" className="!text-[14px]" />
-        </a>
-      </SettingsIntro>
+      <div className="grid min-w-0 gap-x-8 gap-y-6 xl:grid-cols-2">
+        <section aria-labelledby="support-about-heading" className="min-w-0">
+          <h2 id="support-about-heading" className="mb-3 text-base font-semibold">
+            About InfiniDysk
+          </h2>
+          <dl className="divide-y divide-base-content/10 border-y border-base-content/10">
+            <SupportRow label="Version">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <span className="font-mono text-xs">{version || "unknown"}</span>
+                {updateAvailable && (
+                  <SupportLink
+                    href={
+                      updateAvailable.kind === "release"
+                        ? updateAvailable.releaseUrl
+                        : updateAvailable.compareUrl
+                    }
+                  >
+                    {updateAvailable.kind === "release"
+                      ? `Update to v${updateAvailable.latestVersion}`
+                      : `${updateAvailable.commitsBehind} new ${updateAvailable.commitsBehind === 1 ? "commit" : "commits"} on ${updateAvailable.trackRef}`}
+                  </SupportLink>
+                )}
+              </div>
+            </SupportRow>
+            <SupportRow label="GitHub repository">
+              <SupportLink href="https://github.com/infinidysk/infinidysk">
+                github.com/infinidysk/infinidysk
+              </SupportLink>
+            </SupportRow>
+            <SupportRow label="Releases">
+              <SupportLink href="https://github.com/infinidysk/infinidysk/releases">
+                Release notes and downloads
+              </SupportLink>
+            </SupportRow>
+          </dl>
+        </section>
 
-      <Alert variant="warning" className="items-start text-sm">
-        <Icon name="privacy_tip" className="mt-0.5 !text-[20px]" />
-        <span>
-          Passwords, API keys, tokens, URL credentials, sensitive URL parameters, and IP addresses
-          are automatically redacted. File names, paths, account usernames, DNS names, and
-          non-secret URL paths can remain. Review the archive before sharing it.
-        </span>
-      </Alert>
+        <section aria-labelledby="support-help-heading" className="min-w-0">
+          <h2 id="support-help-heading" className="mb-3 text-base font-semibold">
+            Getting support
+          </h2>
+          <dl className="divide-y divide-base-content/10 border-y border-base-content/10">
+            <SupportRow label="Discord">
+              <SupportLink href="https://discord.gg/DAya7W6QMa">Join our Discord</SupportLink>
+            </SupportRow>
+            <SupportRow label="Issues and requests">
+              <SupportLink href="https://github.com/infinidysk/infinidysk/issues">
+                Report a bug or request a feature
+              </SupportLink>
+            </SupportRow>
+            <SupportRow label="Documentation">
+              <SupportLink href="https://www.infinidysk.com/">InfiniDysk documentation</SupportLink>
+            </SupportRow>
+          </dl>
+        </section>
+
+        <section aria-labelledby="support-environment-heading" className="min-w-0">
+          <h2 id="support-environment-heading" className="mb-3 text-base font-semibold">
+            Environment configuration
+          </h2>
+          <p className="mb-3 max-w-3xl text-sm leading-relaxed text-base-content/70">
+            Most options are configured in Settings. Values supplied through{" "}
+            <code className="font-mono text-xs [overflow-wrap:anywhere]">NZBDAV_CONFIG__...</code>{" "}
+            take precedence and are read-only here. Change the container environment and restart to
+            update them.
+          </p>
+          <dl className="divide-y divide-base-content/10 border-y border-base-content/10">
+            <SupportRow label="Environment variables">
+              <SupportLink href="https://www.infinidysk.com/configuration/environment-variables/">
+                Process, container, and legacy variables
+              </SupportLink>
+              <p className="mt-1 text-xs leading-relaxed text-base-content/70">
+                Configuration paths, ports, time zone, logging, and authentication.
+              </p>
+            </SupportRow>
+            <SupportRow label="Headless settings">
+              <SupportLink href="https://www.infinidysk.com/configuration/headless/">
+                Settings overrides and Docker Compose examples
+              </SupportLink>
+            </SupportRow>
+          </dl>
+        </section>
+
+        <section aria-labelledby="support-sponsor-heading" className="min-w-0">
+          <h2 id="support-sponsor-heading" className="mb-3 text-base font-semibold">
+            Support InfiniDysk
+          </h2>
+          <dl className="divide-y divide-base-content/10 border-y border-base-content/10">
+            <SupportRow label="GitHub Sponsors">
+              <SupportLink href="https://github.com/sponsors/hoivikaj">
+                Sponsor on GitHub
+              </SupportLink>
+            </SupportRow>
+            <SupportRow label="Patreon">
+              <SupportLink href="https://www.patreon.com/hoivikaj">Support on Patreon</SupportLink>
+            </SupportRow>
+            <SupportRow label="Buy Me a Coffee">
+              <SupportLink href="https://www.buymeacoffee.com/hoivikaj">Buy a coffee</SupportLink>
+            </SupportRow>
+          </dl>
+        </section>
+      </div>
 
       <SettingsCard
         icon="support_agent"
         title="Technical support pack"
-        description="A ZIP with recent backend diagnostics for troubleshooting."
+        description="A ZIP with recent backend diagnostics, generated in memory and not saved on the server."
       >
         <ul className="list-disc space-y-1 pl-5 text-sm text-base-content/70">
           <li>Current backend logs from the in-memory buffer, plus a separate warnings lane</li>
@@ -270,6 +353,14 @@ export function SupportSettings() {
           It excludes frontend and container logs, databases, backups, NZBs, blobs, environment
           files, crash dumps, and segment-cache data.
         </p>
+        <Alert variant="warning" className="items-start text-sm">
+          <Icon name="privacy_tip" className="mt-0.5 !text-[20px]" />
+          <span>
+            Passwords, API keys, tokens, URL credentials, sensitive URL parameters, and IP addresses
+            are automatically redacted. File names, paths, account usernames, DNS names, and
+            non-secret URL paths can remain. Review the archive before sharing it.
+          </span>
+        </Alert>
         <div className="flex flex-wrap items-center gap-3 pt-1">
           <Button variant="primary" disabled={busy} onClick={() => void download()}>
             {busy ? <Spinner size="sm" /> : <Icon name="download" className="!text-[18px]" />}
@@ -436,5 +527,28 @@ export function SupportSettings() {
         }}
       />
     </SettingsPage>
+  );
+}
+
+function SupportRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid min-w-0 gap-1 py-3 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
+      <dt className="text-xs font-medium text-base-content/70">{label}</dt>
+      <dd className="min-w-0 text-sm">{children}</dd>
+    </div>
+  );
+}
+
+function SupportLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="link link-primary inline-flex max-w-full items-center gap-1.5 [overflow-wrap:anywhere]"
+    >
+      <span className="min-w-0">{children}</span>
+      <Icon name="open_in_new" className="shrink-0 !text-[14px]" />
+    </a>
   );
 }

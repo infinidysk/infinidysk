@@ -3,6 +3,8 @@ import type React from "react";
 import { Fragment, useEffect, useState } from "react";
 import { Icon } from "~/components/ui";
 import { ServiceProviderNotice } from "~/components/service-provider-notice";
+import type { UpdateAvailable } from "~/utils/update-check";
+import { VersionMenu } from "./version-menu";
 import {
   SETTINGS_TAB_GROUPS,
   parseSettingsTab,
@@ -19,6 +21,8 @@ import {
 export type LeftNavigationProps = {
   isWatchdogEnabled?: boolean;
   serviceProvider?: ServiceProviderConfig | null;
+  version?: string;
+  updateAvailable?: UpdateAvailable | null;
 };
 
 type NavItem = {
@@ -28,7 +32,12 @@ type NavItem = {
   featureId: NavFeatureId;
 };
 
-export function LeftNavigation({ isWatchdogEnabled, serviceProvider }: LeftNavigationProps) {
+export function LeftNavigation({
+  isWatchdogEnabled,
+  serviceProvider,
+  version,
+  updateAvailable,
+}: LeftNavigationProps) {
   const location = useLocation();
   const navigation = useNavigation();
   const pathname = navigation.location?.pathname ?? location.pathname;
@@ -87,8 +96,8 @@ export function LeftNavigation({ isWatchdogEnabled, serviceProvider }: LeftNavig
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-4 text-base-content">
-      <nav aria-label="Main">
+    <div className="flex h-full min-h-0 flex-col text-base-content">
+      <nav aria-label="Main" className="min-h-0 flex-1 overflow-y-auto p-4">
         <ul className="menu menu-md w-full gap-1 p-0 text-[15px]">
           {items.map((item) => (
             <Item
@@ -164,6 +173,9 @@ export function LeftNavigation({ isWatchdogEnabled, serviceProvider }: LeftNavig
             ))}
         </ul>
       </nav>
+      <footer className="shrink-0 border-t border-base-content/10 p-3">
+        <VersionMenu version={version} updateAvailable={updateAvailable} />
+      </footer>
       {serviceProvider && (
         <ServiceProviderNotice
           open={providerNoticeOpen}

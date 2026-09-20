@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LiveUsenetConnections } from "./live-usenet-connections";
 
@@ -28,6 +28,8 @@ describe("LiveUsenetConnections", () => {
     render(<LiveUsenetConnections hasUsenetProviders />);
 
     const widget = screen.getByLabelText("Usenet connections");
+    expect(widget.className).not.toContain("border");
+    expect(widget.className).not.toContain("bg-base-200");
     expect(widget.querySelector(".loading-spinner")).not.toBeNull();
     expect(screen.getByText("Connecting")).toBeTruthy();
 
@@ -35,16 +37,23 @@ describe("LiveUsenetConnections", () => {
       onMessage?.("0|1|1|3|20|2");
     });
 
-    expect(screen.getByText("3/20")).toBeTruthy();
+    expect(screen.getByText("3 / 20")).toBeTruthy();
     expect(screen.getByText("1 active · 2 warm")).toBeTruthy();
     expect(widget.querySelector(".loading-spinner")).toBeNull();
     expect(screen.queryByText("Connecting")).toBeNull();
+    expect(screen.queryByText("Connections", { exact: true })).toBeNull();
+    expect(widget.querySelector(".material-symbols-rounded")?.textContent).toBe("sync_alt");
+    fireEvent.focus(widget);
+    expect(screen.getByRole("tooltip").textContent).toContain(
+      "3 open connections out of 20 allowed",
+    );
+    expect(screen.getByRole("tooltip").textContent).toContain("1 active; 2 warm");
 
     act(() => {
       onMessage?.("0|2|1|4|20|2");
     });
 
-    expect(screen.getByText("4/20")).toBeTruthy();
+    expect(screen.getByText("4 / 20")).toBeTruthy();
     expect(widget.querySelector(".loading-spinner")).toBeNull();
     expect(screen.queryByText("Connecting")).toBeNull();
   });

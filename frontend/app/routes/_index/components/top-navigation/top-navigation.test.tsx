@@ -3,15 +3,22 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { TopNavigation } from "./top-navigation";
-import styles from "./top-navigation.module.css";
 
 vi.mock("../live-usenet-connections/live-usenet-connections", () => ({
   LiveUsenetConnections: () => null,
 }));
 
+vi.mock("./header-alerts", () => ({
+  HeaderAlerts: () => <button aria-label="Alerts" />,
+}));
+
+vi.mock("./live-read-count", () => ({
+  LiveReadCount: () => null,
+}));
+
 afterEach(cleanup);
 
-function renderTopNavigation(version = "0.8.0") {
+function renderTopNavigation() {
   const router = createMemoryRouter(
     [
       {
@@ -21,7 +28,6 @@ function renderTopNavigation(version = "0.8.0") {
             isHamburgerMenuOpen={false}
             onHamburgerMenuClick={() => undefined}
             drawerToggleId="drawer"
-            version={version}
           />
         ),
       },
@@ -32,37 +38,15 @@ function renderTopNavigation(version = "0.8.0") {
   return render(<RouterProvider router={router} />);
 }
 
-describe("TopNavigation version summary", () => {
-  it("hides the channel label and separator below the sm breakpoint", () => {
+describe("TopNavigation", () => {
+  it("keeps the version menu out of the header", () => {
     renderTopNavigation();
-
-    const channelLabel = screen.getByText("Stable");
-    expect(channelLabel.className).toContain("hidden");
-    expect(channelLabel.className).toContain("sm:inline");
-
-    const separator = channelLabel.nextElementSibling;
-    expect(separator).toBeInstanceOf(HTMLSpanElement);
-    expect(separator?.getAttribute("aria-hidden")).toBe("true");
-    expect(separator?.className).toContain("hidden");
-    expect(separator?.className).toContain("sm:block");
-
-    expect(screen.getAllByText("0.8.0")).toHaveLength(2);
-    expect(screen.getByText("InfiniDysk Stable")).toBeTruthy();
-
-    const versionInButton = screen.getByLabelText("App menu").querySelector(".font-mono");
-    expect(versionInButton?.className).toContain("text-xs");
-    expect(versionInButton?.className).toContain("sm:text-sm");
-
-    const appMenu = screen.getByLabelText("App menu");
-    expect(appMenu.className).toContain("max-sm:btn-square");
-    expect(versionInButton?.parentElement?.className).toContain("hidden");
-    expect(versionInButton?.parentElement?.className).toContain("sm:inline-flex");
-    expect(appMenu.className).toContain("border-base-content/10");
-    expect(appMenu.className).toContain("bg-base-200");
-    expect(appMenu.className).not.toContain("from-primary");
+    expect(screen.queryByText("Stable", { exact: true })).toBeNull();
+    expect(screen.queryByText("Dev", { exact: true })).toBeNull();
+    expect(screen.queryByLabelText("App menu")).toBeNull();
   });
 
-  it("hides the Update available label below the sm breakpoint", () => {
+  it("does not add a separate update button to the header", () => {
     const router = createMemoryRouter(
       [
         {
@@ -72,7 +56,6 @@ describe("TopNavigation version summary", () => {
               isHamburgerMenuOpen={false}
               onHamburgerMenuClick={() => undefined}
               drawerToggleId="drawer"
-              version="1.2.7"
               updateAvailable={{
                 kind: "release",
                 latestVersion: "1.2.8",
@@ -87,13 +70,8 @@ describe("TopNavigation version summary", () => {
 
     render(<RouterProvider router={router} />);
 
-    const label = screen.getByText("Update available");
-    expect(label.className).toContain("hidden");
-    expect(label.className).toContain("sm:inline");
-    expect(screen.getByLabelText("Update available").className).toContain("max-sm:btn-square");
-    expect(screen.getByLabelText("Update available").className).toContain("border-base-content/10");
-    expect(screen.getByLabelText("Update available").className).toContain("bg-clip-padding");
-    expect(screen.getByLabelText("Update available").className).toContain(styles.updateAvailable);
+    expect(screen.queryByLabelText("Update available")).toBeNull();
+    expect(screen.getByLabelText("Alerts")).toBeTruthy();
   });
 
   it("sizes the user avatar to the header control height", () => {
@@ -106,7 +84,6 @@ describe("TopNavigation version summary", () => {
               isHamburgerMenuOpen={false}
               onHamburgerMenuClick={() => undefined}
               drawerToggleId="drawer"
-              version="1.2.7"
               username="admin"
             />
           ),
@@ -118,6 +95,7 @@ describe("TopNavigation version summary", () => {
     render(<RouterProvider router={router} />);
 
     const menu = screen.getByLabelText("User menu");
+    expect(screen.getByLabelText("Alerts").nextElementSibling?.tagName).toBe("FORM");
     expect(menu.className).toContain("h-10");
     expect(menu.className).toContain("min-h-10");
     expect(menu.className).toContain("w-10");

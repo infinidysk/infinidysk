@@ -133,7 +133,8 @@ export function LiveReadsPanelContent({
   return (
     <section
       ref={cardRef}
-      className={`card w-full min-w-0 border border-base-content/10 bg-base-100 shadow-sm${heightLocked ? " overflow-hidden" : ""}`}
+      id="active-reads"
+      className={`card w-full min-w-0 scroll-mt-20 border border-base-content/10 bg-base-100 shadow-sm${heightLocked ? " overflow-hidden" : ""}`}
       style={heightLocked ? { height: lockedHeight } : undefined}
     >
       <div className="card-body flex h-full min-h-0 flex-col gap-3 p-4">

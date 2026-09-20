@@ -58,7 +58,14 @@ import { isWardenSettingsUpdated, WardenSettings } from "./warden/warden";
 import { isRcloneSettingsUpdated, RcloneSettings } from "./rclone/rclone";
 import { SupportSettings } from "./support/support";
 import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import { useBlocker, useNavigate, useOutletContext, useSearchParams } from "react-router";
+import {
+  useBlocker,
+  useNavigate,
+  useOutletContext,
+  useRouteLoaderData,
+  useSearchParams,
+} from "react-router";
+import type { loader as rootLoader } from "~/root";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { ServiceProviderNotice } from "~/components/service-provider-notice";
 import { parseSettingsTab, getSettingsTabItem, type SettingsTab } from "~/navigation/settings-tabs";
@@ -392,6 +399,7 @@ type BodyProps = {
 
 function Body(props: BodyProps) {
   const { role } = useOutletContext<AppOutletContext>();
+  const appData = useRouteLoaderData<typeof rootLoader>("root");
   const isReadOnly = role === "readonly";
   const activeTab = props.activeTab;
   const activeTabItem = getSettingsTabItem(activeTab);
@@ -686,7 +694,12 @@ function Body(props: BodyProps) {
             {activeTab === "backup" && (
               <BackupSettings config={newConfig} setNewConfig={setNewConfig} />
             )}
-            {activeTab === "support" && <SupportSettings />}
+            {activeTab === "support" && (
+              <SupportSettings
+                version={appData?.version}
+                updateAvailable={appData?.updateAvailable}
+              />
+            )}
             {activeTab === "migration" && <Migration />}
           </fieldset>
         </SettingsPanel>

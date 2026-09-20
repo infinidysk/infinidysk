@@ -3,7 +3,42 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttentionSummary } from "./attention-summary";
-import { mockArrHealthData } from "../arr-health/arr-health.mock";
+import type { ArrHealthResponse } from "~/clients/backend-client.server";
+
+function mockArrHealthData(): ArrHealthResponse {
+  return {
+    configured: true,
+    summary: {
+      instancesOnline: 1,
+      instancesTotal: 1,
+      importsCompleted: 0,
+      medianHandoffMs: null,
+      p95HandoffMs: null,
+      awaitingImport: 0,
+      awaitingShown: 0,
+      degraded: 1,
+    },
+    instances: [
+      {
+        key: "radarr",
+        name: "Home Radarr",
+        appType: "radarr",
+        host: "http://localhost:7878",
+        status: "degraded",
+        imports: 0,
+        medianHandoffMs: null,
+        p95HandoffMs: null,
+        queueCount: 1,
+        awaitingCount: 0,
+        hasWarnings: true,
+        hasErrors: false,
+        lastImportAtMs: null,
+        lastError: null,
+      },
+    ],
+    awaiting: [],
+  };
+}
 
 afterEach(() => {
   cleanup();
@@ -41,11 +76,9 @@ describe("AttentionSummary", () => {
           <AttentionSummary providers={[]} arrHealth={data} hasConfiguredArrs />
         </MemoryRouter>,
       );
+      fireEvent.click(screen.getByLabelText(/Alerts:/));
       await screen.findByText("Health status unavailable");
-      const summary = screen.getByText("1 Arr integration degraded or offline").closest("summary")!;
-      expect(summary.closest("a")).toBeNull();
-      fireEvent.click(summary);
-      expect(summary.closest("details")?.open).toBe(true);
+      expect(screen.getByText("1 Arr integration degraded or offline")).toBeTruthy();
       expect(screen.getByText("Home Radarr", { exact: false })).toBeTruthy();
       expect(screen.getByText(reason, { exact: false })).toBeTruthy();
       expect(
@@ -65,6 +98,7 @@ describe("AttentionSummary", () => {
         <AttentionSummary providers={null} arrHealth={null} hasConfiguredArrs />
       </MemoryRouter>,
     );
+    fireEvent.click(screen.getByLabelText(/Alerts:/));
     expect(
       (await screen.findByRole("link", { name: /7 files need attention/ })).getAttribute("href"),
     ).toBe("/health");
@@ -82,7 +116,8 @@ describe("AttentionSummary", () => {
     );
     await screen.findByText("Health status unavailable");
     expect(screen.queryByText("No files need attention")).toBeNull();
-    expect(screen.getByText("No provider circuits open")).toBeTruthy();
+    expect(screen.queryByText("No provider circuits open")).toBeNull();
+    expect(screen.queryByText("No issues need attention")).toBeNull();
   });
 
   it("times out a health request without preventing a later visibility refresh", async () => {
@@ -113,7 +148,7 @@ describe("AttentionSummary", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(screen.getByText("No files need attention")).toBeTruthy();
+    expect(screen.getByText("No issues need attention")).toBeTruthy();
   });
 
   it("surfaces degraded Arr integrations and accepts a successful empty health response", async () => {
@@ -127,10 +162,32 @@ describe("AttentionSummary", () => {
         <AttentionSummary providers={[]} arrHealth={data} hasConfiguredArrs />
       </MemoryRouter>,
     );
-    await waitFor(() => expect(screen.getByText("No files need attention")).toBeTruthy());
+    await waitFor(() => expect(screen.queryByText("Checking status...")).toBeNull());
+    expect(screen.queryByText("No issues need attention")).toBeNull();
     const affected = data.instances.filter(
       (instance) => instance.status === "degraded" || instance.status === "offline",
     ).length;
-    expect(screen.getByText(`${affected} Arr integrations degraded or offline`)).toBeTruthy();
+    expect(screen.getByText(`${affected} Arr integration degraded or offline`)).toBeTruthy();
+  });
+
+  it("stops pulsing when opened, closes on Escape, and keeps unresolved alerts yellow", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ totalCount: 7 }) }),
+    );
+    render(
+      <MemoryRouter>
+        <AttentionSummary providers={[]} arrHealth={null} hasConfiguredArrs={false} />
+      </MemoryRouter>,
+    );
+    await screen.findByText("7 files need attention");
+    const trigger = screen.getByLabelText("Alerts: needs attention");
+    expect(trigger.querySelector("span[class*='animate-']")).not.toBeNull();
+    fireEvent.click(trigger);
+    await waitFor(() => expect(trigger.querySelector("span[class*='animate-']")).toBeNull());
+    fireEvent.keyDown(trigger, { key: "Escape" });
+    expect(trigger.closest("details")?.open).toBe(false);
+    expect(document.activeElement).toBe(trigger);
+    expect(trigger.className).toContain("text-warning");
   });
 });
