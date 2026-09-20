@@ -21,6 +21,61 @@ public sealed class NativeCacheServiceTests : IDisposable
         Environment.SetEnvironmentVariable("CONFIG_PATH", _root);
     }
 
+    [Fact]
+    public async Task InvalidNativeSettings_StatusStillReportsInitializationFailure()
+    {
+        using var blobs = new FileBlobStore();
+        using var repairs = new RepairPatchStore(Path.Combine(_root, "patches"), 100);
+        var config = Config("native");
+        config.UpdateValues([new ConfigItem { ConfigName = ConfigKeys.NativeCacheFolders, ConfigValue = "not-json" }]);
+        await using var native = new NativeCacheService(config, blobs, repairs);
+        Assert.NotNull(native.InitializationError);
+        Assert.True(native.RequiresRestart(config));
+    }
+
+    [Fact]
+    public async Task StalledNativeInitialization_DoesNotBlockServiceConstruction()
+    {
+        using var blobs = new FileBlobStore();
+        using var repairs = new RepairPatchStore(Path.Combine(_root, "patches"), 100);
+        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var created = Task.Run(() => new NativeCacheService(Config("native"), blobs, repairs, settings =>
+        {
+            entered.TrySetResult();
+            release.Wait();
+            return new NativeCacheStore(Path.Combine(settings.MetadataPath, "catalogue.db"), settings.Folders);
+        }));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var native = await created.WaitAsync(TimeSpan.FromSeconds(1));
+            native.InitializationWait = TimeSpan.FromMilliseconds(50);
+            Assert.True(native.InitializationPending);
+            await using var stream = await native.WrapAsync(new DavItem(), _ => Task.FromResult<Stream>(new VerifiedStream()), CancellationToken.None);
+            Assert.Equal(3, await stream.ReadAsync(new byte[3]));
+            await native.DisposeAsync();
+        }
+        finally
+        {
+            release.Set();
+            var native = await created;
+            await native.DisposeAsync();
+            await native.InitializationCompletion.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Theory]
+    [InlineData(60, 60)]
+    [InlineData(101, 50)]
+    [InlineData(90, 0)]
+    public void NativeFolders_RejectInvalidEvictionWatermarks(int high, int low)
+    {
+        var json = JsonSerializer.Serialize(new[] { new { Id = "disk", Path = "/cache",
+            HighWaterPercent = high, LowWaterPercent = low } });
+        Assert.Throws<ArgumentException>(() => NativeCacheSettings.ParseFolders(json));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

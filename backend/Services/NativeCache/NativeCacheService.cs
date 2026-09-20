@@ -15,9 +15,20 @@ public sealed class NativeCacheService : IAsyncDisposable
     private readonly RepairPatchStore _repairs;
     private readonly SemaphoreSlim? _bufferSlots;
     private readonly int _capacity;
+    private readonly object _lifetimeGate = new();
+    private Task _initialization = Task.CompletedTask;
+    private Task _cleanup = Task.CompletedTask;
+    private NativeCacheStore? _store;
+    private string? _initializationError;
     private bool _disposed;
+    internal TimeSpan InitializationWait { get; set; } = TimeSpan.FromSeconds(1);
+    internal Task InitializationCompletion => Task.WhenAll(_initialization, _cleanup);
 
     public NativeCacheService(ConfigManager config, IBlobStore blobs, RepairPatchStore repairs)
+        : this(config, blobs, repairs, settings => new NativeCacheStore(Path.Combine(settings.MetadataPath, "catalogue.db"), settings.Folders)) { }
+
+    internal NativeCacheService(ConfigManager config, IBlobStore blobs, RepairPatchStore repairs,
+        Func<NativeCacheSettings, NativeCacheStore> storeFactory)
     {
         _blobs = blobs;
         _repairs = repairs;
@@ -28,31 +39,68 @@ public sealed class NativeCacheService : IAsyncDisposable
             ActiveSettings = NativeCacheSettings.FromConfig(config);
             if (!ActiveSettings.Folders.Any(folder => folder.Enabled))
                 throw new ArgumentException("Configure at least one enabled native cache folder.");
-            Store = new NativeCacheStore(Path.Combine(ActiveSettings.MetadataPath, "catalogue.db"), ActiveSettings.Folders);
             _capacity = Math.Max(1, ActiveSettings.BufferMb / 4);
             _bufferSlots = new SemaphoreSlim(_capacity, _capacity);
+            _initialization = Task.Run(() => InitializeStoreAsync(ActiveSettings, storeFactory));
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException or ArgumentException)
         {
-            InitializationError = "Native cache could not initialize. Check folder permissions and the local metadata path.";
+            _initializationError = "Native cache could not initialize. Check folder permissions and the local metadata path.";
             Log.Warning("Native cache initialization failed ({ErrorType}); source streaming remains available", exception.GetType().Name);
         }
     }
 
     public CacheMode ActiveMode { get; }
+    public NativeCacheStatistics Statistics { get; } = new();
     public NativeCacheSettings? ActiveSettings { get; }
-    public string? InitializationError { get; }
-    public NativeCacheStore? Store { get; }
+    public string? InitializationError => Volatile.Read(ref _initializationError);
+    public bool InitializationPending => !_initialization.IsCompleted;
+    public NativeCacheStore? Store => Volatile.Read(ref _store);
     public long ReservedBufferBytes => _bufferSlots is null ? 0 : (_capacity - _bufferSlots.CurrentCount) * (long)NativeCacheStore.BlockSize;
 
-    public bool RequiresRestart(ConfigManager config) => ActiveMode != config.GetCacheMode()
-        || (ActiveMode == CacheMode.Native && System.Text.Json.JsonSerializer.Serialize(ActiveSettings)
-            != System.Text.Json.JsonSerializer.Serialize(NativeCacheSettings.FromConfig(config)));
+    private async Task InitializeStoreAsync(NativeCacheSettings settings, Func<NativeCacheSettings, NativeCacheStore> factory)
+    {
+        try
+        {
+            var store = factory(settings);
+            lock (_lifetimeGate)
+            {
+                if (!_disposed) { Volatile.Write(ref _store, store); return; }
+            }
+            await store.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            Volatile.Write(ref _initializationError, "Native cache could not initialize. Check folder permissions and the local metadata path.");
+            Log.Warning("Native cache initialization failed ({ErrorType}); source streaming remains available", exception.GetType().Name);
+        }
+    }
+
+    public async Task<bool> WaitForInitializationAsync(CancellationToken cancellationToken = default)
+    {
+        try { await _initialization.WaitAsync(InitializationWait, cancellationToken).ConfigureAwait(false); }
+        catch (TimeoutException) { return false; }
+        return Store is not null;
+    }
+
+    public bool RequiresRestart(ConfigManager config)
+    {
+        try
+        {
+            return ActiveMode != config.GetCacheMode()
+                || (ActiveMode == CacheMode.Native && System.Text.Json.JsonSerializer.Serialize(ActiveSettings)
+                    != System.Text.Json.JsonSerializer.Serialize(NativeCacheSettings.FromConfig(config)));
+        }
+        catch (ArgumentException) { return true; } // Keep initialization diagnostics available for malformed optional settings.
+    }
 
     public async Task<Stream> WrapAsync(DavItem item, Func<CancellationToken, Task<Stream>> open, CancellationToken cancellationToken, bool requireNative = false)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (Store is null || _bufferSlots is null || item.FileBlobId is not { } blobId || item.FileSize is not > 0
+        if (InitializationPending) await WaitForInitializationAsync(cancellationToken).ConfigureAwait(false);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var store = Store;
+        if (store is null || _bufferSlots is null || item.FileBlobId is not { } blobId || item.FileSize is not > 0
             || !_bufferSlots.Wait(0))
         {
             if (requireNative) throw new InvalidOperationException("Native cache admission is unavailable; no source bytes were requested.");
@@ -73,8 +121,8 @@ public sealed class NativeCacheService : IAsyncDisposable
                     var repairRevision = _repairs.CaptureNativeRevisions(dependencies);
                     var identity = new NativeCacheIdentity(item.Id.ToString("N"),
                         $"v2:{blobId:N}:{Convert.ToHexString(hash)}:{repairRevision.Fingerprint}", item.FileSize.Value);
-                    var stream = new NativeCachedStream(Store, identity, open,
-                        () => watch.IsCurrent && repairRevision.IsCurrent, admission, background: requireNative);
+                    var stream = new NativeCachedStream(store, identity, open,
+                        () => watch.IsCurrent && repairRevision.IsCurrent, admission, background: requireNative, statistics: Statistics);
                     admission = null; // The returned stream owns the watch and buffer admission.
                     return stream;
                 }
@@ -114,9 +162,21 @@ public sealed class NativeCacheService : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (_disposed) return;
-        _disposed = true;
-        if (Store is not null) await Store.DisposeAsync().ConfigureAwait(false);
+        lock (_lifetimeGate)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            var store = _store;
+            Volatile.Write(ref _store, null);
+            if (store is not null) _cleanup = Task.Run(async () =>
+            {
+                try { await store.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception exception) when (exception is not OutOfMemoryException)
+                { Log.Warning("Native cache shutdown failed ({ErrorType})", exception.GetType().Name); }
+            });
+        }
+        try { await _cleanup.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false); }
+        catch (TimeoutException) { /* A stuck NAS must not hold host shutdown; cleanup remains owned. */ }
         // Active response leases can finish during host shutdown. SemaphoreSlim has
         // no native handle here; let remaining leases release it before collection.
     }

@@ -6,7 +6,7 @@ using UsenetSharp.Streams;
 namespace NzbWebDAV.Streams;
 
 /// <summary>Final-byte, lazy-source read-through stream. Never interprets sparse holes as data.</summary>
-public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
+public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence, IStreamGenerationEvidence
 {
     private readonly NativeCacheStore _store;
     private readonly NativeCacheIdentity _identity;
@@ -15,6 +15,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
     private readonly IDisposable _lease;
     private IDisposable? _bufferAdmission;
     private readonly bool _background;
+    private readonly NativeCacheStatistics? _statistics;
     private Stream? _source;
     private byte[]? _buffer;
     private long _bufferStart = -1;
@@ -24,12 +25,14 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
     private long _position;
     private bool _disposed;
     private bool _bypassFill;
+    private bool _servedBytes;
+    private bool _untrackedSource;
     internal TimeSpan CacheIoTimeout { get; init; } = TimeSpan.FromSeconds(1);
     internal Func<bool, CancellationToken, Task>? BeforeCacheIo { get; init; }
 
     public NativeCachedStream(NativeCacheStore store, NativeCacheIdentity identity,
         Func<CancellationToken, Task<Stream>> openSource, Func<bool> generationIsCurrent,
-        IDisposable? bufferAdmission = null, bool background = false)
+        IDisposable? bufferAdmission = null, bool background = false, NativeCacheStatistics? statistics = null)
     {
         _store = store;
         _identity = identity;
@@ -38,10 +41,12 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
         _lease = store.AcquireLease(identity);
         _bufferAdmission = bufferAdmission;
         _background = background;
+        _statistics = statistics;
     }
 
     public bool LastReadCacheable { get; private set; }
     public NativeCacheIdentity Identity => _identity;
+    public string GenerationIdentity => _identity.Key;
     public bool IsSourceCurrent => _generationIsCurrent();
     public override long Length => _identity.Length;
     public override bool CanSeek => true;
@@ -54,6 +59,12 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
         LastReadCacheable = false;
         cancellationToken.ThrowIfCancellationRequested();
         if (destination.IsEmpty || _position == Length) return 0;
+        if (!_untrackedSource && !_generationIsCurrent())
+        {
+            if (_servedBytes) throw new IOException("Media source changed during this response. Retry the range against the current source.");
+            _untrackedSource = true;
+            _bypassFill = true;
+        }
         if (_bypassFill) return await ReadSourceRangeAsync(destination, cancellationToken).ConfigureAwait(false);
         var blockStart = _position / NativeCacheStore.BlockSize * NativeCacheStore.BlockSize;
         if (_bufferFromCache && !_generationIsCurrent()) _bufferStart = -1;
@@ -77,6 +88,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
                     _bufferVerified = _bufferCount == expected;
                     _bufferFromCache = _bufferVerified;
                     if (!_generationIsCurrent()) _bufferCount = 0;
+                    if (_bufferCount == expected) _statistics?.Hit(expected);
                 }
                 catch (Exception exception) when (exception is IOException or SqliteException or UnauthorizedAccessException)
                 { /* Cache storage failures never prevent source playback. */ }
@@ -87,6 +99,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
             }
             if (_bufferCount != expected)
             {
+                _statistics?.Miss();
                 try
                 {
                 using var verifiedRead = new NativeCacheReadContext();
@@ -108,9 +121,9 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
                     try
                     {
                         var buffer = _buffer;
-                        await CacheIoAsync(true, token => _store.WriteBlockAsync(_identity, blockStart, buffer.AsMemory(0, expected), token,
+                        if (await CacheIoAsync(true, token => _store.WriteBlockAsync(_identity, blockStart, buffer.AsMemory(0, expected), token,
                             waitForWriter: _background), cancellationToken)
-                            .ConfigureAwait(false);
+                            .ConfigureAwait(false)) _statistics?.Committed(expected);
                     }
                     catch (Exception exception) when (exception is IOException or SqliteException or UnauthorizedAccessException) { }
                 }
@@ -129,20 +142,19 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
                     _bufferCount = 0;
                     _bufferVerified = false;
                     _bypassFill = true;
+                    if (exception is not TimeoutException) _statistics?.Fallback();
                     return await ReadSourceRangeAsync(destination, cancellationToken).ConfigureAwait(false);
                 }
             }
             _bufferStart = blockStart;
         }
-        if (_bufferFromCache && !_generationIsCurrent())
-        {
-            _bufferStart = -1;
-            return await ReadAsync(destination, cancellationToken).ConfigureAwait(false);
-        }
+        EnsureResponseGeneration();
         var bufferOffset = checked((int)(_position - _bufferStart));
         var count = Math.Min(destination.Length, _bufferCount - bufferOffset);
         _buffer!.AsMemory(bufferOffset, count).CopyTo(destination);
+        EnsureResponseGeneration();
         _position += count;
+        _servedBytes |= count > 0;
         LastReadCacheable = _bufferVerified && _generationIsCurrent();
         return count;
     }
@@ -156,6 +168,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             _bypassFill = true;
+            _statistics?.Fallback(timeout: true);
             return null;
         }
     }
@@ -178,6 +191,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
         }
         catch (Exception exception) when (exception is TimeoutException or OperationCanceledException)
         {
+            if (exception is TimeoutException) _statistics?.Fallback(timeout: true);
             var buffer = _buffer;
             var admission = _bufferAdmission;
             _buffer = null;
@@ -207,9 +221,17 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence
         _source ??= await _openSource(cancellationToken).ConfigureAwait(false);
         if (_source.Position != _position) _source.Position = _position;
         var count = await _source.ReadAsync(destination[..(int)Math.Min(destination.Length, Length - _position)], cancellationToken).ConfigureAwait(false);
+        EnsureResponseGeneration();
         _position += count;
+        _servedBytes |= count > 0;
         LastReadCacheable = false;
         return count;
+    }
+
+    private void EnsureResponseGeneration()
+    {
+        if (!_untrackedSource && !_generationIsCurrent())
+            throw new IOException("Media source changed during this response. Retry the range against the current source.");
     }
 
     public override long Seek(long offset, SeekOrigin origin)

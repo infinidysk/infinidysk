@@ -10,16 +10,22 @@ namespace NzbWebDAV.Api.Controllers.NativeCache;
 [Route("api/native-cache")]
 public sealed class NativeCacheController(NativeCacheService native, NativeCacheOperations operations, ConfigManager config) : GetOnlyApiController
 {
-    protected override async Task<IActionResult> HandleRequest() => Ok(new
+    protected override async Task<IActionResult> HandleRequest()
     {
+        await native.WaitForInitializationAsync(HttpContext.RequestAborted).ConfigureAwait(false);
+        return Ok(new
+        {
         ActiveMode = native.ActiveMode.ToString().ToLowerInvariant(),
         ConfiguredMode = config.GetCacheMode().ToString().ToLowerInvariant(),
         RestartRequired = native.RequiresRestart(config),
         native.InitializationError,
+        native.InitializationPending,
         native.ReservedBufferBytes,
+        Counters = native.Statistics.Snapshot(),
         Folders = native.Store is null ? [] : await native.Store.GetStatusAsync(HttpContext.RequestAborted).ConfigureAwait(false),
         Jobs = operations.GetJobs()
-    });
+        });
+    }
 }
 
 [ApiController]
@@ -29,6 +35,7 @@ public sealed class NativeCacheOperationController(NativeCacheOperations operati
     public sealed record OperationRequest(string? FolderId, string Operation, string? ConfirmFolderId, string? JobId, string? CacheKey, bool? Pinned);
     protected override async Task<IActionResult> HandleRequest()
     {
+        await native.WaitForInitializationAsync(HttpContext.RequestAborted).ConfigureAwait(false);
         var request = await HttpContext.Request.ReadFromJsonAsync<OperationRequest>(HttpContext.RequestAborted).ConfigureAwait(false)
             ?? throw new ArgumentException("An operation is required.");
         if (request.Operation == "pin")
@@ -48,6 +55,7 @@ public sealed class NativeCacheEntriesController(NativeCacheService native, DavD
 {
     protected override async Task<IActionResult> HandleRequest()
     {
+        await native.WaitForInitializationAsync(HttpContext.RequestAborted).ConfigureAwait(false);
         if (native.Store is null) throw new ArgumentException("Native cache must be active to browse its catalogue.");
         var query = HttpContext.Request.Query;
         var limit = int.TryParse(query["limit"], out var requested) ? requested : 50;

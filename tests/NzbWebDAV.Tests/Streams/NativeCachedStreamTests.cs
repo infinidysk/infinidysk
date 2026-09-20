@@ -119,7 +119,7 @@ public sealed class NativeCachedStreamTests : IDisposable
         [new NativeCacheFolder { Path = _root, MinFreeBytes = 0 }]);
 
     [Fact]
-    public async Task GenerationChanges_InvalidateAlreadyBufferedCacheHit()
+    public async Task GenerationChanges_FailResponseRatherThanMixOldAndNewBytes()
     {
         await using var store = CreateStore();
         var id = new NativeCacheIdentity("id", "version", 3);
@@ -131,8 +131,7 @@ public sealed class NativeCachedStreamTests : IDisposable
         await stream.ReadAsync(bytes);
         Assert.Equal(1, bytes[0]);
         current = false;
-        await stream.ReadAsync(bytes);
-        Assert.Equal(9, bytes[0]);
+        await Assert.ThrowsAsync<IOException>(() => stream.ReadAsync(bytes).AsTask());
     }
 
     [Fact]

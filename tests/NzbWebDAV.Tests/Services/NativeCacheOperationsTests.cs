@@ -27,6 +27,7 @@ public sealed class NativeCacheOperationsTests
             ]);
             using var blobs = new FileBlobStore();
             await using var native = new NativeCacheService(config, blobs, new RepairPatchStore(Path.Combine(root, "patches"), 100));
+            Assert.True(await native.WaitForInitializationAsync());
             using var operations = new NativeCacheOperations(native);
             Assert.Throws<ArgumentException>(() => operations.Enqueue("disk", "clear"));
             var first = operations.Enqueue("disk", "probe");

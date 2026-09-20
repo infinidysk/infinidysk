@@ -23,6 +23,8 @@ internal sealed class SharedReaderStream : FastReadOnlyStream
     private bool _detached;
     private Exception? _deliveredFailure;
     private int _disposed;
+    private string? _responseGeneration;
+    private bool _servedBytes;
 
     internal SharedReaderStream(
         SharedStreamEntry entry,
@@ -40,6 +42,7 @@ internal sealed class SharedReaderStream : FastReadOnlyStream
         _fileSize = fileSize;
         _ringSize = ringSize;
         _fallbackFactory = fallbackFactory;
+        _responseGeneration = entry.GenerationIdentity;
     }
 
     internal long ReaderId => _readerId;
@@ -74,11 +77,14 @@ internal sealed class SharedReaderStream : FastReadOnlyStream
 
         while (true)
         {
+            if (!_entry.ValidateSourceGeneration()) ThrowGenerationChanged();
             var result = _ring.TryCopyAt(_readerId, _cursor, buffer.Span);
             switch (result.Kind)
             {
                 case RingReadKind.Copied:
+                    if (!_entry.ValidateSourceGeneration()) ThrowGenerationChanged();
                     _cursor += result.Count;
+                    _servedBytes |= result.Count > 0;
                     if (result.Count > 0)
                         _entry.NotifyCursorAdvanced(_readerId, _cursor);
                     return result.Count;
@@ -201,9 +207,25 @@ internal sealed class SharedReaderStream : FastReadOnlyStream
 
     private async ValueTask<int> ReadFallbackAsync(Memory<byte> buffer, CancellationToken cancellationToken)
     {
+        if (_servedBytes && _responseGeneration is not null && !_entry.ValidateSourceGeneration()) ThrowGenerationChanged();
         _fallback ??= await _fallbackFactory(_cursor, cancellationToken).ConfigureAwait(false);
+        var evidence = _fallback as IStreamGenerationEvidence;
+        if (_servedBytes && _responseGeneration is not null && evidence?.GenerationIdentity != _responseGeneration)
+            ThrowGenerationChanged();
+        if (!_servedBytes) _responseGeneration = evidence?.GenerationIdentity;
+        if (evidence?.IsSourceCurrent == false) ThrowGenerationChanged();
         var read = await _fallback.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+        if (evidence?.IsSourceCurrent == false || _responseGeneration is not null && evidence?.GenerationIdentity != _responseGeneration)
+            ThrowGenerationChanged();
         _cursor += read;
+        _servedBytes |= read > 0;
         return read;
+    }
+
+    private void ThrowGenerationChanged()
+    {
+        _deliveredFailure = new IOException("Media source changed during this response. Retry the current source.");
+        DetachQuiet();
+        throw _deliveredFailure;
     }
 }
