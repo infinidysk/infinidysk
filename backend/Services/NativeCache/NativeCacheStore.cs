@@ -205,6 +205,8 @@ public sealed class NativeCacheStore : IAsyncDisposable
                     manifest.Flush(flushToDisk: true);
                 }
             }
+            await using var journal = directory.OpenFile("ranges.journal", FileMode.OpenOrCreate, FileAccess.ReadWrite);
+            await RepairJournalTailAsync(journal, cancellationToken).ConfigureAwait(false);
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             catalogueHeld = true;
             // Writers/eviction are serialized separately; readers need only this
@@ -233,13 +235,10 @@ public sealed class NativeCacheStore : IAsyncDisposable
                 stream.Flush(flushToDisk: true);
             }
             // The colocated journal makes explicit scans/imports possible without the local catalogue.
-            await using (var journal = directory.OpenFile("ranges.journal", FileMode.Append, FileAccess.Write))
-            {
-                var record = JsonSerializer.SerializeToUtf8Bytes(new JournalBlock(offset, data.Length, Convert.ToHexString(hash)));
-                await journal.WriteAsync(record, cancellationToken).ConfigureAwait(false);
-                await journal.WriteAsync("\n"u8.ToArray(), cancellationToken).ConfigureAwait(false);
-                journal.Flush(flushToDisk: true);
-            }
+            var record = JsonSerializer.SerializeToUtf8Bytes(new JournalBlock(offset, data.Length, Convert.ToHexString(hash)));
+            await journal.WriteAsync(record, cancellationToken).ConfigureAwait(false);
+            await journal.WriteAsync("\n"u8.ToArray(), cancellationToken).ConfigureAwait(false);
+            journal.Flush(flushToDisk: true);
             directory.Flush();
             using (var shard = _roots[folder.Id].OpenDirectory($"v1/{identity.Key[..2]}")) shard.Flush();
             using (var version = _roots[folder.Id].OpenDirectory("v1")) version.Flush();
@@ -268,6 +267,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
             return true;
         }
         catch (IOException) { return false; }
+        catch (InvalidDataException) { return false; }
         catch (UnauthorizedAccessException) { return false; }
         finally
         {
@@ -588,11 +588,34 @@ public sealed class NativeCacheStore : IAsyncDisposable
         while (count < line.Length)
         {
             var read = await reader.ReadAsync(line.AsMemory(count, 1), cancellationToken).ConfigureAwait(false);
-            if (read == 0) return count == 0 ? null : new string(line, 0, count);
+            if (read == 0) return null; // Only newline-terminated records crossed the journal commit boundary.
             if (line[count] == '\n') return new string(line, 0, count);
             count++;
         }
         throw new InvalidDataException("Oversized native-cache journal record.");
+    }
+
+    private static async Task RepairJournalTailAsync(FileStream journal, CancellationToken cancellationToken)
+    {
+        var length = journal.Length;
+        if (length == 0) return;
+        journal.Position = length - 1;
+        var last = new byte[1];
+        await journal.ReadExactlyAsync(last, cancellationToken).ConfigureAwait(false);
+        if (last[0] == '\n') return;
+        // Recovery belongs off foreground IO when corruption exceeds this window.
+        // Never scan an arbitrarily large journal backwards during a cache fill.
+        var count = (int)Math.Min(length, 64 * 1024);
+        var tail = new byte[count];
+        var start = length - count;
+        journal.Position = start;
+        await journal.ReadExactlyAsync(tail, cancellationToken).ConfigureAwait(false);
+        var newline = tail.AsSpan().LastIndexOf((byte)'\n');
+        if (newline < 0 && start > 0) throw new InvalidDataException("Native cache journal tail exceeds bounded recovery.");
+        var committedLength = start + newline + 1;
+        journal.SetLength(committedLength);
+        journal.Flush(flushToDisk: true);
+        journal.Position = committedLength;
     }
 
     private bool HasQuota(NativeCacheFolder folder, long requested, string? reservationKey = null)
