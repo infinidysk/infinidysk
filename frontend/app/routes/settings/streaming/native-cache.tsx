@@ -23,7 +23,13 @@ type CacheStatus = {
   initializationError?: string;
   initializationPending?: boolean;
   reservedBufferBytes: number;
-  counters?: { hitBlocks: number; missBlocks: number; committedBytes: number; fallbacks: number; ioTimeouts: number };
+  counters?: {
+    hitBlocks: number;
+    missBlocks: number;
+    committedBytes: number;
+    fallbacks: number;
+    ioTimeouts: number;
+  };
   folders: {
     id: string;
     online: boolean;
@@ -39,11 +45,28 @@ type CacheStatus = {
     state: string;
     result?: number;
     error?: string;
-    probe?: { fileSystem: string; capability: string; readable: boolean; writable: boolean; durableWriteVerified: boolean; availableBytes: number; error?: string };
+    probe?: {
+      fileSystem: string;
+      capability: string;
+      readable: boolean;
+      writable: boolean;
+      durableWriteVerified: boolean;
+      availableBytes: number;
+      error?: string;
+    };
   }[];
 };
 
-type CacheEntry = { key: string; itemId: string; name?: string; generation?: string; length: number; allocatedBytes: number; verifiedBytes: number; pinned: boolean };
+type CacheEntry = {
+  key: string;
+  itemId: string;
+  name?: string;
+  generation?: string;
+  length: number;
+  allocatedBytes: number;
+  verifiedBytes: number;
+  pinned: boolean;
+};
 type RangePage = { ranges: { offset: number; count: number }[]; nextAfter: number | null };
 
 export function NativeCacheSettings({
@@ -56,7 +79,11 @@ export function NativeCacheSettings({
   const [status, setStatus] = useState<CacheStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [cachePage, setCachePage] = useState<{ folderId: string; entries: CacheEntry[]; nextAfter: string | null } | null>(null);
+  const [cachePage, setCachePage] = useState<{
+    folderId: string;
+    entries: CacheEntry[];
+    nextAfter: string | null;
+  } | null>(null);
   const [rangePage, setRangePage] = useState<(RangePage & { key: string }) | null>(null);
   const inspectRanges = async (key: string, afterOffset = -1) => {
     setBusy(true);
@@ -65,9 +92,12 @@ export function NativeCacheSettings({
       const query = new URLSearchParams({ key, afterOffset: String(afterOffset), limit: "50" });
       const response = await fetch(withUrlBase(`/api/native-cache/ranges?${query}`));
       if (!response.ok) throw new Error("Could not load verified cache ranges.");
-      setRangePage({ ...(await response.json() as RangePage), key });
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Range listing failed."); }
-    finally { setBusy(false); }
+      setRangePage({ ...((await response.json()) as RangePage), key });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Range listing failed.");
+    } finally {
+      setBusy(false);
+    }
   };
   const browse = async (folderId: string, after?: string) => {
     setBusy(true);
@@ -75,23 +105,38 @@ export function NativeCacheSettings({
       const query = new URLSearchParams({ folderId, limit: "50", ...(after ? { after } : {}) });
       const response = await fetch(withUrlBase(`/api/native-cache/entries?${query}`));
       if (!response.ok) throw new Error("Could not load cached files.");
-      const page = await response.json() as { entries: CacheEntry[]; nextAfter: string | null };
+      const page = (await response.json()) as { entries: CacheEntry[]; nextAfter: string | null };
       setCachePage({ ...page, folderId });
       setRangePage(null);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Cache listing failed."); }
-    finally { setBusy(false); }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Cache listing failed.");
+    } finally {
+      setBusy(false);
+    }
   };
   const pin = async (entry: CacheEntry) => {
     setBusy(true);
     try {
       const response = await fetch(withUrlBase("/api/native-cache/operations"), {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ operation: "pin", cacheKey: entry.key, pinned: !entry.pinned }),
       });
       if (!response.ok) throw new Error("Could not update cache retention.");
-      setCachePage(current => current && ({ ...current, entries: current.entries.map(item => item.key === entry.key ? { ...item, pinned: !item.pinned } : item) }));
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Pin operation failed."); }
-    finally { setBusy(false); }
+      setCachePage(
+        (current) =>
+          current && {
+            ...current,
+            entries: current.entries.map((item) =>
+              item.key === entry.key ? { ...item, pinned: !item.pinned } : item,
+            ),
+          },
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Pin operation failed.");
+    } finally {
+      setBusy(false);
+    }
   };
   useEffect(() => {
     const abort = new AbortController();
@@ -193,14 +238,18 @@ export function NativeCacheSettings({
           Running: {status.activeMode}; saved: {status.configuredMode}
           {status.restartRequired ? " — restart required" : ""}. Buffer reservations:{" "}
           {(status.reservedBufferBytes / 1048576).toFixed(0)} MiB.
-          {status.initializationPending ? " Storage initialization pending; source playback remains available." : ""}
+          {status.initializationPending
+            ? " Storage initialization pending; source playback remains available."
+            : ""}
         </p>
       )}
-      {status?.counters && <p className="text-xs">
-        Verified block hits: {status.counters.hitBlocks}; misses: {status.counters.missBlocks};
-        committed this process: {(status.counters.committedBytes / 1e9).toFixed(2)} GB;
-        source fallbacks: {status.counters.fallbacks} ({status.counters.ioTimeouts} storage timeouts).
-      </p>}
+      {status?.counters && (
+        <p className="text-xs">
+          Verified block hits: {status.counters.hitBlocks}; misses: {status.counters.missBlocks};
+          committed this process: {(status.counters.committedBytes / 1e9).toFixed(2)} GB; source
+          fallbacks: {status.counters.fallbacks} ({status.counters.ioTimeouts} storage timeouts).
+        </p>
+      )}
       {(error || validation || status?.initializationError) && (
         <Alert variant="warning">{error ?? validation ?? status?.initializationError}</Alert>
       )}
@@ -308,13 +357,27 @@ export function NativeCacheSettings({
                       </label>
                       <label>
                         Start eviction at quota (%)
-                        <Input type="number" min={2} max={100} value={folder.highWaterPercent ?? 90}
-                          onChange={event => edit(folder.id, { highWaterPercent: Number(event.target.value) })} />
+                        <Input
+                          type="number"
+                          min={2}
+                          max={100}
+                          value={folder.highWaterPercent ?? 90}
+                          onChange={(event) =>
+                            edit(folder.id, { highWaterPercent: Number(event.target.value) })
+                          }
+                        />
                       </label>
                       <label>
                         Evict down to quota (%)
-                        <Input type="number" min={1} max={99} value={folder.lowWaterPercent ?? 80}
-                          onChange={event => edit(folder.id, { lowWaterPercent: Number(event.target.value) })} />
+                        <Input
+                          type="number"
+                          min={1}
+                          max={99}
+                          value={folder.lowWaterPercent ?? 80}
+                          onChange={(event) =>
+                            edit(folder.id, { lowWaterPercent: Number(event.target.value) })
+                          }
+                        />
                       </label>
                       <label>
                         Storage type
@@ -354,7 +417,9 @@ export function NativeCacheSettings({
                       </p>
                     )}
                     <div className="flex flex-wrap gap-2">
-                      <Button disabled={busy || !live} onClick={() => void browse(folder.id)}>View cached files</Button>
+                      <Button disabled={busy || !live} onClick={() => void browse(folder.id)}>
+                        View cached files
+                      </Button>
                       {["probe", "scan", "clear"].map((operation) => (
                         <Button
                           key={operation}
@@ -401,36 +466,91 @@ export function NativeCacheSettings({
               </Button>
             </div>
           </ManagedSetting>
-          {cachePage && <div className="space-y-2">
-            <h4>Cached files — {folders.find(folder => folder.id === cachePage.folderId)?.name ?? cachePage.folderId}</h4>
-            <p className="text-xs">Catalogue coverage is a snapshot; playback rechecks volume identity and block integrity. Pinned files are retained during automatic eviction and folder clear; unpin them before clearing.</p>
-            {cachePage.entries.map(entry => <div key={entry.key} className="flex flex-wrap items-center gap-2 text-xs">
-              <span>{entry.name ?? entry.itemId}</span>
-              <span>{entry.length ? (entry.verifiedBytes / entry.length * 100).toFixed(1) : "0"}% verified · {(entry.allocatedBytes / 1e9).toFixed(3)} GB allocated</span>
-              <span className="break-all">Generation: {entry.generation ?? "unknown until written or scanned"}</span>
-              <Button disabled={busy} aria-label={`Verified ranges for ${entry.name ?? entry.itemId}`} onClick={() => void inspectRanges(entry.key)}>Verified ranges</Button>
-              <Button disabled={busy} aria-label={`${entry.pinned ? "Unpin" : "Pin"} ${entry.name ?? entry.itemId}`} onClick={() => void pin(entry)}>{entry.pinned ? "Unpin" : "Pin"}</Button>
-              {rangePage?.key === entry.key && <div className="w-full">
-                {rangePage.ranges.map(range => <p key={range.offset}>Bytes {range.offset.toLocaleString()}–{(range.offset + range.count - 1).toLocaleString()}</p>)}
-                {rangePage.ranges.length === 0 && <p>No verified ranges in this page.</p>}
-                <Button disabled={busy} onClick={() => void inspectRanges(entry.key)}>First range page</Button>
-                <Button disabled={busy || rangePage.nextAfter === null} onClick={() => void inspectRanges(entry.key, rangePage.nextAfter ?? -1)}>Next range page</Button>
-              </div>}
-            </div>)}
-            {cachePage.entries.length === 0 && <p>No cached files in this page.</p>}
-            <Button disabled={busy} onClick={() => void browse(cachePage.folderId)}>First page / refresh</Button>
-            <Button disabled={busy || !cachePage.nextAfter} onClick={() => void browse(cachePage.folderId, cachePage.nextAfter ?? undefined)}>Next page</Button>
-          </div>}
+          {cachePage && (
+            <div className="space-y-2">
+              <h4>
+                Cached files —{" "}
+                {folders.find((folder) => folder.id === cachePage.folderId)?.name ??
+                  cachePage.folderId}
+              </h4>
+              <p className="text-xs">
+                Catalogue coverage is a snapshot; playback rechecks volume identity and block
+                integrity. Pinned files are retained during automatic eviction and folder clear;
+                unpin them before clearing.
+              </p>
+              {cachePage.entries.map((entry) => (
+                <div key={entry.key} className="flex flex-wrap items-center gap-2 text-xs">
+                  <span>{entry.name ?? entry.itemId}</span>
+                  <span>
+                    {entry.length ? ((entry.verifiedBytes / entry.length) * 100).toFixed(1) : "0"}%
+                    verified · {(entry.allocatedBytes / 1e9).toFixed(3)} GB allocated
+                  </span>
+                  <span className="break-all">
+                    Generation: {entry.generation ?? "unknown until written or scanned"}
+                  </span>
+                  <Button
+                    disabled={busy}
+                    aria-label={`Verified ranges for ${entry.name ?? entry.itemId}`}
+                    onClick={() => void inspectRanges(entry.key)}
+                  >
+                    Verified ranges
+                  </Button>
+                  <Button
+                    disabled={busy}
+                    aria-label={`${entry.pinned ? "Unpin" : "Pin"} ${entry.name ?? entry.itemId}`}
+                    onClick={() => void pin(entry)}
+                  >
+                    {entry.pinned ? "Unpin" : "Pin"}
+                  </Button>
+                  {rangePage?.key === entry.key && (
+                    <div className="w-full">
+                      {rangePage.ranges.map((range) => (
+                        <p key={range.offset}>
+                          Bytes {range.offset.toLocaleString()}–
+                          {(range.offset + range.count - 1).toLocaleString()}
+                        </p>
+                      ))}
+                      {rangePage.ranges.length === 0 && <p>No verified ranges in this page.</p>}
+                      <Button disabled={busy} onClick={() => void inspectRanges(entry.key)}>
+                        First range page
+                      </Button>
+                      <Button
+                        disabled={busy || rangePage.nextAfter === null}
+                        onClick={() => void inspectRanges(entry.key, rangePage.nextAfter ?? -1)}
+                      >
+                        Next range page
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {cachePage.entries.length === 0 && <p>No cached files in this page.</p>}
+              <Button disabled={busy} onClick={() => void browse(cachePage.folderId)}>
+                First page / refresh
+              </Button>
+              <Button
+                disabled={busy || !cachePage.nextAfter}
+                onClick={() => void browse(cachePage.folderId, cachePage.nextAfter ?? undefined)}
+              >
+                Next page
+              </Button>
+            </div>
+          )}
           <div className="space-y-2">
             {status?.jobs.map((job) => (
               <p key={job.id} className="text-xs">
                 {job.operation} / {job.folderId}: {job.state}
                 {job.result !== undefined ? ` (${job.result})` : ""} {job.error}
-                {job.probe && <span> — {job.probe.fileSystem} / {job.probe.capability};
-                  readable: {job.probe.readable ? "yes" : "no"}; writable: {job.probe.writable ? "yes" : "no"};
-                  durable write verified: {job.probe.durableWriteVerified ? "yes" : "no"};
-                  available: {(job.probe.availableBytes / 1e9).toFixed(1)} GB. {job.probe.error}
-                </span>}
+                {job.probe && (
+                  <span>
+                    {" "}
+                    — {job.probe.fileSystem} / {job.probe.capability}; readable:{" "}
+                    {job.probe.readable ? "yes" : "no"}; writable:{" "}
+                    {job.probe.writable ? "yes" : "no"}; durable write verified:{" "}
+                    {job.probe.durableWriteVerified ? "yes" : "no"}; available:{" "}
+                    {(job.probe.availableBytes / 1e9).toFixed(1)} GB. {job.probe.error}
+                  </span>
+                )}
                 {["queued", "running"].includes(job.state) && (
                   <Button
                     disabled={busy}
