@@ -138,6 +138,8 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
     {
         if (_metadataCache.TryGetValue(id, out T? cached)) return cached;
 
+        using var revision = ContentRevisionTracker.Watch(id);
+
         var stream = ReadBlob(id);
         if (stream == null) return default;
         var blobPath = GetBlobPath(id);
@@ -156,11 +158,14 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
             throw new CorruptedBlobPayloadException(id, blobPath, typeof(T), e);
         }
 
-        if (blob is not null)
+        lock (_lockObj)
         {
-            _metadataCache.Set(id, blob, new MemoryCacheEntryOptions()
-                .SetSize(GetCacheSize(blob))
-                .SetSlidingExpiration(TimeSpan.FromMinutes(10)));
+            // Deserialization can outlive a same-ID replacement. Check and publish
+            // under the same lock as replacement/cache invalidation.
+            if (blob is not null && revision.IsCurrent)
+                _metadataCache.Set(id, blob, new MemoryCacheEntryOptions()
+                    .SetSize(GetCacheSize(blob))
+                    .SetSlidingExpiration(TimeSpan.FromMinutes(10)));
         }
 
         return blob;

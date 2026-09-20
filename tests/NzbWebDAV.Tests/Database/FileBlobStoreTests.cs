@@ -30,6 +30,31 @@ public sealed class FileBlobStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task InFlightOldDeserialize_CannotRepopulateCacheAfterReplacement()
+    {
+        var id = Guid.NewGuid();
+        await _store.WriteBlob(id, new PausedBlob { Value = 1 });
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        PausedBlob.AfterRead = value =>
+        {
+            if (value != 1) return;
+            entered.Set();
+            Assert.True(release.Wait(TimeSpan.FromSeconds(10)));
+        };
+        try
+        {
+            var oldRead = Task.Run(() => _store.ReadBlob<PausedBlob>(id));
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
+            await _store.WriteBlob(id, new PausedBlob { Value = 2 });
+            release.Set();
+            await oldRead;
+            Assert.Equal(2, (await _store.ReadBlob<PausedBlob>(id))!.Value);
+        }
+        finally { release.Set(); PausedBlob.AfterRead = null; }
+    }
+
+    [Fact]
     public async Task SameIdReplacement_InvalidatesActiveNativeReaders()
     {
         var id = Guid.NewGuid();
@@ -164,4 +189,13 @@ public sealed class FileBlobStoreTests : IDisposable
         Assert.NotNull(recovered);
         Assert.Equal(replacement.SegmentIds, recovered!.SegmentIds);
     }
+}
+
+[MemoryPackable]
+public partial class PausedBlob
+{
+    public int Value { get; set; }
+    public static Action<int>? AfterRead { get; set; }
+    [MemoryPackOnDeserialized]
+    private void OnRead() => AfterRead?.Invoke(Value);
 }
