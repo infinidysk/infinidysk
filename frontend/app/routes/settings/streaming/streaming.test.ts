@@ -204,10 +204,10 @@ describe("Streaming settings", () => {
     expect(screen.getByText(/Segment Cache is enabled by default/i)).toBeTruthy();
     expect(screen.getByText(/cannot automatically determine/i)).toBeTruthy();
     expect(screen.getByText("Effective now: 512 MiB")).toBeTruthy();
-    const segmentCache = screen.getByRole<HTMLInputElement>("checkbox", {
-      name: "Enable Segment Cache (fast storage)",
+    const segmentCache = screen.getByRole<HTMLSelectElement>("combobox", {
+      name: "Cache mode (restart required)",
     });
-    expect(segmentCache.checked).toBe(true);
+    expect(segmentCache.value).toBe("segment");
     const cachePath = screen.getByRole<HTMLInputElement>("textbox", {
       name: "Cache path",
     });
@@ -222,8 +222,8 @@ describe("Streaming settings", () => {
     await user.type(cacheSize, "25");
     expect(cacheSize.value).toBe("25");
 
-    await user.click(segmentCache);
-    expect(segmentCache.checked).toBe(false);
+    await user.selectOptions(segmentCache, "off");
+    expect(segmentCache.value).toBe("off");
 
     const numericUpdates: Array<[string, string]> = [
       ["Streaming Segment Timeout", "10"],

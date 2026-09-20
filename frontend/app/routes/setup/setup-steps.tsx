@@ -246,7 +246,9 @@ function SymlinkPlaybackStep({
   return (
     <StepSection
       title="Prepare the rclone playback path"
-      description="InfiniDysk will use rclone's bounded VFS cache for Plex playback and keep its own Segment Cache off."
+      description={draft.config["cache.mode"]?.trim()
+        ? `Your explicit ${draft.config["cache.mode"]} cache mode is preserved. Review rclone VFS caching to avoid duplicate disk storage.`
+        : "InfiniDysk will use rclone's bounded VFS cache for Plex playback and keep its own Segment Cache off."}
     >
       <Alert variant="success" className="alert-soft items-start text-sm">
         <Icon name="check_circle" className="!text-[20px]" />
@@ -419,7 +421,9 @@ function StrmPlaybackStep({ draft, updateDraft }: { draft: SetupDraft; updateDra
       <Alert variant="success" className="alert-soft items-start text-sm">
         <Icon name="cached" className="!text-[20px]" />
         <div>
-          <p className="font-semibold">Segment Cache will be enabled</p>
+          <p className="font-semibold">{draft.config["cache.mode"]?.trim()
+            ? `Explicit ${draft.config["cache.mode"]} cache mode will be preserved`
+            : "Segment Cache will be enabled"}</p>
           <p className="mt-1 text-xs opacity-80">
             It is the local WebDAV cache layer for repeated reads and seeks. A restart is required
             when this setting changes.
@@ -996,6 +1000,7 @@ export function ReviewStep({
         <Badge className="badge-soft badge-primary">
           {strategy === "symlinks" ? "Symlinks · Plex" : "STRM · Emby/Jellyfin"}
         </Badge>
+        {draft.config["cache.mode"]?.trim() && <Badge className="badge-soft">Cache: {draft.config["cache.mode"]} (preserved)</Badge>}
         {baseline["usenet.segment-cache.enabled"] !==
           draft.config["usenet.segment-cache.enabled"] && (
           <Badge className="badge-soft badge-warning">Restart required</Badge>

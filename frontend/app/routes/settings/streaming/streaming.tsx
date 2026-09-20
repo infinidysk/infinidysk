@@ -19,14 +19,16 @@ import { className } from "~/utils/styling";
 import { useWebsocketTopic } from "~/utils/shared-websocket";
 import { withUrlBase } from "~/utils/url-base";
 import { isPositiveInteger } from "../validation";
+import { NativeCacheSettings } from "./native-cache";
+import { cacheMode, NATIVE_CACHE_KEYS, nativeSettingsValid } from "./native-cache-model";
+import { PlexSettings } from "../plex/plex";
+import { SmartPrefetchSettings } from "../smart-prefetch/smart-prefetch";
+import { hasSmartPrefetchSettingsChanged, isSmartPrefetchSettingsValid } from "../smart-prefetch/smart-prefetch-model";
 
 export const SEGMENT_CACHE_READ_AHEAD_WARNING_KEY = "segment-cache-read-ahead-warning-dismissed";
 
 export function shouldWarnSegmentCacheReadAhead(config: Record<string, string>): boolean {
-  return (
-    config["usenet.segment-cache.enabled"] === "true" &&
-    config["api.import-strategy"] === "symlinks"
-  );
+  return cacheMode(config) === "segment" && config["api.import-strategy"] === "symlinks";
 }
 
 type StreamingSettingsProps = {
@@ -245,6 +247,9 @@ export function StreamingSettings({
         </ManagedSetting>
       </SettingsCard>
 
+      <NativeCacheSettings config={config} setNewConfig={setNewConfig} />
+      <PlexSettings />
+      <SmartPrefetchSettings config={config} setNewConfig={setNewConfig} />
       <SettingsCard
         icon="speed"
         title="Streaming performance"
@@ -258,27 +263,9 @@ export function StreamingSettings({
           ]}
         >
           <div className="space-y-2">
-            <Tooltip
-              placement="bottom"
-              content="Cache decoded segments on disk so repeat reads and seeks avoid provider traffic. Takes effect after restart. Enable it only when the cache path is on storage that can handle the extra writes."
-            >
-              <Toggle
-                id="segment-cache-enabled-checkbox"
-                className="cursor-pointer gap-2 p-0"
-                checked={config["usenet.segment-cache.enabled"] === "true"}
-                onChange={(e) =>
-                  setNewConfig({
-                    ...config,
-                    "usenet.segment-cache.enabled": String(e.target.checked),
-                  })
-                }
-                label={
-                  <span className="text-sm text-base-content">
-                    Enable Segment Cache (fast storage)
-                  </span>
-                }
-              />
-            </Tooltip>
+            <p className="text-sm">
+              Segment cache settings apply only when Disk cache mode is Segment.
+            </p>
             <Alert className="alert-soft items-start text-xs" variant="warning">
               InfiniDysk cannot automatically determine whether the configured path is slow storage
               or flash with limited write endurance. Segment Cache is enabled by default; disable it
@@ -317,7 +304,7 @@ export function StreamingSettings({
                 </Button>
               </Alert>
             )}
-            {config["usenet.segment-cache.enabled"] === "true" && (
+            {cacheMode(config) === "segment" && (
               <div className="grid gap-4 border-l border-base-content/10 pl-4 sm:grid-cols-2">
                 <label className="flex flex-col gap-2 text-sm text-base-content/80">
                   <span>Cache path</span>
@@ -1084,6 +1071,8 @@ export function isStreamingSettingsUpdated(
   newConfig: Record<string, string>,
 ): boolean {
   return (
+    NATIVE_CACHE_KEYS.some((key) => config[key] !== newConfig[key]) ||
+    hasSmartPrefetchSettingsChanged(config, newConfig) ||
     config["usenet.max-download-connections"] !== newConfig["usenet.max-download-connections"] ||
     config["usenet.max-download-connections-per-stream"] !==
       newConfig["usenet.max-download-connections-per-stream"] ||
@@ -1130,10 +1119,11 @@ export function isStreamingSettingsUpdated(
 
 export function isStreamingSettingsValid(config: Record<string, string>): boolean {
   const segmentCacheValid =
-    config["usenet.segment-cache.enabled"] !== "true" ||
+    cacheMode(config) !== "segment" ||
     (isValidSegmentCachePath(config["usenet.segment-cache.path"] ?? "") &&
       isPositiveInteger(config["usenet.segment-cache.max-gb"] ?? ""));
   return (
+    isSmartPrefetchSettingsValid(config) &&
     isValidMaxDownloadConnections(config["usenet.max-download-connections"]) &&
     isValidStreamingPriority(config["usenet.streaming-priority"] ?? "") &&
     isValidStreamingSegmentTimeout(config["usenet.streaming-segment-timeout-seconds"] ?? "") &&
@@ -1153,7 +1143,8 @@ export function isStreamingSettingsValid(config: Record<string, string>): boolea
     isValidSharedStreamsRingMb(config["usenet.shared-streams.ring-mb"]) &&
     isValidSharedStreamsGraceSeconds(config["usenet.shared-streams.grace-seconds"]) &&
     isValidSharedStreamsSmallRangeMaxMb(config["usenet.shared-streams.small-range-max-mb"]) &&
-    segmentCacheValid
+    segmentCacheValid &&
+    nativeSettingsValid(config)
   );
 }
 

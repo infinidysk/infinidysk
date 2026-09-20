@@ -77,6 +77,11 @@ import { parseConfigBoolean } from "~/utils/config-bool";
 import { getTrustProxyEnvironmentOverride } from "../../../server/trust-proxy-env.server";
 
 const defaultConfig = {
+  "cache.mode": "",
+  "cache.native.folders": "[]",
+  "cache.native.metadata-path": "",
+  "cache.native.writer-mb": "32",
+  "smart-prefetch.settings": "{}",
   "general.base-url": "",
   "general.trust-proxy": "false",
   "api.key": "",
