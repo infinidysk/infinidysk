@@ -3,7 +3,8 @@ using System.Threading.Channels;
 
 namespace NzbWebDAV.Services.NativeCache;
 
-public sealed record NativeCacheOperation(string Id, string FolderId, string Operation, string State, int? Result = null, string? Error = null);
+public sealed record NativeCacheOperation(string Id, string FolderId, string Operation, string State, int? Result = null, string? Error = null,
+    NativeCacheProbeResult? Probe = null);
 
 public sealed class NativeCacheOperations : BackgroundService
 {
@@ -13,6 +14,22 @@ public sealed class NativeCacheOperations : BackgroundService
     private readonly Dictionary<string, NativeCacheOperation> _jobs = [];
     private readonly Dictionary<string, CancellationTokenSource> _cancellations = [];
     public NativeCacheOperations(NativeCacheService native) => _native = native;
+
+    internal static async Task<NativeCacheProbeResult> RunProbeWithDeadlineAsync(Func<CancellationToken, Task<NativeCacheProbeResult>> probe,
+        TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var work = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var workToken = work.Token;
+        // Even opening an NFS file can block synchronously. Isolate that call so the
+        // admin operation has a deadline; the store's writer gate bounds stalled IO.
+        var pending = Task.Run(() => probe(workToken), CancellationToken.None);
+        _ = pending.ContinueWith(static completed => { _ = completed.Exception; }, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        try { return await pending.WaitAsync(timeout, cancellationToken).ConfigureAwait(false); }
+        catch (TimeoutException) { throw new IOException("Storage probe exceeded its deadline."); }
+        finally { if (!pending.IsCompleted) work.Cancel(); }
+    }
 
     public NativeCacheOperation Enqueue(string folderId, string operation, string? confirmFolderId = null)
     {
@@ -78,11 +95,21 @@ public sealed class NativeCacheOperations : BackgroundService
         }
         try
         {
+            if (job.Operation == "probe")
+            {
+                var probe = await RunProbeWithDeadlineAsync(ct => _native.Store!.ProbeAsync(job.FolderId, ct),
+                    TimeSpan.FromSeconds(15), cancellation.Token).ConfigureAwait(false);
+                lock (_gate)
+                    if (_jobs[id].State != "cancelled")
+                        _jobs[id] = job with { State = probe.Error is null ? "completed" : "failed", Result = probe.Error is null ? 1 : 0,
+                            Probe = probe, Error = probe.Error };
+                return;
+            }
             var result = job.Operation switch
             {
                 "scan" => await _native.Store!.ScanAsync(job.FolderId, cancellation.Token).ConfigureAwait(false),
                 "clear" => await ClearAsync(job.FolderId, cancellation.Token).ConfigureAwait(false),
-                _ => (await _native.Store!.GetStatusAsync(cancellation.Token).ConfigureAwait(false)).Any(folder => folder.Id == job.FolderId && folder.Online) ? 1 : 0
+                _ => throw new InvalidOperationException("Unknown native cache operation.")
             };
             lock (_gate) if (_jobs[id].State != "cancelled") _jobs[id] = job with { State = "completed", Result = result };
         }

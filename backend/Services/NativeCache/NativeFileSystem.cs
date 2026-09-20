@@ -6,6 +6,21 @@ namespace NzbWebDAV.Services.NativeCache;
 /// <summary>Linux native-cache durability/allocation helpers. Never count sparse logical length as allocation.</summary>
 public static class NativeFileSystem
 {
+    internal static (string FileSystem, string Capability) ClassifyFileSystem(long magic) => magic switch
+    {
+        0xef53 => ("ext-family", "local"),
+        0x58465342 => ("xfs", "local"),
+        0x9123683e => ("btrfs", "local"),
+        0xf2f52010 => ("f2fs", "local"),
+        0x01021994 => ("tmpfs", "local"),
+        0x794c7630 => ("overlay", "local"),
+        0x6969 => ("nfs", "nfs"),
+        0x517b => ("smb", "smb"),
+        0xff534d42 => ("cifs", "smb"),
+        0xfe534d42 => ("smb2", "smb"),
+        0x65735546 => ("fuse", "unknown"),
+        _ => ("unknown", "unknown")
+    };
     /// <summary>Pin each path component without following links. Payload IO must use this handle, never the configured pathname.</summary>
     public static PinnedDirectory PinDirectory(string path)
     {
@@ -48,6 +63,15 @@ public static class NativeFileSystem
         // Device numbers can change after a legitimate remount. A mismatch fails
         // closed until the administrator explicitly registers a new folder ID.
         public string RegistrationIdentity => $"{DeviceIdentity}:{_identity.Inode}";
+
+        public (string FileSystem, string Capability) FileSystem
+        {
+            get
+            {
+                if (StatFs(_handle, out var result) != 0) throw new IOException("Cannot identify native cache filesystem.");
+                return ClassifyFileSystem(result.Type);
+            }
+        }
 
         public long AvailableBytes
         {
@@ -245,6 +269,16 @@ public static class NativeFileSystem
         [FieldOffset(8)] public ulong FragmentSize;
         [FieldOffset(32)] public ulong AvailableBlocks;
     }
+
+    [StructLayout(LayoutKind.Explicit, Size = 256)]
+    private struct StatFsResult
+    {
+        [FieldOffset(0)] public long Type;
+    }
+
+    [DllImport("libc", EntryPoint = "fstatfs", SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    private static extern int StatFs(SafeFileHandle descriptor, out StatFsResult result);
 
     [DllImport("libc", EntryPoint = "fstatvfs", SetLastError = true)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]

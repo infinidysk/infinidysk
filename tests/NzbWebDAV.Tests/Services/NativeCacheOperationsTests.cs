@@ -35,6 +35,14 @@ public sealed class NativeCacheOperationsTests
             for (var index = 0; index < 7; index++) operations.Enqueue("disk", "probe");
             Assert.Throws<ArgumentException>(() => operations.Enqueue("disk", "scan"));
             Assert.Throws<ArgumentException>(() => operations.Enqueue("unknown", "probe"));
+            var probe = operations.GetJobs().First(job => job.State == "queued");
+            var run = typeof(NativeCacheOperations).GetMethod("RunAsync", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            await (Task)run.Invoke(operations, [probe.Id, CancellationToken.None])!;
+            var completed = operations.GetJobs().Single(job => job.Id == probe.Id);
+            Assert.Equal("completed", completed.State);
+            Assert.NotNull(completed.Probe);
+            Assert.True(completed.Probe.DurableWriteVerified);
+            Assert.True(completed.Probe.Writable);
         }
         finally { Environment.SetEnvironmentVariable("CONFIG_PATH", old); Directory.Delete(root, true); }
     }

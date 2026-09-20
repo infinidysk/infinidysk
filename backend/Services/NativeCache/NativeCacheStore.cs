@@ -32,6 +32,65 @@ public sealed class NativeCacheStore : IAsyncDisposable
     private bool _disposed;
     internal Func<string, CancellationToken, Task>? BeforeScanReadAsync { get; init; }
     internal Func<string, long>? AvailableBytesOverride { get; init; }
+    internal Func<NativeFileSystem.PinnedDirectory, string, CancellationToken, Task>? BeforeProbeReadAsync { get; init; }
+
+    public async Task<NativeCacheProbeResult> ProbeAsync(string folderId, CancellationToken cancellationToken = default)
+    {
+        var folder = _folders.FirstOrDefault(candidate => candidate.Id == folderId && candidate.Enabled)
+            ?? throw new ArgumentException("Unknown or disabled native cache folder.", nameof(folderId));
+        var result = new NativeCacheProbeResult("unknown", "unknown", false, false, false, 0, null);
+        await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!IsVolumeCurrent(folder)) return result with { Error = "Registered storage is unavailable or its identity changed." };
+            var root = _roots[folder.Id];
+            var filesystem = root.FileSystem;
+            result = result with { FileSystem = filesystem.FileSystem, Capability = filesystem.Capability, Readable = true,
+                AvailableBytes = AvailableBytesOverride?.Invoke(folder.Id) ?? root.AvailableBytes };
+            if (folder.ReadOnly) return result;
+            if (!_owners.ContainsKey(folderId)) return result with { Error = "Folder is not exclusively owned for writes." };
+            long freeRequired;
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try { freeRequired = FreeSpaceRequirement(folder, 4096); }
+            finally { _gate.Release(); }
+            if (result.AvailableBytes < freeRequired) return result with { Error = "Insufficient unreserved space for a safe write probe." };
+            await ProbeRoundTripAsync(root, cancellationToken).ConfigureAwait(false);
+            if (!IsVolumeCurrent(folder)) return result with { Readable = false, Error = "Storage identity changed during the probe." };
+            return result with { Writable = true, DurableWriteVerified = true };
+        }
+        catch (IOException) { return result with { Error = "Storage did not complete a verified write, flush, read and cleanup probe." }; }
+        catch (UnauthorizedAccessException) { return result with { Error = "Storage permissions prevented the probe." }; }
+        finally { _writer.Release(); }
+    }
+
+    private async Task ProbeRoundTripAsync(NativeFileSystem.PinnedDirectory root, CancellationToken cancellationToken)
+    {
+        var name = ".infinidysk-probe-" + Guid.NewGuid().ToString("N");
+        var created = false;
+        try
+        {
+            var expected = RandomNumberGenerator.GetBytes(4096);
+            await using var file = root.OpenFile(name, FileMode.CreateNew, FileAccess.ReadWrite);
+            created = true;
+            await file.WriteAsync(expected, cancellationToken).ConfigureAwait(false);
+            file.Flush(flushToDisk: true);
+            root.Flush();
+            if (BeforeProbeReadAsync is { } beforeRead) await beforeRead(root, name, cancellationToken).ConfigureAwait(false);
+            file.Position = 0;
+            var actual = new byte[expected.Length];
+            await file.ReadExactlyAsync(actual, cancellationToken).ConfigureAwait(false);
+            if (!CryptographicOperations.FixedTimeEquals(expected, actual)) throw new IOException("Probe readback mismatch.");
+        }
+        finally
+        {
+            if (created)
+            {
+                root.DeleteFile(name);
+                root.Flush();
+            }
+        }
+    }
 
     public NativeCacheStore(string cataloguePath, IReadOnlyList<NativeCacheFolder> folders)
     {
@@ -1012,3 +1071,6 @@ public sealed class NativeCacheStore : IAsyncDisposable
     private sealed record Manifest(int Version, NativeCacheIdentity Identity);
     private sealed record JournalBlock(long Offset, int Count, string Hash);
 }
+
+public sealed record NativeCacheProbeResult(string FileSystem, string Capability, bool Readable, bool Writable,
+    bool DurableWriteVerified, long AvailableBytes, string? Error);
