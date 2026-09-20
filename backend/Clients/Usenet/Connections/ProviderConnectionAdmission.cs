@@ -108,6 +108,21 @@ internal sealed class ProviderConnectionAdmission : IDisposable
         }
     }
 
+    internal Lease? TryAcquire(ProviderConnectionKind kind)
+    {
+        lock (_lock)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!CanEnterImmediately(kind))
+                return null;
+            Enter(kind);
+            var lease = new Lease(this, kind);
+            if (kind == ProviderConnectionKind.Transfer)
+                _activeTransferLeases.Add(lease);
+            return lease;
+        }
+    }
+
     public void UpdatePriorityOdds(SemaphorePriorityOdds priorityOdds)
     {
         ArgumentNullException.ThrowIfNull(priorityOdds);

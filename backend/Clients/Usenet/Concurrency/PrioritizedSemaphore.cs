@@ -81,6 +81,20 @@ public sealed class PrioritizedSemaphore : IDisposable
         }
     }
 
+    internal bool TryWait()
+    {
+        lock (_lock)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_enteredCount >= _maxAllowed
+                || _highPriorityWaiters.Count != 0
+                || _lowPriorityWaiters.Count != 0)
+                return false;
+            _enteredCount++;
+            return true;
+        }
+    }
+
     public void Release()
     {
         TaskCompletionSource<bool>? toRelease;

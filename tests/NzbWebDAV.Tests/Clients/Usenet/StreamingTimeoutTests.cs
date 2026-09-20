@@ -5,9 +5,12 @@ using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Config;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
+using NzbWebDAV.Services;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Tests.TestUtils;
@@ -22,6 +25,92 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 [Collection(nameof(GlobalLoggerCollection))]
 public class StreamingTimeoutTests
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task PoolAcquisitionTimeoutDoesNotRetryOrPenalizeProvider(
+        bool handshakeQueue, bool healthAdmission)
+    {
+        var safetyTimeout = TimeSpan.FromSeconds(5);
+        var config = new ConfigManager();
+        config.UpdateValues([
+            new ConfigItem { ConfigName = ConfigKeys.RepairHealthcheckConcurrency, ConfigValue = "1" },
+        ]);
+        using var healthGate = new HealthCheckConnectionGate(config);
+        var inner = new LateBodyCompletionClient();
+        var releaseFactories = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var factoriesStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var factoryCount = 0;
+        var blockerCount = handshakeQueue ? 3 : 1;
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: handshakeQueue ? 4 : 1,
+            async cancellationToken =>
+            {
+                if (Interlocked.Increment(ref factoryCount) == blockerCount)
+                    factoriesStarted.TrySetResult();
+                if (handshakeQueue)
+                    await releaseFactories.Task.WaitAsync(cancellationToken);
+                return inner;
+            },
+            connectionOpenTimeout: () => TimeSpan.FromSeconds(30));
+        var breaker = new ProviderCircuitBreaker("pool-acquisition-timeout");
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, "pool-acquisition-timeout", maxTransferConnections: 1);
+        var blockers = Enumerable.Range(0, blockerCount)
+            .Select(_ => pool.GetConnectionLockAsync(SemaphorePriority.High)).ToArray();
+        var acquisitionAttempts = 0;
+        try
+        {
+            await factoriesStarted.Task.WaitAsync(safetyTimeout);
+            using var callerCts = new CancellationTokenSource(safetyTimeout);
+            using var healthContext = healthAdmission
+                ? callerCts.Token.SetContext(
+                    new HealthCheckAdmissionContext(healthGate, HealthCheckAdmissionPriority.Background))
+                : null;
+            using var failoverContext = callerCts.Token.SetContext(
+                new TransferAdmissionFailoverContext(
+                    () => { Interlocked.Increment(ref acquisitionAttempts); return true; },
+                    TimeSpan.FromMilliseconds(50)));
+            var exception = await Assert.ThrowsAsync<ProviderTransferAdmissionTimeoutException>(() =>
+                client.DecodedBodyAsync("seg", callerCts.Token));
+            Assert.Equal(handshakeQueue ? "HandshakeQueue" : "PoolGate", exception.Phase);
+            Assert.Equal(1, acquisitionAttempts);
+            Assert.Equal(0, breaker.GetSnapshot().FailureCount);
+            Assert.Equal(blockerCount, Volatile.Read(ref factoryCount));
+            Assert.Equal(0, healthGate.GetSnapshot().Active);
+        }
+        finally
+        {
+            releaseFactories.TrySetResult();
+            foreach (var blocker in blockers)
+            {
+                using var connection = await blocker.WaitAsync(safetyTimeout);
+            }
+        }
+
+        using var recoveryCts = new CancellationTokenSource(safetyTimeout);
+        var capacityChecks = Enumerable.Range(0, handshakeQueue ? 4 : 1)
+            .Select(_ => pool.GetConnectionLockAsync(SemaphorePriority.High, recoveryCts.Token)).ToArray();
+        try
+        {
+            await Task.WhenAll(capacityChecks);
+        }
+        finally
+        {
+            foreach (var capacityCheck in capacityChecks)
+            {
+                if (capacityCheck.IsCompletedSuccessfully)
+                    (await capacityCheck).Dispose();
+            }
+        }
+        var recovered = await client.DecodedBodyAsync("seg", recoveryCts.Token);
+        inner.Complete(ArticleBodyResult.Cancelled);
+        if (recovered.Stream is not null)
+            await recovered.Stream.DisposeAsync();
+    }
+
     [Fact]
     public async Task TransferAdmissionFailoverTimeoutRemovesWaiterWithoutPenalizingProvider()
     {
@@ -1345,7 +1434,10 @@ public class StreamingTimeoutTests
             var warning = Assert.Single(sink.Events, logEvent =>
                 logEvent.Level == LogEventLevel.Warning
                 && logEvent.MessageTemplate.Text.StartsWith(
-                    "Error getting connection-lock", StringComparison.Ordinal));
+                    "Error getting connection-lock", StringComparison.Ordinal)
+                && logEvent.Properties.TryGetValue("Provider", out var warningProvider)
+                && warningProvider is ScalarValue { Value: var value }
+                && Equals(value, provider));
             Assert.Null(warning.Exception);
             Assert.Equal(provider, Assert.IsType<ScalarValue>(warning.Properties["Provider"]).Value);
             Assert.Equal(timeout.Message, Assert.IsType<ScalarValue>(warning.Properties["Reason"]).Value);

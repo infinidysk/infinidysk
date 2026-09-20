@@ -19,7 +19,8 @@ flowchart TD
 - A background sweeper runs every half of the [idle connection timeout](../configuration/streaming.md) (default: every 30 seconds). It refills the floor when sockets were lost and reaps idle connections **only above the floor** — warm connections are never closed just for being idle.
 - Before a provider's own idle timeout can drop a warm socket, the sweeper pings it with a lightweight NNTP `DATE` command. A failed ping means the socket went stale; it is disposed and the floor refills.
 - Warm connections never hold download permits, so the full configured connection width stays available to real work.
-- If a provider is unreachable at startup, warming does not spin or block startup — the next sweep retries. When InfiniDysk learns that a provider's real connection limit is lower than configured, the floor shrinks with it.
+- If a provider is unreachable at startup, warming does not spin or block startup — retries resume once the provider circuit permits new opens. When InfiniDysk learns that a provider's real connection limit is lower than configured, the floor shrinks with it.
+- Pending warm-up work has a 15-second acquisition budget and stops when its provider circuit trips. Factories already opening keep their own socket-open deadline. Warm-up never claims the half-open recovery probe. A connection-open timeout pauses new sockets without discarding healthy established ones; see [provider acquisition waits](../configuration/streaming.md#provider-acquisition-waits).
 
 ## What you see in the header
 

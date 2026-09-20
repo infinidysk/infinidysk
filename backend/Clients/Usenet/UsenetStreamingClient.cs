@@ -325,6 +325,31 @@ public class UsenetStreamingClient : WrappingNntpClient
         MultiConnectionNntpClient? providerClient = null;
         var warmFailureLock = new object();
         var pendingWarmFailures = new List<(Exception Exception, bool FactoryStarted)>();
+        if (connectionDetails.ProviderId == Guid.Empty)
+            connectionDetails.ProviderId = Guid.NewGuid();
+        var metricsKey = UsenetProviderIdentity.MetricsKey(connectionDetails);
+        var circuitBreaker = new ProviderCircuitBreaker(
+            connectionDetails.Host,
+            transition =>
+            {
+                metricsWriter.RecordEvent(new MetricEvent
+                {
+                    At = transition.AtUnixMilliseconds,
+                    Kind = "circuit",
+                    Tag1 = metricsKey,
+                    Tag2 = transition.State == ProviderCircuitTransitionState.Open
+                        ? "open"
+                        : "closed",
+                    Num = transition.Cooldown is { } cooldown
+                        ? (long)cooldown.TotalMilliseconds
+                        : null,
+                    Note = BuildCircuitTransitionNote(transition),
+                });
+                tripDetector?.OnTransition(metricsKey, transition);
+            },
+            coalesceFailureBursts: true,
+            initialCooldown: circuitInitialCooldown,
+            maxCooldown: circuitMaxCooldown);
 #pragma warning disable CA2000 // the pool is owned by the provider's MultiConnectionNntpClient and disposed on provider config change
         var connectionPool = CreateNewConnectionPool(
 #pragma warning restore CA2000
@@ -349,6 +374,7 @@ public class UsenetStreamingClient : WrappingNntpClient
             connectionOpenProvider: string.IsNullOrWhiteSpace(connectionDetails.Nickname)
                 ? connectionDetails.Host
                 : connectionDetails.Nickname,
+            circuitBreaker: circuitBreaker,
             onWarmConnectionFailure: (exception, factoryStarted) =>
             {
                 MultiConnectionNntpClient? client;
@@ -378,32 +404,6 @@ public class UsenetStreamingClient : WrappingNntpClient
                 ? Task.FromResult<IDisposable?>(null)
                 : providerClient.AcquireKeepAliveAdmissionAsync(ct)
         );
-        // Ensure a metrics key even if startup backfill was skipped somehow.
-        if (connectionDetails.ProviderId == Guid.Empty)
-            connectionDetails.ProviderId = Guid.NewGuid();
-        var metricsKey = UsenetProviderIdentity.MetricsKey(connectionDetails);
-        var circuitBreaker = new ProviderCircuitBreaker(
-            connectionDetails.Host,
-            transition =>
-            {
-                metricsWriter.RecordEvent(new MetricEvent
-                {
-                    At = transition.AtUnixMilliseconds,
-                    Kind = "circuit",
-                    Tag1 = metricsKey,
-                    Tag2 = transition.State == ProviderCircuitTransitionState.Open
-                        ? "open"
-                        : "closed",
-                    Num = transition.Cooldown is { } cooldown
-                        ? (long)cooldown.TotalMilliseconds
-                        : null,
-                    Note = BuildCircuitTransitionNote(transition),
-                });
-                tripDetector?.OnTransition(metricsKey, transition);
-            },
-            coalesceFailureBursts: true,
-            initialCooldown: circuitInitialCooldown,
-            maxCooldown: circuitMaxCooldown);
         // Only providers that can carry traffic participate in correlation; a Disabled
         // provider never trips and would wedge the "all tripped" condition forever.
         if (connectionDetails.Type != ProviderType.Disabled)
@@ -475,7 +475,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         Func<CancellationToken, Task<IDisposable?>>? keepAliveAdmission = null,
         Func<TimeSpan>? connectionOpenTimeout = null,
         string? connectionOpenProvider = null,
-        Action<Exception, bool>? onWarmConnectionFailure = null
+        Action<Exception, bool>? onWarmConnectionFailure = null,
+        ProviderCircuitBreaker? circuitBreaker = null
     )
     {
         var idleTimeout = TimeSpan.FromSeconds(idleTimeoutSeconds);
@@ -491,7 +492,8 @@ public class UsenetStreamingClient : WrappingNntpClient
             keepAliveAdmission: keepAliveAdmission,
             connectionOpenTimeout: connectionOpenTimeout,
             connectionOpenProvider: connectionOpenProvider,
-            onWarmConnectionFailure: onWarmConnectionFailure);
+            onWarmConnectionFailure: onWarmConnectionFailure,
+            circuitBreaker: circuitBreaker);
         connectionPool.OnConnectionPoolChanged += onConnectionPoolChanged;
         var args = new ConnectionPoolStats.ConnectionPoolChangedEventArgs(0, 0, maxConnections);
         SynchronousObserverInvoker.Invoke(

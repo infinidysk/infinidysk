@@ -19,6 +19,26 @@ public class ExceptionExtensionsTests
     }
 
     [Fact]
+    public void AcquisitionWaitExceptions_AreKnownRetryableFailures()
+    {
+        var exceptions = new Exception[]
+        {
+            new CircuitAdmissionRejectedException(),
+            new ProviderTransferAdmissionTimeoutException(
+                "provider.example",
+                TimeSpan.FromSeconds(15),
+                "PoolGate"),
+        };
+
+        foreach (var exception in exceptions)
+        {
+            Assert.IsAssignableFrom<RetryableDownloadException>(exception);
+            Assert.True(exception.TryGetKnownErrorMessage(out var reason));
+            Assert.Equal(exception.Message, reason);
+        }
+    }
+
+    [Fact]
     public void TryGetKnownErrorMessage_PrefersInnermostKnownMessage()
     {
         var inner = new TimeoutException("Timeout reading from NNTP stream.");

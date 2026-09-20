@@ -1,4 +1,5 @@
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Models;
@@ -101,10 +102,14 @@ public class MultiConnectionStatsPipelinedTests
         using var pool = new ConnectionPool<INntpClient>(
             maxConnections: 1, _ => ValueTask.FromResult<INntpClient>(inner));
 
+        using (await pool.GetConnectionLockAsync(SemaphorePriority.High))
+        {
+            // Establish an idle socket so the fresh-open trip's idle-only exception
+            // can exercise STAT without allowing a new connection.
+        }
+
         var breaker = new ProviderCircuitBreaker("stat-pipeline");
-        breaker.RecordFailure("seed-1");
-        breaker.RecordFailure("seed-2");
-        breaker.RecordFailure("seed-3");
+        breaker.RecordConnectionFailure("seed-1", requiresFreshConnectionProbe: true);
         Assert.True(breaker.IsTripped);
 
         using var client = new MultiConnectionNntpClient(

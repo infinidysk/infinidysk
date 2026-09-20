@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Clients.Usenet.Models;
 using Serilog;
 
@@ -63,8 +65,11 @@ public class ProviderCircuitBreaker
     private long _failureCount;
     private long _articleMissCount;
     private int _requiresFreshConnectionProbe;
+    private AcquisitionEpoch _acquisitionEpoch = new();
+    private int _allowsIdleConnectionReuse;
 
     internal bool RequiresFreshConnectionProbe => Volatile.Read(ref _requiresFreshConnectionProbe) == 1;
+    internal bool AllowsIdleConnectionReuse => Volatile.Read(ref _allowsIdleConnectionReuse) == 1;
 
     public ProviderCircuitBreaker(
         string providerName,
@@ -135,6 +140,91 @@ public class ProviderCircuitBreaker
             AmbientProbe.Value = probe;
             return true;
         }
+    }
+
+    internal AcquisitionLease BeginAcquisition(
+        CircuitProbeLease probe,
+        bool allowIdleReuse = false)
+    {
+        lock (_lock)
+        {
+            var admitted = CanContinueAcquisitionUnderLock(probe);
+            var idleOnly = !admitted
+                && allowIdleReuse
+                && probe.IsNone
+                && _trippedUntilMs != 0
+                && _allowsIdleConnectionReuse == 1;
+            if (!admitted && !idleOnly)
+                throw new CircuitAdmissionRejectedException();
+
+            return new AcquisitionLease(this, _acquisitionEpoch, probe, idleOnly);
+        }
+    }
+
+    private bool CanContinueAcquisitionUnderLock(CircuitProbeLease probe) =>
+        probe.IsNone
+            ? _trippedUntilMs == 0
+            : _halfOpenProbeInFlight == 1
+              && _admittedProbeGeneration == probe.Generation;
+
+    private void ValidateAcquisitionUnderLock(AcquisitionLease acquisition)
+    {
+        if (!ReferenceEquals(acquisition.Epoch, _acquisitionEpoch))
+            throw new CircuitAdmissionRejectedException();
+
+        var remainsAdmitted = acquisition.IdleOnly
+            ? _trippedUntilMs == 0 || _allowsIdleConnectionReuse == 1
+            : CanContinueAcquisitionUnderLock(acquisition.Probe);
+        if (!remainsAdmitted)
+            throw new CircuitAdmissionRejectedException();
+    }
+
+    internal readonly struct AcquisitionLease
+    {
+        private readonly ProviderCircuitBreaker _owner;
+        private readonly CancellationToken _circuitCancellationToken;
+        internal readonly AcquisitionEpoch Epoch;
+        internal readonly CircuitProbeLease Probe;
+
+        internal AcquisitionLease(
+            ProviderCircuitBreaker owner,
+            AcquisitionEpoch epoch,
+            CircuitProbeLease probe,
+            bool idleOnly)
+        {
+            _owner = owner;
+            _circuitCancellationToken = epoch.Token;
+            Epoch = epoch;
+            Probe = probe;
+            IdleOnly = idleOnly;
+        }
+
+        internal CancellationToken CircuitCancellationToken => _circuitCancellationToken;
+        internal bool IdleOnly { get; }
+
+        internal void ThrowIfRejected()
+        {
+            lock (_owner._lock)
+                _owner.ValidateAcquisitionUnderLock(this);
+        }
+
+        internal void Commit()
+        {
+            lock (_owner._lock)
+                _owner.ValidateAcquisitionUnderLock(this);
+        }
+    }
+
+    [SuppressMessage(
+        "Design",
+        "CA1001:Types that own disposable fields should be disposable",
+        Justification = "Retired epochs remain usable by leases that register their token after cancellation.")]
+    internal sealed class AcquisitionEpoch
+    {
+        private readonly CancellationTokenSource _cancellation = new();
+
+        internal CancellationToken Token => _cancellation.Token;
+        internal Task CancelAsync() => _cancellation.CancelAsync();
     }
 
     /// <summary>
@@ -260,6 +350,7 @@ public class ProviderCircuitBreaker
                 _currentCooldown = _initialCooldown;
             _lastFailureReason = null;
             Volatile.Write(ref _requiresFreshConnectionProbe, 0);
+            Volatile.Write(ref _allowsIdleConnectionReuse, 0);
             ClearAdmittedProbe();
             if (wasCircuitActive)
                 NotifyTransition(ProviderCircuitTransitionState.Closed, cooldown: null);
@@ -355,6 +446,7 @@ public class ProviderCircuitBreaker
         CircuitProbeLease? probe = null,
         bool requiresFreshConnectionProbe = false)
     {
+        PendingTrip trip;
         lock (_lock)
         {
             var now = Clock();
@@ -374,10 +466,13 @@ public class ProviderCircuitBreaker
             var failureReason = wasHalfOpen
                 ? "half-open connection failure"
                 : "connection failure";
-            Trip(now, reason is null
-                ? failureReason
-                : $"{failureReason} ({reason})", pool, requiresFreshConnectionProbe);
+            trip = TripUnderLock(
+                now,
+                reason is null ? failureReason : $"{failureReason} ({reason})",
+                pool,
+                requiresFreshConnectionProbe);
         }
+        PublishTrip(trip);
     }
 
     public void RecordFailure(
@@ -385,6 +480,8 @@ public class ProviderCircuitBreaker
         ProviderCircuitPoolDiagnostics? pool = null,
         CircuitProbeLease? probe = null)
     {
+        PendingTrip? trip = null;
+        AcquisitionEpoch? revokedIdleEpoch = null;
         lock (_lock)
         {
             var now = Clock();
@@ -392,56 +489,76 @@ public class ProviderCircuitBreaker
             // Already latched open: ignore in-flight failures from the same burst
             // so they cannot extend the window, double the cooldown, or spam logs.
             if (_trippedUntilMs > 0 && now < _trippedUntilMs)
-                return;
+                revokedIdleEpoch = RevokeIdleReuseUnderLock();
 
             // Half-open once a probe is claimed or once the cooldown lapses with the trip
             // still latched. A failure here reopens on the current cooldown rather than
             // joining the sampling window below, which would return a provider that is
             // still down to normal rotation until that window tripped again.
-            if (Volatile.Read(ref _halfOpenProbeInFlight) == 1 || _trippedUntilMs > 0)
+            else if (Volatile.Read(ref _halfOpenProbeInFlight) == 1 || _trippedUntilMs > 0)
             {
                 if (!CanResolveHalfOpen(probe))
-                    return;
-
-                ClearAdmittedProbe();
-                Interlocked.Increment(ref _failureCount);
-                Trip(now, reason is null
-                    ? "half-open failure"
-                    : $"half-open failure ({reason})", pool);
-                return;
-            }
-
-            Interlocked.Increment(ref _failureCount);
-
-            EvictOldEntries(now);
-            if (!_coalesceFailureBursts
-                || _failureBurstStartedAtMs == long.MinValue
-                || now - _failureBurstStartedAtMs >= (long)FailureBurstCoalesceWindow.TotalMilliseconds)
-            {
-                _failureBurstStartedAtMs = now;
-                _window.Enqueue((now, true));
+                    revokedIdleEpoch = RevokeIdleReuseUnderLock();
+                else
+                {
+                    ClearAdmittedProbe();
+                    Interlocked.Increment(ref _failureCount);
+                    trip = TripUnderLock(
+                        now,
+                        reason is null ? "half-open failure" : $"half-open failure ({reason})",
+                        pool);
+                }
             }
             else
             {
-                return;
-            }
+                Interlocked.Increment(ref _failureCount);
 
-            var failures = 0;
-            foreach (var entry in _window.Where(entry => entry.Failed))
-                failures++;
+                EvictOldEntries(now);
+                if (!_coalesceFailureBursts
+                    || _failureBurstStartedAtMs == long.MinValue
+                    || now - _failureBurstStartedAtMs >= (long)FailureBurstCoalesceWindow.TotalMilliseconds)
+                {
+                    _failureBurstStartedAtMs = now;
+                    _window.Enqueue((now, true));
+                }
+                else
+                {
+                    return;
+                }
 
-            if (failures >= MinFailuresToTrip
-                && failures / (double)_window.Count >= TripFailureRate)
-            {
-                var tripReason = reason is null
-                    ? $"{failures} failures in {_window.Count}-sample window"
-                    : $"{failures} failures in {_window.Count}-sample window ({reason})";
-                Trip(now, tripReason, pool);
+                var failures = _window.Count(entry => entry.Failed);
+                if (failures >= MinFailuresToTrip
+                    && failures / (double)_window.Count >= TripFailureRate)
+                {
+                    var tripReason = reason is null
+                        ? $"{failures} failures in {_window.Count}-sample window"
+                        : $"{failures} failures in {_window.Count}-sample window ({reason})";
+                    trip = TripUnderLock(now, tripReason, pool);
+                }
             }
         }
+
+        if (revokedIdleEpoch is not null)
+        {
+            RetireEpoch(revokedIdleEpoch);
+            Log.Warning(
+                "Provider {Provider} returned a command failure while new connections are paused. Established connection reuse is now disabled. Reason: {Reason}",
+                _providerName,
+                reason ?? "command failure");
+            return;
+        }
+        if (trip is not null)
+            PublishTrip(trip);
     }
 
-    private void Trip(
+    private sealed record PendingTrip(
+        AcquisitionEpoch RetiredEpoch,
+        string Reason,
+        TimeSpan Cooldown,
+        ProviderCircuitPoolDiagnostics? Pool,
+        bool AllowsIdleConnectionReuse);
+
+    private PendingTrip TripUnderLock(
         long nowMs,
         string reason,
         ProviderCircuitPoolDiagnostics? pool = null,
@@ -453,25 +570,72 @@ public class ProviderCircuitBreaker
         _trippedUntilMs = nowMs + (long)appliedCooldown.TotalMilliseconds;
         if (requiresFreshConnectionProbe)
             Volatile.Write(ref _requiresFreshConnectionProbe, 1);
-        if (pool is null)
-        {
-            Log.Warning(
-                "Provider {Provider} tripped ({Reason}). Skipping for {Cooldown}s.",
-                _providerName, reason, appliedCooldown.TotalSeconds);
-        }
-        else
-        {
-            Log.Warning(
-                "Provider {Provider} tripped ({Reason}). Pool live={LiveConnections}, idle={IdleConnections}, active={ActiveConnections}. Skipping for {Cooldown}s.",
-                _providerName, reason, pool.LiveConnections, pool.IdleConnections,
-                pool.ActiveConnections, appliedCooldown.TotalSeconds);
-        }
-        NotifyTransition(ProviderCircuitTransitionState.Open, appliedCooldown, reason, pool);
+        Volatile.Write(ref _allowsIdleConnectionReuse, requiresFreshConnectionProbe ? 1 : 0);
+
+        var retiredEpoch = _acquisitionEpoch;
+        _acquisitionEpoch = new AcquisitionEpoch();
 
         _window.Clear();
         _failureBurstStartedAtMs = long.MinValue;
         _currentCooldown = TimeSpan.FromMilliseconds(
             Math.Min(_currentCooldown.TotalMilliseconds * 2, _maxCooldown.TotalMilliseconds));
+
+        return new PendingTrip(
+            retiredEpoch, reason, appliedCooldown, pool, requiresFreshConnectionProbe);
+    }
+
+    private void PublishTrip(PendingTrip trip)
+    {
+        RetireEpoch(trip.RetiredEpoch);
+        var pool = trip.Pool;
+        if (pool is null)
+        {
+            Log.Warning(
+                trip.AllowsIdleConnectionReuse
+                    ? "Provider {Provider} tripped ({Reason}). New connections paused for {Cooldown}s; established connections remain eligible."
+                    : "Provider {Provider} tripped ({Reason}). Skipping for {Cooldown}s.",
+                _providerName, trip.Reason, trip.Cooldown.TotalSeconds);
+        }
+        else
+        {
+            Log.Warning(
+                trip.AllowsIdleConnectionReuse
+                    ? "Provider {Provider} tripped ({Reason}). Pool live={LiveConnections}, idle={IdleConnections}, active={ActiveConnections}. New connections paused for {Cooldown}s; established connections remain eligible."
+                    : "Provider {Provider} tripped ({Reason}). Pool live={LiveConnections}, idle={IdleConnections}, active={ActiveConnections}. Skipping for {Cooldown}s.",
+                _providerName, trip.Reason, pool.LiveConnections, pool.IdleConnections,
+                pool.ActiveConnections, trip.Cooldown.TotalSeconds);
+        }
+        NotifyTransition(ProviderCircuitTransitionState.Open, trip.Cooldown, trip.Reason, trip.Pool);
+    }
+
+    private AcquisitionEpoch? RevokeIdleReuseUnderLock()
+    {
+        if (_allowsIdleConnectionReuse != 1)
+            return null;
+
+        Volatile.Write(ref _allowsIdleConnectionReuse, 0);
+        var retiredEpoch = _acquisitionEpoch;
+        _acquisitionEpoch = new AcquisitionEpoch();
+        return retiredEpoch;
+    }
+
+    private void RetireEpoch(AcquisitionEpoch epoch)
+    {
+#pragma warning disable CA2025
+        _ = CancelEpochAsync(epoch);
+#pragma warning restore CA2025
+    }
+
+    private async Task CancelEpochAsync(AcquisitionEpoch epoch)
+    {
+        try
+        {
+            await epoch.CancelAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            Log.Error(exception, "Unexpected error cancelling pending NNTP acquisitions for {Provider}", _providerName);
+        }
     }
 
     private void NotifyTransition(
