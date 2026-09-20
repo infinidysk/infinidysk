@@ -64,6 +64,24 @@ public sealed class NativeCacheEntriesController(NativeCacheService native, DavD
         var items = await database.GetItemsByIdsBatchedAsync(ids, ct: HttpContext.RequestAborted).ConfigureAwait(false);
         var names = items.ToDictionary(item => item.Id.ToString("N"), item => item.Name);
         return Ok(new { entries = page.Select(entry => new { entry.Key, entry.FolderId, entry.ItemId, name = names.GetValueOrDefault(entry.ItemId) ?? entry.ItemId,
-            entry.Length, entry.AllocatedBytes, entry.VerifiedBytes, entry.Pinned }), nextAfter = page.Count == limit ? page[^1].Key : null });
+            entry.Length, entry.AllocatedBytes, entry.VerifiedBytes, entry.Pinned, entry.Generation }), nextAfter = page.Count == limit ? page[^1].Key : null });
+    }
+}
+
+[ApiController]
+[Route("api/native-cache/ranges")]
+public sealed class NativeCacheRangesController(NativeCacheService native) : GetOnlyApiController
+{
+    protected override async Task<IActionResult> HandleRequest()
+    {
+        await native.WaitForInitializationAsync(HttpContext.RequestAborted).ConfigureAwait(false);
+        if (native.Store is null) throw new ArgumentException("Native cache must be active to browse its catalogue.");
+        var query = HttpContext.Request.Query;
+        var limit = query.ContainsKey("limit")
+            ? int.TryParse(query["limit"], out var requested) ? requested : throw new ArgumentException("Invalid range page limit.") : 50;
+        var after = query.ContainsKey("afterOffset")
+            ? long.TryParse(query["afterOffset"], out var offset) ? offset : throw new ArgumentException("Invalid range cursor.") : -1;
+        var ranges = await native.Store.ListVerifiedRangesAsync(query["key"].ToString(), after, limit, HttpContext.RequestAborted).ConfigureAwait(false);
+        return Ok(new { ranges, nextAfter = ranges.Count == limit ? (long?)ranges[^1].Offset : null });
     }
 }

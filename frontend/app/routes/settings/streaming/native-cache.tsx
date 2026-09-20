@@ -43,7 +43,8 @@ type CacheStatus = {
   }[];
 };
 
-type CacheEntry = { key: string; itemId: string; name?: string; length: number; allocatedBytes: number; verifiedBytes: number; pinned: boolean };
+type CacheEntry = { key: string; itemId: string; name?: string; generation?: string; length: number; allocatedBytes: number; verifiedBytes: number; pinned: boolean };
+type RangePage = { ranges: { offset: number; count: number }[]; nextAfter: number | null };
 
 export function NativeCacheSettings({
   config,
@@ -56,6 +57,18 @@ export function NativeCacheSettings({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [cachePage, setCachePage] = useState<{ folderId: string; entries: CacheEntry[]; nextAfter: string | null } | null>(null);
+  const [rangePage, setRangePage] = useState<(RangePage & { key: string }) | null>(null);
+  const inspectRanges = async (key: string, afterOffset = -1) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const query = new URLSearchParams({ key, afterOffset: String(afterOffset), limit: "50" });
+      const response = await fetch(withUrlBase(`/api/native-cache/ranges?${query}`));
+      if (!response.ok) throw new Error("Could not load verified cache ranges.");
+      setRangePage({ ...(await response.json() as RangePage), key });
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Range listing failed."); }
+    finally { setBusy(false); }
+  };
   const browse = async (folderId: string, after?: string) => {
     setBusy(true);
     try {
@@ -64,6 +77,7 @@ export function NativeCacheSettings({
       if (!response.ok) throw new Error("Could not load cached files.");
       const page = await response.json() as { entries: CacheEntry[]; nextAfter: string | null };
       setCachePage({ ...page, folderId });
+      setRangePage(null);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Cache listing failed."); }
     finally { setBusy(false); }
   };
@@ -389,11 +403,19 @@ export function NativeCacheSettings({
           </ManagedSetting>
           {cachePage && <div className="space-y-2">
             <h4>Cached files — {folders.find(folder => folder.id === cachePage.folderId)?.name ?? cachePage.folderId}</h4>
-            <p className="text-xs">Verified bytes are ready for playback. Pinned files are retained during automatic eviction and folder clear; unpin them before clearing.</p>
+            <p className="text-xs">Catalogue coverage is a snapshot; playback rechecks volume identity and block integrity. Pinned files are retained during automatic eviction and folder clear; unpin them before clearing.</p>
             {cachePage.entries.map(entry => <div key={entry.key} className="flex flex-wrap items-center gap-2 text-xs">
               <span>{entry.name ?? entry.itemId}</span>
               <span>{entry.length ? (entry.verifiedBytes / entry.length * 100).toFixed(1) : "0"}% verified · {(entry.allocatedBytes / 1e9).toFixed(3)} GB allocated</span>
+              <span className="break-all">Generation: {entry.generation ?? "unknown until written or scanned"}</span>
+              <Button disabled={busy} aria-label={`Verified ranges for ${entry.name ?? entry.itemId}`} onClick={() => void inspectRanges(entry.key)}>Verified ranges</Button>
               <Button disabled={busy} aria-label={`${entry.pinned ? "Unpin" : "Pin"} ${entry.name ?? entry.itemId}`} onClick={() => void pin(entry)}>{entry.pinned ? "Unpin" : "Pin"}</Button>
+              {rangePage?.key === entry.key && <div className="w-full">
+                {rangePage.ranges.map(range => <p key={range.offset}>Bytes {range.offset.toLocaleString()}–{(range.offset + range.count - 1).toLocaleString()}</p>)}
+                {rangePage.ranges.length === 0 && <p>No verified ranges in this page.</p>}
+                <Button disabled={busy} onClick={() => void inspectRanges(entry.key)}>First range page</Button>
+                <Button disabled={busy || rangePage.nextAfter === null} onClick={() => void inspectRanges(entry.key, rangePage.nextAfter ?? -1)}>Next range page</Button>
+              </div>}
             </div>)}
             {cachePage.entries.length === 0 && <p>No cached files in this page.</p>}
             <Button disabled={busy} onClick={() => void browse(cachePage.folderId)}>First page / refresh</Button>

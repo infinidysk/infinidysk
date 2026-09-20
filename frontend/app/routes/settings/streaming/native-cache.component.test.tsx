@@ -52,13 +52,17 @@ describe("native cache folder editor", () => {
   it("browses bounded cache pages and pins media without changing folder configuration", async () => {
     const key = "a".repeat(64);
     const fetcher = vi.fn().mockImplementation((url: string) => Promise.resolve(new Response(JSON.stringify(url.includes("/entries")
-      ? { entries: [{ key, itemId: "movie", name: "Episode 1", length: 100, verifiedBytes: 100, allocatedBytes: 128, pinned: false }], nextAfter: null }
+      ? { entries: [{ key, itemId: "movie", name: "Episode 1", generation: "source-revision", length: 100, verifiedBytes: 100, allocatedBytes: 128, pinned: false }], nextAfter: null }
+      : url.includes("/ranges") ? { ranges: [{ offset: 0, count: 100 }], nextAfter: null }
       : { activeMode: "native", configuredMode: "native", restartRequired: false, reservedBufferBytes: 0, folders: [{ id: "disk", online: true, writable: true, committedBytes: 128, entries: 1 }], jobs: [] }), { status: 200 })));
     vi.stubGlobal("fetch", fetcher);
     render(<Harness native />);
     await waitFor(() => expect(screen.getByText(/Online, writable/)).toBeTruthy());
     await userEvent.click(screen.getByRole("button", { name: "View cached files" }));
     await screen.findByText("Episode 1");
+    expect(screen.getByText(/source-revision/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Verified ranges for Episode 1" }));
+    expect(await screen.findByText("Bytes 0–99")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Pin Episode 1" }));
     expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("/api/native-cache/operations"), expect.objectContaining({
       method: "POST", body: JSON.stringify({ operation: "pin", cacheKey: key, pinned: true }),
