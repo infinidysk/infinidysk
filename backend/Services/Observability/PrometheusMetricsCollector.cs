@@ -17,7 +17,8 @@ public sealed class PrometheusMetricsCollector(
     RepairPatchStore repairPatchStore,
     HealthCheckConnectionGate healthCheckConnectionGate,
     SegmentCacheStatistics segmentCacheStatistics,
-    MemoryComponentSnapshotBuilder memorySnapshotBuilder) : BackgroundService
+    MemoryComponentSnapshotBuilder memorySnapshotBuilder,
+    NativeCache.NativeCacheService? nativeCache = null) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
 
@@ -41,6 +42,8 @@ public sealed class PrometheusMetricsCollector(
                     }
                     metrics.SetHealthCheckGate(healthCheckConnectionGate.GetSnapshot());
                     metrics.SetSegmentCache(segmentCacheStatistics.GetSnapshot());
+                    if (nativeCache is not null)
+                        metrics.SetNativeCache(nativeCache.Statistics.Snapshot(), nativeCache.ReservedBufferBytes, nativeCache.Store is not null);
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {

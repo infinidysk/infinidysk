@@ -22,6 +22,22 @@ public sealed class NativeCacheServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task NativeBufferBudget_IsIncludedInMemoryOwnershipSnapshot()
+    {
+        using var blobs = new FileBlobStore();
+        using var repairs = new RepairPatchStore(Path.Combine(_root, "patches"), 100);
+        var config = Config("native");
+        await using var native = new NativeCacheService(config, blobs, repairs);
+        var builder = new NzbWebDAV.Services.Diagnostics.MemoryComponentSnapshotBuilder(
+            new InFlightArticleBudget(1000), config,
+            new NzbWebDAV.Services.ConcurrentReadTracker(configManager: config), new NzbWebDAV.Services.ActiveReadRegistry(),
+            new NzbWebDAV.Clients.Usenet.SegmentCacheStatistics(), native);
+        var snapshot = builder.Capture();
+        Assert.Equal(native.ReservedBufferBytes, snapshot.NativeCache!.ReservedBufferBytes);
+        Assert.Equal(native.ActiveSettings!.BufferMb * 1024L * 1024, snapshot.NativeCache.BufferBudgetBytes);
+    }
+
+    [Fact]
     public async Task InvalidNativeSettings_StatusStillReportsInitializationFailure()
     {
         using var blobs = new FileBlobStore();

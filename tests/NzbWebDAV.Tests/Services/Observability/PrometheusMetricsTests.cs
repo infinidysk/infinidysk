@@ -13,6 +13,22 @@ namespace NzbWebDAV.Tests.Services.Observability;
 
 public sealed class PrometheusMetricsTests
 {
+    [Fact]
+    public async Task NativeCacheCounters_AreIdentityFreeAndDoNotDoubleCountRefreshes()
+    {
+        var registry = new CollectorRegistry();
+        var metrics = new PrometheusMetrics(registry);
+        var snapshot = new NzbWebDAV.Services.NativeCache.NativeCacheSnapshot(2, 100, 3, 200, 1, 1);
+        metrics.SetNativeCache(snapshot, 4096, true);
+        metrics.SetNativeCache(snapshot, 4096, true);
+        await using var stream = new MemoryStream();
+        await registry.CollectAndExportAsTextAsync(stream);
+        var output = Encoding.UTF8.GetString(stream.ToArray());
+        Assert.Contains("nzbdav_native_cache_hits_total 2", output);
+        Assert.Contains("nzbdav_native_cache_buffer_reserved_bytes 4096", output);
+        Assert.DoesNotContain("cache_key=", output);
+        Assert.DoesNotContain("folder=", output);
+    }
     private static readonly string[] SegmentCacheMetricNames =
     [
         "nzbdav_segment_cache_enabled",
