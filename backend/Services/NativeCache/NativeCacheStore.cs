@@ -945,12 +945,15 @@ public sealed class NativeCacheStore : IAsyncDisposable
             using var total = Command("SELECT Bytes FROM FolderTotals WHERE Folder=$folder", ("$folder", folder.Id));
             var bytes = (decimal)(total.ExecuteScalar() as long? ?? 0) + ReservedBytes(folder.Id);
             var nextBlock = Math.Min(folder.MaxBytes, BlockSize + EntryOverhead);
-            pressure = (lowWater ? bytes > folder.MaxBytes * 0.8m : bytes >= folder.MaxBytes * 0.9m) || !HasQuota(folder, nextBlock);
+            var threshold = GetWatermarkBytes(folder.MaxBytes, lowWater ? folder.LowWaterPercent : folder.HighWaterPercent);
+            pressure = (lowWater ? bytes > threshold : bytes >= threshold) || !HasQuota(folder, nextBlock);
             freeRequired = FreeSpaceRequirement(folder, nextBlock);
         }
         finally { _gate.Release(); }
         return pressure || !CanUseFolder(folder, freeRequired);
     }
+
+    internal static decimal GetWatermarkBytes(long maxBytes, int percent) => (decimal)maxBytes * percent / 100;
 
     private bool RegisterVolume(NativeCacheFolder folder)
     {

@@ -142,6 +142,28 @@ public sealed class NativeCachePressureTests : IDisposable
     }
 
     [Fact]
+    public async Task Pressure_UsesConfiguredHighAndLowWatermarks()
+    {
+        var folder = Folder(quota: 1_000_000_000, reserve: 0) with { HighWaterPercent = 80, LowWaterPercent = 60 };
+        var catalogue = Path.Combine(_root, "index.db");
+        await using var store = new NativeCacheStore(catalogue, [folder]);
+        SeedCatalogue(catalogue, folder.Id, 1000, bytes: 800_000);
+        var deleted = await store.EvictPressureAsync(folder.Id);
+        Assert.Equal(64, deleted);
+        int next;
+        while ((next = await store.EvictPressureAsync(folder.Id)) > 0) deleted += next;
+        Assert.Equal(250, deleted);
+        Assert.Equal(600_000_000, (await store.GetStatusAsync()).Single().CommittedBytes);
+    }
+
+    [Fact]
+    public void WatermarkBytes_PreservesLongMaximumWithoutOverflow()
+    {
+        Assert.Equal((decimal)long.MaxValue, NativeCacheStore.GetWatermarkBytes(long.MaxValue, 100));
+        Assert.Equal(92233720368547758.07m, NativeCacheStore.GetWatermarkBytes(long.MaxValue, 1));
+    }
+
+    [Fact]
     public async Task OfflineRoot_RetiresPendingClearCursor_WithoutReclaimingMetadata()
     {
         var folder = Folder(quota: 100_000_000, reserve: 0);
@@ -174,5 +196,8 @@ public sealed class NativeCachePressureTests : IDisposable
         transaction.Commit();
     }
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose()
+    {
+        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+    }
 }
