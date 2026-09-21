@@ -57,7 +57,8 @@ public class ArrMonitoringService : BackgroundService
 
                 // if all queue-actions are disabled, then do nothing
                 var arrConfig = _configManager.GetArrConfig();
-                if (arrConfig.QueueRules.All(x => x.Action == ArrConfig.QueueAction.DoNothing))
+                if (arrConfig.QueueRules.All(x => x.Action == ArrConfig.QueueAction.DoNothing)
+                    && arrConfig.OrphanedQueueItemAction == ArrConfig.QueueAction.DoNothing)
                     continue;
 
                 // otherwise, handle stuck queue items according to the config
@@ -101,7 +102,14 @@ public class ArrMonitoringService : BackgroundService
         {
             var queueStatus = await client.GetQueueStatusAsync(timeout.Token).ConfigureAwait(false);
             _backoff.RecordSuccess(client.Host);
-            if (queueStatus is { Warnings: false, UnknownWarnings: false }) return;
+            var orphanedActionConfigured = arrConfig.OrphanedQueueItemAction != ArrConfig.QueueAction.DoNothing;
+            // A queue full only of orphaned "Unknown Series/Movie" downloads (deleted
+            // media) never sets Warnings/UnknownWarnings — Arr's own status endpoint only
+            // flips UnknownWarnings on when an unmatched record *also* carries a Warning
+            // TrackedDownloadStatus. UnknownCount, however, counts every unmatched record
+            // regardless, so orphan cleanup gates off that instead.
+            var shouldCheckOrphans = orphanedActionConfigured && queueStatus.UnknownCount > 0;
+            if (queueStatus is { Warnings: false, UnknownWarnings: false } && !shouldCheckOrphans) return;
             var queue = await client.GetQueueAsync(timeout.Token).ConfigureAwait(false);
             var stuckRecords = GetActionableStuckRecords(queue, arrConfig.QueueRules);
             foreach (var record in stuckRecords)
@@ -111,6 +119,24 @@ public class ArrMonitoringService : BackgroundService
                     .ConfigureAwait(false);
                 if (resolution is null) continue;
                 resolutions.Add(resolution.Value);
+            }
+
+            if (orphanedActionConfigured)
+            {
+                // Skip records a status-message rule above already tried to resolve
+                // (e.g. an unparseable-title record can be both "matched a QueueRule"
+                // and "has no media identity") so the same record isn't deleted twice.
+                var handledIds = stuckRecords.Select(x => x.Id).ToHashSet();
+                var orphanedRecords = GetActionableOrphanedRecords(
+                    queue, arrConfig.EffectiveOrphanedQueueItemGrace(), handledIds);
+                foreach (var record in orphanedRecords)
+                {
+                    var resolution = await HandleOrphanedQueueItem(
+                            record, arrConfig, client, rejectedReleaseCaptures, timeout.Token, captureBudget)
+                        .ConfigureAwait(false);
+                    if (resolution is null) continue;
+                    resolutions.Add(resolution.Value);
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -154,6 +180,26 @@ public class ArrMonitoringService : BackgroundService
             .ToList();
     }
 
+    /// <summary>
+    /// Unlike <see cref="GetActionableStuckRecords"/>, this does not require
+    /// <see cref="ArrQueueRecord.IsAwaitingImport"/>: an orphaned record (no series/movie
+    /// match) can never import at any stage, so it should be freed while still
+    /// downloading rather than only once it reaches the import step — that's the
+    /// connection slot the download client is losing.
+    /// </summary>
+    internal static IReadOnlyList<ArrQueueRecord> GetActionableOrphanedRecords(
+        ArrQueue<ArrQueueRecord> queue,
+        TimeSpan grace,
+        IReadOnlySet<int> alreadyHandledIds)
+    {
+        var cutoff = DateTime.UtcNow - grace;
+        return queue.Records
+            .Where(x => !alreadyHandledIds.Contains(x.Id))
+            .Where(x => x.GetMediaIdentity() is null)
+            .Where(x => x.Added is null || x.Added.Value <= cutoff)
+            .ToList();
+    }
+
     internal async Task<(string? Title, ArrConfig.QueueAction Action, string Reason, string IdentitySource)?>
         HandleStuckQueueItem(
         ArrQueueRecord item,
@@ -163,7 +209,6 @@ public class ArrMonitoringService : BackgroundService
         CancellationToken ct,
         RejectedReleaseCaptureBudget? captureBudget = null)
     {
-        var policyGeneration = _configManager.GetUsenetProviderSnapshot().Generation;
         // since there may be multiple status messages, multiple actions may apply.
         // in such case, always perform the strongest action.
         var matchingRules = arrConfig.QueueRules
@@ -178,6 +223,50 @@ public class ArrMonitoringService : BackgroundService
         var reason = SummarizeReason(
             item.GetMatchingStatusMessages(matchingRules.Where(x => x.Action == action).Select(x => x.Message)),
             matchingRules.Where(x => x.Action == action).Select(x => x.Message));
+        return await ResolveQueueItemAsync(
+                item, action, reason, arrConfig, client, rejectedReleaseCaptures, captureBudget, ct)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// A record with no series/movie match (see <see cref="GetActionableOrphanedRecords"/>)
+    /// carries no status message for <see cref="ArrConfig.QueueRules"/> to match against,
+    /// so it needs its own entry point rather than going through
+    /// <see cref="HandleStuckQueueItem"/>'s message-rule lookup. Everything past choosing
+    /// the action and reason — budget, rejected-release capture, the delete call itself —
+    /// is identical, so both share <see cref="ResolveQueueItemAsync"/>.
+    /// </summary>
+    internal async Task<(string? Title, ArrConfig.QueueAction Action, string Reason, string IdentitySource)?>
+        HandleOrphanedQueueItem(
+        ArrQueueRecord item,
+        ArrConfig arrConfig,
+        ArrClient client,
+        IDictionary<Guid, string[]?>? rejectedReleaseCaptures,
+        CancellationToken ct,
+        RejectedReleaseCaptureBudget? captureBudget = null)
+    {
+        var action = arrConfig.OrphanedQueueItemAction;
+        if (action is ArrConfig.QueueAction.DoNothing) return null;
+        const string reason =
+            "Arr has no series/movie match for this queue item, most likely because it was deleted " +
+            "from Arr while the release was still downloading.";
+        return await ResolveQueueItemAsync(
+                item, action, reason, arrConfig, client, rejectedReleaseCaptures, captureBudget, ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<(string? Title, ArrConfig.QueueAction Action, string Reason, string IdentitySource)?>
+        ResolveQueueItemAsync(
+        ArrQueueRecord item,
+        ArrConfig.QueueAction action,
+        string reason,
+        ArrConfig arrConfig,
+        ArrClient client,
+        IDictionary<Guid, string[]?>? rejectedReleaseCaptures,
+        RejectedReleaseCaptureBudget? captureBudget,
+        CancellationToken ct)
+    {
+        var policyGeneration = _configManager.GetUsenetProviderSnapshot().Generation;
         var (mediaKey, identitySource) = GetMediaKey(client, item);
         var shouldCapture = action is ArrConfig.QueueAction.RemoveAndBlocklist
             or ArrConfig.QueueAction.RemoveAndBlocklistAndSearch;

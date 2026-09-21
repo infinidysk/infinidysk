@@ -36,6 +36,8 @@ interface ArrConfig {
   QueueRules: QueueRule[];
   QueueReplacementSearchLimit?: number;
   QueueReplacementSearchWindowMinutes?: number;
+  OrphanedQueueItemAction?: number;
+  OrphanedQueueItemGraceMinutes?: number;
 }
 
 function parseArrConfig(value: string): ArrConfig {
@@ -240,6 +242,27 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
     [arrConfig, updateConfig],
   );
 
+  const updateOrphanedQueueItemAction = useCallback(
+    (action: number) => {
+      updateConfig({ ...arrConfig, OrphanedQueueItemAction: action });
+    },
+    [arrConfig, updateConfig],
+  );
+
+  const updateOrphanedQueueItemGraceMinutes = useCallback(
+    (value: string) => {
+      const fallback = Math.max(1, Math.min(1440, arrConfig.OrphanedQueueItemGraceMinutes ?? 30));
+      const parsed = Number.parseInt(value, 10);
+      updateConfig({
+        ...arrConfig,
+        OrphanedQueueItemGraceMinutes: Number.isFinite(parsed)
+          ? Math.max(1, Math.min(1440, parsed))
+          : fallback,
+      });
+    },
+    [arrConfig, updateConfig],
+  );
+
   return (
     <SettingsPage>
       <SettingsIntro>
@@ -413,6 +436,41 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
                 );
               })}
             </ul>
+            <div className="flex flex-wrap items-end gap-4 rounded-box border border-base-content/10 bg-base-200 p-3">
+              <label className="flex flex-col gap-1 text-sm text-base-content/80">
+                Deleted series/movie downloads
+                <Select
+                  id="orphaned-queue-item-action"
+                  className="select-sm w-full sm:w-auto sm:min-w-48"
+                  value={arrConfig.OrphanedQueueItemAction ?? 0}
+                  onChange={(e) => updateOrphanedQueueItemAction(Number(e.target.value))}
+                >
+                  <option value="0">Do Nothing</option>
+                  <option value="1">Remove</option>
+                  <option value="2">Remove and Blocklist</option>
+                  <option value="3">Remove, Blocklist, and Search</option>
+                </Select>
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-base-content/80">
+                Grace period (minutes)
+                <Input
+                  type="number"
+                  min={1}
+                  max={1440}
+                  className="w-28"
+                  value={arrConfig.OrphanedQueueItemGraceMinutes ?? 30}
+                  onChange={(e) => updateOrphanedQueueItemGraceMinutes(e.target.value)}
+                />
+              </label>
+              <p className="max-w-xl text-[11px] leading-relaxed text-base-content/55">
+                When a series or movie is deleted from Radarr/Sonarr, the Arr app does not cancel
+                its still-downloading release — it just shows up in the Arr queue as "Unknown
+                Series"/"Unknown Movie" and can never import. "Do Nothing" (default) leaves it
+                alone, since re-adding the same series/movie before the grace period elapses can
+                still let it resolve and import. Any other action removes it from this queue once
+                the grace period has passed.
+              </p>
+            </div>
           </SettingsCard>
         </div>
       </ManagedSetting>

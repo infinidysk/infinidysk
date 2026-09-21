@@ -40,6 +40,16 @@ public class ArrQueueRecord
     [JsonPropertyName("downloadId")]
     public string? DownloadId { get; set; }
 
+    /// <summary>
+    /// Used to grace-period an orphaned (no matching series/movie) record before it is
+    /// eligible for removal, so a series/movie re-added moments after deletion still has
+    /// a chance to reclaim its own in-flight download. Nullable defensively: an absent or
+    /// unparseable value should not fail the whole queue response, and is treated as
+    /// "old enough" by callers.
+    /// </summary>
+    [JsonPropertyName("added")]
+    public DateTime? Added { get; set; }
+
     public bool IsAwaitingImport =>
         string.Equals(Status, "completed", StringComparison.OrdinalIgnoreCase)
         || string.Equals(TrackedDownloadState, "importPending", StringComparison.OrdinalIgnoreCase)
