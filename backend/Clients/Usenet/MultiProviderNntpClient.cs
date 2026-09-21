@@ -448,7 +448,7 @@ public class MultiProviderNntpClient(
             ExceptionDispatchInfo? lastException = null;
             var orderedProviders = SelectOrderedProviders(NntpOperation.PipelinedBody, out var reserved);
             using var releasePending = new ScopeReleaser(
-                () => reserved?.ReleasePending(NntpOperation.PipelinedBody));
+                () => ReleasePendingSelection(ref reserved, NntpOperation.PipelinedBody));
             for (var providerIndex = 0; providerIndex < orderedProviders.Count; providerIndex++)
             {
                 var provider = orderedProviders[providerIndex];
@@ -462,6 +462,7 @@ public class MultiProviderNntpClient(
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    MovePendingSelection(ref reserved, provider, NntpOperation.PipelinedBody);
                     attemptCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     primaryBatch = await provider.DecodedBodiesAsync(
                         segmentIds, deferredCallback.Invoke, admission, attemptCts.Token).ConfigureAwait(false);
@@ -471,6 +472,7 @@ public class MultiProviderNntpClient(
                             $"Pipelined BODY returned {primaryBatch.Responses.Count} responses for {segmentIds.Count} requests.");
                     }
 
+                            ReleasePendingSelection(ref reserved, NntpOperation.PipelinedBody);
                     var coordinator = new BatchCallbackCoordinator(
                         primaryBatch.Responses.Count, CompleteBatchFetches);
                     deferredCallback.Activate(coordinator.CompleteTransfer);
@@ -766,7 +768,9 @@ public class MultiProviderNntpClient(
                                     && !IsCachedMissing(
                                         segmentId, candidate, NntpOperation.PipelinedBody);
                             }),
-                        cancellationToken);
+                        cancellationToken,
+                        requireBoundedWait: true,
+                        waitTimeout: attemptAdmissionTimeout);
                     try
                     {
                         MovePendingSelection(ref attemptReserved, provider, NntpOperation.PipelinedBody);
@@ -1062,9 +1066,9 @@ public class MultiProviderNntpClient(
         var lastOutcomeWasException = false;
         List<(string Host, SegmentFetch.FetchStatus Reason)>? priorMisses = null;
         var missingGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var orderedProviders = SelectOrderedProviders(operation, out var reserved);
-        using var releasePending = new ScopeReleaser(() => reserved?.ReleasePending(operation));
-        MultiConnectionNntpClient? attemptReserved = null;
+        var orderedProviders = SelectOrderedProviders(operation, out var attemptReserved);
+        using var releasePending = new ScopeReleaser(
+            () => ReleasePendingSelection(ref attemptReserved, operation));
         var walk = new ProviderWalkSummary(orderedProviders.Count);
         MultiConnectionNntpClient? lastAttemptedProvider = null;
         var attemptIndex = 0;
@@ -1245,9 +1249,9 @@ public class MultiProviderNntpClient(
         MultiConnectionNntpClient? lastAttemptedProvider = null;
         List<(string Host, SegmentFetch.FetchStatus Reason)>? priorMisses = null;
         var missingGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var orderedProviders = SelectOrderedProviders(operation, out var reserved);
-        using var releasePending = new ScopeReleaser(() => reserved?.ReleasePending(operation));
-        MultiConnectionNntpClient? attemptReserved = null;
+        var orderedProviders = SelectOrderedProviders(operation, out var attemptReserved);
+        using var releasePending = new ScopeReleaser(
+            () => ReleasePendingSelection(ref attemptReserved, operation));
         var walk = new ProviderWalkSummary(orderedProviders.Count);
         var attemptIndex = 0;
         foreach (var provider in orderedProviders)

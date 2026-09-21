@@ -25,6 +25,97 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 [Collection(nameof(GlobalLoggerCollection))]
 public class MultiProviderNntpClientTests
 {
+    [Theory]
+    [InlineData("body")]
+    [InlineData("stat")]
+    [InlineData("batch")]
+    [InlineData("batch-setup")]
+    public async Task ProviderWalk_ReservesOnlyTheCurrentAttempt(string operation)
+    {
+        MultiConnectionNntpClient? primary = null;
+        MultiConnectionNntpClient? backup = null;
+        var primaryCounts = new List<(int Primary, int Backup)>();
+        var backupCounts = new List<(int Primary, int Backup)>();
+        var primaryConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularResponseCode = 430,
+            OnRequest = () => primaryCounts.Add((primary!.PendingSelections, backup!.PendingSelections)),
+            BatchException = operation == "batch-setup" ? _ => new IOException("setup failed") : null,
+        };
+        var backupConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            StatResponseCode = 223,
+            OnRequest = () => backupCounts.Add((primary!.PendingSelections, backup!.PendingSelections)),
+        };
+        primary = CreateProvider(primaryConnection, host: "primary.example");
+        backup = CreateProvider(backupConnection, host: "backup.example", providerType: ProviderType.BackupOnly);
+        using var client = new MultiProviderNntpClient([primary, backup]);
+
+        if (operation == "stat")
+        {
+            Assert.True((await client.StatAsync("segment", CancellationToken.None)).ArticleExists);
+        }
+        else if (operation == "body")
+        {
+            var response = await client.DecodedBodyAsync("segment", CancellationToken.None);
+            await response.Stream!.DisposeAsync();
+        }
+        else
+        {
+            var batch = await client.DecodedBodiesAsync(["segment"], null, CancellationToken.None);
+            var response = await batch.Responses[0];
+            await response.Stream!.DisposeAsync();
+            await batch.Completion;
+        }
+
+        Assert.NotEmpty(primaryCounts);
+        Assert.NotEmpty(backupCounts);
+        Assert.All(primaryCounts, counts => Assert.Equal((1, 0), counts));
+        Assert.All(backupCounts, counts => Assert.Equal((0, 1), counts));
+        Assert.Equal(0, primary.PendingSelections);
+        Assert.Equal(0, backup.PendingSelections);
+    }
+
+    [Fact]
+    public async Task BatchFallback_LastSaturatedProvider_HasBoundedAdmission()
+    {
+        var backupConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            DeferSingularCompletion = true,
+        };
+        var primary = CreateProvider(new ScriptedNntpClient { BatchResponseCode = 430 });
+        var backup = CreateProvider(backupConnection, host: "backup.example", providerType: ProviderType.BackupOnly);
+        using var client = new MultiProviderNntpClient([primary, backup], retryPrimaryOnMiss: () => false);
+        using var callerCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var timeoutContext = callerCts.Token.SetContext(new StreamingTimeoutContext
+        {
+            PerSegmentTimeout = TimeSpan.FromMilliseconds(50),
+            MaxRetries = 0,
+        });
+        var held = await backup.DecodedBodyAsync("held", CancellationToken.None);
+        try
+        {
+            var callbacks = 0;
+            var batch = await client.DecodedBodiesAsync(
+                ["segment"], (_, _) => callbacks++, callerCts.Token);
+            await Assert.ThrowsAsync<ProviderTransferAdmissionTimeoutException>(() => batch.Responses[0]);
+            await batch.Completion.WaitAsync(callerCts.Token);
+            Assert.Equal(1, callbacks);
+            Assert.False(callerCts.IsCancellationRequested);
+            Assert.Equal(1, backupConnection.SingularRequests);
+            Assert.Equal(0, primary.PendingSelections);
+            Assert.Equal(0, backup.PendingSelections);
+        }
+        finally
+        {
+            backupConnection.CompletePendingSingularRequests();
+            await held.Stream!.DisposeAsync();
+        }
+    }
+
     [Fact]
     public void AdmissionPolicy_UsesStreamingTimeoutOrDefault()
     {
@@ -2877,6 +2968,7 @@ public class MultiProviderNntpClientTests
         public required int BatchResponseCode { get; init; }
         public int SingularResponseCode { get; init; } = 222;
         public int? StatResponseCode { get; init; }
+        public Action? OnRequest { get; init; }
         public Func<int, Exception?>? BatchException { get; init; }
         public Func<Exception>? FaultBatchResponsesWith { get; init; }
         public Func<string, Exception>? SingularException { get; init; }
@@ -2891,6 +2983,7 @@ public class MultiProviderNntpClientTests
             CancellationToken cancellationToken)
         {
             BatchRequests++;
+            OnRequest?.Invoke();
             var exception = BatchException?.Invoke(BatchRequests);
             if (exception != null)
                 throw exception;
@@ -2918,6 +3011,7 @@ public class MultiProviderNntpClientTests
             CancellationToken cancellationToken)
         {
             SingularRequests++;
+            OnRequest?.Invoke();
             if (SingularException != null)
                 throw SingularException(segmentId.ToString());
 
@@ -2967,6 +3061,7 @@ public class MultiProviderNntpClientTests
             SegmentId segmentId, CancellationToken cancellationToken)
         {
             SingularRequests++;
+            OnRequest?.Invoke();
             if (SingularException != null)
                 throw SingularException(segmentId.ToString());
 
