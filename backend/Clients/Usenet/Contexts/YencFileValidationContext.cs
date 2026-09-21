@@ -102,10 +102,12 @@ internal sealed class YencFileValidationContext : IDisposable
     public void ReportMismatch(string requestedId, string providerKey, int responseCode, UsenetYencHeader header)
     {
         var (fileAnchor, position, nzbNumber) = GetRequestDetails(requestedId);
-        var fileRef = Reference(fileAnchor);
-        var articleRef = Reference(requestedId);
-        var providerRef = Reference(providerKey);
-        var returnedNameRef = Reference(header.FileName);
+        var requestedIdKind = position is null ? "Unknown" : IsPrimaryRequest(requestedId, position) ? "Primary" : "Fallback";
+        var geometryImpliedTotalParts = GetGeometryImpliedTotalParts(header);
+        var fileRef = GetDiagnosticReference(fileAnchor);
+        var articleRef = GetDiagnosticReference(requestedId);
+        var providerRef = GetDiagnosticReference(providerKey);
+        var returnedNameRef = GetDiagnosticReference(header.FileName);
         var key = $"yenc-mismatch/{Stage}/{fileRef}/{articleRef}/{providerRef}/{position}/{nzbNumber}/" +
                   $"{ExpectedTotalParts}/{responseCode}/{returnedNameRef}/{header.PartNumber}/{header.TotalParts}/" +
                   $"{header.FileSize}/{header.PartOffset}/{header.PartSize}/{header.LineLength}";
@@ -113,18 +115,51 @@ internal sealed class YencFileValidationContext : IDisposable
             key,
             "Rejected yEnc article because its parsed total differs from the active file segment count. " +
             "Stage: {Stage}; FileRef: {FileRef}; ArticleRef: {ArticleRef}; ProviderRef: {ProviderRef}; " +
-            "RequestedSegmentPosition: {RequestedSegmentPosition}; NzbSegmentNumber: {NzbSegmentNumber}; " +
+            "RequestedIdKind: {RequestedIdKind}; RequestedSegmentPosition: {RequestedSegmentPosition}; " +
+            "NzbSegmentNumber: {NzbSegmentNumber}; " +
             "ExpectedTotalParts: {ExpectedTotalParts}; ResponseCode: {ResponseCode}; " +
+            "GeometryImpliedTotalParts: {GeometryImpliedTotalParts}; " +
             "ReturnedNameRef: {ReturnedNameRef}; ReturnedPartNumber: {ReturnedPartNumber}; " +
             "ReturnedTotalParts: {ReturnedTotalParts}; ReturnedFileSize: {ReturnedFileSize}; " +
             "ReturnedPartOffset: {ReturnedPartOffset}; ReturnedPartSize: {ReturnedPartSize}; " +
             "ReturnedLineLength: {ReturnedLineLength}; MetadataSource: ParsedYencHeader",
-            Stage, fileRef, articleRef, providerRef, position, nzbNumber, ExpectedTotalParts, responseCode,
+            Stage, fileRef, articleRef, providerRef, requestedIdKind, position, nzbNumber, ExpectedTotalParts, responseCode,
+            geometryImpliedTotalParts,
             returnedNameRef, header.PartNumber, header.TotalParts, header.FileSize, header.PartOffset,
             header.PartSize, header.LineLength);
     }
 
-    private static string? Reference(string? value) => value is null
+    private bool IsPrimaryRequest(string requestedId, int? position)
+    {
+        if (position is not > 0) return false;
+        var index = position.Value - 1;
+        if (_file is { } file && index < file.Segments.Count)
+            return string.Equals(file.Segments[index].MessageId, requestedId, StringComparison.Ordinal);
+        return _segmentIds is not null && index < _segmentIds.Length
+            && string.Equals(_segmentIds[index], requestedId, StringComparison.Ordinal);
+    }
+
+    private static long? GetGeometryImpliedTotalParts(UsenetYencHeader header)
+    {
+        if (header.FileSize <= 0) return null;
+        long regularPartSize;
+        if (header.PartNumber == 1 && header.PartOffset == 0 && header.PartSize > 0)
+        {
+            regularPartSize = header.PartSize;
+        }
+        else if (header.PartNumber > 1 && header.PartOffset > 0
+                 && header.PartOffset % (header.PartNumber - 1L) == 0)
+        {
+            regularPartSize = header.PartOffset / (header.PartNumber - 1L);
+        }
+        else
+        {
+            return null;
+        }
+        return regularPartSize > 0 ? (header.FileSize - 1) / regularPartSize + 1 : null;
+    }
+
+    internal static string? GetDiagnosticReference(string? value) => value is null
         ? null
         : Convert.ToHexString(HMACSHA256.HashData(DiagnosticKey, Encoding.UTF8.GetBytes(value)));
 

@@ -301,6 +301,8 @@ public sealed class MultiProviderNntpClientYencValidationTests
         Assert.Equal(3, Scalar(warning, "ExpectedTotalParts"));
         Assert.Equal(557, Scalar(warning, "ReturnedPartNumber"));
         Assert.Equal(931, Scalar(warning, "ReturnedTotalParts"));
+        Assert.Equal("Primary", Scalar(warning, "RequestedIdKind"));
+        Assert.Null(Scalar(warning, "GeometryImpliedTotalParts"));
         Assert.Equal(187_525_120L, Scalar(warning, "ReturnedPartOffset"));
         Assert.Equal(3L, Scalar(warning, "ReturnedPartSize"));
         Assert.Equal(9L, Scalar(warning, "ReturnedFileSize"));
@@ -346,7 +348,53 @@ public sealed class MultiProviderNntpClientYencValidationTests
         Assert.Equal("Unknown", Scalar(warning, "Stage"));
         Assert.Null(Scalar(warning, "FileRef"));
         Assert.Null(Scalar(warning, "RequestedSegmentPosition"));
+        Assert.Equal("Unknown", Scalar(warning, "RequestedIdKind"));
         Assert.Null(Scalar(warning, "NzbSegmentNumber"));
+    }
+
+    [Fact]
+    public void ReportMismatch_LabelsRequestKindAndGeometryImpliedTotalParts()
+    {
+        var sink = new CollectingLogEventSink();
+        using var logger = new LoggerConfiguration().WriteTo.Sink(sink).CreateLogger();
+        var previousLogger = Log.Logger;
+        var header = CreateHeader(partNumber: 1, totalParts: 21) with
+        {
+            FileSize = 995_942_400,
+            PartSize = 768_000,
+        };
+        try
+        {
+            Log.Logger = logger;
+            using var validation = YencFileValidationContext.BeginStreaming(["first", "last"], [[], ["alternate"]]);
+            var context = Assert.IsType<YencFileValidationContext>(YencFileValidationContext.Current);
+            context.ReportMismatch("alternate", "provider.example", 222, header);
+            context.ReportMismatch("last", "provider.example", 222, header with
+            {
+                FileSize = 7,
+                PartNumber = 3,
+                PartOffset = 6,
+                PartSize = 1,
+            });
+            context.ReportMismatch("unknown", "provider.example", 222, header with { PartSize = 0 });
+        }
+        finally
+        {
+            Log.Logger = previousLogger;
+        }
+
+        var warnings = sink.Events.Where(IsMismatchWarning).ToList();
+        Assert.Equal(3, warnings.Count);
+        Assert.Equal("Fallback", Scalar(warnings[0], "RequestedIdKind"));
+        Assert.Equal(2, Scalar(warnings[0], "RequestedSegmentPosition"));
+        Assert.Equal(1297L, Scalar(warnings[0], "GeometryImpliedTotalParts"));
+        Assert.Equal("Primary", Scalar(warnings[1], "RequestedIdKind"));
+        Assert.Equal(2, Scalar(warnings[1], "RequestedSegmentPosition"));
+        Assert.Equal(3L, Scalar(warnings[1], "GeometryImpliedTotalParts"));
+        Assert.Equal("Unknown", Scalar(warnings[2], "RequestedIdKind"));
+        Assert.Null(Scalar(warnings[2], "GeometryImpliedTotalParts"));
+        Assert.DoesNotContain("provider.example", warnings[0].RenderMessage());
+        Assert.DoesNotContain("alternate", warnings[0].RenderMessage());
     }
 
     [Fact]
