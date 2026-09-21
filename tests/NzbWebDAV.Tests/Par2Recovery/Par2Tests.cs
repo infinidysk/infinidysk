@@ -145,8 +145,11 @@ public class Par2Tests
         var data = Enumerable.Range(0, 4103).Select(value => (byte)value).ToArray();
         var packets = BuildVerifiedPackets(data);
         var descriptions = await ReadVerifiedAsync(packets);
-        var proof = Assert.Single(descriptions).VerificationProof;
+        var description = Assert.Single(descriptions);
+        var proof = description.VerificationProof;
 
+        Assert.Null(description.VerificationProofUnavailableReason);
+        Assert.Equal(4096UL, description.SliceSize);
         Assert.NotNull(proof);
         Assert.True(proof.IsValidFor(data.Length));
         Assert.True(proof.VerifySlice(data.AsSpan(0, 4096), 0));
@@ -240,13 +243,17 @@ public class Par2Tests
     }
 
     [Theory]
-    [InlineData(1)]
-    [InlineData(2)]
-    public async Task ReadVerifiedFileDescriptions_RequiresCompleteMetadata(int missingPacket)
+    [InlineData(1, FileDesc.MainPacketMissingReason, null)]
+    [InlineData(2, FileDesc.SliceChecksumsMissingReason, 4096UL)]
+    public async Task ReadVerifiedFileDescriptions_RequiresCompleteMetadata(
+        int missingPacket, string expectedReason, ulong? expectedSliceSize)
     {
         var packets = BuildVerifiedPackets(new byte[4103]);
         packets.RemoveAt(missingPacket);
-        Assert.Null(Assert.Single(await ReadVerifiedAsync(packets)).VerificationProof);
+        var description = Assert.Single(await ReadVerifiedAsync(packets));
+        Assert.Null(description.VerificationProof);
+        Assert.Equal(expectedReason, description.VerificationProofUnavailableReason);
+        Assert.Equal(expectedSliceSize, description.SliceSize);
     }
 
     [Theory]
@@ -260,7 +267,25 @@ public class Par2Tests
         BinaryPrimitives.WriteUInt64LittleEndian(checksums.AsSpan(8), (ulong)checksums.Length);
         RehashPacket(checksums);
         packets[^1] = checksums;
-        Assert.Null(Assert.Single(await ReadVerifiedAsync(packets)).VerificationProof);
+        var description = Assert.Single(await ReadVerifiedAsync(packets));
+        Assert.Null(description.VerificationProof);
+        Assert.Equal(FileDesc.SliceCountMismatchReason, description.VerificationProofUnavailableReason);
+        Assert.Equal(4096UL, description.SliceSize);
+    }
+
+    [Fact]
+    public async Task ReadVerifiedFileDescriptions_RecordsUnsupportedSliceSize()
+    {
+        var packets = BuildVerifiedPackets(new byte[4103]);
+        const ulong unsupportedSliceSize = 32UL * 1024 * 1024 + 4;
+        BinaryPrimitives.WriteUInt64LittleEndian(packets[1].AsSpan(64), unsupportedSliceSize);
+        RehashPacket(packets[1]);
+
+        var description = Assert.Single(await ReadVerifiedAsync(packets));
+
+        Assert.Null(description.VerificationProof);
+        Assert.Equal(FileDesc.SliceSizeUnsupportedReason, description.VerificationProofUnavailableReason);
+        Assert.Equal(unsupportedSliceSize, description.SliceSize);
     }
 
     [Theory]

@@ -19,6 +19,16 @@ namespace NzbWebDAV.Par2Recovery.Packets
         public ulong FileLength { get; protected set; }
         public string FileName { get; internal set; } = null!;
         public Par2FileProof? VerificationProof { get; internal set; }
+        internal ulong? SliceSize { get; set; }
+        // Null when a proof exists or when the descriptor came from unverified ReadFileDescriptions.
+        internal string? VerificationProofUnavailableReason { get; set; }
+
+        internal const string MainPacketMissingReason = "the PAR2 Main packet does not list this file";
+        internal const string SliceChecksumsMissingReason = "the PAR2 set has no slice checksum (IFSC) packet for this file";
+        internal const string UnusableFileLengthReason = "the PAR2 file length is zero or too large";
+        internal const string SliceSizeUnsupportedReason = "the PAR2 slice size exceeds the 32 MiB verification limit";
+        internal const string SliceCountMismatchReason = "the PAR2 slice checksum count does not match the file length";
+        internal const string ProofInvalidReason = "the PAR2 verification proof failed its own consistency check";
 
         public FileDesc(Par2PacketHeader header) : base(header)
         {

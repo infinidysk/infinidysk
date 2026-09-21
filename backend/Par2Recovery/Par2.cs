@@ -113,13 +113,33 @@ namespace NzbWebDAV.Par2Recovery
                         && namePacket is UniFileN { FileName.Length: > 0 } unicodeName)
                         description.FileName = unicodeName.FileName;
 
-                    if (!mainByFile.TryGetValue(setId + fileId, out var main)
-                        || !packets.TryGetValue(setId + IfscPacket.PacketType + fileId, out var slicePacket)
-                        || slicePacket is not IfscPacket checksums
-                        || description.FileLength == 0 || description.FileLength > long.MaxValue
-                        || main.SliceSize > 32 * 1024 * 1024
-                        || (description.FileLength - 1) / main.SliceSize + 1 != (ulong)checksums.Slices.Count)
+                    if (!mainByFile.TryGetValue(setId + fileId, out var main))
+                    {
+                        description.VerificationProofUnavailableReason = FileDesc.MainPacketMissingReason;
                         continue;
+                    }
+                    description.SliceSize = main.SliceSize;
+                    if (!packets.TryGetValue(setId + IfscPacket.PacketType + fileId, out var slicePacket)
+                        || slicePacket is not IfscPacket checksums)
+                    {
+                        description.VerificationProofUnavailableReason = FileDesc.SliceChecksumsMissingReason;
+                        continue;
+                    }
+                    if (description.FileLength == 0 || description.FileLength > long.MaxValue)
+                    {
+                        description.VerificationProofUnavailableReason = FileDesc.UnusableFileLengthReason;
+                        continue;
+                    }
+                    if (main.SliceSize > (ulong)Par2FileProof.MaxVerificationSliceSize)
+                    {
+                        description.VerificationProofUnavailableReason = FileDesc.SliceSizeUnsupportedReason;
+                        continue;
+                    }
+                    if ((description.FileLength - 1) / main.SliceSize + 1 != (ulong)checksums.Slices.Count)
+                    {
+                        description.VerificationProofUnavailableReason = FileDesc.SliceCountMismatchReason;
+                        continue;
+                    }
 
                     budget.Charge(512L + checksums.Slices.Count * 20L);
                     var proof = new Par2FileProof
@@ -139,6 +159,8 @@ namespace NzbWebDAV.Par2Recovery
                     }
                     if (proof.IsValidFor((long)description.FileLength))
                         description.VerificationProof = proof;
+                    else
+                        description.VerificationProofUnavailableReason = FileDesc.ProofInvalidReason;
                 }
 
                 foreach (var description in packets.Values.OfType<FileDesc>())

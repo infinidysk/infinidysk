@@ -7,12 +7,19 @@ using NzbWebDAV.Queue.DeobfuscationSteps._1.FetchFirstSegment;
 using NzbWebDAV.Queue.DeobfuscationSteps._2.GetPar2FileDescriptors;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Par2Recovery;
+using NzbWebDAV.Tests.TestUtils;
+using Serilog;
+using Serilog.Events;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Queue;
 
+[Collection(nameof(GlobalLoggerCollection))]
 public class GetPar2FileDescriptorsStepTests
 {
+    private static object? Scalar(LogEvent logEvent, string property) =>
+        Assert.IsType<ScalarValue>(logEvent.Properties[property]).Value;
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -215,6 +222,108 @@ public class GetPar2FileDescriptorsStepTests
         var descriptors = await GetPar2FileDescriptorsStep.GetPar2FileDescriptors(files, client);
 
         Assert.Empty(descriptors);
+    }
+
+    [Fact]
+    public async Task GetPar2FileDescriptors_LogsDiscoverySummary()
+    {
+        var (index, _) = Par2TestEncoder.EncodeSet("movie.mkv", new byte[8192], 4096, []);
+        var file = Par2File("index.par2", "index@example.com", index);
+        using var client = new Par2ServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["index@example.com"] = index,
+        });
+        var sink = new CollectingLogEventSink();
+        using var logger = new LoggerConfiguration().WriteTo.Sink(sink).CreateLogger();
+        var previousLogger = Log.Logger;
+        try
+        {
+            Log.Logger = logger;
+            await GetPar2FileDescriptorsStep.GetPar2FileDescriptors([file], client);
+        }
+        finally
+        {
+            Log.Logger = previousLogger;
+        }
+
+        var summary = Assert.Single(sink.Events, logEvent =>
+            logEvent.MessageTemplate.Text.StartsWith("PAR2 metadata discovery finished", StringComparison.Ordinal));
+        Assert.Equal(LogEventLevel.Information, summary.Level);
+        Assert.Equal(1, Scalar(summary, "Candidates"));
+        Assert.Equal(1, Scalar(summary, "IndexCandidates"));
+        Assert.Equal(1, Scalar(summary, "MetadataFilesAttempted"));
+        Assert.Equal(1, Scalar(summary, "Descriptors"));
+        Assert.Equal(1, Scalar(summary, "VerifiedProofs"));
+        Assert.Equal(0, Scalar(summary, "UnverifiedDescriptors"));
+        Assert.Equal(1, Scalar(summary, "SliceSizeCount"));
+        Assert.Equal("4096", Scalar(summary, "SliceSizes"));
+        Assert.Equal(false, Scalar(summary, "SliceSizesTruncated"));
+        Assert.Equal(1, Scalar(summary, "ArticlesRequested"));
+        Assert.Equal((long)index.Length, Scalar(summary, "BytesDownloaded"));
+        Assert.Equal(false, Scalar(summary, "DeadlineExceeded"));
+    }
+
+    [Fact]
+    public async Task GetPar2FileDescriptors_DoesNotLogSummaryWhenNoPar2Present()
+    {
+        using var client = new Par2ServingNntpClient(new Dictionary<string, byte[]>());
+        var files = new List<FetchFirstSegmentsStep.NzbFileWithFirstSegment>
+        {
+            VideoFile("Release [AAAAAAAA].mkv", "video-a@example.com"),
+        };
+        var sink = new CollectingLogEventSink();
+        using var logger = new LoggerConfiguration().WriteTo.Sink(sink).CreateLogger();
+        var previousLogger = Log.Logger;
+        try
+        {
+            Log.Logger = logger;
+            Assert.Empty(await GetPar2FileDescriptorsStep.GetPar2FileDescriptors(files, client));
+        }
+        finally
+        {
+            Log.Logger = previousLogger;
+        }
+
+        Assert.DoesNotContain(sink.Events, logEvent =>
+            logEvent.MessageTemplate.Text.StartsWith("PAR2 metadata discovery finished", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task GetPar2FileDescriptors_CapsReportedSliceSizes()
+    {
+        var files = new List<FetchFirstSegmentsStep.NzbFileWithFirstSegment>();
+        var served = new Dictionary<string, byte[]>();
+        var expectedSizes = new List<ulong>();
+        for (var indexNumber = 0; indexNumber < 9; indexNumber++)
+        {
+            var sliceSize = 4096UL + (ulong)indexNumber * 4;
+            var data = Enumerable.Repeat((byte)(indexNumber + 1), 8192).ToArray();
+            var (indexBytes, _) = Par2TestEncoder.EncodeSet(
+                $"movie-{indexNumber}.mkv", data, sliceSize, []);
+            var messageId = $"index-{indexNumber}@example.com";
+            files.Add(Par2File($"index-{indexNumber}.par2", messageId, indexBytes));
+            served.Add(messageId, indexBytes);
+            expectedSizes.Add(sliceSize);
+        }
+        using var client = new Par2ServingNntpClient(served);
+        var sink = new CollectingLogEventSink();
+        using var logger = new LoggerConfiguration().WriteTo.Sink(sink).CreateLogger();
+        var previousLogger = Log.Logger;
+        try
+        {
+            Log.Logger = logger;
+            await GetPar2FileDescriptorsStep.GetPar2FileDescriptors(files, client);
+        }
+        finally
+        {
+            Log.Logger = previousLogger;
+        }
+
+        var summary = Assert.Single(sink.Events, logEvent =>
+            logEvent.MessageTemplate.Text.StartsWith("PAR2 metadata discovery finished", StringComparison.Ordinal));
+        Assert.Equal(9, Scalar(summary, "SliceSizeCount"));
+        Assert.Equal(string.Join(",", expectedSizes.Take(8)), Scalar(summary, "SliceSizes"));
+        Assert.Equal(true, Scalar(summary, "SliceSizesTruncated"));
     }
 
     private sealed class CollectingProgress(List<int> reports) : IProgress<int>

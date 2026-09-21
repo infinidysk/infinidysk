@@ -7,6 +7,8 @@ namespace NzbWebDAV.Models;
 [MemoryPackable(GenerateType.VersionTolerant)]
 public partial class Par2FileProof
 {
+    internal const int MaxVerificationSliceSize = 32 * 1024 * 1024;
+
     [MemoryPackOrder(0)]
     public long FileLength { get; set; }
 
@@ -31,7 +33,7 @@ public partial class Par2FileProof
     public bool IsValidFor(long fileLength)
     {
         if (fileLength <= 0 || FileLength != fileLength
-            || SliceSize <= 0 || SliceSize > 32 * 1024 * 1024 || SliceSize % 4 != 0
+            || SliceSize <= 0 || SliceSize > MaxVerificationSliceSize || SliceSize % 4 != 0
             || FileId is not { Length: 16 } || FileHash is not { Length: 16 }
             || SliceMd5 is null || SliceCrc32 is null)
             return false;
