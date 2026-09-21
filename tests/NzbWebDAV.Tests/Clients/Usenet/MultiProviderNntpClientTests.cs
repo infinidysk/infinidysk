@@ -2,11 +2,13 @@ using System.IO;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.StreamTrace;
@@ -23,6 +25,66 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 [Collection(nameof(GlobalLoggerCollection))]
 public class MultiProviderNntpClientTests
 {
+    [Fact]
+    public void AdmissionPolicy_UsesStreamingTimeoutOrDefault()
+    {
+        var provider = CreateProvider(new ScriptedNntpClient { BatchResponseCode = 222 });
+        using var client = new MultiProviderNntpClient([provider]);
+
+        var defaultContext = client.CreateTransferAdmissionFailoverContext(
+            NntpOperation.Body, [provider], CancellationToken.None);
+        Assert.NotNull(defaultContext);
+        Assert.Equal(TransferAdmissionFailoverContext.DefaultWaitTimeout, defaultContext.WaitTimeout);
+
+        using var callerCts = new CancellationTokenSource();
+        using var timeoutContext = callerCts.Token.SetContext(new StreamingTimeoutContext
+        {
+            PerSegmentTimeout = TimeSpan.FromMilliseconds(100),
+            MaxRetries = 0,
+        });
+        var streamingContext = client.CreateTransferAdmissionFailoverContext(
+            NntpOperation.Body, [provider], callerCts.Token);
+        Assert.NotNull(streamingContext);
+        Assert.Equal(TimeSpan.FromMilliseconds(100), streamingContext.WaitTimeout);
+
+        var explicitContext = client.CreateTransferAdmissionFailoverContext(
+            NntpOperation.Body,
+            [provider],
+            callerCts.Token,
+            requireBoundedWait: true,
+            waitTimeout: TimeSpan.FromMilliseconds(7));
+        Assert.NotNull(explicitContext);
+        Assert.True(explicitContext.RequireBoundedWait);
+        Assert.Equal(TimeSpan.FromMilliseconds(7), explicitContext.WaitTimeout);
+        Assert.Null(client.CreateTransferAdmissionFailoverContext(
+            NntpOperation.Stat, [provider], CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(1, 1500000L)]
+    [InlineData(2, 750000L)]
+    [InlineData(3, 500000L)]
+    [InlineData(11, 136363L)]
+    public void AdmissionPolicy_PartitionsInitialCandidates(int providerCount, long expectedTicks)
+    {
+        var budget = TimeSpan.FromMilliseconds(150);
+
+        var slice = MultiProviderNntpClient.CalculateBatchFallbackAdmissionSlice(
+            budget, providerCount);
+
+        Assert.Equal(TimeSpan.FromTicks(expectedTicks), slice);
+        Assert.True(slice.Ticks * providerCount <= budget.Ticks);
+    }
+
+    [Fact]
+    public void AdmissionPolicy_PartitionsInitialCandidates_EmptySetUsesMinimumSlice()
+    {
+        var slice = MultiProviderNntpClient.CalculateBatchFallbackAdmissionSlice(
+            TimeSpan.FromMilliseconds(150), 0);
+
+        Assert.Equal(TimeSpan.FromMilliseconds(150), slice);
+    }
+
     [Theory]
     [InlineData(new[] { 10, 10 }, 3, new[] { 2, 1 })]
     [InlineData(new[] { 20, 5 }, 10, new[] { 8, 2 })]

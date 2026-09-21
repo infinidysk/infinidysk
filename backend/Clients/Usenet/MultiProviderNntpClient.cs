@@ -333,13 +333,13 @@ public class MultiProviderNntpClient(
     public override Task<UsenetStatResponse> StatAsync(SegmentId segmentId, CancellationToken cancellationToken)
     {
         return RunFromPoolWithBackup(
-            x => x.StatAsync(segmentId, cancellationToken), segmentId, NntpOperation.Stat, cancellationToken);
+            (x, _, token) => x.StatAsync(segmentId, token), segmentId, NntpOperation.Stat, cancellationToken);
     }
 
     public override Task<UsenetHeadResponse> HeadAsync(SegmentId segmentId, CancellationToken cancellationToken)
     {
         return RunFromPoolWithBackup(
-            x => x.HeadAsync(segmentId, cancellationToken), segmentId, NntpOperation.Head, cancellationToken);
+            (x, _, token) => x.HeadAsync(segmentId, token), segmentId, NntpOperation.Head, cancellationToken);
     }
 
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync
@@ -349,7 +349,8 @@ public class MultiProviderNntpClient(
     )
     {
         return RunFromPoolWithBackup(
-            x => x.DecodedBodyAsync(segmentId, cancellationToken), segmentId, NntpOperation.Body, cancellationToken);
+            (x, admission, token) => x.DecodedBodyAsync(segmentId, admission, token),
+            segmentId, NntpOperation.Body, cancellationToken);
     }
 
     public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync
@@ -359,13 +360,14 @@ public class MultiProviderNntpClient(
     )
     {
         return RunFromPoolWithBackup(
-            x => x.DecodedArticleAsync(segmentId, cancellationToken), segmentId, NntpOperation.Article, cancellationToken);
+            (x, admission, token) => x.DecodedArticleAsync(segmentId, admission, token),
+            segmentId, NntpOperation.Article, cancellationToken);
     }
 
     public override Task<UsenetDateResponse> DateAsync(CancellationToken cancellationToken)
     {
         return RunFromPoolWithBackup(
-            x => x.DateAsync(cancellationToken), articleId: null, NntpOperation.Date, cancellationToken);
+            (x, _, token) => x.DateAsync(token), articleId: null, NntpOperation.Date, cancellationToken);
     }
 
     public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync
@@ -381,8 +383,8 @@ public class MultiProviderNntpClient(
         try
         {
             return await RunStreamingFromPoolWithBackup(
-                (provider, callback) =>
-                    provider.DecodedBodyAsync(segmentId, callback, cancellationToken),
+                (provider, callback, admission, token) =>
+                    provider.DecodedBodyAsync(segmentId, callback, admission, token),
                 UsenetResponseType.ArticleRetrievedBodyFollows,
                 segmentId,
                 (result, failureReason) =>
@@ -453,18 +455,16 @@ public class MultiProviderNntpClient(
                 var deferredCallback = new DeferredArticleBodyCallback();
                 UsenetDecodedBodyBatch? primaryBatch = null;
                 ContextualCancellationTokenSource? attemptCts = null;
-#pragma warning disable CA2000 // The returned scope owns and disposes the token-context registration.
-                using var admissionFailoverContext = SetTransferAdmissionFailoverContext(
+                var admission = CreateTransferAdmissionFailoverContext(
                     NntpOperation.PipelinedBody,
                     orderedProviders.Skip(providerIndex + 1),
                     cancellationToken);
-#pragma warning restore CA2000
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     attemptCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     primaryBatch = await provider.DecodedBodiesAsync(
-                        segmentIds, deferredCallback.Invoke, attemptCts.Token).ConfigureAwait(false);
+                        segmentIds, deferredCallback.Invoke, admission, attemptCts.Token).ConfigureAwait(false);
                     if (primaryBatch.Responses.Count != segmentIds.Count)
                     {
                         throw new InvalidOperationException(
@@ -597,10 +597,13 @@ public class MultiProviderNntpClient(
         // primary's storage group on the initial batch 430 so that re-probe is not skipped
         // by its own miss. Cross-request negative cache may skip re-probe separately.
         var missingGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        MultiConnectionNntpClient? attemptReserved = null;
         try
         {
             UsenetDecodedBodyResponse? response = null;
             ExceptionDispatchInfo? lastException = null;
+            ExceptionDispatchInfo? inconclusiveAdmissionFailure = null;
+            string? inconclusiveAdmissionProvider = null;
             try
             {
                 response = await primaryResponse.ConfigureAwait(false);
@@ -693,7 +696,17 @@ public class MultiProviderNntpClient(
 
             await previousFallbackAdmission.WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
-            await _batchFallbackStartGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var fallbackAdmissionBudget = GetBatchFallbackAdmissionBudget(cancellationToken);
+            if (!await _batchFallbackStartGate
+                    .WaitAsync(fallbackAdmissionBudget, cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var exception = new ProviderTransferAdmissionTimeoutException(
+                    primaryProvider.Host, fallbackAdmissionBudget, "BatchFallbackGate");
+                LogInconclusiveAdmissionFailure(primaryProvider.Host, exception);
+                throw exception;
+            }
             var gateHeld = true;
             var gateOwnedByTransfer = false;
             try
@@ -701,7 +714,18 @@ public class MultiProviderNntpClient(
                 // Admit the next segment before (or while) walking providers so N+1 is not
                 // blocked on this segment's body stream — only on ordered start + the gate.
                 SignalAdmission();
-                foreach (var provider in retryProviders)
+                var eligibleRetryProviders = retryProviders
+                    .Where(candidate =>
+                    {
+                        var group = NormalizeStorageGroup(candidate.StorageGroup);
+                        return (group.Length == 0 || !missingGroups.Contains(group))
+                               && !IsCachedMissing(
+                                   segmentId, candidate, NntpOperation.PipelinedBody);
+                    })
+                    .ToArray();
+                var attemptAdmissionTimeout = CalculateBatchFallbackAdmissionSlice(
+                    fallbackAdmissionBudget, eligibleRetryProviders.Length);
+                foreach (var provider in eligibleRetryProviders)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var group = NormalizeStorageGroup(provider.StorageGroup);
@@ -730,8 +754,7 @@ public class MultiProviderNntpClient(
                     var traceRange = CurrentStreamTraceRange;
                     var stopwatch = Stopwatch.StartNew();
                     lastAttemptedProvider = provider;
-#pragma warning disable CA2000 // The returned scope owns and disposes the token-context registration.
-                    using var fallbackAdmissionContext = SetTransferAdmissionFailoverContext(
+                    var fallbackAdmissionContext = CreateTransferAdmissionFailoverContext(
                         NntpOperation.PipelinedBody,
                         retryProviders
                             .SkipWhile(candidate => !ReferenceEquals(candidate, provider))
@@ -744,12 +767,13 @@ public class MultiProviderNntpClient(
                                         segmentId, candidate, NntpOperation.PipelinedBody);
                             }),
                         cancellationToken);
-#pragma warning restore CA2000
                     try
                     {
+                        MovePendingSelection(ref attemptReserved, provider, NntpOperation.PipelinedBody);
                         walk.Attempts++;
                         response = await provider.DecodedBodyAsync(
-                            segmentId, deferredCallback.Invoke, cancellationToken).ConfigureAwait(false);
+                            segmentId, deferredCallback.Invoke, fallbackAdmissionContext,
+                            cancellationToken).ConfigureAwait(false);
                         await RejectMismatchedYencFileAsync(
                             segmentId, provider.MetricsKey, response, cancellationToken).ConfigureAwait(false);
                         stopwatch.Stop();
@@ -808,6 +832,8 @@ public class MultiProviderNntpClient(
                         deferredCallback.Discard();
                         coordinator.CompleteAttempt();
                         lastException = ExceptionDispatchInfo.Capture(exception);
+                        inconclusiveAdmissionFailure ??= lastException;
+                        inconclusiveAdmissionProvider ??= provider.Host;
                         continue;
                     }
                     catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
@@ -831,6 +857,10 @@ public class MultiProviderNntpClient(
                         coordinator.CompleteAttempt();
                         throw;
                     }
+                    finally
+                    {
+                        ReleasePendingSelection(ref attemptReserved, NntpOperation.PipelinedBody);
+                    }
 
                     if (response.ResponseType == UsenetResponseType.ArticleRetrievedBodyFollows)
                     {
@@ -844,15 +874,23 @@ public class MultiProviderNntpClient(
                     _batchFallbackStartGate.Release();
             }
 
-            walk.LastOutcomeWasException = lastException is not null
-                && ClassifyException(lastException.SourceException) != SegmentFetch.FetchStatus.Missing;
-            LogProviderWalkOutcome(
-                walk,
-                segmentId,
-                NntpOperation.PipelinedBody,
-                lastAttemptedProvider.Host,
-                lastException?.SourceException);
-            lastException?.Throw();
+            var terminalFailure = lastException is not null
+                && ClassifyException(lastException.SourceException) != SegmentFetch.FetchStatus.Missing
+                    ? lastException
+                    : inconclusiveAdmissionFailure ?? lastException;
+            var terminalProvider = ReferenceEquals(terminalFailure, inconclusiveAdmissionFailure)
+                ? inconclusiveAdmissionProvider
+                : lastAttemptedProvider.Host;
+            walk.LastOutcomeWasException = terminalFailure is not null
+                && ClassifyException(terminalFailure.SourceException) != SegmentFetch.FetchStatus.Missing;
+            if (terminalFailure?.SourceException is ProviderTransferAdmissionTimeoutException
+                or CircuitAdmissionRejectedException)
+                LogInconclusiveAdmissionFailure(terminalProvider, terminalFailure.SourceException);
+            else
+                LogProviderWalkOutcome(
+                    walk, segmentId, NntpOperation.PipelinedBody,
+                    terminalProvider, terminalFailure?.SourceException);
+            terminalFailure?.Throw();
             throw new UsenetArticleNotFoundException(segmentId, response?.ResponseMessage);
         }
         catch
@@ -862,6 +900,7 @@ public class MultiProviderNntpClient(
         }
         finally
         {
+            ReleasePendingSelection(ref attemptReserved, NntpOperation.PipelinedBody);
             SignalAdmission();
             coordinator.CompleteDecision();
         }
@@ -995,8 +1034,8 @@ public class MultiProviderNntpClient(
     )
     {
         return await RunStreamingFromPoolWithBackup(
-            (provider, callback) =>
-                provider.DecodedArticleAsync(segmentId, callback, cancellationToken),
+            (provider, callback, admission, token) =>
+                provider.DecodedArticleAsync(segmentId, callback, admission, token),
             UsenetResponseType.ArticleRetrievedHeadAndBodyFollow,
             segmentId,
             onConnectionReadyAgain,
@@ -1005,7 +1044,7 @@ public class MultiProviderNntpClient(
     }
 
     private async Task<T> RunStreamingFromPoolWithBackup<T>(
-        Func<INntpClient, ArticleBodyCompletionHandler, Task<T>> task,
+        Func<MultiConnectionNntpClient, ArticleBodyCompletionHandler, TransferAdmissionFailoverContext?, CancellationToken, Task<T>> task,
         UsenetResponseType successResponseType,
         SegmentId segmentId,
         ArticleBodyCompletionHandler? onConnectionReadyAgain,
@@ -1017,12 +1056,15 @@ public class MultiProviderNntpClient(
         var attribution = AttributionContext.Value;
         if (attribution != null) attribution.Host = null;
         ExceptionDispatchInfo? lastException = null;
+        ExceptionDispatchInfo? inconclusiveAdmissionFailure = null;
+        string? inconclusiveAdmissionProvider = null;
         T? lastNoArticleResult = null;
         var lastOutcomeWasException = false;
         List<(string Host, SegmentFetch.FetchStatus Reason)>? priorMisses = null;
         var missingGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var orderedProviders = SelectOrderedProviders(operation, out var reserved);
         using var releasePending = new ScopeReleaser(() => reserved?.ReleasePending(operation));
+        MultiConnectionNntpClient? attemptReserved = null;
         var walk = new ProviderWalkSummary(orderedProviders.Count);
         MultiConnectionNntpClient? lastAttemptedProvider = null;
         var attemptIndex = 0;
@@ -1053,8 +1095,7 @@ public class MultiProviderNntpClient(
             var traceRange = CurrentStreamTraceRange;
             var stopwatch = Stopwatch.StartNew();
             lastAttemptedProvider = provider;
-#pragma warning disable CA2000 // The returned scope owns and disposes the token-context registration.
-            using var admissionFailoverContext = SetTransferAdmissionFailoverContext(
+            var admissionFailoverContext = CreateTransferAdmissionFailoverContext(
                 operation,
                 orderedProviders
                     .SkipWhile(candidate => !ReferenceEquals(candidate, provider))
@@ -1066,12 +1107,12 @@ public class MultiProviderNntpClient(
                             && !IsCachedMissing(segmentId, candidate, operation);
                     }),
                 cancellationToken);
-#pragma warning restore CA2000
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                MovePendingSelection(ref attemptReserved, provider, operation);
                 walk.Attempts++;
-                var result = await task(provider, deferredCallback.Invoke)
+                var result = await task(provider, deferredCallback.Invoke, admissionFailoverContext, cancellationToken)
                     .ConfigureAwait(false);
                 await RejectMismatchedYencFileAsync(
                     segmentId, provider.MetricsKey, result, cancellationToken).ConfigureAwait(false);
@@ -1124,6 +1165,8 @@ public class MultiProviderNntpClient(
                 stopwatch.Stop();
                 deferredCallback.Discard();
                 lastException = ExceptionDispatchInfo.Capture(exception);
+                inconclusiveAdmissionFailure ??= lastException;
+                inconclusiveAdmissionProvider ??= provider.Host;
                 lastOutcomeWasException = true;
                 attemptIndex++;
             }
@@ -1149,14 +1192,28 @@ public class MultiProviderNntpClient(
                     onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
                 throw;
             }
+            finally
+            {
+                ReleasePendingSelection(ref attemptReserved, operation);
+            }
         }
 
         // Terminal 430 after skips/exhaustion must fire the completion callback exactly once.
         ArticleBodyCompletion.InvokeContained(onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
-        walk.LastOutcomeWasException = lastOutcomeWasException;
-        LogProviderWalkOutcome(
-            walk, segmentId, operation, lastAttemptedProvider?.Host, lastException?.SourceException);
-        if (lastOutcomeWasException) lastException!.Throw();
+        var terminalFailure = lastOutcomeWasException
+            ? lastException
+            : inconclusiveAdmissionFailure;
+        var terminalProvider = ReferenceEquals(terminalFailure, inconclusiveAdmissionFailure)
+            ? inconclusiveAdmissionProvider
+            : lastAttemptedProvider?.Host;
+        walk.LastOutcomeWasException = terminalFailure is not null;
+        if (terminalFailure?.SourceException is ProviderTransferAdmissionTimeoutException
+            or CircuitAdmissionRejectedException)
+            LogInconclusiveAdmissionFailure(terminalProvider, terminalFailure.SourceException);
+        else
+            LogProviderWalkOutcome(
+                walk, segmentId, operation, terminalProvider, terminalFailure?.SourceException);
+        terminalFailure?.Throw();
         if (lastNoArticleResult is not null) return lastNoArticleResult;
         if (orderedProviders.Count == 0)
             throw new InvalidOperationException("There are no usenet providers configured.");
@@ -1170,7 +1227,7 @@ public class MultiProviderNntpClient(
 
     private async Task<T> RunFromPoolWithBackup<T>
     (
-        Func<INntpClient, Task<T>> task,
+        Func<MultiConnectionNntpClient, TransferAdmissionFailoverContext?, CancellationToken, Task<T>> task,
         SegmentId? articleId,
         NntpOperation operation,
         CancellationToken cancellationToken
@@ -1180,6 +1237,8 @@ public class MultiProviderNntpClient(
         var attribution = AttributionContext.Value;
         if (attribution != null) attribution.Host = null;
         ExceptionDispatchInfo? lastException = null;
+        ExceptionDispatchInfo? inconclusiveAdmissionFailure = null;
+        string? inconclusiveAdmissionProvider = null;
         ExceptionDispatchInfo? lastInconclusiveFailure = null;
         T? lastNoArticleResult = null;
         var lastOutcomeWasException = false;
@@ -1188,6 +1247,7 @@ public class MultiProviderNntpClient(
         var missingGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var orderedProviders = SelectOrderedProviders(operation, out var reserved);
         using var releasePending = new ScopeReleaser(() => reserved?.ReleasePending(operation));
+        MultiConnectionNntpClient? attemptReserved = null;
         var walk = new ProviderWalkSummary(orderedProviders.Count);
         var attemptIndex = 0;
         foreach (var provider in orderedProviders)
@@ -1227,8 +1287,7 @@ public class MultiProviderNntpClient(
             lastAttemptedProvider = provider;
             var traceRange = CurrentStreamTraceRange;
             var stopwatch = Stopwatch.StartNew();
-#pragma warning disable CA2000 // The returned scope owns and disposes the token-context registration.
-            using var admissionFailoverContext = SetTransferAdmissionFailoverContext(
+            var admissionFailoverContext = CreateTransferAdmissionFailoverContext(
                 operation,
                 orderedProviders
                     .SkipWhile(candidate => !ReferenceEquals(candidate, provider))
@@ -1241,11 +1300,11 @@ public class MultiProviderNntpClient(
                                 || !IsCachedMissing(segmentId, candidate, operation));
                     }),
                 cancellationToken);
-#pragma warning restore CA2000
             try
             {
+                MovePendingSelection(ref attemptReserved, provider, operation);
                 walk.Attempts++;
-                var result = await task.Invoke(provider).ConfigureAwait(false);
+                var result = await task(provider, admissionFailoverContext, cancellationToken).ConfigureAwait(false);
                 await RejectMismatchedYencFileAsync(
                     articleId, provider.MetricsKey, result, cancellationToken).ConfigureAwait(false);
                 stopwatch.Stop();
@@ -1305,6 +1364,8 @@ public class MultiProviderNntpClient(
             {
                 stopwatch.Stop();
                 lastException = ExceptionDispatchInfo.Capture(exception);
+                inconclusiveAdmissionFailure ??= lastException;
+                inconclusiveAdmissionProvider ??= provider.Host;
                 lastOutcomeWasException = true;
                 attemptIndex++;
             }
@@ -1325,20 +1386,32 @@ public class MultiProviderNntpClient(
                     lastInconclusiveFailure = lastException;
                 attemptIndex++;
             }
+            finally
+            {
+                ReleasePendingSelection(ref attemptReserved, operation);
+            }
         }
 
         // Whichever terminal outcome occurred on the last attempted provider wins,
         // matching the original fallback precedence (a later connection error beats
         // an earlier 430, and a later 430 beats an earlier error).
-        walk.LastOutcomeWasException = lastOutcomeWasException;
-        LogProviderWalkOutcome(
-            walk, articleId, operation, lastAttemptedProvider?.Host, lastException?.SourceException);
-        if (lastOutcomeWasException)
-            lastException!.Throw();
-        if (ConclusiveAvailabilityContext.IsActive
-            && !walk.IsPureDefinitiveMiss
-            && lastInconclusiveFailure is not null)
-            lastInconclusiveFailure.Throw();
+        var terminalFailure = lastOutcomeWasException
+            ? lastException
+                        : inconclusiveAdmissionFailure
+                            ?? (ConclusiveAvailabilityContext.IsActive && !walk.IsPureDefinitiveMiss
+                                    ? lastInconclusiveFailure
+                                    : null);
+        var terminalProvider = ReferenceEquals(terminalFailure, inconclusiveAdmissionFailure)
+            ? inconclusiveAdmissionProvider
+            : lastAttemptedProvider?.Host;
+        walk.LastOutcomeWasException = terminalFailure is not null;
+        if (terminalFailure?.SourceException is ProviderTransferAdmissionTimeoutException
+            or CircuitAdmissionRejectedException)
+            LogInconclusiveAdmissionFailure(terminalProvider, terminalFailure.SourceException);
+        else
+            LogProviderWalkOutcome(
+                walk, articleId, operation, terminalProvider, terminalFailure?.SourceException);
+        terminalFailure?.Throw();
         if (lastNoArticleResult is not null) return lastNoArticleResult;
         if (orderedProviders.Count == 0)
             throw new InvalidOperationException("There are no usenet providers configured.");
@@ -1913,28 +1986,82 @@ public class MultiProviderNntpClient(
         }
     }
 
-    private IDisposable SetTransferAdmissionFailoverContext(
+    private void MovePendingSelection(
+        ref MultiConnectionNntpClient? reserved,
+        MultiConnectionNntpClient? target,
+        NntpOperation operation)
+    {
+        lock (_selectLock)
+        {
+            if (ReferenceEquals(reserved, target))
+                return;
+
+            reserved?.ReleasePending(operation);
+            reserved = target;
+            reserved?.ReservePending(operation);
+        }
+    }
+
+    private void ReleasePendingSelection(
+        ref MultiConnectionNntpClient? reserved,
+        NntpOperation operation) =>
+        MovePendingSelection(ref reserved, null, operation);
+
+    private static TimeSpan GetBatchFallbackAdmissionBudget(
+        CancellationToken cancellationToken) =>
+        cancellationToken.GetContext<StreamingTimeoutContext>()?.PerSegmentTimeout
+        ?? TransferAdmissionFailoverContext.DefaultWaitTimeout;
+
+    private static void LogInconclusiveAdmissionFailure(
+        string? providerHost,
+        Exception exception)
+    {
+        switch (exception)
+        {
+            case ProviderTransferAdmissionTimeoutException timeout:
+                Log.Debug(
+                    "Fallback admission waited {TimeoutSeconds:0.#}s for provider {Provider} during {Phase}; deferring as inconclusive.",
+                    timeout.Timeout.TotalSeconds,
+                    timeout.ProviderName,
+                    timeout.Phase);
+                break;
+            case CircuitAdmissionRejectedException:
+                Log.Debug(
+                    "Fallback could not enter provider {Provider} because circuit admission was unavailable; deferring as inconclusive.",
+                    providerHost ?? "unknown");
+                break;
+        }
+    }
+
+    internal TransferAdmissionFailoverContext? CreateTransferAdmissionFailoverContext(
         NntpOperation operation,
         IEnumerable<MultiConnectionNntpClient> candidateProviders,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool requireBoundedWait = false,
+        TimeSpan? waitTimeout = null)
     {
         if (operation is not (NntpOperation.Body
             or NntpOperation.Article
             or NntpOperation.PipelinedBody
             or NntpOperation.PipelinedArticle))
-            return ScopeReleaser.Empty;
+            return null;
 
-    #pragma warning disable CA2000 // ScopeReleaser owns this registration and disposes it when the provider attempt ends.
-        var context = cancellationToken.SetContext(new TransferAdmissionFailoverContext(
+        return new TransferAdmissionFailoverContext(
             () => candidateProviders.Any(provider =>
                 provider.ProviderType != ProviderType.Disabled
                 && (provider.GetCircuitBreakerSnapshot().State != ProviderCircuitState.Open
                     || provider.CanReuseIdleConnection)
                 && provider.UnreservedConnectionsFor(operation) > 0),
-            TransferAdmissionFailoverContext.DefaultWaitTimeout));
-    #pragma warning restore CA2000
-        return new ScopeReleaser(context.Dispose);
+            waitTimeout
+                ?? cancellationToken.GetContext<StreamingTimeoutContext>()?.PerSegmentTimeout
+                ?? TransferAdmissionFailoverContext.DefaultWaitTimeout,
+            requireBoundedWait);
     }
+
+    internal static TimeSpan CalculateBatchFallbackAdmissionSlice(
+        TimeSpan budget,
+        int eligibleProviderCount) =>
+        TimeSpan.FromTicks(Math.Max(1, budget.Ticks / Math.Max(1, eligibleProviderCount)));
 
     internal MultiConnectionNntpClient? SelectProviderForBenchmark(NntpOperation operation)
     {

@@ -244,7 +244,8 @@ public class MultiConnectionNntpClient(
             GetDownloadPriority(ct),
             (connection, _, commandCt) => connection.StatAsync(segmentId, commandCt),
             onConnectionReadyAgain: null,
-            ct
+            ct,
+            transferAdmission: null
         );
     }
 
@@ -255,7 +256,8 @@ public class MultiConnectionNntpClient(
             GetDownloadPriority(ct),
             (connection, _, commandCt) => connection.HeadAsync(segmentId, commandCt),
             onConnectionReadyAgain: null,
-            ct
+            ct,
+            transferAdmission: null
         );
     }
 
@@ -266,7 +268,8 @@ public class MultiConnectionNntpClient(
             GetDownloadPriority(ct),
             (connection, onDone, commandCt) => connection.DecodedBodyAsync(segmentId, onDone, commandCt),
             onConnectionReadyAgain: null,
-            ct
+            ct,
+            transferAdmission: null
         );
     }
 
@@ -281,7 +284,8 @@ public class MultiConnectionNntpClient(
             GetDownloadPriority(ct),
             (connection, onDone, commandCt) => connection.DecodedArticleAsync(segmentId, onDone, commandCt),
             onConnectionReadyAgain: null,
-            ct
+            ct,
+            transferAdmission: null
         );
     }
 
@@ -323,16 +327,43 @@ public class MultiConnectionNntpClient(
             GetDownloadPriority(ct),
             (connection, onDone, commandCt) => connection.DecodedBodyAsync(segmentId, onDone, commandCt),
             onConnectionReadyAgain,
-            ct
+            ct,
+            transferAdmission: null
         );
     }
+
+    internal Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+        SegmentId segmentId,
+        TransferAdmissionFailoverContext? transferAdmission,
+        CancellationToken cancellationToken) =>
+        DecodedBodyAsync(segmentId, null, transferAdmission, cancellationToken);
+
+    internal Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+        SegmentId segmentId,
+        TransferAdmissionFailoverContext? transferAdmission,
+        CancellationToken cancellationToken) =>
+        DecodedArticleAsync(segmentId, null, transferAdmission, cancellationToken);
 
     public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync
     (
         IReadOnlyList<SegmentId> segmentIds,
         ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken ct
-    )
+    ) => await DecodedBodiesCoreAsync(segmentIds, onConnectionReadyAgain, null, ct)
+        .ConfigureAwait(false);
+
+    internal Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+        IReadOnlyList<SegmentId> segmentIds,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
+        TransferAdmissionFailoverContext? transferAdmission,
+        CancellationToken cancellationToken) =>
+        DecodedBodiesCoreAsync(segmentIds, onConnectionReadyAgain, transferAdmission, cancellationToken);
+
+    private async Task<UsenetDecodedBodyBatch> DecodedBodiesCoreAsync(
+        IReadOnlyList<SegmentId> segmentIds,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
+        TransferAdmissionFailoverContext? transferAdmission,
+        CancellationToken ct)
     {
         // Streaming reads carry a per-segment deadline so a stalled provider fails over
         // instead of holding a playback stream open for the raw NNTP stalled-read timeout
@@ -362,7 +393,7 @@ public class MultiConnectionNntpClient(
             try
             {
                 connectionLock = await AcquireConnectionLockAsync(
-                    GetDownloadPriority(ct), workload, operation, probeLease, ct)
+                    GetDownloadPriority(ct), workload, operation, probeLease, ct, transferAdmission)
                     .ConfigureAwait(false);
                 freshConnection = !connectionLock.WasReused;
 
@@ -568,9 +599,38 @@ public class MultiConnectionNntpClient(
             GetDownloadPriority(ct),
             (connection, onDone, commandCt) => connection.DecodedArticleAsync(segmentId, onDone, commandCt),
             onConnectionReadyAgain,
-            ct
+            ct,
+            transferAdmission: null
         );
     }
+
+    internal Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+        SegmentId segmentId,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
+        TransferAdmissionFailoverContext? transferAdmission,
+        CancellationToken cancellationToken) =>
+        RunWithConnection(
+            "BODY",
+            GetDownloadPriority(cancellationToken),
+            (connection, onDone, commandToken) =>
+                connection.DecodedBodyAsync(segmentId, onDone, commandToken),
+            onConnectionReadyAgain,
+            cancellationToken,
+            transferAdmission: transferAdmission);
+
+    internal Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+        SegmentId segmentId,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
+        TransferAdmissionFailoverContext? transferAdmission,
+        CancellationToken cancellationToken) =>
+        RunWithConnection(
+            "ARTICLE",
+            GetDownloadPriority(cancellationToken),
+            (connection, onDone, commandToken) =>
+                connection.DecodedArticleAsync(segmentId, onDone, commandToken),
+            onConnectionReadyAgain,
+            cancellationToken,
+            transferAdmission: transferAdmission);
 
     private async Task<T> RunWithConnection<T>
     (
@@ -579,7 +639,8 @@ public class MultiConnectionNntpClient(
         Func<INntpClient, ArticleBodyCompletionHandler, CancellationToken, Task<T>> command,
         ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken ct,
-        int retryCount = 1
+        int retryCount = 1,
+        TransferAdmissionFailoverContext? transferAdmission = null
     ) where T : UsenetResponse
     {
         var workload = DownloadWorkloadClassifier.Classify(ct);
@@ -604,7 +665,8 @@ public class MultiConnectionNntpClient(
             var freshConnection = false;
             try
             {
-                connectionLock = await AcquireConnectionLockAsync(priority, workload, operation, probeLease, ct)
+                connectionLock = await AcquireConnectionLockAsync(
+                    priority, workload, operation, probeLease, ct, transferAdmission)
                     .ConfigureAwait(false);
                 if (connectionLock is null)
                     throw new InvalidOperationException("Connection acquisition returned no lock.");
@@ -1064,7 +1126,8 @@ public class MultiConnectionNntpClient(
         DownloadWorkload workload,
         NntpOperation operation,
         CircuitProbeLease probeLease,
-        CancellationToken ct)
+        CancellationToken ct,
+        TransferAdmissionFailoverContext? explicitTransferAdmission = null)
     {
         var traceRange = MultiProviderNntpClient.CurrentStreamTraceRange;
         var started = Stopwatch.GetTimestamp();
@@ -1080,9 +1143,11 @@ public class MultiConnectionNntpClient(
         try
         {
             var admissionKind = ClassifyConnectionKind(operation);
-            var failoverContext = ct.GetContext<TransferAdmissionFailoverContext>();
+            var failoverContext = explicitTransferAdmission
+                ?? ct.GetContext<TransferAdmissionFailoverContext>();
             waitTimeout = admissionKind == ProviderConnectionKind.Transfer
-                && failoverContext?.HasAlternativeCapacity() == true
+                && failoverContext is not null
+                && (failoverContext.RequireBoundedWait || failoverContext.HasAlternativeCapacity())
                     ? failoverContext.WaitTimeout
                     : null;
             CancellationToken GetOrCreateWaitToken(string phase)
