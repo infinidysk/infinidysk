@@ -99,10 +99,14 @@ public partial class WardenStore
     /// Marks many fingerprints dead in one transaction. <see cref="MarkDead"/> opens a connection
     /// per call, which is fine for the one-at-a-time verdicts Watchtower and playback produce but
     /// not for a history import that can mint thousands at once.
+    ///
+    /// Returns false when the write failed. A caller that reports a count to the user must not
+    /// treat a rolled-back transaction as "nothing to add": the counts would read as a clean
+    /// zero-add run when the database never accepted the verdicts.
     /// </summary>
-    public void MarkDeadMany(IReadOnlyCollection<string> fps)
+    public bool MarkDeadMany(IReadOnlyCollection<string> fps)
     {
-        if (fps.Count == 0) return;
+        if (fps.Count == 0) return true;
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var backbones = MergeBackbones("", CurrentBackbones());
         try
@@ -128,10 +132,14 @@ public partial class WardenStore
             }
 
             tx.Commit();
+            return true;
         }
         catch (SqliteException e)
         {
-            Log.Debug(e, "Warden: bulk mark failed");
+            // Warning, not Debug: unlike the one-at-a-time verdicts this rolls back a whole batch
+            // and the caller surfaces a count for it.
+            Log.Warning(e, "Warden: bulk mark failed for {Count} fingerprint(s)", fps.Count);
+            return false;
         }
     }
 

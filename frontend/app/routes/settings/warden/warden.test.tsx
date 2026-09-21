@@ -105,6 +105,31 @@ describe("WardenSettings history scan", () => {
     expect(fetchMock.mock.calls.filter(([url]) => url.includes("dryRun=false"))).toHaveLength(1);
   });
 
+  it("keeps the modal open when the write fails so the scan is not lost", async () => {
+    stubFetch((url) => {
+      if (url.includes("dryRun=false"))
+        return {
+          ok: false,
+          json: () => Promise.resolve({ error: "database is locked" }),
+        } as unknown as Response;
+      if (url.includes("/api/warden-import-history")) return jsonResponse(SCAN);
+      if (url.includes("/api/warden-sources")) return jsonResponse(EMPTY_SNAPSHOT);
+      return jsonResponse({});
+    });
+    renderWarden();
+
+    await userEvent.click(screen.getByRole("button", { name: /scan history/i }));
+    await waitFor(() => screen.getByRole("button", { name: /add to my list/i }));
+    await userEvent.click(screen.getByRole("button", { name: /add to my list/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/database is locked/)).toBeTruthy();
+    });
+    // The counts are still on screen, so retrying costs nothing.
+    expect(screen.getByRole("button", { name: /add to my list/i })).toBeTruthy();
+    expect(screen.getByText(/850 distinct fingerprints/)).toBeTruthy();
+  });
+
   it("offers no write button when the scan found nothing", async () => {
     stubFetch((url) => {
       if (url.includes("/api/warden-import-history")) {

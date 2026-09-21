@@ -143,6 +143,29 @@ public sealed class WardenHistoryImporterTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Import_ThrowsWhenTheWardenWriteFails()
+    {
+        var blobId = Guid.NewGuid();
+        var blobs = new Dictionary<Guid, byte[]> { [blobId] = Nzb("fail@example.test", 1_700_000_000) };
+
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>().UseSqlite(connection).Options;
+        await using (var context = new DavDatabaseContext(options))
+        {
+            await context.Database.EnsureCreatedAsync();
+            context.HistoryItems.Add(Failed(blobId, "Missing segments across all providers.", 1_000));
+            await context.SaveChangesAsync();
+        }
+
+        var importer = new WardenHistoryImporter(
+            new TestDbContextFactory(options), new MemoryBlobStore(blobs), UnusableWardenStore());
+
+        // A rolled-back batch must not read as a successful run that added nothing.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => importer.ImportAsync(dryRun: false));
+    }
+
+    [Fact]
     public async Task Import_RefusesToStartWhileAScanIsRunning()
     {
         var blobId = Guid.NewGuid();
@@ -196,6 +219,17 @@ public sealed class WardenHistoryImporterTests : IAsyncLifetime
         Assert.Equal(
             WardenFingerprint.Compute(128, "poster@example.test", DateTimeOffset.FromUnixTimeSeconds(1_700_000_000)),
             fromSegments);
+    }
+
+    /// <summary>
+    /// A store whose database file cannot be opened, so every write rolls back. Initialize()
+    /// tolerates that, which is exactly the state where a silent failure could be mistaken for
+    /// "nothing to add".
+    /// </summary>
+    private WardenStore UnusableWardenStore()
+    {
+        Directory.CreateDirectory(Path.Join(_configRoot, "warden.db"));
+        return new WardenStore(new ConfigManager());
     }
 
     private static HistoryItem Failed(Guid? blobId, string failMessage, long totalBytes) => new()

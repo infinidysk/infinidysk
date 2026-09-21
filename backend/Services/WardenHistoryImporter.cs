@@ -119,7 +119,11 @@ public class WardenHistoryImporter(
         if (!dryRun && distinct.Count > 0)
         {
             var before = warden.LocalCount;
-            warden.MarkDeadMany(distinct);
+            // A rolled-back batch leaves LocalCount untouched, which would otherwise be reported as
+            // a successful run that happened to add nothing. Fail loudly instead.
+            if (!warden.MarkDeadMany(distinct))
+                throw new InvalidOperationException(
+                    $"Warden could not store {distinct.Count} fingerprint(s); the database write failed.");
             added = Math.Max(0, warden.LocalCount - before);
         }
 

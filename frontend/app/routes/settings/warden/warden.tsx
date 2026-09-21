@@ -283,8 +283,16 @@ export function WardenSettings({ config, setNewConfig }: WardenSettingsProps) {
       });
       await refresh();
     } catch (err: unknown) {
-      setShowHistory(false);
-      setMessage({ text: errorText(err, "Could not scan your history."), variant: "danger" });
+      // Keep the modal open when the write fails so the counts survive and the user can retry
+      // without paying for another full-history scan. A failed scan has nothing to keep.
+      if (dryRun) setShowHistory(false);
+      setMessage({
+        text: errorText(
+          err,
+          dryRun ? "Could not scan your history." : "Could not add the fingerprints.",
+        ),
+        variant: "danger",
+      });
     } finally {
       setBusy(null);
     }
