@@ -745,7 +745,7 @@ public class QueueItemProcessor(
 
             // validate media files found
             if (configManager.IsEnsureImportableMediaEnabled())
-                new EnsureImportableMediaValidator(dbClient).ThrowIfValidationFails();
+                new EnsureImportableMediaValidator(dbClient).ThrowIfValidationFails(fileProcessingResults);
 
             // STRM sidecars are published after the commit below (see
             // MarkQueueItemCompleted), never inside these staged operations:
