@@ -704,7 +704,6 @@ public sealed partial class Program
     private static async Task RunDatabaseMigrationsAsync(string[] args)
     {
         var ct = SigtermUtil.GetCancellationToken();
-        await RecoverMetricsDatabaseAsync(ct).ConfigureAwait(false);
 
         if (DatabaseProviderConfig.IsPostgres)
         {
@@ -747,7 +746,6 @@ public sealed partial class Program
                 progress.Initialize(DatabaseRestoreRunner.GetRestoreSteps(pendingRestore!));
                 await using var statusServer = await MigrationStatusServer.StartAsync(progress, ct).ConfigureAwait(false);
                 await DatabaseRestoreRunner.ApplyPendingRestoreAsync(progress, ct).ConfigureAwait(false);
-                await RecoverMetricsDatabaseAsync(ct).ConfigureAwait(false);
                 if (statusServer is not null)
                     await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
             }
@@ -825,7 +823,6 @@ public sealed partial class Program
             {
                 Log.Information("Applying staged database restore for backup {BackupId}", pendingRestore!.BackupId);
                 await DatabaseRestoreRunner.ApplyPendingRestoreAsync(progressFull, ct).ConfigureAwait(false);
-                await RecoverMetricsDatabaseAsync(ct).ConfigureAwait(false);
             }
 
             await using var databaseContext = new DavDatabaseContext();
@@ -965,7 +962,6 @@ public sealed partial class Program
                 progress.Initialize(DatabaseRestoreRunner.GetRestoreSteps(pendingRestore!));
                 await using var statusServer = await MigrationStatusServer.StartAsync(progress, ct).ConfigureAwait(false);
                 await DatabaseRestoreRunner.ApplyPendingRestoreAsync(progress, ct).ConfigureAwait(false);
-                await RecoverMetricsDatabaseAsync(ct).ConfigureAwait(false);
                 if (statusServer is not null)
                     await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
             }
@@ -1021,7 +1017,6 @@ public sealed partial class Program
             {
                 Log.Information("Applying staged database restore for backup {BackupId}", pendingRestore!.BackupId);
                 await DatabaseRestoreRunner.ApplyPendingRestoreAsync(progressFull, ct).ConfigureAwait(false);
-                await RecoverMetricsDatabaseAsync(ct).ConfigureAwait(false);
             }
 
             // Pending migrations are computed after the restore so the metrics step
@@ -1096,14 +1091,6 @@ public sealed partial class Program
 
             throw;
         }
-    }
-
-    private static async Task RecoverMetricsDatabaseAsync(CancellationToken cancellationToken)
-    {
-        await using var metricsRecoveryContext = new MetricsDbContext();
-        await MetricsDatabaseRecovery
-            .QuarantineIfCorruptAsync(metricsRecoveryContext, cancellationToken)
-            .ConfigureAwait(false);
     }
 
     private static void ConfigureSegmentBufferPool(ConfigManager configManager)
