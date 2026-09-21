@@ -283,6 +283,8 @@ namespace NzbWebDAV.Database.PostgresMigrations
                     b.HasIndex("RepairStatus", "CreatedAt")
                         .HasFilter("\"RepairStatus\" IN (1, 2)");
 
+                    b.HasIndex("DavItemId", "CreatedAt", "Id");
+
                     b.HasIndex("Result", "RepairStatus", "CreatedAt");
 
                     b.ToTable("HealthCheckResults", (string)null);
