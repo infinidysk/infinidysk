@@ -55,6 +55,34 @@ public sealed class ArrMonitoringOrphanedQueueItemTests
         Assert.Null(record.GetMediaIdentity());
     }
 
+    [Theory]
+    [InlineData("\"not-a-date\"")]
+    [InlineData("\"0000-00-00T00:00:00Z\"")]
+    [InlineData("\"\"")]
+    [InlineData("null")]
+    [InlineData("12345")]
+    public void SonarrQueueRecord_ToleratesMalformedAddedTimestamp(string addedJson)
+    {
+        // A nullable DateTime already covers a missing or null field, but System.Text.Json throws
+        // on a malformed date string. One such record would fail the whole page and put the
+        // monitor back in the blind spot this change exists to remove.
+        var json = $$"""
+            {
+                "id": 501,
+                "title": "Some.Show.S01E01",
+                "status": "completed",
+                "seriesId": null,
+                "added": {{addedJson}}
+            }
+            """;
+
+        var record = JsonSerializer.Deserialize<SonarrQueueRecord>(json);
+
+        Assert.NotNull(record);
+        Assert.Null(record!.Added);
+        Assert.Equal(501, record.Id);
+    }
+
     [Fact]
     public void RadarrQueueRecord_DeserializesUnmatchedRecord_WithoutThrowing()
     {

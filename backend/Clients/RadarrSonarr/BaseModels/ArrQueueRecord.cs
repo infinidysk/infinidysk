@@ -1,4 +1,5 @@
-﻿using System.Text.Json.Serialization;
+﻿using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 
@@ -48,6 +49,7 @@ public class ArrQueueRecord
     /// "old enough" by callers.
     /// </summary>
     [JsonPropertyName("added")]
+    [JsonConverter(typeof(TolerantDateTimeJsonConverter))]
     public DateTime? Added { get; set; }
 
     public bool IsAwaitingImport =>
@@ -80,4 +82,26 @@ public class ArrQueueRecord
     }
 
     public virtual string? GetMediaIdentity() => null;
+}
+
+/// <summary>
+/// Maps an unparseable or unexpected <c>added</c> value to null instead of throwing. A plain
+/// <see cref="DateTime"/>? already tolerates a missing or null field, but System.Text.Json still
+/// throws on a malformed date string — and a single bad record would fail the whole queue response,
+/// which is the blindness this PR exists to remove.
+/// </summary>
+public sealed class TolerantDateTimeJsonConverter : JsonConverter<DateTime?>
+{
+    public override DateTime? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+        reader.TokenType switch
+        {
+            JsonTokenType.String when reader.TryGetDateTime(out var value) => value,
+            _ => null,
+        };
+
+    public override void Write(Utf8JsonWriter writer, DateTime? value, JsonSerializerOptions options)
+    {
+        if (value is { } dt) writer.WriteStringValue(dt);
+        else writer.WriteNullValue();
+    }
 }
