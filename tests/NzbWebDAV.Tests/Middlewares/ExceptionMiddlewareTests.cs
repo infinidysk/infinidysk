@@ -542,6 +542,48 @@ public class ExceptionMiddlewareTests
             DavItem.ItemSubType.MultipartFile);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task CircuitAdmissionRejected_IsTransientWithoutRepair(bool hasStarted, bool wrapped)
+    {
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted, lifetimeFeature);
+        context.Request.Path = $"/content/circuit-{Guid.NewGuid():N}.mkv";
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        davItem.Path = context.Request.Path.Value!;
+        var failureTracker = new StreamingFailureTracker();
+        Exception failure = new CircuitAdmissionRejectedException();
+        if (wrapped)
+            failure = new IOException("stream pump failed", failure);
+        var middleware = CreateMiddleware(
+            _ => throw failure, CreateRepairEnabledConfig(), failureTracker);
+        var observability = new WebDavObservabilityMiddleware(middleware.InvokeAsync);
+        var failedBefore = WebDavObservabilityMiddleware.Snapshot().GetValueOrDefault("failed");
+
+        var events = await CaptureLogsAsync(async () =>
+        {
+            await observability.InvokeAsync(context);
+            await observability.InvokeAsync(context);
+        });
+
+        Assert.Equal(hasStarted, lifetimeFeature.Aborted);
+        Assert.Equal(hasStarted ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable,
+            context.Response.StatusCode);
+        Assert.Equal(hasStarted ? "" : "5", context.Response.Headers.RetryAfter.ToString());
+        Assert.Equal(0, failureTracker.GetFailureCount(davItem.Id));
+        var logged = Assert.Single(events, entry =>
+            entry.Level == LogEventLevel.Warning &&
+            entry.RenderMessage().Contains("provider circuit admission unavailable", StringComparison.Ordinal));
+        Assert.Null(logged.Exception);
+        Assert.DoesNotContain(events, entry => entry.Level >= LogEventLevel.Error);
+        Assert.DoesNotContain(events, entry => entry.RenderMessage().Contains("WebDAV request failed", StringComparison.Ordinal));
+        Assert.Equal(failedBefore + (hasStarted ? 0 : 2),
+            WebDavObservabilityMiddleware.Snapshot().GetValueOrDefault("failed"));
+    }
+
     [Fact]
     public async Task StreamingReadTimeout_BeforeResponseStarted_Returns503WithRetryAfter()
     {

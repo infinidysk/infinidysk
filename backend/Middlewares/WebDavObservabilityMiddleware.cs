@@ -114,7 +114,7 @@ public class WebDavObservabilityMiddleware(RequestDelegate next, StreamTraceBuff
                     Increment("abortedBeforeFirstByte");
             }
 
-            if (failed)
+            if (failed && !context.Items.ContainsKey(ExceptionMiddleware.CircuitAdmissionRejectedKey))
             {
                 Log.Warning(
                     "WebDAV request failed. Method={Method} Path={Path} Status={Status} DurationMs={DurationMs}",

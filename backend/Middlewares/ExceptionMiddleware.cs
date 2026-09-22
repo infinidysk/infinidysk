@@ -36,6 +36,7 @@ public class ExceptionMiddleware(
     private static readonly TimeSpan RepairDedupeWindow = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan CleanupThreshold = TimeSpan.FromMinutes(5);
     private static int _callCount;
+    internal static readonly object CircuitAdmissionRejectedKey = new();
 
     internal Func<Guid, Task>? RepairScheduleCompletionHook { get; set; }
 
@@ -248,6 +249,29 @@ public class ExceptionMiddleware(
             var filePath = GetRequestFilePath(context);
             Log.Error("File {FilePath} could not connect to usenet provider: {ErrorMessage}", filePath, e.Message);
             AbortStartedResponse(context);
+        }
+        catch (Exception e) when (
+            IsDavItemRequest(context) &&
+            e.TryGetCausingException(out CircuitAdmissionRejectedException? _) &&
+            e is not OutOfMemoryException)
+        {
+            context.Items[CircuitAdmissionRejectedKey] = true;
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                context.Response.Headers.RetryAfter = "5";
+            }
+            else
+            {
+                AbortStartedResponse(context);
+            }
+
+            var filePath = GetRequestFilePath(context);
+            LogWithDedup(RecentReadErrors, "circuit-admission|" + filePath, suppressed =>
+                Log.Warning(
+                    "WebDAV read deferred. Path={Path} Reason: {Reason} SuppressedCount={SuppressedCount}",
+                    filePath, "provider circuit admission unavailable", suppressed));
         }
         catch (Exception e) when (e.TryGetCausingException(out StreamingReadTimeoutException? _) && e is not OutOfMemoryException)
         {
