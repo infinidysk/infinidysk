@@ -35,7 +35,7 @@ public partial class UsenetClient
     /// backpressure according to <see cref="UsenetClientOptions"/>. The completion callback reports
     /// <see cref="ArticleBodyResult.NotFound"/> for clean 430 responses,
     /// <see cref="ArticleBodyResult.Cancelled"/> after a successfully drained cancellation, and
-    /// <see cref="ArticleBodyResult.NotRetrieved"/> only when the connection is unsafe to reuse.
+    /// <see cref="ArticleBodyResult.NotRetrieved"/> or <see cref="ArticleBodyResult.Discarded"/> when the connection is unsafe to reuse.
     /// <see cref="UsenetDecodedBodyBatch.Completion"/> finishes after that callback and after the
     /// command lock is released.
     /// </remarks>
@@ -354,6 +354,15 @@ public partial class UsenetClient
 
                 failure = bodyReadResult.Failure;
                 nextResponseIndex++;
+                if (failure is UsenetSharp.Exceptions.UsenetBodyAbandonedException)
+                {
+                    if (completionResult != ArticleBodyResult.NotRetrieved)
+                    {
+                        completionResult = ArticleBodyResult.Discarded;
+                        completionReason = DescribeFailure(failure);
+                    }
+                    break;
+                }
                 var cancelledByCaller =
                     bodyReadResult.Failure is OperationCanceledException &&
                     callerCancellationToken.IsCancellationRequested;
@@ -510,7 +519,9 @@ public partial class UsenetClient
     internal static string? DescribeFailure(Exception? failure)
     {
         if (failure == null) return null;
-        var description = failure.GetType().Name;
+        var description = failure is UsenetSharp.Exceptions.UsenetBodyAbandonedException
+            ? nameof(UsenetSharp.Exceptions.UsenetProtocolException)
+            : failure.GetType().Name;
 
         if (failure is UsenetSharp.Exceptions.UsenetProtocolException)
         {

@@ -2978,35 +2978,80 @@ public class UsenetClientDeterministicTests
         });
     }
 
-    [Test]
-    public async Task BodyAsync_AbandonedBodyBeyondDrainLimitReportsNotRetrieved()
+    [TestCase(false, false, false)]
+    [TestCase(true, false, false)]
+    [TestCase(true, true, false)]
+    [TestCase(true, true, true)]
+    public async Task BodyAsync_AbandonedBodyBeyondDrainLimitReportsDiscarded(
+        bool decoded, bool batched, bool previousFailure)
     {
         var continueBody = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         // Post-dispose payload exceeds the 8 KiB flush threshold so the pump discovers
         // the completed reader, switches to drain mode, then overflows the drain limit.
-        var postDisposeBurst = string.Concat(Enumerable.Repeat(new string('x', 126) + "\r\n", 70));
-        await using var server = new ScriptedNntpServer(async (_, writer, _) =>
+        var postDisposeBurst = string.Concat(Enumerable.Repeat(new string('x', 126) + "\r\n", 700));
+        await using var server = new ScriptedNntpServer(async (command, writer, _) =>
         {
-            await writer.WriteAsync("222 body follows\r\ninitial\r\n");
+            if (command.Contains("bad@example.com", StringComparison.Ordinal))
+            {
+                await writer.WriteLineAsync("500 unsupported command");
+                return;
+            }
+            await writer.WriteAsync(decoded
+                ? "222 body follows\r\n=ybegin line=128 size=88200 name=test.bin\r\n"
+                : "222 body follows\r\ninitial\r\n");
             await continueBody.Task;
             await writer.WriteAsync(postDisposeBurst);
             await writer.WriteAsync("overflow-after-drain-switch\r\n.\r\n");
         });
         await using var client = new UsenetClient(new UsenetClientOptions
         {
-            AbandonedBodyDrainLimit = 4
+            AbandonedBodyDrainLimit = 4,
+            DecodedBodyPauseWriterThreshold = 1024,
+            DecodedBodyResumeWriterThreshold = 512
         });
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
         var completion = new TaskCompletionSource<ArticleBodyResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var response = await client.BodyAsync(
-            "article@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
-        await response.Stream!.DisposeAsync();
+        var callbackCount = 0;
+        void OnCompleted(ArticleBodyResult result, string? reason)
+        {
+            Interlocked.Increment(ref callbackCount);
+            completion.TrySetResult(result);
+        }
+        Stream stream;
+        UsenetDecodedBodyBatch? batch = null;
+        if (batched)
+        {
+            SegmentId[] segments = previousFailure
+                ? [new SegmentId("bad@example.com"), new SegmentId("article@example.com"), new SegmentId("next@example.com")]
+                : [new SegmentId("article@example.com"), new SegmentId("next@example.com")];
+            batch = await client.DecodedBodiesAsync(
+                segments, OnCompleted, CancellationToken.None);
+            stream = (await batch.Responses[previousFailure ? 1 : 0]).Stream!;
+        }
+        else if (decoded)
+        {
+            stream = (await client.DecodedBodyAsync(
+                "article@example.com", OnCompleted, CancellationToken.None)).Stream!;
+        }
+        else
+        {
+            stream = (await client.BodyAsync(
+                "article@example.com", OnCompleted, CancellationToken.None)).Stream!;
+        }
+        await stream.DisposeAsync();
         continueBody.SetResult();
 
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
-            Is.EqualTo(ArticleBodyResult.NotRetrieved));
+            Is.EqualTo(previousFailure ? ArticleBodyResult.NotRetrieved : ArticleBodyResult.Discarded));
+        if (batch is not null)
+        {
+            Assert.CatchAsync<UsenetProtocolException>(async () =>
+                await batch.Completion.WaitAsync(TimeSpan.FromSeconds(2)));
+            Assert.CatchAsync<UsenetProtocolException>(async () => await batch.Responses[^1]);
+        }
+        Assert.That(callbackCount, Is.EqualTo(1));
         Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.DateAsync(CancellationToken.None));
     }

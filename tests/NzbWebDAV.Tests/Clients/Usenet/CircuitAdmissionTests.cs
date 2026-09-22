@@ -10,6 +10,98 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 
 public class CircuitAdmissionTests
 {
+    [Theory]
+    [InlineData(false, false, ArticleBodyResult.Discarded)]
+    [InlineData(false, true, ArticleBodyResult.Discarded)]
+    [InlineData(true, false, ArticleBodyResult.Discarded)]
+    [InlineData(true, true, ArticleBodyResult.Discarded)]
+    [InlineData(false, false, ArticleBodyResult.NotRetrieved)]
+    [InlineData(false, true, ArticleBodyResult.NotRetrieved)]
+    [InlineData(true, false, ArticleBodyResult.NotRetrieved)]
+    [InlineData(true, true, ArticleBodyResult.NotRetrieved)]
+    public async Task BodyCompletion_ReplacesUnsafeConnection_ChargesOnlyProviderFailures(
+        bool batched, bool halfOpen, ArticleBodyResult result)
+    {
+        var inner = new CompletionBodyClient();
+        var breaker = halfOpen ? HalfOpen() : new ProviderCircuitBreaker("body-completion");
+        var before = breaker.GetSnapshot();
+        var cooldown = breaker.CurrentCooldown;
+        using var pool = new ConnectionPool<INntpClient>(
+            1, _ => ValueTask.FromResult<INntpClient>(inner));
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, "body-completion");
+        var callbacks = 0;
+        ArticleBodyResult? observed = null;
+        void OnCompleted(ArticleBodyResult completed, string? reason)
+        {
+            callbacks++;
+            observed = completed;
+        }
+        UsenetDecodedBodyBatch? batch = null;
+        if (batched)
+            batch = await client.DecodedBodiesAsync(
+                [new SegmentId("segment@example.com")], OnCompleted, CancellationToken.None);
+        else
+            await client.DecodedBodyAsync(
+                new SegmentId("segment@example.com"), OnCompleted, CancellationToken.None);
+
+        inner.Callback!(result, "diagnostic text is not a classification");
+        inner.Callback(result, "duplicate");
+        if (batch is not null)
+            await batch.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(1, callbacks);
+        Assert.Equal(ArticleBodyResult.NotRetrieved, observed);
+        Assert.Equal(0, pool.LiveConnections);
+        Assert.Equal(0, pool.IdleConnections);
+        Assert.Equal(before.FailureCount + (result == ArticleBodyResult.NotRetrieved ? 1 : 0),
+            breaker.GetSnapshot().FailureCount);
+        if (result == ArticleBodyResult.Discarded)
+        {
+            Assert.Equal(before.State, breaker.GetSnapshot().State);
+            Assert.Equal(cooldown, breaker.CurrentCooldown);
+            Assert.True(breaker.TryAdmit(out var probe));
+            breaker.ReleaseProbe(probe);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            using var recovered = await pool.GetConnectionLockAsync(SemaphorePriority.High, deadline.Token);
+        }
+        else if (halfOpen)
+        {
+            Assert.Equal(ProviderCircuitState.Open, breaker.GetSnapshot().State);
+        }
+    }
+
+    [Theory]
+    [InlineData(false, ArticleBodyResult.Cancelled)]
+    [InlineData(false, ArticleBodyResult.NotRetrieved)]
+    [InlineData(true, ArticleBodyResult.Cancelled)]
+    [InlineData(true, ArticleBodyResult.NotRetrieved)]
+    public async Task BodyAsync_CancelledHalfOpenCompletion_ReleasesProbe(bool batched, ArticleBodyResult result)
+    {
+        var inner = new CompletionBodyClient();
+        var breaker = HalfOpen();
+        using var pool = new ConnectionPool<INntpClient>(
+            1, _ => ValueTask.FromResult<INntpClient>(inner));
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, "cancelled-body-probe");
+        using var cancellation = new CancellationTokenSource();
+        UsenetDecodedBodyBatch? batch = null;
+        if (batched)
+            batch = await client.DecodedBodiesAsync(
+                [new SegmentId("segment@example.com")], null, cancellation.Token);
+        else
+            await client.DecodedBodyAsync(new SegmentId("segment@example.com"), null, cancellation.Token);
+
+        cancellation.Cancel();
+        inner.Callback!(result);
+        if (batch is not null)
+            await batch.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.True(breaker.TryAdmit(out var probe));
+        Assert.False(probe.IsNone);
+        breaker.ReleaseProbe(probe);
+    }
+
     [Fact]
     public async Task IdleReuse_CircuitTripBeforeCommit_ReturnsConnectionAndPermit()
     {
@@ -335,6 +427,37 @@ public class CircuitAdmissionTests
             }
 
             return Task.FromResult(OkDate());
+        }
+    }
+
+    private sealed class CompletionBodyClient : StubNntpClient
+    {
+        public ArticleBodyCompletionHandler? Callback { get; private set; }
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            Callback = onConnectionReadyAgain;
+            return Task.FromResult(new UsenetDecodedBodyResponse
+            {
+                SegmentId = segmentId,
+                ResponseCode = 222,
+                ResponseMessage = "222 body follows",
+                Stream = null
+            });
+        }
+
+        public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+            IReadOnlyList<SegmentId> segmentIds, ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            var response = await DecodedBodyAsync(segmentIds[0], onConnectionReadyAgain, cancellationToken);
+            return new UsenetDecodedBodyBatch
+            {
+                Responses = [Task.FromResult(response)],
+                Completion = Task.CompletedTask
+            };
         }
     }
 

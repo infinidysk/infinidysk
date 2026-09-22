@@ -434,6 +434,11 @@ public class MultiConnectionNntpClient(
                     {
                         switch (result)
                         {
+                            case ArticleBodyResult.Discarded:
+                                LogException(() => connectionLock.Replace("pipelined-body-discarded"));
+                                circuitBreaker.ReleaseProbe(probeLease);
+                                result = ArticleBodyResult.NotRetrieved;
+                                break;
                             case ArticleBodyResult.Retrieved:
                                 circuitBreaker.RecordSuccess(probe: probeLease, freshConnection: freshConnection);
                                 break;
@@ -441,6 +446,7 @@ public class MultiConnectionNntpClient(
                                 circuitBreaker.RecordArticleNotFound(probeLease, freshConnection);
                                 break;
                             case ArticleBodyResult.Cancelled:
+                                circuitBreaker.ReleaseProbe(probeLease);
                                 break;
                             case ArticleBodyResult.NotRetrieved:
                                 // Seek/abort cancels mid-pipeline; UsenetSharp reports NotRetrieved
@@ -451,6 +457,8 @@ public class MultiConnectionNntpClient(
                                     RecordProviderFailure(failureReason is null
                                         ? $"pipeline-callback-{result}"
                                         : $"pipeline-callback-{result} ({failureReason})", probeLease);
+                                else
+                                    circuitBreaker.ReleaseProbe(probeLease);
                                 break;
                             default:
                                 RecordProviderFailure(failureReason is null
@@ -915,7 +923,13 @@ public class MultiConnectionNntpClient(
                     if (Interlocked.Exchange(ref callbackInvoked, 1) != 0) return;
                     using var completedBodyCts = bodyCts;
 
-                    if (articleBodyResult == ArticleBodyResult.NotRetrieved)
+                    if (articleBodyResult == ArticleBodyResult.Discarded)
+                    {
+                        LogException(() => connectionLock?.Replace($"body-callback-{name}-discarded"));
+                        circuitBreaker.ReleaseProbe(probeLease);
+                        articleBodyResult = ArticleBodyResult.NotRetrieved;
+                    }
+                    else if (articleBodyResult == ArticleBodyResult.NotRetrieved)
                     {
                         LogException(() => connectionLock?.Replace($"body-callback-{name}-NotRetrieved"));
                         // Client abort (seek) must not trip the provider circuit breaker.
@@ -923,6 +937,8 @@ public class MultiConnectionNntpClient(
                             RecordProviderFailure(failureReason is null
                                 ? $"body-callback-{name}-NotRetrieved"
                                 : $"body-callback-{name}-NotRetrieved ({failureReason})", probeLease);
+                        else
+                            circuitBreaker.ReleaseProbe(probeLease);
                     }
                     else if (articleBodyResult == ArticleBodyResult.Retrieved)
                     {
@@ -931,6 +947,10 @@ public class MultiConnectionNntpClient(
                     else if (articleBodyResult == ArticleBodyResult.NotFound)
                     {
                         circuitBreaker.RecordArticleNotFound(probeLease, freshConnection);
+                    }
+                    else if (articleBodyResult == ArticleBodyResult.Cancelled)
+                    {
+                        circuitBreaker.ReleaseProbe(probeLease);
                     }
 
                     LogException(() => connectionLock?.Dispose());
