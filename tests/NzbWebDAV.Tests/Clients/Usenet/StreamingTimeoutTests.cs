@@ -1004,18 +1004,23 @@ public class StreamingTimeoutTests
     }
 
     [Theory]
-    [InlineData(true, true)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    [InlineData(false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(false, false, true)]
     public async Task ConnectionPool_LateFactoryFailure_OnlyCancellationOmitsStack(
         bool deadlineExpires,
-        bool factoryCancelled)
+        bool factoryCancelled,
+        bool warm)
     {
         var sink = new CollectingSink();
         var previous = Log.Logger;
         using var logger = new LoggerConfiguration()
-            .MinimumLevel.Warning()
+            .MinimumLevel.Debug()
             .WriteTo.Sink(sink)
             .CreateLogger();
         Log.Logger = logger;
@@ -1033,17 +1038,27 @@ public class StreamingTimeoutTests
                 diagnosticName: "news.late-factory.example",
                 connectionOpenTimeout: () => openTimeout);
             using var caller = new CancellationTokenSource();
-            var borrow = pool.GetConnectionLockAsync(SemaphorePriority.High, caller.Token);
+            Task borrow = warm ? pool.WarmToAsync(1, caller.Token)
+                : pool.GetConnectionLockAsync(SemaphorePriority.High, caller.Token);
             Assert.Equal(1, pool.PendingConnectionCreations);
 
             if (deadlineExpires)
-                await Assert.ThrowsAsync<ConnectionOpenTimeoutException>(() => borrow.WaitAsync(TimeSpan.FromSeconds(5)));
+            {
+                if (warm)
+                    await borrow.WaitAsync(TimeSpan.FromSeconds(5));
+                else
+                    await Assert.ThrowsAsync<ConnectionOpenTimeoutException>(() => borrow.WaitAsync(TimeSpan.FromSeconds(5)));
+            }
             else
             {
                 await caller.CancelAsync();
-                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => borrow.WaitAsync(TimeSpan.FromSeconds(5)));
+                if (warm)
+                    await borrow.WaitAsync(TimeSpan.FromSeconds(5));
+                else
+                    await Assert.ThrowsAnyAsync<OperationCanceledException>(() => borrow.WaitAsync(TimeSpan.FromSeconds(5)));
             }
 
+            await caller.CancelAsync();
             openTimeout = TimeSpan.FromSeconds(5);
             Exception failure = factoryCancelled
                 ? new OperationCanceledException("Connection opening was cancelled.")
@@ -1056,23 +1071,73 @@ public class StreamingTimeoutTests
             Assert.Equal(1, pool.LiveConnections);
             Assert.Equal(2, attempts);
 
+            var expectedLevel = factoryCancelled && !deadlineExpires ? LogEventLevel.Debug : LogEventLevel.Warning;
             var warning = Assert.Single(sink.Events, eventItem =>
-                eventItem.Level == LogEventLevel.Warning
+                eventItem.Level == expectedLevel
+                && eventItem.RenderMessage().Contains("NNTP connection factory", StringComparison.Ordinal)
                 && eventItem.Properties.TryGetValue("Provider", out var provider)
                 && provider is ScalarValue { Value: "news.late-factory.example" });
-            Assert.Equal(LogEventLevel.Warning, warning.Level);
+            Assert.Equal(expectedLevel, warning.Level);
             Assert.Equal("news.late-factory.example", Assert.IsType<ScalarValue>(warning.Properties["Provider"]).Value);
             if (factoryCancelled)
             {
                 Assert.Null(warning.Exception);
-                Assert.Equal(failure.Message, Assert.IsType<ScalarValue>(warning.Properties["Reason"]).Value);
-                Assert.Contains("open attempt was cancelled", warning.RenderMessage(), StringComparison.Ordinal);
+                Assert.Equal(deadlineExpires ? "connection-open deadline expired" : "caller cancellation",
+                    Assert.IsType<ScalarValue>(warning.Properties["Reason"]).Value);
+                if (!deadlineExpires)
+                    Assert.DoesNotContain(sink.Events, entry => entry.Level >= LogEventLevel.Warning);
             }
             else
                 Assert.Same(failure, warning.Exception);
         }
         finally
         {
+            Log.Logger = previous;
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConnectionPool_LateFactoryCancellationAfterShutdown_LogsDebug(bool warm)
+    {
+        var stopped = new TaskCompletionSource<LogEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sink = new CollectingSink
+        {
+            OnEvent = entry =>
+            {
+                if (entry.RenderMessage().Contains("NNTP connection factory stopped", StringComparison.Ordinal))
+                    stopped.TrySetResult(entry);
+            }
+        };
+        var previous = Log.Logger;
+        using var logger = new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger();
+        Log.Logger = logger;
+        var factory = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            await using var pool = new ConnectionPool<object>(
+                1, _ => new ValueTask<object>(factory.Task),
+                diagnosticName: "shutdown.example", connectionOpenTimeout: () => TimeSpan.FromSeconds(5));
+            Task borrow = warm ? pool.WarmToAsync(1)
+                : pool.GetConnectionLockAsync(SemaphorePriority.High);
+            Assert.Equal(1, pool.PendingConnectionCreations);
+            await pool.DisposeAsync();
+            if (warm)
+                await borrow.WaitAsync(TimeSpan.FromSeconds(5));
+            else
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => borrow.WaitAsync(TimeSpan.FromSeconds(5)));
+            factory.TrySetCanceled();
+
+            var logged = await stopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(LogEventLevel.Debug, logged.Level);
+            Assert.Equal("pool shutdown", Assert.IsType<ScalarValue>(logged.Properties["Reason"]).Value);
+            Assert.Null(logged.Exception);
+            Assert.DoesNotContain(sink.Events, entry => entry.Level >= LogEventLevel.Warning);
+        }
+        finally
+        {
+            factory.TrySetCanceled();
             Log.Logger = previous;
         }
     }
@@ -1717,6 +1782,7 @@ public class StreamingTimeoutTests
     private sealed class CollectingSink : ILogEventSink
     {
         private readonly List<LogEvent> _events = [];
+        public Action<LogEvent>? OnEvent { get; init; }
 
         public IReadOnlyList<LogEvent> Events
         {
@@ -1729,6 +1795,7 @@ public class StreamingTimeoutTests
         public void Emit(LogEvent logEvent)
         {
             lock (_events) _events.Add(logEvent);
+            OnEvent?.Invoke(logEvent);
         }
     }
 

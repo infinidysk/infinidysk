@@ -283,7 +283,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         {
             await Task.WhenAll(workers).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (linked.IsCancellationRequested)
+        catch (OperationCanceledException) when (linked.IsCancellationRequested || _sweepCts.IsCancellationRequested)
         {
             // Read cancellation or pool retirement ends this best-effort hint.
         }
@@ -632,7 +632,11 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                         factoryCleanupPending = true;
                     }
 #pragma warning disable CA2025 // The late-completion observer retains cleanup ownership until the factory stops.
-                    _ = ObserveLateFactoryCompletionAsync(factoryTask, creationReserved, handshakeOwned: true);
+                    _ = ObserveLateFactoryCompletionAsync(
+                        factoryTask, creationReserved, handshakeOwned: true,
+                        cancellationReason: _sweepCts.IsCancellationRequested ? "pool shutdown"
+                            : cancellationToken.IsCancellationRequested ? "caller cancellation"
+                            : "connection-open deadline expired");
 #pragma warning restore CA2025
                 }
                 else if (creationReserved)
@@ -734,23 +738,29 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private async Task ObserveLateFactoryCompletionAsync(
         Task<T> factoryTask,
         bool creationReserved,
-        bool handshakeOwned)
+        bool handshakeOwned,
+        string cancellationReason)
     {
         try
         {
             var lateConnection = await factoryTask.ConfigureAwait(false);
             DisposeConnection(lateConnection);
         }
-        catch (OperationCanceledException exception)
+        catch (OperationCanceledException)
         {
-            Log.Warning(
-                "NNTP connection factory stopped after the open attempt was cancelled for {Provider}. Reason: {Reason}",
-                _diagnosticName, exception.Message);
+            if (cancellationReason == "connection-open deadline expired")
+                Log.Warning(
+                    "NNTP connection factory stopped for {Provider}. Reason: {Reason}",
+                    _diagnosticName, cancellationReason);
+            else
+                Log.Debug(
+                    "NNTP connection factory stopped for {Provider}. Reason: {Reason}",
+                    _diagnosticName, cancellationReason);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             exception.LogWarningKnownOrStack(
-                "NNTP connection factory completed after the open deadline for {Provider}.",
+                "NNTP connection factory failed after the open attempt ended for {Provider}.",
                 _diagnosticName);
         }
         finally
@@ -886,7 +896,11 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                             factoryCleanupPending = true;
                         }
 #pragma warning disable CA2025 // The late-completion observer retains cleanup ownership until the factory stops.
-                        _ = ObserveLateFactoryCompletionAsync(factoryTask, creationReserved: true, handshakeOwned: true);
+                        _ = ObserveLateFactoryCompletionAsync(
+                            factoryTask, creationReserved: true, handshakeOwned: true,
+                            cancellationReason: _sweepCts.IsCancellationRequested ? "pool shutdown"
+                                : cancellationToken.IsCancellationRequested ? "caller cancellation"
+                                : "connection-open deadline expired");
 #pragma warning restore CA2025
                     }
                     else
