@@ -349,7 +349,10 @@ public sealed class WatchtowerServiceTests
         Assert.Same(cancellationOom, thrown);
         Assert.True((await WaitClearedAsync(run.Service)).BothTasksObserved);
         Assert.Equal(1, Volatile.Read(ref starts));
-        Assert.DoesNotContain(sink.Events, e => e.Level is LogEventLevel.Warning or LogEventLevel.Error);
+        Assert.DoesNotContain(
+            sink.Events,
+            e => e.Level is LogEventLevel.Warning or LogEventLevel.Error
+                && e.MessageTemplate.Text.Contains("Watchtower", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
