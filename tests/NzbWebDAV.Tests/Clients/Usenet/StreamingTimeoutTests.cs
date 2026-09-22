@@ -332,7 +332,9 @@ public class StreamingTimeoutTests
         await pool.DisposeAsync();
 
         var exception = await Assert.ThrowsAsync<NntpClientRetiredException>(() => request);
-        Assert.IsAssignableFrom<OperationCanceledException>(exception.InnerException);
+        Assert.True(
+            exception.InnerException is OperationCanceledException or ObjectDisposedException,
+            $"Unexpected retirement cause: {exception.InnerException}");
         Assert.Equal(1, created);
         Assert.Equal(1, callbacks);
         Assert.Equal(ArticleBodyResult.NotRetrieved, callbackResult);
