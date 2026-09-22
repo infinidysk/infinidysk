@@ -156,7 +156,16 @@ internal sealed class YencFileValidationContext : IDisposable
         {
             return null;
         }
-        return regularPartSize > 0 ? (header.FileSize - 1) / regularPartSize + 1 : null;
+        if (regularPartSize <= 0) return null;
+
+        var impliedTotalParts = (header.FileSize - 1) / regularPartSize + 1;
+        if (header.PartNumber <= 0 || header.PartNumber > impliedTotalParts)
+            return null;
+
+        var remainingFileSize = header.FileSize - header.PartOffset;
+        if (remainingFileSize <= 0) return null;
+        var expectedPartSize = Math.Min(regularPartSize, remainingFileSize);
+        return header.PartSize == expectedPartSize ? impliedTotalParts : null;
     }
 
     internal static string? GetDiagnosticReference(string? value) => value is null

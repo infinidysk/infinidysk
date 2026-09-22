@@ -223,16 +223,20 @@ public class GetFileInfosStepTests
     }
 
     [Fact]
-    public void GetFileInfos_GroupsRecoveryWarningsByReason()
+    public void GetFileInfos_GroupsRecoveryWarningsByDiagnosticSample()
     {
         var first = ProofFile(Enumerable.Range(0, 64).Select(value => (byte)value).ToArray(), totalParts: 2, headerFileSize: 64);
         var second = ProofFile(Enumerable.Range(64, 64).Select(value => (byte)value).ToArray(), totalParts: 3, headerFileSize: 64);
 
-        var warning = Assert.Single(CaptureRecoveryWarnings(() => GetFileInfosStep.GetFileInfos([first, second], [])));
+        var warnings = CaptureRecoveryWarnings(() => GetFileInfosStep.GetFileInfos([first, second], []));
 
-        Assert.Equal(2, Scalar(warning, "Count"));
-        Assert.Equal(GetFileInfosStep.NoDescriptorsReason, Scalar(warning, "Reason"));
-        Assert.Equal(2, Scalar(warning, "HeaderTotalParts"));
+        Assert.Equal(2, warnings.Count);
+        Assert.All(warnings, warning =>
+        {
+            Assert.Equal(1, Scalar(warning, "Count"));
+            Assert.Equal(GetFileInfosStep.NoDescriptorsReason, Scalar(warning, "Reason"));
+        });
+        Assert.Equal([2, 3], warnings.Select(warning => Scalar(warning, "HeaderTotalParts")).ToArray());
     }
 
     [Fact]

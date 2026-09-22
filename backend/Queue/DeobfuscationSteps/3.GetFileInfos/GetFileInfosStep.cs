@@ -29,7 +29,7 @@ public static class GetFileInfosStep
         using var md5 = MD5.Create();
 #pragma warning restore CA5351
         var hashToFileDescMap = GetHashToFileDescMap(par2FileDescriptors);
-        var recoveryUnavailable = new Dictionary<string, RecoveryUnavailableSummary>(StringComparer.Ordinal);
+        var recoveryUnavailable = new Dictionary<RecoveryUnavailableKey, RecoveryUnavailableSummary>();
         var picks = files.Select(x =>
         {
             var fileDesc = GetMatchingFileDescriptor(
@@ -72,35 +72,42 @@ public static class GetFileInfosStep
     }
 
     private static void RecordRecoveryUnavailable(
-        Dictionary<string, RecoveryUnavailableSummary> summaries,
+        Dictionary<RecoveryUnavailableKey, RecoveryUnavailableSummary> summaries,
         NzbFile file,
         FileDesc? fileDesc,
         UsenetYencHeader header,
         string reason)
     {
-        if (summaries.TryGetValue(reason, out var existing))
+        var fileRef = YencFileValidationContext.GetDiagnosticReference(
+            file.Segments.FirstOrDefault()?.MessageId);
+        var par2FileLength = fileDesc?.FileLength;
+        var par2SliceSize = fileDesc?.SliceSize;
+        var nzbEncodedSize = file.GetTotalYencodedSize();
+        var key = new RecoveryUnavailableKey(
+            reason, fileRef, header.TotalParts, file.Segments.Count, header.FileSize,
+            par2FileLength, par2SliceSize, nzbEncodedSize);
+        if (summaries.TryGetValue(key, out var existing))
         {
             existing.Count++;
             return;
         }
 
-        summaries.Add(reason, new RecoveryUnavailableSummary
+        summaries.Add(key, new RecoveryUnavailableSummary
         {
             Count = 1,
             Reason = reason,
-            FileRef = YencFileValidationContext.GetDiagnosticReference(
-                file.Segments.FirstOrDefault()?.MessageId),
+            FileRef = fileRef,
             HeaderTotalParts = header.TotalParts,
             NzbSegmentCount = file.Segments.Count,
             HeaderFileSize = header.FileSize,
-            Par2FileLength = fileDesc?.FileLength,
-            Par2SliceSize = fileDesc?.SliceSize,
-            NzbEncodedSize = file.GetTotalYencodedSize(),
+            Par2FileLength = par2FileLength,
+            Par2SliceSize = par2SliceSize,
+            NzbEncodedSize = nzbEncodedSize,
         });
     }
 
     private static void LogRecoveryUnavailable(
-        Dictionary<string, RecoveryUnavailableSummary> summaries)
+        Dictionary<RecoveryUnavailableKey, RecoveryUnavailableSummary> summaries)
     {
         foreach (var summary in summaries.Values)
         {
@@ -113,6 +120,16 @@ public static class GetFileInfosStep
                 summary.HeaderFileSize, summary.Par2FileLength, summary.Par2SliceSize, summary.NzbEncodedSize);
         }
     }
+
+    private readonly record struct RecoveryUnavailableKey(
+        string Reason,
+        string? FileRef,
+        int HeaderTotalParts,
+        int NzbSegmentCount,
+        long HeaderFileSize,
+        ulong? Par2FileLength,
+        ulong? Par2SliceSize,
+        long NzbEncodedSize);
 
     private sealed class RecoveryUnavailableSummary
     {

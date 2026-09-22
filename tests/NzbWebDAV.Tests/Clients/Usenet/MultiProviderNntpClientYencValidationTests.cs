@@ -398,6 +398,33 @@ public sealed class MultiProviderNntpClientYencValidationTests
     }
 
     [Fact]
+    public void ReportMismatch_DoesNotInferInconsistentLaterPartGeometry()
+    {
+        var sink = new CollectingLogEventSink();
+        using var logger = new LoggerConfiguration().WriteTo.Sink(sink).CreateLogger();
+        var previousLogger = Log.Logger;
+        try
+        {
+            Log.Logger = logger;
+            using var validation = YencFileValidationContext.Begin(3);
+            var context = Assert.IsType<YencFileValidationContext>(YencFileValidationContext.Current);
+            context.ReportMismatch("article", "provider.example", 222, CreateHeader(3, 99) with
+            {
+                FileSize = 9,
+                PartOffset = 7,
+                PartSize = 2,
+            });
+        }
+        finally
+        {
+            Log.Logger = previousLogger;
+        }
+
+        var warning = Assert.Single(sink.Events, IsMismatchWarning);
+        Assert.Null(Scalar(warning, "GeometryImpliedTotalParts"));
+    }
+
+    [Fact]
     public async Task DecodedArticleAsync_HeaderInspectionFails_DisposesStreamAndUsesBackupProvider()
     {
         var innerSegments = new Dictionary<string, byte[]> { ["segment"] = [1, 2, 3] };
