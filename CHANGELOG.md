@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.4.4](https://github.com/infinidysk/infinidysk/compare/v1.4.3...v1.4.4) (2026-09-22)
+
+
+### Bug Fixes
+
+* **db:** remove metrics integrity scans from startup ([#1512](https://github.com/infinidysk/infinidysk/issues/1512)) ([eb76ecf](https://github.com/infinidysk/infinidysk/commit/eb76ecf4434da790a72bcb773411ba8556ee4dae))
+* **health:** prevent health alerts timing out on large histories ([#1518](https://github.com/infinidysk/infinidysk/issues/1518)) ([37173d3](https://github.com/infinidysk/infinidysk/commit/37173d36ebf2ec6b4738d260d7d4f43804fa302d))
+* **queue:** add nested archive context to media validation failures ([#1516](https://github.com/infinidysk/infinidysk/issues/1516)) ([fb68a84](https://github.com/infinidysk/infinidysk/commit/fb68a8481ec818d394a6213ba2a8dfc057b3c1df))
+* **queue:** import logs now explain why PAR2-verified recovery was unavailable for mismatched yEnc articles ([#1519](https://github.com/infinidysk/infinidysk/issues/1519)) ([57bc644](https://github.com/infinidysk/infinidysk/commit/57bc644042d354cf1ed156aae7d1b1da56c862c0))
+* **usenet:** prevent playback and queue stalls after missing articles ([#1514](https://github.com/infinidysk/infinidysk/issues/1514)) ([aeed8ab](https://github.com/infinidysk/infinidysk/commit/aeed8abf7b6a896337ea3b0a081c8f08241a5d3d))
+
 ## [1.4.3](https://github.com/infinidysk/infinidysk/compare/v1.4.2...v1.4.3) (2026-09-20)
 
 
