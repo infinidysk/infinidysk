@@ -26,6 +26,7 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
         operation.OperationId = $"{verb}-{routeName}";
         operation.Summary = HumanizeControllerName(descriptor.ControllerName);
         AddKnownFormRequestBody(operation, route, verb);
+        if (route == "api/browse-files") AddBrowseParameters(operation);
         if (route == "api/get-health-check-history")
         {
             operation.Parameters ??= [];
@@ -98,6 +99,38 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
         AddProblemResponse(operation, "500", "Unexpected server error. Detail is sanitized; use traceId.");
 
         return Task.CompletedTask;
+    }
+
+    private static void AddBrowseParameters(OpenApiOperation operation)
+    {
+        operation.Parameters ??= [];
+        void Parameter(string name, OpenApiSchema schema, string? description = null) => operation.Parameters.Add(new OpenApiParameter
+        {
+            Name = name, In = ParameterLocation.Query, Schema = schema, Description = description,
+        });
+        void Choice(string name, string fallback, params string[] values) => Parameter(name, new OpenApiSchema
+        {
+            Type = JsonSchemaType.String, Default = System.Text.Json.Nodes.JsonValue.Create(fallback),
+            Enum = values.Select(value => (System.Text.Json.Nodes.JsonNode)System.Text.Json.Nodes.JsonValue.Create(value)!).ToList(),
+        });
+        Parameter("scopePath", new OpenApiSchema { Type = JsonSchemaType.String, Default = System.Text.Json.Nodes.JsonValue.Create("/content") }, "Decoded canonical content directory.");
+        Parameter("parentPath", new OpenApiSchema { Type = JsonSchemaType.String }, "Tree branch within scope; defaults to scopePath.");
+        Choice("mode", "tree", "tree", "list");
+        Parameter("q", new OpenApiSchema { Type = JsonSchemaType.String, MaxLength = 256 });
+        Parameter("health", new OpenApiSchema { Type = JsonSchemaType.String }, "Comma-separated healthy, degraded, needs-attention, unknown; selections are ORed.");
+        Choice("schedule", "all", "all", "due", "scheduled", "recheck-queued", "repair-pending", "never-scheduled", "checking");
+        Choice("library", "all", "all", "in-library", "not-in-library", "unknown", "not-configured");
+        foreach (var name in new[] { "category", "indexer" }) Parameter(name, new OpenApiSchema { Type = JsonSchemaType.String, MaxLength = 255 });
+        foreach (var (name, values) in new[] { ("subType", new[] { 201, 202, 203 }), ("repairAction", new[] { 0, 1, 2, 3, 4 }) })
+            Parameter(name, new OpenApiSchema { Type = JsonSchemaType.Integer, Enum = values.Select(value => (System.Text.Json.Nodes.JsonNode)System.Text.Json.Nodes.JsonValue.Create(value)!).ToList() });
+        Parameter("hasNzb", new OpenApiSchema { Type = JsonSchemaType.Boolean });
+        foreach (var name in new[] { "minSize", "maxSize" }) Parameter(name, new OpenApiSchema { Type = JsonSchemaType.Integer, Format = "int64", Minimum = "0" }, "Inclusive byte count.");
+        foreach (var name in new[] { "addedAfter", "addedBefore", "postedAfter", "postedBefore", "checkedAfter", "checkedBefore", "playedAfter", "playedBefore" })
+            Parameter(name, new OpenApiSchema { Type = JsonSchemaType.Integer, Format = "int64" }, "Integer Unix seconds; After inclusive, Before exclusive. Added bounds use server-local wall clock.");
+        Parameter("offset", new OpenApiSchema { Type = JsonSchemaType.Integer, Minimum = "0", Default = System.Text.Json.Nodes.JsonValue.Create(0) });
+        Parameter("limit", new OpenApiSchema { Type = JsonSchemaType.Integer, Minimum = "1", Maximum = "200", Default = System.Text.Json.Nodes.JsonValue.Create(100) });
+        Choice("sort", "name", "name", "size", "added", "posted", "last-check", "next-check", "type", "health");
+        Choice("direction", "asc", "asc", "desc");
     }
 
     private static void AddProblemResponse(OpenApiOperation operation, string status, string description)

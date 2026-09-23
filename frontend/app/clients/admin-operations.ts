@@ -40,6 +40,7 @@ export const adminFrontendOperations = [
     operationId: "post-api-list-webdav-directory",
   },
   { method: "post", path: "/api/get-config", operationId: "post-api-get-config" },
+  { method: "get", path: "/api/browse-files", operationId: "get-api-browse-files" },
   { method: "post", path: "/api/update-config", operationId: "post-api-update-config" },
   {
     method: "get",
@@ -106,6 +107,7 @@ export const adminApi = {
   authenticate: "/api/authenticate",
   searchIndexers: "/api/search-indexers",
   listWebdavDirectory: "/api/list-webdav-directory",
+  browseFiles: "/api/browse-files",
   getConfig: "/api/get-config",
   updateConfig: "/api/update-config",
   getHealthCheckQueue: "/api/get-health-check-queue",
