@@ -278,6 +278,18 @@ describe("ThroughputChart", () => {
     expect(container.querySelector("[data-area-series]")).toBeNull();
   });
 
+  it("keeps the isolated errors control available when polling clears errors", () => {
+    const props = chartProps([point(3, 0, 2)]);
+    const { container, getByRole, rerender } = render(<ThroughputChart {...props} />);
+    fireEvent.click(getByRole("button", { name: "Errors" }));
+    rerender(<ThroughputChart {...chartProps([point(3, 3)])} />);
+    const errorsButton = getByRole("button", { name: "Errors" });
+    expect(errorsButton.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(errorsButton);
+    expect(container.querySelector('button[aria-pressed="true"]')).toBeNull();
+    expect(container.querySelector('[data-series="client-articles"]')).toBeTruthy();
+  });
+
   it("draws the green series when an article bucket has activity", () => {
     const markup = renderMarkup([point(0), point(2, 2)]);
 
