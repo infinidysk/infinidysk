@@ -77,6 +77,33 @@ public sealed class MetricsRollupPeakRateTests
     }
 
     [Fact]
+    public async Task ApplyPendingPeakRatesAsync_WaitsUntilFullStatsResetCompletes()
+    {
+        await using var harness = await MetricsHarness.CreateAsync();
+        var db = harness.Context;
+        var tracker = new ProviderBytesTracker(() => 1);
+        tracker.RestorePeaks([(Hour0, 800L)]);
+        await tracker.PeakPersistenceGate.WaitAsync();
+
+        try
+        {
+            var apply = MetricsRollupService.ApplyPendingPeakRatesAsync(db, tracker, Hour0 + OneHour);
+            tracker.ResetCounters();
+            Assert.False(apply.IsCompleted);
+            tracker.PeakPersistenceGate.Release();
+            await apply;
+        }
+        finally
+        {
+            if (tracker.PeakPersistenceGate.CurrentCount == 0)
+                tracker.PeakPersistenceGate.Release();
+        }
+
+        Assert.Empty(await db.ThroughputMinutes.ToListAsync());
+        Assert.Empty(await db.ThroughputHourly.ToListAsync());
+    }
+
+    [Fact]
     public async Task SweepAsync_KeepsThroughputHourlyBeyondHourlyTtl()
     {
         await using var harness = await MetricsHarness.CreateAsync();

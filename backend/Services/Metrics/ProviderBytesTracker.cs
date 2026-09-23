@@ -35,6 +35,7 @@ public sealed class ProviderBytesTracker
     // minute -> highest sampled aggregate fetch rate (bytes/sec); drained by the rollup service.
     private readonly ConcurrentDictionary<long, long> _peakByMinute = new();
     private readonly Lock _sampleGate = new();
+    internal SemaphoreSlim PeakPersistenceGate { get; } = new(1, 1);
     private long _lastSampleBytes;
     private long _lastSampleTimestamp;
     private bool _hasSample;
@@ -128,9 +129,8 @@ public sealed class ProviderBytesTracker
     public long PendingPeakSince(long minuteInclusive)
     {
         long peak = 0;
-        foreach (var pair in _peakByMinute.Where(pair => pair.Key >= minuteInclusive))
-            if (pair.Value > peak)
-                peak = pair.Value;
+        foreach (var pair in _peakByMinute.Where(pair => pair.Key >= minuteInclusive && pair.Value > peak))
+            peak = pair.Value;
         return peak;
     }
 
@@ -232,9 +232,9 @@ public sealed class ProviderBytesTracker
             _lifetime.Clear();
             Interlocked.Exchange(ref _lifetimeAll, 0);
             _peakByMinute.Clear();
-            _lastSampleBytes = 0;
+            _lastSampleBytes = LifetimeAll;
             _lastSampleTimestamp = _timestampProvider();
-            _hasSample = false;
+            _hasSample = true;
         }
     }
 
@@ -245,11 +245,16 @@ public sealed class ProviderBytesTracker
     public void ResetProvider(string providerKey)
     {
         if (string.IsNullOrEmpty(providerKey)) return;
-        foreach (var key in _buckets.Keys)
-            if (key.ProviderKey == providerKey)
+        lock (_sampleGate)
+        {
+            foreach (var key in _buckets.Keys.Where(key => key.ProviderKey == providerKey))
                 _buckets.TryRemove(key, out _);
-        if (_lifetime.TryRemove(providerKey, out var removed))
-            Interlocked.Add(ref _lifetimeAll, -removed);
+            if (_lifetime.TryRemove(providerKey, out var removed))
+                Interlocked.Add(ref _lifetimeAll, -removed);
+            _lastSampleBytes = LifetimeAll;
+            _lastSampleTimestamp = _timestampProvider();
+            _hasSample = true;
+        }
     }
 
     private static long NowMinute()

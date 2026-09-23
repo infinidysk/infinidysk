@@ -161,15 +161,23 @@ public class MetricsRollupService(
         ProviderBytesTracker bytesTracker,
         long currentMinute)
     {
-        var peaks = bytesTracker.DrainClosedPeaks(currentMinute);
+        await bytesTracker.PeakPersistenceGate.WaitAsync().ConfigureAwait(false);
         try
         {
-            await ApplyPeakRatesAsync(db, peaks).ConfigureAwait(false);
+            var peaks = bytesTracker.DrainClosedPeaks(currentMinute);
+            try
+            {
+                await ApplyPeakRatesAsync(db, peaks).ConfigureAwait(false);
+            }
+            catch
+            {
+                bytesTracker.RestorePeaks(peaks);
+                throw;
+            }
         }
-        catch
+        finally
         {
-            bytesTracker.RestorePeaks(peaks);
-            throw;
+            bytesTracker.PeakPersistenceGate.Release();
         }
     }
 

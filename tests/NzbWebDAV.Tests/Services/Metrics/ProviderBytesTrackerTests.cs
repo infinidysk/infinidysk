@@ -131,4 +131,35 @@ public class ProviderBytesTrackerTests
         tracker.SampleFetchRate(Minute0 + 3_000);
         Assert.Equal(2_000, tracker.PendingPeakSince(Minute0));
     }
+
+    [Fact]
+    public void ResetCounters_TracksBytesAddedBeforeNextSample()
+    {
+        long timestamp = 1;
+        var tracker = new ProviderBytesTracker(() => timestamp);
+        tracker.SampleFetchRate(Minute0);
+
+        tracker.ResetCounters();
+        tracker.Add("p1", 1_000);
+        timestamp += Stopwatch.Frequency;
+        tracker.SampleFetchRate(Minute0 + 1_000);
+
+        Assert.Equal(1_000, tracker.PendingPeakSince(Minute0));
+    }
+
+    [Fact]
+    public void ResetProvider_RebaselinesAfterRemovingProviderBytes()
+    {
+        long timestamp = 1;
+        var tracker = new ProviderBytesTracker(() => timestamp);
+        tracker.Add("p1", 10_000);
+        tracker.SampleFetchRate(Minute0);
+
+        tracker.ResetProvider("p1");
+        tracker.Add("p2", 2_000);
+        timestamp += Stopwatch.Frequency;
+        tracker.SampleFetchRate(Minute0 + 1_000);
+
+        Assert.Equal(2_000, tracker.PendingPeakSince(Minute0));
+    }
 }
