@@ -68,6 +68,8 @@ public sealed class NativeCacheServiceTests : IDisposable
             for (var i = 0; i < 20; i++) streams.Add(await service.WrapAsync(item,
                 _ => throw new InvalidOperationException("Cache hit opened source"), CancellationToken.None));
             foreach (var stream in streams) Assert.Equal(3, await stream.ReadAsync(new byte[3]));
+            foreach (var stream in streams.Where(stream => stream is NativeCachedStream)) await stream.DisposeAsync();
+            Assert.Equal(0, await service.Store!.EvictAsync("media", clear: true));
             Assert.True(service.ReservedBufferBytes <= service.ActiveSettings!.BufferMb * 1024L * 1024);
         }
         finally { foreach (var stream in streams) await stream.DisposeAsync(); }

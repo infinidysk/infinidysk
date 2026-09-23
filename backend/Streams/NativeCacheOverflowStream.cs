@@ -8,6 +8,7 @@ internal sealed class NativeCacheOverflowStream(NativeCacheStore store, NativeCa
     Func<CancellationToken, Task<Stream>> open, Func<bool> current, IDisposable watch,
     SemaphoreSlim slots, NativeCacheStatistics statistics) : FastReadOnlyStream, IStreamGenerationEvidence
 {
+    private readonly IDisposable _lease = store.AcquireLease(identity);
     private long _position;
     private bool _disposed;
     private Stream? _source;
@@ -58,7 +59,12 @@ internal sealed class NativeCacheOverflowStream(NativeCacheStore store, NativeCa
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing && !_disposed) { _disposed = true; try { _source?.Dispose(); } finally { watch.Dispose(); } }
+        if (disposing && !_disposed)
+        {
+            _disposed = true;
+            try { _source?.Dispose(); }
+            finally { try { watch.Dispose(); } finally { _lease.Dispose(); } }
+        }
         base.Dispose(disposing);
     }
 
