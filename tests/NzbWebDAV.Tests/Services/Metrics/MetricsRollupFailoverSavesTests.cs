@@ -560,6 +560,68 @@ public sealed class MetricsRollupFailoverSavesTests
     }
 
     [Fact]
+    public async Task RollupTick_StartupReplay_SkipsFinalizedHistoricalMinutes()
+    {
+        await withMetricsDb(async context =>
+        {
+            context.ThroughputMinutes.Add(new ThroughputMinute
+            {
+                Minute = MissedMinute,
+                Articles = 5,
+                ClientArticles = 5,
+                ClientArticlesFinalized = true,
+                BytesServed = 321,
+                Misses = 2,
+                Errors = 1,
+            });
+            context.ProviderMinutes.Add(new ProviderMinute
+            {
+                Minute = MissedMinute,
+                Provider = "provider-a",
+                Articles = 5,
+                ClientArticles = 5,
+                ClientArticlesFinalized = true,
+                Misses = 2,
+                Errors = 1,
+                SumDurationMs = 100,
+            });
+            await context.SaveChangesAsync();
+
+            await context.Database.ExecuteSqlRawAsync(
+                """
+                INSERT INTO SegmentFetches
+                    (At, Provider, ReadSessionId, QueueItemId, Workload,
+                     Bytes, DurationMs, Status, Retries)
+                VALUES ({0}, 'provider-a', NULL, NULL, 1, 0, 20, 0, 0);
+                """,
+                MissedMinute + 1);
+
+            using var writer = new MetricsWriter(
+                () => throw new InvalidOperationException("Test seeds metrics directly."));
+            using var service = new MetricsRollupService(
+                new ProviderBytesTracker(), new ProviderLatencyTracker(), writer);
+
+            await service.RollupTickAsync(context, TickNow);
+
+            var throughput = await context.ThroughputMinutes.AsNoTracking()
+                .SingleAsync(row => row.Minute == MissedMinute);
+            var provider = await context.ProviderMinutes.AsNoTracking()
+                .SingleAsync(row => row.Minute == MissedMinute && row.Provider == "provider-a");
+            Assert.Equal(5, throughput.Articles);
+            Assert.Equal(5, throughput.ClientArticles);
+            Assert.Equal(321, throughput.BytesServed);
+            Assert.Equal(2, throughput.Misses);
+            Assert.Equal(5, provider.Articles);
+            Assert.Equal(5, provider.ClientArticles);
+            Assert.Equal(2, provider.Misses);
+            Assert.Equal(100, provider.SumDurationMs);
+
+            Assert.True(await context.ThroughputMinutes.AsNoTracking()
+                .AnyAsync(row => row.Minute == TargetMinute));
+        });
+    }
+
+    [Fact]
     public async Task RollupTick_StartupReplayFailure_KeepsOriginalFailoverBoundary()
     {
         await withMetricsDb(async context =>
