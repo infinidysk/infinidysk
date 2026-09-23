@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
 using NzbWebDAV.Database;
@@ -61,6 +62,21 @@ public sealed class MetricsRollupPeakRateTests
     }
 
     [Fact]
+    public async Task ApplyPendingPeakRatesAsync_RestoresDrainedPeaksWhenPersistenceFails()
+    {
+        await using var harness = await MetricsHarness.CreateAsync();
+        var db = harness.Context;
+        var tracker = new ProviderBytesTracker(() => 1);
+        tracker.RestorePeaks([(Hour0, 800L)]);
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE ThroughputHourly");
+
+        await Assert.ThrowsAsync<SqliteException>(
+            () => MetricsRollupService.ApplyPendingPeakRatesAsync(db, tracker, Hour0 + OneHour));
+
+        Assert.Equal(800, tracker.PendingPeakSince(Hour0));
+    }
+
+    [Fact]
     public async Task SweepAsync_KeepsThroughputHourlyBeyondHourlyTtl()
     {
         await using var harness = await MetricsHarness.CreateAsync();
@@ -111,9 +127,17 @@ public sealed class MetricsRollupPeakRateTests
             {
                 Directory.Delete(_dir, recursive: true);
             }
-            catch
+            catch (DirectoryNotFoundException)
             {
-                // best effort
+                // Best effort cleanup.
+            }
+            catch (IOException)
+            {
+                // Best effort cleanup.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Best effort cleanup.
             }
         }
     }

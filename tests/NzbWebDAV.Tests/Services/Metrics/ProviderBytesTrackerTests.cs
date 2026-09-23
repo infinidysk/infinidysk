@@ -55,6 +55,25 @@ public class ProviderBytesTrackerTests
     }
 
     [Fact]
+    public void SampleFetchRate_DoesNotRecordPeakFromSubSecondWindow()
+    {
+        long timestamp = 1;
+        var tracker = new ProviderBytesTracker(() => timestamp);
+
+        tracker.SampleFetchRate(Minute0);
+        tracker.Add("p1", 1_000_000);
+        timestamp += Stopwatch.Frequency / 10;
+        tracker.SampleFetchRate(Minute0 + 100);
+
+        Assert.Equal(0, tracker.PendingPeakSince(Minute0));
+
+        timestamp += Stopwatch.Frequency * 9 / 10;
+        tracker.SampleFetchRate(Minute0 + 1_000);
+
+        Assert.Equal(1_000_000, tracker.PendingPeakSince(Minute0));
+    }
+
+    [Fact]
     public void DrainClosedPeaks_PopsOnlyMinutesBeforeCutoff()
     {
         long timestamp = 1;
@@ -74,6 +93,18 @@ public class ProviderBytesTrackerTests
         Assert.Equal([(Minute0, 1_000L)], drained);
         Assert.Equal(5_000, tracker.PendingPeakSince(minute1));
         Assert.Empty(tracker.DrainClosedPeaks(minute1));
+    }
+
+    [Fact]
+    public void RestorePeaks_MergesDrainedValuesWithoutLosingConcurrentHigherPeak()
+    {
+        var tracker = new ProviderBytesTracker(() => 1);
+        tracker.RestorePeaks([(Minute0, 500L)]);
+        var drained = tracker.DrainClosedPeaks(Minute0 + 60_000);
+        tracker.RestorePeaks([(Minute0, 700L)]);
+        tracker.RestorePeaks(drained);
+
+        Assert.Equal(700, tracker.PendingPeakSince(Minute0));
     }
 
     [Fact]
