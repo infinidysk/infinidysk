@@ -140,8 +140,13 @@ export function NativeCacheSettings({
     }
   };
   const evict = async (entry: CacheEntry) => {
-    if (!cachePage || entry.pinned ||
-      !globalThis.confirm(`Evict Native Cache for ${entry.name ?? entry.itemId}? Source media is not deleted. Active playback may delay eviction.`))
+    if (
+      !cachePage ||
+      entry.pinned ||
+      !globalThis.confirm(
+        `Evict Native Cache for ${entry.name ?? entry.itemId}? Source media is not deleted. Active playback may delay eviction.`,
+      )
+    )
       return;
     setBusy(true);
     setError(null);
@@ -150,8 +155,10 @@ export function NativeCacheSettings({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          operation: "evict", folderId: cachePage.folderId,
-          cacheKey: entry.key, confirmCacheKey: entry.key,
+          operation: "evict",
+          folderId: cachePage.folderId,
+          cacheKey: entry.key,
+          confirmCacheKey: entry.key,
         }),
       });
       if (!response.ok) throw new Error("Could not queue file eviction.");
@@ -660,7 +667,11 @@ export function NativeCacheSettings({
                     {entry.pinned ? "Unpin" : "Pin"}
                   </Button>
                   <Button
-                    disabled={busy || entry.pinned || folders.find((folder) => folder.id === cachePage.folderId)?.readOnly}
+                    disabled={
+                      busy ||
+                      entry.pinned ||
+                      folders.find((folder) => folder.id === cachePage.folderId)?.readOnly
+                    }
                     aria-label={`Evict ${entry.name ?? entry.itemId} from Native Cache`}
                     onClick={() => void evict(entry)}
                   >
