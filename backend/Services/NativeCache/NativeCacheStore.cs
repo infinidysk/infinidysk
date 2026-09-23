@@ -157,6 +157,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
     internal Func<NativeFileSystem.PinnedDirectory, string, CancellationToken, Task>? BeforeProbeReadAsync { get; init; }
     internal Func<string, CancellationToken, Task>? CheckpointPhaseAsync { get; init; }
     internal Func<CancellationToken, Task>? BeforeWriteReserveAsync { get; init; }
+    internal Func<CancellationToken, Task>? BeforeRetiredDeleteAsync { get; init; }
     internal int PendingCheckpointCount { get { lock (_leaseLock) return _pendingCheckpoints.Count; } }
 
     private void QueueCheckpoint(string key, string folder)
@@ -835,27 +836,27 @@ public sealed class NativeCacheStore : IAsyncDisposable
             finally { _gate.Release(); }
             foreach (var key in keys)
             {
-                lock (_leaseLock) { if (_leases.ContainsKey(key)) continue; _evicting.Add(key); }
+                // New readers resolve only the replacement folder. Existing readers
+                // of the retired root already hold a lease; do not mark the current
+                // replica as evicting while deleting an unrelated old payload.
+                lock (_leaseLock) if (_leases.ContainsKey(key)) continue;
+                if (BeforeRetiredDeleteAsync is { } beforeDelete) await beforeDelete(ct).ConfigureAwait(false);
                 try
                 {
-                    try
-                    {
 #pragma warning disable CA2000 // The using declaration owns the anchored shard through unlink/flush, including exceptions.
-                        using var shard = _roots[folderId].OpenDirectory($"v1/{key[..2]}");
+                    using var shard = _roots[folderId].OpenDirectory($"v1/{key[..2]}");
 #pragma warning restore CA2000
-                        using var directory = shard.OpenDirectory(key);
-                        foreach (var name in new[] { "content.data", "ranges.journal", "manifest.json", "ranges.checkpoint.tmp" }) directory.DeleteFile(name);
-                        shard.DeleteDirectory(key);
-                        shard.Flush();
-                    }
-                    catch (IOException exception) when (NativeFileSystem.IsMissing(exception)) { }
-                    if (!IsVolumeCurrent(folder)) return reclaimed;
-                    await _gate.WaitAsync(ct).ConfigureAwait(false);
-                    try { Execute("DELETE FROM RetiredEntries WHERE Key=$key AND Folder=$folder", ("$key", key), ("$folder", folderId)); }
-                    finally { _gate.Release(); }
-                    reclaimed++;
+                    using var directory = shard.OpenDirectory(key);
+                    foreach (var name in new[] { "content.data", "ranges.journal", "manifest.json", "ranges.checkpoint.tmp" }) directory.DeleteFile(name);
+                    shard.DeleteDirectory(key);
+                    shard.Flush();
                 }
-                finally { lock (_leaseLock) _evicting.Remove(key); }
+                catch (IOException exception) when (NativeFileSystem.IsMissing(exception)) { }
+                if (!IsVolumeCurrent(folder)) return reclaimed;
+                await _gate.WaitAsync(ct).ConfigureAwait(false);
+                try { Execute("DELETE FROM RetiredEntries WHERE Key=$key AND Folder=$folder", ("$key", key), ("$folder", folderId)); }
+                finally { _gate.Release(); }
+                reclaimed++;
             }
         }
         finally { writer.Release(); }
