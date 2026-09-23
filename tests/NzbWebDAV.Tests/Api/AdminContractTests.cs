@@ -19,9 +19,9 @@ public sealed class AdminContractTests
         await using var factory = new NzbDavWebApplicationFactory();
         using var client = factory.CreateAuthenticatedClient();
         var selected = NewUncheckedUsenetFile("selected.mkv");
-        selected.NextHealthCheck = new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        selected.NextHealthCheck = DateTimeOffset.UtcNow.AddDays(1);
         var other = NewUncheckedUsenetFile("other.mkv");
-        other.NextHealthCheck = new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        other.NextHealthCheck = DateTimeOffset.UtcNow.AddDays(1);
         await factory.AddDavItemsAsync(selected, other);
         using var form = new MultipartFormDataContent();
         form.Add(new StringContent(selected.Id.ToString()), "davItemId");
