@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import styles from "./throughput-chart.module.css";
 import type { OverviewWindow, ThroughputPoint } from "~/clients/backend-client.server";
 import { formatBytes, formatNumber } from "../../utils/format";
@@ -23,6 +23,14 @@ const VB_H = 160;
 const TOP_PAD = 6;
 const BOT_PAD = 4;
 
+const seriesValues = {
+  "client-articles": clientArticles,
+  "queue-articles": queueArticles,
+  "app-articles": appArticles,
+  errors: (point: ThroughputPoint) => point.errors,
+};
+type SeriesId = keyof typeof seriesValues;
+
 export function ThroughputChart({
   points,
   totalArticles,
@@ -38,6 +46,9 @@ export function ThroughputChart({
 }: ThroughputChartProps) {
   const [hoverBucket, setHoverBucket] = useState<number | null>(null);
   const [keyboardBucket, setKeyboardBucket] = useState<number | null>(null);
+  const [isolatedSeries, setIsolatedSeries] = useState<SeriesId | null>(null);
+  const [previewSeries, setPreviewSeries] = useState<SeriesId | null>(null);
+  const emphasizedSeries = isolatedSeries ?? previewSeries;
 
   const bucketSeconds = Math.max(1, (bucketSizeMs || 60_000) / 1000);
   const hoverIdx = indexOfBucket(points, hoverBucket);
@@ -47,6 +58,8 @@ export function ThroughputChart({
   useEffect(() => {
     setHoverBucket(null);
     setKeyboardBucket(null);
+    setIsolatedSeries(null);
+    setPreviewSeries(null);
   }, [window]);
 
   const {
@@ -54,6 +67,7 @@ export function ThroughputChart({
     queueArticlesPath,
     appArticlesPath,
     errorsPath,
+    areaPath,
     maxArticles,
     scaleMax,
     maxClientArticles,
@@ -69,6 +83,7 @@ export function ThroughputChart({
         queueArticlesPath: "",
         appArticlesPath: "",
         errorsPath: "",
+        areaPath: "",
         maxArticles: 0,
         scaleMax: 0,
         maxClientArticles: 0,
@@ -83,7 +98,9 @@ export function ThroughputChart({
     const peakQueueArticles = Math.max(0, ...points.map(queueArticles));
     const peakAppArticles = Math.max(0, ...points.map(appArticles));
     const peakArticles = Math.max(peakClientArticles, peakQueueArticles, peakAppArticles);
-    const scaleMax = Math.max(1, peakArticles, ...points.map((p) => p.errors));
+    const scaleMax = isolatedSeries
+      ? Math.max(1, ...points.map(seriesValues[isolatedSeries]))
+      : Math.max(1, peakArticles, ...points.map((p) => p.errors));
     // Bucket averages only floor the peak for history recorded before 1-second sampling existed.
     const maxRate = Math.max(
       peakFetchBytesPerSec,
@@ -102,6 +119,9 @@ export function ThroughputChart({
       queueArticlesPath: buildArticlesSeriesPath(points, queueArticles, xStep, y),
       appArticlesPath: buildArticlesSeriesPath(points, appArticles, xStep, y),
       errorsPath: buildSparseSeriesPath(points, (p) => p.errors, xStep, y),
+      areaPath: emphasizedSeries
+        ? buildArticlesSeriesPath(points, seriesValues[emphasizedSeries], xStep, y, true)
+        : "",
       maxArticles: peakArticles,
       scaleMax,
       maxClientArticles: peakClientArticles,
@@ -111,7 +131,7 @@ export function ThroughputChart({
       xPercent: xPct,
       yPercent: yPct,
     };
-  }, [points, bucketSeconds, peakFetchBytesPerSec]);
+  }, [points, bucketSeconds, peakFetchBytesPerSec, isolatedSeries, emphasizedSeries]);
 
   const xTicks = useMemo(() => {
     if (points.length === 0) return [];
@@ -127,20 +147,21 @@ export function ThroughputChart({
     });
   }, [points, window]);
 
-  const onMove = useCallback(
+  const bucketAt = useCallback(
     (clientX: number, target: HTMLElement) => {
-      if (points.length === 0) return;
+      if (points.length === 0) return null;
       const rect = target.getBoundingClientRect();
+      if (rect.width <= 0) return points.at(-1)?.bucket ?? null;
       const rel = (clientX - rect.left) / rect.width;
       const idx = Math.round(rel * (points.length - 1));
       const clamped = Math.max(0, Math.min(points.length - 1, idx));
-      setHoverBucket(points[clamped]?.bucket ?? null);
+      return points[clamped]?.bucket ?? null;
     },
     [points],
   );
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) =>
-    onMove(e.clientX, e.currentTarget);
+    setHoverBucket(bucketAt(e.clientX, e.currentTarget));
   const handleMouseLeave = () => setHoverBucket(null);
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (points.length === 0) return;
@@ -170,11 +191,11 @@ export function ThroughputChart({
   };
   const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
     const t = e.touches[0];
-    if (t) onMove(t.clientX, e.currentTarget);
+    if (t) setHoverBucket(bucketAt(t.clientX, e.currentTarget));
   };
   const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     const t = e.touches[0];
-    if (t) onMove(t.clientX, e.currentTarget);
+    if (t) setHoverBucket(bucketAt(t.clientX, e.currentTarget));
   };
 
   const hasData = points.length > 0;
@@ -184,6 +205,64 @@ export function ThroughputChart({
     Math.max(0, totalQueueArticles ?? 0),
   );
   const totalAppArticles = totalArticles - safeTotalClientArticles - safeTotalQueueArticles;
+  const series = [
+    {
+      id: "client-articles",
+      label: "Client attempts",
+      total: safeTotalClientArticles,
+      peak: maxClientArticles,
+      path: clientArticlesPath,
+      className: styles.lineClient,
+      color: "var(--color-success)",
+      swatch: "bg-success",
+    },
+    {
+      id: "queue-articles",
+      label: "Import attempts",
+      total: safeTotalQueueArticles,
+      peak: maxQueueArticles,
+      path: queueArticlesPath,
+      className: styles.lineQueue,
+      color: "var(--color-secondary)",
+      swatch: "bg-secondary",
+    },
+    {
+      id: "app-articles",
+      label: "Maintenance attempts",
+      total: totalAppArticles,
+      peak: maxAppArticles,
+      path: appArticlesPath,
+      className: styles.lineApp,
+      color: "var(--color-info)",
+      swatch: "border-t-2 border-info",
+    },
+    {
+      id: "errors",
+      label: "Errors",
+      total: totalErrors,
+      peak: totalErrors,
+      path: errorsPath,
+      className: styles.lineErrors,
+      color: "var(--color-error)",
+      swatch: "bg-error",
+    },
+  ] satisfies {
+    id: SeriesId;
+    label: string;
+    total: number;
+    peak: number;
+    path: string;
+    className: string;
+    color: string;
+    swatch: string;
+  }[];
+  const visibleSeries = series
+    .filter((item) => !isolatedSeries || item.id === isolatedSeries)
+    .sort(
+      (left, right) => Number(left.id === emphasizedSeries) - Number(right.id === emphasizedSeries),
+    );
+  const selectedSeries = series.find((item) => item.id === isolatedSeries);
+  const emphasizedItem = series.find((item) => item.id === emphasizedSeries);
   const successfulReads = Math.max(0, totalArticles - totalMisses - totalErrors);
   const bucketLabel =
     window === "1h" || window === "24h" ? "min" : window === "all" ? "day" : "hour";
@@ -193,18 +272,9 @@ export function ThroughputChart({
     ? describeThroughputBucket(keyboardPoint, window, bucketSeconds)
     : "";
   const hoverNetworkRate = hover ? (hover.bytesFetched ?? 0) / bucketSeconds : 0;
-  const hoverClientArticles = hover ? clientArticles(hover) : 0;
-  const hoverQueueArticles = hover ? queueArticles(hover) : 0;
-  const hoverAppArticles = hover ? appArticles(hover) : 0;
-  const tooltipPlacement =
-    cursorIdx === null || points.length < 2
-      ? "tooltip-top"
-      : (() => {
-          const rel = cursorIdx / (points.length - 1);
-          if (rel < 0.2) return "tooltip-right";
-          if (rel > 0.8) return "tooltip-left";
-          return "tooltip-top";
-        })();
+  const cursorValue = hover
+    ? Math.max(0, ...visibleSeries.map((item) => seriesValues[item.id](hover)))
+    : 0;
 
   return (
     <section className="card w-full min-w-0 overflow-visible border border-base-content/10 bg-base-100 shadow-sm">
@@ -253,22 +323,39 @@ export function ThroughputChart({
             <div className={styles.plot}>
               <div className="flex h-40 w-9 shrink-0 flex-col items-end justify-between text-[10px] text-base-content/70 tabular-nums select-none">
                 <span>{formatNumber(scaleMax)}</span>
-                <span>{formatNumber(Math.round(scaleMax / 2))}</span>
+                {scaleMax > 1 && <span>{formatNumber(Math.round(scaleMax / 2))}</span>}
                 <span>0</span>
               </div>
               <div
                 className={styles.chartArea}
                 tabIndex={0}
                 role="img"
-                aria-label={`${formatNumber(safeTotalClientArticles)} client attempts, ${formatNumber(safeTotalQueueArticles)} import attempts, ${formatNumber(totalAppArticles)} maintenance attempts, ${formatNumber(totalArticles)} attempts total, ${formatNumber(successfulReads)} successful reads, ${formatNumber(totalErrors)} errors, ${formatBytes(totalBytesServed)} served, ${formatBytes(totalBytesFetched)} fetched. Use arrow keys for bucket details.`}
+                aria-label={`${formatNumber(safeTotalClientArticles)} client attempts, ${formatNumber(safeTotalQueueArticles)} import attempts, ${formatNumber(totalAppArticles)} maintenance attempts, ${formatNumber(totalArticles)} attempts total, ${formatNumber(successfulReads)} successful reads, ${formatNumber(totalErrors)} errors, ${formatBytes(totalBytesServed)} served, ${formatBytes(totalBytesFetched)} fetched. ${selectedSeries ? `Showing only ${selectedSeries.label.toLowerCase()}. ` : ""}Use Left and Right arrow keys for bucket details, Home and End for the first and last bucket, and Escape to dismiss.`}
                 aria-describedby="overview-throughput-keyboard-status"
                 onMouseMove={handleMouseMove}
                 onMouseLeave={handleMouseLeave}
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
                 onKeyDown={handleKeyDown}
+                onFocus={() => {
+                  setKeyboardBucket((current) =>
+                    indexOfBucket(points, current) !== null
+                      ? current
+                      : (hoverBucket ?? points.at(-1)?.bucket ?? null),
+                  );
+                }}
+                onBlur={() => {
+                  setKeyboardBucket(null);
+                  setHoverBucket(null);
+                }}
+                onClick={(event) => {
+                  event.currentTarget.focus();
+                  setKeyboardBucket(bucketAt(event.clientX, event.currentTarget));
+                  setHoverBucket(null);
+                }}
               >
                 <svg
+                  aria-hidden="true"
                   viewBox={`0 0 ${VB_W} ${VB_H}`}
                   preserveAspectRatio="none"
                   className={styles.svg}
@@ -295,50 +382,69 @@ export function ThroughputChart({
                     y2={TOP_PAD.toFixed(1)}
                     className={styles.gridline}
                   />
-                  {maxClientArticles > 0 && (
+                  {emphasizedItem && areaPath && (
                     <path
-                      d={clientArticlesPath}
-                      className={styles.lineClient}
-                      data-series="client-articles"
+                      d={areaPath}
+                      fill={emphasizedItem.color}
+                      fillOpacity={0.12}
+                      stroke="none"
+                      data-area-series={emphasizedItem.id}
                     />
                   )}
-                  {maxQueueArticles > 0 && (
-                    <path
-                      d={queueArticlesPath}
-                      className={styles.lineQueue}
-                      data-series="queue-articles"
-                    />
-                  )}
-                  {maxAppArticles > 0 && (
-                    <path
-                      d={appArticlesPath}
-                      className={styles.lineApp}
-                      data-series="app-articles"
-                    />
-                  )}
-                  {totalErrors > 0 && errorsPath && (
-                    <path d={errorsPath} className={styles.lineErrors} data-series="errors" />
-                  )}
+                  {visibleSeries
+                    .filter((item) => item.peak > 0 && item.path)
+                    .map((item) => (
+                      <path
+                        key={item.id}
+                        d={item.path}
+                        className={item.className}
+                        data-series={item.id}
+                        style={{
+                          opacity: emphasizedSeries && item.id !== emphasizedSeries ? 0.3 : 1,
+                          strokeWidth: item.id === emphasizedSeries ? 2.5 : 1.5,
+                        }}
+                      />
+                    ))}
                 </svg>
 
                 {hover && cursorIdx !== null && (
                   <>
                     <div className={styles.crosshair} style={{ left: `${xPercent(cursorIdx)}%` }} />
                     <div
-                      className={`tooltip tooltip-open ${tooltipPlacement} ${styles.hoverTooltip}`}
-                      style={{
-                        left: `${xPercent(cursorIdx)}%`,
-                        top: `${yPercent(Math.max(hoverClientArticles, hoverQueueArticles, hoverAppArticles))}%`,
-                      }}
+                      className={`tooltip tooltip-open tooltip-top ${styles.hoverTooltip}`}
+                      style={
+                        {
+                          "--cursor-x": `${xPercent(cursorIdx)}%`,
+                          "--cursor-y": `${yPercent(cursorValue)}%`,
+                        } as CSSProperties
+                      }
                     >
                       <div className="tooltip-content">
                         <div className="space-y-0.5 text-left font-mono text-xs">
                           <div className="font-semibold">
                             {formatBucketTime(hover.bucket, window)}
                           </div>
-                          <div>{formatNumber(hoverClientArticles)} client attempts</div>
-                          <div>{formatNumber(hoverQueueArticles)} import attempts</div>
-                          <div>{formatNumber(hoverAppArticles)} maintenance attempts</div>
+                          {series
+                            .filter(
+                              (item) =>
+                                item.id !== "errors" ||
+                                hover.errors > 0 ||
+                                isolatedSeries === "errors",
+                            )
+                            .map((item) => (
+                              <div
+                                key={item.id}
+                                className={`flex items-center gap-1.5 ${item.id === emphasizedSeries ? "font-semibold" : ""}`}
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  className="inline-block h-2 w-2 shrink-0 rounded-full"
+                                  style={{ background: item.color }}
+                                />
+                                {formatNumber(seriesValues[item.id](hover))}{" "}
+                                {item.label.toLowerCase()}
+                              </div>
+                            ))}
                           <div>{formatNumber(hover.articles)} attempts total</div>
                           {hoverNetworkRate > 0 && (
                             <div>{formatBytes(hoverNetworkRate)}/s downloaded</div>
@@ -346,25 +452,27 @@ export function ThroughputChart({
                           {(hover.misses ?? 0) > 0 && (
                             <div>{formatNumber(hover.misses)} provider miss attempts</div>
                           )}
-                          {hover.errors > 0 && (
-                            <div className="text-error">{formatNumber(hover.errors)} errors</div>
-                          )}
                           {hover.bytesServed > 0 && (
                             <div>{formatBytes(hover.bytesServed)} served</div>
                           )}
                         </div>
                       </div>
-                      <span className={styles.hoverDotAnchor} />
+                      <span />
                     </div>
-                    {totalErrors > 0 && hover.errors > 0 && (
-                      <div
-                        className={`${styles.hoverDot} ${styles.hoverDotErr}`}
-                        style={{
-                          left: `${xPercent(cursorIdx)}%`,
-                          top: `${yPercent(hover.errors)}%`,
-                        }}
-                      />
-                    )}
+                    {visibleSeries
+                      .filter((item) => seriesValues[item.id](hover) > 0)
+                      .map((item) => (
+                        <div
+                          key={item.id}
+                          className={styles.hoverDot}
+                          data-marker-series={item.id}
+                          style={{
+                            left: `${xPercent(cursorIdx)}%`,
+                            top: `${yPercent(seriesValues[item.id](hover))}%`,
+                            background: item.color,
+                          }}
+                        />
+                      ))}
                   </>
                 )}
               </div>
@@ -392,26 +500,44 @@ export function ThroughputChart({
             </div>
 
             <div className="mt-2 flex flex-wrap items-center gap-3.5 text-[11px] text-base-content/70">
-              <span className="inline-flex items-center gap-1.5">
-                <span className="inline-block h-0.5 w-2.5 bg-success" />
-                Client attempts · {formatNumber(safeTotalClientArticles)}
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="inline-block h-0.5 w-2.5 bg-secondary" />
-                Import attempts · {formatNumber(safeTotalQueueArticles)}
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="inline-block w-2.5 border-t-2 border-info" />
-                Maintenance attempts · {formatNumber(totalAppArticles)}
-              </span>
-              {totalErrors > 0 && (
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="inline-block h-0.5 w-2.5 bg-error" />
-                  Errors
-                </span>
-              )}
+              {series
+                .filter((item) => item.id !== "errors" || totalErrors > 0)
+                .map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    aria-pressed={isolatedSeries === item.id}
+                    title={
+                      isolatedSeries === item.id
+                        ? "Show all series"
+                        : `Isolate ${item.label.toLowerCase()}`
+                    }
+                    className={`inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-sm px-1 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${isolatedSeries === item.id ? "text-base-content underline underline-offset-4" : "hover:text-base-content"}`}
+                    onMouseEnter={() => setPreviewSeries(item.id)}
+                    onMouseLeave={() => setPreviewSeries(null)}
+                    onFocus={() => setPreviewSeries(item.id)}
+                    onBlur={() => setPreviewSeries(null)}
+                    onClick={() => {
+                      setIsolatedSeries((current) => (current === item.id ? null : item.id));
+                      setPreviewSeries(null);
+                    }}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`inline-block h-0.5 w-2.5 shrink-0 ${item.swatch}`}
+                    />
+                    {item.label}
+                    {item.id !== "errors" ? ` · ${formatNumber(item.total)}` : ""}
+                  </button>
+                ))}
               <span className="ml-auto tabular-nums">
-                Peak attempts {formatNumber(maxArticles)} / {bucketLabel} · hover or use arrow keys
+                Peak {selectedSeries ? selectedSeries.label.toLowerCase() : "attempts"}{" "}
+                {formatNumber(
+                  selectedSeries
+                    ? Math.max(0, ...points.map(seriesValues[selectedSeries.id]))
+                    : maxArticles,
+                )}{" "}
+                / {bucketLabel}
               </span>
             </div>
           </>
@@ -438,8 +564,10 @@ function buildArticlesSeriesPath(
   getValue: (p: ThroughputPoint) => number,
   xStep: number,
   y: (v: number) => number,
+  filled = false,
 ): string {
   const parts: string[] = [];
+  const xOffset = points.length === 1 ? VB_W / 2 : 0;
   let i = 0;
   while (i < points.length) {
     const current = points[i];
@@ -457,21 +585,27 @@ function buildArticlesSeriesPath(
     const from = runStart > 0 ? runStart - 1 : runStart;
     const to = runEnd < points.length - 1 ? runEnd + 1 : runEnd;
 
+    if (filled) parts.push(`M${(xOffset + from * xStep).toFixed(1)},${y(0).toFixed(1)}`);
+
     for (let j = from; j <= to; j++) {
       const p = points[j];
       if (!p) continue;
-      const x = (j * xStep).toFixed(1);
+      const x = (xOffset + j * xStep).toFixed(1);
       const yy = y(getValue(p)).toFixed(1);
-      parts.push(`${j === from ? "M" : "L"}${x},${yy}`);
+      parts.push(`${j === from && !filled ? "M" : "L"}${x},${yy}`);
     }
     // Edge-of-window isolated spike with no adjacent zero needs a tiny stroke.
     if (from === to) {
       const p = points[from];
       if (p) {
-        const x2 = (from * xStep + Math.max(xStep * 0.15, 1)).toFixed(1);
+        const x2 = (xOffset + from * xStep + Math.max(xStep * 0.15, 1)).toFixed(1);
         const yy = y(getValue(p)).toFixed(1);
         parts.push(`L${x2},${yy}`);
       }
+    }
+    if (filled) {
+      const endX = xOffset + to * xStep + (from === to ? Math.max(xStep * 0.15, 1) : 0);
+      parts.push(`L${endX.toFixed(1)},${y(0).toFixed(1)} Z`);
     }
   }
   return parts.join(" ");
@@ -486,11 +620,12 @@ function buildSparseSeriesPath(
 ): string {
   const parts: string[] = [];
   let inSegment = false;
+  const xOffset = points.length === 1 ? VB_W / 2 : 0;
   for (let i = 0; i < points.length; i++) {
     const p = points[i];
     if (!p) continue;
     const value = getValue(p);
-    const x = (i * xStep).toFixed(1);
+    const x = (xOffset + i * xStep).toFixed(1);
     const yy = y(value).toFixed(1);
     if (value > 0) {
       if (!inSegment) {
@@ -500,7 +635,7 @@ function buildSparseSeriesPath(
         const next = points[i + 1];
         const nextZero = i === points.length - 1 || !next || getValue(next) === 0;
         if (nextZero) {
-          const x2 = (i * xStep + Math.max(xStep * 0.15, 1)).toFixed(1);
+          const x2 = (xOffset + i * xStep + Math.max(xStep * 0.15, 1)).toFixed(1);
           parts.push(`L${x2},${yy}`);
         }
       } else {

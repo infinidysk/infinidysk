@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import type { ThroughputPoint } from "~/clients/backend-client.server";
 import { formatBytes } from "../../utils/format";
-import { ThroughputChart } from "./throughput-chart";
+import { ThroughputChart, type ThroughputChartProps } from "./throughput-chart";
 
 const point = (
   articles: number,
@@ -46,9 +47,71 @@ function articlesPathD(markup: string): string {
   return match?.[1] ?? match?.[2] ?? "";
 }
 
+function chartProps(points: ThroughputPoint[]): ThroughputChartProps {
+  return {
+    points,
+    totalArticles: points.reduce((sum, item) => sum + item.articles, 0),
+    totalClientArticles: points.reduce((sum, item) => sum + item.clientArticles, 0),
+    totalQueueArticles: points.reduce((sum, item) => sum + item.queueArticles, 0),
+    totalErrors: points.reduce((sum, item) => sum + item.errors, 0),
+    totalMisses: 0,
+    totalBytesServed: 0,
+    totalBytesFetched: 0,
+    bucketSizeMs: 60000,
+    window: "24h",
+  };
+}
+
 describe("ThroughputChart", () => {
   afterEach(() => {
     cleanup();
+  });
+  it("previews without rescaling, isolates small imports, and restores all series", () => {
+    const { container, getByRole, getByText } = render(
+      <ThroughputChart
+        points={[
+          { ...point(0), bucket: 0 },
+          { ...point(10012, 10, 0, 2), bucket: 60000 },
+        ]}
+        totalArticles={10012}
+        totalClientArticles={10}
+        totalQueueArticles={2}
+        totalMisses={0}
+        totalErrors={0}
+        totalBytesServed={100}
+        totalBytesFetched={200}
+        bucketSizeMs={60000}
+        window="24h"
+      />,
+    );
+    const imports = getByRole("button", { name: "Import attempts · 2" });
+    const originalPath = container
+      .querySelector('[data-series="queue-articles"]')
+      ?.getAttribute("d");
+    fireEvent.mouseEnter(imports);
+    expect(container.querySelector('[data-series="queue-articles"]')?.getAttribute("d")).toBe(
+      originalPath,
+    );
+    expect(
+      container.querySelector('[data-series="client-articles"]')?.getAttribute("style"),
+    ).toContain("opacity: 0.3");
+    fireEvent.click(imports);
+    expect(imports.getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelectorAll("[data-series]")).toHaveLength(1);
+    expect(container.querySelector('[data-series="queue-articles"]')?.getAttribute("d")).toContain(
+      "800.0,6.0",
+    );
+    expect(getByText("Peak import attempts 2 / min")).toBeTruthy();
+    expect(getByText("Successful reads").parentElement?.textContent).toContain("10,012");
+    fireEvent.mouseEnter(getByRole("button", { name: "Client attempts · 10" }));
+    expect(container.querySelectorAll("[data-series]")).toHaveLength(1);
+    expect(getByText("Peak import attempts 2 / min")).toBeTruthy();
+    fireEvent.click(imports);
+    expect(imports.getAttribute("aria-pressed")).toBe("false");
+    expect(container.querySelectorAll("[data-series]")).toHaveLength(3);
+    expect(container.querySelector('[data-series="queue-articles"]')?.getAttribute("d")).toBe(
+      originalPath,
+    );
   });
   it("does not draw the green series when every article bucket is zero", () => {
     const markup = renderMarkup([point(0, 0, 1), point(0)], 1);
@@ -57,6 +120,162 @@ describe("ThroughputChart", () => {
     expect(markup).not.toContain('data-series="queue-articles"');
     expect(markup).not.toContain('data-series="app-articles"');
     expect(markup).toContain('data-series="errors"');
+  });
+
+  it("reveals bucket details on Tab focus and supports navigation and dismissal", async () => {
+    const user = userEvent.setup();
+    const props = chartProps(
+      [0, 3, 8].map((value, index) => ({ ...point(value, value), bucket: index * 60000 })),
+    );
+    const { container, getByRole, getByText } = render(<ThroughputChart {...props} />);
+    const chart = getByRole("img");
+    const status = container.querySelector("#overview-throughput-keyboard-status");
+    await user.click(getByText("Fetched").parentElement!);
+    await user.tab();
+    expect(document.activeElement).toBe(chart);
+    expect(status?.textContent).toContain("8 client attempts");
+    await user.keyboard("{Home}");
+    expect(status?.textContent).toContain("0 client attempts");
+    await user.keyboard("{ArrowRight}");
+    expect(status?.textContent).toContain("3 client attempts");
+    await user.keyboard("{End}");
+    expect(status?.textContent).toContain("8 client attempts");
+    await user.keyboard("{Escape}");
+    expect(status?.textContent).toBe("");
+    expect(container.querySelector("[data-marker-series]")).toBeNull();
+    await user.keyboard("{ArrowLeft}");
+    expect(status?.textContent).toContain("8 client attempts");
+    await user.tab();
+    const client = getByRole("button", { name: "Client attempts · 11" });
+    expect(document.activeElement).toBe(client);
+    expect(status?.textContent).toBe("");
+    await user.keyboard("{Enter}");
+    expect(client.getAttribute("aria-pressed")).toBe("true");
+    await user.keyboard(" ");
+    expect(client.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("selects the clicked bucket and hands off between pointer, touch, and keyboard", () => {
+    const props = chartProps(
+      [2, 4, 6].map((value, index) => ({ ...point(value, value), bucket: index * 60000 })),
+    );
+    const { container, getByRole } = render(<ThroughputChart {...props} />);
+    const chart = getByRole("img");
+    vi.spyOn(chart, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 800, 160));
+    fireEvent.mouseMove(chart, { clientX: 800 });
+    expect(document.activeElement).not.toBe(chart);
+    fireEvent.click(chart, { clientX: 400 });
+    expect(document.activeElement).toBe(chart);
+    const status = container.querySelector("#overview-throughput-keyboard-status");
+    expect(status?.textContent).toContain("4 client attempts");
+    fireEvent.keyDown(chart, { key: "ArrowLeft" });
+    expect(status?.textContent).toContain("2 client attempts");
+    fireEvent.touchStart(chart, { touches: [{ clientX: 800 }] });
+    expect(
+      container.querySelector('[data-marker-series="client-articles"]')?.getAttribute("style"),
+    ).toContain("left: 100%");
+    fireEvent.keyDown(chart, { key: "ArrowRight" });
+    expect(status?.textContent).toContain("4 client attempts");
+    expect(
+      container.querySelector('[data-marker-series="client-articles"]')?.getAttribute("style"),
+    ).toContain("left: 50%");
+  });
+
+  it("shades only the emphasized series, closes separate runs, and draws its stroke last", () => {
+    const props = chartProps(
+      [0, 5, 0, 0, 3, 0].map((value, index) => ({
+        ...point(value + 1, value),
+        bucket: index * 60000,
+      })),
+    );
+    const { container, getByRole } = render(<ThroughputChart {...props} />);
+    const client = getByRole("button", { name: "Client attempts · 8" });
+    expect(container.querySelector("[data-area-series]")).toBeNull();
+    fireEvent.mouseEnter(client);
+    const area = container.querySelector('[data-area-series="client-articles"]');
+    expect(container.querySelectorAll("[data-area-series]")).toHaveLength(1);
+    expect(area?.getAttribute("fill")).toBe("var(--color-success)");
+    expect(area?.getAttribute("d")?.match(/M/g)).toHaveLength(2);
+    expect(area?.getAttribute("d")?.match(/Z/g)).toHaveLength(2);
+    expect(area?.getAttribute("d")).toContain("L320.0,156.0 Z");
+    expect(container.querySelector("svg")?.lastElementChild?.getAttribute("data-series")).toBe(
+      "client-articles",
+    );
+    fireEvent.mouseLeave(client);
+    expect(container.querySelector("[data-area-series]")).toBeNull();
+    fireEvent.focus(client);
+    expect(container.querySelector("[data-area-series]")).not.toBeNull();
+    fireEvent.blur(client);
+    expect(container.querySelector("[data-area-series]")).toBeNull();
+  });
+
+  it("matches cursor colors and positions to visible series, including a centered singleton", () => {
+    const { container, getByRole } = render(
+      <ThroughputChart {...chartProps([point(10012, 10, 3, 2)])} />,
+    );
+    fireEvent.focus(getByRole("img"));
+    expect(container.querySelectorAll("[data-marker-series]")).toHaveLength(4);
+    expect(
+      container.querySelector('[data-marker-series="app-articles"]')?.getAttribute("style"),
+    ).toContain("var(--color-info)");
+    expect(container.querySelector('[data-series="client-articles"]')?.getAttribute("d")).toMatch(
+      /^M400\.0,/,
+    );
+    expect(container.querySelector('[data-series="errors"]')?.getAttribute("d")).toMatch(
+      /^M400\.0,/,
+    );
+    fireEvent.click(getByRole("button", { name: "Import attempts · 2" }));
+    fireEvent.focus(getByRole("img"));
+    expect(container.querySelectorAll("[data-marker-series]")).toHaveLength(1);
+    expect(
+      container.querySelector('[data-marker-series="queue-articles"]')?.getAttribute("style"),
+    ).toContain("var(--color-secondary)");
+    expect(
+      container.querySelector('[data-marker-series="queue-articles"]')?.getAttribute("style"),
+    ).toContain("left: 50%; top: 3.75%");
+    expect(container.querySelector(".tooltip-open")?.getAttribute("style")).toContain(
+      "--cursor-y: 3.75%",
+    );
+    expect(container.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("handles empty isolated series and switches directly to error scaling", () => {
+    const { container, getByRole, getByText } = render(
+      <ThroughputChart {...chartProps([point(3, 3, 10)])} />,
+    );
+    fireEvent.click(getByRole("button", { name: "Import attempts · 0" }));
+    expect(container.querySelectorAll("[data-series]")).toHaveLength(0);
+    expect(container.querySelector("[data-area-series]")).toBeNull();
+    expect(getByText("Peak import attempts 0 / min")).toBeTruthy();
+    expect(getByText("1")).toBeTruthy();
+    fireEvent.click(getByRole("button", { name: "Errors" }));
+    expect(container.querySelectorAll("[data-series]")).toHaveLength(1);
+    expect(container.querySelector('[data-series="errors"]')?.getAttribute("d")).toContain(
+      "400.0,6.0",
+    );
+    expect(getByText("Peak errors 10 / min")).toBeTruthy();
+    expect(getByRole("button", { name: "Import attempts · 0" }).getAttribute("aria-pressed")).toBe(
+      "false",
+    );
+  });
+
+  it("preserves isolation through polling and resets it when the time window changes", () => {
+    const props = chartProps([{ ...point(12, 0, 0, 2), bucket: 60000 }]);
+    const { container, getByRole, getByText, rerender } = render(<ThroughputChart {...props} />);
+    fireEvent.click(getByRole("button", { name: "Import attempts · 2" }));
+    const updated = chartProps([{ ...point(23, 0, 0, 3), bucket: 0 }, ...props.points]);
+    rerender(<ThroughputChart {...updated} />);
+    expect(getByRole("button", { name: "Import attempts · 5" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    expect(getByText("Peak import attempts 3 / min")).toBeTruthy();
+    expect(container.querySelectorAll("[data-series]")).toHaveLength(1);
+    rerender(<ThroughputChart {...updated} window="1h" />);
+    expect(getByRole("button", { name: "Import attempts · 5" }).getAttribute("aria-pressed")).toBe(
+      "false",
+    );
+    expect(container.querySelectorAll("[data-series]")).toHaveLength(2);
+    expect(container.querySelector("[data-area-series]")).toBeNull();
   });
 
   it("draws the green series when an article bucket has activity", () => {
