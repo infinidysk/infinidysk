@@ -37,6 +37,13 @@ InfiniDysk can pull its indexer list from one Prowlarr instance. Configure the c
 
 Use **Test Connection** to verify the URL and API key, save the settings, then use **Sync now**. Automatic sync runs on the configured interval (5–10080 minutes). The URL may include a Prowlarr URL base such as `http://prowlarr:9696/prowlarr`; credentials, query strings, and fragments are not accepted.
 
+A Prowlarr hostname without a dot (for example the Docker service name `prowlarr`) is
+contacted directly, bypassing any `HTTP_PROXY` / `HTTPS_PROXY` configured for the
+container; dotted hostnames and IP addresses keep the normal proxy policy. Requests that
+exceed the 15-second budget are reported as `... timed out after 15 seconds; routing: ...`
+in Settings and logs. See [Docker hostnames and proxies](arrs.md#docker-hostnames-and-proxies)
+for details.
+
 Sync imports searchable Usenet indexers and points each one at Prowlarr's per-indexer Newznab proxy (`{prowlarrUrl}/{indexerId}/api`). Prowlarr owns each managed entry's name, proxy URL, API key, and enabled state. InfiniDysk preserves local tuning such as rate limits, filters, category overrides, proxy, TLS, timeout, max response, and user agents. Manually configured indexers are never changed or removed.
 
 Entries that disappear or become unsupported in Prowlarr are removed only when they are marked as Prowlarr-managed. Search profiles are updated in the same write for managed renames and removals. If Prowlarr is unavailable or returns an invalid response, InfiniDysk keeps the complete last-good indexer configuration and reports the failure in Settings.
