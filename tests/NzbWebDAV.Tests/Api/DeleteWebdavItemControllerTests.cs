@@ -573,24 +573,60 @@ public sealed class DeleteWebdavItemControllerTests : IAsyncLifetime
         return httpContext;
     }
 
-    private async Task<IActionResult> InvokeDeleteAsync(string path, string? healthCheckResultId = null)
+    private async Task<IActionResult> InvokeDeleteAsync(string path, string? healthCheckResultId = null, string? expectedDavItemId = null)
     {
         var controller = CreateDeleteController();
         controller.HttpContext.Request.Method = HttpMethods.Post;
         controller.HttpContext.Request.ContentType = "application/x-www-form-urlencoded";
         var fields = new Dictionary<string, StringValues> { ["path"] = path };
         if (healthCheckResultId is not null) fields["healthCheckResultId"] = healthCheckResultId;
+        if (expectedDavItemId is not null) fields["expectedDavItemId"] = expectedDavItemId;
         controller.HttpContext.Request.Form = new FormCollection(fields);
         return await controller.HandleApiRequest();
     }
 
-    private async Task<IActionResult> InvokePreviewAsync(string path, string? healthCheckResultId = null)
+    private async Task<IActionResult> InvokePreviewAsync(string path, string? healthCheckResultId = null, string? expectedDavItemId = null)
     {
         var controller = CreatePreviewController();
         controller.HttpContext.Request.Method = HttpMethods.Get;
         controller.HttpContext.Request.QueryString = new QueryString($"?path={Uri.EscapeDataString(path)}" +
-            (healthCheckResultId is null ? "" : $"&healthCheckResultId={Uri.EscapeDataString(healthCheckResultId)}"));
+            (healthCheckResultId is null ? "" : $"&healthCheckResultId={Uri.EscapeDataString(healthCheckResultId)}") +
+            (expectedDavItemId is null ? "" : $"&expectedDavItemId={Uri.EscapeDataString(expectedDavItemId)}"));
         return await controller.HandleApiRequest();
+    }
+
+    [Fact]
+    public async Task Preview_ExpectedIdMismatchReturnsConflict()
+    {
+        var (_, file, _) = await SeedContentReleaseAsync();
+        Assert.Equal(409, GetStatusCode(await InvokePreviewAsync(file.Path, expectedDavItemId: Guid.NewGuid().ToString())));
+        Assert.True(await _context.Items.AnyAsync(item => item.Id == file.Id));
+    }
+
+    [Fact]
+    public async Task Delete_ExpectedIdMismatchPreservesReplacementFile()
+    {
+        var (_, file, history) = await SeedContentReleaseAsync();
+        Assert.Equal(409, GetStatusCode(await InvokeDeleteAsync(file.Path, expectedDavItemId: Guid.NewGuid().ToString())));
+        Assert.True(await _context.Items.AnyAsync(item => item.Id == file.Id));
+        Assert.True(await _context.HistoryItems.AnyAsync(item => item.Id == history));
+    }
+
+    [Fact]
+    public async Task Delete_InvalidExpectedIdReturnsBadRequest()
+    {
+        var (_, file, _) = await SeedContentReleaseAsync();
+        Assert.Equal(400, GetStatusCode(await InvokeDeleteAsync(file.Path, expectedDavItemId: "invalid")));
+        Assert.Throws<BadHttpRequestException>(() => DeleteWebdavItemSupport.ParseExpectedItemId(new StringValues([Guid.NewGuid().ToString(), Guid.NewGuid().ToString()])));
+        Assert.True(await _context.Items.AnyAsync(item => item.Id == file.Id));
+    }
+
+    [Fact]
+    public async Task Delete_OmittedExpectedIdPreservesLegacyBehavior()
+    {
+        var (_, file, _) = await SeedContentReleaseAsync();
+        Assert.Equal(200, GetStatusCode(await InvokeDeleteAsync(file.Path)));
+        Assert.False(await _context.Items.AnyAsync(item => item.Id == file.Id));
     }
 
     private async Task<(DavItem JobDir, DavItem File, Guid HistoryId)> SeedContentReleaseAsync(

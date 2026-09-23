@@ -7,6 +7,14 @@ namespace NzbWebDAV.Api.Controllers.DeleteWebdavItem;
 
 internal static class DeleteWebdavItemSupport
 {
+    public static Guid? ParseExpectedItemId(Microsoft.Extensions.Primitives.StringValues values)
+    {
+        if (values.Count == 0) return null;
+        if (values.Count != 1 || !Guid.TryParse(values[0], out var id) || id == Guid.Empty)
+            throw new Microsoft.AspNetCore.Http.BadHttpRequestException("Invalid expectedDavItemId.");
+        return id;
+    }
+
     public static Task<bool> IsCurrentAttentionFileAsync(
         DavDatabaseClient dbClient,
         DavItem item,
