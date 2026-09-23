@@ -221,4 +221,90 @@ describe("native cache folder editor", () => {
       }),
     );
   });
+
+  it("confirms file eviction and disables it for pinned or read-only entries", async () => {
+    const key = "b".repeat(64);
+    const confirm = vi.fn().mockReturnValue(false);
+    vi.stubGlobal("confirm", confirm);
+    const fetcher = vi.fn().mockImplementation((url: string) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify(
+            url.includes("/entries")
+              ? {
+                  entries: [
+                    {
+                      key,
+                      itemId: "episode",
+                      name: "Episode 2",
+                      generation: "current-revision",
+                      length: 100,
+                      verifiedBytes: 100,
+                      allocatedBytes: 128,
+                      pinned: false,
+                    },
+                  ],
+                  nextAfter: null,
+                }
+              : {
+                  activeMode: "native",
+                  configuredMode: "native",
+                  restartRequired: false,
+                  reservedBufferBytes: 0,
+                  folders: [
+                    {
+                      id: "disk",
+                      online: true,
+                      writable: true,
+                      committedBytes: 128,
+                      entries: 1,
+                    },
+                  ],
+                  jobs: [],
+                },
+          ),
+          { status: 200 },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    render(<Harness native />);
+    await screen.findByText(/Online, writable/);
+    await userEvent.click(screen.getByRole("button", { name: "View cached files" }));
+    const evict = await screen.findByRole("button", {
+      name: "Evict Episode 2 from Native Cache",
+    });
+
+    await userEvent.click(evict);
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(fetcher.mock.calls.some(([, init]) => init?.body?.includes('"operation":"evict"'))).toBe(
+      false,
+    );
+
+    confirm.mockReturnValue(true);
+    await userEvent.click(evict);
+    expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/api/native-cache/operations"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          operation: "evict",
+          folderId: "disk",
+          cacheKey: key,
+          confirmCacheKey: key,
+        }),
+      }),
+    );
+
+    await waitFor(() => expect(evict).toHaveProperty("disabled", false));
+    await userEvent.click(screen.getByRole("button", { name: "Pin Episode 2" }));
+    expect(evict).toHaveProperty("disabled", true);
+    await userEvent.click(screen.getByRole("button", { name: "Unpin Episode 2" }));
+    expect(evict).toHaveProperty("disabled", false);
+    await userEvent.click(screen.getByText("Edit folder settings"));
+    await userEvent.click(
+      screen.getByLabelText("Read-only (hits/import only; no writes or eviction)"),
+    );
+    expect(evict).toHaveProperty("disabled", true);
+  });
 });
