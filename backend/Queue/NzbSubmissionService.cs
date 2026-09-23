@@ -52,27 +52,15 @@ public class NzbSubmissionService(
             var maxItems = configManager.GetQueueMaxItems();
             if (maxItems > 0)
             {
-                var currentCount = await dbClient.Ctx.QueueItems
-                    .CountAsync(request.CancellationToken)
-                    .ConfigureAwait(false);
                 var resumeThreshold = configManager.GetQueueResumeThreshold();
-#pragma warning disable CA2000 // reservation is assigned to the method-scoped using below; the only statements between creation and the using are a null check and logging
-                admissionReservation = queueManager.TryReserveQueueSlot(
-                    currentCount, maxItems, resumeThreshold);
+#pragma warning disable CA2000 // reservation ownership transfers to the method-scoped using below; assignment and the null check happen first
+                var admission = await queueManager.TryReserveQueueSlotAsync(
+                        dbClient, maxItems, resumeThreshold, request.CancellationToken)
+                    .ConfigureAwait(false);
+                admissionReservation = admission.Reservation;
 #pragma warning restore CA2000
                 if (admissionReservation is null)
-                {
-                    Log.Warning(
-                        "Rejected NZB submission because the queue has {QueueCount} of {QueueLimit} items. " +
-                        "Admission resumes at or below {ResumeThreshold} items.",
-                        currentCount, maxItems, resumeThreshold);
-                    return new NzbSubmissionResult
-                    {
-                        Status = false,
-                        Error = $"Queue is full ({currentCount} of {maxItems} items); " +
-                                $"submissions resume at or below {resumeThreshold}.",
-                    };
-                }
+                    return CreateQueueFullResult(admission.CurrentCount, maxItems, resumeThreshold);
             }
         }
 
@@ -195,8 +183,16 @@ public class NzbSubmissionService(
                 queueItem,
                 nzbName,
                 request.ReplaceExistingQueueItem,
+                admissionReservation is not null,
                 dbClient,
                 request.CancellationToken).ConfigureAwait(false);
+
+            if (commitResult.Rejection is { } rejection)
+            {
+                BlobStore.Delete(id);
+                TryDeleteBackupFile(backupPath);
+                return rejection;
+            }
 
             removedIds = commitResult.RemovedIds;
         }
@@ -236,6 +232,23 @@ public class NzbSubmissionService(
         {
             Status = true,
             NzoIds = [queueItem.Id.ToString()],
+        };
+    }
+
+    internal static NzbSubmissionResult CreateQueueFullResult(
+        int currentCount,
+        int maxItems,
+        int resumeThreshold)
+    {
+        Log.Warning(
+            "Rejected NZB submission because the queue has {QueueCount} of {QueueLimit} items. " +
+            "Admission resumes at or below {ResumeThreshold} items.",
+            currentCount, maxItems, resumeThreshold);
+        return new NzbSubmissionResult
+        {
+            Status = false,
+            Error = $"Queue is full ({currentCount} of {maxItems} items); " +
+                    $"submissions resume at or below {resumeThreshold}.",
         };
     }
 

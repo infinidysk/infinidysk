@@ -292,6 +292,29 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
         }
     }
 
+    internal async Task<(IDisposable? Reservation, int CurrentCount)> TryReserveQueueSlotAsync(
+        DavDatabaseClient dbClient,
+        int maxItems,
+        int resumeThreshold,
+        CancellationToken ct)
+    {
+        using var submissionLifetime = EnterSubmission();
+        await _submissionCommitLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var currentCount = await dbClient.Ctx.QueueItems
+                .CountAsync(ct)
+                .ConfigureAwait(false);
+            return (
+                TryReserveQueueSlot(currentCount, maxItems, resumeThreshold),
+                currentCount);
+        }
+        finally
+        {
+            _submissionCommitLock.Release();
+        }
+    }
+
     private void ReleaseQueueSlotReservation()
     {
         lock (_admissionLock)
@@ -376,7 +399,10 @@ public sealed class QueueManager : IQueueCoordinator, IDisposable
     }
 
 public record QueueRemovalResult(Guid[] RemovedIds, Guid[] StillRunningIds);
-public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
+public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds)
+{
+    public NzbSubmissionResult? Rejection { get; init; }
+}
 
     private Guid[] ReserveMutationsUnderLock(IEnumerable<Guid> requestedIds)
     {
@@ -527,6 +553,26 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
         DavDatabaseClient dbClient,
         CancellationToken ct)
     {
+        var result = await CommitSubmissionAsync(
+            replacement,
+            replacementName,
+            replaceExisting,
+            hasAdmissionReservation: false,
+            dbClient,
+            ct).ConfigureAwait(false);
+        if (result.Rejection is { } rejection)
+            throw new BadHttpRequestException(rejection.Error ?? "Queue is full.");
+        return result;
+    }
+
+    public async Task<QueueSubmissionCommitResult> CommitSubmissionAsync(
+        QueueItem replacement,
+        NzbName replacementName,
+        bool replaceExisting,
+        bool hasAdmissionReservation,
+        DavDatabaseClient dbClient,
+        CancellationToken ct)
+    {
         using var submissionLifetime = EnterSubmission();
         var submissionKey = (replacement.Category, replacement.FileName);
         var commitLockHeld = false;
@@ -599,6 +645,28 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds);
                 if (conflictId is not null)
                 {
                     removedIds = await dbClient.RemoveQueueItemsAsync([conflictId.Value], ct).ConfigureAwait(false);
+                }
+
+                var maxItems = _configManager.GetQueueMaxItems();
+                var resumeThreshold = _configManager.GetQueueResumeThreshold();
+                var requiresAdmission = removedIds.Count == 0
+                    && !hasAdmissionReservation
+                    && maxItems > 0;
+                var currentCount = requiresAdmission
+                    ? await dbClient.Ctx.QueueItems.CountAsync(ct).ConfigureAwait(false)
+                    : 0;
+                using var fallbackAdmissionReservation = requiresAdmission
+                    ? TryReserveQueueSlot(currentCount, maxItems, resumeThreshold)
+                    : null;
+
+                if (requiresAdmission && fallbackAdmissionReservation is null)
+                {
+                    await transaction.RollbackAsync(ct).ConfigureAwait(false);
+                    return new QueueSubmissionCommitResult(replacement, [])
+                    {
+                        Rejection = NzbSubmissionService.CreateQueueFullResult(
+                            currentCount, maxItems, resumeThreshold),
+                    };
                 }
 
                 dbClient.Ctx.QueueItems.Add(replacement);
