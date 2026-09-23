@@ -22,6 +22,29 @@ public sealed class NativeCacheServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SaturatedStreams_StillServeCachedBytesWithoutOpeningSource()
+    {
+        using var blobs = new FileBlobStore();
+        var blobId = Guid.NewGuid();
+        await blobs.WriteBlob(blobId, new DavNzbFile { Id = blobId, SegmentIds = ["segment"] });
+        var item = new DavItem { Id = Guid.NewGuid(), Name = "movie", FileSize = 3, FileBlobId = blobId, SubType = DavItem.ItemSubType.NzbFile };
+        using var repair = new RepairPatchStore(Path.Combine(_root, "patches"), 100);
+        await using var service = new NativeCacheService(Config("native"), blobs, repair);
+        await using (var seed = await service.WrapAsync(item, _ => Task.FromResult<Stream>(new VerifiedStream()), CancellationToken.None))
+            Assert.Equal(3, await seed.ReadAsync(new byte[3]));
+        var streams = new List<Stream>();
+        try
+        {
+            for (var i = 0; i < 20; i++) streams.Add(await service.WrapAsync(item,
+                _ => throw new InvalidOperationException("Cache hit opened source"), CancellationToken.None));
+            foreach (var stream in streams) Assert.Equal(3, await stream.ReadAsync(new byte[3]));
+            Assert.True(service.ReservedBufferBytes <= service.ActiveSettings!.BufferMb * 1024L * 1024);
+        }
+        finally { foreach (var stream in streams) await stream.DisposeAsync(); }
+        Assert.Equal(0, service.ReservedBufferBytes);
+    }
+
+    [Fact]
     public async Task NativeBufferBudget_IsIncludedInMemoryOwnershipSnapshot()
     {
         using var blobs = new FileBlobStore();

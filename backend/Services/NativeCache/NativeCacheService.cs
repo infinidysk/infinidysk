@@ -15,6 +15,8 @@ public sealed class NativeCacheService : IAsyncDisposable
     private readonly RepairPatchStore _repairs;
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2213", Justification = "Managed-only semaphore: detached filesystem operations retain admissions after shutdown and must still release them. AvailableWaitHandle is never used.")]
     private readonly SemaphoreSlim? _bufferSlots;
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2213", Justification = "Detached IO retains managed-only admission through shutdown.")]
+    private readonly SemaphoreSlim _hitSlot = new(1, 1);
     private readonly int _capacity;
     private readonly object _lifetimeGate = new();
     private Task _initialization = Task.CompletedTask;
@@ -41,7 +43,7 @@ public sealed class NativeCacheService : IAsyncDisposable
             if (!ActiveSettings.Folders.Any(folder => folder.Enabled))
                 throw new ArgumentException("Configure at least one enabled native cache folder.");
             _capacity = Math.Max(1, ActiveSettings.BufferMb / 4);
-            _bufferSlots = new SemaphoreSlim(_capacity, _capacity);
+            _bufferSlots = new SemaphoreSlim(Math.Max(1, _capacity - 1), _capacity);
             _initialization = Task.Run(() => InitializeStoreAsync(ActiveSettings, storeFactory));
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException or ArgumentException)
@@ -57,7 +59,7 @@ public sealed class NativeCacheService : IAsyncDisposable
     public string? InitializationError => Volatile.Read(ref _initializationError);
     public bool InitializationPending => !_initialization.IsCompleted;
     public NativeCacheStore? Store => Volatile.Read(ref _store);
-    public long ReservedBufferBytes => _bufferSlots is null ? 0 : (_capacity - _bufferSlots.CurrentCount) * (long)NativeCacheStore.BlockSize;
+    public long ReservedBufferBytes => _bufferSlots is null ? 0 : (Math.Max(1, _capacity - 1) - _bufferSlots.CurrentCount + (_capacity > 1 ? 1 - _hitSlot.CurrentCount : 0)) * (long)NativeCacheStore.BlockSize;
 
     private async Task InitializeStoreAsync(NativeCacheSettings settings, Func<NativeCacheSettings, NativeCacheStore> factory)
     {
@@ -101,15 +103,17 @@ public sealed class NativeCacheService : IAsyncDisposable
         if (InitializationPending) await WaitForInitializationAsync(cancellationToken).ConfigureAwait(false);
         ObjectDisposedException.ThrowIf(_disposed, this);
         var store = Store;
-        if (store is null || _bufferSlots is null || item.FileBlobId is not { } blobId || item.FileSize is not > 0
-            || !_bufferSlots.Wait(0))
+        if (store is null || _bufferSlots is null || item.FileBlobId is not { } blobId || item.FileSize is not > 0)
         {
             if (requireNative) throw new InvalidOperationException("Native cache admission is unavailable; no source bytes were requested.");
             return await open(cancellationToken).ConfigureAwait(false);
         }
 
+        var admitted = _bufferSlots.Wait(0);
+        if (!admitted && requireNative)
+            throw new InvalidOperationException("Native cache admission is unavailable; no source bytes were requested.");
         var watch = ContentRevisionTracker.Watch(blobId);
-        AdmissionLease? admission = new(_bufferSlots, watch);
+        IDisposable? admission = admitted ? new AdmissionLease(_bufferSlots, watch) : watch;
         try
         {
             await using var blob = _blobs.ReadBlob(blobId);
@@ -122,8 +126,15 @@ public sealed class NativeCacheService : IAsyncDisposable
                     var repairRevision = _repairs.CaptureNativeRevisions(dependencies);
                     var identity = new NativeCacheIdentity(item.Id.ToString("N"),
                         $"v2:{blobId:N}:{Convert.ToHexString(hash)}:{repairRevision.Fingerprint}", item.FileSize.Value);
+                    if (!admitted)
+                    {
+                        var overflow = new NativeCacheOverflowStream(store, identity, open,
+                            () => watch.IsCurrent && repairRevision.IsCurrent, watch, _capacity > 1 ? _hitSlot : _bufferSlots, Statistics);
+                        admission = null;
+                        return overflow;
+                    }
                     var stream = new NativeCachedStream(store, identity, open,
-                        () => watch.IsCurrent && repairRevision.IsCurrent, admission, background: requireNative, statistics: Statistics);
+                        () => watch.IsCurrent && repairRevision.IsCurrent, admission, background: requireNative, statistics: Statistics, writeBehind: true);
                     admission = null; // The returned stream owns the watch and buffer admission.
                     return stream;
                 }

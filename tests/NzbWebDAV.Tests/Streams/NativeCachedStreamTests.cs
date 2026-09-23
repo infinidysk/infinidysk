@@ -8,6 +8,35 @@ public sealed class NativeCachedStreamTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "native-stream-tests-" + Guid.NewGuid().ToString("N"));
     public NativeCachedStreamTests() => Directory.CreateDirectory(_root);
 
+    [Fact]
+    public async Task WriteBehind_ServesBytesBeforeFlush_AndRetainsBufferUntilPublication()
+    {
+        await using var store = CreateStore();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var admission = new TrackingAdmission();
+        var identity = new NativeCacheIdentity("write-behind", "v1", 3);
+        await using var stream = new NativeCachedStream(store, identity,
+            _ => Task.FromResult<Stream>(new EvidenceStream(true)), () => true, admission, writeBehind: true)
+        {
+            CacheIoTimeout = TimeSpan.FromMilliseconds(30),
+            BeforeCacheIo = async (write, _) => { if (write) { entered.TrySetResult(); await release.Task; } }
+        };
+        try
+        {
+            var bytes = new byte[3];
+            Assert.Equal(3, await stream.ReadAsync(bytes).AsTask().WaitAsync(TimeSpan.FromSeconds(2)));
+            Assert.Equal(new byte[] { 1, 2, 3 }, bytes);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal(0, await store.GetCoverageAsync(identity));
+            await stream.DisposeAsync();
+            Assert.False(admission.Disposed.Task.IsCompleted);
+        }
+        finally { release.TrySetResult(); }
+        await admission.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(3, await store.GetCoverageAsync(identity));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
