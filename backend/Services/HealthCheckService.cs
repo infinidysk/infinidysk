@@ -198,6 +198,36 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         .Where(entry => entry.Value.ProcessingTask?.IsCompleted != true)
         .ToDictionary(entry => entry.Key, entry => entry.Value.Progress);
 
+    public enum FileRecheckOutcome { Queued, AlreadyQueued, AlreadyRunning, NotFound, Unsupported, Disabled }
+
+    public async Task<FileRecheckOutcome> QueueFileRecheckAsync(Guid davItemId, CancellationToken cancellationToken)
+    {
+        await _workerAdmissionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!_configManager.IsRepairJobEnabled()) return FileRecheckOutcome.Disabled;
+            await using var context = CreateContext();
+            var item = await context.Items.AsNoTracking().SingleOrDefaultAsync(file => file.Id == davItemId, cancellationToken).ConfigureAwait(false);
+            if (item is null || !item.Path.StartsWith("/content/", StringComparison.Ordinal)) return FileRecheckOutcome.NotFound;
+            if (item.Type != DavItem.ItemType.UsenetFile || !FilenameUtil.IsHealthCheckCandidate(item.Name)) return FileRecheckOutcome.Unsupported;
+            if (_inProgress.ContainsKey(davItemId)) return FileRecheckOutcome.AlreadyRunning;
+            if (item.HealthRepairPending || item.NextHealthCheck == DateTimeOffset.UnixEpoch || item.NextHealthCheck == ForcedRecheckSentinel)
+                return FileRecheckOutcome.AlreadyQueued;
+            var updated = await context.Items.Where(file => file.Id == davItemId && file.Type == DavItem.ItemType.UsenetFile)
+                .Where(file => !file.HealthRepairPending)
+                .Where(file => file.NextHealthCheck != DateTimeOffset.UnixEpoch)
+                .Where(file => file.NextHealthCheck != ForcedRecheckSentinel)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(file => file.NextHealthCheck, ForcedRecheckSentinel), cancellationToken)
+                .ConfigureAwait(false);
+            if (updated == 0)
+                return await context.Items.AnyAsync(file => file.Id == davItemId, cancellationToken).ConfigureAwait(false)
+                    ? FileRecheckOutcome.AlreadyQueued : FileRecheckOutcome.NotFound;
+            SignalWorkerStateChanged();
+            return FileRecheckOutcome.Queued;
+        }
+        finally { _workerAdmissionGate.Release(); }
+    }
+
     public HealthCheckDiagnosticsSnapshot CaptureHealthCheckDiagnostics()
     {
         var now = _timeProvider.GetUtcNow();

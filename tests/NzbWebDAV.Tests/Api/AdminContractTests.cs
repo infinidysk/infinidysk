@@ -14,6 +14,91 @@ namespace NzbWebDAV.Tests.Api;
 public sealed class AdminContractTests
 {
     [Fact]
+    public async Task FileRecheck_QueuesOnlyTheSelectedFile()
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var client = factory.CreateAuthenticatedClient();
+        var selected = NewUncheckedUsenetFile("selected.mkv");
+        var other = NewUncheckedUsenetFile("other.mkv");
+        other.NextHealthCheck = new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        await factory.AddDavItemsAsync(selected, other);
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent(selected.Id.ToString()), "davItemId");
+        using var response = await client.PostAsync("/api/recheck-file", form);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        JsonContractValidator.AssertMatchesSchema(json.RootElement, "admin/v1/recheck-file.schema.json");
+        using var scope = factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<DavDatabaseClient>().Ctx;
+        Assert.Equal(HealthCheckService.ForcedRecheckSentinel, (await context.Items.FindAsync(selected.Id))!.NextHealthCheck);
+        Assert.Equal(other.NextHealthCheck, (await context.Items.FindAsync(other.Id))!.NextHealthCheck);
+    }
+
+    [Fact]
+    public async Task FileRecheck_PreservesUrgentPendingAndHistoricalState()
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var client = factory.CreateAuthenticatedClient();
+        var file = NewUncheckedUsenetFile("urgent.mkv");
+        file.NextHealthCheck = DateTimeOffset.UnixEpoch;
+        file.UrgentRepairFailures = 7;
+        file.HealthRepairPending = true;
+        file.LastHealthCheck = new DateTimeOffset(2026, 9, 22, 0, 0, 0, TimeSpan.Zero);
+        await factory.AddDavItemsAsync(file);
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var form = new MultipartFormDataContent();
+            form.Add(new StringContent(file.Id.ToString()), "davItemId");
+            using var response = await client.PostAsync("/api/recheck-file", form);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+            Assert.Equal("already-queued", json.RootElement.GetProperty("state").GetString());
+        }
+        using var scope = factory.Services.CreateScope();
+        var current = await scope.ServiceProvider.GetRequiredService<DavDatabaseClient>().Ctx.Items.FindAsync(file.Id);
+        Assert.Equal(DateTimeOffset.UnixEpoch, current!.NextHealthCheck);
+        Assert.Equal(7, current.UrgentRepairFailures);
+        Assert.True(current.HealthRepairPending);
+        Assert.Equal(file.LastHealthCheck, current.LastHealthCheck);
+    }
+
+    [Fact]
+    public async Task FileRecheck_RejectsGetInvalidIdDirectoryAndDisabledRepairs()
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var client = factory.CreateAuthenticatedClient();
+        using var get = await client.GetAsync("/api/recheck-file");
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, get.StatusCode);
+        foreach (var id in new[] { "invalid", Guid.Empty.ToString() })
+        {
+            using var form = new MultipartFormDataContent();
+            form.Add(new StringContent(id), "davItemId");
+            using var response = await client.PostAsync("/api/recheck-file", form);
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+        var directory = DavItem.New(Guid.NewGuid(), DavItem.ContentFolder, "directory", null, DavItem.ItemType.Directory, DavItem.ItemSubType.Directory, null, null, null, null);
+        await factory.AddDavItemsAsync(directory);
+        using var directoryForm = new MultipartFormDataContent();
+        directoryForm.Add(new StringContent(directory.Id.ToString()), "davItemId");
+        using var conflict = await client.PostAsync("/api/recheck-file", directoryForm);
+        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+        using var duplicateForm = new MultipartFormDataContent();
+        duplicateForm.Add(new StringContent(directory.Id.ToString()), "davItemId");
+        duplicateForm.Add(new StringContent(directory.Id.ToString()), "davItemId");
+        using var duplicate = await client.PostAsync("/api/recheck-file", duplicateForm);
+        Assert.Equal(HttpStatusCode.BadRequest, duplicate.StatusCode);
+        using var serviceScope = factory.Services.CreateScope();
+        serviceScope.ServiceProvider.GetRequiredService<ConfigManager>().UpdateValues([new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "false" }]);
+        var unsupported = NewUncheckedUsenetFile("notes.nfo");
+        await factory.AddDavItemsAsync(unsupported);
+        using var disabledForm = new MultipartFormDataContent();
+        disabledForm.Add(new StringContent(unsupported.Id.ToString()), "davItemId");
+        using var disabled = await client.PostAsync("/api/recheck-file", disabledForm);
+        Assert.Equal(HttpStatusCode.Conflict, disabled.StatusCode);
+        Assert.Null((await serviceScope.ServiceProvider.GetRequiredService<DavDatabaseClient>().Ctx.Items.FindAsync(unsupported.Id))!.NextHealthCheck);
+    }
+
+    [Fact]
     public async Task FilesBrowse_RequiresAuthenticationAndMatchesSchema()
     {
         await using var factory = new NzbDavWebApplicationFactory();
