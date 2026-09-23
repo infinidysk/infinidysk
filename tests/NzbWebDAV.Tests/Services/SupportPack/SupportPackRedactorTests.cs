@@ -74,6 +74,17 @@ public class SupportPackRedactorTests
         Assert.Equal(0, redactor.SecretsRedacted);
     }
 
+    [Theory]
+    [InlineData("node_1:2:3:4:5:6:7:8")]
+    [InlineData("1:2:3:4:5:6:7:8_node")]
+    public void RedactText_DoesNotPseudonymizeIpv6CandidatesAdjacentToUnderscores(string input)
+    {
+        var redactor = new SupportPackRedactor([]);
+
+        Assert.Equal(input, redactor.RedactText(input));
+        Assert.Equal(0, redactor.AddressesPseudonymized);
+    }
+
     [Fact]
     public void RedactText_ReusesFullIpv6AliasAcrossCallsAndBrackets()
     {
