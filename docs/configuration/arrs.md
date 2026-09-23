@@ -29,7 +29,7 @@ rules. Typical mappings:
 
 Any action other than **Do Nothing** tells the Arr to delete the queue record with `removeFromClient=true`. The Arr then removes the download from InfiniDysk History even when its own **Remove Completed** checkbox is off. That is independent of mounted files, which stay.
 
-## Docker hostnames and proxies [since 1.4.6](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.6){ .nzbdav-since }
+## Docker hostnames and proxies [since 1.4.6](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.6){ #docker-hostnames-and-proxies .nzbdav-since }
 
 Radarr, Sonarr, and [Prowlarr](indexers.md#prowlarr-pull-sync) hosts whose hostname
 has **no dot** — Docker Compose service names such as `http://sonarr:8989` — are always
