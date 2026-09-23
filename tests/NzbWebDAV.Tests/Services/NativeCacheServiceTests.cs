@@ -35,7 +35,7 @@ public sealed class NativeCacheServiceTests : IDisposable
         {
             Assert.True(await service.WaitForInitializationAsync());
             var initial = await service.GetLastModifiedAsync(item, CancellationToken.None);
-            Assert.Equal(item.CreatedAt, initial);
+            Assert.True(initial > item.CreatedAt);
             repair.CommitPatch("movie-segment", [4, 5, 6], new UsenetSharp.Models.UsenetYencHeader
             {
                 FileName = "movie", FileSize = 3, PartSize = 3, PartOffset = 0, PartNumber = 1, TotalParts = 1, LineLength = 128

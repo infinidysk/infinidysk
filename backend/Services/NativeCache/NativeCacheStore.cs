@@ -193,7 +193,10 @@ public sealed class NativeCacheStore : IAsyncDisposable
         {
             using var query = Command("SELECT Generation,Seconds FROM ModificationTimes WHERE ItemId=$item", ("$item", itemId));
             using var reader = query.ExecuteReader();
-            var seconds = new DateTimeOffset(created == default ? DateTime.UnixEpoch : created.ToUniversalTime()).ToUnixTimeSeconds();
+            // First observation deliberately changes legacy creation-time fingerprints,
+            // including after a catalogue rebuild, so pre-upgrade client payloads revalidate.
+            var seconds = Math.Max(DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                new DateTimeOffset(created == default ? DateTime.UnixEpoch : created.ToUniversalTime()).ToUnixTimeSeconds());
             if (reader.Read())
             {
                 var previous = reader.GetInt64(1);
