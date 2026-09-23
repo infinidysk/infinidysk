@@ -951,6 +951,50 @@ public sealed class MetricsRollupFailoverSavesTests
             var oldest = await context.ThroughputMinutes.AsNoTracking()
                 .SingleAsync(row => row.Minute == OldestMinute);
             Assert.Equal(1, oldest.Articles);
+
+        });
+    }
+
+    [Fact]
+    public async Task RollupMinute_SplitsQueueArticlesFromClientAndMaintenance()
+    {
+        await withMetricsDb(async context =>
+        {
+            // Workload: 1 = Streaming, 2 = Queue, 3 = Maintenance.
+            await context.Database.ExecuteSqlRawAsync(
+                """
+                INSERT INTO SegmentFetches
+                    (At, Provider, ReadSessionId, QueueItemId, Workload, Bytes, DurationMs, Status, Retries)
+                VALUES
+                    ({0}, 'p', NULL, NULL, 1, 0, 20, 0, 0),
+                    ({0}, 'p', NULL, NULL, 2, 0, 20, 0, 0),
+                    ({0}, 'p', NULL, NULL, 2, 0, 20, 1, 0),
+                    ({0}, 'p', NULL, NULL, 3, 0, 20, 0, 0);
+                """,
+                Minute + 1);
+
+            await MetricsRollupService.RollupMinuteAsync(context, Minute);
+            await MetricsRollupService.RollupHourAsync(context, Minute - (Minute % 3_600_000L));
+
+            var throughput = await context.ThroughputMinutes.AsNoTracking().SingleAsync();
+            var provider = await context.ProviderMinutes.AsNoTracking().SingleAsync();
+            var hourly = await context.ProviderHourly.AsNoTracking().SingleAsync();
+            Assert.Equal(4, throughput.Articles);
+            Assert.Equal(1, throughput.ClientArticles);
+            Assert.Equal(2, throughput.QueueArticles);
+            Assert.Equal(2, provider.QueueArticles);
+            Assert.Equal(2, hourly.QueueArticles);
+
+            // Re-rolling after raw rows are pruned must keep the finalized queue count.
+            await context.Database.ExecuteSqlRawAsync("DELETE FROM SegmentFetches");
+            await MetricsRollupService.RollupMinuteAsync(context, Minute);
+
+            throughput = await context.ThroughputMinutes.AsNoTracking().SingleAsync();
+            provider = await context.ProviderMinutes.AsNoTracking().SingleAsync();
+            Assert.Equal(4, throughput.Articles);
+            Assert.Equal(4, provider.Articles);
+            Assert.Equal(2, throughput.QueueArticles);
+            Assert.Equal(2, provider.QueueArticles);
         });
     }
 

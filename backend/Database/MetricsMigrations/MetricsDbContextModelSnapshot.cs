@@ -196,6 +196,9 @@ namespace NzbWebDAV.Database.MetricsMigrations
                     b.Property<int?>("P95DurationMs")
                         .HasColumnType("INTEGER");
 
+                    b.Property<long>("QueueArticles")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long>("Retries")
                         .HasColumnType("INTEGER");
 
@@ -232,6 +235,9 @@ namespace NzbWebDAV.Database.MetricsMigrations
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("Misses")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("QueueArticles")
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("Retries")
@@ -296,6 +302,9 @@ namespace NzbWebDAV.Database.MetricsMigrations
                         .HasColumnType("BLOB");
 
                     b.Property<long>("Misses")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("QueueArticles")
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("Retries")
@@ -401,6 +410,19 @@ namespace NzbWebDAV.Database.MetricsMigrations
                     b.ToTable("SegmentFetches", (string)null);
                 });
 
+            modelBuilder.Entity("NzbWebDAV.Database.Models.Metrics.ThroughputHourly", b =>
+                {
+                    b.Property<long>("Hour")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("PeakFetchBytesPerSec")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Hour");
+
+                    b.ToTable("ThroughputHourly", (string)null);
+                });
+
             modelBuilder.Entity("NzbWebDAV.Database.Models.Metrics.ThroughputMinute", b =>
                 {
                     b.Property<long>("Minute")
@@ -428,6 +450,12 @@ namespace NzbWebDAV.Database.MetricsMigrations
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("Misses")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("PeakFetchBytesPerSec")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("QueueArticles")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Minute");

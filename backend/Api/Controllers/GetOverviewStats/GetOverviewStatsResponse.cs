@@ -11,8 +11,12 @@ public class GetOverviewStatsResponse
     public List<ThroughputPoint> Throughput { get; init; } = new();
     /// <summary>Chart bucket width in ms for normalizing throughput totals into rates.</summary>
     public long ThroughputBucketSizeMs { get; init; }
+    /// <summary>Highest 1-second aggregate fetch rate observed within the window (bytes/sec).</summary>
+    public long PeakFetchBytesPerSec { get; init; }
     public long TotalArticles { get; init; }
     public long TotalClientArticles { get; init; }
+    /// <summary>Article attempts made while importing queue items (initial download).</summary>
+    public long TotalQueueArticles { get; init; }
     public long TotalMisses { get; init; }
     public long TotalErrors { get; init; }
     public long TotalBytesFetched { get; init; }
@@ -64,6 +68,8 @@ public class GetOverviewStatsResponse
         public long Bucket { get; init; }
         public long Articles { get; init; }
         public long ClientArticles { get; init; }
+        /// <summary>Article attempts made while importing queue items (initial download).</summary>
+        public long QueueArticles { get; init; }
         public long Misses { get; init; }
         public long Errors { get; init; }
         public long BytesServed { get; init; }

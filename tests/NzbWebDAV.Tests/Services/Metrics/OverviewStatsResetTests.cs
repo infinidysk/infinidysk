@@ -52,6 +52,7 @@ public class OverviewStatsResetTests
             Reason = SegmentFetch.FetchStatus.Missing,
             Count = 1,
         });
+        db.ThroughputHourly.Add(new ThroughputHourly { Hour = now, PeakFetchBytesPerSec = 1 });
         db.CatalogueDaily.Add(new CatalogueDaily { Day = now, FileCount = 1 });
         db.ProviderLifetimeTotals.Add(new ProviderLifetimeTotal
         {
@@ -64,7 +65,7 @@ public class OverviewStatsResetTests
 
         var deleted = await OverviewStatsReset.WipeAsync(db, CancellationToken.None);
 
-        Assert.Equal(10, deleted);
+        Assert.Equal(11, deleted);
         Assert.Equal(0, await db.SegmentFetches.CountAsync());
         Assert.Equal(0, await db.ReadSessions.CountAsync());
         Assert.Equal(0, await db.MetricEvents.CountAsync());
@@ -73,6 +74,7 @@ public class OverviewStatsResetTests
         Assert.Equal(0, await db.ProviderHourly.CountAsync());
         Assert.Equal(0, await db.FailoverMisses.CountAsync());
         Assert.Equal(0, await db.FailoverHourly.CountAsync());
+        Assert.Equal(0, await db.ThroughputHourly.CountAsync());
         Assert.Equal(0, await db.CatalogueDaily.CountAsync());
         Assert.Equal(0, await db.ProviderLifetimeTotals.CountAsync());
     }

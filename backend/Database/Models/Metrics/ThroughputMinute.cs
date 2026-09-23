@@ -7,8 +7,10 @@ public class ThroughputMinute
     public long BytesFetched { get; set; }
     public long Articles { get; set; }
     public long ClientArticles { get; set; }
+    public long QueueArticles { get; set; }
     public bool ClientArticlesFinalized { get; set; }
     public long Misses { get; set; }
     public long Errors { get; set; }
     public int ActiveReadsMax { get; set; }
+    public long PeakFetchBytesPerSec { get; set; }
 }

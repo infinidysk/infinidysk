@@ -19,6 +19,7 @@ namespace NzbWebDAV.Services.Metrics;
 public sealed class ProviderBytesTracker
 {
     private const long OneMinute = 60_000;
+    private static readonly TimeSpan MinSampleWindow = TimeSpan.FromMilliseconds(900);
 
     private readonly ConcurrentDictionary<(long Minute, string ProviderKey), long> _buckets = new();
     private readonly ConcurrentDictionary<string, long> _lifetime = new();
@@ -29,6 +30,14 @@ public sealed class ProviderBytesTracker
     private readonly ConcurrentDictionary<string, long> _speedRecordedAt = new();
     private readonly Func<long> _timestampProvider;
     private const double SpeedEwmaAlpha = 0.3;
+
+    // minute -> highest sampled aggregate fetch rate (bytes/sec); drained by the rollup service.
+    private readonly ConcurrentDictionary<long, long> _peakByMinute = new();
+    private readonly Lock _sampleGate = new();
+    internal SemaphoreSlim PeakPersistenceGate { get; } = new(1, 1);
+    private long _lastSampleBytes;
+    private long _lastSampleTimestamp;
+    private bool _hasSample;
 
     private sealed class QuotaCounter(long resetAt, long bytesUsed)
     {
@@ -82,6 +91,66 @@ public sealed class ProviderBytesTracker
     public long LifetimeAll => Interlocked.Read(ref _lifetimeAll);
 
     public IReadOnlyDictionary<string, long> LifetimeByProvider => _lifetime;
+
+    /// <summary>
+    /// Records one aggregate fetch-rate sample by differencing <see cref="LifetimeAll"/>
+    /// against the previous call. Called at ~1 Hz off the hot path; keeps only the
+    /// per-minute maximum so nothing is stored per sample.
+    /// </summary>
+    public void SampleFetchRate(long nowMs)
+    {
+        var timestamp = _timestampProvider();
+        lock (_sampleGate)
+        {
+            var bytes = LifetimeAll;
+            if (_hasSample)
+            {
+                var delta = bytes - _lastSampleBytes;
+                var elapsed = Stopwatch.GetElapsedTime(_lastSampleTimestamp, timestamp);
+                // Negative delta means the counters were reset between samples; rebaseline only.
+                if (delta > 0 && elapsed < MinSampleWindow)
+                    return;
+                if (delta > 0 && elapsed > TimeSpan.Zero)
+                {
+                    var rate = (long)Math.Round(delta / elapsed.TotalSeconds);
+                    var minute = nowMs - (nowMs % OneMinute);
+                    _peakByMinute.AddOrUpdate(minute, rate, (_, prev) => Math.Max(prev, rate));
+                }
+            }
+
+            _lastSampleBytes = bytes;
+            _lastSampleTimestamp = timestamp;
+            _hasSample = true;
+        }
+    }
+
+    /// <summary>Highest sampled rate in any not-yet-drained minute at or after <paramref name="minuteInclusive"/>.</summary>
+    public long PendingPeakSince(long minuteInclusive)
+    {
+        long peak = 0;
+        foreach (var pair in _peakByMinute.Where(pair => pair.Key >= minuteInclusive && pair.Value > peak))
+            peak = pair.Value;
+        return peak;
+    }
+
+    /// <summary>Pop per-minute peak rates strictly older than <paramref name="cutoffMinute"/>.</summary>
+    public List<(long Minute, long PeakBytesPerSec)> DrainClosedPeaks(long cutoffMinute)
+    {
+        var drained = new List<(long, long)>();
+        foreach (var minute in _peakByMinute.Keys.Where(minute => minute < cutoffMinute))
+        {
+            if (_peakByMinute.TryRemove(minute, out var peak))
+                drained.Add((minute, peak));
+        }
+        drained.Sort((a, b) => a.Item1.CompareTo(b.Item1));
+        return drained;
+    }
+
+    internal void RestorePeaks(IEnumerable<(long Minute, long PeakBytesPerSec)> peaks)
+    {
+        foreach (var (minute, peak) in peaks)
+            _peakByMinute.AddOrUpdate(minute, peak, (_, current) => Math.Max(current, peak));
+    }
 
     public void InitializeQuota(string providerKey, long resetAt, long bytesUsed)
     {
@@ -156,9 +225,16 @@ public sealed class ProviderBytesTracker
     /// </summary>
     public void ResetCounters()
     {
-        _buckets.Clear();
-        _lifetime.Clear();
-        Interlocked.Exchange(ref _lifetimeAll, 0);
+        lock (_sampleGate)
+        {
+            _buckets.Clear();
+            _lifetime.Clear();
+            Interlocked.Exchange(ref _lifetimeAll, 0);
+            _peakByMinute.Clear();
+            _lastSampleBytes = LifetimeAll;
+            _lastSampleTimestamp = _timestampProvider();
+            _hasSample = true;
+        }
     }
 
     /// <summary>
@@ -168,11 +244,16 @@ public sealed class ProviderBytesTracker
     public void ResetProvider(string providerKey)
     {
         if (string.IsNullOrEmpty(providerKey)) return;
-        foreach (var key in _buckets.Keys)
-            if (key.ProviderKey == providerKey)
+        lock (_sampleGate)
+        {
+            foreach (var key in _buckets.Keys.Where(key => key.ProviderKey == providerKey))
                 _buckets.TryRemove(key, out _);
-        if (_lifetime.TryRemove(providerKey, out var removed))
-            Interlocked.Add(ref _lifetimeAll, -removed);
+            if (_lifetime.TryRemove(providerKey, out var removed))
+                Interlocked.Add(ref _lifetimeAll, -removed);
+            _lastSampleBytes = LifetimeAll;
+            _lastSampleTimestamp = _timestampProvider();
+            _hasSample = true;
+        }
     }
 
     private static long NowMinute()

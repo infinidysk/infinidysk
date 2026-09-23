@@ -2986,8 +2986,6 @@ public class UsenetClientDeterministicTests
         bool decoded, bool batched, bool previousFailure)
     {
         var continueBody = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        // Post-dispose payload exceeds the 8 KiB flush threshold so the pump discovers
-        // the completed reader, switches to drain mode, then overflows the drain limit.
         var postDisposeBurst = string.Concat(Enumerable.Repeat(new string('x', 126) + "\r\n", 700));
         await using var server = new ScriptedNntpServer(async (command, writer, _) =>
         {
@@ -3001,6 +2999,10 @@ public class UsenetClientDeterministicTests
                 : "222 body follows\r\ninitial\r\n");
             await continueBody.Task;
             await writer.WriteAsync(postDisposeBurst);
+            if (decoded)
+            {
+                await writer.WriteAsync("=yend size=88200\r\n");
+            }
             await writer.WriteAsync("overflow-after-drain-switch\r\n.\r\n");
         });
         await using var client = new UsenetClient(new UsenetClientOptions

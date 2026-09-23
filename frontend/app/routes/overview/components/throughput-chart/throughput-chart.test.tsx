@@ -3,12 +3,19 @@ import { cleanup, fireEvent, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ThroughputPoint } from "~/clients/backend-client.server";
+import { formatBytes } from "../../utils/format";
 import { ThroughputChart } from "./throughput-chart";
 
-const point = (articles: number, clientArticles = 0, errors = 0): ThroughputPoint => ({
+const point = (
+  articles: number,
+  clientArticles = 0,
+  errors = 0,
+  queueArticles = 0,
+): ThroughputPoint => ({
   bucket: 0,
   articles,
   clientArticles,
+  queueArticles,
   misses: 0,
   errors,
   bytesServed: 0,
@@ -21,9 +28,11 @@ function renderMarkup(points: ThroughputPoint[], totalErrors = 0) {
       points={points}
       totalArticles={points.reduce((sum, item) => sum + item.articles, 0)}
       totalClientArticles={points.reduce((sum, item) => sum + item.clientArticles, 0)}
+      totalQueueArticles={points.reduce((sum, item) => sum + item.queueArticles, 0)}
       totalMisses={0}
       totalErrors={totalErrors}
       totalBytesServed={0}
+      totalBytesFetched={0}
       bucketSizeMs={60_000}
       window="24h"
     />,
@@ -45,6 +54,7 @@ describe("ThroughputChart", () => {
     const markup = renderMarkup([point(0, 0, 1), point(0)], 1);
 
     expect(markup).not.toContain('data-series="client-articles"');
+    expect(markup).not.toContain('data-series="queue-articles"');
     expect(markup).not.toContain('data-series="app-articles"');
     expect(markup).toContain('data-series="errors"');
   });
@@ -55,12 +65,40 @@ describe("ThroughputChart", () => {
     expect(markup).toContain('data-series="client-articles"');
   });
 
-  it("uses a solid blue swatch for app reads in the legend", () => {
+  it("uses a solid blue swatch for maintenance reads in the legend", () => {
     const markup = renderMarkup([point(3, 1)]);
 
-    expect(markup).toContain("App attempts · 2");
+    expect(markup).toContain("Maintenance attempts · 2");
     expect(markup).toContain("border-t-2 border-info");
     expect(markup).not.toContain("border-dashed");
+  });
+
+  it("splits import attempts into a violet series distinct from client and maintenance", () => {
+    // 10 attempts: 3 client, 5 import, 2 residual maintenance.
+    const markup = renderMarkup([point(0), point(10, 3, 0, 5)]);
+
+    expect(markup).toContain('data-series="client-articles"');
+    expect(markup).toContain('data-series="queue-articles"');
+    expect(markup).toContain('data-series="app-articles"');
+    expect(markup).toContain("Client attempts · 3");
+    expect(markup).toContain("Import attempts · 5");
+    expect(markup).toContain("Maintenance attempts · 2");
+    expect(markup).toContain("bg-secondary");
+    expect(markup).toContain("3 client attempts, 5 import attempts, 2 maintenance attempts");
+  });
+
+  it("treats buckets recorded before import tracking as maintenance and clamps overlaps", () => {
+    // Legacy bucket: queueArticles missing/zero → everything non-client stays blue.
+    const legacy = renderMarkup([point(4, 1)]);
+    expect(legacy).not.toContain('data-series="queue-articles"');
+    expect(legacy).toContain("Import attempts · 0");
+    expect(legacy).toContain("Maintenance attempts · 3");
+
+    // Over-reported import count is clamped to what is left after client attempts.
+    const clamped = renderMarkup([point(4, 3, 0, 9)]);
+    expect(clamped).toContain("Import attempts · 1");
+    expect(clamped).toContain("Maintenance attempts · 0");
+    expect(clamped).not.toContain('data-series="app-articles"');
   });
 
   it("labels the y-axis with the error-dominant coordinate scale", () => {
@@ -83,9 +121,11 @@ describe("ThroughputChart", () => {
         ]}
         totalArticles={10}
         totalClientArticles={10}
+        totalQueueArticles={0}
         totalMisses={0}
         totalErrors={0}
         totalBytesServed={0}
+        totalBytesFetched={60 * 1024 * 1024}
         bucketSizeMs={60_000}
         window="24h"
       />,
@@ -94,7 +134,7 @@ describe("ThroughputChart", () => {
     expect(markup).toContain("Client attempts · 10");
     expect(markup).toContain("Peak download");
     expect(markup).not.toContain("bg-base-content/40");
-    expect(markup).not.toContain("App attempts · 0 · peak");
+    expect(markup).not.toContain("Maintenance attempts · 0 · peak");
   });
 
   it("skips idle stretches but anchors each run to leading and trailing zeros", () => {
@@ -129,9 +169,11 @@ describe("ThroughputChart", () => {
         points={points}
         totalArticles={11}
         totalClientArticles={0}
+        totalQueueArticles={0}
         totalMisses={1}
         totalErrors={2}
         totalBytesServed={100}
+        totalBytesFetched={50}
         bucketSizeMs={60_000}
         window="24h"
       />,
@@ -155,9 +197,11 @@ describe("ThroughputChart", () => {
         points={updated}
         totalArticles={15}
         totalClientArticles={0}
+        totalQueueArticles={0}
         totalMisses={1}
         totalErrors={4}
         totalBytesServed={100}
+        totalBytesFetched={50}
         bucketSizeMs={60_000}
         window="24h"
       />,
@@ -176,9 +220,11 @@ describe("ThroughputChart", () => {
         points={points}
         totalArticles={11}
         totalClientArticles={0}
+        totalQueueArticles={0}
         totalMisses={0}
         totalErrors={2}
         totalBytesServed={0}
+        totalBytesFetched={0}
         bucketSizeMs={60_000}
         window="24h"
       />,
@@ -199,9 +245,11 @@ describe("ThroughputChart", () => {
         points={shifted}
         totalArticles={12}
         totalClientArticles={0}
+        totalQueueArticles={0}
         totalMisses={0}
         totalErrors={2}
         totalBytesServed={0}
+        totalBytesFetched={0}
         bucketSizeMs={60_000}
         window="24h"
       />,
@@ -227,9 +275,11 @@ describe("ThroughputChart", () => {
           points={[]}
           totalArticles={articles}
           totalClientArticles={0}
+          totalQueueArticles={0}
           totalMisses={misses}
           totalErrors={errors}
           totalBytesServed={0}
+          totalBytesFetched={0}
           bucketSizeMs={60_000}
           window="24h"
         />,
@@ -243,7 +293,7 @@ describe("ThroughputChart", () => {
       expect(queryByText("Misses")).toBeNull();
       expect(queryByText("Articles")).toBeNull();
       fireEvent.focus(getByText("Peak download").parentElement!);
-      expect(getByText(/Highest average Usenet download rate/).getAttribute("aria-hidden")).toBe(
+      expect(getByText(/Highest 1-second Usenet download rate/).getAttribute("aria-hidden")).toBe(
         "false",
       );
     },
@@ -260,9 +310,11 @@ describe("ThroughputChart", () => {
           ]}
           totalArticles={8}
           totalClientArticles={0}
+          totalQueueArticles={0}
           totalMisses={0}
           totalErrors={0}
           totalBytesServed={0}
+          totalBytesFetched={0}
           bucketSizeMs={bucketSizeMs}
           window={bucketSizeMs === 60_000 ? "24h" : bucketSizeMs === 3_600_000 ? "7d" : "all"}
         />,
@@ -271,4 +323,76 @@ describe("ThroughputChart", () => {
       expect(getByText("Peak download").parentElement?.textContent).toBe("Peak download2.0 MB/s");
     },
   );
+
+  it.each([60_000, 3_600_000, 86_400_000])(
+    "prefers the sampled 1-second peak over bucket averages for %d ms buckets",
+    (bucketSizeMs) => {
+      const { getByText } = render(
+        <ThroughputChart
+          points={[
+            { ...point(3), bytesFetched: (1_000_000 * bucketSizeMs) / 1000 },
+            { ...point(5), bucket: bucketSizeMs, bytesFetched: (2_000_000 * bucketSizeMs) / 1000 },
+          ]}
+          totalArticles={8}
+          totalClientArticles={0}
+          totalQueueArticles={0}
+          totalMisses={0}
+          totalErrors={0}
+          totalBytesServed={0}
+          totalBytesFetched={0}
+          bucketSizeMs={bucketSizeMs}
+          peakFetchBytesPerSec={109_000_000}
+          window={bucketSizeMs === 60_000 ? "24h" : bucketSizeMs === 3_600_000 ? "7d" : "all"}
+        />,
+      );
+      expect(getByText("Peak download").parentElement?.textContent).toBe("Peak download109 MB/s");
+    },
+  );
+
+  it("falls back to the bucket average when the sampled peak is lower", () => {
+    const { getByText } = render(
+      <ThroughputChart
+        points={[{ ...point(3), bytesFetched: 2_000_000 * 60 }]}
+        totalArticles={3}
+        totalClientArticles={0}
+        totalQueueArticles={0}
+        totalMisses={0}
+        totalErrors={0}
+        totalBytesServed={0}
+        totalBytesFetched={0}
+        bucketSizeMs={60_000}
+        peakFetchBytesPerSec={1_000_000}
+        window="24h"
+      />,
+    );
+    expect(getByText("Peak download").parentElement?.textContent).toBe("Peak download2.0 MB/s");
+  });
+
+  it("shows provider bytes fetched separately from bytes served", () => {
+    const { getByText } = render(
+      <ThroughputChart
+        points={[]}
+        totalArticles={0}
+        totalClientArticles={0}
+        totalQueueArticles={0}
+        totalMisses={0}
+        totalErrors={0}
+        totalBytesServed={1_000_000_000}
+        totalBytesFetched={2_500_000_000}
+        bucketSizeMs={60_000}
+        window="24h"
+      />,
+    );
+
+    expect(getByText("Served").parentElement?.textContent).toBe(
+      `Served${formatBytes(1_000_000_000)}`,
+    );
+    expect(getByText("Fetched").parentElement?.textContent).toBe(
+      `Fetched${formatBytes(2_500_000_000)}`,
+    );
+    fireEvent.focus(getByText("Fetched").parentElement!);
+    expect(getByText(/including streaming, health checks/).getAttribute("aria-hidden")).toBe(
+      "false",
+    );
+  });
 });
