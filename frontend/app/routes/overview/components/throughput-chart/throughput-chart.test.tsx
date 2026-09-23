@@ -84,7 +84,7 @@ describe("ThroughputChart", () => {
         window="24h"
       />,
     );
-    const imports = getByRole("button", { name: "Import attempts · 2" });
+    const imports = getByRole("button", { name: "Imports · 2" });
     const originalPath = container
       .querySelector('[data-series="queue-articles"]')
       ?.getAttribute("d");
@@ -103,7 +103,7 @@ describe("ThroughputChart", () => {
     );
     expect(getByText("Peak import attempts 2 / min")).toBeTruthy();
     expect(getByText("Successful reads").parentElement?.textContent).toContain("10,012");
-    fireEvent.mouseEnter(getByRole("button", { name: "Client attempts · 10" }));
+    fireEvent.mouseEnter(getByRole("button", { name: "WebDAV Clients · 10" }));
     expect(container.querySelectorAll("[data-series]")).toHaveLength(1);
     expect(getByText("Peak import attempts 2 / min")).toBeTruthy();
     fireEvent.click(imports);
@@ -146,7 +146,7 @@ describe("ThroughputChart", () => {
     await user.keyboard("{ArrowLeft}");
     expect(status?.textContent).toContain("8 client attempts");
     await user.tab();
-    const client = getByRole("button", { name: "Client attempts · 11" });
+    const client = getByRole("button", { name: "WebDAV Clients · 11" });
     expect(document.activeElement).toBe(client);
     expect(status?.textContent).toBe("");
     await user.keyboard("{Enter}");
@@ -189,7 +189,7 @@ describe("ThroughputChart", () => {
       })),
     );
     const { container, getByRole } = render(<ThroughputChart {...props} />);
-    const client = getByRole("button", { name: "Client attempts · 8" });
+    const client = getByRole("button", { name: "WebDAV Clients · 8" });
     expect(container.querySelector("[data-area-series]")).toBeNull();
     fireEvent.mouseEnter(client);
     const area = container.querySelector('[data-area-series="client-articles"]');
@@ -224,7 +224,7 @@ describe("ThroughputChart", () => {
     expect(container.querySelector('[data-series="errors"]')?.getAttribute("d")).toMatch(
       /^M400\.0,/,
     );
-    fireEvent.click(getByRole("button", { name: "Import attempts · 2" }));
+    fireEvent.click(getByRole("button", { name: "Imports · 2" }));
     fireEvent.focus(getByRole("img"));
     expect(container.querySelectorAll("[data-marker-series]")).toHaveLength(1);
     expect(
@@ -243,7 +243,7 @@ describe("ThroughputChart", () => {
     const { container, getByRole, getByText } = render(
       <ThroughputChart {...chartProps([point(3, 3, 10)])} />,
     );
-    fireEvent.click(getByRole("button", { name: "Import attempts · 0" }));
+    fireEvent.click(getByRole("button", { name: "Imports · 0" }));
     expect(container.querySelectorAll("[data-series]")).toHaveLength(0);
     expect(container.querySelector("[data-area-series]")).toBeNull();
     expect(getByText("Peak import attempts 0 / min")).toBeTruthy();
@@ -254,7 +254,7 @@ describe("ThroughputChart", () => {
       "400.0,6.0",
     );
     expect(getByText("Peak errors 10 / min")).toBeTruthy();
-    expect(getByRole("button", { name: "Import attempts · 0" }).getAttribute("aria-pressed")).toBe(
+    expect(getByRole("button", { name: "Imports · 0" }).getAttribute("aria-pressed")).toBe(
       "false",
     );
   });
@@ -262,16 +262,16 @@ describe("ThroughputChart", () => {
   it("preserves isolation through polling and resets it when the time window changes", () => {
     const props = chartProps([{ ...point(12, 0, 0, 2), bucket: 60000 }]);
     const { container, getByRole, getByText, rerender } = render(<ThroughputChart {...props} />);
-    fireEvent.click(getByRole("button", { name: "Import attempts · 2" }));
+    fireEvent.click(getByRole("button", { name: "Imports · 2" }));
     const updated = chartProps([{ ...point(23, 0, 0, 3), bucket: 0 }, ...props.points]);
     rerender(<ThroughputChart {...updated} />);
-    expect(getByRole("button", { name: "Import attempts · 5" }).getAttribute("aria-pressed")).toBe(
+    expect(getByRole("button", { name: "Imports · 5" }).getAttribute("aria-pressed")).toBe(
       "true",
     );
     expect(getByText("Peak import attempts 3 / min")).toBeTruthy();
     expect(container.querySelectorAll("[data-series]")).toHaveLength(1);
     rerender(<ThroughputChart {...updated} window="1h" />);
-    expect(getByRole("button", { name: "Import attempts · 5" }).getAttribute("aria-pressed")).toBe(
+    expect(getByRole("button", { name: "Imports · 5" }).getAttribute("aria-pressed")).toBe(
       "false",
     );
     expect(container.querySelectorAll("[data-series]")).toHaveLength(2);
@@ -299,7 +299,7 @@ describe("ThroughputChart", () => {
   it("uses a solid blue swatch for maintenance reads in the legend", () => {
     const markup = renderMarkup([point(3, 1)]);
 
-    expect(markup).toContain("Maintenance attempts · 2");
+    expect(markup).toContain("Maintenance · 2");
     expect(markup).toContain("border-t-2 border-info");
     expect(markup).not.toContain("border-dashed");
   });
@@ -311,9 +311,9 @@ describe("ThroughputChart", () => {
     expect(markup).toContain('data-series="client-articles"');
     expect(markup).toContain('data-series="queue-articles"');
     expect(markup).toContain('data-series="app-articles"');
-    expect(markup).toContain("Client attempts · 3");
-    expect(markup).toContain("Import attempts · 5");
-    expect(markup).toContain("Maintenance attempts · 2");
+    expect(markup).toContain("WebDAV Clients · 3");
+    expect(markup).toContain("Imports · 5");
+    expect(markup).toContain("Maintenance · 2");
     expect(markup).toContain("bg-secondary");
     expect(markup).toContain("3 client attempts, 5 import attempts, 2 maintenance attempts");
   });
@@ -322,13 +322,13 @@ describe("ThroughputChart", () => {
     // Legacy bucket: queueArticles missing/zero → everything non-client stays blue.
     const legacy = renderMarkup([point(4, 1)]);
     expect(legacy).not.toContain('data-series="queue-articles"');
-    expect(legacy).toContain("Import attempts · 0");
-    expect(legacy).toContain("Maintenance attempts · 3");
+    expect(legacy).toContain("Imports · 0");
+    expect(legacy).toContain("Maintenance · 3");
 
     // Over-reported import count is clamped to what is left after client attempts.
     const clamped = renderMarkup([point(4, 3, 0, 9)]);
-    expect(clamped).toContain("Import attempts · 1");
-    expect(clamped).toContain("Maintenance attempts · 0");
+    expect(clamped).toContain("Imports · 1");
+    expect(clamped).toContain("Maintenance · 0");
     expect(clamped).not.toContain('data-series="app-articles"');
   });
 
@@ -362,10 +362,10 @@ describe("ThroughputChart", () => {
       />,
     );
 
-    expect(markup).toContain("Client attempts · 10");
+    expect(markup).toContain("WebDAV Clients · 10");
     expect(markup).toContain("Peak download");
     expect(markup).not.toContain("bg-base-content/40");
-    expect(markup).not.toContain("Maintenance attempts · 0 · peak");
+    expect(markup).not.toContain("Maintenance · 0 · peak");
   });
 
   it("skips idle stretches but anchors each run to leading and trailing zeros", () => {

@@ -508,6 +508,7 @@ export function ThroughputChart({
                   <button
                     key={item.id}
                     type="button"
+                    aria-label={`${item.id === "client-articles" ? "WebDAV Clients" : item.id === "queue-articles" ? "Imports" : item.id === "app-articles" ? "Maintenance" : item.label}${item.id !== "errors" ? ` · ${formatNumber(item.total)}` : ""}`}
                     aria-pressed={isolatedSeries === item.id}
                     title={
                       isolatedSeries === item.id
@@ -528,7 +529,13 @@ export function ThroughputChart({
                       aria-hidden="true"
                       className={`inline-block h-0.5 w-2.5 shrink-0 ${item.swatch}`}
                     />
-                    {item.label}
+                    {item.id === "client-articles"
+                      ? "WebDAV Clients"
+                      : item.id === "queue-articles"
+                        ? "Imports"
+                        : item.id === "app-articles"
+                          ? "Maintenance"
+                          : item.label}
                     {item.id !== "errors" ? ` · ${formatNumber(item.total)}` : ""}
                   </button>
                 ))}
