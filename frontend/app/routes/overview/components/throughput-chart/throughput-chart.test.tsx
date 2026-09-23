@@ -276,7 +276,6 @@ describe("ThroughputChart", () => {
           totalArticles={articles}
           totalClientArticles={0}
           totalQueueArticles={0}
-          totalQueueArticles={0}
           totalMisses={misses}
           totalErrors={errors}
           totalBytesServed={0}
@@ -311,7 +310,6 @@ describe("ThroughputChart", () => {
           ]}
           totalArticles={8}
           totalClientArticles={0}
-          totalQueueArticles={0}
           totalQueueArticles={0}
           totalMisses={0}
           totalErrors={0}

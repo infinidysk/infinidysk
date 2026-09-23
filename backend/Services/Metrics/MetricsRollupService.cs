@@ -181,7 +181,7 @@ public class MetricsRollupService(
                 0 AS ActiveReadsMax
             ON CONFLICT(Minute) DO UPDATE SET
                 BytesServed  = excluded.BytesServed,
-                Articles     = excluded.Articles,
+                Articles     = MAX(ThroughputMinutes.Articles, excluded.Articles),
                 ClientArticles = MAX(ThroughputMinutes.ClientArticles, excluded.ClientArticles),
                 QueueArticles = MAX(ThroughputMinutes.QueueArticles, excluded.QueueArticles),
                 ClientArticlesFinalized = excluded.ClientArticlesFinalized,
@@ -217,7 +217,7 @@ public class MetricsRollupService(
             WHERE At >= {0} AND At < {1}
             GROUP BY Provider
             ON CONFLICT(Minute, Provider) DO UPDATE SET
-                Articles      = excluded.Articles,
+                Articles      = MAX(ProviderMinutes.Articles, excluded.Articles),
                 ClientArticles = MAX(ProviderMinutes.ClientArticles, excluded.ClientArticles),
                 QueueArticles = MAX(ProviderMinutes.QueueArticles, excluded.QueueArticles),
                 ClientArticlesFinalized = excluded.ClientArticlesFinalized,

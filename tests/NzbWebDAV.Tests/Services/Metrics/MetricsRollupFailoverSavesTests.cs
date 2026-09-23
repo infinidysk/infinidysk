@@ -212,6 +212,8 @@ public sealed class MetricsRollupFailoverSavesTests
 
             throughput = await context.ThroughputMinutes.AsNoTracking().SingleAsync();
             provider = await context.ProviderMinutes.AsNoTracking().SingleAsync();
+            Assert.Equal(4, throughput.Articles);
+            Assert.Equal(4, provider.Articles);
             Assert.Equal(2, throughput.QueueArticles);
             Assert.Equal(2, provider.QueueArticles);
         });
