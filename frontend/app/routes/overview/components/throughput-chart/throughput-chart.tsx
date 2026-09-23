@@ -8,6 +8,7 @@ export type ThroughputChartProps = {
   points: ThroughputPoint[];
   totalArticles: number;
   totalClientArticles: number;
+  totalQueueArticles: number;
   totalMisses: number;
   totalErrors: number;
   totalBytesServed: number;
@@ -25,6 +26,7 @@ export function ThroughputChart({
   points,
   totalArticles,
   totalClientArticles,
+  totalQueueArticles,
   totalMisses,
   totalErrors,
   totalBytesServed,
@@ -47,11 +49,13 @@ export function ThroughputChart({
 
   const {
     clientArticlesPath,
+    queueArticlesPath,
     appArticlesPath,
     errorsPath,
     maxArticles,
     scaleMax,
     maxClientArticles,
+    maxQueueArticles,
     maxAppArticles,
     maxNetworkRate,
     xPercent,
@@ -60,11 +64,13 @@ export function ThroughputChart({
     if (points.length === 0) {
       return {
         clientArticlesPath: "",
+        queueArticlesPath: "",
         appArticlesPath: "",
         errorsPath: "",
         maxArticles: 0,
         scaleMax: 0,
         maxClientArticles: 0,
+        maxQueueArticles: 0,
         maxAppArticles: 0,
         maxNetworkRate: 0,
         xPercent: (_: number) => 0,
@@ -72,8 +78,9 @@ export function ThroughputChart({
       };
     }
     const peakClientArticles = Math.max(0, ...points.map(clientArticles));
+    const peakQueueArticles = Math.max(0, ...points.map(queueArticles));
     const peakAppArticles = Math.max(0, ...points.map(appArticles));
-    const peakArticles = Math.max(peakClientArticles, peakAppArticles);
+    const peakArticles = Math.max(peakClientArticles, peakQueueArticles, peakAppArticles);
     const scaleMax = Math.max(1, peakArticles, ...points.map((p) => p.errors));
     const maxRate = Math.max(0, ...points.map((p) => (p.bytesFetched ?? 0) / bucketSeconds));
     const xStep = points.length > 1 ? VB_W / (points.length - 1) : 0;
@@ -86,11 +93,13 @@ export function ThroughputChart({
 
     return {
       clientArticlesPath: buildArticlesSeriesPath(points, clientArticles, xStep, y),
+      queueArticlesPath: buildArticlesSeriesPath(points, queueArticles, xStep, y),
       appArticlesPath: buildArticlesSeriesPath(points, appArticles, xStep, y),
       errorsPath: buildSparseSeriesPath(points, (p) => p.errors, xStep, y),
       maxArticles: peakArticles,
       scaleMax,
       maxClientArticles: peakClientArticles,
+      maxQueueArticles: peakQueueArticles,
       maxAppArticles: peakAppArticles,
       maxNetworkRate: maxRate,
       xPercent: xPct,
@@ -164,7 +173,11 @@ export function ThroughputChart({
 
   const hasData = points.length > 0;
   const safeTotalClientArticles = Math.min(totalArticles, Math.max(0, totalClientArticles ?? 0));
-  const totalAppArticles = totalArticles - safeTotalClientArticles;
+  const safeTotalQueueArticles = Math.min(
+    totalArticles - safeTotalClientArticles,
+    Math.max(0, totalQueueArticles ?? 0),
+  );
+  const totalAppArticles = totalArticles - safeTotalClientArticles - safeTotalQueueArticles;
   const successfulReads = Math.max(0, totalArticles - totalMisses - totalErrors);
   const bucketLabel =
     window === "1h" || window === "24h" ? "min" : window === "all" ? "day" : "hour";
@@ -175,6 +188,7 @@ export function ThroughputChart({
     : "";
   const hoverNetworkRate = hover ? (hover.bytesFetched ?? 0) / bucketSeconds : 0;
   const hoverClientArticles = hover ? clientArticles(hover) : 0;
+  const hoverQueueArticles = hover ? queueArticles(hover) : 0;
   const hoverAppArticles = hover ? appArticles(hover) : 0;
   const tooltipPlacement =
     cursorIdx === null || points.length < 2
@@ -240,7 +254,7 @@ export function ThroughputChart({
                 className={styles.chartArea}
                 tabIndex={0}
                 role="img"
-                aria-label={`${formatNumber(safeTotalClientArticles)} client attempts, ${formatNumber(totalAppArticles)} app attempts, ${formatNumber(totalArticles)} attempts total, ${formatNumber(successfulReads)} successful reads, ${formatNumber(totalErrors)} errors, ${formatBytes(totalBytesServed)} served, ${formatBytes(totalBytesFetched)} fetched. Use arrow keys for bucket details.`}
+                aria-label={`${formatNumber(safeTotalClientArticles)} client attempts, ${formatNumber(safeTotalQueueArticles)} import attempts, ${formatNumber(totalAppArticles)} maintenance attempts, ${formatNumber(totalArticles)} attempts total, ${formatNumber(successfulReads)} successful reads, ${formatNumber(totalErrors)} errors, ${formatBytes(totalBytesServed)} served, ${formatBytes(totalBytesFetched)} fetched. Use arrow keys for bucket details.`}
                 aria-describedby="overview-throughput-keyboard-status"
                 onMouseMove={handleMouseMove}
                 onMouseLeave={handleMouseLeave}
@@ -282,6 +296,13 @@ export function ThroughputChart({
                       data-series="client-articles"
                     />
                   )}
+                  {maxQueueArticles > 0 && (
+                    <path
+                      d={queueArticlesPath}
+                      className={styles.lineQueue}
+                      data-series="queue-articles"
+                    />
+                  )}
                   {maxAppArticles > 0 && (
                     <path
                       d={appArticlesPath}
@@ -301,7 +322,7 @@ export function ThroughputChart({
                       className={`tooltip tooltip-open ${tooltipPlacement} ${styles.hoverTooltip}`}
                       style={{
                         left: `${xPercent(cursorIdx)}%`,
-                        top: `${yPercent(Math.max(hoverClientArticles, hoverAppArticles))}%`,
+                        top: `${yPercent(Math.max(hoverClientArticles, hoverQueueArticles, hoverAppArticles))}%`,
                       }}
                     >
                       <div className="tooltip-content">
@@ -310,7 +331,8 @@ export function ThroughputChart({
                             {formatBucketTime(hover.bucket, window)}
                           </div>
                           <div>{formatNumber(hoverClientArticles)} client attempts</div>
-                          <div>{formatNumber(hoverAppArticles)} app attempts</div>
+                          <div>{formatNumber(hoverQueueArticles)} import attempts</div>
+                          <div>{formatNumber(hoverAppArticles)} maintenance attempts</div>
                           <div>{formatNumber(hover.articles)} attempts total</div>
                           {hoverNetworkRate > 0 && (
                             <div>{formatBytes(hoverNetworkRate)}/s downloaded</div>
@@ -369,8 +391,12 @@ export function ThroughputChart({
                 Client attempts · {formatNumber(safeTotalClientArticles)}
               </span>
               <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-0.5 w-2.5 bg-secondary" />
+                Import attempts · {formatNumber(safeTotalQueueArticles)}
+              </span>
+              <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block w-2.5 border-t-2 border-info" />
-                App attempts · {formatNumber(totalAppArticles)}
+                Maintenance attempts · {formatNumber(totalAppArticles)}
               </span>
               {totalErrors > 0 && (
                 <span className="inline-flex items-center gap-1.5">
@@ -530,7 +556,8 @@ function describeThroughputBucket(
   const parts = [
     formatBucketTime(point.bucket, window),
     `${formatNumber(clientArticles(point))} client attempts`,
-    `${formatNumber(appArticles(point))} app attempts`,
+    `${formatNumber(queueArticles(point))} import attempts`,
+    `${formatNumber(appArticles(point))} maintenance attempts`,
     `${formatNumber(point.articles)} attempts total`,
   ];
   const rate = (point.bytesFetched ?? 0) / bucketSeconds;
@@ -545,8 +572,14 @@ function clientArticles(point: ThroughputPoint): number {
   return Math.min(point.articles, Math.max(0, point.clientArticles ?? 0));
 }
 
+/** Queue-import attempts, clamped so client + import never exceed the bucket total. */
+function queueArticles(point: ThroughputPoint): number {
+  return Math.min(point.articles - clientArticles(point), Math.max(0, point.queueArticles ?? 0));
+}
+
+/** Everything that is neither client nor import: health checks, repairs, other background work. */
 function appArticles(point: ThroughputPoint): number {
-  return Math.max(0, point.articles - clientArticles(point));
+  return Math.max(0, point.articles - clientArticles(point) - queueArticles(point));
 }
 
 function formatBucketTime(ms: number, window: OverviewWindow): string {

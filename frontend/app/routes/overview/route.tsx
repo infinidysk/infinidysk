@@ -398,6 +398,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
             points={stats.throughput}
             totalArticles={stats.totalArticles}
             totalClientArticles={stats.totalClientArticles}
+            totalQueueArticles={stats.totalQueueArticles}
             totalMisses={stats.totalMisses}
             totalErrors={stats.totalErrors}
             totalBytesServed={stats.sessions.totalBytesServed}

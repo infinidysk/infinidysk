@@ -1043,6 +1043,7 @@ export type OverviewStatsResponse = {
   throughputBucketSizeMs: number;
   totalArticles: number;
   totalClientArticles: number;
+  totalQueueArticles: number;
   totalMisses: number;
   totalErrors: number;
   totalBytesFetched: number;
@@ -1193,6 +1194,7 @@ export type ThroughputPoint = {
   bucket: number;
   articles: number;
   clientArticles: number;
+  queueArticles: number;
   misses: number;
   errors: number;
   bytesServed: number;
