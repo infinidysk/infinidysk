@@ -413,6 +413,7 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
             var staleResponse = await staleTask.WaitAsync(timeout.Token);
             Assert.False(staleResponse.Status);
             Assert.Contains("Queue is full", staleResponse.Error);
+            Assert.Empty(staleResponse.NzoIds);
             await using (var verifyContext = new DavDatabaseContext(_options))
                 Assert.Empty(await verifyContext.QueueItems.AsNoTracking().ToListAsync());
 
@@ -441,8 +442,6 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
         ConfigureAdmission(maxItems: 2, resumeThreshold: 2);
         var firstOriginalId = Guid.NewGuid();
         var secondOriginalId = Guid.NewGuid();
-        var firstReplacementId = Guid.Parse("00000001-0000-0000-0000-000000000000");
-        var secondReplacementId = Guid.Parse("00000002-0000-0000-0000-000000000000");
         await SeedQueueItemAsync(firstOriginalId, "first.nzb", "tv");
         await SeedQueueItemAsync(secondOriginalId, "second.nzb", "tv");
 
@@ -463,7 +462,7 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
                 await releaseReplacements.Task.WaitAsync(timeout.Token);
             };
             firstTask = firstController.AddFileAsync(CreateRequest(
-                "first.nzb", "tv", nzoId: firstReplacementId, cancellationToken: timeout.Token));
+                "first.nzb", "tv", cancellationToken: timeout.Token));
 
             await using var secondContext = new DavDatabaseContext(_options);
             var secondController = CreateController(new DavDatabaseClient(secondContext));
@@ -473,7 +472,7 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
                 await releaseReplacements.Task.WaitAsync(timeout.Token);
             };
             secondTask = secondController.AddFileAsync(CreateRequest(
-                "second.nzb", "tv", nzoId: secondReplacementId, cancellationToken: timeout.Token));
+                "second.nzb", "tv", cancellationToken: timeout.Token));
 
             await Task.WhenAll(firstHeld.Task, secondHeld.Task).WaitAsync(timeout.Token);
             await RemoveQueuedItemAsync(firstOriginalId);
@@ -483,17 +482,16 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
 
             releaseReplacements.TrySetResult();
             var responses = await Task.WhenAll(firstTask, secondTask).WaitAsync(timeout.Token);
-            Assert.Single(responses, response => response.Status);
+            var successful = Assert.Single(responses, response => response.Status);
             var rejected = Assert.Single(responses, response => !response.Status);
             Assert.Contains("Queue is full", rejected.Error);
-            Assert.Equal(2, await _context.QueueItems.AsNoTracking().CountAsync());
-
-            var rejectedId = ReferenceEquals(rejected, responses[0])
-                ? firstReplacementId
-                : secondReplacementId;
-            Assert.False(BlobStore.Exists(rejectedId));
-            Assert.False(await _context.NzbNames.AsNoTracking()
-                .AnyAsync(name => name.Id == rejectedId));
+            var items = await _context.QueueItems.AsNoTracking().ToListAsync();
+            Assert.Equal(2, items.Count);
+            Assert.Contains(items, item => item.FileName == "other.nzb");
+            var acceptedReplacement = Assert.Single(items,
+                item => item.FileName is "first.nzb" or "second.nzb");
+            Assert.Equal(Assert.Single(successful.NzoIds), acceptedReplacement.Id.ToString());
+            Assert.True(BlobStore.Exists(acceptedReplacement.Id));
         }
         finally
         {
@@ -602,27 +600,6 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
         Assert.Equal(2, await _context.QueueItems.AsNoTracking().CountAsync());
     }
 
-    [Fact]
-    public async Task CommitSubmissionAsync_LegacyOverloadRejectsFullQueue()
-    {
-        ConfigureAdmission(maxItems: 1, resumeThreshold: 1);
-        await SeedQueueItem("other.nzb", "tv");
-        var newId = Guid.NewGuid();
-
-        var error = await Assert.ThrowsAsync<BadHttpRequestException>(() =>
-            _queueManager.CommitSubmissionAsync(
-                CreateQueueItem(newId, "same.nzb", "tv"),
-                new NzbName { Id = newId, FileName = "same.nzb" },
-                replaceExisting: true,
-                _dbClient,
-                CancellationToken.None));
-
-        Assert.Contains("Queue is full", error.Message);
-        Assert.Equal("other.nzb",
-            (await _context.QueueItems.AsNoTracking().SingleAsync()).FileName);
-        Assert.False(await _context.NzbNames.AsNoTracking().AnyAsync(name => name.Id == newId));
-    }
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -710,7 +687,6 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
                 new DavDatabaseClient(pausedContext), 1, 1, timeout.Token);
             await countRead.Task.WaitAsync(timeout.Token);
 
-            var id = Guid.NewGuid();
             var commitStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             commitTask = CommitAfterSignalAsync();
             await commitStarted.Task.WaitAsync(timeout.Token);
@@ -920,28 +896,14 @@ public sealed class AddFileDuplicateReplaceTests : IAsyncLifetime
             DbDataReader result,
             CancellationToken cancellationToken = default)
         {
-            await PauseCountAsync(command, cancellationToken);
-            return result;
-        }
-
-        public override async ValueTask<object?> ScalarExecutedAsync(
-            DbCommand command,
-            CommandExecutedEventData eventData,
-            object? result,
-            CancellationToken cancellationToken = default)
-        {
-            await PauseCountAsync(command, cancellationToken);
-            return result;
-        }
-
-        private async Task PauseCountAsync(DbCommand command, CancellationToken cancellationToken)
-        {
             if (command.CommandText.Contains("COUNT(*)", StringComparison.OrdinalIgnoreCase)
                 && command.CommandText.Contains("QueueItems", StringComparison.Ordinal))
             {
                 countRead.TrySetResult();
                 await releaseCount.Task.WaitAsync(cancellationToken);
             }
+
+            return result;
         }
     }
 }

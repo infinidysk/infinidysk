@@ -550,25 +550,6 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds)
         QueueItem replacement,
         NzbName replacementName,
         bool replaceExisting,
-        DavDatabaseClient dbClient,
-        CancellationToken ct)
-    {
-        var result = await CommitSubmissionAsync(
-            replacement,
-            replacementName,
-            replaceExisting,
-            hasAdmissionReservation: false,
-            dbClient,
-            ct).ConfigureAwait(false);
-        if (result.Rejection is { } rejection)
-            throw new BadHttpRequestException(rejection.Error ?? "Queue is full.");
-        return result;
-    }
-
-    public async Task<QueueSubmissionCommitResult> CommitSubmissionAsync(
-        QueueItem replacement,
-        NzbName replacementName,
-        bool replaceExisting,
         bool hasAdmissionReservation,
         DavDatabaseClient dbClient,
         CancellationToken ct)
@@ -661,7 +642,7 @@ public record QueueSubmissionCommitResult(QueueItem Item, Guid[] RemovedIds)
 
                 if (requiresAdmission && fallbackAdmissionReservation is null)
                 {
-                    await transaction.RollbackAsync(ct).ConfigureAwait(false);
+                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                     return new QueueSubmissionCommitResult(replacement, [])
                     {
                         Rejection = NzbSubmissionService.CreateQueueFullResult(

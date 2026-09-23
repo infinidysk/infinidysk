@@ -53,12 +53,10 @@ public class NzbSubmissionService(
             if (maxItems > 0)
             {
                 var resumeThreshold = configManager.GetQueueResumeThreshold();
-#pragma warning disable CA2000 // reservation ownership transfers to the method-scoped using below; assignment and the null check happen first
                 var admission = await queueManager.TryReserveQueueSlotAsync(
                         dbClient, maxItems, resumeThreshold, request.CancellationToken)
                     .ConfigureAwait(false);
                 admissionReservation = admission.Reservation;
-#pragma warning restore CA2000
                 if (admissionReservation is null)
                     return CreateQueueFullResult(admission.CurrentCount, maxItems, resumeThreshold);
             }
@@ -96,6 +94,7 @@ public class NzbSubmissionService(
         QueueItem? queueItem;
         Guid[] removedIds = [];
         string? backupPath = null;
+        NzbSubmissionResult? rejection = null;
         try
         {
             var prepared = await NzbStreamUtil.OpenMaybeCompressedAsync(
@@ -187,13 +186,7 @@ public class NzbSubmissionService(
                 dbClient,
                 request.CancellationToken).ConfigureAwait(false);
 
-            if (commitResult.Rejection is { } rejection)
-            {
-                BlobStore.Delete(id);
-                TryDeleteBackupFile(backupPath);
-                return rejection;
-            }
-
+            rejection = commitResult.Rejection;
             removedIds = commitResult.RemovedIds;
         }
         catch
@@ -203,6 +196,13 @@ public class NzbSubmissionService(
             BlobStore.Delete(id);
             TryDeleteBackupFile(backupPath);
             throw;
+        }
+
+        if (rejection is not null)
+        {
+            BlobStore.Delete(id);
+            TryDeleteBackupFile(backupPath);
+            return rejection;
         }
 
         foreach (var removedId in removedIds)
