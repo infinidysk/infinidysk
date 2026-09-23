@@ -10,7 +10,8 @@ namespace NzbWebDAV.Clients.RadarrSonarr;
 public class ArrClient(string host, string apiKey)
 {
     internal static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
-    protected static readonly HttpClient HttpClient = new() { Timeout = RequestTimeout };
+    protected static readonly HttpClient HttpClient =
+        new(ArrHttpTransport.CreateHandler(), disposeHandler: true) { Timeout = RequestTimeout };
     protected virtual HttpClient Client => HttpClient;
 
     public string Host { get; } = host;
@@ -333,6 +334,15 @@ public class ArrClient(string host, string apiKey)
     private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         request.Headers.Add("X-Api-Key", ApiKey);
-        return await Client.SendAsync(request, ct).ConfigureAwait(false);
+        try
+        {
+            return await Client.SendAsync(request, ct).ConfigureAwait(false);
+        }
+        catch (TaskCanceledException e) when (!ct.IsCancellationRequested && e.InnerException is TimeoutException)
+        {
+            // HttpClient.Timeout surfaces as TaskCanceledException wrapping a TimeoutException.
+            var operation = $"{request.Method} {request.RequestUri?.AbsolutePath}";
+            throw new ArrRequestTimeoutException(operation, Host, Client.Timeout, e);
+        }
     }
 }
