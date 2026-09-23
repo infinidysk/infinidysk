@@ -48,6 +48,7 @@ public sealed class MetricsDbContext : DbContext
     public DbSet<ProviderHourly> ProviderHourly => Set<ProviderHourly>();
     public DbSet<FailoverMiss> FailoverMisses => Set<FailoverMiss>();
     public DbSet<FailoverHourly> FailoverHourly => Set<FailoverHourly>();
+    public DbSet<ThroughputHourly> ThroughputHourly => Set<ThroughputHourly>();
     public DbSet<CatalogueDaily> CatalogueDaily => Set<CatalogueDaily>();
     public DbSet<ProviderLifetimeTotal> ProviderLifetimeTotals => Set<ProviderLifetimeTotal>();
     public DbSet<ProviderQuotaUsage> ProviderQuotaUsage => Set<ProviderQuotaUsage>();
@@ -117,6 +118,7 @@ public sealed class MetricsDbContext : DbContext
             e.Property(x => x.Misses).IsRequired();
             e.Property(x => x.Errors).IsRequired();
             e.Property(x => x.ActiveReadsMax).IsRequired();
+            e.Property(x => x.PeakFetchBytesPerSec).IsRequired();
         });
 
         b.Entity<ProviderMinute>(e =>
@@ -176,6 +178,15 @@ public sealed class MetricsDbContext : DbContext
             e.Property(x => x.ToProvider).IsRequired().HasMaxLength(255);
             e.Property(x => x.Reason).HasConversion<int>().IsRequired();
             e.Property(x => x.Count).IsRequired();
+        });
+
+        b.Entity<ThroughputHourly>(e =>
+        {
+            e.ToTable("ThroughputHourly");
+            e.HasKey(x => x.Hour);
+
+            e.Property(x => x.Hour).ValueGeneratedNever();
+            e.Property(x => x.PeakFetchBytesPerSec).IsRequired();
         });
 
         b.Entity<CatalogueDaily>(e =>

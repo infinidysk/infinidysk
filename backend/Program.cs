@@ -434,6 +434,7 @@ public sealed partial class Program
                 .AddSingleton(providerBytesTracker)
                 .AddSingleton<ProviderLatencyTracker>()
                 .AddHostedService<MetricsRollupService>()
+                .AddHostedService<FetchPeakSamplerService>()
                 .AddSingleton(providerQuotaService)
                 .AddHostedService(sp => sp.GetRequiredService<ProviderQuotaService>())
                 .AddHostedService<MetricsRetentionService>()

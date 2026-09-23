@@ -30,6 +30,13 @@ public sealed class ProviderBytesTracker
     private readonly Func<long> _timestampProvider;
     private const double SpeedEwmaAlpha = 0.3;
 
+    // minute -> highest sampled aggregate fetch rate (bytes/sec); drained by the rollup service.
+    private readonly ConcurrentDictionary<long, long> _peakByMinute = new();
+    private readonly Lock _sampleGate = new();
+    private long _lastSampleBytes;
+    private long _lastSampleTimestamp;
+    private bool _hasSample;
+
     private sealed class QuotaCounter(long resetAt, long bytesUsed)
     {
         private readonly Lock _gate = new();
@@ -82,6 +89,60 @@ public sealed class ProviderBytesTracker
     public long LifetimeAll => Interlocked.Read(ref _lifetimeAll);
 
     public IReadOnlyDictionary<string, long> LifetimeByProvider => _lifetime;
+
+    /// <summary>
+    /// Records one aggregate fetch-rate sample by differencing <see cref="LifetimeAll"/>
+    /// against the previous call. Called at ~1 Hz off the hot path; keeps only the
+    /// per-minute maximum so nothing is stored per sample.
+    /// </summary>
+    public void SampleFetchRate(long nowMs)
+    {
+        var bytes = LifetimeAll;
+        var timestamp = _timestampProvider();
+        lock (_sampleGate)
+        {
+            if (_hasSample)
+            {
+                var delta = bytes - _lastSampleBytes;
+                var elapsed = Stopwatch.GetElapsedTime(_lastSampleTimestamp, timestamp);
+                // Negative delta means the counters were reset between samples; rebaseline only.
+                if (delta > 0 && elapsed > TimeSpan.Zero)
+                {
+                    var rate = (long)Math.Round(delta / elapsed.TotalSeconds);
+                    var minute = nowMs - (nowMs % OneMinute);
+                    _peakByMinute.AddOrUpdate(minute, rate, (_, prev) => Math.Max(prev, rate));
+                }
+            }
+
+            _lastSampleBytes = bytes;
+            _lastSampleTimestamp = timestamp;
+            _hasSample = true;
+        }
+    }
+
+    /// <summary>Highest sampled rate in any not-yet-drained minute at or after <paramref name="minuteInclusive"/>.</summary>
+    public long PendingPeakSince(long minuteInclusive)
+    {
+        long peak = 0;
+        foreach (var pair in _peakByMinute)
+            if (pair.Key >= minuteInclusive && pair.Value > peak)
+                peak = pair.Value;
+        return peak;
+    }
+
+    /// <summary>Pop per-minute peak rates strictly older than <paramref name="cutoffMinute"/>.</summary>
+    public List<(long Minute, long PeakBytesPerSec)> DrainClosedPeaks(long cutoffMinute)
+    {
+        var drained = new List<(long, long)>();
+        foreach (var minute in _peakByMinute.Keys)
+        {
+            if (minute >= cutoffMinute) continue;
+            if (_peakByMinute.TryRemove(minute, out var peak))
+                drained.Add((minute, peak));
+        }
+        drained.Sort((a, b) => a.Item1.CompareTo(b.Item1));
+        return drained;
+    }
 
     public void InitializeQuota(string providerKey, long resetAt, long bytesUsed)
     {
@@ -159,6 +220,8 @@ public sealed class ProviderBytesTracker
         _buckets.Clear();
         _lifetime.Clear();
         Interlocked.Exchange(ref _lifetimeAll, 0);
+        _peakByMinute.Clear();
+        lock (_sampleGate) _hasSample = false;
     }
 
     /// <summary>

@@ -67,6 +67,7 @@ public class GetOverviewStatsController(
         var tiles = new GetOverviewStatsResponse.LiveTiles();
         var throughput = new List<GetOverviewStatsResponse.ThroughputPoint>();
         long throughputBucketSizeMs = 0;
+        long peakFetchBytesPerSec = 0;
         var providers = new List<GetOverviewStatsResponse.ProviderRow>();
         long providerSpeedBucketSizeMs = 0;
         long providerSpeedWindowStartMs = 0;
@@ -109,6 +110,7 @@ public class GetOverviewStatsController(
             tiles = w.Tiles;
             throughput = w.Throughput;
             throughputBucketSizeMs = w.ThroughputBucketSizeMs;
+            peakFetchBytesPerSec = w.PeakFetchBytesPerSec;
             providers = w.Providers;
             providerSpeedBucketSizeMs = w.ProviderSpeedBucketSizeMs;
             providerSpeedWindowStartMs = w.ProviderSpeedWindowStartMs;
@@ -156,6 +158,7 @@ public class GetOverviewStatsController(
             Tiles = tiles,
             Throughput = throughput,
             ThroughputBucketSizeMs = throughputBucketSizeMs,
+            PeakFetchBytesPerSec = peakFetchBytesPerSec,
             TotalArticles = totalArticles,
             TotalClientArticles = totalClientArticles,
             TotalQueueArticles = totalQueueArticles,
@@ -185,6 +188,7 @@ public class GetOverviewStatsController(
         GetOverviewStatsResponse.LiveTiles Tiles,
         List<GetOverviewStatsResponse.ThroughputPoint> Throughput,
         long ThroughputBucketSizeMs,
+        long PeakFetchBytesPerSec,
         List<GetOverviewStatsResponse.ProviderRow> Providers,
         GetOverviewStatsResponse.SessionsBlock Sessions,
         GetOverviewStatsResponse.HeatmapBlock Heatmap,
@@ -275,10 +279,12 @@ public class GetOverviewStatsController(
         List<GetOverviewStatsResponse.ThroughputPoint> throughput;
         List<GetOverviewStatsResponse.ProviderRow> providers;
         long totalArticles, totalClientArticles, totalQueueArticles, totalMisses, totalErrors, totalBytesFetched;
+        long peakFetchBytesPerSec;
         List<ProviderLifetimeTotal> lifetimeTotals = [];
 
         if (useRollups)
         {
+            await using var metricsPeak = new MetricsDbContext();
             var hoursTask = metricsA.ProviderHourly
                 .Where(h => h.Hour >= windowStart)
                 .Select(h => new { h.Hour, h.Provider, h.Articles, h.ClientArticles, h.QueueArticles, h.BytesFetched, h.Misses, h.Errors, h.Retries, h.FailoverSaves, h.SumDurationMs })
@@ -290,10 +296,13 @@ public class GetOverviewStatsController(
             Task<List<ProviderLifetimeTotal>>? lifetimeTotalsTask = window == GetOverviewStatsRequest.OverviewWindow.AllTime
                 ? metricsA.ProviderLifetimeTotals.ToListAsync()
                 : null;
+            var hourlyPeakTask = metricsPeak.ThroughputHourly
+                .Where(h => h.Hour >= windowStart)
+                .MaxAsync(h => (long?)h.PeakFetchBytesPerSec);
 
             var rollupTasks = new List<Task>
             {
-                sessionsTask, heatmapTask, previousSavesTask, liveCountsTask, hoursTask, failoverEdgesTask,
+                sessionsTask, heatmapTask, previousSavesTask, liveCountsTask, hoursTask, failoverEdgesTask, hourlyPeakTask,
             };
             if (lifetimeTotalsTask is not null)
                 rollupTasks.Add(lifetimeTotalsTask);
@@ -305,6 +314,7 @@ public class GetOverviewStatsController(
             lifetimeTotals = lifetimeTotalsTask is not null
                 ? await lifetimeTotalsTask.ConfigureAwait(false)
                 : [];
+            peakFetchBytesPerSec = await hourlyPeakTask.ConfigureAwait(false) ?? 0;
 
             throughput = BuildThroughputFromHourly(
                 hours.Select(h => (h.Hour, h.Articles, h.ClientArticles, h.QueueArticles, h.Misses, h.Errors, h.BytesFetched)),
@@ -361,7 +371,7 @@ public class GetOverviewStatsController(
                 .ToListAsync();
             var throughputMinutesTask = metricsB.ThroughputMinutes
                 .Where(t => t.Minute >= windowStart)
-                .Select(t => new { t.Minute, t.Articles, t.ClientArticles, t.QueueArticles, t.Misses, t.Errors, t.BytesServed, t.BytesFetched })
+                .Select(t => new { t.Minute, t.Articles, t.ClientArticles, t.QueueArticles, t.Misses, t.Errors, t.BytesServed, t.BytesFetched, t.PeakFetchBytesPerSec })
                 .ToListAsync();
             var failoverMissesTask = metricsC.FailoverMisses
                 .Where(f => f.At >= windowStart)
@@ -380,6 +390,7 @@ public class GetOverviewStatsController(
             throughput = BuildThroughputFromMinutes(
                 throughputMinutes.Select(t => (t.Minute, t.Articles, t.ClientArticles, t.QueueArticles, t.Misses, t.Errors, t.BytesServed, t.BytesFetched)),
                 bucketSize);
+            peakFetchBytesPerSec = throughputMinutes.Count > 0 ? throughputMinutes.Max(t => t.PeakFetchBytesPerSec) : 0;
             providers = BuildProvidersFromMinutes(
                 minutes.Select(m => (m.Minute, m.Provider, m.Articles, m.BytesFetched, m.Misses, m.Errors, m.Retries, m.SumDurationMs)),
                 windowStart, window, labelsByMetricsKey, nowMs);
@@ -399,6 +410,9 @@ public class GetOverviewStatsController(
         var heatmap = await heatmapTask.ConfigureAwait(false);
         var previousSaves = await previousSavesTask.ConfigureAwait(false);
         var liveCounts = await liveCountsTask.ConfigureAwait(false);
+
+        // Minutes not yet flushed by the rollup tick still count toward the window peak.
+        peakFetchBytesPerSec = Math.Max(peakFetchBytesPerSec, providerBytesTracker.PendingPeakSince(windowStart));
 
         var readsSaved = sessionsRows.LongCount(s => s.FailoverSaves > 0);
         var failover = BuildFailover(
@@ -442,7 +456,7 @@ public class GetOverviewStatsController(
                         || (window == GetOverviewStatsRequest.OverviewWindow.AllTime
                             && lifetimeTotals.Count > 0);
         return new WindowSectionResult(
-            tiles, throughput, bucketSize, providers, sessionsBlock, heatmap, failover,
+            tiles, throughput, bucketSize, peakFetchBytesPerSec, providers, sessionsBlock, heatmap, failover,
             totalArticles, totalClientArticles, totalQueueArticles, totalMisses, totalErrors, totalBytesFetched,
             series.BucketSize, series.Start, series.End, truncated);
     }

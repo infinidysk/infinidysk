@@ -12,4 +12,5 @@ public class ThroughputMinute
     public long Misses { get; set; }
     public long Errors { get; set; }
     public int ActiveReadsMax { get; set; }
+    public long PeakFetchBytesPerSec { get; set; }
 }

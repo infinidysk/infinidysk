@@ -35,6 +35,7 @@ public static class OverviewStatsReset
         deleted += await db.ProviderHourly.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         deleted += await db.FailoverMisses.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         deleted += await db.FailoverHourly.ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        deleted += await db.ThroughputHourly.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         deleted += await db.CatalogueDaily.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         deleted += await db.ProviderLifetimeTotals.ExecuteDeleteAsync(ct).ConfigureAwait(false);
         return deleted;
