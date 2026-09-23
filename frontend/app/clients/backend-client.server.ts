@@ -1041,6 +1041,7 @@ export type OverviewStatsResponse = {
   };
   throughput: ThroughputPoint[];
   throughputBucketSizeMs: number;
+  peakFetchBytesPerSec?: number;
   totalArticles: number;
   totalClientArticles: number;
   totalQueueArticles: number;

@@ -14,6 +14,7 @@ export type ThroughputChartProps = {
   totalBytesServed: number;
   totalBytesFetched: number;
   bucketSizeMs: number;
+  peakFetchBytesPerSec?: number;
   window: OverviewWindow;
 };
 
@@ -32,6 +33,7 @@ export function ThroughputChart({
   totalBytesServed,
   totalBytesFetched,
   bucketSizeMs,
+  peakFetchBytesPerSec = 0,
   window,
 }: ThroughputChartProps) {
   const [hoverBucket, setHoverBucket] = useState<number | null>(null);
@@ -82,7 +84,11 @@ export function ThroughputChart({
     const peakAppArticles = Math.max(0, ...points.map(appArticles));
     const peakArticles = Math.max(peakClientArticles, peakQueueArticles, peakAppArticles);
     const scaleMax = Math.max(1, peakArticles, ...points.map((p) => p.errors));
-    const maxRate = Math.max(0, ...points.map((p) => (p.bytesFetched ?? 0) / bucketSeconds));
+    // Bucket averages only floor the peak for history recorded before 1-second sampling existed.
+    const maxRate = Math.max(
+      peakFetchBytesPerSec,
+      ...points.map((p) => (p.bytesFetched ?? 0) / bucketSeconds),
+    );
     const xStep = points.length > 1 ? VB_W / (points.length - 1) : 0;
     const innerH = VB_H - TOP_PAD - BOT_PAD;
     const y = (v: number) => VB_H - BOT_PAD - (v / scaleMax) * innerH;
@@ -105,7 +111,7 @@ export function ThroughputChart({
       xPercent: xPct,
       yPercent: yPct,
     };
-  }, [points, bucketSeconds]);
+  }, [points, bucketSeconds, peakFetchBytesPerSec]);
 
   const xTicks = useMemo(() => {
     if (points.length === 0) return [];
@@ -220,7 +226,7 @@ export function ThroughputChart({
             <Total
               label="Peak download"
               value={hasData ? `${formatBytes(maxNetworkRate)}/s` : "N/A"}
-              description="Highest average Usenet download rate among the displayed buckets, not an instantaneous peak. Each bucket's downloaded bytes are divided by its duration. Older folded all-time history is excluded."
+              description="Highest 1-second Usenet download rate sampled in this window. It does not shrink when you widen the time range. History recorded before peak sampling falls back to the highest bucket average."
             />
             <Total
               label="Errors"

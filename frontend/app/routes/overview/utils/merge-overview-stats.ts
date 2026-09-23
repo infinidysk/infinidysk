@@ -22,6 +22,7 @@ export const EMPTY_OVERVIEW_STATS: OverviewStatsResponse = {
   },
   throughput: [],
   throughputBucketSizeMs: 60_000,
+  peakFetchBytesPerSec: 0,
   totalArticles: 0,
   totalClientArticles: 0,
   totalQueueArticles: 0,
@@ -101,6 +102,7 @@ export function mergeOverviewStats(
     next.tiles = partial.tiles;
     next.throughput = partial.throughput;
     next.throughputBucketSizeMs = partial.throughputBucketSizeMs;
+    next.peakFetchBytesPerSec = partial.peakFetchBytesPerSec ?? 0;
     next.totalArticles = partial.totalArticles;
     next.totalClientArticles = partial.totalClientArticles ?? 0;
     next.totalQueueArticles = partial.totalQueueArticles ?? 0;

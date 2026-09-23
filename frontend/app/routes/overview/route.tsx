@@ -404,6 +404,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
             totalBytesServed={stats.sessions.totalBytesServed}
             totalBytesFetched={stats.totalBytesFetched}
             bucketSizeMs={stats.throughputBucketSizeMs}
+            peakFetchBytesPerSec={stats.peakFetchBytesPerSec ?? 0}
             window={window}
           />
         ) : (

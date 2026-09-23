@@ -293,7 +293,7 @@ describe("ThroughputChart", () => {
       expect(queryByText("Misses")).toBeNull();
       expect(queryByText("Articles")).toBeNull();
       fireEvent.focus(getByText("Peak download").parentElement!);
-      expect(getByText(/Highest average Usenet download rate/).getAttribute("aria-hidden")).toBe(
+      expect(getByText(/Highest 1-second Usenet download rate/).getAttribute("aria-hidden")).toBe(
         "false",
       );
     },
@@ -323,6 +323,50 @@ describe("ThroughputChart", () => {
       expect(getByText("Peak download").parentElement?.textContent).toBe("Peak download2.0 MB/s");
     },
   );
+
+  it.each([60_000, 3_600_000, 86_400_000])(
+    "prefers the sampled 1-second peak over bucket averages for %d ms buckets",
+    (bucketSizeMs) => {
+      const { getByText } = render(
+        <ThroughputChart
+          points={[
+            { ...point(3), bytesFetched: (1_000_000 * bucketSizeMs) / 1000 },
+            { ...point(5), bucket: bucketSizeMs, bytesFetched: (2_000_000 * bucketSizeMs) / 1000 },
+          ]}
+          totalArticles={8}
+          totalClientArticles={0}
+          totalQueueArticles={0}
+          totalMisses={0}
+          totalErrors={0}
+          totalBytesServed={0}
+          totalBytesFetched={0}
+          bucketSizeMs={bucketSizeMs}
+          peakFetchBytesPerSec={109_000_000}
+          window={bucketSizeMs === 60_000 ? "24h" : bucketSizeMs === 3_600_000 ? "7d" : "all"}
+        />,
+      );
+      expect(getByText("Peak download").parentElement?.textContent).toBe("Peak download109 MB/s");
+    },
+  );
+
+  it("falls back to the bucket average when the sampled peak is lower", () => {
+    const { getByText } = render(
+      <ThroughputChart
+        points={[{ ...point(3), bytesFetched: 2_000_000 * 60 }]}
+        totalArticles={3}
+        totalClientArticles={0}
+        totalQueueArticles={0}
+        totalMisses={0}
+        totalErrors={0}
+        totalBytesServed={0}
+        totalBytesFetched={0}
+        bucketSizeMs={60_000}
+        peakFetchBytesPerSec={1_000_000}
+        window="24h"
+      />,
+    );
+    expect(getByText("Peak download").parentElement?.textContent).toBe("Peak download2.0 MB/s");
+  });
 
   it("shows provider bytes fetched separately from bytes served", () => {
     const { getByText } = render(
