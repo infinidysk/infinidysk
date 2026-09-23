@@ -277,8 +277,9 @@ describe("native cache folder editor", () => {
 
     await userEvent.click(evict);
     expect(confirm).toHaveBeenCalledOnce();
-    expect(fetcher.mock.calls.some(([, init]) => init?.body?.includes('"operation":"evict"'))).toBe(
-      false,
+    expect(fetcher).not.toHaveBeenCalledWith(
+      expect.stringContaining("/api/native-cache/operations"),
+      expect.objectContaining({ method: "POST" }),
     );
 
     confirm.mockReturnValue(true);
