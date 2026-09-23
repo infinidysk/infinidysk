@@ -3,6 +3,7 @@ using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models;
 using NzbWebDAV.Services;
 using Serilog;
 using UsenetSharp.Streams;
@@ -23,6 +24,7 @@ public class DavMultipartFileStream : FastReadOnlyStream, ICacheReadEvidence
     private readonly string? _fileName;
     private readonly InFlightArticleBudget? _inFlightArticleBudget;
     private readonly long _length;
+    private readonly Dictionary<int, DavMultipartFile.FilePart> _nativeIndexedParts = [];
 
     private long _position;
     private CombinedStream? _innerStream;
@@ -280,8 +282,7 @@ public class DavMultipartFileStream : FastReadOnlyStream, ICacheReadEvidence
 
                 var partBudget = budget?.GetPartContribution(
                     part.FilePartByteRange.Count - extraOffset);
-                yield return Task.FromResult<System.IO.Stream>(
-                    OpenPart(part, extraOffset, i, partBudget, budget));
+                yield return OpenPartWithNativeIndexAsync(part, extraOffset, i, partBudget, budget, ct);
                 i++;
                 continue;
             }
@@ -297,6 +298,73 @@ public class DavMultipartFileStream : FastReadOnlyStream, ICacheReadEvidence
             }
 
             yield break;
+        }
+    }
+
+    private async Task<Stream> OpenPartWithNativeIndexAsync(
+        DavMultipartFile.FilePart part, long extraOffset, int partIndex,
+        long? readBudgetOverride, FiniteMultipartBudget? finiteBudget, CancellationToken ct)
+    {
+        if (NativeCacheReadContext.IsActive && part.SegmentByteRangesTrusted != true &&
+            part.VerificationProof is null)
+        {
+            if (!_nativeIndexedParts.TryGetValue(partIndex, out var indexed))
+            {
+                indexed = await TryBuildNativeIndexAsync(part, ct).ConfigureAwait(false) ?? part;
+                _nativeIndexedParts[partIndex] = indexed;
+            }
+            part = indexed;
+        }
+        return OpenPart(part, extraOffset, partIndex, readBudgetOverride, finiteBudget);
+    }
+
+    private async Task<DavMultipartFile.FilePart?> TryBuildNativeIndexAsync(
+        DavMultipartFile.FilePart part, CancellationToken ct)
+    {
+        var count = part.SegmentIds.Length;
+        var length = GetEffectivePartLength(part);
+        if (count == 0 || length <= 0) return null;
+        try
+        {
+            var first = await _usenetClient.GetYencHeadersAsync(part.SegmentIds[0], ct).ConfigureAwait(false);
+            if (first.PartOffset != 0 || first.PartSize <= 0) return null;
+            var stride = first.PartSize;
+            if (count > 2)
+            {
+                var second = await _usenetClient.GetYencHeadersAsync(part.SegmentIds[1], ct).ConfigureAwait(false);
+                if (second.PartOffset != stride || second.PartSize != stride) return null;
+            }
+            var tail = count == 1 ? first :
+                await _usenetClient.GetYencHeadersAsync(part.SegmentIds[^1], ct).ConfigureAwait(false);
+            var tailStart = checked(stride * (count - 1L));
+            if (tail.PartOffset != tailStart || tail.PartSize <= 0 ||
+                checked(tailStart + tail.PartSize) != length) return null;
+
+            // This is only a seek map. MultiSegmentStream checks each BODY's yEnc
+            // placement and CRC before Native Cache accepts any block.
+            var ranges = new LongRange[count];
+            for (var i = 0; i < count; i++)
+            {
+                var start = checked(stride * i);
+                ranges[i] = LongRange.FromStartAndSize(start, i == count - 1 ? tail.PartSize : stride);
+            }
+            return new DavMultipartFile.FilePart
+            {
+                SegmentIds = part.SegmentIds,
+                SegmentIdByteRange = part.SegmentIdByteRange,
+                FilePartByteRange = part.FilePartByteRange,
+                SegmentByteRanges = ranges,
+                SegmentByteRangesTrusted = true,
+                SegmentFallbackIds = part.SegmentFallbackIds,
+                IsSplitAfter = part.IsSplitAfter,
+                VerificationProof = part.VerificationProof,
+            };
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException and not OutOfMemoryException)
+        {
+            Log.Debug(exception, "Could not establish Native Cache segment geometry for {FileName}; using source playback without cache writes.",
+                _fileName ?? "unknown");
+            return null;
         }
     }
 
@@ -389,12 +457,12 @@ public class DavMultipartFileStream : FastReadOnlyStream, ICacheReadEvidence
         }
 
         var part = meta.FileParts[targetIndex];
-        return OpenPart(
+        return await OpenPartWithNativeIndexAsync(
             part,
             0,
             targetIndex,
             budget?.GetPartContribution(part.FilePartByteRange.Count),
-            budget);
+            budget, ct).ConfigureAwait(false);
     }
 
     private sealed class FiniteMultipartBudget(long remaining)

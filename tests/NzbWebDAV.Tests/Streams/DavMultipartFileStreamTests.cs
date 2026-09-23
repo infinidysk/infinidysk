@@ -54,6 +54,88 @@ public class DavMultipartFileStreamTests
         Assert.False(evidence.LastReadCacheable);
     }
 
+    [Fact]
+    public async Task NativeReads_ValidateLegacyUnindexedVolumeBeforeCaching()
+    {
+        using var native = new NativeCacheReadContext();
+        var bytes = new Dictionary<string, byte[]>
+        {
+            ["first"] = [1, 2, 3, 4],
+            ["next-1"] = [5, 6, 7, 8],
+            ["next-2"] = [9, 10, 11, 12],
+            ["next-3"] = [13, 14],
+        };
+        var ranges = new Dictionary<string, LongRange>
+        {
+            ["first"] = new(0, 4), ["next-1"] = new(0, 4),
+            ["next-2"] = new(4, 8), ["next-3"] = new(8, 10),
+        };
+        using var client = new FakeNntpClient(bytes, useCachedYencStreams: true, segmentRanges: ranges);
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta
+            {
+                FileParts =
+                [
+                    new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = ["first"], SegmentIdByteRange = new LongRange(0, 4),
+                        FilePartByteRange = new LongRange(0, 4),
+                        SegmentByteRanges = [new LongRange(0, 4)], SegmentByteRangesTrusted = true,
+                    },
+                    new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = ["next-1", "next-2", "next-3"],
+                        SegmentIdByteRange = new LongRange(0, 10),
+                        FilePartByteRange = new LongRange(0, 10),
+                    },
+                ],
+            },
+        };
+        await using var stream = new DavMultipartFileStream(multipart, client, 0, resolver: null,
+            usePipelinedBodyRequests: true);
+        var result = new byte[14];
+        await stream.ReadExactlyAsync(result);
+        Assert.Equal(Enumerable.Range(1, 14).Select(i => (byte)i), result);
+        Assert.True(Assert.IsAssignableFrom<ICacheReadEvidence>(stream).LastReadCacheable);
+        Assert.Equal(3, client.HeaderProbeCount);
+        Assert.Null(multipart.Metadata.FileParts[1].SegmentByteRanges);
+    }
+
+    [Fact]
+    public async Task NativeReads_DoNotCacheUnindexedVolumeWithMismatchedMiddleGeometry()
+    {
+        using var native = new NativeCacheReadContext();
+        using var client = new FakeNntpClient(new Dictionary<string, byte[]>
+        {
+            ["one"] = [1, 2, 3, 4], ["two"] = [5, 6, 7, 8], ["three"] = [9, 10],
+        }, useCachedYencStreams: true, segmentRanges: new Dictionary<string, LongRange>
+        {
+            ["one"] = new(0, 4), ["two"] = new(5, 9), ["three"] = new(8, 10),
+        });
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta
+            {
+                FileParts =
+                [
+                    new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = ["one", "two", "three"],
+                        SegmentIdByteRange = new LongRange(0, 10),
+                        FilePartByteRange = new LongRange(0, 10),
+                    },
+                ],
+            },
+        };
+        await using var stream = new DavMultipartFileStream(multipart, client, 0, resolver: null,
+            usePipelinedBodyRequests: true);
+        Assert.True(await stream.ReadAsync(new byte[4]) > 0);
+        Assert.False(Assert.IsAssignableFrom<ICacheReadEvidence>(stream).LastReadCacheable);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
