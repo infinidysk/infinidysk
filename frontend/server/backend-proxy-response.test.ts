@@ -6,7 +6,8 @@ import { createProxyMiddleware } from "http-proxy-middleware";
 import { handleBackendProxyResponse } from "./backend-proxy-response";
 import { logger } from "./logger";
 
-vi.mock("./logger", () => ({
+vi.mock("./logger", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./logger")>()),
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
@@ -292,12 +293,17 @@ describe("handleBackendProxyResponse", () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it("warns and destroys when the backend aborts with a live client", () => {
+  it("warns with pathname only and destroys when the backend aborts with a live client", () => {
     const { proxyRes, req, res } = createMockStreams({
       proxyResComplete: false,
       reqDestroyed: false,
       resWritableEnded: false,
     });
+    const originalUrl =
+      "/content/movie.mkv?downloadKey=synthetic-1441-download-key&apikey=synthetic-1441-api-key" +
+      "&name=" +
+      encodeURIComponent("https://indexer.example.test/nzb?token=synthetic-1441-indexer-token");
+    req.url = originalUrl;
 
     handleBackendProxyResponse(
       proxyRes as unknown as import("node:http").IncomingMessage,
@@ -308,9 +314,17 @@ describe("handleBackendProxyResponse", () => {
     proxyRes.emit("close");
 
     expect(logger.warn).toHaveBeenCalledTimes(1);
-    const [message] = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
-    expect(message).toContain("ended before its body was complete");
-    expect(res.destroy).toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Backend response for GET /content/movie.mkv ended before its body was " +
+        "complete; aborting the client transfer instead of ending it successfully.",
+    );
+    const loggedText = vi.mocked(logger.warn).mock.calls.flat().map(String).join("\n");
+    expect(loggedText).not.toContain("synthetic-1441-download-key");
+    expect(loggedText).not.toContain("synthetic-1441-api-key");
+    expect(loggedText).not.toContain("synthetic-1441-indexer-token");
+    expect(res.destroy).toHaveBeenCalledTimes(1);
+    expect(res.end).not.toHaveBeenCalled();
+    expect(req.url).toBe(originalUrl);
   });
 
   it("does not warn when the client already disconnected before the backend abort closed", () => {
@@ -319,6 +333,7 @@ describe("handleBackendProxyResponse", () => {
       reqDestroyed: true,
       resWritableEnded: false,
     });
+    req.url = "/content/movie.mkv?apikey=synthetic-1441-api-key";
 
     handleBackendProxyResponse(
       proxyRes as unknown as import("node:http").IncomingMessage,
@@ -330,6 +345,30 @@ describe("handleBackendProxyResponse", () => {
 
     expect(logger.warn).not.toHaveBeenCalled();
     expect(res.destroy).not.toHaveBeenCalled();
+  });
+
+  it("forwards query credentials and header authentication unchanged", async () => {
+    const originalUrl =
+      "/api?mode=addurl&apikey=synthetic-1441-api-key&name=" +
+      encodeURIComponent("https://indexer.example.test/nzb?token=synthetic-1441-indexer-token");
+    const headerKey = "synthetic-1441-header-key";
+    let receivedUrl: string | undefined;
+    let receivedHeader: string | string[] | undefined;
+    const frontendPort = await startProxy((req, res) => {
+      receivedUrl = req.url;
+      receivedHeader = req.headers["x-api-key"];
+      res.writeHead(200, { "Content-Type": "text/plain", "Content-Length": "2" });
+      res.end("ok");
+    });
+
+    const result = await fetchThroughProxy(frontendPort, originalUrl, { "x-api-key": headerKey });
+
+    expect(receivedUrl).toBe(originalUrl);
+    expect(receivedHeader).toBe(headerKey);
+    expect(result.status).toBe(200);
+    expect(result.body).toBe("ok");
+    expect(result.endedCleanly).toBe(true);
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 });
 

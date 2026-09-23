@@ -13,13 +13,14 @@ import {
   safeDecodePath,
   shouldProxyToBackend,
 } from "./proxy-path";
-import { logger } from "./logger";
+import { logger, requestPathForLog } from "./logger";
 import { authMiddleware } from "~/auth/auth-middleware.server";
 import { getSessionUser, isAuthenticated } from "~/auth/authentication.server";
 import { setApiKeyForAuthenticatedRequests } from "./inject-api-key.server";
 import {
   BACKEND_FAILURE_LOG_THROTTLE_MS,
   isExpectedBackendConnectionError,
+  isExpectedNetworkCode,
   isWithinBackendStartupGrace,
 } from "./startup-grace";
 import {
@@ -84,7 +85,16 @@ function logProxyFailure(message: string, error: unknown) {
   }
 
   if (now - lastProxyFailureLogAt >= BACKEND_FAILURE_LOG_THROTTLE_MS) {
-    logger.warn(message, error);
+    if (isExpectedBackendConnectionError(error)) {
+      const code =
+        error && typeof error === "object"
+          ? (error as { code?: string }).code
+          : undefined;
+      const reason = isExpectedNetworkCode(code) ? code : "backend connection unavailable";
+      logger.warn(`${message}. Reason: ${reason}`);
+    } else {
+      logger.warn(message, error);
+    }
     lastProxyFailureLogAt = now;
   }
 }
@@ -107,7 +117,7 @@ const forwardToBackend = createProxyMiddleware({
     },
     error: (error, req, res) => {
       logProxyFailure(
-        `Backend proxy failed for ${req.method ?? "UNKNOWN"} ${req.url ?? "unknown URL"}`,
+        `Backend proxy failed for ${req.method ?? "UNKNOWN"} ${requestPathForLog(req.url)}`,
         error,
       );
       if ("writeHead" in res && !res.headersSent) {

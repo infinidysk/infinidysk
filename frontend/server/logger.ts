@@ -106,6 +106,20 @@ function colorStatus(status: number): string {
   return color.green(value);
 }
 
+export function requestPathForLog(rawUrl: string | undefined): string {
+  if (!rawUrl) return "[unknown path]";
+
+  try {
+    const parsed = new URL(rawUrl, "http://localhost");
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return "[invalid path]";
+    }
+    return parsed.pathname;
+  } catch {
+    return "[invalid path]";
+  }
+}
+
 export const requestLogger: RequestHandler = (req, res, next) => {
   const startedAt = process.hrtime.bigint();
 
@@ -129,7 +143,7 @@ export const requestLogger: RequestHandler = (req, res, next) => {
       return color.dim(`${via} "${userAgent}"`);
     };
     const message =
-      `${colorMethod(req.method)} ${req.originalUrl} ` +
+      `${colorMethod(req.method)} ${requestPathForLog(req.originalUrl)} ` +
       `${colorStatus(res.statusCode)} ${color.dim(`${elapsedMs.toFixed(1)} ms`)}` +
       (res.statusCode >= 400 ? ` ${clientInfo()}` : "");
 
