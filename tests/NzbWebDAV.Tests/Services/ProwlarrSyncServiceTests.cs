@@ -2,6 +2,7 @@ using System.Collections;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
+using NzbWebDAV.Clients;
 using NzbWebDAV.Clients.Prowlarr;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
@@ -109,6 +110,20 @@ public sealed class ProwlarrSyncServiceTests : IAsyncLifetime
         var managed = Assert.Single(persisted.Indexers);
         Assert.Equal("Good", managed.Name);
         Assert.Equal(7, managed.ProwlarrIndexerId);
+    }
+
+    [Fact]
+    public async Task SyncNow_TimedOutFetch_PersistsTimedOutReason()
+    {
+        _clientFactory.Enqueue(_ => throw new ArrRequestTimeoutException(
+            "Prowlarr indexer list", "http://prowlarr:9696", TimeSpan.FromSeconds(15), null));
+
+        var failed = await _service.SyncNowAsync();
+
+        Assert.Equal(
+            "Prowlarr indexer list request to http://prowlarr:9696 timed out after 15 seconds; routing: direct (single-label hostname).",
+            failed.LastError);
+        Assert.Null(failed.LastSuccessAt);
     }
 
     [Fact]
