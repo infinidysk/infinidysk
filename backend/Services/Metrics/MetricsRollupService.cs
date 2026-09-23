@@ -11,8 +11,12 @@ namespace NzbWebDAV.Services.Metrics;
 /// <summary>
 /// Materializes per-minute and per-hour rollups from the raw SegmentFetch /
 /// ReadSession event tables. Runs once a minute, idempotently upserting the
-/// last fully-elapsed minute. On the hour boundary it folds the 60 finished
-/// minutes into ProviderHourly. Re-running any window is safe.
+/// last fully-elapsed minute. The first tick replays at most 60 completed
+/// minutes after a restart. On the hour boundary it folds the 60 finished
+/// minutes into ProviderHourly. Historical provider hours are rebuilt from
+/// minute rows; existing older FailoverHourly rows are preserved because their
+/// raw edges may have been pruned, while missing hours are still materialized.
+/// Re-running any window is safe.
 ///
 /// Errors are hard fetch failures only (Status NOT IN Ok/Missing). Expected
 /// provider misses (Status = Missing) are counted separately as Misses.
@@ -29,6 +33,7 @@ public class MetricsRollupService(
     private static readonly JsonSerializerOptions CompactJson = new();
 
     private long _lastMinuteRolled;
+    private long _startupTargetMinute;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -52,23 +57,36 @@ public class MetricsRollupService(
 
     private async Task RollupTickAsync()
     {
-        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        await using var db = new MetricsDbContext();
+        await RollupTickAsync(db, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+            .ConfigureAwait(false);
+    }
+
+    internal async Task RollupTickAsync(MetricsDbContext db, long nowMs)
+    {
         var currentMinute = FloorTo(nowMs, OneMinute);
         var targetMinute = currentMinute - OneMinute;
 
-        // Catch up at most 60 minutes if the service was paused/restarted.
+        if (_startupTargetMinute == 0)
+            _startupTargetMinute = targetMinute;
+
         var start = _lastMinuteRolled == 0
-            ? targetMinute
+            ? targetMinute - 59 * OneMinute
             : Math.Max(_lastMinuteRolled + OneMinute, targetMinute - 59 * OneMinute);
 
-        await using var db = new MetricsDbContext();
         for (var minute = start; minute <= targetMinute; minute += OneMinute)
         {
             await RollupMinuteAsync(db, minute).ConfigureAwait(false);
             if (minute % OneHour == 0 && minute > 0)
             {
                 await RollupHourAsync(db, minute - OneHour).ConfigureAwait(false);
-                await RollupFailoverHourAsync(db, minute - OneHour).ConfigureAwait(false);
+                if (minute >= _startupTargetMinute ||
+                    !await db.FailoverHourly.AnyAsync(row => row.Hour == minute - OneHour)
+                        .ConfigureAwait(false))
+                {
+                    await RollupFailoverHourAsync(db, minute - OneHour)
+                        .ConfigureAwait(false);
+                }
             }
             _lastMinuteRolled = minute;
         }
