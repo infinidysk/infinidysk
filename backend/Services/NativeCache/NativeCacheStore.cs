@@ -651,7 +651,8 @@ public sealed class NativeCacheStore : IAsyncDisposable
     {
         if (bytesToFetch < 0 || bytesToFetch > identity.Length) throw new ArgumentOutOfRangeException(nameof(bytesToFetch));
         using var placement = await AcquireFillAsync(identity, -1, cancellationToken).ConfigureAwait(false);
-        var selectedWriter = await SelectWriterAsync(identity, bytesToFetch, true, cancellationToken).ConfigureAwait(false);
+        var reservationBytes = checked(bytesToFetch + ((bytesToFetch + BlockSize - 1) / BlockSize) * (65536 + 4096));
+        var selectedWriter = await SelectWriterAsync(identity, reservationBytes, true, cancellationToken).ConfigureAwait(false);
         if (selectedWriter is not { } selection) return null;
         try
         {
@@ -763,7 +764,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
             var folder = _folders.FirstOrDefault(folder => folder.Id == oldFolder);
             if (folder is null || folder.ReadOnly) return false;
             lock (_leaseLock) if (_reservations.ContainsKey(identity.Key) || _scanning.Contains(identity.Key)) return false;
-            quota = HasQuota(folder, missing + EntryOverhead);
+            quota = HasQuota(folder, checked(missing + ((missing + BlockSize - 1) / BlockSize) * (65536 + 4096)));
         }
         finally { _gate.Release(); }
         var original = _folders.First(folder => folder.Id == oldFolder);
