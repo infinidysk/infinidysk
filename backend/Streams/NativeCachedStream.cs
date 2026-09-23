@@ -53,6 +53,28 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
     public override long Position { get => _position; set => Seek(value, SeekOrigin.Begin); }
     public override void Flush() { }
 
+    /// <summary>Checks existing bytes without opening the source or spending a warming budget.</summary>
+    internal async Task<bool> VerifyCachedBlockAsync(long blockStart, CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_bypassFill || !_generationIsCurrent()) return false;
+        // Use this stream's admitted buffer and IO lifetime handling. Cancellation
+        // must not return memory still owned by an uncancellable NAS read.
+        _buffer ??= ArrayPool<byte>.Shared.Rent(NativeCacheStore.BlockSize);
+        _bufferStart = -1;
+        _bufferCount = 0;
+        _bufferVerified = false;
+        _bufferFromCache = false;
+        LastReadCacheable = false;
+        var expected = (int)Math.Min(NativeCacheStore.BlockSize, Length - blockStart);
+        var buffer = _buffer;
+        var count = await CacheIoAsync(false,
+            token => _store.ReadBlockAsync(_identity, blockStart, buffer.AsMemory(0, expected), token),
+            cancellationToken).ConfigureAwait(false);
+        return count == expected && _generationIsCurrent();
+    }
+
     public override async ValueTask<int> ReadAsync(Memory<byte> destination, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
