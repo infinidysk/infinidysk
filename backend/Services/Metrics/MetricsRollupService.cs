@@ -186,6 +186,8 @@ public class MetricsRollupService(
         MetricsDbContext db,
         IReadOnlyList<(long Minute, long PeakBytesPerSec)> peaks)
     {
+        if (peaks.Count == 0) return;
+
         await using var transaction = await db.Database.BeginTransactionAsync().ConfigureAwait(false);
         foreach (var (minute, peak) in peaks)
         {
@@ -208,7 +210,8 @@ public class MetricsRollupService(
                 """,
                 FloorTo(minute, OneHour), peak).ConfigureAwait(false);
         }
-            await transaction.CommitAsync().ConfigureAwait(false);
+
+        await transaction.CommitAsync().ConfigureAwait(false);
     }
 
     internal static async Task RollupMinuteAsync(MetricsDbContext db, long minute)
