@@ -501,7 +501,9 @@ export function ThroughputChart({
 
             <div className="mt-2 flex flex-wrap items-center gap-3.5 text-[11px] text-base-content/70">
               {series
-                .filter((item) => item.id !== "errors" || totalErrors > 0 || isolatedSeries === "errors")
+                .filter(
+                  (item) => item.id !== "errors" || totalErrors > 0 || isolatedSeries === "errors",
+                )
                 .map((item) => (
                   <button
                     key={item.id}
