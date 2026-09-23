@@ -14,6 +14,46 @@ namespace NzbWebDAV.Tests.Api;
 public sealed class AdminContractTests
 {
     [Fact]
+    public async Task FilesBrowse_RequiresAuthenticationAndMatchesSchema()
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var anonymous = factory.CreateClient();
+        using var denied = await anonymous.GetAsync("/api/browse-files");
+        await AdminProblemAssertions.AssertProblemAsync(denied, HttpStatusCode.Unauthorized, "API Key Required");
+        using var client = factory.CreateAuthenticatedClient();
+        var file = NewUncheckedUsenetFile("synthetic.mkv");
+        await factory.AddDavItemsAsync(file);
+        using var response = await client.GetAsync("/api/browse-files?mode=list");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(response.Headers.CacheControl?.NoStore);
+        using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        JsonContractValidator.AssertMatchesSchema(json.RootElement, "admin/v1/browse-files.schema.json");
+        var row = Assert.Single(json.RootElement.GetProperty("rows").EnumerateArray());
+        Assert.Equal(file.Id, row.GetProperty("id").GetGuid());
+        Assert.Equal("unknown", row.GetProperty("health").GetString());
+        Assert.Equal(JsonValueKind.Null, row.GetProperty("nextCheckAt").ValueKind);
+        Assert.False(row.TryGetProperty("generatedStrmTarget", out _));
+        Assert.False(row.TryGetProperty("fileBlobId", out _));
+    }
+
+    [Fact]
+    public async Task FilesBrowse_InvalidFiltersAndScopeReturnProblems()
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var client = factory.CreateAuthenticatedClient();
+        var file = NewUncheckedUsenetFile("synthetic.mkv");
+        await factory.AddDavItemsAsync(file);
+        foreach (var query in new[] { "limit=201", "limit=1&limit=2", "health=bad", "parentPath=/nzbs", "scopePath=" + file.Path })
+        {
+            using var response = await client.GetAsync("/api/browse-files?" + query);
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        }
+        using var missing = await client.GetAsync("/api/browse-files?scopePath=/content/missing");
+        await AdminProblemAssertions.AssertProblemAsync(missing, HttpStatusCode.NotFound, "Directory not found");
+    }
+
+    [Fact]
     public async Task SettingsReadUpdateRead_UsesStableAdminContracts()
     {
         await using var factory = new NzbDavWebApplicationFactory();

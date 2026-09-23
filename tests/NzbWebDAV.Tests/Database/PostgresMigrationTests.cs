@@ -28,6 +28,49 @@ namespace NzbWebDAV.Tests.Database;
 public sealed class PostgresMigrationTests
 {
     [SkippableFact]
+    public async Task BrowseFiles_ProjectionFiltersAndPaginationTranslate()
+    {
+        Skip.IfNot(DatabaseProviderConfig.IsPostgres, "PostgreSQL tests require DATABASE_PROVIDER=postgres.");
+        var schema = $"files_browse_{Guid.NewGuid():N}";
+        await using var connection = new NpgsqlConnection(DatabaseProviderConfig.PostgresConnectionString);
+        await connection.OpenAsync();
+        await ExecuteAsync(connection, $"CREATE SCHEMA \"{schema}\"");
+        try
+        {
+            var options = new DbContextOptionsBuilder<PostgresDavDatabaseContext>().UseNpgsql(
+                new NpgsqlConnectionStringBuilder(DatabaseProviderConfig.PostgresConnectionString) { SearchPath = schema }.ConnectionString).Options;
+            await using var context = new PostgresDavDatabaseContext(options);
+            await context.Database.MigrateAsync();
+            var directory = DavItem.New(Guid.NewGuid(), DavItem.ContentFolder, "tv%_", null,
+                DavItem.ItemType.Directory, DavItem.ItemSubType.Directory, null, null, null, null);
+            var now = DateTimeOffset.UtcNow;
+            var file = DavItem.New(Guid.NewGuid(), directory, "video.mkv", 100,
+                DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile, now.AddDays(-2), now.AddDays(-1), null, null);
+            context.Items.AddRange(directory, file);
+            context.HealthCheckResults.Add(new HealthCheckResult
+            {
+                Id = Guid.NewGuid(), DavItemId = file.Id, Path = file.Path, CreatedAt = now,
+                Result = HealthCheckResult.HealthResult.Degraded,
+            });
+            await context.SaveChangesAsync();
+            var library = new FilesLibrarySnapshot("ready", now, new Dictionary<Guid, string[]> { [file.Id] = ["/synthetic/video.mkv"] }, null);
+            var config = new ConfigManager();
+            foreach (var mode in new[] { "tree", "list" })
+            {
+                var http = new DefaultHttpContext();
+                http.Request.QueryString = new QueryString($"?mode={mode}&scopePath={Uri.EscapeDataString(directory.Path)}&health=degraded&library=in-library&limit=1&postedBefore={now.ToUnixTimeSeconds()}&sort=size");
+                var result = await NzbWebDAV.Api.Controllers.BrowseFiles.BrowseFilesQuery.ReadAsync(
+                    new DavDatabaseClient(context), config, new NzbWebDAV.Api.Controllers.BrowseFiles.BrowseFilesRequest(http), library,
+                    new Dictionary<Guid, int>(), [], new NzbWebDAV.Config.Scheduling.HealthWorkSchedulePolicy(config), now, CancellationToken.None);
+                Assert.Equal(file.Id, Assert.Single(result.Rows).Id);
+                Assert.Equal(1, result.MatchingFileCount);
+                Assert.Null(result.Rows[0].JobName);
+            }
+        }
+        finally { await ExecuteAsync(connection, $"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE"); }
+    }
+
+    [SkippableFact]
     public void ModelSnapshot_MatchesCurrentModel()
     {
         Skip.IfNot(

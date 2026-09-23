@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/browse-files.schema.json",
+  "title": "Files browse response",
+  "type": "object",
+  "required": ["status", "mode", "scopePath", "parentPath", "offset", "limit", "totalRows", "matchingFileCount", "hasMore", "observedAt", "libraryScanState", "libraryScannedAt", "libraryError", "schedule", "rows"],
+  "properties": {
+    "status": { "const": true },
+    "error": { "type": ["string", "null"] },
+    "mode": { "enum": ["tree", "list"] },
+    "scopePath": { "type": "string" },
+    "parentPath": { "type": "string" },
+    "offset": { "type": "integer", "minimum": 0 },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
+    "totalRows": { "type": "integer", "minimum": 0 },
+    "matchingFileCount": { "type": "integer", "minimum": 0 },
+    "hasMore": { "type": "boolean" },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "libraryScanState": { "enum": ["ready", "unknown", "not-configured"] },
+    "libraryScannedAt": { "type": ["string", "null"], "format": "date-time" },
+    "libraryError": { "type": ["string", "null"] },
+    "schedule": { "type": "object", "required": ["timeZoneId", "checksOpen", "repairsOpen", "pendingRepairCount", "manualRunActive"] },
+    "rows": {
+      "type": "array", "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": ["key", "id", "parentId", "name", "path", "isDirectory", "hasChildren", "size", "subType", "addedAt", "releaseDate", "lastHealthCheck", "nextCheckAt", "health", "scanState", "progress", "healthResultId", "healthResultAt", "repairAction", "healthMessage", "historyItemId", "jobName", "nzbFileName", "category", "indexerName", "lastPlayedAt", "nzbBlobId", "libraryState", "libraryLinkCount", "libraryPaths", "canRecheck", "recheckDisabledReason", "canDelete", "deleteDisabledReason", "canSearchArr", "searchArrDisabledReason"],
+        "properties": {
+          "key": { "type": "string" }, "id": { "type": ["string", "null"], "format": "uuid" },
+          "parentId": { "type": ["string", "null"], "format": "uuid" },
+          "name": { "type": "string" }, "path": { "type": "string" },
+          "isDirectory": { "type": "boolean" }, "hasChildren": { "type": "boolean" },
+          "size": { "type": ["integer", "null"], "minimum": 0 }, "subType": { "type": ["integer", "null"] },
+          "addedAt": { "type": ["string", "null"], "format": "date-time" },
+          "releaseDate": { "type": ["string", "null"], "format": "date-time" },
+          "lastHealthCheck": { "type": ["string", "null"], "format": "date-time" },
+          "nextCheckAt": { "type": ["string", "null"], "format": "date-time" },
+          "health": { "enum": [null, "healthy", "degraded", "needs-attention", "unknown"] },
+          "scanState": { "enum": [null, "not-applicable", "disabled", "checking", "repair-pending", "queued", "due", "scheduled"] },
+          "progress": { "type": ["integer", "null"] },
+          "healthResultId": { "type": ["string", "null"], "format": "uuid" },
+          "healthResultAt": { "type": ["string", "null"], "format": "date-time" },
+          "repairAction": { "type": ["integer", "null"] }, "healthMessage": { "type": ["string", "null"] },
+          "historyItemId": { "type": ["string", "null"], "format": "uuid" },
+          "jobName": { "type": ["string", "null"] }, "nzbFileName": { "type": ["string", "null"] },
+          "category": { "type": ["string", "null"] }, "indexerName": { "type": ["string", "null"] },
+          "lastPlayedAt": { "type": ["string", "null"], "format": "date-time" },
+          "nzbBlobId": { "type": ["string", "null"], "format": "uuid" },
+          "libraryState": { "enum": [null, "in-library", "not-in-library", "unknown", "not-configured"] },
+          "libraryLinkCount": { "type": "integer", "minimum": 0 }, "libraryPaths": { "type": "array", "items": { "type": "string" } },
+          "canRecheck": { "type": "boolean" }, "recheckDisabledReason": { "type": ["string", "null"] },
+          "canDelete": { "type": "boolean" }, "deleteDisabledReason": { "type": ["string", "null"] },
+          "canSearchArr": { "type": "boolean" }, "searchArrDisabledReason": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

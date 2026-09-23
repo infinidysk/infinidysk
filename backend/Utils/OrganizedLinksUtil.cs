@@ -41,8 +41,18 @@ public static class OrganizedLinksUtil
         if (libraryRoot == null)
             return [];
 
-        var allSymlinksAndStrms = SymlinkAndStrmUtil.GetAllSymlinksAndStrms(libraryRoot);
-        return GetDavItemLinks(allSymlinksAndStrms, configManager);
+        return GetLibraryDavItemLinks(libraryRoot, configManager.GetRcloneMountDir(), CancellationToken.None);
+    }
+
+    internal static IEnumerable<DavItemLink> GetLibraryDavItemLinks(
+        string libraryRoot, string mountDir, CancellationToken cancellationToken)
+    {
+        foreach (var info in SymlinkAndStrmUtil.GetAllSymlinksAndStrms(libraryRoot, cancellationToken))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var link = GetDavItemLink(info, mountDir);
+            if (link is not null) yield return link.Value;
+        }
     }
 
     private static bool TryGetLinkFromCache

@@ -11,20 +11,31 @@ public static class SymlinkAndStrmUtil
     internal const int MaxStrmTargetBytes = 8 * 1024;
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
-    public static IEnumerable<ISymlinkOrStrmInfo> GetAllSymlinksAndStrms(string directoryPath)
+    public static IEnumerable<ISymlinkOrStrmInfo> GetAllSymlinksAndStrms(string directoryPath, CancellationToken cancellationToken = default)
     {
         return IsLinux
-            ? GetAllSymlinksAndStrmsLinux(directoryPath)
-            : GetAllSymlinksAndStrmsWindows(directoryPath);
+            ? GetAllSymlinksAndStrmsLinux(directoryPath, cancellationToken)
+            : GetAllSymlinksAndStrmsWindows(directoryPath, cancellationToken);
     }
 
-    private static IEnumerable<ISymlinkOrStrmInfo> GetAllSymlinksAndStrmsLinux(string directoryPath)
+    private static IEnumerable<ISymlinkOrStrmInfo> GetAllSymlinksAndStrmsLinux(string directoryPath, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         // find -print0 (no shell) keeps traversal errors in find's own exit code and avoids
         // argv quoting / newline framing hazards. Targets are read in managed code.
         var startInfo = CreateLinuxFindStartInfo(directoryPath);
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Library symlink scan failed to start find.");
+        using var registration = cancellationToken.UnsafeRegister(static state =>
+        {
+            var runningProcess = (Process)state!;
+            try
+            {
+                if (!runningProcess.HasExited) runningProcess.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException) { }
+            catch (System.ComponentModel.Win32Exception) { }
+        }, process);
 
         // Drain stderr asynchronously. Leaving it unread can fill the OS pipe buffer and
         // deadlock find when a library tree produces many permission errors.
@@ -49,6 +60,7 @@ public static class SymlinkAndStrmUtil
         {
             while (true)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var filePath = ReadNullTerminated(process.StandardOutput);
                 if (filePath is null)
                     break;
@@ -86,6 +98,7 @@ public static class SymlinkAndStrmUtil
             }
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         if (process.ExitCode != 0)
         {
             string stderr;
@@ -191,13 +204,16 @@ public static class SymlinkAndStrmUtil
         };
     }
 
-    private static IEnumerable<ISymlinkOrStrmInfo> GetAllSymlinksAndStrmsWindows(string directoryPath)
+    private static IEnumerable<ISymlinkOrStrmInfo> GetAllSymlinksAndStrmsWindows(string directoryPath, CancellationToken cancellationToken)
     {
-        return Directory.EnumerateFileSystemEntries(directoryPath, "*", SearchOption.AllDirectories)
-            .Select(x => new FileInfo(x))
-            .Select(GetSymlinkOrStrmInfo)
-            .Where(x => x != null)
-            .Select(x => x!);
+        cancellationToken.ThrowIfCancellationRequested();
+        foreach (var path in Directory.EnumerateFileSystemEntries(directoryPath, "*", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var info = GetSymlinkOrStrmInfo(new FileInfo(path));
+            if (info is not null) yield return info;
+        }
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     public static ISymlinkOrStrmInfo? GetSymlinkOrStrmInfo(FileInfo x)

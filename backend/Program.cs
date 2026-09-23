@@ -449,6 +449,7 @@ public sealed partial class Program
                 .AddSingleton<HealthScheduleBroadcaster>()
                 .AddHostedService(sp => sp.GetRequiredService<HealthScheduleBroadcaster>())
                 .AddSingleton<HealthCheckService>()
+                .AddSingleton(sp => new FilesLibraryIndex(sp.GetRequiredService<ConfigManager>(), TimeProvider.System))
                 .AddSingleton<IHealthCheckQuiescence>(
                     sp => sp.GetRequiredService<HealthCheckService>())
                 .AddHostedService(sp => sp.GetRequiredService<HealthCheckService>())
