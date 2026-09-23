@@ -74,6 +74,7 @@ public sealed class MetricsRollupPeakRateTests
             () => MetricsRollupService.ApplyPendingPeakRatesAsync(db, tracker, Hour0 + OneHour));
 
         Assert.Equal(800, tracker.PendingPeakSince(Hour0));
+        Assert.Empty(await db.ThroughputMinutes.AsNoTracking().ToListAsync());
     }
 
     [Fact]
