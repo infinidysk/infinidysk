@@ -24,7 +24,7 @@ Newznab indexers/aggregators, global request defaults, and title exclude pattern
 
 Synced patterns take precedence; last-good cache survives temporary URL failures.
 
-## Prowlarr pull sync [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since }
+## Prowlarr pull sync [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ #prowlarr-pull-sync .nzbdav-since }
 
 InfiniDysk can pull its indexer list from one Prowlarr instance. Configure the connection in InfiniDysk under **Settings → Indexers → Prowlarr pull sync** — do **not** add InfiniDysk under Prowlarr's Apps list, and do not use InfiniDysk's SABnzbd-compatible settings for this integration.
 
