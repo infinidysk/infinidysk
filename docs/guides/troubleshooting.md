@@ -106,7 +106,7 @@ because the backend process exits on failure.
 The Overview Activity summary uses the selected time window:
 
 - **Successful reads** counts article retrievals reported successful, including segment-cache hits. It excludes recorded misses and errors, but is not a count of unique articles, completed files, or successful playback sessions.
-- **Peak download** is the highest average Usenet download rate among the displayed buckets: downloaded bytes divided by bucket duration. It is not an instantaneous peak. Older folded all-time history is excluded, and **N/A** means no chart data. This metric works with or without segment caching, including rclone installations.
+- **Peak download** is the highest 1-second Usenet download rate sampled in the window [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }. The sampler runs once per second and stores only the per-minute and per-hour maximum, so the value does not shrink when you widen the time range. History recorded before the sampler existed falls back to the highest bucket average (downloaded bytes divided by bucket duration). **N/A** means no chart data. This metric works with or without segment caching, including rclone installations.
 - **Errors** counts attempt errors other than provider misses. A retry or fallback can still recover the request.
 - **Served** counts bytes served by client read sessions ending in the window.
 
