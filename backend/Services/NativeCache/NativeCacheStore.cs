@@ -37,6 +37,24 @@ public sealed class NativeCacheStore : IAsyncDisposable
     private readonly Dictionary<string, WarmReservation> _reservations = new(StringComparer.Ordinal);
     private readonly Lock _leaseLock = new();
     private bool _disposed;
+    private readonly Dictionary<string, Task<bool>> _statusProbes = [];
+    internal TimeSpan StatusProbeTimeout { get; init; } = TimeSpan.FromSeconds(1);
+    internal Func<string, bool>? StatusProbeOverride { get; init; }
+
+    private async Task<bool?> StatusOnlineAsync(NativeCacheFolder folder, CancellationToken ct)
+    {
+        Task<bool> probe;
+        lock (_leaseLock)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_statusProbes.TryGetValue(folder.Id, out probe!) || probe.IsCompleted)
+                _statusProbes[folder.Id] = probe = Task.Run(() => StatusProbeOverride?.Invoke(folder.Id) ?? IsVolumeCurrent(folder));
+        }
+        try { return await probe.WaitAsync(StatusProbeTimeout, ct).ConfigureAwait(false); }
+        catch (TimeoutException) { return null; }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return false; }
+    }
+
     internal Func<string, CancellationToken, Task>? BeforeScanReadAsync { get; init; }
     internal Func<string, long>? AvailableBytesOverride { get; init; }
     internal Func<NativeFileSystem.PinnedDirectory, string, CancellationToken, Task>? BeforeProbeReadAsync { get; init; }
@@ -384,13 +402,14 @@ public sealed class NativeCacheStore : IAsyncDisposable
             }
         }
         finally { _gate.Release(); }
-        return result.Select(status =>
+        return await Task.WhenAll(result.Select(async status =>
         {
             var folder = _folders.First(folder => folder.Id == status.Id);
-            var online = IsVolumeCurrent(folder);
-            return status with { Online = online, Writable = online && _owners.ContainsKey(folder.Id),
-                Error = online ? null : "Folder is unavailable or its storage identity changed; no fallback directory will be created. Restore the original mount, or explicitly register the verified path with a new folder ID and scan it." };
-        }).ToArray();
+            var online = await StatusOnlineAsync(folder, cancellationToken).ConfigureAwait(false);
+            return status with { Online = online == true, Writable = online == true && _owners.ContainsKey(folder.Id),
+                Error = online is null ? "Storage status is unknown: the filesystem check exceeded its deadline."
+                    : online.Value ? null : "Folder is unavailable or its storage identity changed; restore the original mount before retrying." };
+        })).ConfigureAwait(false);
     }
 
     [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
@@ -1225,7 +1244,11 @@ public sealed class NativeCacheStore : IAsyncDisposable
         try
         {
             if (_disposed) return;
-            _disposed = true;
+            Task<bool>[] probes;
+            lock (_leaseLock) { _disposed = true; probes = _statusProbes.Values.ToArray(); }
+            // A timed-out request does not stop a syscall; retain root handles until it finishes.
+            try { await Task.WhenAll(probes).ConfigureAwait(false); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
             foreach (var owner in _owners.Values) await owner.DisposeAsync().ConfigureAwait(false);
             foreach (var root in _roots.Values) root.Dispose();
             await _database.DisposeAsync().ConfigureAwait(false);

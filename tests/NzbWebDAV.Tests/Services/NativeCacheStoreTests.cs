@@ -9,6 +9,34 @@ public sealed class NativeCacheStoreTests : IDisposable
     public NativeCacheStoreTests() => Directory.CreateDirectory(_root);
 
     [Fact]
+    public async Task StatusDeadline_CoalescesStalledCalls_AndRecovers()
+    {
+        var folder = CreateFolder();
+        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        await using var store = new NativeCacheStore(Path.Combine(_root, "status.db"), [folder])
+        {
+            StatusProbeTimeout = TimeSpan.FromMilliseconds(30),
+            StatusProbeOverride = _ => { Interlocked.Increment(ref calls); entered.TrySetResult(); release.Wait(); return true; }
+        };
+        try
+        {
+            var first = store.GetStatusAsync();
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Contains("unknown", Assert.Single(await first).Error!);
+            var results = await Task.WhenAll(Enumerable.Range(0, 10).Select(_ => store.GetStatusAsync()));
+            Assert.All(results, result => Assert.False(Assert.Single(result).Online));
+            Assert.Equal(1, calls);
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => store.GetStatusAsync(cancellation.Token));
+        }
+        finally { release.Set(); }
+        Assert.True(Assert.Single(await store.GetStatusAsync()).Online);
+    }
+
+    [Fact]
     public async Task EntryGeneration_SurvivesReopen_AndExplicitCatalogueRecovery()
     {
         var folder = CreateFolder();
