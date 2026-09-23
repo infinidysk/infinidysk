@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace NzbWebDAV.Clients;
 
 /// <summary>
@@ -26,6 +28,6 @@ public sealed class ArrRequestTimeoutException : TaskCanceledException
             ? uri.GetComponents(UriComponents.SchemeAndServer, UriFormat.SafeUnescaped)
             : "the configured instance";
         var routing = created && uri is not null ? ArrHttpTransport.DescribeRouting(uri) : "unknown";
-        return $"{operation} request to {instance} timed out after {budget.TotalSeconds:0.##} seconds; routing: {routing}.";
+        return string.Create(CultureInfo.InvariantCulture, $"{operation} request to {instance} timed out after {budget.TotalSeconds:0.##} seconds; routing: {routing}.");
     }
 }

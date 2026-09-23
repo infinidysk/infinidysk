@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using NzbWebDAV.Clients;
 
@@ -126,6 +127,24 @@ public class ArrHttpTransportTests
 
         var fractional = new ArrRequestTimeoutException("Op", "not a url", TimeSpan.FromMilliseconds(250), null);
         Assert.Equal("Op request to the configured instance timed out after 0.25 seconds; routing: unknown.", fractional.Message);
+    }
+
+    [Fact]
+    public void TimeoutException_FormatsBudgetWithInvariantCulture()
+    {
+        var originalCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
+
+            var exception = new ArrRequestTimeoutException("Op", "not a url", TimeSpan.FromMilliseconds(250), null);
+
+            Assert.Contains("after 0.25 seconds", exception.Message);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = originalCulture;
+        }
     }
 
     [Theory]
