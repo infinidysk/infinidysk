@@ -151,5 +151,20 @@ public sealed class NativeCacheAdminTests
         using var pin = await client.PostAsJsonAsync("/api/native-cache/operations", new { operation = "pin", cacheKey = identity.Key, pinned = true });
         pin.EnsureSuccessStatusCode();
         Assert.True((await store.ListEntriesAsync("disk", null, 1))[0].Pinned);
+        using var rejected = await client.PostAsJsonAsync("/api/native-cache/operations",
+            new { operation = "evict", folderId = "disk", cacheKey = identity.Key });
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        using var unpin = await client.PostAsJsonAsync("/api/native-cache/operations", new { operation = "pin", cacheKey = identity.Key, pinned = false });
+        unpin.EnsureSuccessStatusCode();
+        using var evict = await client.PostAsJsonAsync("/api/native-cache/operations",
+            new { operation = "evict", folderId = "disk", cacheKey = identity.Key, confirmCacheKey = identity.Key });
+        Assert.Equal(HttpStatusCode.Accepted, evict.StatusCode);
+        var operations = factory.Services.GetRequiredService<NativeCacheOperations>();
+        for (var attempt = 0; attempt < 100 &&
+            (Assert.Single(operations.GetJobs()).State is "queued" or "running"); attempt++)
+            await Task.Delay(100);
+        Assert.Equal("completed", operations.GetJobs().Single().State);
+        Assert.Equal(1, operations.GetJobs().Single().Result);
+        Assert.Empty(await store.ListEntriesAsync("disk", null, 1));
     }
 }

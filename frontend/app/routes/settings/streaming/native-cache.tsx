@@ -139,6 +139,30 @@ export function NativeCacheSettings({
       setBusy(false);
     }
   };
+  const evict = async (entry: CacheEntry) => {
+    if (!cachePage || entry.pinned ||
+      !globalThis.confirm(`Evict Native Cache for ${entry.name ?? entry.itemId}? Source media is not deleted. Active playback may delay eviction.`))
+      return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(withUrlBase("/api/native-cache/operations"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operation: "evict", folderId: cachePage.folderId,
+          cacheKey: entry.key, confirmCacheKey: entry.key,
+        }),
+      });
+      if (!response.ok) throw new Error("Could not queue file eviction.");
+      const next = await fetch(withUrlBase("/api/native-cache"));
+      if (next.ok) setStatus((await next.json()) as CacheStatus);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "File eviction failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
   useEffect(() => {
     const abort = new AbortController();
     const refresh = async () => {
@@ -634,6 +658,13 @@ export function NativeCacheSettings({
                     onClick={() => void pin(entry)}
                   >
                     {entry.pinned ? "Unpin" : "Pin"}
+                  </Button>
+                  <Button
+                    disabled={busy || entry.pinned || folders.find((folder) => folder.id === cachePage.folderId)?.readOnly}
+                    aria-label={`Evict ${entry.name ?? entry.itemId} from Native Cache`}
+                    onClick={() => void evict(entry)}
+                  >
+                    Evict file
                   </Button>
                   {rangePage?.key === entry.key && (
                     <div className="w-full">

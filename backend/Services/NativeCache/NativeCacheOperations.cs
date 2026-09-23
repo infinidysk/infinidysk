@@ -4,7 +4,7 @@ using System.Threading.Channels;
 namespace NzbWebDAV.Services.NativeCache;
 
 public sealed record NativeCacheOperation(string Id, string FolderId, string Operation, string State, int? Result = null, string? Error = null,
-    NativeCacheProbeResult? Probe = null);
+    NativeCacheProbeResult? Probe = null, string? CacheKey = null);
 
 public sealed class NativeCacheOperations : BackgroundService
 {
@@ -35,16 +35,20 @@ public sealed class NativeCacheOperations : BackgroundService
 #pragma warning restore CA1849
     }
 
-    public NativeCacheOperation Enqueue(string folderId, string operation, string? confirmFolderId = null)
+    public NativeCacheOperation Enqueue(string folderId, string operation, string? confirmFolderId = null,
+        string? cacheKey = null, string? confirmCacheKey = null)
     {
         if (_native.Store is null || _native.ActiveSettings?.Folders.FirstOrDefault(folder => folder.Id == folderId && folder.Enabled) is not { } folder)
             throw new ArgumentException("Native cache and the selected folder must be active.");
-        if (operation is not ("probe" or "scan" or "clear")) throw new ArgumentException("Unknown native cache operation.");
+        if (operation is not ("probe" or "scan" or "clear" or "evict")) throw new ArgumentException("Unknown native cache operation.");
         if (operation == "clear" && (confirmFolderId != folderId || folder.ReadOnly))
             throw new ArgumentException("Confirm the exact writable folder before clearing its cached files.");
+        if (operation == "evict" && (folder.ReadOnly || cacheKey is not { Length: 64 }
+            || !cacheKey.All(char.IsAsciiHexDigit) || confirmCacheKey != cacheKey))
+            throw new ArgumentException("Confirm the exact cache entry key in a writable folder before eviction.");
         lock (_gate)
         {
-            var job = new NativeCacheOperation(Guid.NewGuid().ToString("N"), folderId, operation, "queued");
+            var job = new NativeCacheOperation(Guid.NewGuid().ToString("N"), folderId, operation, "queued", CacheKey: cacheKey);
             if (!_pending.Writer.TryWrite(job.Id)) throw new ArgumentException("Native cache operation queue is full.");
             foreach (var id in _jobs.Values.Where(job => job.State is not ("queued" or "running")).Take(Math.Max(0, _jobs.Count - 63)).Select(job => job.Id).ToArray())
                 _jobs.Remove(id);
@@ -145,6 +149,7 @@ public sealed class NativeCacheOperations : BackgroundService
             {
                 "scan" => await _native.Store!.ScanAsync(job.FolderId, cancellation.Token).ConfigureAwait(false),
                 "clear" => await ClearAsync(job.FolderId, cancellation.Token).ConfigureAwait(false),
+                "evict" => await EvictKeyAsync(job, cancellation.Token).ConfigureAwait(false),
                 _ => throw new InvalidOperationException("Unknown native cache operation.")
             };
             lock (_gate) if (_jobs[id].State != "cancelled") _jobs[id] = job with { State = "completed", Result = result };
@@ -152,7 +157,8 @@ public sealed class NativeCacheOperations : BackgroundService
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         { lock (_gate) _jobs[id] = job with { State = "cancelled" }; }
         catch (Exception exception) when (exception is not OutOfMemoryException)
-        { lock (_gate) _jobs[id] = job with { State = "failed", Error = "Storage operation failed. Check folder availability, permissions, and local metadata space." }; }
+        { lock (_gate) _jobs[id] = job with { State = "failed", Error = exception is ArgumentException
+            ? exception.Message : "Storage operation failed. Check folder availability, permissions, and local metadata space." }; }
         finally { lock (_gate) _cancellations.Remove(id); }
     }
 
@@ -169,5 +175,18 @@ public sealed class NativeCacheOperations : BackgroundService
             if (count == 0 && !_native.Store.HasPendingClearPage(folderId)) return total;
             await Task.Yield();
         }
+    }
+
+    private async Task<int> EvictKeyAsync(NativeCacheOperation job, CancellationToken cancellationToken)
+    {
+        var result = await _native.Store!.EvictKeyAsync(job.FolderId, job.CacheKey!, cancellationToken).ConfigureAwait(false);
+        return result switch
+        {
+            NativeCacheEntryEviction.Evicted => 1,
+            NativeCacheEntryEviction.NotFound => throw new ArgumentException("Cache entry no longer exists in this folder."),
+            NativeCacheEntryEviction.Pinned => throw new ArgumentException("Unpin this file before eviction."),
+            NativeCacheEntryEviction.Active => throw new ArgumentException("File is currently in use; retry after playback stops."),
+            _ => throw new IOException("Cache folder is unavailable or read-only.")
+        };
     }
 }

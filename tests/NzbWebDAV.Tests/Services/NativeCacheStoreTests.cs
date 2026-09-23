@@ -302,6 +302,33 @@ public sealed class NativeCacheStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task EvictKey_RemovesOnlySelectedIdleUnpinnedFile()
+    {
+        var folder = CreateFolder();
+        await using var store = new NativeCacheStore(Path.Combine(_root, "catalogue.db"), [folder]);
+        var selected = new NativeCacheIdentity("selected", "revision", 3);
+        var other = new NativeCacheIdentity("other", "revision", 3);
+        Assert.True(await store.WriteBlockAsync(selected, 0, new byte[] { 1, 2, 3 }));
+        Assert.True(await store.WriteBlockAsync(other, 0, new byte[] { 4, 5, 6 }));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => store.EvictKeyAsync(folder.Id, "../unsafe"));
+        Assert.Equal(NativeCacheEntryEviction.NotFound, await store.EvictKeyAsync(folder.Id, new string('a', 64)));
+        await store.SetPinnedAsync(selected, true);
+        Assert.Equal(NativeCacheEntryEviction.Pinned, await store.EvictKeyAsync(folder.Id, selected.Key));
+        await store.SetPinnedAsync(selected, false);
+        using (store.AcquireLease(selected))
+            Assert.Equal(NativeCacheEntryEviction.Active, await store.EvictKeyAsync(folder.Id, selected.Key));
+
+        Assert.Equal(NativeCacheEntryEviction.Evicted, await store.EvictKeyAsync(folder.Id, selected.Key));
+        Assert.Equal(0, await store.GetCoverageAsync(selected));
+        Assert.Equal(3, await store.GetCoverageAsync(other));
+        Assert.Equal(other.Key, Assert.Single(await store.ListEntriesAsync(folder.Id, null, 10)).Key);
+        Assert.Equal(NativeCacheEntryEviction.NotFound, await store.EvictKeyAsync(folder.Id, selected.Key));
+        Assert.True(await store.WriteBlockAsync(selected, 0, new byte[] { 1, 2, 3 }));
+        Assert.Equal(3, await store.GetCoverageAsync(selected));
+    }
+
+    [Fact]
     public async Task ExplicitScan_ImportsVerifiedJournalIntoNewCatalogue()
     {
         var folder = CreateFolder();

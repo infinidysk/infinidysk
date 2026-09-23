@@ -32,7 +32,8 @@ public sealed class NativeCacheController(NativeCacheService native, NativeCache
 [Route("api/native-cache/operations")]
 public sealed class NativeCacheOperationController(NativeCacheOperations operations, NativeCacheService native) : PostOnlyApiController
 {
-    public sealed record OperationRequest(string? FolderId, string Operation, string? ConfirmFolderId, string? JobId, string? CacheKey, bool? Pinned);
+    public sealed record OperationRequest(string? FolderId, string Operation, string? ConfirmFolderId, string? JobId,
+        string? CacheKey, bool? Pinned, string? ConfirmCacheKey);
     protected override async Task<IActionResult> HandleRequest()
     {
         await native.WaitForInitializationAsync(HttpContext.RequestAborted).ConfigureAwait(false);
@@ -45,7 +46,8 @@ public sealed class NativeCacheOperationController(NativeCacheOperations operati
             return Ok(new { status = true });
         }
         return request.Operation == "cancel" ? Ok(new { Cancelled = operations.Cancel(request.JobId ?? "") })
-            : Accepted(value: operations.Enqueue(request.FolderId ?? "", request.Operation, request.ConfirmFolderId));
+            : Accepted(value: operations.Enqueue(request.FolderId ?? "", request.Operation, request.ConfirmFolderId,
+                request.CacheKey, request.ConfirmCacheKey));
     }
 }
 

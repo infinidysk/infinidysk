@@ -1264,6 +1264,77 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
     public Task<int> EvictAsync(string folderId, bool clear = false, CancellationToken cancellationToken = default)
         => EvictCoreAsync(folderId, clear, pressure: false, cancellationToken);
 
+    /// <summary>Evicts one exact catalogue key without touching other entries or source media.</summary>
+    [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
+    public async Task<NativeCacheEntryEviction> EvictKeyAsync(string folderId, string key, CancellationToken ct = default)
+    {
+        if (key is not { Length: 64 } || !key.All(char.IsAsciiHexDigit))
+            throw new ArgumentException("Select a valid cache entry key.", nameof(key));
+        var folder = _folders.FirstOrDefault(candidate => candidate.Id == folderId);
+        if (folder is null || !folder.Enabled || folder.ReadOnly || !_owners.ContainsKey(folderId))
+            return NativeCacheEntryEviction.Unavailable;
+
+        var writer = Writer(folderId);
+        await writer.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await _gate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                using var query = Command("SELECT Folder,Pinned FROM Entries WHERE Key=$key", ("$key", key));
+                using var reader = query.ExecuteReader();
+                if (!reader.Read() || reader.GetString(0) != folderId) return NativeCacheEntryEviction.NotFound;
+                if (reader.GetInt64(1) != 0) return NativeCacheEntryEviction.Pinned;
+            }
+            finally { _gate.Release(); }
+
+            lock (_leaseLock)
+            {
+                if (_leases.ContainsKey(key) || _evicting.Contains(key)) return NativeCacheEntryEviction.Active;
+                _evicting.Add(key);
+            }
+            try
+            {
+                if (!IsVolumeCurrent(folder)) return NativeCacheEntryEviction.Unavailable;
+                DeleteEntryFiles(folder, key);
+                if (!IsVolumeCurrent(folder)) return NativeCacheEntryEviction.Unavailable;
+                await _gate.WaitAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    Execute("DELETE FROM Entries WHERE Key=$key AND Folder=$folder AND Pinned=0",
+                        ("$key", key), ("$folder", folderId));
+                }
+                finally { _gate.Release(); }
+                return NativeCacheEntryEviction.Evicted;
+            }
+            catch (IOException) { return NativeCacheEntryEviction.Unavailable; }
+            catch (UnauthorizedAccessException) { return NativeCacheEntryEviction.Unavailable; }
+            finally { lock (_leaseLock) _evicting.Remove(key); }
+        }
+        finally { writer.Release(); }
+    }
+
+    private void DeleteEntryFiles(NativeCacheFolder folder, string key)
+    {
+        // Anchored paths restrict deletion to this application's known files.
+        try
+        {
+#pragma warning disable CA2000 // This using declaration owns the anchored shard through unlink/flush, including exceptions.
+            using var shard = _roots[folder.Id].OpenDirectory($"v1/{key[..2]}");
+#pragma warning restore CA2000
+            using var directory = shard.OpenDirectory(key);
+            directory.DeleteFile("content.data");
+            directory.DeleteFile("ranges.journal");
+            directory.DeleteFile("manifest.json");
+            directory.DeleteFile("ranges.checkpoint.tmp");
+            shard.DeleteDirectory(key);
+            shard.Flush();
+        }
+        catch (IOException exception) when (NativeFileSystem.IsMissing(exception))
+        { /* Payload was already removed; catalogue still needs to be reclaimed. */ }
+    }
+
     internal bool HasPendingClearPage(string folderId)
     { lock (_leaseLock) return _evictionCursors.ContainsKey((folderId, true, false)); }
 
@@ -1340,24 +1411,10 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
                             lock (_leaseLock) _evictionCursors.Remove(cursorId);
                             return deleted;
                         }
-                        // No arbitrary recursive deletion: remove our three known files only.
+                        // No arbitrary recursive deletion: remove only known cache files.
                         try
                         {
-                            try
-                            {
-#pragma warning disable CA2000 // This using declaration owns the anchored shard through unlink/flush, including exceptions.
-                                using var shard = _roots[folder.Id].OpenDirectory($"v1/{key[..2]}");
-#pragma warning restore CA2000
-                                using var directory = shard.OpenDirectory(key);
-                                directory.DeleteFile("content.data");
-                                directory.DeleteFile("ranges.journal");
-                                directory.DeleteFile("manifest.json");
-                                directory.DeleteFile("ranges.checkpoint.tmp");
-                                shard.DeleteDirectory(key);
-                                shard.Flush();
-                            }
-                            catch (IOException exception) when (NativeFileSystem.IsMissing(exception))
-                            { /* Anchored payload was already removed; reclaim only while its root remains current. */ }
+                            DeleteEntryFiles(folder, key);
                             if (!IsVolumeCurrent(folder))
                             {
                                 lock (_leaseLock) _evictionCursors.Remove(cursorId);
@@ -1549,6 +1606,8 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
     private sealed record Manifest(int Version, NativeCacheIdentity Identity);
     private sealed record JournalBlock(long Offset, int Count, string Hash);
 }
+
+public enum NativeCacheEntryEviction { Evicted, NotFound, Pinned, Active, Unavailable }
 
 public sealed record NativeCacheProbeResult(string FileSystem, string Capability, bool Readable, bool Writable,
     bool DurableWriteVerified, long AvailableBytes, string? Error);
