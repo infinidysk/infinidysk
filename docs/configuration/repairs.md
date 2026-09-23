@@ -183,8 +183,9 @@ Degraded verdicts compose with the rest of the repair pipeline:
 - **PAR2 first.** When PAR2 gap repair (`repair.par2-enabled`) is enabled and preferred,
   reconstruction is attempted with the full hole list before any verdict; success records a
   healthy, PAR2-repaired result and clears any recorded holes.
-- **Rechecks can escalate or recover.** Degraded files stay on the normal age-doubling
-  recheck schedule. If damage grows past a cap, the next check fails the file and repair
+- **Rechecks can escalate or recover.** Degraded files stay on the normal
+  [age-doubling recheck schedule](../operations/health-repairs.md#when-files-are-rechecked).
+  If damage grows past a cap, the next check fails the file and repair
   proceeds; if the missing articles reappear (provider-side restoration), the record clears
   itself and the file returns to healthy.
 - **Streaming failures still count.** A degraded verdict does not reset the consecutive

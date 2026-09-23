@@ -45,6 +45,30 @@ provider. If a walk would otherwise conclude that the segment is missing but any
 or failed to connect, the file is marked *Action needed* and rechecked later instead of being
 repaired or blocklisted.
 
+### When files are rechecked
+
+After a successful health check, InfiniDysk schedules the next routine check after an
+interval equal to the release's current age, measured from its release date rather than
+when it was imported into InfiniDysk.
+
+| Release age when checked | Next routine check due |
+|--------------------------|------------------------|
+| 1 week | In 1 week |
+| 2 weeks | In 2 weeks |
+| 1 year | In 1 year |
+
+For example, a one-week-old release is checked again in one week. It is then two weeks
+old, so the following check is scheduled two weeks later. Older releases are therefore
+checked less frequently. Degraded files use this same age-based schedule.
+
+The minimum interval is **one hour**, with no maximum interval. Missing or future release
+dates use the one-hour minimum. Failed checks and repairs use separate retry rules, and
+[health-check windows](../configuration/repairs.md#health-check-and-repair-windows-since-130)
+may delay when a due routine check actually runs.
+
+This schedule is independent of **Check older releases less thoroughly**, which changes
+how many segments are checked, not how often checks occur.
+
 ## Health-check retention
 
 Health result rows prune by age (**Maintenance** retention or `DATABASE_HEALTHCHECK_RETENTION_DAYS`). Reset counters from Maintenance when needed.
