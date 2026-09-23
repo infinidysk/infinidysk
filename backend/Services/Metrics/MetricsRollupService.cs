@@ -70,31 +70,30 @@ public class MetricsRollupService(
         if (_startupTargetMinute == 0)
             _startupTargetMinute = targetMinute;
 
-        var start = _lastMinuteRolled == 0
-            ? targetMinute - 59 * OneMinute
+        var isStartupReplay = _lastMinuteRolled < _startupTargetMinute;
+        var start = isStartupReplay
+            ? (_lastMinuteRolled == 0
+                ? _startupTargetMinute - 59 * OneMinute
+                : _lastMinuteRolled + OneMinute)
             : Math.Max(_lastMinuteRolled + OneMinute, targetMinute - 59 * OneMinute);
+        var end = isStartupReplay
+            ? _startupTargetMinute
+            : targetMinute;
 
-        for (var minute = start; minute <= targetMinute; minute += OneMinute)
+        for (var minute = start; minute <= end; minute += OneMinute)
         {
-            var isFinalizedStartupHistory = minute < _startupTargetMinute &&
-                await db.ThroughputMinutes
-                    .AnyAsync(row => row.Minute == minute && row.ClientArticlesFinalized)
-                    .ConfigureAwait(false);
-            if (!isFinalizedStartupHistory)
-                await RollupMinuteAsync(db, minute).ConfigureAwait(false);
+            await RollupMinuteAndHoursAsync(db, minute, _startupTargetMinute)
+                .ConfigureAwait(false);
+        }
 
-            if (minute % OneHour == 0 && minute > 0)
+        if (isStartupReplay && targetMinute > _startupTargetMinute)
+        {
+            start = Math.Max(_lastMinuteRolled + OneMinute, targetMinute - 59 * OneMinute);
+            for (var minute = start; minute <= targetMinute; minute += OneMinute)
             {
-                await RollupHourAsync(db, minute - OneHour).ConfigureAwait(false);
-                if (minute >= _startupTargetMinute ||
-                    !await db.FailoverHourly.AnyAsync(row => row.Hour == minute - OneHour)
-                        .ConfigureAwait(false))
-                {
-                    await RollupFailoverHourAsync(db, minute - OneHour)
-                        .ConfigureAwait(false);
-                }
+                await RollupMinuteAndHoursAsync(db, minute, _startupTargetMinute)
+                    .ConfigureAwait(false);
             }
-            _lastMinuteRolled = minute;
         }
 
         // After fetch-row rollups have written/refreshed ProviderMinute rows, fold in
@@ -103,6 +102,37 @@ public class MetricsRollupService(
         // contributes at most once because DrainClosed pops the bucket.
         await ApplyByteCountersAsync(db, currentMinute).ConfigureAwait(false);
         FlushClosedLatency(currentMinute);
+    }
+
+    private async Task RollupMinuteAndHoursAsync(
+        MetricsDbContext db,
+        long minute,
+        long startupTargetMinute)
+    {
+        var isFinalizedStartupHistory = minute < startupTargetMinute &&
+            await db.ThroughputMinutes
+                .AnyAsync(row => row.Minute == minute && row.ClientArticlesFinalized)
+                .ConfigureAwait(false) &&
+            !await db.SegmentFetches.AnyAsync(fetch =>
+                fetch.At >= minute && fetch.At < minute + OneMinute &&
+                !db.ProviderMinutes.Any(provider =>
+                    provider.Minute == minute && provider.Provider == fetch.Provider))
+                .ConfigureAwait(false);
+        if (!isFinalizedStartupHistory)
+            await RollupMinuteAsync(db, minute).ConfigureAwait(false);
+
+        if (minute % OneHour == 0 && minute > 0)
+        {
+            await RollupHourAsync(db, minute - OneHour).ConfigureAwait(false);
+            if (minute >= startupTargetMinute ||
+                !await db.FailoverHourly.AnyAsync(row => row.Hour == minute - OneHour)
+                    .ConfigureAwait(false))
+            {
+                await RollupFailoverHourAsync(db, minute - OneHour)
+                    .ConfigureAwait(false);
+            }
+        }
+        _lastMinuteRolled = minute;
     }
 
     internal void FlushClosedLatency(long currentMinute)
