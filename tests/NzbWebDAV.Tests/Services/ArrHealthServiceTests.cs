@@ -2,6 +2,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
+using NzbWebDAV.Clients;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Config;
@@ -11,9 +12,13 @@ using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Services;
+using NzbWebDAV.Tests.TestUtils;
+using Serilog;
+using Serilog.Events;
 
 namespace NzbWebDAV.Tests.Services;
 
+[Collection(nameof(GlobalLoggerCollection))]
 public sealed class ArrHealthServiceTests
 {
     [Fact]
@@ -322,6 +327,101 @@ public sealed class ArrHealthServiceTests
         Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
         harness.Metrics.ChangeTracker.Clear();
         Assert.Equal(1, await harness.Metrics.ArrImportEvents.CountAsync());
+    }
+
+    [Fact]
+    public async Task Poll_PerCallDeadline_ReportsTimedOutOperation_AndEntersBackoff()
+    {
+        const string host = "http://sonarr:8989";
+        var backoff = new ArrInstanceBackoff();
+        await using var harness = await DualDbHarness.CreateAsync();
+        var client = new ScriptedArrClient(host)
+        {
+            Queue = async ct =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                return new ArrQueue<ArrQueueRecord>();
+            },
+        };
+        using var service = harness.CreateService(client, host, backoff);
+        service.PerCallTimeout = TimeSpan.FromMilliseconds(200);
+
+        var events = await CaptureAsync(async () =>
+        {
+            Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+            Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+        });
+
+        const string expected =
+            "Sonarr queue request to http://sonarr:8989 timed out after 0.2 seconds; routing: direct (single-label hostname).";
+        var snapshot = Assert.Single(service.GetSnapshots());
+        Assert.Equal(expected, snapshot.LastError);
+        Assert.Equal(ArrInstanceHealthStatus.Offline, snapshot.Status);
+        Assert.True(backoff.IsInBackoff(host));
+
+        var warnings = events
+            .Where(e => e.Level == LogEventLevel.Warning
+                        && e.MessageTemplate.Text.StartsWith("Arr health poll failed", StringComparison.Ordinal)
+                        && e.Properties.TryGetValue("Host", out var loggedHost)
+                        && loggedHost.ToString().Trim('"') == host)
+            .ToList();
+        Assert.Equal(2, warnings.Count);
+        foreach (var warning in warnings)
+        {
+            Assert.Null(warning.Exception);
+            var rendered = warning.RenderMessage();
+            Assert.Contains(expected, rendered);
+            Assert.DoesNotContain("cancel", rendered, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public async Task Poll_ShutdownCancellation_DoesNotLogOrRecordFailure()
+    {
+        const string host = "http://sonarr:8989";
+        var backoff = new ArrInstanceBackoff();
+        await using var harness = await DualDbHarness.CreateAsync();
+        var client = new ScriptedArrClient(host)
+        {
+            QueueStatus = async ct =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                return new ArrQueueStatus();
+            },
+        };
+        using var service = harness.CreateService(client, host, backoff);
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        var events = await CaptureAsync(async () =>
+            Assert.True(await service.TryRunCycleAsync(cts.Token)));
+
+        Assert.Empty(service.GetSnapshots());
+        Assert.DoesNotContain(events, e =>
+            e.Level >= LogEventLevel.Warning
+            && e.MessageTemplate.Text.StartsWith("Arr health poll failed", StringComparison.Ordinal));
+        backoff.RecordFailure(host, new SocketException());
+        Assert.False(backoff.IsInBackoff(host));
+    }
+
+    private static async Task<IReadOnlyList<LogEvent>> CaptureAsync(Func<Task> action)
+    {
+        var sink = new CollectingLogEventSink();
+        var previous = Log.Logger;
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        try
+        {
+            await action();
+        }
+        finally
+        {
+            Log.Logger = previous;
+        }
+
+        return sink.Events;
     }
 
     private static ArrHistoryRecord History(int id, Guid downloadId, DateTimeOffset date, string title) =>

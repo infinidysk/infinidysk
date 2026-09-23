@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using NzbWebDAV.Clients;
 using NzbWebDAV.Clients.Prowlarr;
 
 namespace NzbWebDAV.Tests.Clients;
@@ -72,10 +73,54 @@ public class ProwlarrClientTests
         await Assert.ThrowsAsync<InvalidDataException>(() => client.GetIndexersAsync());
     }
 
+    [Fact]
+    public void SharedHttpClient_HasExplicitTimeout()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(15), ProwlarrClient.RequestTimeout);
+    }
+
+    [Fact]
+    public async Task HttpClientTimeout_SurfacesAsTimedOutRequest()
+    {
+        using var http = new HttpClient(new HangHandler()) { Timeout = TimeSpan.FromMilliseconds(100) };
+        var client = new ProwlarrClient(http, "http://prowlarr:9696/prowlarr/", "super-secret-key");
+
+        var ex = await Assert.ThrowsAsync<ArrRequestTimeoutException>(() => client.GetIndexersAsync());
+
+        Assert.Equal(
+            "Prowlarr indexer list request to http://prowlarr:9696 timed out after 0.1 seconds; routing: direct (single-label hostname).",
+            ex.Message);
+        Assert.DoesNotContain("super-secret-key", ex.Message);
+    }
+
+    [Fact]
+    public async Task CallerCancellation_IsNotReportedAsTimeout()
+    {
+        using var http = new HttpClient(new HangHandler());
+        var client = new ProwlarrClient(http, "http://prowlarr:9696", "key");
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        var ex = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.GetStatusAsync(cts.Token));
+
+        Assert.IsNotType<ArrRequestTimeoutException>(ex);
+    }
+
     private static HttpResponseMessage JsonResponse(string json) => new(HttpStatusCode.OK)
     {
         Content = new StringContent(json, Encoding.UTF8, "application/json"),
     };
+
+    private sealed class HangHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("Expected cancellation before a response.");
+        }
+    }
 
     private sealed class CaptureHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
     {
