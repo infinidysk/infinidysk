@@ -55,6 +55,100 @@ public class SupportPackRedactorTests
         Assert.Equal(2, redactor.AddressesPseudonymized);
     }
 
+    [Theory]
+    [InlineData("2001:0000:0000:0000:0000:0000:0000:0001")]
+    [InlineData("[2001:0000:0000:0000:0000:0000:0000:0001]")]
+    [InlineData("2001:0:0:0:0:0:0:1")]
+    [InlineData("[2001:0:0:0:0:0:0:1]")]
+    [InlineData("1:2:3:4:5:6:7:8")]
+    [InlineData("2001:0db8:0000:0000:0000:0000:0000:0001")]
+    [InlineData("[2001:0DB8:0000:0000:0000:0000:0000:0000]")]
+    public void RedactText_PseudonymizesFullIpv6Addresses(string address)
+    {
+        var redactor = new SupportPackRedactor([]);
+
+        var result = redactor.RedactText($"connected from {address}; disconnected");
+
+        Assert.Equal("connected from [IP-1]; disconnected", result);
+        Assert.Equal(1, redactor.AddressesPseudonymized);
+        Assert.Equal(0, redactor.SecretsRedacted);
+    }
+
+    [Fact]
+    public void RedactText_ReusesFullIpv6AliasAcrossCallsAndBrackets()
+    {
+        const string address = "2001:0000:0000:0000:0000:0000:0000:0001";
+        var redactor = new SupportPackRedactor([]);
+
+        Assert.Equal("peer [IP-1]", redactor.RedactText($"peer {address}"));
+        Assert.Equal("peer [IP-1]", redactor.RedactText($"peer [{address}]"));
+        Assert.Equal("[IP-1] [IP-1]", redactor.RedactText($"{address} {address}"));
+        Assert.Equal(1, redactor.AddressesPseudonymized);
+    }
+
+    [Theory]
+    [InlineData("[2001:db8::1]", "[IP-1]")]
+    [InlineData("2001:db8::1", "2001:[IP-1]")]
+    [InlineData("::1", "[IP-1]")]
+    [InlineData("::ffff:192.0.2.10", "::ffff:[IP-1]")]
+    [InlineData("[::ffff:192.0.2.10]", "[::ffff:[IP-1]]")]
+    public void RedactText_PreservesExistingCompressedAndMappedIpv6Behavior(
+        string input,
+        string expected)
+    {
+        var redactor = new SupportPackRedactor([]);
+
+        Assert.Equal(expected, redactor.RedactText(input));
+        Assert.Equal(1, redactor.AddressesPseudonymized);
+    }
+
+    [Theory]
+    [InlineData("2026-09-23T12:34:56.789Z")]
+    [InlineData("elapsed 12:34:56")]
+    [InlineData("counters 1:2:3:4:5:6:7")]
+    [InlineData("counters 1:2:3:4:5:6:7:8:9")]
+    [InlineData("invalid 12345:0:0:0:0:0:0:1")]
+    [InlineData("invalid 2001:0:0:0:0:0:0:12345")]
+    [InlineData("invalid 2001:0:0:0:0:0:0:1:")]
+    [InlineData("invalid :2001:0:0:0:0:0:0:1")]
+    [InlineData("identifier x2001:0:0:0:0:0:0:1")]
+    [InlineData("identifier 2001:0:0:0:0:0:0:1x")]
+    [InlineData("Chrome/140.0.0.0 Edg/140.0.0.0 client v1.2.3.4")]
+    public void RedactText_KeepsNonAddressTextWhenMatchingFullIpv6(string input)
+    {
+        var redactor = new SupportPackRedactor([]);
+
+        Assert.Equal(input, redactor.RedactText(input));
+        Assert.Equal(0, redactor.AddressesPseudonymized);
+    }
+
+    [Fact]
+    public void RedactJson_PseudonymizesFullIpv6StringValues()
+    {
+        const string address = "2001:0000:0000:0000:0000:0000:0000:0001";
+        var redactor = new SupportPackRedactor([]);
+        var json = JsonSerializer.Serialize(new
+        {
+            peer = address,
+            endpoints = new[] { $"https://[{address}]:8080/status" },
+            enabled = true,
+            count = 2,
+        });
+
+        var result = redactor.RedactJson(json);
+
+        using var document = JsonDocument.Parse(result);
+        var root = document.RootElement;
+        Assert.Equal("[IP-1]", root.GetProperty("peer").GetString());
+        Assert.Equal(
+            "https://[IP-1]:8080/status",
+            root.GetProperty("endpoints")[0].GetString());
+        Assert.True(root.GetProperty("enabled").GetBoolean());
+        Assert.Equal(2, root.GetProperty("count").GetInt32());
+        Assert.DoesNotContain(address, result);
+        Assert.Equal(1, redactor.AddressesPseudonymized);
+    }
+
     [Fact]
     public void RedactText_KeepsVersionStringsThatLookLikeAddresses()
     {
