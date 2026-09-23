@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import styles from "./provider-speed-chart.module.css";
-import type { OverviewWindow, ProviderSpeedPoint } from "~/clients/backend-client.server";
-import { formatBytes } from "../../utils/format";
+import type { OverviewWindow, ProviderSampledSpeedPoint } from "~/clients/backend-client.server";
 
 export type ProviderSpeedChartProps = {
   providerLabel: string;
-  points: ProviderSpeedPoint[];
+  points: ProviderSampledSpeedPoint[];
   bucketSizeMs: number;
   historyTruncated: boolean;
   window: OverviewWindow;
@@ -35,16 +34,17 @@ export function ProviderSpeedChart({
     setKeyboardBucket(null);
   }, [window, providerLabel]);
 
-  const { speedPath, maxSpeed, xPercent, yPercent } = useMemo(() => {
+  const { speedPath, averagePath, maxSpeed, xPercent, yPercent } = useMemo(() => {
     if (points.length === 0) {
       return {
         speedPath: "",
+        averagePath: "",
         maxSpeed: 0,
         xPercent: (_: number) => 0,
         yPercent: (_: number) => 0,
       };
     }
-    const peak = Math.max(0, ...points.map((p) => p.speedMbPerSec));
+    const peak = Math.max(0, ...points.map((point) => point.peakMbPerSec ?? 0));
     const scaleMax = Math.max(0.1, peak);
     const xStep = points.length > 1 ? VB_W / (points.length - 1) : 0;
     const innerH = VB_H - TOP_PAD - BOT_PAD;
@@ -54,7 +54,8 @@ export function ProviderSpeedChart({
       100 - ((v / scaleMax) * (1 - (TOP_PAD + BOT_PAD) / VB_H) * 100 + (BOT_PAD / VB_H) * 100);
 
     return {
-      speedPath: buildSpeedPath(points, xStep, y),
+      speedPath: buildSpeedPath(points, xStep, y, "peakMbPerSec"),
+      averagePath: buildSpeedPath(points, xStep, y, "activeAverageMbPerSec"),
       maxSpeed: peak,
       xPercent: xPct,
       yPercent: yPct,
@@ -114,7 +115,7 @@ export function ProviderSpeedChart({
     setKeyboardBucket(points[next]?.bucket ?? null);
   };
 
-  const hasData = points.length > 0;
+  const hasData = points.some((point) => point.peakMbPerSec !== null);
   const hover = cursorIdx !== null ? (points[cursorIdx] ?? null) : null;
   const keyboardPoint = keyboardIdx !== null ? points[keyboardIdx] : undefined;
   const keyboardStatus = keyboardPoint ? describeSpeedBucket(keyboardPoint, window) : "";
@@ -129,18 +130,18 @@ export function ProviderSpeedChart({
         })();
 
   return (
-    <section className="card w-full min-w-0 overflow-visible border border-base-content/10 bg-base-100 shadow-sm">
-      <div className="card-body gap-3 overflow-visible p-4">
+    <section className="w-full min-w-0 overflow-visible border-t border-base-content/10">
+      <div className="flex flex-col gap-3 overflow-visible pt-4">
         <div>
           <h3 className="card-title text-base">{providerLabel}</h3>
           <p className="text-xs text-base-content/50">
-            Effective MB/s
+            Sampled MB/s
             {historyTruncated
               ? " · retained provider history (last 365 days)"
               : window === "all"
                 ? " · all time"
                 : ` · last ${window}`}
-            {maxSpeed > 0 ? ` · peak ${maxSpeed.toFixed(2)} MB/s` : ""}
+            {maxSpeed > 0 ? ` · chart peak ${maxSpeed.toFixed(2)} MB/s` : ""}
           </p>
         </div>
 
@@ -199,6 +200,13 @@ export function ProviderSpeedChart({
                   {speedPath && (
                     <path d={speedPath} className={styles.lineSpeed} data-series="speed" />
                   )}
+                  {averagePath && (
+                    <path
+                      d={averagePath}
+                      className={styles.lineAverage}
+                      data-series="active-average"
+                    />
+                  )}
                 </svg>
 
                 {hover && cursorIdx !== null && (
@@ -208,25 +216,27 @@ export function ProviderSpeedChart({
                       className={`tooltip tooltip-open ${tooltipPlacement} ${styles.hoverTooltip}`}
                       style={{
                         left: `${xPercent(cursorIdx)}%`,
-                        top: `${yPercent(hover.speedMbPerSec)}%`,
+                        top: `${yPercent(hover.peakMbPerSec ?? 0)}%`,
                       }}
                     >
                       <div className="tooltip-content">
                         <div className="space-y-0.5 text-left font-mono text-xs">
                           <div className="font-semibold">{formatFullBucketTime(hover.bucket)}</div>
-                          <div>{hover.speedMbPerSec.toFixed(2)} MB/s</div>
-                          <div>{formatBytes(hover.bytesFetched)} fetched</div>
+                          <div>Peak {formatRate(hover.peakMbPerSec)}</div>
+                          <div>Active avg {formatRate(hover.activeAverageMbPerSec)}</div>
                         </div>
                       </div>
                       <span className={styles.hoverDotAnchor} />
                     </div>
-                    <div
-                      className={styles.hoverDot}
-                      style={{
-                        left: `${xPercent(cursorIdx)}%`,
-                        top: `${yPercent(hover.speedMbPerSec)}%`,
-                      }}
-                    />
+                    {hover.peakMbPerSec !== null && (
+                      <div
+                        className={styles.hoverDot}
+                        style={{
+                          left: `${xPercent(cursorIdx)}%`,
+                          top: `${yPercent(hover.peakMbPerSec)}%`,
+                        }}
+                      />
+                    )}
                   </>
                 )}
               </div>
@@ -252,6 +262,10 @@ export function ProviderSpeedChart({
                 </span>
               ))}
             </div>
+            <div className="flex flex-wrap gap-4 text-xs">
+              <span className="text-secondary">Peak</span>
+              <span className="text-info">Active avg</span>
+            </div>
           </>
         ) : (
           <div className="py-12 text-center text-[13px] text-base-content/50">
@@ -264,40 +278,42 @@ export function ProviderSpeedChart({
 }
 
 function buildSpeedPath(
-  points: ProviderSpeedPoint[],
+  points: ProviderSampledSpeedPoint[],
   xStep: number,
   y: (v: number) => number,
+  field: "peakMbPerSec" | "activeAverageMbPerSec",
 ): string {
-  if (points.length === 0) return "";
-  if (points.length === 1) {
-    const yy = y(points[0]?.speedMbPerSec ?? 0).toFixed(1);
-    const mid = VB_W / 2;
-    const extension = 1;
-    const x1 = Math.max(0, mid - extension).toFixed(1);
-    const x2 = Math.min(VB_W, mid + extension).toFixed(1);
-    return `M${x1},${yy} L${x2},${yy}`;
-  }
   return points
-    .map((p, i) => {
-      const x = (i * xStep).toFixed(1);
-      const yy = y(p?.speedMbPerSec ?? 0).toFixed(1);
-      return `${i === 0 ? "M" : "L"}${x},${yy}`;
+    .map((point, index) => {
+      const value = point[field];
+      if (value === null) return "";
+      const position = points.length === 1 ? VB_W / 2 : index * xStep;
+      const height = y(value).toFixed(1);
+      const startsRun = points[index - 1]?.[field] == null;
+      if (startsRun && points[index + 1]?.[field] == null) {
+        return `M${Math.max(0, position - 1).toFixed(1)},${height} L${Math.min(VB_W, position + 1).toFixed(1)},${height}`;
+      }
+      return `${startsRun ? "M" : "L"}${position.toFixed(1)},${height}`;
     })
     .join(" ");
 }
 
-function indexOfBucket(points: ProviderSpeedPoint[], bucket: number | null): number | null {
+function indexOfBucket(points: ProviderSampledSpeedPoint[], bucket: number | null): number | null {
   if (bucket === null) return null;
   const idx = points.findIndex((p) => p.bucket === bucket);
   return idx >= 0 ? idx : null;
 }
 
-function describeSpeedBucket(point: ProviderSpeedPoint, window: OverviewWindow): string {
+function describeSpeedBucket(point: ProviderSampledSpeedPoint, window: OverviewWindow): string {
   return [
     formatBucketTime(point.bucket, window),
-    `${point.speedMbPerSec.toFixed(2)} MB/s`,
-    `${formatBytes(point.bytesFetched)} fetched`,
+    `Peak ${formatRate(point.peakMbPerSec)}`,
+    `Active avg ${formatRate(point.activeAverageMbPerSec)}`,
   ].join(", ");
+}
+
+function formatRate(value: number | null): string {
+  return value === null ? "unavailable" : `${value.toFixed(2)} MB/s`;
 }
 
 function formatFullBucketTime(ms: number): string {

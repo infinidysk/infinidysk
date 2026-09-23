@@ -61,10 +61,16 @@ public sealed class MetricsMigrationTests
             var providerMinute = await context.ProviderMinutes.AsNoTracking().SingleAsync();
             Assert.Equal(5, providerMinute.Misses);
             Assert.Equal(0, providerMinute.Errors);
+            Assert.Null(providerMinute.PeakBytesPerSec);
+            Assert.Null(providerMinute.ActiveBytes);
+            Assert.Null(providerMinute.ActiveSeconds);
 
             var providerHour = await context.ProviderHourly.AsNoTracking().SingleAsync();
             Assert.Equal(9, providerHour.Misses);
             Assert.Equal(0, providerHour.Errors);
+            Assert.Null(providerHour.PeakBytesPerSec);
+            Assert.Null(providerHour.ActiveBytes);
+            Assert.Null(providerHour.ActiveSeconds);
 
             Assert.Empty(await context.ProviderQuotaUsage.AsNoTracking().ToListAsync());
             Assert.Empty(await context.ThroughputHourly.AsNoTracking().ToListAsync());

@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
+using NzbWebDAV.Api.Controllers.GetOverviewStats;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.MigrationHelpers;
@@ -14,6 +15,76 @@ public sealed class MetricsRollupPeakRateTests
     private const long OneMinute = 60_000;
     private const long OneHour = 60 * OneMinute;
     private const long Hour0 = 1_700_000_000_000L - (1_700_000_000_000L % OneHour);
+
+    [Fact]
+    public async Task ProviderRates_ApiCombinesPersistedAndPendingSamplesExactlyOnce()
+    {
+        await using var harness = await MetricsHarness.CreateAsync();
+        var tracker = new ProviderBytesTracker(() => 1);
+        var providers = new List<GetOverviewStatsResponse.ProviderRow>();
+        var labels = new Dictionary<string, string?> { ["primary"] = "Primary" };
+        tracker.RestoreProviderRates([new(Hour0, "primary", 100_000_000, 100_000_000, 1)]);
+        await MetricsRollupService.ApplyPendingPeakRatesAsync(harness.Context, tracker, Hour0 + OneMinute);
+        tracker.RestoreProviderRates([new(Hour0 + OneMinute, "primary", 50_000_000, 100_000_000, 2)]);
+
+        foreach (var useRollups in new[] { false, true })
+        {
+            await ProviderSampledRates.LoadAndApplyAsync(harness.Context, tracker, providers, labels,
+                GetOverviewStatsRequest.OverviewWindow.Last1Hour, Hour0, Hour0 + OneHour + 1, useRollups);
+            var row = Assert.Single(providers);
+            Assert.Equal(100d, row.PeakMbPerSec);
+            Assert.Equal(200d / 3, row.ActiveAverageMbPerSec!.Value, 8);
+        }
+
+        await MetricsRollupService.ApplyPendingPeakRatesAsync(harness.Context, tracker, Hour0 + OneHour);
+        await ProviderSampledRates.LoadAndApplyAsync(harness.Context, tracker, providers, labels,
+            GetOverviewStatsRequest.OverviewWindow.Last1Hour, Hour0, Hour0 + OneHour + 1, false);
+        Assert.Equal(200d / 3, Assert.Single(providers).ActiveAverageMbPerSec!.Value, 8);
+        var json = System.Text.Json.JsonSerializer.Serialize(providers,
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        Assert.Contains("\"peakMbPerSec\":100", json);
+        Assert.Contains("\"sampledSpeedSeries\":", json);
+    }
+
+    [Fact]
+    public async Task ProviderRates_PersistRebuildAndRetainWeightedTotals()
+    {
+        await using var harness = await MetricsHarness.CreateAsync();
+        var db = harness.Context;
+        var tracker = new ProviderBytesTracker(() => 1);
+        tracker.RestoreProviderRates([
+            new(Hour0, "primary", 100_000_000, 100_000_000, 1),
+            new(Hour0 + OneMinute, "primary", 50_000_000, 100_000_000, 2),
+        ]);
+        await MetricsRollupService.ApplyPendingPeakRatesAsync(db, tracker, Hour0 + OneHour);
+        await MetricsRollupService.ApplyPendingPeakRatesAsync(db, tracker, Hour0 + OneHour);
+        await MetricsRollupService.RollupHourAsync(db, Hour0);
+        await MetricsRollupService.RollupHourAsync(db, Hour0);
+        var hourly = await db.ProviderHourly.AsNoTracking().SingleAsync();
+        Assert.Equal(100_000_000, hourly.PeakBytesPerSec);
+        Assert.Equal(200_000_000, hourly.ActiveBytes);
+        Assert.Equal(3d, hourly.ActiveSeconds);
+
+        await MetricsRetentionService.SweepAsync(db, Hour0 + 400L * 24 * OneHour, TimeSpan.FromHours(24));
+        var lifetime = await db.ProviderLifetimeTotals.AsNoTracking().SingleAsync();
+        Assert.Equal(hourly.PeakBytesPerSec, lifetime.PeakBytesPerSec);
+        Assert.Equal(hourly.ActiveBytes, lifetime.ActiveBytes);
+        Assert.Equal(hourly.ActiveSeconds, lifetime.ActiveSeconds);
+    }
+
+    [Fact]
+    public async Task ProviderRates_RollbackRestoresPendingSamples()
+    {
+        await using var harness = await MetricsHarness.CreateAsync();
+        var db = harness.Context;
+        var tracker = new ProviderBytesTracker(() => 1);
+        tracker.RestoreProviderRates([new(Hour0, "primary", 100, 200, 2)]);
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE ProviderHourly");
+        await Assert.ThrowsAsync<SqliteException>(() =>
+            MetricsRollupService.ApplyPendingPeakRatesAsync(db, tracker, Hour0 + OneHour));
+        Assert.Equal(200, Assert.Single(tracker.PendingProviderRates(0)).ActiveBytes);
+        Assert.Empty(await db.ProviderMinutes.ToListAsync());
+    }
 
     [Fact]
     public async Task ApplyPeakRatesAsync_MaxMergesIntoMinuteAndHourRows()

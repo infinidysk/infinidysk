@@ -19,10 +19,10 @@ public class GetOverviewStatsProviderSeriesTests
     private const long OneDay = 86_400_000;
 
     [Theory]
-    [InlineData(GetOverviewStatsRequest.OverviewWindow.Last1Hour, OneMinute, 60, false)]
-    [InlineData(GetOverviewStatsRequest.OverviewWindow.Last24Hours, 15 * OneMinute, 96, false)]
-    [InlineData(GetOverviewStatsRequest.OverviewWindow.Last7Days, OneHour, 168, false)]
-    [InlineData(GetOverviewStatsRequest.OverviewWindow.Last30Days, 6 * OneHour, 120, false)]
+    [InlineData(GetOverviewStatsRequest.OverviewWindow.Last1Hour, OneMinute, 61, false)]
+    [InlineData(GetOverviewStatsRequest.OverviewWindow.Last24Hours, 15 * OneMinute, 97, false)]
+    [InlineData(GetOverviewStatsRequest.OverviewWindow.Last7Days, OneHour, 169, false)]
+    [InlineData(GetOverviewStatsRequest.OverviewWindow.Last30Days, 6 * OneHour, 121, false)]
     [InlineData(GetOverviewStatsRequest.OverviewWindow.AllTime, 7 * OneDay, 0, true)]
     public void ResolveProviderSeriesGeometry_AlignsBucketsAndMarksTruncation(
         GetOverviewStatsRequest.OverviewWindow window,
@@ -46,6 +46,7 @@ public class GetOverviewStatsProviderSeriesTests
         Assert.Equal(0, geometry.Start % expectedBucket);
         Assert.Equal(0, geometry.End % expectedBucket);
         Assert.True(geometry.End > geometry.Start);
+        Assert.True(geometry.End > nowMs);
         if (expectedCount > 0)
             Assert.Equal(expectedCount, (geometry.End - geometry.Start) / expectedBucket);
         else
@@ -72,14 +73,50 @@ public class GetOverviewStatsProviderSeriesTests
         var a = Assert.Single(rows, r => r.Provider == ProviderA);
         var b = Assert.Single(rows, r => r.Provider == ProviderB);
         var alignedStart = windowStart - windowStart % OneMinute;
-        Assert.Equal(60, a.SpeedSeries.Count);
-        Assert.Equal(60, b.SpeedSeries.Count);
+        Assert.Equal(61, a.SpeedSeries.Count);
+        Assert.Equal(61, b.SpeedSeries.Count);
         Assert.Equal(alignedStart, a.SpeedSeries[0].Bucket);
         Assert.Equal(2.0, a.SpeedSeries[0].SpeedMbPerSec);
         Assert.Equal(2_000_000, a.SpeedSeries[0].BytesFetched);
         Assert.Equal(0, a.SpeedSeries[1].SpeedMbPerSec);
         Assert.Equal(0, b.SpeedSeries[0].SpeedMbPerSec);
         Assert.Equal(1.0, b.SpeedSeries[1].SpeedMbPerSec);
+    }
+
+    [Fact]
+    public void SampledRates_WeightActiveTimeAndIncludeCurrentPartialBucket()
+    {
+        var nowMs = 10 * OneHour + 5_000;
+        var rows = new List<GetOverviewStatsResponse.ProviderRow>
+        {
+            new() { Provider = ProviderB, SpeedMbPerSec = 123 },
+        };
+        ProviderSampledRates.Apply(rows, Labels,
+            [new(nowMs - OneMinute, ProviderA, 100_000_000, 100_000_000, 1),
+             new(nowMs, ProviderA, 50_000_000, 100_000_000, 2)],
+            [], GetOverviewStatsRequest.OverviewWindow.Last1Hour, nowMs - OneHour, nowMs);
+
+        var primary = Assert.Single(rows, row => row.Provider == ProviderA);
+        Assert.Equal(100d, primary.PeakMbPerSec);
+        Assert.Equal(200d / 3, primary.ActiveAverageMbPerSec!.Value, 8);
+        Assert.Equal(50d, primary.SampledSpeedSeries[^1].PeakMbPerSec);
+        var legacy = Assert.Single(rows, row => row.Provider == ProviderB);
+        Assert.Null(legacy.PeakMbPerSec);
+        Assert.Null(legacy.ActiveAverageMbPerSec);
+        Assert.All(legacy.SampledSpeedSeries, point => Assert.Null(point.PeakMbPerSec));
+    }
+
+    [Fact]
+    public void SampledRates_AllTimeIncludesFoldedTotalsOnlyInSummary()
+    {
+        var rows = new List<GetOverviewStatsResponse.ProviderRow>();
+        ProviderSampledRates.Apply(rows, Labels, [],
+            [new() { Provider = ProviderA, PeakBytesPerSec = 100_000_000, ActiveBytes = 200_000_000, ActiveSeconds = 4 }],
+            GetOverviewStatsRequest.OverviewWindow.AllTime, 0, 400 * OneDay);
+        var primary = Assert.Single(rows);
+        Assert.Equal(100d, primary.PeakMbPerSec);
+        Assert.Equal(50d, primary.ActiveAverageMbPerSec);
+        Assert.All(primary.SampledSpeedSeries, point => Assert.Null(point.PeakMbPerSec));
     }
 
     [Fact]

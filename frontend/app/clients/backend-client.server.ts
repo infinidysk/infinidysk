@@ -1218,6 +1218,10 @@ export type ProviderRow = {
   errors: number;
   retries: number;
   speedMbPerSec?: number | null | undefined;
+  peakMbPerSec?: number | null;
+  activeAverageMbPerSec?: number | null;
+  peakSpeedSpark?: (number | null)[];
+  sampledSpeedSeries?: ProviderSampledSpeedPoint[];
   speedSpark?: number[];
   speedSeries?: ProviderSpeedPoint[];
   avgDurationMs: number;
@@ -1232,6 +1236,12 @@ export type ProviderRow = {
   tripCount?: number | undefined;
   failureCount?: number | undefined;
   articleMissCount?: number | undefined;
+};
+
+export type ProviderSampledSpeedPoint = {
+  bucket: number;
+  peakMbPerSec: number | null;
+  activeAverageMbPerSec: number | null;
 };
 
 export type ProviderCircuitBreakerRow = {

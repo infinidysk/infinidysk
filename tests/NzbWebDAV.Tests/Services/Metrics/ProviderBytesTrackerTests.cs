@@ -23,6 +23,51 @@ public class ProviderBytesTrackerTests
     private const long Minute0 = 1_700_000_000_000L - (1_700_000_000_000L % 60_000);
 
     [Fact]
+    public void ProviderRates_WeightActiveIntervalsAndExcludeIdleTime()
+    {
+        long timestamp = 1;
+        var tracker = new ProviderBytesTracker(() => timestamp);
+        tracker.SampleFetchRate(Minute0);
+        tracker.Add("primary", 40_000_000);
+        tracker.Add("primary", 60_000_000);
+        tracker.Add("secondary", 20_000_000);
+        timestamp += Stopwatch.Frequency;
+        tracker.SampleFetchRate(Minute0 + 1_000);
+        timestamp += Stopwatch.Frequency * 50;
+        tracker.SampleFetchRate(Minute0 + 51_000);
+        tracker.Add("primary", 100_000_000);
+        timestamp += Stopwatch.Frequency * 2;
+        tracker.SampleFetchRate(Minute0 + 53_000);
+
+        var primary = Assert.Single(tracker.PendingProviderRates(Minute0), sample => sample.Provider == "primary");
+        Assert.Equal(100_000_000, primary.PeakBytesPerSec);
+        Assert.Equal(200_000_000, primary.ActiveBytes);
+        Assert.Equal(3d, primary.ActiveSeconds);
+        var secondary = Assert.Single(tracker.PendingProviderRates(Minute0), sample => sample.Provider == "secondary");
+        Assert.Equal(20_000_000, secondary.PeakBytesPerSec);
+        Assert.Equal(1d, secondary.ActiveSeconds);
+    }
+
+    [Fact]
+    public void ProviderRates_DrainRestoreAndResetPreserveOtherProviders()
+    {
+        long timestamp = 1;
+        var tracker = new ProviderBytesTracker(() => timestamp);
+        tracker.SampleFetchRate(Minute0);
+        tracker.Add("primary", 100);
+        tracker.Add("secondary", 200);
+        timestamp += Stopwatch.Frequency;
+        tracker.SampleFetchRate(Minute0 + 1_000);
+        var drained = tracker.DrainProviderRates(Minute0 + 60_000);
+        Assert.Empty(tracker.PendingProviderRates(0));
+        tracker.RestoreProviderRates(drained);
+        tracker.ResetProvider("primary");
+        Assert.Equal("secondary", Assert.Single(tracker.PendingProviderRates(0)).Provider);
+        tracker.ResetCounters();
+        Assert.Empty(tracker.PendingProviderRates(0));
+    }
+
+    [Fact]
     public void SampleFetchRate_KeepsHighestOneSecondRatePerMinute()
     {
         long timestamp = 1;

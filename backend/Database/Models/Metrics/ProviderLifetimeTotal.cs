@@ -8,6 +8,9 @@ public class ProviderLifetimeTotal
 {
     public string Provider { get; set; } = null!;
     public long BytesFetched { get; set; }
+    public long? PeakBytesPerSec { get; set; }
+    public long? ActiveBytes { get; set; }
+    public double? ActiveSeconds { get; set; }
     public long Articles { get; set; }
     public long ClientArticles { get; set; }
     public long QueueArticles { get; set; }

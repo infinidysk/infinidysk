@@ -295,8 +295,8 @@ public static class UsenetProviderIdentity
         {
             await db.Database.ExecuteSqlRawAsync(
                 """
-                INSERT INTO ProviderMinutes (Minute, Provider, Articles, ClientArticles, QueueArticles, ClientArticlesFinalized, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist)
-                SELECT Minute, {0}, Articles, ClientArticles, QueueArticles, ClientArticlesFinalized, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist
+                INSERT INTO ProviderMinutes (Minute, Provider, Articles, ClientArticles, QueueArticles, ClientArticlesFinalized, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist, PeakBytesPerSec, ActiveBytes, ActiveSeconds)
+                SELECT Minute, {0}, Articles, ClientArticles, QueueArticles, ClientArticlesFinalized, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist, PeakBytesPerSec, ActiveBytes, ActiveSeconds
                 FROM ProviderMinutes WHERE Provider = {1}
                 ON CONFLICT(Minute, Provider) DO UPDATE SET
                     Articles = ProviderMinutes.Articles + excluded.Articles,
@@ -308,6 +308,9 @@ public static class UsenetProviderIdentity
                     Errors = ProviderMinutes.Errors + excluded.Errors,
                     Retries = ProviderMinutes.Retries + excluded.Retries,
                     FailoverSaves = ProviderMinutes.FailoverSaves + excluded.FailoverSaves,
+                    PeakBytesPerSec = COALESCE(ProviderMinutes.PeakBytesPerSec, excluded.PeakBytesPerSec),
+                    ActiveBytes = COALESCE(ProviderMinutes.ActiveBytes, excluded.ActiveBytes),
+                    ActiveSeconds = COALESCE(ProviderMinutes.ActiveSeconds, excluded.ActiveSeconds),
                     SumDurationMs = ProviderMinutes.SumDurationMs + excluded.SumDurationMs;
                 """,
                 new object[] { metricsKey, host }, ct).ConfigureAwait(false);
@@ -324,8 +327,8 @@ public static class UsenetProviderIdentity
         {
             await db.Database.ExecuteSqlRawAsync(
                 """
-                INSERT INTO ProviderHourly (Hour, Provider, Articles, ClientArticles, QueueArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, P95DurationMs)
-                SELECT Hour, {0}, Articles, ClientArticles, QueueArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, P95DurationMs
+                INSERT INTO ProviderHourly (Hour, Provider, Articles, ClientArticles, QueueArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, P95DurationMs, PeakBytesPerSec, ActiveBytes, ActiveSeconds)
+                SELECT Hour, {0}, Articles, ClientArticles, QueueArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, P95DurationMs, PeakBytesPerSec, ActiveBytes, ActiveSeconds
                 FROM ProviderHourly WHERE Provider = {1}
                 ON CONFLICT(Hour, Provider) DO UPDATE SET
                     Articles = ProviderHourly.Articles + excluded.Articles,
@@ -336,6 +339,9 @@ public static class UsenetProviderIdentity
                     Errors = ProviderHourly.Errors + excluded.Errors,
                     Retries = ProviderHourly.Retries + excluded.Retries,
                     FailoverSaves = ProviderHourly.FailoverSaves + excluded.FailoverSaves,
+                    PeakBytesPerSec = COALESCE(ProviderHourly.PeakBytesPerSec, excluded.PeakBytesPerSec),
+                    ActiveBytes = COALESCE(ProviderHourly.ActiveBytes, excluded.ActiveBytes),
+                    ActiveSeconds = COALESCE(ProviderHourly.ActiveSeconds, excluded.ActiveSeconds),
                     SumDurationMs = ProviderHourly.SumDurationMs + excluded.SumDurationMs;
                 """,
                 new object[] { metricsKey, host }, ct).ConfigureAwait(false);

@@ -219,13 +219,15 @@ public class MetricsRollupService(
         try
         {
             var peaks = bytesTracker.DrainClosedPeaks(currentMinute);
+            var providerRates = bytesTracker.DrainProviderRates(currentMinute);
             try
             {
-                await ApplyPeakRatesAsync(db, peaks).ConfigureAwait(false);
+                await ApplyPeakRatesAsync(db, peaks, providerRates).ConfigureAwait(false);
             }
             catch
             {
                 bytesTracker.RestorePeaks(peaks);
+                bytesTracker.RestoreProviderRates(providerRates);
                 throw;
             }
         }
@@ -238,9 +240,10 @@ public class MetricsRollupService(
     // MAX-merge so catch-up re-runs and restarts can never lower a persisted peak.
     internal static async Task ApplyPeakRatesAsync(
         MetricsDbContext db,
-        IReadOnlyList<(long Minute, long PeakBytesPerSec)> peaks)
+        IReadOnlyList<(long Minute, long PeakBytesPerSec)> peaks,
+        IReadOnlyList<ProviderBytesTracker.ProviderRateSample>? providerRates = null)
     {
-        if (peaks.Count == 0) return;
+        if (peaks.Count == 0 && (providerRates is null || providerRates.Count == 0)) return;
 
         await using var transaction = await db.Database.BeginTransactionAsync().ConfigureAwait(false);
         foreach (var (minute, peak) in peaks)
@@ -263,6 +266,36 @@ public class MetricsRollupService(
                     PeakFetchBytesPerSec = MAX(ThroughputHourly.PeakFetchBytesPerSec, excluded.PeakFetchBytesPerSec);
                 """,
                 FloorTo(minute, OneHour), peak).ConfigureAwait(false);
+        }
+
+        foreach (var sample in providerRates ?? [])
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                """
+                INSERT INTO ProviderMinutes
+                    (Minute, Provider, Articles, BytesFetched, Misses, Errors, Retries, SumDurationMs,
+                     PeakBytesPerSec, ActiveBytes, ActiveSeconds)
+                VALUES ({0}, {1}, 0, 0, 0, 0, 0, 0, {2}, {3}, {4})
+                ON CONFLICT(Minute, Provider) DO UPDATE SET
+                    PeakBytesPerSec = MAX(COALESCE(ProviderMinutes.PeakBytesPerSec, 0), excluded.PeakBytesPerSec),
+                    ActiveBytes = COALESCE(ProviderMinutes.ActiveBytes, 0) + excluded.ActiveBytes,
+                    ActiveSeconds = COALESCE(ProviderMinutes.ActiveSeconds, 0) + excluded.ActiveSeconds;
+                """,
+                sample.Minute, sample.Provider, sample.PeakBytesPerSec, sample.ActiveBytes, sample.ActiveSeconds)
+                .ConfigureAwait(false);
+            await db.Database.ExecuteSqlRawAsync(
+                """
+                INSERT INTO ProviderHourly
+                    (Hour, Provider, Articles, ClientArticles, BytesFetched, Misses, Errors, Retries, SumDurationMs,
+                     PeakBytesPerSec, ActiveBytes, ActiveSeconds)
+                VALUES ({0}, {1}, 0, 0, 0, 0, 0, 0, 0, {2}, {3}, {4})
+                ON CONFLICT(Hour, Provider) DO UPDATE SET
+                    PeakBytesPerSec = MAX(COALESCE(ProviderHourly.PeakBytesPerSec, 0), excluded.PeakBytesPerSec),
+                    ActiveBytes = COALESCE(ProviderHourly.ActiveBytes, 0) + excluded.ActiveBytes,
+                    ActiveSeconds = COALESCE(ProviderHourly.ActiveSeconds, 0) + excluded.ActiveSeconds;
+                """,
+                FloorTo(sample.Minute, OneHour), sample.Provider, sample.PeakBytesPerSec, sample.ActiveBytes, sample.ActiveSeconds)
+                .ConfigureAwait(false);
         }
 
         await transaction.CommitAsync().ConfigureAwait(false);
@@ -347,7 +380,7 @@ public class MetricsRollupService(
         var next = hour + OneHour;
         await db.Database.ExecuteSqlRawAsync(
             """
-            INSERT INTO ProviderHourly (Hour, Provider, Articles, ClientArticles, QueueArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, P95DurationMs)
+            INSERT INTO ProviderHourly (Hour, Provider, Articles, ClientArticles, QueueArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, P95DurationMs, PeakBytesPerSec, ActiveBytes, ActiveSeconds)
             SELECT {0}, Provider,
                 SUM(Articles),
                 SUM(ClientArticles),
@@ -358,7 +391,10 @@ public class MetricsRollupService(
                 SUM(Retries),
                 SUM(FailoverSaves),
                 SUM(SumDurationMs),
-                NULL
+                NULL,
+                MAX(PeakBytesPerSec),
+                SUM(ActiveBytes),
+                SUM(ActiveSeconds)
             FROM ProviderMinutes
             WHERE Minute >= {0} AND Minute < {1}
             GROUP BY Provider
@@ -371,6 +407,9 @@ public class MetricsRollupService(
                 Errors        = excluded.Errors,
                 Retries       = excluded.Retries,
                 FailoverSaves = excluded.FailoverSaves,
+                PeakBytesPerSec = excluded.PeakBytesPerSec,
+                ActiveBytes = excluded.ActiveBytes,
+                ActiveSeconds = excluded.ActiveSeconds,
                 SumDurationMs = excluded.SumDurationMs;
             """,
             hour, next).ConfigureAwait(false);

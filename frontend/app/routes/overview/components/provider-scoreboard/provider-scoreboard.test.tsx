@@ -11,6 +11,9 @@ const provider = (speedMbPerSec: number | null): ProviderRow => ({
   errors: 0,
   retries: 0,
   speedMbPerSec,
+  peakMbPerSec: speedMbPerSec,
+  activeAverageMbPerSec: speedMbPerSec == null ? null : speedMbPerSec / 2,
+  peakSpeedSpark: speedMbPerSec == null ? [] : [speedMbPerSec],
   speedSpark: speedMbPerSec == null ? [] : [speedMbPerSec],
   avgDurationMs: 100,
   errorRate: 0,
@@ -18,7 +21,7 @@ const provider = (speedMbPerSec: number | null): ProviderRow => ({
 });
 
 describe("ProviderScoreboard", () => {
-  it("shows sustained speed and an em dash when speed is unavailable", () => {
+  it("shows peak and active average, with an em dash when unavailable", () => {
     const active = renderToStaticMarkup(
       <MemoryRouter>
         <ProviderScoreboard providers={[provider(12.34)]} window="1h" />
@@ -32,15 +35,31 @@ describe("ProviderScoreboard", () => {
 
     expect(active).toContain(">MB/s<");
     expect(active).toContain(">12.3<");
-    expect(active).toContain("not wall-clock aggregate bandwidth");
+    expect(active).toContain(">Peak<");
+    expect(active).toContain(">Active avg<");
+    expect(active).toContain(">6.2<");
+    expect(active).toContain("wholly idle intervals are excluded");
     expect(active).toContain('aria-label="Article share: 100%"');
     expect(idle).toContain(">—<");
+  });
+
+  it("does not relabel legacy request-duration estimates as sampled rates", () => {
+    const legacy = { ...provider(null), speedMbPerSec: 99.9 };
+    const markup = renderToStaticMarkup(
+      <MemoryRouter>
+        <ProviderScoreboard providers={[legacy]} window="1h" />
+      </MemoryRouter>,
+    );
+    expect(markup).not.toContain(">99.9<");
+    expect(markup).toContain(">—<");
   });
 
   it("places the speed chart after the horizontal scroll wrapper", () => {
     const selected = {
       ...provider(2),
-      speedSeries: [{ bucket: 1_700_000_000_000, speedMbPerSec: 2.25, bytesFetched: 4_000 }],
+      sampledSpeedSeries: [
+        { bucket: 1_700_000_000_000, peakMbPerSec: 2.25, activeAverageMbPerSec: 1.5 },
+      ],
     };
     const markup = renderToStaticMarkup(
       <MemoryRouter>

@@ -130,6 +130,9 @@ public class MetricsRetentionService(ConfigManager configManager) : BackgroundSe
                     Retries = g.Sum(x => x.Retries),
                     SumDurationMs = g.Sum(x => x.SumDurationMs),
                     FailoverSaves = g.Sum(x => x.FailoverSaves),
+                    PeakBytesPerSec = g.Max(x => x.PeakBytesPerSec),
+                    ActiveBytes = g.Sum(x => x.ActiveBytes),
+                    ActiveSeconds = g.Sum(x => x.ActiveSeconds),
                     FirstHour = g.Min(x => x.Hour),
                 })
                 .ToListAsync().ConfigureAwait(false);
@@ -160,6 +163,12 @@ public class MetricsRetentionService(ConfigManager configManager) : BackgroundSe
                     total.Retries += fold.Retries;
                     total.SumDurationMs += fold.SumDurationMs;
                     total.FailoverSaves += fold.FailoverSaves;
+                    if (fold.PeakBytesPerSec is not null)
+                    {
+                        total.PeakBytesPerSec = Math.Max(total.PeakBytesPerSec ?? 0, fold.PeakBytesPerSec.Value);
+                        total.ActiveBytes = (total.ActiveBytes ?? 0) + (fold.ActiveBytes ?? 0);
+                        total.ActiveSeconds = (total.ActiveSeconds ?? 0) + (fold.ActiveSeconds ?? 0);
+                    }
                     total.FirstHour = total.FirstHour is null
                         ? fold.FirstHour
                         : Math.Min(total.FirstHour.Value, fold.FirstHour);

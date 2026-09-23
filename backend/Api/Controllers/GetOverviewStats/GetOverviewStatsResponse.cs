@@ -95,6 +95,10 @@ public class GetOverviewStatsResponse
         public long Retries { get; init; }
         /// <summary>Decimal megabytes fetched per second over the selected window.</summary>
         public double? SpeedMbPerSec { get; set; }
+        public double? PeakMbPerSec { get; set; }
+        public double? ActiveAverageMbPerSec { get; set; }
+        public List<double?> PeakSpeedSpark { get; set; } = new();
+        public List<ProviderSampledSpeedPoint> SampledSpeedSeries { get; set; } = new();
         public List<double> SpeedSpark { get; init; } = new();
         /// <summary>Timestamped effective MB/s for the detail chart. Same metric as <see cref="SpeedMbPerSec"/>.</summary>
         public List<ProviderSpeedPoint> SpeedSeries { get; init; } = new();
@@ -117,6 +121,13 @@ public class GetOverviewStatsResponse
         public long TripCount { get; init; }
         public long FailureCount { get; init; }
         public long ArticleMissCount { get; init; }
+    }
+
+    public class ProviderSampledSpeedPoint
+    {
+        public long Bucket { get; init; }
+        public double? PeakMbPerSec { get; init; }
+        public double? ActiveAverageMbPerSec { get; init; }
     }
 
     public class CatalogueBlock

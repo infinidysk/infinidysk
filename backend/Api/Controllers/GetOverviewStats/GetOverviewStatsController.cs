@@ -438,6 +438,9 @@ public class GetOverviewStatsController(
             .Select(ProviderOverviewRowMapper.ToApi)
             .ToList();
         ApplyLiveSpeedFallback(providers);
+        await ProviderSampledRates.LoadAndApplyAsync(
+            metricsA, providerBytesTracker, providers, labelsByMetricsKey,
+            window, windowStart, nowMs, useRollups).ConfigureAwait(false);
         var circuitEvents = await circuitEventsTask.ConfigureAwait(false);
         ApplyOutageSparks(
             providers,
@@ -902,7 +905,8 @@ public class GetOverviewStatsController(
         }
 
         var alignedStart = windowStart - windowStart % bucketSize;
-        return (alignedStart, alignedStart + (long)count * bucketSize, bucketSize, truncated);
+        var alignedEnd = nowMs - nowMs % bucketSize + (nowMs % bucketSize > 0 ? bucketSize : 0);
+        return (alignedStart, Math.Max(alignedEnd, alignedStart + (long)count * bucketSize), bucketSize, truncated);
     }
 
     internal static List<GetOverviewStatsResponse.ProviderRow> BuildProvidersFromMinutes(

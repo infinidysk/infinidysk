@@ -38,6 +38,11 @@ public sealed class ProviderBytesTracker
     private long _lastSampleBytes;
     private long _lastSampleTimestamp;
     private bool _hasSample;
+    private readonly Dictionary<string, (long Bytes, long Timestamp)> _providerBaselines = new();
+    private readonly Dictionary<(long Minute, string Provider), ProviderRateSample> _providerRates = new();
+
+    public readonly record struct ProviderRateSample(
+        long Minute, string Provider, long PeakBytesPerSec, long ActiveBytes, double ActiveSeconds);
 
     private sealed class QuotaCounter(long resetAt, long bytesUsed)
     {
@@ -99,9 +104,9 @@ public sealed class ProviderBytesTracker
     /// </summary>
     public void SampleFetchRate(long nowMs)
     {
-        var timestamp = _timestampProvider();
         lock (_sampleGate)
         {
+            var timestamp = _timestampProvider();
             var bytes = LifetimeAll;
             if (_hasSample)
             {
@@ -118,10 +123,62 @@ public sealed class ProviderBytesTracker
                 }
             }
 
+            foreach (var (provider, total) in _lifetime)
+            {
+                var baseline = _providerBaselines.GetValueOrDefault(provider, (0, _lastSampleTimestamp));
+                var elapsed = Stopwatch.GetElapsedTime(baseline.Timestamp, timestamp).TotalSeconds;
+                var delta = total - baseline.Bytes;
+                if (_hasSample && delta > 0 && elapsed < MinSampleWindow.TotalSeconds)
+                    continue;
+                if (_hasSample && delta > 0 && elapsed > 0)
+                {
+                    var minute = nowMs - nowMs % OneMinute;
+                    MergeProviderRate(new ProviderRateSample(minute, provider,
+                        (long)Math.Round(delta / elapsed), delta, elapsed));
+                }
+                _providerBaselines[provider] = (total, timestamp);
+            }
+
             _lastSampleBytes = bytes;
             _lastSampleTimestamp = timestamp;
             _hasSample = true;
         }
+    }
+
+    public IReadOnlyList<ProviderRateSample> PendingProviderRates(long minuteInclusive)
+    {
+        lock (_sampleGate)
+            return _providerRates.Values.Where(sample => sample.Minute >= minuteInclusive).ToArray();
+    }
+
+    internal IReadOnlyList<ProviderRateSample> DrainProviderRates(long cutoffMinute)
+    {
+        lock (_sampleGate)
+        {
+            var samples = _providerRates.Values.Where(sample => sample.Minute < cutoffMinute).ToArray();
+            foreach (var sample in samples)
+                _providerRates.Remove((sample.Minute, sample.Provider));
+            return samples;
+        }
+    }
+
+    internal void RestoreProviderRates(IEnumerable<ProviderRateSample> samples)
+    {
+        lock (_sampleGate)
+            foreach (var sample in samples)
+                MergeProviderRate(sample);
+    }
+
+    private void MergeProviderRate(ProviderRateSample sample)
+    {
+        var key = (sample.Minute, sample.Provider);
+        var previous = _providerRates.GetValueOrDefault(key);
+        _providerRates[key] = sample with
+        {
+            PeakBytesPerSec = Math.Max(previous.PeakBytesPerSec, sample.PeakBytesPerSec),
+            ActiveBytes = previous.ActiveBytes + sample.ActiveBytes,
+            ActiveSeconds = previous.ActiveSeconds + sample.ActiveSeconds,
+        };
     }
 
     /// <summary>Highest sampled rate in any not-yet-drained minute at or after <paramref name="minuteInclusive"/>.</summary>
@@ -231,6 +288,8 @@ public sealed class ProviderBytesTracker
             _lifetime.Clear();
             Interlocked.Exchange(ref _lifetimeAll, 0);
             _peakByMinute.Clear();
+            _providerRates.Clear();
+            _providerBaselines.Clear();
             _lastSampleBytes = LifetimeAll;
             _lastSampleTimestamp = _timestampProvider();
             _hasSample = true;
@@ -250,6 +309,9 @@ public sealed class ProviderBytesTracker
                 _buckets.TryRemove(key, out _);
             if (_lifetime.TryRemove(providerKey, out var removed))
                 Interlocked.Add(ref _lifetimeAll, -removed);
+            foreach (var key in _providerRates.Keys.Where(key => key.Provider == providerKey).ToArray())
+                _providerRates.Remove(key);
+            _providerBaselines[providerKey] = (0, _timestampProvider());
             _lastSampleBytes = LifetimeAll;
             _lastSampleTimestamp = _timestampProvider();
             _hasSample = true;

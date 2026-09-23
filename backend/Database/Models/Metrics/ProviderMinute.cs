@@ -9,6 +9,9 @@ public class ProviderMinute
     public long QueueArticles { get; set; }
     public bool ClientArticlesFinalized { get; set; }
     public long BytesFetched { get; set; }
+    public long? PeakBytesPerSec { get; set; }
+    public long? ActiveBytes { get; set; }
+    public double? ActiveSeconds { get; set; }
     public long Misses { get; set; }
     public long Errors { get; set; }
     public long Retries { get; set; }

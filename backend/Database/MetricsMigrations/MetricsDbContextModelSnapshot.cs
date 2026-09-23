@@ -168,6 +168,9 @@ namespace NzbWebDAV.Database.MetricsMigrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.Metrics.ProviderHourly", b =>
                 {
+                    b.Property<long?>("ActiveBytes").HasColumnType("INTEGER");
+                    b.Property<double?>("ActiveSeconds").HasColumnType("REAL");
+                    b.Property<long?>("PeakBytesPerSec").HasColumnType("INTEGER");
                     b.Property<long>("Hour")
                         .HasColumnType("INTEGER");
 
@@ -212,6 +215,9 @@ namespace NzbWebDAV.Database.MetricsMigrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.Metrics.ProviderLifetimeTotal", b =>
                 {
+                    b.Property<long?>("ActiveBytes").HasColumnType("INTEGER");
+                    b.Property<double?>("ActiveSeconds").HasColumnType("REAL");
+                    b.Property<long?>("PeakBytesPerSec").HasColumnType("INTEGER");
                     b.Property<string>("Provider")
                         .HasMaxLength(255)
                         .HasColumnType("TEXT");
@@ -273,6 +279,9 @@ namespace NzbWebDAV.Database.MetricsMigrations
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.Metrics.ProviderMinute", b =>
                 {
+                    b.Property<long?>("ActiveBytes").HasColumnType("INTEGER");
+                    b.Property<double?>("ActiveSeconds").HasColumnType("REAL");
+                    b.Property<long?>("PeakBytesPerSec").HasColumnType("INTEGER");
                     b.Property<long>("Minute")
                         .HasColumnType("INTEGER");
 

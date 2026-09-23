@@ -1,12 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { ProviderSpeedPoint } from "~/clients/backend-client.server";
+import type { ProviderSampledSpeedPoint } from "~/clients/backend-client.server";
 import { ProviderSpeedChart } from "./provider-speed-chart";
 
-const point = (speedMbPerSec: number): ProviderSpeedPoint => ({
+const point = (speedMbPerSec: number | null): ProviderSampledSpeedPoint => ({
   bucket: 1_700_000_000_000,
-  speedMbPerSec,
-  bytesFetched: speedMbPerSec > 0 ? 1_000 : 0,
+  peakMbPerSec: speedMbPerSec,
+  activeAverageMbPerSec: speedMbPerSec === null ? null : speedMbPerSec / 2,
 });
 
 function speedPathD(markup: string): string {
@@ -17,11 +17,11 @@ function speedPathD(markup: string): string {
 }
 
 describe("ProviderSpeedChart", () => {
-  it("connects positive runs through idle buckets at the baseline", () => {
+  it("leaves gaps for intervals without samples and renders both series", () => {
     const markup = renderToStaticMarkup(
       <ProviderSpeedChart
         providerLabel="Alpha"
-        points={[point(4), point(0), point(7)]}
+        points={[point(4), point(null), point(7)]}
         bucketSizeMs={60_000}
         historyTruncated={false}
         window="1h"
@@ -30,9 +30,10 @@ describe("ProviderSpeedChart", () => {
     const d = speedPathD(markup);
 
     expect(d).not.toBe("");
-    expect((d.match(/M/g) ?? []).length).toBe(1);
-    // Three buckets span 800 viewBox units, so the idle bucket is at x=400.
-    expect(d).toContain("400.0,156.0");
+    expect((d.match(/M/g) ?? []).length).toBe(2);
+    expect(d).not.toContain("400.0,156.0");
+    expect(markup).toContain('data-series="active-average"');
+    expect(markup).toContain("Active avg");
     expect(d.startsWith("M0.0,")).toBe(true);
   });
 
@@ -40,7 +41,7 @@ describe("ProviderSpeedChart", () => {
     const markup = renderToStaticMarkup(
       <ProviderSpeedChart
         providerLabel="Alpha"
-        points={[point(0), point(0), point(7)]}
+        points={[point(null), point(null), point(7)]}
         bucketSizeMs={60_000}
         historyTruncated={false}
         window="1h"
@@ -54,8 +55,8 @@ describe("ProviderSpeedChart", () => {
     expect(Math.min(...xs)).toBeGreaterThanOrEqual(0);
     expect(Math.max(...xs)).toBeLessThanOrEqual(800);
     expect(Math.min(...xs)).toBeLessThan(800);
-    expect(d).toContain("0.0,156.0");
-    expect(d).toContain("400.0,156.0");
+    expect(d).not.toContain("0.0,156.0");
+    expect(d).not.toContain("400.0,156.0");
   });
 
   it("centers a single-bucket sample on the chart", () => {

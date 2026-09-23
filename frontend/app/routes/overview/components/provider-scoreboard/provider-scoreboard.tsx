@@ -32,7 +32,7 @@ export function ProviderScoreboard({
   );
   const outageHelp = `Circuit-open time per ${outageIntervalLabel(window)} interval on a fixed 0–100% scale. Brief trips use a minimum-height tick.`;
   const speedHelp =
-    "Historical average: bytes fetched divided by summed successful fetch durations over the selected window. Durations include connection-pool wait and overlap across concurrent fetches, so this is not wall-clock aggregate bandwidth. Use the provider benchmark for line-rate calibration.";
+    "Peak: highest approximately one-second raw download rate across this provider's connections. Active avg: sampled bytes divided by elapsed time in intervals with transferred bytes; wholly idle intervals are excluded. Only recorded samples in the selected window are included; older history is unavailable.";
   const selected = providers.find((p) => p.provider === selectedProvider);
 
   return (
@@ -147,9 +147,18 @@ export function ProviderScoreboard({
                         <td className="min-w-0 px-1">
                           <Tooltip content={speedHelp}>
                             <div className="flex flex-col gap-0.5">
-                              <Sparkline values={p.speedSpark ?? []} tone="secondary" />
-                              <div className="font-mono text-[11px] tabular-nums text-secondary">
-                                {formatSpeed(p.speedMbPerSec)}
+                              <Sparkline values={p.peakSpeedSpark ?? []} tone="secondary" />
+                              <div className="flex justify-between gap-2 text-[11px] text-secondary">
+                                <span>Peak</span>
+                                <span className="font-mono tabular-nums">
+                                  {formatSpeed(p.peakMbPerSec)}
+                                </span>
+                              </div>
+                              <div className="flex justify-between gap-2 text-[11px] text-base-content/70">
+                                <span className="whitespace-nowrap">Active avg</span>
+                                <span className="font-mono tabular-nums">
+                                  {formatSpeed(p.activeAverageMbPerSec)}
+                                </span>
                               </div>
                             </div>
                           </Tooltip>
@@ -195,7 +204,7 @@ export function ProviderScoreboard({
               <div id="provider-speed-chart">
                 <ProviderSpeedChart
                   providerLabel={selected.nickname?.trim() || selected.provider}
-                  points={selected.speedSeries ?? []}
+                  points={selected.sampledSpeedSeries ?? []}
                   bucketSizeMs={providerSpeedBucketSizeMs}
                   historyTruncated={providerSpeedHistoryTruncated}
                   window={window}
@@ -377,7 +386,7 @@ export function Sparkline({
   tone = "success",
   eventsOnly = false,
 }: {
-  values: number[];
+  values: (number | null)[];
   tone?: SparklineTone;
   eventsOnly?: boolean;
 }) {
@@ -385,16 +394,26 @@ export function Sparkline({
     return <div className="h-[22px] w-[110px] rounded-sm bg-base-content/[0.04]" />;
   const w = 110;
   const h = 22;
-  const max = Math.max(1, ...values);
+  const max = Math.max(1, ...values.map((value) => value ?? 0));
   const step = values.length > 1 ? w / (values.length - 1) : 0;
   const y = (v: number) => h - (v / max) * (h - 4) - 2;
   const path = values
-    .map((v, i) => `${i === 0 ? "M" : "L"}${(i * step).toFixed(1)},${y(v).toFixed(1)}`)
+    .map((value, index) =>
+      value === null
+        ? ""
+        : `${index === 0 || values[index - 1] == null ? "M" : "L"}${(index * step).toFixed(1)},${y(value).toFixed(1)} l0.1,0`,
+    )
     .join(" ");
   const area = `${path} L${((values.length - 1) * step).toFixed(1)},${h} L0,${h} Z`;
   const colorVar = sparklineColor(tone);
   const fill = `color-mix(in srgb, ${colorVar} 16%, transparent)`;
-  const eventPath = eventsOnly ? buildEventPath(values, step, y) : path;
+  const eventPath = eventsOnly
+    ? buildEventPath(
+        values.map((value) => value ?? 0),
+        step,
+        y,
+      )
+    : path;
   return (
     <svg viewBox={`0 0 ${w} ${h}`} className="block h-[22px] w-[110px]" preserveAspectRatio="none">
       {eventsOnly ? (
@@ -406,9 +425,9 @@ export function Sparkline({
           strokeWidth="1.2"
           vectorEffect="non-scaling-stroke"
         />
-      ) : (
+      ) : !values.includes(null) ? (
         <path d={area} fill={fill} />
-      )}
+      ) : null}
       {eventPath && (
         <path
           d={eventPath}
