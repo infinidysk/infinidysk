@@ -210,6 +210,7 @@ public sealed class ArrHealthService : BackgroundService
             return;
         }
 
+        var queueSucceeded = false;
         try
         {
             var queueStatus = await CallAsync(
@@ -218,14 +219,14 @@ public sealed class ArrHealthService : BackgroundService
             var queue = await CallAsync(
                 $"{appLabel} queue", details.Host,
                 callCt => client.GetQueueAsync(callCt), ct).ConfigureAwait(false);
-            // Arr answered; clear reachability backoff before local DB/history work.
-            _backoff.RecordSuccess(details.Host);
+            queueSucceeded = true;
 
             await using var dav = DavContextFactory();
             await using var metrics = MetricsContextFactory();
 
             var awaiting = await BuildAwaitingAsync(queue.Records, dav, ct).ConfigureAwait(false);
             await IngestHistoryAsync(key, appLabel, details.Host, client, dav, metrics, ct).ConfigureAwait(false);
+            _backoff.RecordSuccess(details.Host);
 
             var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var cutoff30d = nowMs - (long)ArrHealthMath.MedianWindow.TotalMilliseconds;
@@ -278,9 +279,14 @@ public sealed class ArrHealthService : BackgroundService
         catch (Exception e) when (e is not OutOfMemoryException)
         {
             if (e.TryGetCausingException<ArrRequestTimeoutException>(out var timeout))
+            {
                 Log.Warning("Arr health poll failed for {Host}. Reason: {Reason}", details.Host, timeout!.Message);
+                Log.Debug(e, "Arr health poll timeout details for {Host}", details.Host);
+            }
             else
                 e.LogWarningKnownOrStack("Arr health poll failed for {Host}", details.Host);
+            if (queueSucceeded && !ArrInstanceBackoff.IsReachabilityFailure(e))
+                _backoff.RecordSuccess(details.Host);
             _backoff.RecordFailure(details.Host, e);
             RecordFailure(key, appType, details.Host, displayName, e);
         }

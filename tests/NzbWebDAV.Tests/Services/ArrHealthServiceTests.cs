@@ -310,6 +310,48 @@ public sealed class ArrHealthServiceTests
     }
 
     [Fact]
+    public async Task Poll_RepeatedImportHistoryTimeouts_EnterBackoff()
+    {
+        var host = "http://sonarr:8989";
+        var backoff = new ArrInstanceBackoff();
+        await using var harness = await DualDbHarness.CreateAsync();
+        var historyCalls = 0;
+        var client = new ScriptedArrClient(host)
+        {
+            ImportHistory = (_, _, _) =>
+            {
+                historyCalls++;
+                throw new ArrRequestTimeoutException("Sonarr import history", host,
+                    TimeSpan.FromSeconds(10), new TimeoutException());
+            },
+        };
+        using var service = harness.CreateService(client, host, backoff);
+
+        Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+        Assert.False(backoff.IsInBackoff(host));
+        Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+        Assert.True(backoff.IsInBackoff(host));
+        Assert.Equal(ArrInstanceHealthStatus.Offline, Assert.Single(service.GetSnapshots()).Status);
+        Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+        Assert.Equal(2, historyCalls);
+    }
+
+    [Fact]
+    public async Task Poll_CompleteSuccess_ClearsReachabilityStreak()
+    {
+        var host = "http://sonarr:8989";
+        var backoff = new ArrInstanceBackoff();
+        backoff.RecordFailure(host, new SocketException());
+        await using var harness = await DualDbHarness.CreateAsync();
+        using var service = harness.CreateService(new ScriptedArrClient(host), host, backoff);
+
+        Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+        Assert.Equal(ArrInstanceHealthStatus.Healthy, Assert.Single(service.GetSnapshots()).Status);
+        backoff.RecordFailure(host, new SocketException());
+        Assert.False(backoff.IsInBackoff(host));
+    }
+
+    [Fact]
     public async Task UniqueConstraint_OnDuplicateArrRecordId_IsTolerated()
     {
         await using var harness = await DualDbHarness.CreateAsync();
@@ -373,6 +415,14 @@ public sealed class ArrHealthServiceTests
             Assert.Contains(expected, rendered);
             Assert.DoesNotContain("cancel", rendered, StringComparison.OrdinalIgnoreCase);
         }
+        var diagnostics = events.Where(logEvent =>
+            logEvent.Level == LogEventLevel.Debug
+            && logEvent.MessageTemplate.Text == "Arr health poll timeout details for {Host}"
+            && logEvent.Properties.TryGetValue("Host", out var loggedHost)
+            && loggedHost.ToString().Trim('"') == host).ToList();
+        Assert.Equal(2, diagnostics.Count);
+        Assert.All(diagnostics, diagnostic =>
+            Assert.IsType<ArrRequestTimeoutException>(diagnostic.Exception));
     }
 
     [Fact]
