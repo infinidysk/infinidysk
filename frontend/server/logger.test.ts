@@ -121,7 +121,7 @@ describe("requestLogger", () => {
   });
 
   it("keeps startup 502 logs query-free and debug-only", () => {
-    vi.mocked(process.uptime).mockReturnValue(1);
+    vi.spyOn(process, "uptime").mockReturnValue(1);
     finishRequest(502);
     expect(logger.debug).toHaveBeenCalledOnce();
     expect(logger.error).not.toHaveBeenCalled();
