@@ -11,8 +11,12 @@ namespace NzbWebDAV.Services.Metrics;
 /// <summary>
 /// Materializes per-minute and per-hour rollups from the raw SegmentFetch /
 /// ReadSession event tables. Runs once a minute, idempotently upserting the
-/// last fully-elapsed minute. On the hour boundary it folds the 60 finished
-/// minutes into ProviderHourly. Re-running any window is safe.
+/// last fully-elapsed minute. The first tick replays at most 60 completed
+/// minutes after a restart. On the hour boundary it folds the 60 finished
+/// minutes into ProviderHourly. Historical provider hours are rebuilt from
+/// minute rows; existing older FailoverHourly rows are preserved because their
+/// raw edges may have been pruned, while missing hours are still materialized.
+/// Re-running any window is safe.
 ///
 /// Errors are hard fetch failures only (Status NOT IN Ok/Missing). Expected
 /// provider misses (Status = Missing) are counted separately as Misses.
@@ -29,6 +33,7 @@ public class MetricsRollupService(
     private static readonly JsonSerializerOptions CompactJson = new();
 
     private long _lastMinuteRolled;
+    private long _startupTargetMinute;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -52,25 +57,43 @@ public class MetricsRollupService(
 
     private async Task RollupTickAsync()
     {
-        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        await using var db = new MetricsDbContext();
+        await RollupTickAsync(db, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+            .ConfigureAwait(false);
+    }
+
+    internal async Task RollupTickAsync(MetricsDbContext db, long nowMs)
+    {
         var currentMinute = FloorTo(nowMs, OneMinute);
         var targetMinute = currentMinute - OneMinute;
 
-        // Catch up at most 60 minutes if the service was paused/restarted.
-        var start = _lastMinuteRolled == 0
-            ? targetMinute
-            : Math.Max(_lastMinuteRolled + OneMinute, targetMinute - 59 * OneMinute);
+        if (_startupTargetMinute == 0)
+            _startupTargetMinute = targetMinute;
 
-        await using var db = new MetricsDbContext();
-        for (var minute = start; minute <= targetMinute; minute += OneMinute)
+        var isStartupReplay = _lastMinuteRolled < _startupTargetMinute;
+        var start = isStartupReplay
+            ? (_lastMinuteRolled == 0
+                ? _startupTargetMinute - 59 * OneMinute
+                : _lastMinuteRolled + OneMinute)
+            : Math.Max(_lastMinuteRolled + OneMinute, targetMinute - 59 * OneMinute);
+        var end = isStartupReplay
+            ? _startupTargetMinute
+            : targetMinute;
+
+        for (var minute = start; minute <= end; minute += OneMinute)
         {
-            await RollupMinuteAsync(db, minute).ConfigureAwait(false);
-            if (minute % OneHour == 0 && minute > 0)
+            await RollupMinuteAndHoursAsync(db, minute, _startupTargetMinute)
+                .ConfigureAwait(false);
+        }
+
+        if (isStartupReplay && targetMinute > _startupTargetMinute)
+        {
+            start = Math.Max(_lastMinuteRolled + OneMinute, targetMinute - 59 * OneMinute);
+            for (var minute = start; minute <= targetMinute; minute += OneMinute)
             {
-                await RollupHourAsync(db, minute - OneHour).ConfigureAwait(false);
-                await RollupFailoverHourAsync(db, minute - OneHour).ConfigureAwait(false);
+                await RollupMinuteAndHoursAsync(db, minute, _startupTargetMinute)
+                    .ConfigureAwait(false);
             }
-            _lastMinuteRolled = minute;
         }
 
         // After fetch-row rollups have written/refreshed ProviderMinute rows, fold in
@@ -79,6 +102,37 @@ public class MetricsRollupService(
         // contributes at most once because DrainClosed pops the bucket.
         await ApplyByteCountersAsync(db, currentMinute).ConfigureAwait(false);
         FlushClosedLatency(currentMinute);
+    }
+
+    private async Task RollupMinuteAndHoursAsync(
+        MetricsDbContext db,
+        long minute,
+        long startupTargetMinute)
+    {
+        var isFinalizedStartupHistory = minute < startupTargetMinute &&
+            await db.ThroughputMinutes
+                .AnyAsync(row => row.Minute == minute && row.ClientArticlesFinalized)
+                .ConfigureAwait(false) &&
+            !await db.SegmentFetches.AnyAsync(fetch =>
+                fetch.At >= minute && fetch.At < minute + OneMinute &&
+                !db.ProviderMinutes.Any(provider =>
+                    provider.Minute == minute && provider.Provider == fetch.Provider))
+                .ConfigureAwait(false);
+        if (!isFinalizedStartupHistory)
+            await RollupMinuteAsync(db, minute).ConfigureAwait(false);
+
+        if (minute % OneHour == 0 && minute > 0)
+        {
+            await RollupHourAsync(db, minute - OneHour).ConfigureAwait(false);
+            if (minute >= startupTargetMinute ||
+                !await db.FailoverHourly.AnyAsync(row => row.Hour == minute - OneHour)
+                    .ConfigureAwait(false))
+            {
+                await RollupFailoverHourAsync(db, minute - OneHour)
+                    .ConfigureAwait(false);
+            }
+        }
+        _lastMinuteRolled = minute;
     }
 
     internal void FlushClosedLatency(long currentMinute)
@@ -220,35 +274,6 @@ public class MetricsRollupService(
         var streamingWorkload = (int)SegmentFetch.FetchWorkload.Streaming;
         var queueWorkload = (int)SegmentFetch.FetchWorkload.Queue;
 
-        // ThroughputMinute: read-session bytes (downstream) + fetch bytes (upstream).
-        // BytesFetched and PeakFetchBytesPerSec intentionally omitted from ON CONFLICT — owned by ProviderBytesTracker.
-        // Re-rolling a minute (e.g. on catch-up after restart) must not zero out bytes the
-        // tracker already deposited via ApplyByteCountersAsync.
-        await db.Database.ExecuteSqlRawAsync(
-            """
-            INSERT INTO ThroughputMinutes (Minute, BytesServed, BytesFetched, Articles, ClientArticles, QueueArticles, ClientArticlesFinalized, Misses, Errors, ActiveReadsMax)
-            SELECT
-                {0} AS Minute,
-                COALESCE((SELECT SUM(BytesServed) FROM ReadSessions WHERE EndedAt >= {0} AND EndedAt < {1}), 0) AS BytesServed,
-                0 AS BytesFetched,
-                COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1}), 0) AS Articles,
-                COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Workload = {2}), 0) AS ClientArticles,
-                COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Workload = {3}), 0) AS QueueArticles,
-                1 AS ClientArticlesFinalized,
-                COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Status = 1), 0) AS Misses,
-                COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Status NOT IN (0, 1)), 0) AS Errors,
-                0 AS ActiveReadsMax
-            ON CONFLICT(Minute) DO UPDATE SET
-                BytesServed  = excluded.BytesServed,
-                Articles     = MAX(ThroughputMinutes.Articles, excluded.Articles),
-                ClientArticles = MAX(ThroughputMinutes.ClientArticles, excluded.ClientArticles),
-                QueueArticles = MAX(ThroughputMinutes.QueueArticles, excluded.QueueArticles),
-                ClientArticlesFinalized = excluded.ClientArticlesFinalized,
-                Misses       = excluded.Misses,
-                Errors       = excluded.Errors;
-            """,
-            minute, next, streamingWorkload, queueWorkload).ConfigureAwait(false);
-
         // ProviderMinute: per-provider counters. BytesFetched intentionally omitted from
         // ON CONFLICT — the tracker is the sole writer of that column.
         // FailoverSaves come from one event per cross-provider rescue, not from
@@ -287,6 +312,34 @@ public class MetricsRollupService(
                 SumDurationMs = excluded.SumDurationMs;
             """,
                 minute, next, streamingWorkload, MetricsWriter.FailoverSaveEventKind, queueWorkload).ConfigureAwait(false);
+
+        // BytesFetched and PeakFetchBytesPerSec are owned by ProviderBytesTracker.
+        // Write the completion marker after ProviderMinutes so a failed partial rollup
+        // is retried rather than mistaken for finalized history during startup replay.
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            INSERT INTO ThroughputMinutes (Minute, BytesServed, BytesFetched, Articles, ClientArticles, QueueArticles, ClientArticlesFinalized, Misses, Errors, ActiveReadsMax)
+            SELECT
+                {0} AS Minute,
+                COALESCE((SELECT SUM(BytesServed) FROM ReadSessions WHERE EndedAt >= {0} AND EndedAt < {1}), 0) AS BytesServed,
+                0 AS BytesFetched,
+                COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1}), 0) AS Articles,
+                COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Workload = {2}), 0) AS ClientArticles,
+                COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Workload = {3}), 0) AS QueueArticles,
+                1 AS ClientArticlesFinalized,
+                COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Status = 1), 0) AS Misses,
+                COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Status NOT IN (0, 1)), 0) AS Errors,
+                0 AS ActiveReadsMax
+            ON CONFLICT(Minute) DO UPDATE SET
+                BytesServed  = excluded.BytesServed,
+                Articles     = MAX(ThroughputMinutes.Articles, excluded.Articles),
+                ClientArticles = MAX(ThroughputMinutes.ClientArticles, excluded.ClientArticles),
+                QueueArticles = MAX(ThroughputMinutes.QueueArticles, excluded.QueueArticles),
+                ClientArticlesFinalized = excluded.ClientArticlesFinalized,
+                Misses       = excluded.Misses,
+                Errors       = excluded.Errors;
+            """,
+            minute, next, streamingWorkload, queueWorkload).ConfigureAwait(false);
     }
 
     internal static async Task RollupHourAsync(MetricsDbContext db, long hour)
