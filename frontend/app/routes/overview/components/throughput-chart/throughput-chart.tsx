@@ -11,6 +11,7 @@ export type ThroughputChartProps = {
   totalMisses: number;
   totalErrors: number;
   totalBytesServed: number;
+  totalBytesFetched: number;
   bucketSizeMs: number;
   window: OverviewWindow;
 };
@@ -27,6 +28,7 @@ export function ThroughputChart({
   totalMisses,
   totalErrors,
   totalBytesServed,
+  totalBytesFetched,
   bucketSizeMs,
   window,
 }: ThroughputChartProps) {
@@ -218,6 +220,11 @@ export function ThroughputChart({
               value={formatBytes(totalBytesServed)}
               description="Bytes served by client read sessions ending in this window."
             />
+            <Total
+              label="Fetched"
+              value={formatBytes(totalBytesFetched)}
+              description="Bytes downloaded from Usenet providers in this window, including streaming, health checks, and queue processing. Counted when fetched, so it will not reconcile exactly with Served."
+            />
           </div>
         </div>
 
@@ -233,7 +240,7 @@ export function ThroughputChart({
                 className={styles.chartArea}
                 tabIndex={0}
                 role="img"
-                aria-label={`${formatNumber(safeTotalClientArticles)} client attempts, ${formatNumber(totalAppArticles)} app attempts, ${formatNumber(totalArticles)} attempts total, ${formatNumber(successfulReads)} successful reads, ${formatNumber(totalErrors)} errors, ${formatBytes(totalBytesServed)} served. Use arrow keys for bucket details.`}
+                aria-label={`${formatNumber(safeTotalClientArticles)} client attempts, ${formatNumber(totalAppArticles)} app attempts, ${formatNumber(totalArticles)} attempts total, ${formatNumber(successfulReads)} successful reads, ${formatNumber(totalErrors)} errors, ${formatBytes(totalBytesServed)} served, ${formatBytes(totalBytesFetched)} fetched. Use arrow keys for bucket details.`}
                 aria-describedby="overview-throughput-keyboard-status"
                 onMouseMove={handleMouseMove}
                 onMouseLeave={handleMouseLeave}

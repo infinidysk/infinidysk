@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ThroughputPoint } from "~/clients/backend-client.server";
+import { formatBytes } from "../../utils/format";
 import { ThroughputChart } from "./throughput-chart";
 
 const point = (articles: number, clientArticles = 0, errors = 0): ThroughputPoint => ({
@@ -24,6 +25,7 @@ function renderMarkup(points: ThroughputPoint[], totalErrors = 0) {
       totalMisses={0}
       totalErrors={totalErrors}
       totalBytesServed={0}
+      totalBytesFetched={0}
       bucketSizeMs={60_000}
       window="24h"
     />,
@@ -86,6 +88,7 @@ describe("ThroughputChart", () => {
         totalMisses={0}
         totalErrors={0}
         totalBytesServed={0}
+        totalBytesFetched={60 * 1024 * 1024}
         bucketSizeMs={60_000}
         window="24h"
       />,
@@ -132,6 +135,7 @@ describe("ThroughputChart", () => {
         totalMisses={1}
         totalErrors={2}
         totalBytesServed={100}
+        totalBytesFetched={50}
         bucketSizeMs={60_000}
         window="24h"
       />,
@@ -158,6 +162,7 @@ describe("ThroughputChart", () => {
         totalMisses={1}
         totalErrors={4}
         totalBytesServed={100}
+        totalBytesFetched={50}
         bucketSizeMs={60_000}
         window="24h"
       />,
@@ -179,6 +184,7 @@ describe("ThroughputChart", () => {
         totalMisses={0}
         totalErrors={2}
         totalBytesServed={0}
+        totalBytesFetched={0}
         bucketSizeMs={60_000}
         window="24h"
       />,
@@ -202,6 +208,7 @@ describe("ThroughputChart", () => {
         totalMisses={0}
         totalErrors={2}
         totalBytesServed={0}
+        totalBytesFetched={0}
         bucketSizeMs={60_000}
         window="24h"
       />,
@@ -230,6 +237,7 @@ describe("ThroughputChart", () => {
           totalMisses={misses}
           totalErrors={errors}
           totalBytesServed={0}
+          totalBytesFetched={0}
           bucketSizeMs={60_000}
           window="24h"
         />,
@@ -263,6 +271,7 @@ describe("ThroughputChart", () => {
           totalMisses={0}
           totalErrors={0}
           totalBytesServed={0}
+          totalBytesFetched={0}
           bucketSizeMs={bucketSizeMs}
           window={bucketSizeMs === 60_000 ? "24h" : bucketSizeMs === 3_600_000 ? "7d" : "all"}
         />,
@@ -271,4 +280,31 @@ describe("ThroughputChart", () => {
       expect(getByText("Peak download").parentElement?.textContent).toBe("Peak download2.0 MB/s");
     },
   );
+
+  it("shows provider bytes fetched separately from bytes served", () => {
+    const { getByText } = render(
+      <ThroughputChart
+        points={[]}
+        totalArticles={0}
+        totalClientArticles={0}
+        totalMisses={0}
+        totalErrors={0}
+        totalBytesServed={1_000_000_000}
+        totalBytesFetched={2_500_000_000}
+        bucketSizeMs={60_000}
+        window="24h"
+      />,
+    );
+
+    expect(getByText("Served").parentElement?.textContent).toBe(
+      `Served${formatBytes(1_000_000_000)}`,
+    );
+    expect(getByText("Fetched").parentElement?.textContent).toBe(
+      `Fetched${formatBytes(2_500_000_000)}`,
+    );
+    fireEvent.focus(getByText("Fetched").parentElement!);
+    expect(getByText(/including streaming, health checks/).getAttribute("aria-hidden")).toBe(
+      "false",
+    );
+  });
 });

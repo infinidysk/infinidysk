@@ -401,6 +401,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
             totalMisses={stats.totalMisses}
             totalErrors={stats.totalErrors}
             totalBytesServed={stats.sessions.totalBytesServed}
+            totalBytesFetched={stats.totalBytesFetched}
             bucketSizeMs={stats.throughputBucketSizeMs}
             window={window}
           />
