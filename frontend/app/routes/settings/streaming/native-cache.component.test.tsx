@@ -125,6 +125,38 @@ describe("native cache folder editor", () => {
     expect(screen.getByText(/nfs \/ nfs/).textContent).toContain("durable write verified: yes");
   });
 
+  it("shows folder capacity and keeps tuning and maintenance in disclosures", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            activeMode: "native",
+            configuredMode: "native",
+            restartRequired: false,
+            reservedBufferBytes: 32 * 1048576,
+            folders: [
+              { id: "disk", online: true, writable: true, committedBytes: 250e9, entries: 4 },
+            ],
+            jobs: [],
+          }),
+        ),
+      ),
+    );
+    render(<Harness native />);
+    await screen.findByText(/Online, writable/);
+    expect(screen.getAllByText("25.0%")).toHaveLength(2);
+    const editor = screen.getByText("Edit folder settings").closest("details");
+    expect(editor?.open).toBe(false);
+    await userEvent.click(screen.getByText("Edit folder settings"));
+    expect(editor?.open).toBe(true);
+    expect(screen.getByLabelText("Free-space reserve (GB)")).toBeTruthy();
+    const maintenance = screen.getByText("Maintenance").closest("details");
+    expect(maintenance?.open).toBe(false);
+    await userEvent.click(screen.getByText("Maintenance"));
+    expect(screen.getByRole("button", { name: "Clear eligible files" })).toBeTruthy();
+  });
+
   it("browses bounded cache pages and pins media without changing folder configuration", async () => {
     const key = "a".repeat(64);
     const fetcher = vi
