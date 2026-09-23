@@ -69,26 +69,50 @@ public sealed class NativeCacheOperations : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var tick = 0;
+        var running = new Dictionary<string, Task>(StringComparer.Ordinal);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
-            if (_pending.Reader.TryRead(out var id)) await RunAsync(id, stoppingToken).ConfigureAwait(false);
-            else if (_native.Store is { } store)
+            foreach (var key in running.Where(pair => pair.Value.IsCompleted).Select(pair => pair.Key).ToArray())
             {
-                try { await store.ProcessOneCheckpointAsync(stoppingToken).ConfigureAwait(false); }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException)
-                { /* Bounded idle maintenance never stops source playback. */ }
+                _ = running[key].Exception;
+                running.Remove(key);
             }
-            if (++tick % 30 != 0 || _native.Store is null || _native.ActiveSettings is null) continue;
-            foreach (var folder in _native.ActiveSettings.Folders.Where(folder => folder.Enabled && !folder.ReadOnly))
+            for (var index = 0; index < 8 && _pending.Reader.TryRead(out var id); index++)
             {
-                try
+                NativeCacheOperation? job;
+                lock (_gate) job = _jobs.GetValueOrDefault(id);
+                if (job is null || job.State == "cancelled") continue;
+                if (running.ContainsKey(job.FolderId))
                 {
-                    await _native.Store.EvictAsync(folder.Id, cancellationToken: stoppingToken).ConfigureAwait(false);
-                    await _native.Store.EvictPressureAsync(folder.Id, stoppingToken).ConfigureAwait(false);
+                    if (!_pending.Writer.TryWrite(id))
+                        lock (_gate) _jobs[id] = job with { State = "failed", Error = "Storage operation queue is full; retry later." };
+                    continue;
                 }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException)
-                { /* An offline root never stops other roots or source playback. */ }
+                running[job.FolderId] = Task.Run(() => RunAsync(id, stoppingToken), CancellationToken.None);
+            }
+            var pressure = ++tick % 30 == 0;
+            if (_native.Store is not { } store || _native.ActiveSettings is not { } settings) continue;
+            foreach (var folder in settings.Folders.Where(folder => folder.Enabled && !folder.ReadOnly))
+            {
+                if (running.ContainsKey(folder.Id)) continue;
+                // At most one owned task per configured folder, even if an OS call
+                // ignores cancellation. Completed tasks are observed on the next tick.
+                running[folder.Id] = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await store.ProcessOneCheckpointAsync(stoppingToken, folder.Id).ConfigureAwait(false);
+                        if (pressure)
+                        {
+                            await store.EvictAsync(folder.Id, cancellationToken: stoppingToken).ConfigureAwait(false);
+                            await store.EvictPressureAsync(folder.Id, stoppingToken).ConfigureAwait(false);
+                        }
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                        or Microsoft.Data.Sqlite.SqliteException or OperationCanceledException or ObjectDisposedException)
+                    { /* Offline maintenance stays isolated to this folder. */ }
+                }, CancellationToken.None);
             }
         }
     }

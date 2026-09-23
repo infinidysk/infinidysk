@@ -24,6 +24,60 @@ public sealed class NativeCacheStore : IAsyncDisposable
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Managed-only semaphore: no WaitHandle is created. Retained so queued waiters can observe disposal and release safely.")]
     private readonly SemaphoreSlim _writer = new(1, 1);
     private readonly NativeCacheFolder[] _folders;
+    private readonly Dictionary<string, SemaphoreSlim> _folderWriters = new(StringComparer.Ordinal);
+    private SemaphoreSlim Writer(string folder) => _folderWriters.GetValueOrDefault(folder, _writer);
+
+    [SuppressMessage("Performance", "CA1849", Justification = LocalSqliteReason)]
+    private async Task<SemaphoreSlim> EntryWriterAsync(string key, CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            using var query = Command("SELECT Folder FROM Entries WHERE Key=$key", ("$key", key));
+            return query.ExecuteScalar() is string folder ? Writer(folder) : _writer;
+        }
+        finally { _gate.Release(); }
+    }
+
+    [SuppressMessage("Performance", "CA1849", Justification = LocalSqliteReason)]
+    private async Task<(NativeCacheFolder Folder, SemaphoreSlim Writer)?> SelectWriterAsync(
+        NativeCacheIdentity identity, long required, bool wait, CancellationToken ct)
+    {
+        NativeCacheFolder[] candidates;
+        string? existing;
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            using var query = Command("SELECT Folder FROM Entries WHERE Key=$key", ("$key", identity.Key));
+            existing = query.ExecuteScalar() as string;
+            string? reserved;
+            lock (_leaseLock) reserved = _reservations.GetValueOrDefault(identity.Key)?.Folder;
+            candidates = _folders.Where(folder => (existing is null || folder.Id == existing)
+                && (reserved is null || folder.Id == reserved) && HasQuota(folder, required + (existing is null ? EntryOverhead : 0), identity.Key)).ToArray();
+        }
+        finally { _gate.Release(); }
+        foreach (var folder in candidates)
+        {
+            var writer = Writer(folder.Id);
+            if (!await writer.WaitAsync(0, ct).ConfigureAwait(false))
+            {
+                if (!wait || existing is null) continue;
+                await writer.WaitAsync(ct).ConfigureAwait(false);
+            }
+            try
+            {
+                long freeRequired;
+                await _gate.WaitAsync(ct).ConfigureAwait(false);
+                try { freeRequired = FreeSpaceRequirement(folder, required + (existing is null ? EntryOverhead : 0), identity.Key); }
+                finally { _gate.Release(); }
+                if (CanUseFolder(folder, freeRequired)) return (folder, writer);
+            }
+            catch { writer.Release(); throw; }
+            writer.Release();
+        }
+        return null;
+    }
     private readonly Dictionary<string, FileStream> _owners = new(StringComparer.Ordinal);
     private readonly Dictionary<string, NativeFileSystem.PinnedDirectory> _roots = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _volumes = new(StringComparer.Ordinal);
@@ -68,13 +122,14 @@ public sealed class NativeCacheStore : IAsyncDisposable
             if (_pendingCheckpoints.Count < 128) _pendingCheckpoints.TryAdd(key, folder);
     }
 
-    public async Task<int> ProcessOneCheckpointAsync(CancellationToken cancellationToken = default)
+    public async Task<int> ProcessOneCheckpointAsync(CancellationToken cancellationToken = default, string? folderId = null)
     {
         KeyValuePair<string, string> next;
         lock (_leaseLock)
         {
             if (_pendingCheckpoints.Count == 0) return 0;
-            next = _pendingCheckpoints.First();
+            next = _pendingCheckpoints.FirstOrDefault(pair => folderId is null || pair.Value == folderId);
+            if (next.Key is null) return 0;
             _pendingCheckpoints.Remove(next.Key);
         }
         return await ScanCoreAsync(next.Value, next.Key, cancellationToken).ConfigureAwait(false);
@@ -88,7 +143,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         var folder = _folders.FirstOrDefault(candidate => candidate.Id == folderId && candidate.Enabled)
             ?? throw new ArgumentException("Unknown or disabled native cache folder.", nameof(folderId));
         var result = new NativeCacheProbeResult("unknown", "unknown", false, false, false, 0, null);
-        await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await Writer(folderId).WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -110,7 +165,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         }
         catch (IOException) { return result with { Error = "Storage did not complete a verified write, flush, read and cleanup probe." }; }
         catch (UnauthorizedAccessException) { return result with { Error = "Storage permissions prevented the probe." }; }
-        finally { _writer.Release(); }
+        finally { Writer(folderId).Release(); }
     }
 
     private async Task ProbeRoundTripAsync(NativeFileSystem.PinnedDirectory root, CancellationToken cancellationToken)
@@ -204,6 +259,13 @@ public sealed class NativeCacheStore : IAsyncDisposable
             catch (UnauthorizedAccessException) { }
             catch (PlatformNotSupportedException) { /* Unsupported platforms fail closed. */ }
         }
+        var devices = new Dictionary<string, SemaphoreSlim>(StringComparer.Ordinal);
+        foreach (var folder in _folders)
+        {
+            var device = _roots.TryGetValue(folder.Id, out var root) ? root.DeviceIdentity.ToString() : folder.Id;
+            if (!devices.TryGetValue(device, out var writer)) devices[device] = writer = new SemaphoreSlim(1, 1);
+            _folderWriters[folder.Id] = writer;
+        }
     }
 
     [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
@@ -273,8 +335,9 @@ public sealed class NativeCacheStore : IAsyncDisposable
         if (data.Length != Math.Min(BlockSize, identity.Length - offset))
             throw new ArgumentException("Only complete integrity blocks may be published.", nameof(data));
         using var lease = AcquireLease(identity);
-        if (waitForWriter) await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
-        else if (!await _writer.WaitAsync(0, cancellationToken).ConfigureAwait(false)) return false;
+        using var placement = await AcquireFillAsync(identity, -1, cancellationToken).ConfigureAwait(false);
+        var selectedWriter = await SelectWriterAsync(identity, RoundAllocation(data.Length), waitForWriter, cancellationToken).ConfigureAwait(false);
+        if (selectedWriter is not { } selection) return false;
         var catalogueHeld = false;
         try
         {
@@ -291,7 +354,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
             var required = allocation + (folderId is null ? EntryOverhead : 0);
             string? reservedFolder;
             lock (_leaseLock) reservedFolder = _reservations.GetValueOrDefault(identity.Key)?.Folder;
-            var candidates = _folders.Where(candidate => (folderId is null || candidate.Id == folderId)
+            var candidates = _folders.Where(candidate => candidate.Id == selection.Folder.Id && (folderId is null || candidate.Id == folderId)
                 && (reservedFolder is null || candidate.Id == reservedFolder)
                 && HasQuota(candidate, required, identity.Key))
                 .Select(candidate => (Folder: candidate, FreeRequired: FreeSpaceRequirement(candidate, required, identity.Key))).ToArray();
@@ -382,7 +445,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         finally
         {
             if (catalogueHeld) _gate.Release();
-            _writer.Release();
+            selection.Writer.Release();
         }
     }
 
@@ -467,7 +530,8 @@ public sealed class NativeCacheStore : IAsyncDisposable
     public async Task SetPinnedKeyAsync(string key, bool pinned, CancellationToken ct = default)
     {
         if (key.Length != 64 || !key.All(char.IsAsciiHexDigit)) throw new ArgumentException("Invalid cache entry key.");
-        await _writer.WaitAsync(ct).ConfigureAwait(false);
+        var writer = await EntryWriterAsync(key, ct).ConfigureAwait(false);
+        await writer.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             await _gate.WaitAsync(ct).ConfigureAwait(false);
@@ -478,7 +542,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
             }
             finally { _gate.Release(); }
         }
-        finally { _writer.Release(); }
+        finally { writer.Release(); }
     }
 
     private void EnsureMetadataColumns()
@@ -506,7 +570,9 @@ public sealed class NativeCacheStore : IAsyncDisposable
     public async Task<IDisposable?> ReserveWarmAsync(NativeCacheIdentity identity, long bytesToFetch, CancellationToken cancellationToken = default)
     {
         if (bytesToFetch < 0 || bytesToFetch > identity.Length) throw new ArgumentOutOfRangeException(nameof(bytesToFetch));
-        await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
+        using var placement = await AcquireFillAsync(identity, -1, cancellationToken).ConfigureAwait(false);
+        var selectedWriter = await SelectWriterAsync(identity, bytesToFetch, true, cancellationToken).ConfigureAwait(false);
+        if (selectedWriter is not { } selection) return null;
         try
         {
             (NativeCacheFolder Folder, long FreeRequired)[] candidates;
@@ -520,7 +586,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                 var existing = lookup.ExecuteScalar() as string;
                 required = checked(bytesToFetch + ((bytesToFetch + BlockSize - 1) / BlockSize) * (65536 + 4096)
                     + (existing is null ? EntryOverhead : 0));
-                candidates = _folders.Where(folder => (existing is null || folder.Id == existing) && HasQuota(folder, required))
+                candidates = _folders.Where(folder => folder.Id == selection.Folder.Id && (existing is null || folder.Id == existing) && HasQuota(folder, required))
                     .Select(folder => (folder, FreeSpaceRequirement(folder, required))).ToArray();
             }
             finally { _gate.Release(); }
@@ -537,7 +603,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
             }
             finally { lease?.Dispose(); }
         }
-        finally { _writer.Release(); }
+        finally { selection.Writer.Release(); }
     }
 
     [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = LocalSqliteReason)]
@@ -635,7 +701,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                     // Admit by the validated directory key before touching manifest/data.
                     // Eviction cannot unlink open-but-not-yet-leased scan handles, and a
                     // first publication cannot race manifest parsing.
-                    await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    await Writer(folderId).WaitAsync(cancellationToken).ConfigureAwait(false);
                     writerHeld = true;
                     lock (_leaseLock)
                     {
@@ -645,7 +711,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                         scanLease = AcquireKeyLease(key);
 #pragma warning restore CA2000
                     }
-                    _writer.Release();
+                    Writer(folderId).Release();
                     writerHeld = false;
                     if (BeforeScanReadAsync is { } beforeRead) await beforeRead(key, cancellationToken).ConfigureAwait(false);
 #pragma warning disable CA2000 // This using declaration disposes the directory on every exit from the per-key try scope.
@@ -713,7 +779,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                     if (!folder.ReadOnly)
                         await CheckpointJournalAsync(folder, key, directory, cancellationToken).ConfigureAwait(false);
                     physicalBytes = PhysicalEntryBytes(directory);
-                    await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    await Writer(folderId).WaitAsync(cancellationToken).ConfigureAwait(false);
                     writerHeld = true;
                     await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                     try
@@ -736,7 +802,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                         if (scanning) _scanning.Remove(key);
                         scanLease?.Dispose();
                     }
-                    if (writerHeld) _writer.Release();
+                    if (writerHeld) Writer(folderId).Release();
                 }
             }
         }
@@ -750,7 +816,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         const string temporary = "ranges.checkpoint.tmp";
         long scratch;
         long freeRequired;
-        await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await Writer(folder.Id).WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -773,7 +839,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
             }
             finally { _gate.Release(); }
         }
-        finally { _writer.Release(); }
+        finally { Writer(folder.Id).Release(); }
         var created = false;
         try
         {
@@ -963,14 +1029,15 @@ public sealed class NativeCacheStore : IAsyncDisposable
 
     public async Task SetPinnedAsync(NativeCacheIdentity identity, bool pinned, CancellationToken cancellationToken = default)
     {
-        await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var writer = await EntryWriterAsync(identity.Key, cancellationToken).ConfigureAwait(false);
+        await writer.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try { Execute("UPDATE Entries SET Pinned=$pinned WHERE Key=$key", ("$pinned", pinned ? 1 : 0), ("$key", identity.Key)); }
         finally { _gate.Release(); }
         }
-        finally { _writer.Release(); }
+        finally { writer.Release(); }
     }
 
     /// <summary>Deletes only indexed application-owned entries, in bounded pages. Active and pinned entries are retained.</summary>
@@ -994,7 +1061,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
             lock (_leaseLock) _evictionCursors.Remove(cursorId);
             return 0;
         }
-        await _writer.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await Writer(folderId).WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var cutoff = DateTimeOffset.UtcNow.AddDays(-folder.MaxAgeDays).ToUnixTimeSeconds() / 300;
@@ -1095,7 +1162,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
             }
             return deleted;
         }
-        finally { _writer.Release(); }
+        finally { Writer(folderId).Release(); }
     }
 
     public async Task<int> EvictPressureAsync(string folderId, CancellationToken cancellationToken = default)
@@ -1239,7 +1306,8 @@ public sealed class NativeCacheStore : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (Volatile.Read(ref _disposed)) return;
-        await _writer.WaitAsync().ConfigureAwait(false);
+        var writers = _folderWriters.Values.Append(_writer).Distinct().ToArray();
+        foreach (var writer in writers) await writer.WaitAsync().ConfigureAwait(false);
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -1253,7 +1321,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
             foreach (var root in _roots.Values) root.Dispose();
             await _database.DisposeAsync().ConfigureAwait(false);
         }
-        finally { _gate.Release(); _writer.Release(); }
+        finally { _gate.Release(); foreach (var writer in writers) writer.Release(); }
         // Do not dispose the managed-only gate: already queued operations must wake
         // and observe _disposed, and repeated disposal is supported. No WaitHandle is used.
     }

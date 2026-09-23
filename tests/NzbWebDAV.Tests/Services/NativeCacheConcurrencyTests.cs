@@ -1,4 +1,3 @@
-using System.Reflection;
 using Microsoft.Data.Sqlite;
 using NzbWebDAV.Services.NativeCache;
 
@@ -18,16 +17,52 @@ public sealed class NativeCacheConcurrencyTests : IDisposable
     [Fact]
     public async Task ForegroundWrite_DoesNotWaitBehindAnotherWriter()
     {
-        await using var store = new NativeCacheStore(Path.Combine(_root, "index.db"), [Folder()]);
-        var writer = (SemaphoreSlim)typeof(NativeCacheStore).GetField("_writer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(store)!;
-        await writer.WaitAsync();
-        Task<bool>? pending = null;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var store = new NativeCacheStore(Path.Combine(_root, "index.db"), [Folder()])
+        {
+            BeforeWriteReserveAsync = async _ => { entered.TrySetResult(); await release.Task; }
+        };
+        var first = store.WriteBlockAsync(new("first", "v1", 3), 0, new byte[3]);
         try
         {
-            pending = store.WriteBlockAsync(new("other", "v1", 3), 0, new byte[3]);
-            Assert.False(await pending.WaitAsync(TimeSpan.FromSeconds(2)));
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.False(await store.WriteBlockAsync(new("other", "v1", 3), 0, new byte[3]).WaitAsync(TimeSpan.FromSeconds(2)));
         }
-        finally { writer.Release(); if (pending is not null) await pending; }
+        finally { release.TrySetResult(); await first; }
+    }
+
+    [Fact]
+    public async Task StalledWriter_DoesNotBlockAnIndependentFilesystem()
+    {
+        var firstFolder = Folder();
+        var secondPath = Path.Combine("/dev/shm", "native-isolation-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(secondPath);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        try
+        {
+            await using var store = new NativeCacheStore(Path.Combine(_root, "index.db"),
+                [firstFolder with { Priority = 10 }, new() { Id = "healthy", Path = secondPath, MinFreeBytes = 0 }])
+            {
+                BeforeWriteReserveAsync = async _ =>
+                {
+                    if (Interlocked.Increment(ref calls) == 1) { entered.TrySetResult(); await release.Task; }
+                }
+            };
+            var first = store.WriteBlockAsync(new("first", "v1", 3), 0, new byte[3]);
+            try
+            {
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                var other = new NativeCacheIdentity("other", "v1", 3);
+                Assert.True(await store.WriteBlockAsync(other, 0, new byte[] { 1, 2, 3 }).WaitAsync(TimeSpan.FromSeconds(2)));
+                Assert.Equal("healthy", Assert.Single(await store.ListEntriesAsync("healthy", null, 10)).FolderId);
+                Assert.True((await store.ProbeAsync("healthy").WaitAsync(TimeSpan.FromSeconds(2))).Writable);
+            }
+            finally { release.TrySetResult(); await first; }
+        }
+        finally { Directory.Delete(secondPath, recursive: true); }
     }
 
     [Fact]
