@@ -81,6 +81,8 @@ public static class ArrHttpTransport
                 _ => false,
             };
             request.Headers.Authorization = null;
+            if (Uri.Compare(previous, destination, UriComponents.SchemeAndServer, UriFormat.SafeUnescaped, StringComparison.OrdinalIgnoreCase) != 0)
+                request.Headers.Remove("X-Api-Key");
             request.RequestUri = destination;
             if (forceGet)
             {

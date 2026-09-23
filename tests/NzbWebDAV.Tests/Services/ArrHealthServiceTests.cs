@@ -1,6 +1,8 @@
+using System.Data.Common;
 using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Migrations;
 using NzbWebDAV.Clients;
 using NzbWebDAV.Clients.RadarrSonarr;
@@ -310,6 +312,45 @@ public sealed class ArrHealthServiceTests
     }
 
     [Fact]
+    public async Task Poll_LocalDbFailureWithSocketCause_DoesNotBackoffHealthyArr()
+    {
+        var host = "http://sonarr:8989";
+        var backoff = new ArrInstanceBackoff();
+        await using var harness = await DualDbHarness.CreateAsync();
+        harness.DavInterceptor = new SocketFailureInterceptor();
+        var client = new ScriptedArrClient(host)
+        {
+            Queue = _ => Task.FromResult(new ArrQueue<ArrQueueRecord>
+            {
+                Records = [new ArrQueueRecord { Status = "completed", DownloadId = Guid.NewGuid().ToString() }],
+            }),
+        };
+        using var service = harness.CreateService(client, host, backoff);
+
+        Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+        Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+
+        Assert.Equal(2, ((SocketFailureInterceptor)harness.DavInterceptor).Attempts);
+        Assert.Equal(ArrInstanceHealthStatus.Offline, Assert.Single(service.GetSnapshots()).Status);
+        Assert.False(backoff.IsInBackoff(host));
+        backoff.RecordFailure(host, new SocketException());
+        Assert.False(backoff.IsInBackoff(host));
+    }
+
+    private sealed class SocketFailureInterceptor : DbCommandInterceptor
+    {
+        public int Attempts { get; private set; }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            Attempts++;
+            throw new InvalidOperationException("database unavailable", new SocketException());
+        }
+    }
+
+    [Fact]
     public async Task Poll_RepeatedImportHistoryTimeouts_EnterBackoff()
     {
         var host = "http://sonarr:8989";
@@ -545,6 +586,7 @@ public sealed class ArrHealthServiceTests
 
         public MetricsDbContext Metrics { get; }
         public DavDatabaseContext Dav { get; }
+        public DbCommandInterceptor? DavInterceptor { get; set; }
 
         public static async Task<DualDbHarness> CreateAsync()
         {
@@ -601,12 +643,12 @@ public sealed class ArrHealthServiceTests
 
         private DavDatabaseContext CloneDav()
         {
-            var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            var builder = new DbContextOptionsBuilder<DavDatabaseContext>()
                 .UseSqlite($"Data Source={_davPath}")
                 .AddInterceptors(new SqliteForeignKeyEnabler())
-                .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
-                .Options;
-            return new DavDatabaseContext(options);
+                .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>();
+            if (DavInterceptor is not null) builder.AddInterceptors(DavInterceptor);
+            return new DavDatabaseContext(builder.Options);
         }
 
         public async ValueTask DisposeAsync()

@@ -211,21 +211,23 @@ public sealed class ArrHealthService : BackgroundService
         }
 
         var queueSucceeded = false;
+        var arrRequestFailed = false;
         try
         {
             var queueStatus = await CallAsync(
                 $"{appLabel} queue status", details.Host,
-                callCt => client.GetQueueStatusAsync(callCt), ct).ConfigureAwait(false);
+                callCt => client.GetQueueStatusAsync(callCt), () => arrRequestFailed = true, ct).ConfigureAwait(false);
             var queue = await CallAsync(
                 $"{appLabel} queue", details.Host,
-                callCt => client.GetQueueAsync(callCt), ct).ConfigureAwait(false);
+                callCt => client.GetQueueAsync(callCt), () => arrRequestFailed = true, ct).ConfigureAwait(false);
             queueSucceeded = true;
 
             await using var dav = DavContextFactory();
             await using var metrics = MetricsContextFactory();
 
             var awaiting = await BuildAwaitingAsync(queue.Records, dav, ct).ConfigureAwait(false);
-            await IngestHistoryAsync(key, appLabel, details.Host, client, dav, metrics, ct).ConfigureAwait(false);
+            await IngestHistoryAsync(key, appLabel, details.Host, client, dav, metrics,
+                () => arrRequestFailed = true, ct).ConfigureAwait(false);
             _backoff.RecordSuccess(details.Host);
 
             var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -285,9 +287,10 @@ public sealed class ArrHealthService : BackgroundService
             }
             else
                 e.LogWarningKnownOrStack("Arr health poll failed for {Host}", details.Host);
-            if (queueSucceeded && !ArrInstanceBackoff.IsReachabilityFailure(e))
+            if (queueSucceeded && !arrRequestFailed)
                 _backoff.RecordSuccess(details.Host);
-            _backoff.RecordFailure(details.Host, e);
+            if (arrRequestFailed)
+                _backoff.RecordFailure(details.Host, e);
             RecordFailure(key, appType, details.Host, displayName, e);
         }
     }
@@ -296,6 +299,7 @@ public sealed class ArrHealthService : BackgroundService
         string operation,
         string host,
         Func<CancellationToken, Task<T>> call,
+        Action onFailure,
         CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -306,7 +310,13 @@ public sealed class ArrHealthService : BackgroundService
         }
         catch (OperationCanceledException e) when (timeout.IsCancellationRequested && !ct.IsCancellationRequested)
         {
+            onFailure();
             throw new ArrRequestTimeoutException(operation, host, PerCallTimeout, e);
+        }
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            onFailure();
+            throw;
         }
     }
 
@@ -317,6 +327,7 @@ public sealed class ArrHealthService : BackgroundService
         ArrClient client,
         DavDatabaseContext dav,
         MetricsDbContext metrics,
+        Action onRequestFailure,
         CancellationToken ct)
     {
         var cursor = await metrics.ArrImportEvents
@@ -329,7 +340,7 @@ public sealed class ArrHealthService : BackgroundService
             var history = await CallAsync(
                 $"{appLabel} import history page {page}", host,
                 callCt => client.GetImportHistoryAsync(page, HistoryPageSize, callCt),
-                ct).ConfigureAwait(false);
+                onRequestFailure, ct).ConfigureAwait(false);
             var records = history.Records ?? [];
             if (records.Count == 0) break;
 

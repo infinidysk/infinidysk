@@ -155,6 +155,34 @@ public class ArrHttpTransportTests
         Assert.Single(defaultHandler.Seen);
     }
 
+    [Theory]
+    [InlineData("https://prowlarr/api", "https://other.example/api", false)]
+    [InlineData("https://prowlarr/api", "https://prowlarr:8443/api", false)]
+    [InlineData("https://prowlarr/api", "https://prowlarr/next", true)]
+    public async Task Redirect_OnlyForwardsApiKeyToSameOrigin(string source, string target, bool expectApiKey)
+    {
+        var redirectCount = 0;
+        HttpResponseMessage Respond() => redirectCount++ == 0
+            ? new HttpResponseMessage(HttpStatusCode.Found) { Headers = { Location = new Uri(target) } }
+            : new HttpResponseMessage(HttpStatusCode.OK);
+        string? forwardedKey = null;
+        void Observe(HttpRequestMessage request)
+        {
+            if (request.RequestUri == new Uri(source)) return;
+            forwardedKey = request.Headers.TryGetValues("X-Api-Key", out var values) ? values.Single() : null;
+        }
+        var initial = new RecordingHandler(Respond, Observe);
+        var final = new RecordingHandler(Respond, Observe);
+        using var client = new HttpClient(new ArrHttpTransport.RoutingHandler(initial, final));
+        using var request = new HttpRequestMessage(HttpMethod.Get, source);
+        request.Headers.Add("X-Api-Key", "secret");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(expectApiKey ? "secret" : null, forwardedKey);
+    }
+
     [Fact]
     public async Task Redirect_StopsAtDefaultLimit()
     {
@@ -172,14 +200,17 @@ public class ArrHttpTransportTests
         Assert.Empty(defaultHandler.Seen);
     }
 
-    private sealed class RecordingHandler(Func<HttpResponseMessage>? respond = null) : HttpMessageHandler
+    private sealed class RecordingHandler(Func<HttpResponseMessage>? respond = null, Action<HttpRequestMessage>? observe = null) : HttpMessageHandler
     {
+        private readonly Func<HttpResponseMessage> _respond = respond ?? (() => new HttpResponseMessage(HttpStatusCode.OK));
+
         public List<Uri> Seen { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Seen.Add(request.RequestUri!);
-            return Task.FromResult(respond?.Invoke() ?? new HttpResponseMessage(HttpStatusCode.OK));
+            observe?.Invoke(request);
+            return Task.FromResult(_respond());
         }
     }
 }
