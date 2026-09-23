@@ -21,10 +21,11 @@ public sealed class ArrRequestTimeoutException : TaskCanceledException
     private static string BuildMessage(string operation, string host, TimeSpan budget)
     {
         // Scheme and authority only: never echo query strings or user info from the configured URL.
-        var instance = Uri.TryCreate(host, UriKind.Absolute, out var uri)
+        var created = Uri.TryCreate(host, UriKind.Absolute, out var uri);
+        var instance = created && uri is not null
             ? uri.GetComponents(UriComponents.SchemeAndServer, UriFormat.SafeUnescaped)
             : "the configured instance";
-        var routing = uri is null ? "unknown" : ArrHttpTransport.DescribeRouting(uri);
+        var routing = created && uri is not null ? ArrHttpTransport.DescribeRouting(uri) : "unknown";
         return $"{operation} request to {instance} timed out after {budget.TotalSeconds:0.##} seconds; routing: {routing}.";
     }
 }
