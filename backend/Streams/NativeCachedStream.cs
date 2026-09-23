@@ -18,6 +18,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
     private readonly bool _writeBehind;
     private Task<bool>? _pendingWrite;
     private readonly NativeCacheStatistics? _statistics;
+    private NativeCacheStatistics.NativeCacheTransfer? _transfer;
     private Stream? _source;
     private byte[]? _buffer;
     private long _bufferStart = -1;
@@ -29,6 +30,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
     private bool _bypassFill;
     private bool _servedBytes;
     private bool _untrackedSource;
+    private long _lastDirectMissBlock = -1;
     internal TimeSpan CacheIoTimeout { get; init; } = TimeSpan.FromSeconds(1);
     internal Func<bool, CancellationToken, Task>? BeforeCacheIo { get; init; }
 
@@ -138,6 +140,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
             if (_bufferCount != expected)
             {
                 _statistics?.Miss();
+                _lastDirectMissBlock = blockStart;
                 try
                 {
                 using var verifiedRead = new NativeCacheReadContext();
@@ -151,6 +154,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
                     var read = await _source.ReadAsync(_buffer.AsMemory(_bufferCount, expected - _bufferCount), cancellationToken)
                         .ConfigureAwait(false);
                     if (read == 0) throw new EndOfStreamException("Source ended before the declared media length.");
+                    _statistics?.SourceBytes(read);
                     _bufferVerified &= _source is ICacheReadEvidence { LastReadCacheable: true };
                     _bufferCount += read;
                 }
@@ -158,6 +162,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
                 {
                     try
                     {
+                        _transfer ??= _statistics?.BeginTransfer(_identity.ItemId, _identity.DisplayName, _identity.Length, _background);
                         var buffer = _buffer;
                         if (_writeBehind)
                         {
@@ -170,7 +175,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
                                     if (BeforeCacheIo is not null) await BeforeCacheIo(true, cancellationToken).ConfigureAwait(false);
                                     var committed = await _store.WriteBlockAsync(_identity, blockStart, buffer.AsMemory(0, expected),
                                         waitForWriter: true, cancellationToken: cancellationToken).ConfigureAwait(false);
-                                    if (committed) _statistics?.Committed(expected);
+                                    if (committed) { _statistics?.Committed(expected); _transfer?.Committed(expected); }
                                     return committed;
                                 }
                                 catch (Exception exception) when (exception is IOException or SqliteException or UnauthorizedAccessException or OperationCanceledException)
@@ -179,7 +184,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
                         }
                         else if (await CacheIoAsync(true, token => _store.WriteBlockAsync(_identity, blockStart, buffer.AsMemory(0, expected),
                             waitForWriter: _background, cancellationToken: token), cancellationToken)
-                            .ConfigureAwait(false)) _statistics?.Committed(expected);
+                            .ConfigureAwait(false)) { _statistics?.Committed(expected); _transfer?.Committed(expected); }
                     }
                     catch (Exception exception) when (exception is IOException or SqliteException or UnauthorizedAccessException) { }
                 }
@@ -276,7 +281,12 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
     {
         _source ??= await _openSource(cancellationToken).ConfigureAwait(false);
         if (_source.Position != _position) _source.Position = _position;
+        var start = _position;
         var count = await _source.ReadAsync(destination[..(int)Math.Min(destination.Length, Length - _position)], cancellationToken).ConfigureAwait(false);
+        _statistics?.SourceBytes(count);
+        for (var block = start / NativeCacheStore.BlockSize * NativeCacheStore.BlockSize;
+            block < start + count; block += NativeCacheStore.BlockSize)
+            if (block != _lastDirectMissBlock) { _statistics?.Miss(); _lastDirectMissBlock = block; }
         EnsureResponseGeneration();
         _position += count;
         _servedBytes |= count > 0;
@@ -351,6 +361,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
         else if (_buffer is not null) ArrayPool<byte>.Shared.Return(_buffer);
         _buffer = null;
         _lease.Dispose();
+        _transfer?.Dispose();
         _bufferAdmission?.Dispose();
     }
 }

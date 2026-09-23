@@ -11,7 +11,7 @@ namespace NzbWebDAV.Services.NativeCache;
 /// Writes are serialized and durably flushed before catalogue publication. Reads
 /// open delete-sharing handles under the catalogue gate then perform IO outside it.
 /// </summary>
-public sealed class NativeCacheStore : IAsyncDisposable
+public sealed partial class NativeCacheStore : IAsyncDisposable
 {
     public const int BlockSize = 4 * 1024 * 1024;
     private const long EntryOverhead = 64 * 1024;
@@ -321,6 +321,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                 PRIMARY KEY(Key, Offset));
             """);
         EnsureMetadataColumns();
+        EnsureBrowserSchema();
         Execute("CREATE INDEX IF NOT EXISTS EntryPendingReservation ON Entries(Folder,PendingBytes) WHERE PendingBytes>0");
         Execute("""
             CREATE TRIGGER IF NOT EXISTS BlockAdded AFTER INSERT ON Blocks BEGIN
@@ -380,6 +381,9 @@ public sealed class NativeCacheStore : IAsyncDisposable
             try
             {
                 Execute("UPDATE Entries SET Access=$access WHERE Key=$key AND Access<>$access", ("$access", bucket), ("$key", identity.Key));
+                if (!string.IsNullOrWhiteSpace(identity.DisplayName))
+                    Execute("UPDATE Entries SET DisplayName=$name WHERE Key=$key AND DisplayName<>$name",
+                        ("$name", SafeDisplayName(identity.DisplayName)), ("$key", identity.Key));
             }
             catch (SqliteException) { /* Access telemetry cannot invalidate an otherwise usable open handle. */ }
         }
@@ -468,12 +472,13 @@ public sealed class NativeCacheStore : IAsyncDisposable
             // short local transaction, even while another folder is stalled.
             if (folderId is null)
             {
-                Execute("INSERT INTO Entries(Key,Folder,Length,Bytes,Access,Dirty,ItemId,Generation) VALUES($key,$folder,$length,$bytes,$access,1,$item,$generation)",
+                Execute("INSERT INTO Entries(Key,Folder,Length,Bytes,Access,Dirty,ItemId,Generation,DisplayName) VALUES($key,$folder,$length,$bytes,$access,1,$item,$generation,$name)",
                     ("$key", identity.Key), ("$folder", folder.Id), ("$length", identity.Length),
                     ("$bytes", EntryOverhead), ("$access", DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 300), ("$item", identity.ItemId),
-                    ("$generation", identity.Generation));
+                    ("$generation", identity.Generation), ("$name", SafeDisplayName(identity.DisplayName)));
             }
-            else Execute("UPDATE Entries SET Dirty=1,Generation=$generation WHERE Key=$key", ("$key", identity.Key), ("$generation", identity.Generation));
+            else Execute("UPDATE Entries SET Dirty=1,Generation=$generation,DisplayName=CASE WHEN $name='' THEN DisplayName ELSE $name END WHERE Key=$key",
+                ("$key", identity.Key), ("$generation", identity.Generation), ("$name", SafeDisplayName(identity.DisplayName)));
 
             // Reserve before disk IO. Failed writes deliberately retain their reservation until
             // reconciliation/eviction, so interrupted writes cannot silently exceed the quota.
@@ -798,7 +803,11 @@ public sealed class NativeCacheStore : IAsyncDisposable
                         if (current.ExecuteScalar() is not long currentBytes) return false;
                         allocated = currentBytes;
                         using var transaction = _database.BeginTransaction();
-                        using var remember = Command("INSERT INTO RetiredEntries(Key,Folder,Bytes) VALUES($key,$folder,$bytes)",
+                        using var remember = Command("""
+                            INSERT INTO RetiredEntries(Key,Folder,Bytes,ItemId,DisplayName,Length,VerifiedBytes,AccessCount,LastAccessUnix)
+                            SELECT $key,$folder,$bytes,ItemId,DisplayName,Length,VerifiedBytes,AccessCount,Access*300
+                            FROM Entries WHERE Key=$key AND Folder=$folder
+                            """,
                             ("$key", identity.Key), ("$folder", oldFolder), ("$bytes", allocated));
                         remember.Transaction = transaction;
                         remember.ExecuteNonQuery();
@@ -857,7 +866,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                 catch (IOException exception) when (NativeFileSystem.IsMissing(exception)) { }
                 if (!IsVolumeCurrent(folder)) return reclaimed;
                 await _gate.WaitAsync(ct).ConfigureAwait(false);
-                try { Execute("DELETE FROM RetiredEntries WHERE Key=$key AND Folder=$folder", ("$key", key), ("$folder", folderId)); }
+                try { DeleteRetiredWithEviction(key, folderId, clear ? "clear" : "relocation"); }
                 finally { _gate.Release(); }
                 reclaimed++;
             }
@@ -945,9 +954,10 @@ public sealed class NativeCacheStore : IAsyncDisposable
                             // Drop its local coverage before verifying the newly registered root.
                             Execute("DELETE FROM Entries WHERE Key=$key", ("$key", key));
                         }
-                        Execute("INSERT OR IGNORE INTO Entries(Key,Folder,Length,Bytes,Access,ItemId,Dirty) VALUES($key,$folder,$length,$bytes,$access,$item,1)",
+                        Execute("INSERT OR IGNORE INTO Entries(Key,Folder,Length,Bytes,Access,ItemId,Dirty,DisplayName) VALUES($key,$folder,$length,$bytes,$access,$item,1,$name)",
                             ("$key", manifest.Identity.Key), ("$folder", folder.Id), ("$length", manifest.Identity.Length),
-                            ("$bytes", physicalBytes), ("$access", DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 300), ("$item", manifest.Identity.ItemId));
+                            ("$bytes", physicalBytes), ("$access", DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 300), ("$item", manifest.Identity.ItemId),
+                            ("$name", SafeDisplayName(manifest.Identity.DisplayName)));
                         Execute("UPDATE Entries SET Bytes=MAX(Bytes,$bytes),Dirty=1,Generation=$generation WHERE Key=$key",
                             ("$key", key), ("$bytes", physicalBytes), ("$generation", manifest.Identity.Generation));
                         // Rebuild coverage from this scan's verified bytes; stale catalogue
@@ -1354,7 +1364,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
                                 return deleted;
                             }
                             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-                            try { Execute("DELETE FROM Entries WHERE Key=$key", ("$key", key)); }
+                            try { DeleteEntryWithEviction(key, pressure ? "pressure" : clear ? "clear" : "age"); }
                             finally { _gate.Release(); }
                             deleted++;
                         }

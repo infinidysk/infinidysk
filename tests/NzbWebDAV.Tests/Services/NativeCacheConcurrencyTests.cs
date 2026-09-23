@@ -40,6 +40,7 @@ public sealed class NativeCacheConcurrencyTests : IDisposable
             Assert.Equal(block.Length, await store.ReadBlockAsync(identity, 0, block).WaitAsync(TimeSpan.FromSeconds(2)));
         }
         finally { release.TrySetResult(); await cleanup; }
+        Assert.Equal("relocation", Assert.Single((await store.GetEvictionsAsync(null, null, null, 10)).Items).Reason);
     }
 
     [Fact]

@@ -19,6 +19,11 @@ public sealed class NativeCacheAdminTests
     [InlineData("/api/native-cache")]
     [InlineData("/api/native-cache/entries?folderId=disk")]
     [InlineData("/api/native-cache/ranges?key=test")]
+    [InlineData("/api/native-cache/summary")]
+    [InlineData("/api/native-cache/files")]
+    [InlineData("/api/native-cache/activity")]
+    [InlineData("/api/native-cache/transfers")]
+    [InlineData("/api/native-cache/evictions")]
     [InlineData("/api/prefetch")]
     [InlineData("/api/prefetch/preview")]
     public async Task CacheAndPrefetchViews_RequireAuthentication(string path)
@@ -121,6 +126,16 @@ public sealed class NativeCacheAdminTests
         var store = native.Store!;
         var identity = new NativeCacheIdentity(Guid.NewGuid().ToString("N"), "test", 3);
         Assert.True(await store.WriteBlockAsync(identity, 0, new byte[] { 1, 2, 3 }));
+        using var summary = await client.GetAsync("/api/native-cache/summary");
+        summary.EnsureSuccessStatusCode();
+        using (var payload = JsonDocument.Parse(await summary.Content.ReadAsStringAsync()))
+            Assert.Equal(1, payload.RootElement.GetProperty("liveFiles").GetInt64());
+        using var files = await client.GetAsync("/api/native-cache/files?limit=10");
+        files.EnsureSuccessStatusCode();
+        using (var payload = JsonDocument.Parse(await files.Content.ReadAsStringAsync()))
+            Assert.Equal(identity.Key, payload.RootElement.GetProperty("items")[0].GetProperty("key").GetString());
+        using var invalidBrowser = await client.GetAsync("/api/native-cache/files?sort=invalid");
+        Assert.Equal(HttpStatusCode.BadRequest, invalidBrowser.StatusCode);
         using var response = await client.GetAsync("/api/native-cache/entries?folderId=disk&limit=1");
         response.EnsureSuccessStatusCode();
         using var page = JsonDocument.Parse(await response.Content.ReadAsStringAsync());

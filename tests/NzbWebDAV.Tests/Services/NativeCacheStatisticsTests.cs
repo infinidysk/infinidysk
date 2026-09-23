@@ -25,4 +25,20 @@ public sealed class NativeCacheStatisticsTests
         Assert.Equal(1000, snapshot.IoTimeouts);
         Assert.DoesNotContain("path", JsonSerializer.Serialize(snapshot), StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void ActiveWriteSnapshots_IncludeOnlyCommittedBytes_AndReleaseOnDispose()
+    {
+        var statistics = new NativeCacheStatistics();
+        using (var transfer = statistics.BeginTransfer("item", "Film.mkv", 100, background: true))
+        {
+            Assert.NotNull(transfer);
+            Assert.Empty(statistics.ActiveTransfers());
+            transfer.Committed(40);
+            var active = Assert.Single(statistics.ActiveTransfers());
+            Assert.Equal(40, active.CommittedBytes);
+            Assert.True(active.Background);
+        }
+        Assert.Empty(statistics.ActiveTransfers());
+    }
 }

@@ -51,6 +51,8 @@ public sealed record NativeCacheFolder
 
 public sealed record NativeCacheIdentity(string ItemId, string Generation, long Length)
 {
+    // Diagnostic metadata only; it does not participate in the cache key.
+    public string? DisplayName { get; init; }
     public string Key => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
         System.Text.Encoding.UTF8.GetBytes($"{ItemId.Length}:{ItemId}{Generation.Length}:{Generation}:{Length}"))).ToLowerInvariant();
 }

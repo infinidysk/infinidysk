@@ -342,6 +342,7 @@ public sealed partial class Program
                     configManager: sp.GetRequiredService<ConfigManager>()))
                 .AddSingleton<SharedStreamRegistry>()
                 .AddSingleton<NzbWebDAV.Services.NativeCache.NativeCacheService>()
+                .AddHostedService<NzbWebDAV.Services.NativeCache.NativeCacheBrowserMaintenance>()
                 .AddSingleton<NzbWebDAV.Services.NativeCache.NativeCacheOperations>()
                 .AddHostedService(sp => sp.GetRequiredService<NzbWebDAV.Services.NativeCache.NativeCacheOperations>())
                 .AddScoped<DavContentStreamFactory>()

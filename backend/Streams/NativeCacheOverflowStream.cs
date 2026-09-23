@@ -12,6 +12,7 @@ internal sealed class NativeCacheOverflowStream(NativeCacheStore store, NativeCa
     private long _position;
     private bool _disposed;
     private Stream? _source;
+    private long _lastSourceBlock = -1;
     public string GenerationIdentity => identity.Key;
     public bool IsSourceCurrent => current();
     public override long Length => identity.Length;
@@ -30,7 +31,12 @@ internal sealed class NativeCacheOverflowStream(NativeCacheStore store, NativeCa
         {
             _source ??= await open(cancellationToken).ConfigureAwait(false);
             _source.Position = _position;
+            var start = _position;
             var read = await _source.ReadAsync(destination[..(int)Math.Min(destination.Length, Length - _position)], cancellationToken).ConfigureAwait(false);
+            statistics.SourceBytes(read);
+            for (var block = start / NativeCacheStore.BlockSize * NativeCacheStore.BlockSize;
+                block < start + read; block += NativeCacheStore.BlockSize)
+                if (block != _lastSourceBlock) { statistics.Miss(); _lastSourceBlock = block; }
             if (!current()) throw new IOException("Media source changed during this response. Retry the range.");
             _position += read;
             return read;
