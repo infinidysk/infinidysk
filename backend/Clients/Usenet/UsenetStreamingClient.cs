@@ -247,9 +247,7 @@ public class UsenetStreamingClient : WrappingNntpClient
                 idleTimeoutSeconds,
                 nntpReadTimeout,
                 reconnectDelay,
-                configManager.IsWarmConnectionsEnabled()
-                    ? configManager.GetWarmConnectionsFloor(provider.MaxConnections)
-                    : 0,
+                ResolveWarmConnectionFloor(configManager, provider),
                 metricsWriter,
                 circuitInitialCooldown,
                 circuitMaxCooldown,
@@ -270,6 +268,19 @@ public class UsenetStreamingClient : WrappingNntpClient
             connectionPoolStats: connectionPoolStats,
             concurrentReadTracker: concurrentReadTracker,
             providerGeneration: providerSnapshot.Generation);
+    }
+
+    /// <summary>
+    /// A disabled provider never carries traffic, so it must not open or keep alive warm
+    /// sockets against the account. Every other type keeps the configured floor.
+    /// </summary>
+    internal static int ResolveWarmConnectionFloor(
+        ConfigManager configManager,
+        UsenetProviderConfig.ConnectionDetails provider)
+    {
+        if (provider.Type == ProviderType.Disabled || !configManager.IsWarmConnectionsEnabled())
+            return 0;
+        return configManager.GetWarmConnectionsFloor(provider.MaxConnections);
     }
 
     private static MultiConnectionNntpClient CreateProviderClient
