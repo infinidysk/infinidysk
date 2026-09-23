@@ -24,6 +24,7 @@ public sealed class NativeCacheService : IAsyncDisposable
     private NativeCacheStore? _store;
     private string? _initializationError;
     private bool _disposed;
+    private int _revisionMetadataWarning;
     internal TimeSpan InitializationWait { get; set; } = TimeSpan.FromSeconds(1);
     internal Task InitializationCompletion => Task.WhenAll(_initialization, _cleanup);
 
@@ -149,6 +150,34 @@ public sealed class NativeCacheService : IAsyncDisposable
         finally { admission?.Dispose(); }
         if (requireNative) throw new InvalidOperationException("Native cache metadata is unavailable; no source bytes were requested.");
         return await open(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<DateTime> GetLastModifiedAsync(DavItem item, CancellationToken ct)
+    {
+        try { return await GetRevisionModifiedAsync(item, ct).ConfigureAwait(false); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException
+            or NzbWebDAV.Exceptions.CorruptedBlobPayloadException)
+        {
+            if (Interlocked.Exchange(ref _revisionMetadataWarning, 1) == 0)
+                Log.Warning("Native revision metadata is unavailable; clients will revalidate source content. Reason: {Reason}", exception.GetType().Name);
+            return DateTime.UtcNow;
+        }
+    }
+
+    private async Task<DateTime> GetRevisionModifiedAsync(DavItem item, CancellationToken ct)
+    {
+        if (InitializationPending) await WaitForInitializationAsync(ct).ConfigureAwait(false);
+        if (Store is not { } store || item.FileBlobId is not { } blobId) return item.CreatedAt;
+        using var watch = ContentRevisionTracker.Watch(blobId);
+        await using var blob = _blobs.ReadBlob(blobId);
+        if (blob is null) return item.CreatedAt;
+        var hash = await SHA256.HashDataAsync(blob, ct).ConfigureAwait(false);
+        var dependencies = await GetSourceSegmentsAsync(item, blobId).ConfigureAwait(false);
+        if (dependencies is null) return item.CreatedAt;
+        var revision = _repairs.CaptureNativeRevisions(dependencies);
+        if (!watch.IsCurrent || !revision.IsCurrent) throw new IOException("Media revision is changing; retry metadata refresh.");
+        return await store.ModificationTimeAsync(item.Id.ToString("N"),
+            $"{blobId:N}:{Convert.ToHexString(hash)}:{revision.Fingerprint}", item.CreatedAt, ct).ConfigureAwait(false);
     }
 
     private async Task<IEnumerable<string>?> GetSourceSegmentsAsync(DavItem item, Guid blobId)

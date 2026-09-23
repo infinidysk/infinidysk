@@ -89,7 +89,8 @@ public sealed class NativeCacheOperations : BackgroundService
                         lock (_gate) _jobs[id] = job with { State = "failed", Error = "Storage operation queue is full; retry later." };
                     continue;
                 }
-                running[job.FolderId] = Task.Run(() => RunAsync(id, stoppingToken), CancellationToken.None);
+                var jobId = id;
+                running[job.FolderId] = Task.Run(() => RunAsync(jobId, stoppingToken), CancellationToken.None);
             }
             var pressure = ++tick % 30 == 0;
             if (_native.Store is not { } store || _native.ActiveSettings is not { } settings) continue;
@@ -102,9 +103,10 @@ public sealed class NativeCacheOperations : BackgroundService
                 {
                     try
                     {
-                        await store.ProcessOneCheckpointAsync(stoppingToken, folder.Id).ConfigureAwait(false);
+                        await store.ProcessOneCheckpointAsync(folder.Id, stoppingToken).ConfigureAwait(false);
                         if (pressure)
                         {
+                            await store.ReclaimRetiredAsync(folder.Id, ct: stoppingToken).ConfigureAwait(false);
                             await store.EvictAsync(folder.Id, cancellationToken: stoppingToken).ConfigureAwait(false);
                             await store.EvictPressureAsync(folder.Id, stoppingToken).ConfigureAwait(false);
                         }
@@ -157,6 +159,8 @@ public sealed class NativeCacheOperations : BackgroundService
     private async Task<int> ClearAsync(string folderId, CancellationToken cancellationToken)
     {
         var total = 0;
+        while (await _native.Store!.ReclaimRetiredAsync(folderId, clear: true, ct: cancellationToken).ConfigureAwait(false) is var reclaimed && reclaimed > 0)
+            total += reclaimed;
         _native.Store!.ResetClearCursor(folderId);
         while (true)
         {

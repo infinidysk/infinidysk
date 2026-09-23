@@ -53,7 +53,12 @@ public sealed class NativeCacheStore : IAsyncDisposable
             existing = query.ExecuteScalar() as string;
             string? reserved;
             lock (_leaseLock) reserved = _reservations.GetValueOrDefault(identity.Key)?.Folder;
-            candidates = _folders.Where(folder => (existing is null || folder.Id == existing)
+            using var retiredQuery = Command("SELECT Folder FROM RetiredEntries WHERE Key=$key", ("$key", identity.Key));
+            using var retiredReader = retiredQuery.ExecuteReader();
+            var retired = new HashSet<string>(StringComparer.Ordinal);
+            while (retiredReader.Read()) retired.Add(retiredReader.GetString(0));
+            retiredReader.Close();
+            candidates = _folders.Where(folder => !retired.Contains(folder.Id) && (existing is null || folder.Id == existing)
                 && (reserved is null || folder.Id == reserved) && HasQuota(folder, required + (existing is null ? EntryOverhead : 0), identity.Key)).ToArray();
         }
         finally { _gate.Release(); }
@@ -88,10 +93,41 @@ public sealed class NativeCacheStore : IAsyncDisposable
     private readonly HashSet<string> _pressuredFolders = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _pendingCheckpoints = new(StringComparer.Ordinal);
     private readonly Dictionary<(string Key, long Offset), FillState> _fills = [];
+    private readonly Dictionary<(string Key, long Offset), Task<bool>> _verifications = [];
+
+    internal Task<bool> VerifyOnceAsync(NativeCacheIdentity identity, long offset, Func<Task<bool>> verify, CancellationToken ct)
+    {
+        var key = (identity.Key, offset);
+        TaskCompletionSource<bool> completion;
+        lock (_leaseLock)
+        {
+            if (_verifications.TryGetValue(key, out var pending)) return pending.WaitAsync(ct);
+            if (_verifications.Count >= 64) return verify();
+            completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            _verifications.Add(key, completion.Task);
+        }
+        _ = CompleteVerificationAsync(key, verify, completion);
+        return completion.Task;
+    }
+
+    private async Task CompleteVerificationAsync((string Key, long Offset) key, Func<Task<bool>> verify, TaskCompletionSource<bool> completion)
+    {
+        try
+        {
+            var valid = await verify().ConfigureAwait(false);
+            lock (_leaseLock) { _verifications.Remove(key); completion.TrySetResult(valid); }
+        }
+        catch (Exception exception)
+        {
+            lock (_leaseLock) { _verifications.Remove(key); completion.TrySetException(exception); }
+        }
+    }
+
     private readonly Dictionary<string, WarmReservation> _reservations = new(StringComparer.Ordinal);
     private readonly Lock _leaseLock = new();
     private bool _disposed;
     private readonly Dictionary<string, Task<bool>> _statusProbes = [];
+    private readonly Dictionary<string, long> _statusFreeBytes = [];
     internal TimeSpan StatusProbeTimeout { get; init; } = TimeSpan.FromSeconds(1);
     internal Func<string, bool>? StatusProbeOverride { get; init; }
 
@@ -102,7 +138,14 @@ public sealed class NativeCacheStore : IAsyncDisposable
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (!_statusProbes.TryGetValue(folder.Id, out probe!) || probe.IsCompleted)
-                _statusProbes[folder.Id] = probe = Task.Run(() => StatusProbeOverride?.Invoke(folder.Id) ?? IsVolumeCurrent(folder));
+                _statusProbes[folder.Id] = probe = Task.Run(() =>
+                {
+                    var online = StatusProbeOverride?.Invoke(folder.Id) ?? IsVolumeCurrent(folder);
+                    var available = online && _roots.TryGetValue(folder.Id, out var root)
+                        ? AvailableBytesOverride?.Invoke(folder.Id) ?? root.GetAvailableBytes() : 0;
+                    lock (_leaseLock) _statusFreeBytes[folder.Id] = available;
+                    return online;
+                });
         }
         try { return await probe.WaitAsync(StatusProbeTimeout, ct).ConfigureAwait(false); }
         catch (TimeoutException) { return null; }
@@ -122,7 +165,10 @@ public sealed class NativeCacheStore : IAsyncDisposable
             if (_pendingCheckpoints.Count < 128) _pendingCheckpoints.TryAdd(key, folder);
     }
 
-    public async Task<int> ProcessOneCheckpointAsync(CancellationToken cancellationToken = default, string? folderId = null)
+    public Task<int> ProcessOneCheckpointAsync(CancellationToken cancellationToken = default)
+        => ProcessOneCheckpointAsync(null, cancellationToken);
+
+    public async Task<int> ProcessOneCheckpointAsync(string? folderId, CancellationToken cancellationToken)
     {
         KeyValuePair<string, string> next;
         lock (_leaseLock)
@@ -137,6 +183,29 @@ public sealed class NativeCacheStore : IAsyncDisposable
 
     private static long JournalSoftLimit(long length)
         => (long)Math.Min(long.MaxValue - 65536m, Math.Max(4096m, decimal.Ceiling((decimal)length / BlockSize) * 256));
+
+    [SuppressMessage("Performance", "CA1849", Justification = LocalSqliteReason)]
+    internal async Task<DateTime> ModificationTimeAsync(string itemId, string generation, DateTime created, CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            using var query = Command("SELECT Generation,Seconds FROM ModificationTimes WHERE ItemId=$item", ("$item", itemId));
+            using var reader = query.ExecuteReader();
+            var seconds = new DateTimeOffset(created == default ? DateTime.UnixEpoch : created.ToUniversalTime()).ToUnixTimeSeconds();
+            if (reader.Read())
+            {
+                var previous = reader.GetInt64(1);
+                if (reader.GetString(0) == generation) return DateTimeOffset.FromUnixTimeSeconds(previous).UtcDateTime;
+                seconds = Math.Max(previous + 1, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+            }
+            reader.Close();
+            Execute("INSERT INTO ModificationTimes(ItemId,Generation,Seconds) VALUES($item,$generation,$seconds) ON CONFLICT(ItemId) DO UPDATE SET Generation=excluded.Generation,Seconds=excluded.Seconds",
+                ("$item", itemId), ("$generation", generation), ("$seconds", seconds));
+            return DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime;
+        }
+        finally { _gate.Release(); }
+    }
 
     public async Task<NativeCacheProbeResult> ProbeAsync(string folderId, CancellationToken cancellationToken = default)
     {
@@ -220,7 +289,17 @@ public sealed class NativeCacheStore : IAsyncDisposable
             CREATE INDEX IF NOT EXISTS EntryEviction ON Entries(Folder, Pinned, Access);
             CREATE INDEX IF NOT EXISTS EntryEvictionCursor ON Entries(Folder, Pinned, Access, Key);
             CREATE INDEX IF NOT EXISTS EntryPage ON Entries(Folder,Key);
+            CREATE TABLE IF NOT EXISTS ModificationTimes(ItemId TEXT PRIMARY KEY, Generation TEXT NOT NULL, Seconds INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS RetiredEntries(Key TEXT NOT NULL, Folder TEXT NOT NULL, Bytes INTEGER NOT NULL,
+                PRIMARY KEY(Key,Folder));
             CREATE TABLE IF NOT EXISTS FolderTotals(Folder TEXT PRIMARY KEY, Bytes INTEGER NOT NULL DEFAULT 0);
+            CREATE TRIGGER IF NOT EXISTS RetiredAdded AFTER INSERT ON RetiredEntries BEGIN
+                INSERT INTO FolderTotals(Folder,Bytes) VALUES(NEW.Folder,NEW.Bytes)
+                    ON CONFLICT(Folder) DO UPDATE SET Bytes=Bytes+NEW.Bytes;
+            END;
+            CREATE TRIGGER IF NOT EXISTS RetiredRemoved AFTER DELETE ON RetiredEntries BEGIN
+                UPDATE FolderTotals SET Bytes=Bytes-OLD.Bytes WHERE Folder=OLD.Folder;
+            END;
             CREATE TABLE IF NOT EXISTS FolderIdentity(Folder TEXT PRIMARY KEY, Volume TEXT NOT NULL);
             CREATE TRIGGER IF NOT EXISTS EntryAdded AFTER INSERT ON Entries BEGIN
                 INSERT INTO FolderTotals(Folder,Bytes) VALUES(NEW.Folder,NEW.Bytes)
@@ -458,7 +537,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
         {
             foreach (var folder in _folders)
             {
-                using var command = Command("SELECT COALESCE(SUM(Bytes),0),COUNT(*) FROM Entries WHERE Folder=$folder", ("$folder", folder.Id));
+                using var command = Command("SELECT COALESCE((SELECT SUM(Bytes) FROM Entries WHERE Folder=$folder),0)+COALESCE((SELECT SUM(Bytes) FROM RetiredEntries WHERE Folder=$folder),0), (SELECT COUNT(*) FROM Entries WHERE Folder=$folder)+(SELECT COUNT(*) FROM RetiredEntries WHERE Folder=$folder)", ("$folder", folder.Id));
                 using var reader = command.ExecuteReader();
                 reader.Read();
                 result.Add(new(folder.Id, false, false, reader.GetInt64(0), reader.GetInt64(1), null));
@@ -530,6 +609,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
     public async Task SetPinnedKeyAsync(string key, bool pinned, CancellationToken ct = default)
     {
         if (key.Length != 64 || !key.All(char.IsAsciiHexDigit)) throw new ArgumentException("Invalid cache entry key.");
+        using var placement = await AcquireFillKeyAsync(key, -1, ct).ConfigureAwait(false);
         var writer = await EntryWriterAsync(key, ct).ConfigureAwait(false);
         await writer.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -662,6 +742,125 @@ public sealed class NativeCacheStore : IAsyncDisposable
         }
     }
 
+    /// <summary>Restarts a partial warm on another root without merging replicas or losing allocation debt.</summary>
+    [SuppressMessage("Performance", "CA1849", Justification = LocalSqliteReason)]
+    internal async Task<bool> RestartPartialWarmAsync(NativeCacheIdentity identity, long missing, CancellationToken ct)
+    {
+        if (missing <= 0) return false;
+        using var placement = await AcquireFillAsync(identity, -1, ct).ConfigureAwait(false);
+        string? oldFolder;
+        long allocated;
+        bool quota;
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            using var query = Command("SELECT Folder,Bytes,Pinned FROM Entries WHERE Key=$key", ("$key", identity.Key));
+            using var reader = query.ExecuteReader();
+            if (!reader.Read() || reader.GetInt64(2) != 0) return false;
+            oldFolder = reader.GetString(0);
+            allocated = reader.GetInt64(1);
+            reader.Close();
+            var folder = _folders.FirstOrDefault(folder => folder.Id == oldFolder);
+            if (folder is null || folder.ReadOnly) return false;
+            lock (_leaseLock) if (_reservations.ContainsKey(identity.Key) || _scanning.Contains(identity.Key)) return false;
+            quota = HasQuota(folder, missing + EntryOverhead);
+        }
+        finally { _gate.Release(); }
+        var original = _folders.First(folder => folder.Id == oldFolder);
+        if (quota && await StatusOnlineAsync(original, ct).ConfigureAwait(false) == true) return false;
+        var oldWriter = Writer(oldFolder);
+        if (!await oldWriter.WaitAsync(0, ct).ConfigureAwait(false)) return false;
+        try
+        {
+            foreach (var target in _folders.Where(folder => folder.Id != oldFolder && folder.Enabled && !folder.ReadOnly))
+            {
+                if (await StatusOnlineAsync(target, ct).ConfigureAwait(false) != true) continue;
+                var targetWriter = Writer(target.Id);
+                var distinct = !ReferenceEquals(oldWriter, targetWriter);
+                if (distinct && !await targetWriter.WaitAsync(0, ct).ConfigureAwait(false)) continue;
+                try
+                {
+                    await _gate.WaitAsync(ct).ConfigureAwait(false);
+                    try
+                    {
+                        using var retired = Command("SELECT 1 FROM RetiredEntries WHERE Key=$key AND Folder=$folder", ("$key", identity.Key), ("$folder", target.Id));
+                        var required = checked(identity.Length + EntryOverhead + ((identity.Length + BlockSize - 1) / BlockSize) * (65536 + 4096));
+                        if (retired.ExecuteScalar() is not null || !HasQuota(target, required)) continue;
+                        var freeRequired = FreeSpaceRequirement(target, required);
+                        lock (_leaseLock) if (_statusFreeBytes.GetValueOrDefault(target.Id) < freeRequired) continue;
+                        lock (_leaseLock) if (_scanning.Contains(identity.Key) || _reservations.ContainsKey(identity.Key)) return false;
+                        using var current = Command("SELECT Bytes FROM Entries WHERE Key=$key AND Folder=$folder AND Pinned=0", ("$key", identity.Key), ("$folder", oldFolder));
+                        if (current.ExecuteScalar() is not long currentBytes) return false;
+                        allocated = currentBytes;
+                        using var transaction = _database.BeginTransaction();
+                        using var remember = Command("INSERT INTO RetiredEntries(Key,Folder,Bytes) VALUES($key,$folder,$bytes)",
+                            ("$key", identity.Key), ("$folder", oldFolder), ("$bytes", allocated));
+                        remember.Transaction = transaction;
+                        remember.ExecuteNonQuery();
+                        using var remove = Command("DELETE FROM Entries WHERE Key=$key", ("$key", identity.Key));
+                        remove.Transaction = transaction;
+                        remove.ExecuteNonQuery();
+                        transaction.Commit();
+                        return true;
+                    }
+                    finally { _gate.Release(); }
+                }
+                finally { if (distinct) targetWriter.Release(); }
+            }
+            return false;
+        }
+        finally { oldWriter.Release(); }
+    }
+
+    [SuppressMessage("Performance", "CA1849", Justification = LocalSqliteReason)]
+    internal async Task<int> ReclaimRetiredAsync(string folderId, bool clear = false, CancellationToken ct = default)
+    {
+        var folder = _folders.First(folder => folder.Id == folderId);
+        if (folder.ReadOnly || !_owners.ContainsKey(folderId)) return 0;
+        var reclaimed = 0;
+        var writer = Writer(folderId);
+        await writer.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (!IsVolumeCurrent(folder)) return reclaimed;
+            List<string> keys = [];
+            await _gate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                using var query = Command("SELECT r.Key FROM RetiredEntries r LEFT JOIN Entries e ON e.Key=r.Key WHERE r.Folder=$folder AND ($clear=1 OR e.VerifiedBytes=e.Length) LIMIT 32", ("$folder", folderId), ("$clear", clear ? 1 : 0));
+                using var reader = query.ExecuteReader();
+                while (reader.Read()) keys.Add(reader.GetString(0));
+            }
+            finally { _gate.Release(); }
+            foreach (var key in keys)
+            {
+                lock (_leaseLock) { if (_leases.ContainsKey(key)) continue; _evicting.Add(key); }
+                try
+                {
+                    try
+                    {
+#pragma warning disable CA2000 // The using declaration owns the anchored shard through unlink/flush, including exceptions.
+                        using var shard = _roots[folderId].OpenDirectory($"v1/{key[..2]}");
+#pragma warning restore CA2000
+                        using var directory = shard.OpenDirectory(key);
+                        foreach (var name in new[] { "content.data", "ranges.journal", "manifest.json", "ranges.checkpoint.tmp" }) directory.DeleteFile(name);
+                        shard.DeleteDirectory(key);
+                        shard.Flush();
+                    }
+                    catch (IOException exception) when (NativeFileSystem.IsMissing(exception)) { }
+                    if (!IsVolumeCurrent(folder)) return reclaimed;
+                    await _gate.WaitAsync(ct).ConfigureAwait(false);
+                    try { Execute("DELETE FROM RetiredEntries WHERE Key=$key AND Folder=$folder", ("$key", key), ("$folder", folderId)); }
+                    finally { _gate.Release(); }
+                    reclaimed++;
+                }
+                finally { lock (_leaseLock) _evicting.Remove(key); }
+            }
+        }
+        finally { writer.Release(); }
+        return reclaimed;
+    }
+
     /// <summary>Explicit, streaming reconciliation; never enumerates the NAS during normal startup.</summary>
     public Task<int> ScanAsync(string folderId, CancellationToken cancellationToken = default)
         => ScanCoreAsync(folderId, null, cancellationToken);
@@ -731,6 +930,8 @@ public sealed class NativeCacheStore : IAsyncDisposable
                     try
                     {
                         ObjectDisposedException.ThrowIf(_disposed, this);
+                        using var retired = Command("SELECT 1 FROM RetiredEntries WHERE Key=$key AND Folder=$folder", ("$key", key), ("$folder", folderId));
+                        if (retired.ExecuteScalar() is not null) continue;
                         using var owner = Command("SELECT Folder FROM Entries WHERE Key=$key", ("$key", manifest.Identity.Key));
                         if (owner.ExecuteScalar() is string existingFolder && existingFolder != folder.Id)
                         {
@@ -991,9 +1192,12 @@ public sealed class NativeCacheStore : IAsyncDisposable
         return new ActivityLease(this, key);
     }
 
-    public async ValueTask<IDisposable> AcquireFillAsync(NativeCacheIdentity identity, long offset, CancellationToken cancellationToken)
+    public ValueTask<IDisposable> AcquireFillAsync(NativeCacheIdentity identity, long offset, CancellationToken cancellationToken)
+        => AcquireFillKeyAsync(identity.Key, offset, cancellationToken);
+
+    private async ValueTask<IDisposable> AcquireFillKeyAsync(string identityKey, long offset, CancellationToken cancellationToken)
     {
-        var key = (identity.Key, offset);
+        var key = (identityKey, offset);
         FillState state;
         lock (_leaseLock)
         {
@@ -1029,6 +1233,7 @@ public sealed class NativeCacheStore : IAsyncDisposable
 
     public async Task SetPinnedAsync(NativeCacheIdentity identity, bool pinned, CancellationToken cancellationToken = default)
     {
+        using var placement = await AcquireFillAsync(identity, -1, cancellationToken).ConfigureAwait(false);
         var writer = await EntryWriterAsync(identity.Key, cancellationToken).ConfigureAwait(false);
         await writer.WaitAsync(cancellationToken).ConfigureAwait(false);
         try

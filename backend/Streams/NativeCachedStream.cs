@@ -59,6 +59,13 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
     /// <summary>Checks existing bytes without opening the source or spending a warming budget.</summary>
     internal async Task<bool> VerifyCachedBlockAsync(long blockStart, CancellationToken cancellationToken)
     {
+        var valid = await _store.VerifyOnceAsync(_identity, blockStart,
+            () => VerifyOwnedBlockAsync(blockStart, cancellationToken), cancellationToken).ConfigureAwait(false);
+        return valid && _generationIsCurrent();
+    }
+
+    private async Task<bool> VerifyOwnedBlockAsync(long blockStart, CancellationToken cancellationToken)
+    {
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
         if (_bypassFill || !_generationIsCurrent()) return false;
@@ -319,12 +326,15 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
                 try { if (_source is not null) await _source.DisposeAsync().ConfigureAwait(false); }
                 finally
                 {
-                    if (_pendingWrite is { } pending)
+                    try
                     {
-                        try { await pending.WaitAsync(CacheIoTimeout).ConfigureAwait(false); }
-                        catch (TimeoutException) { }
+                        if (_pendingWrite is { } pending)
+                        {
+                            try { await pending.WaitAsync(CacheIoTimeout).ConfigureAwait(false); }
+                            catch (TimeoutException) { }
+                        }
                     }
-                    Release();
+                    finally { Release(); }
                 }
             }
         }

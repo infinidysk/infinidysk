@@ -22,6 +22,10 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
     protected HttpContext Context => context;
     protected ConfigManager Config => configManager;
 
+    public override Task<DateTime> GetLastModifiedAsync(CancellationToken ct)
+        => DavItem is { } item && context.RequestServices?.GetService<NativeCacheService>() is { } native
+            ? native.GetLastModifiedAsync(item, ct) : base.GetLastModifiedAsync(ct);
+
     protected abstract Task<Stream> GetStreamAsync(CancellationToken cancellationToken);
 
     public override async Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)

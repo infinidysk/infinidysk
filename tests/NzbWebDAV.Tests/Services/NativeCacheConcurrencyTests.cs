@@ -14,6 +14,49 @@ public sealed class NativeCacheConcurrencyTests : IDisposable
         return new() { Id = "cache", Path = path, MinFreeBytes = 0 };
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PartialWarm_RestartsOnEligibleFolder_AndRetainsOldAllocationUntilSafeCleanup(bool offline)
+    {
+        var first = Folder() with { MaxBytes = NativeCacheStore.BlockSize + 200000, Priority = 10 };
+        var path = Path.Combine(_root, "second");
+        Directory.CreateDirectory(path);
+        var second = new NativeCacheFolder { Id = "second", Path = path, MinFreeBytes = 0 };
+        await using var store = new NativeCacheStore(Path.Combine(_root, "index.db"), [first, second]);
+        var identity = new NativeCacheIdentity("move", "generation", NativeCacheStore.BlockSize * 2L);
+        var bytes = new byte[NativeCacheStore.BlockSize];
+        new Random(38).NextBytes(bytes);
+        Assert.True(await store.WriteBlockAsync(identity, 0, bytes));
+        await store.SetPinnedAsync(identity, true);
+        Assert.False(await store.RestartPartialWarmAsync(identity, NativeCacheStore.BlockSize, CancellationToken.None));
+        await store.SetPinnedAsync(identity, false);
+        if (offline) Directory.Move(first.Path, first.Path + "-offline");
+        try
+        {
+            using (store.AcquireLease(identity))
+            {
+                Assert.True(await store.RestartPartialWarmAsync(identity, NativeCacheStore.BlockSize, CancellationToken.None));
+                Assert.Equal(0, await store.GetCoverageAsync(identity));
+                using var reservation = await store.ReserveWarmAsync(identity, identity.Length);
+                Assert.NotNull(reservation);
+                Assert.True(await store.WriteBlockAsync(identity, 0, bytes));
+                Assert.True(await store.WriteBlockAsync(identity, NativeCacheStore.BlockSize, bytes));
+                Assert.Equal(identity.Length, await store.GetCoverageAsync(identity));
+                Assert.Equal("second", Assert.Single(await store.ListEntriesAsync("second", null, 10)).FolderId);
+                await store.ReclaimRetiredAsync(first.Id);
+                Assert.True((await store.GetStatusAsync()).Single(status => status.Id == first.Id).CommittedBytes > 0);
+            }
+        }
+        finally { if (offline) Directory.Move(first.Path + "-offline", first.Path); }
+        Assert.Equal(0, await store.ScanAsync(first.Id)); // Retired replicas cannot resurrect coverage.
+        await store.ReclaimRetiredAsync(first.Id);
+        Assert.Equal(0, (await store.GetStatusAsync()).Single(status => status.Id == first.Id).CommittedBytes);
+        var actual = new byte[bytes.Length];
+        Assert.Equal(bytes.Length, await store.ReadBlockAsync(identity, 0, actual));
+        Assert.Equal(bytes, actual);
+    }
+
     [Fact]
     public async Task ForegroundWrite_DoesNotWaitBehindAnotherWriter()
     {
@@ -35,6 +78,7 @@ public sealed class NativeCacheConcurrencyTests : IDisposable
     [Fact]
     public async Task StalledWriter_DoesNotBlockAnIndependentFilesystem()
     {
+        if (!OperatingSystem.IsLinux()) return; // Uses a separate tmpfs device to model an independent mount.
         var firstFolder = Folder();
         var secondPath = Path.Combine("/dev/shm", "native-isolation-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(secondPath);

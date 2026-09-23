@@ -9,6 +9,37 @@ public sealed class NativeCachedStreamTests : IDisposable
     public NativeCachedStreamTests() => Directory.CreateDirectory(_root);
 
     [Fact]
+    public async Task ConcurrentVerification_SharesOnlyInFlightEvidence_AndRechecksLaterDamage()
+    {
+        await using var store = CreateStore();
+        var identity = new NativeCacheIdentity("shared-verification", "v1", 3);
+        Assert.True(await store.WriteBlockAsync(identity, 0, new byte[] { 1, 2, 3 }));
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        await using var first = new NativeCachedStream(store, identity, _ => throw new Exception("source"), () => true)
+        {
+            BeforeCacheIo = async (_, _) => { Interlocked.Increment(ref reads); entered.TrySetResult(); await release.Task; }
+        };
+        await using var second = new NativeCachedStream(store, identity, _ => throw new Exception("source"), () => true)
+        {
+            BeforeCacheIo = (_, _) => { Interlocked.Increment(ref reads); return Task.CompletedTask; }
+        };
+        var owner = first.VerifyCachedBlockAsync(0, CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var follower = second.VerifyCachedBlockAsync(0, CancellationToken.None);
+        release.TrySetResult();
+        Assert.True(await owner);
+        Assert.True(await follower);
+        Assert.Equal(1, reads);
+        Assert.True(await second.VerifyCachedBlockAsync(0, CancellationToken.None));
+        Assert.Equal(2, reads); // No TTL-based trust of old catalogue or verification results.
+        await File.WriteAllBytesAsync(Path.Combine(_root, "v1", identity.Key[..2], identity.Key, "content.data"), new byte[] { 9, 9, 9 });
+        Assert.False(await second.VerifyCachedBlockAsync(0, CancellationToken.None));
+        Assert.Equal(0, await store.GetCoverageAsync(identity));
+    }
+
+    [Fact]
     public async Task WriteBehind_ServesBytesBeforeFlush_AndRetainsBufferUntilPublication()
     {
         await using var store = CreateStore();
