@@ -9,8 +9,6 @@ declare const styles: {
   readonly lineErrors: string;
   readonly crosshair: string;
   readonly hoverTooltip: string;
-  readonly hoverDotAnchor: string;
   readonly hoverDot: string;
-  readonly hoverDotErr: string;
 };
 export = styles;
