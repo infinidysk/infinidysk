@@ -25,10 +25,9 @@ public class ProwlarrClientFactory : IProwlarrClientFactory
 
 public class ProwlarrClient : IProwlarrClient
 {
-    private static readonly HttpClient SharedHttpClient = new()
-    {
-        Timeout = TimeSpan.FromSeconds(15),
-    };
+    internal static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(15);
+    private static readonly HttpClient SharedHttpClient =
+        new(ArrHttpTransport.CreateHandler(), disposeHandler: true) { Timeout = RequestTimeout };
 
     private readonly string _baseUrl;
     private readonly string _apiKey;
@@ -64,25 +63,25 @@ public class ProwlarrClient : IProwlarrClient
         $"{NormalizeBaseUrl(baseUrl)}/{indexerId}/api";
 
     public Task<ProwlarrSystemStatus> GetStatusAsync(CancellationToken ct = default) =>
-        GetAsync<ProwlarrSystemStatus>("system/status", ct);
+        GetAsync<ProwlarrSystemStatus>("system/status", "Prowlarr system status", ct);
 
     public async Task<IReadOnlyList<ProwlarrIndexer>> GetIndexersAsync(CancellationToken ct = default)
     {
-        var indexers = await GetAsync<List<ProwlarrIndexer>>("indexer", ct).ConfigureAwait(false);
+        var indexers = await GetAsync<List<ProwlarrIndexer>>("indexer", "Prowlarr indexer list", ct).ConfigureAwait(false);
         if (indexers.Any(indexer => indexer.Id <= 0 || string.IsNullOrWhiteSpace(indexer.Name)))
             throw new InvalidDataException("Prowlarr returned an indexer without a valid ID or name.");
 
         return indexers;
     }
 
-    private async Task<T> GetAsync<T>(string resource, CancellationToken ct)
+    private async Task<T> GetAsync<T>(string resource, string operation, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/api/v1/{resource}");
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         request.Headers.UserAgent.ParseAdd($"NzbDAV/{ConfigManager.AppVersion}");
         request.Headers.TryAddWithoutValidation("X-Api-Key", _apiKey);
 
-        using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
+        using var response = await SendAsync(request, operation, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             var reason = response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
@@ -100,6 +99,19 @@ public class ProwlarrClient : IProwlarrClient
         catch (JsonException e)
         {
             throw new InvalidDataException("Prowlarr returned invalid JSON.", e);
+        }
+    }
+
+    private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, string operation, CancellationToken ct)
+    {
+        try
+        {
+            return await _http.SendAsync(request, ct).ConfigureAwait(false);
+        }
+        catch (TaskCanceledException e) when (!ct.IsCancellationRequested && e.InnerException is TimeoutException)
+        {
+            // HttpClient.Timeout surfaces as TaskCanceledException wrapping a TimeoutException.
+            throw new ArrRequestTimeoutException(operation, _baseUrl, _http.Timeout, e);
         }
     }
 }
