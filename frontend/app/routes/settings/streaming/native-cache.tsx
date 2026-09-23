@@ -1,4 +1,4 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
   Alert,
   Button,
@@ -86,6 +86,9 @@ export function NativeCacheSettings({
     nextAfter: string | null;
   } | null>(null);
   const [rangePage, setRangePage] = useState<(RangePage & { key: string }) | null>(null);
+  const pendingEvictions = useRef(new Map<string, { folderId: string; key: string }>());
+  const openFolderId = useRef<string | null>(null);
+  openFolderId.current = cachePage?.folderId ?? null;
   const inspectRanges = async (key: string, afterOffset = -1) => {
     setBusy(true);
     setError(null);
@@ -162,6 +165,8 @@ export function NativeCacheSettings({
         }),
       });
       if (!response.ok) throw new Error("Could not queue file eviction.");
+      const job = (await response.json()) as { id: string };
+      pendingEvictions.current.set(job.id, { folderId: cachePage.folderId, key: entry.key });
       const next = await fetch(withUrlBase("/api/native-cache"));
       if (next.ok) setStatus((await next.json()) as CacheStatus);
     } catch (cause) {
@@ -170,6 +175,39 @@ export function NativeCacheSettings({
       setBusy(false);
     }
   };
+  useEffect(() => {
+    if (!status) return;
+    for (const job of status.jobs) {
+      const pending = pendingEvictions.current.get(job.id);
+      if (!pending || !["completed", "failed", "cancelled"].includes(job.state)) continue;
+      pendingEvictions.current.delete(job.id);
+      if (job.state !== "completed" || job.result !== 1) {
+        setError(job.error || `File eviction ${job.state}; the cached file was retained.`);
+        continue;
+      }
+      if (openFolderId.current !== pending.folderId) continue;
+      const query = new URLSearchParams({ folderId: pending.folderId, limit: "50" });
+      void (async () => {
+        try {
+          const response = await fetch(withUrlBase(`/api/native-cache/entries?${query}`));
+          if (!response.ok)
+            throw new Error("File eviction completed, but the catalogue could not refresh.");
+          const page = (await response.json()) as {
+            entries: CacheEntry[];
+            nextAfter: string | null;
+          };
+          setCachePage((current) =>
+            current?.folderId === pending.folderId
+              ? { ...page, folderId: pending.folderId }
+              : current,
+          );
+          setRangePage((current) => (current?.key === pending.key ? null : current));
+        } catch (cause) {
+          setError(cause instanceof Error ? cause.message : "Cache listing failed.");
+        }
+      })();
+    }
+  }, [status]);
   useEffect(() => {
     const abort = new AbortController();
     const refresh = async () => {

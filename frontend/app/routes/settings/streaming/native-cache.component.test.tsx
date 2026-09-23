@@ -308,4 +308,133 @@ describe("native cache folder editor", () => {
     );
     expect(evict).toHaveProperty("disabled", true);
   });
+
+  it("refreshes the open catalogue and ranges after a completed exact-file eviction", async () => {
+    const key = "a".repeat(64);
+    let evicted = false;
+    const fetcher = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+      if (url.includes("/operations") && options?.method === "POST") {
+        evicted = true;
+        return Promise.resolve(new Response(JSON.stringify({ id: "evict-job" }), { status: 202 }));
+      }
+      const body = url.includes("/entries")
+        ? {
+            entries: evicted
+              ? []
+              : [
+                  {
+                    key,
+                    itemId: "episode",
+                    name: "Episode 3",
+                    length: 100,
+                    verifiedBytes: 100,
+                    allocatedBytes: 128,
+                    pinned: false,
+                  },
+                ],
+            nextAfter: null,
+          }
+        : url.includes("/ranges")
+          ? { ranges: [{ offset: 0, count: 100 }], nextAfter: null }
+          : {
+              activeMode: "native",
+              configuredMode: "native",
+              folders: [
+                { id: "disk", online: true, writable: true, committedBytes: 128, entries: 1 },
+              ],
+              jobs: evicted
+                ? [
+                    {
+                      id: "evict-job",
+                      folderId: "disk",
+                      operation: "evict",
+                      state: "completed",
+                      result: 1,
+                    },
+                  ]
+                : [],
+            };
+      return Promise.resolve(new Response(JSON.stringify(body)));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+    render(<Harness native />);
+    await screen.findByText(/Online, writable/);
+    await userEvent.click(screen.getByRole("button", { name: "View cached files" }));
+    await screen.findByText("Episode 3");
+    await userEvent.click(screen.getByRole("button", { name: "Verified ranges for Episode 3" }));
+    await screen.findByText("Bytes 0–99");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Evict Episode 3 from Native Cache" }),
+    );
+    await waitFor(() => expect(screen.queryByText("Episode 3")).toBeNull());
+    expect(screen.queryByText("Bytes 0–99")).toBeNull();
+    expect(screen.getByText("No cached files in this page.")).toBeTruthy();
+    expect(fetcher.mock.calls.filter(([url]) => String(url).includes("/entries"))).toHaveLength(2);
+  });
+
+  it("keeps the file visible and reports a failed eviction job", async () => {
+    const key = "b".repeat(64);
+    let queued = false;
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+        if (url.includes("/operations") && options?.method === "POST") {
+          queued = true;
+          return Promise.resolve(
+            new Response(JSON.stringify({ id: "failed-job" }), { status: 202 }),
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify(
+              url.includes("/entries")
+                ? {
+                    entries: [
+                      {
+                        key,
+                        itemId: "episode",
+                        name: "Episode 4",
+                        length: 100,
+                        verifiedBytes: 100,
+                        allocatedBytes: 128,
+                        pinned: false,
+                      },
+                    ],
+                    nextAfter: null,
+                  }
+                : {
+                    activeMode: "native",
+                    configuredMode: "native",
+                    folders: [
+                      { id: "disk", online: true, writable: true, committedBytes: 128, entries: 1 },
+                    ],
+                    jobs: queued
+                      ? [
+                          {
+                            id: "failed-job",
+                            folderId: "disk",
+                            operation: "evict",
+                            state: "failed",
+                            error: "File is active",
+                          },
+                        ]
+                      : [],
+                  },
+            ),
+          ),
+        );
+      }),
+    );
+    render(<Harness native />);
+    await screen.findByText(/Online, writable/);
+    await userEvent.click(screen.getByRole("button", { name: "View cached files" }));
+    await screen.findByText("Episode 4");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Evict Episode 4 from Native Cache" }),
+    );
+    await screen.findByText("File is active");
+    expect(screen.getByText("Episode 4")).toBeTruthy();
+  });
 });
