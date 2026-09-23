@@ -56,6 +56,7 @@ public sealed class MetricsMigrationTests
             var throughput = await context.ThroughputMinutes.AsNoTracking().SingleAsync();
             Assert.Equal(7, throughput.Misses);
             Assert.Equal(0, throughput.Errors);
+            Assert.Equal(0, throughput.PeakFetchBytesPerSec);
 
             var providerMinute = await context.ProviderMinutes.AsNoTracking().SingleAsync();
             Assert.Equal(5, providerMinute.Misses);
@@ -66,6 +67,7 @@ public sealed class MetricsMigrationTests
             Assert.Equal(0, providerHour.Errors);
 
             Assert.Empty(await context.ProviderQuotaUsage.AsNoTracking().ToListAsync());
+            Assert.Empty(await context.ThroughputHourly.AsNoTracking().ToListAsync());
 
             Assert.Empty(await context.Database.GetPendingMigrationsAsync());
         }

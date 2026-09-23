@@ -153,13 +153,15 @@ public class MetricsRollupService(
                 minute, bytes).ConfigureAwait(false);
         }
 
-        await ApplyPeakRatesAsync(db, currentMinute).ConfigureAwait(false);
+        await ApplyPeakRatesAsync(db, bytesTracker.DrainClosedPeaks(currentMinute)).ConfigureAwait(false);
     }
 
     // MAX-merge so catch-up re-runs and restarts can never lower a persisted peak.
-    private async Task ApplyPeakRatesAsync(MetricsDbContext db, long currentMinute)
+    internal static async Task ApplyPeakRatesAsync(
+        MetricsDbContext db,
+        IReadOnlyList<(long Minute, long PeakBytesPerSec)> peaks)
     {
-        foreach (var (minute, peak) in bytesTracker.DrainClosedPeaks(currentMinute))
+        foreach (var (minute, peak) in peaks)
         {
             await db.Database.ExecuteSqlRawAsync(
                 """
