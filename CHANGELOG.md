@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.5](https://github.com/infinidysk/infinidysk/compare/v1.4.4...v1.4.5) (2026-09-23)
+
+
+### Bug Fixes
+
+* **usenet:** prevent abandoned reads from disabling healthy providers ([#1521](https://github.com/infinidysk/infinidysk/issues/1521)) ([894da90](https://github.com/infinidysk/infinidysk/commit/894da90604a24505988f8a78805469961815d4e3))
+
 ## [1.4.4](https://github.com/infinidysk/infinidysk/compare/v1.4.3...v1.4.4) (2026-09-22)
 
 
