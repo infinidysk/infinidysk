@@ -14,7 +14,7 @@ public class OrganizedLinksUtilTests
         try
         {
             var id = Guid.NewGuid();
-            File.CreateSymbolicLink(Path.Join(root, "movie.mkv"), $"/synthetic/mount/.ids/{id}.mkv");
+            File.WriteAllText(Path.Join(root, "movie.strm"), $"http://localhost/view/.ids/{id}.mkv");
             var configManager = new ConfigManager();
             configManager.UpdateValues([
                 new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = root },
