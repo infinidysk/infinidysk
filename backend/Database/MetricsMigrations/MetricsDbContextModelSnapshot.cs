@@ -196,6 +196,9 @@ namespace NzbWebDAV.Database.MetricsMigrations
                     b.Property<int?>("P95DurationMs")
                         .HasColumnType("INTEGER");
 
+                    b.Property<long>("QueueArticles")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long>("Retries")
                         .HasColumnType("INTEGER");
 
@@ -232,6 +235,9 @@ namespace NzbWebDAV.Database.MetricsMigrations
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("Misses")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("QueueArticles")
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("Retries")
@@ -296,6 +302,9 @@ namespace NzbWebDAV.Database.MetricsMigrations
                         .HasColumnType("BLOB");
 
                     b.Property<long>("Misses")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("QueueArticles")
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("Retries")
@@ -428,6 +437,9 @@ namespace NzbWebDAV.Database.MetricsMigrations
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("Misses")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("QueueArticles")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Minute");

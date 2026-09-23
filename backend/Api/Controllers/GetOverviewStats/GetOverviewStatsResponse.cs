@@ -13,6 +13,8 @@ public class GetOverviewStatsResponse
     public long ThroughputBucketSizeMs { get; init; }
     public long TotalArticles { get; init; }
     public long TotalClientArticles { get; init; }
+    /// <summary>Article attempts made while importing queue items (initial download).</summary>
+    public long TotalQueueArticles { get; init; }
     public long TotalMisses { get; init; }
     public long TotalErrors { get; init; }
     public long TotalBytesFetched { get; init; }
@@ -64,6 +66,8 @@ public class GetOverviewStatsResponse
         public long Bucket { get; init; }
         public long Articles { get; init; }
         public long ClientArticles { get; init; }
+        /// <summary>Article attempts made while importing queue items (initial download).</summary>
+        public long QueueArticles { get; init; }
         public long Misses { get; init; }
         public long Errors { get; init; }
         public long BytesServed { get; init; }
