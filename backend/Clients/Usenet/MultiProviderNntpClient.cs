@@ -851,6 +851,10 @@ public class MultiProviderNntpClient(
                                 if (group.Length > 0) missingGroups.Add(group);
                                 MarkCachedMissing(segmentId, provider, NntpOperation.PipelinedBody);
                             }
+                            else
+                            {
+                                walk.UnexpectedResponses++;
+                            }
                             deferredCallback.Discard();
                             coordinator.CompleteAttempt();
                         }

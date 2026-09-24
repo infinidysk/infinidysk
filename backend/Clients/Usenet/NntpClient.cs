@@ -517,7 +517,7 @@ public abstract class NntpClient : INntpClient
                 SegmentId = segmentId,
                 Found = false,
                 Stream = null,
-                DefinitivelyMissing = true,
+                DefinitivelyMissing = e.InconclusiveReason is null,
                 ProviderGeneration = e.ProviderGeneration ?? ProviderGeneration,
             };
         }

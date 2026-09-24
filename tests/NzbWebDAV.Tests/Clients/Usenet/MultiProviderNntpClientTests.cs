@@ -1086,6 +1086,33 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public async Task PipelinedBody_NonDefinitiveFallbackResponse_IsNotDefinitivelyMissing()
+    {
+        var primary = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularResponseCode = 430,
+        };
+        var backup = new ScriptedNntpClient
+        {
+            BatchResponseCode = 400,
+            SingularResponseCode = 400,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(primary, host: "a.example"),
+            CreateProvider(backup, host: "b.example"),
+        ]);
+
+        var results = await CollectPipelinedAsync(client, ["segment"], depth: 2);
+
+        Assert.Single(results);
+        Assert.False(results[0].Found);
+        Assert.False(results[0].DefinitivelyMissing);
+        Assert.Equal(1, backup.SingularRequests);
+    }
+
+    [Fact]
     public async Task PipelinedBody_SuccessfulPrimary_DoesNotCallBackup()
     {
         var primary = new ScriptedNntpClient

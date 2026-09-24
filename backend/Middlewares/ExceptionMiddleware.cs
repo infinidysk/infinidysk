@@ -906,10 +906,9 @@ public class ExceptionMiddleware(
             if (kvp.Value.LastLogged < cutoff)
                 RecentMissingArticles.TryRemove(kvp.Key, out _);
         }
-        foreach (var kvp in RecentInconclusiveMissingArticles)
+        foreach (var kvp in RecentInconclusiveMissingArticles.Where(kvp => kvp.Value.LastLogged < cutoff))
         {
-            if (kvp.Value.LastLogged < cutoff)
-                RecentInconclusiveMissingArticles.TryRemove(kvp.Key, out _);
+            RecentInconclusiveMissingArticles.TryRemove(kvp.Key, out _);
         }
         foreach (var kvp in RecentConnectionLimitErrors)
         {
