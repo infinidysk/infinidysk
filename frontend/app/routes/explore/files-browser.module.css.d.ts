@@ -1,0 +1,20 @@
+declare const classes: {
+  readonly browser: string;
+  readonly toolbar: string;
+  readonly filters: string;
+  readonly viewport: string;
+  readonly grid: string;
+  readonly row: string;
+  readonly listRow: string;
+  readonly header: string;
+  readonly name: string;
+  readonly nameText: string;
+  readonly path: string;
+  readonly actions: string;
+  readonly action: string;
+  readonly branch: string;
+  readonly details: string;
+  readonly healthMenu: string;
+  readonly healthOptions: string;
+};
+export default classes;

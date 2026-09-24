@@ -1039,6 +1039,31 @@
         ],
         "type": "object"
       },
+      "RecheckFileResponse": {
+        "properties": {
+          "davItemId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "state": {
+            "type": "string"
+          },
+          "status": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "davItemId",
+          "state"
+        ],
+        "type": "object"
+      },
       "RequeueActionNeededHealthChecksResponse": {
         "description": "Success response for POST /api/requeue-action-needed-health-checks.",
         "properties": {
@@ -1059,6 +1084,86 @@
         "required": [
           "requeuedCount",
           "status"
+        ],
+        "type": "object"
+      },
+      "Result": {
+        "properties": {
+          "appType": {
+            "type": "string"
+          },
+          "commandId": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "null",
+              "string"
+            ]
+          },
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "instanceName": {
+            "type": "string"
+          },
+          "mediaIds": {
+            "items": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            },
+            "type": "array"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "appType",
+          "commandId",
+          "error",
+          "instanceName",
+          "mediaIds",
+          "state"
+        ],
+        "type": "object"
+      },
+      "SearchFileInArrResponse": {
+        "properties": {
+          "davItemId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/Result"
+            },
+            "type": "array"
+          },
+          "status": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "davItemId",
+          "outcome",
+          "results"
         ],
         "type": "object"
       },
@@ -3198,80 +3303,34 @@
       }
     },
     "/api/delete-webdav-item": {
-      "get": {
-        "operationId": "get-api-delete-webdav-item",
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Bad request."
-          },
-          "401": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Unauthorized."
-          },
-          "403": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Forbidden."
-          },
-          "404": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Not found."
-          },
-          "409": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Conflict."
-          },
-          "500": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Unexpected server error. Detail is sanitized; use traceId."
-          }
-        },
-        "summary": "Delete Webdav Item",
-        "tags": [
-          "DeleteWebdavItem"
-        ]
-      },
       "post": {
         "operationId": "post-api-delete-webdav-item",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "expectedDavItemId": {
+                    "type": "string"
+                  },
+                  "healthCheckResultId": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "Submit the fields as multipart form data.",
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "OK"
@@ -3346,78 +3405,32 @@
     "/api/delete-webdav-item-preview": {
       "get": {
         "operationId": "get-api-delete-webdav-item-preview",
-        "responses": {
-          "200": {
-            "description": "OK"
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           },
-          "400": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Bad request."
+          {
+            "in": "query",
+            "name": "expectedDavItemId",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
           },
-          "401": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Unauthorized."
-          },
-          "403": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Forbidden."
-          },
-          "404": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Not found."
-          },
-          "409": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Conflict."
-          },
-          "500": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Unexpected server error. Detail is sanitized; use traceId."
+          {
+            "in": "query",
+            "name": "healthCheckResultId",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
           }
-        },
-        "summary": "Delete Webdav Item Preview",
-        "tags": [
-          "DeleteWebdavItemPreview"
-        ]
-      },
-      "post": {
-        "operationId": "post-api-delete-webdav-item-preview",
+        ],
         "responses": {
           "200": {
             "description": "OK"
@@ -8018,6 +8031,127 @@
         ]
       }
     },
+    "/api/recheck-file": {
+      "post": {
+        "operationId": "post-api-recheck-file",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "davItemId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "davItemId"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "Submit the fields as multipart form data.",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecheckFileResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecheckFileResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecheckFileResponse"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad request."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "405": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "POST required."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unexpected server error. Detail is sanitized; use traceId."
+          }
+        },
+        "summary": "Recheck File",
+        "tags": [
+          "RecheckFile"
+        ]
+      }
+    },
     "/api/recreate-strm-files": {
       "get": {
         "operationId": "get-api-recreate-strm-files",
@@ -9596,6 +9730,137 @@
         "summary": "Reset Health Check Queue",
         "tags": [
           "ResetHealthCheckQueue"
+        ]
+      }
+    },
+    "/api/search-file-in-arr": {
+      "post": {
+        "operationId": "post-api-search-file-in-arr",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "davItemId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "davItemId"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "Submit the fields as multipart form data.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchFileInArrResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchFileInArrResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchFileInArrResponse"
+                }
+              }
+            },
+            "description": "Command processing completed. Inspect outcome and per-target receipts; partial and unconfirmed do not mean all searches were requested."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad request."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "405": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "POST required."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unexpected server error. Detail is sanitized; use traceId."
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Could not verify all Arr targets; no commands requested."
+          }
+        },
+        "summary": "Search File In Arr",
+        "tags": [
+          "SearchFileInArr"
         ]
       }
     },
@@ -12546,6 +12811,9 @@
       "name": "SearchIndexers"
     },
     {
+      "name": "SearchFileInArr"
+    },
+    {
       "name": "ResetHealthCheckQueue"
     },
     {
@@ -12580,6 +12848,9 @@
     },
     {
       "name": "RecreateStrmFiles"
+    },
+    {
+      "name": "RecheckFile"
     },
     {
       "name": "PruneCompletedHistory"

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isBackendApiDocsPath,
+  isFilesBackendMutation,
   isBackendApiPath,
   isReadOnlyDeniedBackendMutation,
   matchesBackendPathPrefix,
@@ -8,6 +9,19 @@ import {
   shouldProxyToBackend,
   shouldSkipCompression,
 } from "./proxy-path";
+
+describe("Files mutations", () => {
+  it.each([
+    "/api/recheck-file",
+    "/api/search-file-in-arr",
+    "/API/RECHECK-FILE/",
+    "/%61pi/search-file-in-arr///",
+  ])("guards %s", (path) => {
+    expect(isFilesBackendMutation("POST", path)).toBe(true);
+    expect(isReadOnlyDeniedBackendMutation("post", path)).toBe(true);
+    expect(isFilesBackendMutation("GET", path)).toBe(false);
+  });
+});
 
 describe("safeDecodePath", () => {
   it("decodes valid percent-encoding", () => {

@@ -11,6 +11,8 @@ const BACKEND_PATH_PREFIXES = [
   "/README",
 ];
 const READ_ONLY_DENIED_POST_PATHS = new Set([
+  "/api/recheck-file",
+  "/api/search-file-in-arr",
   "/api/delete-webdav-item",
   "/api/remove-missing-payloads",
   "/api/setup-wizard/complete",
@@ -44,6 +46,7 @@ export function isBackendApiPath(pathname: string): boolean {
 }
 
 export function isReadOnlyDeniedBackendMutation(method: string, pathname: string): boolean {
+  if (isFilesBackendMutation(method, pathname)) return true;
   if (method.toUpperCase() !== "POST") return false;
   const decodedPath = safeDecodePath(pathname);
   if (decodedPath === null) return false;
@@ -53,6 +56,14 @@ export function isReadOnlyDeniedBackendMutation(method: string, pathname: string
     normalizedPath.startsWith("/api/delete-webdav-item/") ||
     normalizedPath.startsWith("/api/trigger-health-check/")
   );
+}
+
+export function isFilesBackendMutation(method: string, pathname: string): boolean {
+  if (method.toUpperCase() !== "POST") return false;
+  const decoded = safeDecodePath(pathname);
+  if (decoded === null) return false;
+  const normalized = decoded.replace(/\/+$/, "").toLowerCase();
+  return normalized === "/api/recheck-file" || normalized === "/api/search-file-in-arr";
 }
 
 /** True when the path is the Prometheus metrics endpoint. */
