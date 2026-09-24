@@ -285,15 +285,13 @@ function buildSpeedPath(
 ): string {
   return points
     .map((point, index) => {
-      const value = point[field];
-      if (value === null) return "";
+      const value = point[field] ?? 0;
       const position = points.length === 1 ? VB_W / 2 : index * xStep;
       const height = y(value).toFixed(1);
-      const startsRun = points[index - 1]?.[field] == null;
-      if (startsRun && points[index + 1]?.[field] == null) {
+      if (points.length === 1) {
         return `M${Math.max(0, position - 1).toFixed(1)},${height} L${Math.min(VB_W, position + 1).toFixed(1)},${height}`;
       }
-      return `${startsRun ? "M" : "L"}${position.toFixed(1)},${height}`;
+      return `${index === 0 ? "M" : "L"}${position.toFixed(1)},${height}`;
     })
     .join(" ");
 }
