@@ -584,6 +584,56 @@ public class ExceptionMiddlewareTests
             WebDavObservabilityMiddleware.Snapshot().GetValueOrDefault("failed"));
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task InconclusiveMissingArticle_IsTransientWithoutRepairOrFailFastSeed(
+        bool hasStarted, bool wrappedInSeekFailure)
+    {
+        var segmentId = $"<{Guid.NewGuid():N}@test>";
+        var lifetimeFeature = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted, lifetimeFeature);
+        context.Request.Path = $"/content/inconclusive-{Guid.NewGuid():N}.mkv";
+        var davItem = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        davItem.Path = context.Request.Path.Value!;
+        var failureTracker = new StreamingFailureTracker();
+        Exception failure = new UsenetArticleNotFoundException(segmentId)
+        {
+            ProviderGeneration = 0,
+            InconclusiveReason = "a provider was skipped by its circuit breaker",
+        };
+        if (wrappedInSeekFailure)
+            failure = new SeekPositionNotFoundException("Cannot find byte position 50.", failure);
+        var middleware = CreateMiddleware(
+            _ => throw failure, CreateRepairEnabledConfig(), failureTracker);
+        var observability = new WebDavObservabilityMiddleware(middleware.InvokeAsync);
+
+        var events = await CaptureLogsAsync(async () =>
+        {
+            await observability.InvokeAsync(context);
+            await observability.InvokeAsync(context);
+        });
+
+        Assert.Equal(hasStarted, lifetimeFeature.Aborted);
+        Assert.Equal(
+            hasStarted ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable,
+            context.Response.StatusCode);
+        Assert.Equal(hasStarted ? "" : "5", context.Response.Headers.RetryAfter.ToString());
+        Assert.Equal(0, failureTracker.GetFailureCount(davItem.Id));
+        HealthCheckService.CheckCachedMissingSegmentIds([segmentId]);
+        var logged = Assert.Single(events, entry =>
+            entry.Level == LogEventLevel.Warning &&
+            entry.RenderMessage().Contains("could not be confirmed missing", StringComparison.Ordinal));
+        Assert.Null(logged.Exception);
+        Assert.Contains(
+            "a provider was skipped by its circuit breaker", logged.RenderMessage(), StringComparison.Ordinal);
+        Assert.DoesNotContain(events, entry => entry.Level >= LogEventLevel.Error);
+        Assert.DoesNotContain(events, entry =>
+            entry.RenderMessage().Contains("WebDAV request failed", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task StreamingReadTimeout_BeforeResponseStarted_Returns503WithRetryAfter()
     {
