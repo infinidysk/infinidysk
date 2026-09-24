@@ -187,11 +187,14 @@ export function filesReducer(state: FilesState, action: FilesAction): FilesState
       if (next === state) return state;
       const branches = { ...next.branches };
       const expanded = new Set(next.expanded);
+      let focusedKey = next.focusedKey;
       const removedDirectories = (state.branches[job.branchKey]?.keys ?? []).filter(
         (key) => state.rows[key]?.isDirectory && !page.rows.some((row) => row.key === key),
       );
       for (const key of removedDirectories) {
         const path = state.rows[key]!.path;
+        const focusedPath = focusedKey ? state.rows[focusedKey]?.path : null;
+        if (focusedPath === path || focusedPath?.startsWith(path + "/")) focusedKey = null;
         for (const [childKey, branch] of Object.entries(branches)) {
           if (
             childKey !== "root" &&
@@ -207,7 +210,7 @@ export function filesReducer(state: FilesState, action: FilesAction): FilesState
       for (const row of page.rows) {
         if (row.isDirectory && branches[row.key]?.parentPath !== row.path) delete branches[row.key];
       }
-      next = { ...next, branches, expanded };
+      next = { ...next, branches, expanded, focusedKey };
       return prune(next);
     }
     case "failure": {
