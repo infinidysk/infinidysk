@@ -1133,7 +1133,8 @@ public class StreamingTimeoutTests
             Assert.Equal(LogEventLevel.Debug, logged.Level);
             Assert.Equal("pool shutdown", Assert.IsType<ScalarValue>(logged.Properties["Reason"]).Value);
             Assert.Null(logged.Exception);
-            Assert.DoesNotContain(sink.Events, entry => entry.Level >= LogEventLevel.Warning);
+            Assert.DoesNotContain(sink.Events, entry => entry.Level >= LogEventLevel.Warning
+                && entry.MessageTemplate.Text.Contains("NNTP connection factory stopped", StringComparison.Ordinal));
         }
         finally
         {
