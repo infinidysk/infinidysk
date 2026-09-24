@@ -419,6 +419,29 @@ public class ConnectionPoolWarmConnectionTests
     }
 
     [Fact]
+    public async Task Retire_DoesNotCancelInFlightConnectionAcquisition()
+    {
+        var factoryStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFactory = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var pool = new ConnectionPool<TestConnection>(
+            maxConnections: 1,
+            connectionFactory: async cancellationToken =>
+            {
+                factoryStarted.TrySetResult();
+                await releaseFactory.Task.WaitAsync(cancellationToken);
+                return new TestConnection(1);
+            });
+        var acquisition = pool.GetConnectionLockAsync(SemaphorePriority.High);
+
+        await factoryStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        pool.Retire();
+        releaseFactory.TrySetResult();
+
+        using var connection = await acquisition.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, pool.LiveConnections);
+    }
+
+    [Fact]
     public async Task FailedIdleKeepAlive_RecyclesConnectionAndRefillsFloor()
     {
         var first = new TestConnection(1) { FailKeepAlive = true };
