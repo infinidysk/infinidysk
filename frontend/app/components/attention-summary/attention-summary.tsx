@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
-import type { ArrHealthResponse, ProviderRow } from "~/clients/backend-client.server";
+import type { ArrHealthResponse, ProviderCircuitBreakerRow } from "~/clients/backend-client.server";
 import { adminApi } from "~/clients/admin-operations";
 import { Icon } from "~/components/ui";
 import { settingsPath } from "~/navigation/settings-tabs";
@@ -17,7 +17,10 @@ export function AttentionSummary({
   arrLoading = false,
   updateAvailable,
 }: {
-  providers: Pick<ProviderRow, "provider" | "circuitState">[] | null;
+  providers: Pick<
+    ProviderCircuitBreakerRow,
+    "provider" | "circuitState" | "nickname" | "lastFailureReason" | "consecutiveTrips"
+  >[] | null;
   arrHealth: ArrHealthResponse | null;
   hasConfiguredArrs: boolean;
   providersLoading?: boolean;
@@ -86,6 +89,12 @@ export function AttentionSummary({
   const affectedProviders = providers?.filter(
     (provider) => provider.circuitState === "open" || provider.circuitState === "halfOpen",
   );
+  const stalledProviders = affectedProviders?.filter(
+    (provider) => (provider.consecutiveTrips ?? 0) >= 3,
+  );
+  const recentlyAffectedProviders = affectedProviders?.filter(
+    (provider) => (provider.consecutiveTrips ?? 0) < 3,
+  );
   const affectedArrs = arrHealth?.instances.filter(
     (instance) => instance.status === "degraded" || instance.status === "offline",
   );
@@ -97,6 +106,7 @@ export function AttentionSummary({
     updateAvailable,
     healthCount || healthError,
     affectedProviders?.map((provider) => [provider.provider, provider.circuitState]),
+    stalledProviders?.map((provider) => provider.provider),
     hasConfiguredArrs
       ? (affectedArrs?.map((instance) => [
           instance.key,
@@ -205,12 +215,44 @@ export function AttentionSummary({
                 : `${healthCount!.toLocaleString()} ${healthCount === 1 ? "file needs" : "files need"} attention`}
             </AttentionLink>
           )}
-          {(providersUnavailable || !!affectedProviders?.length) && (
+          {(providersUnavailable || !!recentlyAffectedProviders?.length) && (
             <AttentionLink to={settingsPath("usenet")} icon="cloud" warning>
-              {affectedProviders == null
+              {recentlyAffectedProviders == null
                 ? "Provider status unavailable"
-                : `${affectedProviders.length} provider ${affectedProviders.length === 1 ? "circuit" : "circuits"} open or recovering`}
+                : `${recentlyAffectedProviders.length} provider ${recentlyAffectedProviders.length === 1 ? "circuit" : "circuits"} open or recovering`}
             </AttentionLink>
+          )}
+          {!!stalledProviders?.length && (
+            <div className="min-w-0 px-2 py-2">
+              <div className="mb-3 flex items-center gap-2 text-sm text-warning">
+                <Icon name="cloud" className="shrink-0 !text-[18px]" />
+                <span className="min-w-0 flex-1">
+                  {stalledProviders.length} provider {stalledProviders.length === 1 ? "circuit" : "circuits"} repeatedly open
+                </span>
+              </div>
+              <ul className="space-y-3 pb-2 text-sm">
+                {stalledProviders.map((provider) => (
+                  <li key={provider.provider} className="min-w-0 [overflow-wrap:anywhere]">
+                    <p className="font-semibold text-base-content">
+                      {provider.nickname ?? provider.provider} unreachable
+                    </p>
+                    {provider.lastFailureReason && (
+                      <p className="mt-1 whitespace-pre-wrap text-base-content/80">
+                        {provider.lastFailureReason}
+                      </p>
+                    )}
+                    <p className="text-base-content/80">
+                      Missing-article checks are paused while this provider stays enabled: affected
+                      reads answer try again and repairs wait. Files parked as Action needed re-check
+                      on their own once it recovers.
+                    </p>
+                  </li>
+                ))}
+              </ul>
+              <Link to={settingsPath("usenet")} className="link text-sm text-base-content/80">
+                Disable or fix it in Usenet settings
+              </Link>
+            </div>
           )}
           {hasConfiguredArrs && !!affectedArrs?.length ? (
             <div className="min-w-0 px-2 py-2">

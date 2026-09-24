@@ -131,6 +131,27 @@ describe("HeaderAlerts live data", () => {
     expect(screen.queryByText("1 provider circuit open or recovering")).toBeNull();
   });
 
+  it("passes consecutive trips and provider reason through the live socket message", async () => {
+    renderAlerts();
+    act(() =>
+      socket.receive(JSON.stringify({
+        ts: Date.now(),
+        providerBreakers: [{
+          provider: "news.example.com",
+          nickname: "Backup account",
+          circuitState: "halfOpen",
+          consecutiveTrips: 3,
+          lastFailureReason: "Login rejected",
+        }],
+      })),
+    );
+
+    await screen.findByText("Backup account unreachable");
+    expect(screen.getByText("Login rejected")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Disable or fix it in Usenet settings" }))
+      .toBeTruthy();
+  });
+
   it("keeps health alerts when Arr checks fail and recovers on visibility refresh", async () => {
     healthCount = 7;
     arrUnavailable = true;

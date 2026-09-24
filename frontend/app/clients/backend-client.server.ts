@@ -1252,6 +1252,7 @@ export type ProviderCircuitBreakerRow = {
   cooldownRemainingSeconds?: number | null | undefined;
   lastFailureReason?: string | null | undefined;
   tripCount?: number;
+  consecutiveTrips?: number;
   failureCount?: number;
   articleMissCount?: number;
 };
