@@ -82,7 +82,10 @@ public sealed class MultiProviderNntpClientYencValidationTests
         file.Segments.Add(new NzbSegment { Bytes = 3, MessageId = "first", Number = 2 });
         file.Segments.Add(new NzbSegment
         {
-            Bytes = 3, MessageId = "last", Number = 8, FallbackMessageIds = ["alternate"],
+            Bytes = 3,
+            MessageId = "last",
+            Number = 8,
+            FallbackMessageIds = ["alternate"],
         });
 
         using (YencFileValidationContext.BeginSizeProbe(file))
@@ -114,6 +117,21 @@ public sealed class MultiProviderNntpClientYencValidationTests
         });
 
         Assert.Equal(17, YencFileValidationContext.CurrentExpectedTotalParts);
+    }
+
+    [Fact]
+    public void ValidationContext_Streaming_NormalizesBracketedIdsAndPrefersPrimaryIds()
+    {
+        using var validation = YencFileValidationContext.BeginStreaming(
+            ["<first>", "second"], [["second"], ["<alternate>"]]);
+        var context = Assert.IsType<YencFileValidationContext>(YencFileValidationContext.Current);
+
+        Assert.Equal(("<first>", (int?)2, (int?)null), context.GetRequestDetails("second"));
+        Assert.Equal(("<first>", (int?)2, (int?)null), context.GetRequestDetails("alternate"));
+        Assert.Equal(("<first>", (int?)1, (int?)null), context.GetRequestDetails("first"));
+        Assert.Equal(("<first>", (int?)1, (int?)null), context.GetRequestDetails("<first>"));
+        Assert.True(YencFileValidationContext.MatchesExpectedFile(
+            CreateHeader(1, 402) with { FileSize = 6_100_269, PartSize = 768_000 }, "first"));
     }
 
     [Theory]

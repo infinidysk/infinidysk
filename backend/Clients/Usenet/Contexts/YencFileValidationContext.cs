@@ -17,6 +17,7 @@ internal sealed class YencFileValidationContext : IDisposable
     private readonly NzbFile? _file;
     private readonly string[]? _segmentIds;
     private readonly string[][]? _segmentFallbacks;
+    private readonly Lazy<Dictionary<string, int>> _positionIndex;
     private readonly bool _deferToPar2Proof;
 
     private YencFileValidationContext(
@@ -32,6 +33,7 @@ internal sealed class YencFileValidationContext : IDisposable
         _file = file;
         _segmentIds = segmentIds;
         _segmentFallbacks = segmentFallbacks;
+        _positionIndex = new Lazy<Dictionary<string, int>>(CreatePositionIndex);
         _deferToPar2Proof = deferToPar2Proof;
         Active.Value = this;
     }
@@ -95,31 +97,17 @@ internal sealed class YencFileValidationContext : IDisposable
     {
         if (_file is { Segments.Count: > 0 })
         {
-            for (var index = 0; index < _file.Segments.Count; index++)
-            {
-                var segment = _file.Segments[index];
-                if (string.Equals(segment.MessageId, requestedId, StringComparison.Ordinal)
-                    || Array.IndexOf(segment.FallbackMessageIds, requestedId) >= 0)
-                    return (_file.Segments[0].MessageId, index + 1, segment.Number);
-            }
-
-            return (_file.Segments[0].MessageId, null, null);
+            var anchor = _file.Segments[0].MessageId;
+            return _positionIndex.Value.TryGetValue(NormalizeMessageId(requestedId), out var position)
+                ? (anchor, position, _file.Segments[position - 1].Number)
+                : (anchor, null, null);
         }
 
         if (_segmentIds is { Length: > 0 })
         {
-            var index = Array.IndexOf(_segmentIds, requestedId);
-            if (index >= 0) return (_segmentIds[0], index + 1, null);
-            if (_segmentFallbacks is not null)
-            {
-                for (index = 0; index < Math.Min(_segmentIds.Length, _segmentFallbacks.Length); index++)
-                {
-                    if (_segmentFallbacks[index] is { } fallbacks && Array.IndexOf(fallbacks, requestedId) >= 0)
-                        return (_segmentIds[0], index + 1, null);
-                }
-            }
-
-            return (_segmentIds[0], null, null);
+            return (_segmentIds[0],
+                _positionIndex.Value.TryGetValue(NormalizeMessageId(requestedId), out var position) ? position : null,
+                null);
         }
 
         return (null, null, null);
@@ -160,10 +148,47 @@ internal sealed class YencFileValidationContext : IDisposable
         if (position is not > 0) return false;
         var index = position.Value - 1;
         if (_file is { } file && index < file.Segments.Count)
-            return string.Equals(file.Segments[index].MessageId, requestedId, StringComparison.Ordinal);
+            return string.Equals(NormalizeMessageId(file.Segments[index].MessageId), NormalizeMessageId(requestedId),
+                StringComparison.Ordinal);
         return _segmentIds is not null && index < _segmentIds.Length
-            && string.Equals(_segmentIds[index], requestedId, StringComparison.Ordinal);
+            && string.Equals(NormalizeMessageId(_segmentIds[index]), NormalizeMessageId(requestedId),
+                StringComparison.Ordinal);
     }
+
+    private Dictionary<string, int> CreatePositionIndex()
+    {
+        var index = new Dictionary<string, int>(StringComparer.Ordinal);
+        var segmentCount = _file?.Segments.Count ?? _segmentIds?.Length ?? 0;
+        for (var segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++)
+        {
+            var messageId = _file is { } file
+                ? file.Segments[segmentIndex].MessageId
+                : _segmentIds![segmentIndex];
+            index.TryAdd(NormalizeMessageId(messageId), segmentIndex + 1);
+        }
+
+        if (_file is { } nzbFile)
+        {
+            for (var segmentIndex = 0; segmentIndex < nzbFile.Segments.Count; segmentIndex++)
+            {
+                foreach (var fallbackId in nzbFile.Segments[segmentIndex].FallbackMessageIds)
+                    index.TryAdd(NormalizeMessageId(fallbackId), segmentIndex + 1);
+            }
+        }
+        else if (_segmentFallbacks is not null)
+        {
+            for (var segmentIndex = 0; segmentIndex < Math.Min(segmentCount, _segmentFallbacks.Length); segmentIndex++)
+            {
+                if (_segmentFallbacks[segmentIndex] is not { } fallbackIds) continue;
+                foreach (var fallbackId in fallbackIds)
+                    index.TryAdd(NormalizeMessageId(fallbackId), segmentIndex + 1);
+            }
+        }
+
+        return index;
+    }
+
+    private static string NormalizeMessageId(string messageId) => new SegmentId(messageId).ToString();
 
     private static long? GetGeometryImpliedTotalParts(UsenetYencHeader header)
     {
