@@ -10,8 +10,7 @@ import {
 const apiKey = "synthetic-1441-api-key";
 const nestedToken = "synthetic-1441-indexer-token";
 const nestedUrl = `https://indexer.example.test/nzb?token=${nestedToken}`;
-const requestUrl =
-  `/prefix/api?mode=addurl&apikey=${apiKey}&name=${encodeURIComponent(nestedUrl)}`;
+const requestUrl = `/prefix/api?mode=addurl&apikey=${apiKey}&name=${encodeURIComponent(nestedUrl)}`;
 const logLevels = ["debug", "info", "warn", "error"] as const;
 
 function finishRequest(statusCode: number, originalUrl = requestUrl) {
@@ -96,7 +95,14 @@ describe("requestLogger", () => {
       }
     }
     const message = vi.mocked(selectedLogger).mock.calls[0]?.[0] as string;
-    for (const value of ["POST", "/prefix/api", String(statusCode), "ms", "127.0.0.1", "synthetic-1441-client"]) {
+    for (const value of [
+      "POST",
+      "/prefix/api",
+      String(statusCode),
+      "ms",
+      "127.0.0.1",
+      "synthetic-1441-client",
+    ]) {
       expect(message).toContain(value);
     }
     expectNoQuerySecrets();

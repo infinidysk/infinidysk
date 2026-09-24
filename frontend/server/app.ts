@@ -87,9 +87,7 @@ function logProxyFailure(message: string, error: unknown) {
   if (now - lastProxyFailureLogAt >= BACKEND_FAILURE_LOG_THROTTLE_MS) {
     if (isExpectedBackendConnectionError(error)) {
       const code =
-        error && typeof error === "object"
-          ? (error as { code?: string }).code
-          : undefined;
+        error && typeof error === "object" ? (error as { code?: string }).code : undefined;
       const reason = isExpectedNetworkCode(code) ? code : "backend connection unavailable";
       logger.warn(`${message}. Reason: ${reason}`);
     } else {

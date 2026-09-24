@@ -2,11 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKEND_FAILURE_LOG_THROTTLE_MS } from "./startup-grace";
 
-type ProxyErrorHandler = (
-  error: unknown,
-  req: IncomingMessage,
-  res: ServerResponse,
-) => void;
+type ProxyErrorHandler = (error: unknown, req: IncomingMessage, res: ServerResponse) => void;
 
 const harness = vi.hoisted(() => ({
   onError: undefined as ProxyErrorHandler | undefined,
