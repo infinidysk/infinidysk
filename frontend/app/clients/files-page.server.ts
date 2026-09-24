@@ -8,7 +8,7 @@ import {
 } from "./files-contract";
 import { getDownloadKey } from "~/auth/downloads.server";
 import { getFrontendRuntimeConfig } from "../../server/runtime-config";
-import { getExtension } from "~/routes/explore/file-kind/file-kind";
+import { getExtension } from "~/utils/file-kind";
 import { withUrlBase } from "~/utils/url-base";
 
 export function addMediaUrl(row: FileRow, frontendBackendApiKey: string): FileResourceRow {

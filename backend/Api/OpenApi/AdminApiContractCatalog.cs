@@ -61,6 +61,10 @@ public static class AdminApiContractCatalog
             .Where(operation => string.Equals(operation.Path, path, StringComparison.OrdinalIgnoreCase))
             .Select(operation => operation.Method.ToUpperInvariant())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (string.Equals(path, "/api/delete-webdav-item", StringComparison.OrdinalIgnoreCase))
+            methods.Add("GET");
+        if (string.Equals(path, "/api/delete-webdav-item-preview", StringComparison.OrdinalIgnoreCase))
+            methods.Add("POST");
         return methods;
     }
 }

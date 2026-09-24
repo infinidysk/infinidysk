@@ -28,8 +28,21 @@ public sealed class SearchFileInArrControllerTests : IAsyncLifetime
     private DavItem _file = null!;
     private readonly List<string> _requests = [];
     private readonly List<HttpClient> _clients = [];
-    private Func<HttpRequestMessage, Task<HttpResponseMessage>> _send = _ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"id\":1}") });
+    private readonly List<HttpResponseMessage> _responses = [];
+    private Func<HttpRequestMessage, Task<HttpResponseMessage>> _send;
     private Func<string, Task<List<ArrRootFolder>>> _roots = null!;
+
+    public SearchFileInArrControllerTests()
+    {
+        _send = _ => Task.FromResult(CreateOkResponse("{\"id\":1}"));
+    }
+
+    private HttpResponseMessage CreateOkResponse(string json)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+        _responses.Add(response);
+        return response;
+    }
 
     public async Task InitializeAsync()
     {
@@ -55,6 +68,7 @@ public sealed class SearchFileInArrControllerTests : IAsyncLifetime
     {
         _index.Dispose();
         foreach (var client in _clients) client.Dispose();
+        foreach (var response in _responses) response.Dispose();
         _scope.Dispose();
         await _factory.DisposeAsync();
         Directory.Delete(_root, true);
@@ -182,7 +196,7 @@ public sealed class SearchFileInArrControllerTests : IAsyncLifetime
     public async Task Search_PartialAndUnconfirmedResultsAreNotRetried()
     {
         _send = request => request.RequestUri!.Host == "first.test" ? throw new HttpRequestException("lost receipt")
-            : Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"id\":2}", Encoding.UTF8, "application/json") });
+            : Task.FromResult(CreateOkResponse("{\"id\":2}"));
         var result = Assert.IsType<SearchFileInArrResponse>(Assert.IsType<OkObjectResult>(await Controller().HandlePostApiRequest()).Value);
         Assert.Equal("partial", result.Outcome);
         Assert.Contains(result.Results, item => item.State == "unconfirmed");

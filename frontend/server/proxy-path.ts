@@ -21,6 +21,17 @@ const READ_ONLY_DENIED_POST_PATHS = new Set([
   "/api/trigger-health-check",
 ]);
 
+function normalizedApiPath(pathname: string): string | null {
+  const decoded = safeDecodePath(pathname);
+  if (decoded === null) return null;
+  const segments: string[] = [];
+  for (const segment of decoded.split("/")) {
+    if (segment === "..") segments.pop();
+    else if (segment && segment !== ".") segments.push(segment);
+  }
+  return `/${segments.join("/")}`.toLowerCase();
+}
+
 /** Decode a path; return null on malformed percent-encoding instead of throwing. */
 export function safeDecodePath(path: string): string | null {
   try {
@@ -47,10 +58,11 @@ export function isBackendApiPath(pathname: string): boolean {
 
 export function isReadOnlyDeniedBackendMutation(method: string, pathname: string): boolean {
   if (isFilesBackendMutation(method, pathname)) return true;
+  const normalizedPath = normalizedApiPath(pathname);
+  if (normalizedPath === null) return false;
+  if (normalizedPath === "/api/delete-webdav-item-preview") return true;
+  if (method.toUpperCase() === "GET") return normalizedPath === "/api/delete-webdav-item";
   if (method.toUpperCase() !== "POST") return false;
-  const decodedPath = safeDecodePath(pathname);
-  if (decodedPath === null) return false;
-  const normalizedPath = decodedPath.length > 1 ? decodedPath.replace(/\/+$/, "") : decodedPath;
   return (
     READ_ONLY_DENIED_POST_PATHS.has(normalizedPath) ||
     normalizedPath.startsWith("/api/delete-webdav-item/") ||
@@ -60,9 +72,7 @@ export function isReadOnlyDeniedBackendMutation(method: string, pathname: string
 
 export function isFilesBackendMutation(method: string, pathname: string): boolean {
   if (method.toUpperCase() !== "POST") return false;
-  const decoded = safeDecodePath(pathname);
-  if (decoded === null) return false;
-  const normalized = decoded.replace(/\/+$/, "").toLowerCase();
+  const normalized = normalizedApiPath(pathname);
   return normalized === "/api/recheck-file" || normalized === "/api/search-file-in-arr";
 }
 

@@ -6,7 +6,7 @@ import {
   parseFilesParameters,
 } from "./files-contract";
 import { filesResourcePageSchema } from "./files-contract";
-import { makeFileRow, makeFilesPage } from "../routes/explore/files-fixtures";
+import { makeFileRow, makeFilesPage } from "./files-fixtures";
 
 describe("Files filters", () => {
   it("acceptsStaticDirectoryGuidsAndExplicitNulls", () => {

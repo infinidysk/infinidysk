@@ -7,7 +7,7 @@ import {
   topLevelRemovalTargets,
   FilesReadCoordinator,
 } from "./files-state";
-import { makeFileRow, makeFilesPage } from "./files-fixtures";
+import { makeFileRow, makeFilesPage } from "~/clients/files-fixtures";
 describe("Files state", () => {
   it("clearsOrphanFocusWhenASelectedDescendantRemainsCached", () => {
     const parent = makeFileRow({ key: "parent", isDirectory: true, path: "/content/tv" });
@@ -157,6 +157,15 @@ describe("Files state", () => {
     expect(applyFilesPage(state, "root", 1, 0, 0, page, 0)).toBe(state);
     expect(applyFilesPage(state, "root", 0, 1, 0, page, 0)).toBe(state);
     expect(applyFilesPage(state, "root", 0, 0, 100, page, 0)).toBe(state);
+  });
+  it("marks a current branch error when the server returns a different page", () => {
+    const page = makeFilesPage([makeFileRow()]);
+    const state = initialFilesState("query", page);
+    const mismatch = makeFilesPage([], { parentPath: "/content/normalized" });
+    const result = applyFilesPage(state, "root", 0, 0, 0, mismatch, 1);
+    expect(result.branches["root"]?.status).toBe("error");
+    expect(result.branches["root"]?.error).toBe("The server returned a different page.");
+    expect(result.rows).toBe(state.rows);
   });
   it("expandsAndCollapsesOnlyOneBranch", () => {
     const parent = makeFileRow({ isDirectory: true });

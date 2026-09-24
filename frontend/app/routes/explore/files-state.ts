@@ -70,11 +70,17 @@ export function applyFilesPage(
     state.generation !== generation ||
     !branch ||
     branch.requestId !== requestId ||
-    branch.offset !== requestedOffset ||
-    branch.parentPath !== page.parentPath ||
-    page.offset !== requestedOffset
+    branch.offset !== requestedOffset
   )
     return state;
+  if (branch.parentPath !== page.parentPath || page.offset !== requestedOffset)
+    return {
+      ...state,
+      branches: {
+        ...state.branches,
+        [branchKey]: { ...branch, status: "error", error: "The server returned a different page." },
+      },
+    };
   const observedAt = Date.parse(page.observedAt);
   const rows = { ...state.rows };
   const rowObservedAt = { ...state.rowObservedAt };
