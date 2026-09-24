@@ -41,12 +41,38 @@ internal sealed class YencFileValidationContext : IDisposable
     public int ExpectedTotalParts { get; }
     public string Stage { get; }
 
-    public static bool MatchesExpectedFile(UsenetYencHeader header) =>
+    public static bool MatchesExpectedFile(UsenetYencHeader header, string? requestedId = null) =>
         Current?._deferToPar2Proof == true
         || CurrentExpectedTotalParts is not { } expectedTotalParts
         || (expectedTotalParts == 1 && header.TotalParts == 0)
         || (header.HasTotalParts == false && header.TotalParts == 0)
-        || header.TotalParts == expectedTotalParts;
+        || header.TotalParts == expectedTotalParts
+        || (requestedId is not null
+            && Current!.GetRequestDetails(requestedId).Position is { } position
+            && HasSelfContradictoryTotal(header, position));
+
+    // Some posters obfuscate total/size; a part at its requested ordinal whose own geometry
+    // cannot yield that total carries no evidence of belonging to another post.
+    internal static bool HasSelfContradictoryTotal(UsenetYencHeader header, int position)
+    {
+        if (header.PartNumber != position || header.TotalParts <= 0 || header.FileSize <= 0 || header.PartSize <= 0)
+            return false;
+
+        long regularPartSize;
+        if (position == 1)
+        {
+            if (header.PartOffset != 0) return false;
+            regularPartSize = header.PartSize;
+        }
+        else
+        {
+            if (header.PartOffset <= 0 || header.PartOffset % (position - 1L) != 0) return false;
+            regularPartSize = header.PartOffset / (position - 1L);
+            if (header.PartSize > regularPartSize) return false;
+        }
+
+        return (header.FileSize - 1) / regularPartSize + 1 != header.TotalParts;
+    }
 
     public static IDisposable Begin(int expectedTotalParts) =>
         new YencFileValidationContext(expectedTotalParts);
