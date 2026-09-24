@@ -11,7 +11,7 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 public sealed class MultiProviderNntpClientConclusiveWalkTests
 {
     [Fact]
-    public async Task Stat_TransportThen430_ReturnsMissingByDefault()
+    public async Task Stat_TransportThen430_ThrowsInconclusiveMissByDefault()
     {
         var flaky = new MultiProviderNntpClientTests.ScriptedNntpClient
         {
@@ -29,9 +29,10 @@ public sealed class MultiProviderNntpClientConclusiveWalkTests
             MultiProviderNntpClientTests.CreateProvider(missing, host: "b.example"),
         ]);
 
-        var response = await client.StatAsync("seg@conclusive", CancellationToken.None);
+        var miss = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+            () => client.StatAsync("seg@conclusive", CancellationToken.None));
 
-        Assert.True(UsenetArticleAvailability.IsDefinitiveMissing(response));
+        Assert.Equal(MultiProviderNntpClient.InconclusiveMissReason, miss.InconclusiveReason);
     }
 
     [Fact]
@@ -221,7 +222,7 @@ public sealed class MultiProviderNntpClientConclusiveWalkTests
     }
 
     [Fact]
-    public async Task Stat_OpenCircuitProviderSkipped_OutsideConclusiveScope_StillReturnsMissing()
+    public async Task Stat_OpenCircuitProviderSkipped_OutsideConclusiveScope_ThrowsInconclusiveMiss()
     {
         var skipped = new MultiProviderNntpClientTests.ScriptedNntpClient
         {
@@ -241,9 +242,10 @@ public sealed class MultiProviderNntpClientConclusiveWalkTests
             MultiProviderNntpClientTests.CreateProvider(missing, host: "b.example"),
         ]);
 
-        var response = await client.StatAsync("seg@conclusive", CancellationToken.None);
+        var miss = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+            () => client.StatAsync("seg@conclusive", CancellationToken.None));
 
-        Assert.True(UsenetArticleAvailability.IsDefinitiveMissing(response));
+        Assert.Equal(MultiProviderNntpClient.InconclusiveMissReason, miss.InconclusiveReason);
     }
 
     [Fact]

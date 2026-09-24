@@ -299,6 +299,31 @@ public class MultiProviderNntpClient(
             || UnexpectedResponses > 0
             || OtherExceptions > 0;
 
+        public void RemoveFailure(SegmentFetch.FetchStatus status)
+        {
+            switch (status)
+            {
+                case SegmentFetch.FetchStatus.Timeout:
+                    Timeouts--;
+                    break;
+                case SegmentFetch.FetchStatus.Network:
+                    TransportFailures--;
+                    break;
+                case SegmentFetch.FetchStatus.Auth:
+                    AuthFailures--;
+                    break;
+                case SegmentFetch.FetchStatus.Protocol:
+                    ProtocolFailures--;
+                    break;
+                case SegmentFetch.FetchStatus.Corrupt:
+                    CorruptionFailures--;
+                    break;
+                default:
+                    OtherExceptions--;
+                    break;
+            }
+        }
+
         public void NoteException(Exception ex)
         {
             var status = ClassifyException(ex);
@@ -631,6 +656,8 @@ public class MultiProviderNntpClient(
         List<(string Host, SegmentFetch.FetchStatus Reason)>? priorMisses = null;
         var walk = new ProviderWalkSummary(1 + fallbackProviders.Length);
         MultiConnectionNntpClient? lastAttemptedProvider = primaryProvider;
+        SegmentFetch.FetchStatus? primaryBatchExceptionFailure = null;
+        var primaryBatchUnexpectedResponse = false;
         // Fresh per article resolution. When primary re-probe is enabled, do not mark the
         // primary's storage group on the initial batch 430 so that re-probe is not skipped
         // by its own miss. Cross-request negative cache may skip re-probe separately.
@@ -659,6 +686,9 @@ public class MultiProviderNntpClient(
                 primaryStopwatch.Stop();
                 walk.Attempts++;
                 walk.NoteException(e);
+                var failureStatus = ClassifyException(e);
+                if (failureStatus != SegmentFetch.FetchStatus.Missing)
+                    primaryBatchExceptionFailure = failureStatus;
                 var reason = ClassifyAndRecordFailure(
                     primaryProvider.MetricsKey, e, primaryStopwatch.ElapsedMilliseconds, 0,
                     fetchWorkload, primaryTraceRange, NntpOperation.PipelinedBody, segmentId);
@@ -690,6 +720,22 @@ public class MultiProviderNntpClient(
             {
                 walk.Attempts++;
                 walk.UnexpectedResponses++;
+                primaryBatchUnexpectedResponse = true;
+            }
+
+            void ConfirmPrimaryBatchFailureResolved()
+            {
+                if (primaryBatchUnexpectedResponse)
+                {
+                    walk.UnexpectedResponses--;
+                    primaryBatchUnexpectedResponse = false;
+                }
+
+                if (primaryBatchExceptionFailure is { } failureStatus)
+                {
+                    walk.RemoveFailure(failureStatus);
+                    primaryBatchExceptionFailure = null;
+                }
             }
 
             // Re-probe primary once on a definitive miss when enabled (default). Multi-node
@@ -847,6 +893,8 @@ public class MultiProviderNntpClient(
                             (priorMisses ??= []).Add((provider.MetricsKey, SegmentFetch.FetchStatus.Missing));
                             if (UsenetArticleAvailability.IsDefinitiveMissing(response))
                             {
+                                if (ReferenceEquals(provider, primaryProvider))
+                                    ConfirmPrimaryBatchFailureResolved();
                                 walk.CurrentDefinitiveMisses++;
                                 if (group.Length > 0) missingGroups.Add(group);
                                 MarkCachedMissing(segmentId, provider, NntpOperation.PipelinedBody);
@@ -884,6 +932,9 @@ public class MultiProviderNntpClient(
                     {
                         stopwatch.Stop();
                         walk.NoteException(e);
+                        if (ReferenceEquals(provider, primaryProvider)
+                            && ClassifyException(e) == SegmentFetch.FetchStatus.Missing)
+                            ConfirmPrimaryBatchFailureResolved();
                         MarkCachedMissingOnThrownMiss(e, segmentId, provider, missingGroups, NntpOperation.PipelinedBody);
                         var reason = ClassifyAndRecordFailure(
                             provider.MetricsKey, e, stopwatch.ElapsedMilliseconds,
@@ -1379,6 +1430,7 @@ public class MultiProviderNntpClient(
                         stopwatch.ElapsedMilliseconds, attemptIndex, fetchWorkload, traceRange);
                     (priorMisses ??= new()).Add((provider.MetricsKey, SegmentFetch.FetchStatus.Missing));
                     lastNoArticleResult = result;
+                    lastException = null;
                     lastOutcomeWasException = false;
                     if (group.Length > 0) missingGroups.Add(group);
                     if (articleId is { } missId) MarkCachedMissing(missId, provider, operation);
@@ -1479,7 +1531,8 @@ public class MultiProviderNntpClient(
         // A health check must not count a provider it never asked as a miss.
         if (ConclusiveAvailabilityContext.IsActive && walk.UnaskedProviders > 0)
             throw new CircuitAdmissionRejectedException();
-        if (lastNoArticleResult is not null) return lastNoArticleResult;
+        if (lastNoArticleResult is not null && !walk.HasUnansweredProviders)
+            return lastNoArticleResult;
         if (orderedProviders.Count == 0)
             throw new InvalidOperationException("There are no usenet providers configured.");
         if (lastException is not null)

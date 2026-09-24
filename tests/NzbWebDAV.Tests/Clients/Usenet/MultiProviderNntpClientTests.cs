@@ -684,6 +684,41 @@ public class MultiProviderNntpClientTests
         Assert.Equal(1, missing.SingularRequests);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DecodedBodiesAsync_PrimaryUnexpectedBatchThenConfirmedMiss_RemainsConclusive(
+        bool primaryMissThrows)
+    {
+        var primary = new ScriptedNntpClient
+        {
+            BatchResponseCode = 400,
+            SingularResponseCode = 430,
+            SingularException = primaryMissThrows
+                ? id => new UsenetArticleNotFoundException(id)
+                : null,
+        };
+        var backup = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularResponseCode = 430,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(primary, host: "a.example"),
+            CreateProvider(backup, host: "b.example"),
+        ]);
+
+        var batch = await client.DecodedBodiesAsync(
+            ["segment"], onConnectionReadyAgain: null, CancellationToken.None);
+        var miss = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+            () => batch.Responses[0]);
+
+        Assert.Null(miss.InconclusiveReason);
+        Assert.Equal(1, primary.SingularRequests);
+        Assert.Equal(1, backup.SingularRequests);
+    }
+
     [Fact]
     public async Task DecodedBodiesAsync_EveryEnabledProviderMisses_ThrowsConclusiveMiss()
     {
