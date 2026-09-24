@@ -285,7 +285,7 @@ public sealed class ArrHealthService : BackgroundService
                                   && e.IsTransientDatabaseException())
         {
             Log.Warning(
-                "Arr health import history for {Host} deferred; InfiniDysk's local database is busy. Reason: {Reason}",
+                "Arr health refresh for {Host} deferred due to local database contention. Reason: {Reason}",
                 details.Host,
                 e.TryGetKnownErrorMessage(out var reason) ? reason : e.Message);
             Log.Debug(e, "Arr health local database contention details for {Host}", details.Host);
@@ -534,7 +534,7 @@ public sealed class ArrHealthService : BackgroundService
     }
 
     internal const string LocalDatabaseBusyMessage =
-        "Import history was not updated because InfiniDysk's local database is busy; the instance itself responded normally.";
+        "Health refresh was deferred due to local database contention; the instance itself responded normally.";
 
     // The Arr answered, so reset the offline streak and refresh queue-derived fields;
     // DB-derived fields (awaiting, medians) keep their last known values.

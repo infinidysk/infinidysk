@@ -339,19 +339,30 @@ public sealed class ArrHealthServiceTests
     }
 
     [Fact]
-    public async Task Poll_LocalDbBusy_DefersImportHistoryWithoutMarkingArrOffline()
+    public async Task Poll_MetricsDbBusy_DefersHealthRefreshWithoutMarkingArrOffline()
     {
         var host = "http://sonarr:8989";
         var backoff = new ArrInstanceBackoff();
         await using var harness = await DualDbHarness.CreateAsync();
-        harness.DavInterceptor = new BusyFailureInterceptor();
+        var interceptor = new BusyFailureInterceptor();
+        harness.MetricsInterceptor = interceptor;
+        var queueStatusCalls = 0;
+        var queueCalls = 0;
         var client = new ScriptedArrClient(host)
         {
-            QueueStatus = _ => Task.FromResult(new ArrQueueStatus { TotalCount = 3 }),
-            Queue = _ => Task.FromResult(new ArrQueue<ArrQueueRecord>
+            QueueStatus = _ =>
             {
-                Records = [new ArrQueueRecord { Status = "completed", DownloadId = Guid.NewGuid().ToString() }],
-            }),
+                queueStatusCalls++;
+                return Task.FromResult(new ArrQueueStatus { TotalCount = 3 });
+            },
+            Queue = _ =>
+            {
+                queueCalls++;
+                return Task.FromResult(new ArrQueue<ArrQueueRecord>
+                {
+                    Records = [new ArrQueueRecord { Status = "completed", DownloadId = Guid.NewGuid().ToString() }],
+                });
+            },
         };
         using var service = harness.CreateService(client, host, backoff);
 
@@ -366,24 +377,39 @@ public sealed class ArrHealthServiceTests
         Assert.Equal(3, snapshot.QueueCount);
         Assert.Equal(ArrHealthService.LocalDatabaseBusyMessage, snapshot.LastError);
         Assert.False(backoff.IsInBackoff(host));
+        Assert.Equal(ArrHealthService.OfflineFailureThreshold + 1, queueStatusCalls);
+        Assert.Equal(ArrHealthService.OfflineFailureThreshold + 1, queueCalls);
+        Assert.Equal(ArrHealthService.OfflineFailureThreshold + 1, interceptor.Attempts);
         Assert.DoesNotContain(events, e =>
             e.MessageTemplate.Text.StartsWith("Arr health poll failed", StringComparison.Ordinal)
             && e.Properties.TryGetValue("Host", out var loggedHost)
             && loggedHost.ToString().Trim('"') == host);
-        Assert.All(
-            events.Where(e => e.Level == LogEventLevel.Warning
-                              && e.MessageTemplate.Text.StartsWith("Arr health import history", StringComparison.Ordinal)
-                              && e.Properties.TryGetValue("Host", out var loggedHost)
-                              && loggedHost.ToString().Trim('"') == host),
-            warning => Assert.Null(warning.Exception));
+        var warnings = events.Where(e => e.Level == LogEventLevel.Warning
+                                         && e.MessageTemplate.Text.StartsWith("Arr health refresh", StringComparison.Ordinal)
+                                         && e.Properties.TryGetValue("Host", out var loggedHost)
+                                         && loggedHost.ToString().Trim('"') == host)
+            .ToList();
+        Assert.Equal(ArrHealthService.OfflineFailureThreshold + 1, warnings.Count);
+        Assert.All(warnings, warning =>
+        {
+            Assert.Equal(
+                "Arr health refresh for {Host} deferred due to local database contention. Reason: {Reason}",
+                warning.MessageTemplate.Text);
+            Assert.Null(warning.Exception);
+        });
     }
 
     private sealed class BusyFailureInterceptor : DbCommandInterceptor
     {
+        public int Attempts { get; private set; }
+
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
             DbCommand command, CommandEventData eventData,
-            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default) =>
+            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            Attempts++;
             throw new SqliteException("SQLite Error 5: 'database is locked'.", 5);
+        }
     }
 
     private sealed class SocketFailureInterceptor : DbCommandInterceptor
@@ -636,6 +662,7 @@ public sealed class ArrHealthServiceTests
         public MetricsDbContext Metrics { get; }
         public DavDatabaseContext Dav { get; }
         public DbCommandInterceptor? DavInterceptor { get; set; }
+        public DbCommandInterceptor? MetricsInterceptor { get; set; }
 
         public static async Task<DualDbHarness> CreateAsync()
         {
@@ -682,12 +709,12 @@ public sealed class ArrHealthServiceTests
 
         private MetricsDbContext CloneMetrics()
         {
-            var options = new DbContextOptionsBuilder<MetricsDbContext>()
+            var builder = new DbContextOptionsBuilder<MetricsDbContext>()
                 .UseSqlite($"Data Source={_metricsPath}")
                 .AddInterceptors(new SqliteMetricsPragmas())
-                .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
-                .Options;
-            return new MetricsDbContext(options);
+                .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>();
+            if (MetricsInterceptor is not null) builder.AddInterceptors(MetricsInterceptor);
+            return new MetricsDbContext(builder.Options);
         }
 
         private DavDatabaseContext CloneDav()
