@@ -166,6 +166,9 @@ public class ProviderMetricsKeyTests
             Provider = "news.example.com",
             BytesFetched = 5000,
             Articles = 10,
+            PeakBytesPerSec = 9_000_000,
+            ActiveBytes = 200,
+            ActiveSeconds = 20,
         });
         // Pre-existing id-keyed row in the same hour to exercise merge-on-conflict.
         harness.Context.ProviderHourly.Add(new ProviderHourly
@@ -174,6 +177,9 @@ public class ProviderMetricsKeyTests
             Provider = firstKey,
             BytesFetched = 100,
             Articles = 1,
+            PeakBytesPerSec = 4_000_000,
+            ActiveBytes = 100,
+            ActiveSeconds = 10,
         });
         harness.Context.ProviderMinutes.AddRange(
             new ProviderMinute
@@ -182,12 +188,18 @@ public class ProviderMetricsKeyTests
                 Provider = "news.example.com",
                 ClientArticles = 4,
                 ClientArticlesFinalized = true,
+                PeakBytesPerSec = 9_000_000,
+                ActiveBytes = 200,
+                ActiveSeconds = 20,
             },
             new ProviderMinute
             {
                 Minute = hour,
                 Provider = firstKey,
                 ClientArticles = 1,
+                PeakBytesPerSec = 4_000_000,
+                ActiveBytes = 100,
+                ActiveSeconds = 10,
             });
         await harness.Context.SaveChangesAsync();
 
@@ -199,11 +211,17 @@ public class ProviderMetricsKeyTests
         var firstRow = await verify.ProviderHourly.SingleAsync(x => x.Provider == firstKey && x.Hour == hour);
         Assert.Equal(5100, firstRow.BytesFetched);
         Assert.Equal(11, firstRow.Articles);
+        Assert.Equal(9_000_000, firstRow.PeakBytesPerSec);
+        Assert.Equal(300, firstRow.ActiveBytes);
+        Assert.Equal(30, firstRow.ActiveSeconds);
         Assert.False(await verify.ProviderHourly.AnyAsync(x => x.Provider == "news.example.com"));
         Assert.False(await verify.ProviderHourly.AnyAsync(x => x.Provider == secondKey));
         var minuteRow = await verify.ProviderMinutes.SingleAsync(x => x.Provider == firstKey && x.Minute == hour);
         Assert.Equal(5, minuteRow.ClientArticles);
         Assert.True(minuteRow.ClientArticlesFinalized);
+        Assert.Equal(9_000_000, minuteRow.PeakBytesPerSec);
+        Assert.Equal(300, minuteRow.ActiveBytes);
+        Assert.Equal(30, minuteRow.ActiveSeconds);
     }
 
     [Fact]

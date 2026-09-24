@@ -254,9 +254,7 @@ describe("ThroughputChart", () => {
       "400.0,6.0",
     );
     expect(getByText("Peak errors 10 / min")).toBeTruthy();
-    expect(getByRole("button", { name: "Imports · 0" }).getAttribute("aria-pressed")).toBe(
-      "false",
-    );
+    expect(getByRole("button", { name: "Imports · 0" }).getAttribute("aria-pressed")).toBe("false");
   });
 
   it("preserves isolation through polling and resets it when the time window changes", () => {
@@ -265,15 +263,11 @@ describe("ThroughputChart", () => {
     fireEvent.click(getByRole("button", { name: "Imports · 2" }));
     const updated = chartProps([{ ...point(23, 0, 0, 3), bucket: 0 }, ...props.points]);
     rerender(<ThroughputChart {...updated} />);
-    expect(getByRole("button", { name: "Imports · 5" }).getAttribute("aria-pressed")).toBe(
-      "true",
-    );
+    expect(getByRole("button", { name: "Imports · 5" }).getAttribute("aria-pressed")).toBe("true");
     expect(getByText("Peak import attempts 3 / min")).toBeTruthy();
     expect(container.querySelectorAll("[data-series]")).toHaveLength(1);
     rerender(<ThroughputChart {...updated} window="1h" />);
-    expect(getByRole("button", { name: "Imports · 5" }).getAttribute("aria-pressed")).toBe(
-      "false",
-    );
+    expect(getByRole("button", { name: "Imports · 5" }).getAttribute("aria-pressed")).toBe("false");
     expect(container.querySelectorAll("[data-series]")).toHaveLength(2);
     expect(container.querySelector("[data-area-series]")).toBeNull();
   });

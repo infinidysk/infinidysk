@@ -1,5 +1,6 @@
 using NzbWebDAV.Api.Controllers.GetOverviewStats;
 using NzbWebDAV.Database.Models.Metrics;
+using NzbWebDAV.Services.Metrics;
 
 namespace NzbWebDAV.Tests.Api;
 
@@ -161,5 +162,31 @@ public class GetOverviewStatsProviderSeriesTests
         Assert.All(
             row.SpeedSeries,
             p => Assert.True(p.Bucket >= nowMs - 365 * OneDay - 7 * OneDay));
+    }
+
+    [Fact]
+    public void Apply_IncludesSamplesInFirstAlignedBucket()
+    {
+        const long nowMs = 1_700_000_000_000L;
+        var windowStart = nowMs - OneHour + 30_000;
+        var geometry = GetOverviewStatsController.ResolveProviderSeriesGeometry(
+            GetOverviewStatsRequest.OverviewWindow.Last1Hour, windowStart, nowMs);
+        var providers = new List<GetOverviewStatsResponse.ProviderRow>();
+
+        ProviderSampledRates.Apply(
+            providers,
+            Labels,
+            [new ProviderBytesTracker.ProviderRateSample(geometry.Start, ProviderA, 2_000_000, 2_000_000, 1)],
+            [],
+            GetOverviewStatsRequest.OverviewWindow.Last1Hour,
+            windowStart,
+            nowMs);
+
+        var provider = Assert.Single(providers);
+        Assert.Equal(2.0, provider.PeakMbPerSec);
+        Assert.Equal(2.0, provider.ActiveAverageMbPerSec);
+        var firstPoint = provider.SampledSpeedSeries[0];
+        Assert.Equal(geometry.Start, firstPoint.Bucket);
+        Assert.Equal(2.0, firstPoint.PeakMbPerSec);
     }
 }

@@ -308,9 +308,14 @@ public static class UsenetProviderIdentity
                     Errors = ProviderMinutes.Errors + excluded.Errors,
                     Retries = ProviderMinutes.Retries + excluded.Retries,
                     FailoverSaves = ProviderMinutes.FailoverSaves + excluded.FailoverSaves,
-                    PeakBytesPerSec = COALESCE(ProviderMinutes.PeakBytesPerSec, excluded.PeakBytesPerSec),
-                    ActiveBytes = COALESCE(ProviderMinutes.ActiveBytes, excluded.ActiveBytes),
-                    ActiveSeconds = COALESCE(ProviderMinutes.ActiveSeconds, excluded.ActiveSeconds),
+                    PeakBytesPerSec = CASE
+                        WHEN ProviderMinutes.PeakBytesPerSec IS NULL THEN excluded.PeakBytesPerSec
+                        WHEN excluded.PeakBytesPerSec IS NULL THEN ProviderMinutes.PeakBytesPerSec
+                        ELSE MAX(ProviderMinutes.PeakBytesPerSec, excluded.PeakBytesPerSec) END,
+                    ActiveBytes = CASE WHEN ProviderMinutes.ActiveBytes IS NULL AND excluded.ActiveBytes IS NULL THEN NULL
+                        ELSE COALESCE(ProviderMinutes.ActiveBytes, 0) + COALESCE(excluded.ActiveBytes, 0) END,
+                    ActiveSeconds = CASE WHEN ProviderMinutes.ActiveSeconds IS NULL AND excluded.ActiveSeconds IS NULL THEN NULL
+                        ELSE COALESCE(ProviderMinutes.ActiveSeconds, 0) + COALESCE(excluded.ActiveSeconds, 0) END,
                     SumDurationMs = ProviderMinutes.SumDurationMs + excluded.SumDurationMs;
                 """,
                 new object[] { metricsKey, host }, ct).ConfigureAwait(false);
@@ -339,9 +344,14 @@ public static class UsenetProviderIdentity
                     Errors = ProviderHourly.Errors + excluded.Errors,
                     Retries = ProviderHourly.Retries + excluded.Retries,
                     FailoverSaves = ProviderHourly.FailoverSaves + excluded.FailoverSaves,
-                    PeakBytesPerSec = COALESCE(ProviderHourly.PeakBytesPerSec, excluded.PeakBytesPerSec),
-                    ActiveBytes = COALESCE(ProviderHourly.ActiveBytes, excluded.ActiveBytes),
-                    ActiveSeconds = COALESCE(ProviderHourly.ActiveSeconds, excluded.ActiveSeconds),
+                    PeakBytesPerSec = CASE
+                        WHEN ProviderHourly.PeakBytesPerSec IS NULL THEN excluded.PeakBytesPerSec
+                        WHEN excluded.PeakBytesPerSec IS NULL THEN ProviderHourly.PeakBytesPerSec
+                        ELSE MAX(ProviderHourly.PeakBytesPerSec, excluded.PeakBytesPerSec) END,
+                    ActiveBytes = CASE WHEN ProviderHourly.ActiveBytes IS NULL AND excluded.ActiveBytes IS NULL THEN NULL
+                        ELSE COALESCE(ProviderHourly.ActiveBytes, 0) + COALESCE(excluded.ActiveBytes, 0) END,
+                    ActiveSeconds = CASE WHEN ProviderHourly.ActiveSeconds IS NULL AND excluded.ActiveSeconds IS NULL THEN NULL
+                        ELSE COALESCE(ProviderHourly.ActiveSeconds, 0) + COALESCE(excluded.ActiveSeconds, 0) END,
                     SumDurationMs = ProviderHourly.SumDurationMs + excluded.SumDurationMs;
                 """,
                 new object[] { metricsKey, host }, ct).ConfigureAwait(false);

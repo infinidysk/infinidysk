@@ -17,6 +17,8 @@ internal static class ProviderSampledRates
         long nowMs,
         bool useRollups)
     {
+        var geometry = GetOverviewStatsController.ResolveProviderSeriesGeometry(window, windowStart, nowMs);
+        var sampleStart = GetSampleStart(window, windowStart, geometry.Start);
         await tracker.PeakPersistenceGate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -26,22 +28,29 @@ internal static class ProviderSampledRates
             await using var transaction = connection.BeginTransaction(deferred: true);
 #pragma warning restore CA1849
             await db.Database.UseTransactionAsync(transaction).ConfigureAwait(false);
-            var samples = useRollups
-                ? await db.ProviderHourly.AsNoTracking()
-                    .Where(row => row.Hour >= windowStart && row.PeakBytesPerSec != null)
-                    .Select(row => new ProviderBytesTracker.ProviderRateSample(row.Hour, row.Provider,
-                        row.PeakBytesPerSec!.Value, row.ActiveBytes ?? 0, row.ActiveSeconds ?? 0))
-                    .ToListAsync().ConfigureAwait(false)
-                : await db.ProviderMinutes.AsNoTracking()
-                    .Where(row => row.Minute >= windowStart && row.PeakBytesPerSec != null)
-                    .Select(row => new ProviderBytesTracker.ProviderRateSample(row.Minute, row.Provider,
-                        row.PeakBytesPerSec!.Value, row.ActiveBytes ?? 0, row.ActiveSeconds ?? 0))
-                    .ToListAsync().ConfigureAwait(false);
-            var lifetime = window == GetOverviewStatsRequest.OverviewWindow.AllTime
-                ? await db.ProviderLifetimeTotals.AsNoTracking().ToListAsync().ConfigureAwait(false)
-                : [];
-            samples.AddRange(tracker.PendingProviderRates(windowStart));
-            Apply(providers, labels, samples, lifetime, window, windowStart, nowMs);
+            try
+            {
+                var samples = useRollups
+                    ? await db.ProviderHourly.AsNoTracking()
+                        .Where(row => row.Hour >= sampleStart && row.PeakBytesPerSec != null)
+                        .Select(row => new ProviderBytesTracker.ProviderRateSample(row.Hour, row.Provider,
+                            row.PeakBytesPerSec!.Value, row.ActiveBytes ?? 0, row.ActiveSeconds ?? 0))
+                        .ToListAsync().ConfigureAwait(false)
+                    : await db.ProviderMinutes.AsNoTracking()
+                        .Where(row => row.Minute >= sampleStart && row.PeakBytesPerSec != null)
+                        .Select(row => new ProviderBytesTracker.ProviderRateSample(row.Minute, row.Provider,
+                            row.PeakBytesPerSec!.Value, row.ActiveBytes ?? 0, row.ActiveSeconds ?? 0))
+                        .ToListAsync().ConfigureAwait(false);
+                var lifetime = window == GetOverviewStatsRequest.OverviewWindow.AllTime
+                    ? await db.ProviderLifetimeTotals.AsNoTracking().ToListAsync().ConfigureAwait(false)
+                    : [];
+                samples.AddRange(tracker.PendingProviderRates(sampleStart));
+                Apply(providers, labels, samples, lifetime, window, windowStart, nowMs);
+            }
+            finally
+            {
+                await db.Database.UseTransactionAsync(null).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -59,13 +68,14 @@ internal static class ProviderSampledRates
         long nowMs)
     {
         var geometry = GetOverviewStatsController.ResolveProviderSeriesGeometry(window, windowStart, nowMs);
-        var byProvider = samples.Where(sample => sample.Minute >= windowStart).ToLookup(sample => sample.Provider);
+        var sampleStart = GetSampleStart(window, windowStart, geometry.Start);
+        var byProvider = samples.Where(sample => sample.Minute >= sampleStart).ToLookup(sample => sample.Provider);
         foreach (var provider in byProvider.Select(group => group.Key)
                      .Concat(lifetime.Select(total => total.Provider)).Distinct()
-                     .Where(provider => labels.ContainsKey(provider)))
+                     .Where(provider => labels.ContainsKey(provider)
+                         && providers.All(row => row.Provider != provider)))
         {
-            if (providers.All(row => row.Provider != provider))
-                providers.Add(new GetOverviewStatsResponse.ProviderRow { Provider = provider, Nickname = labels[provider] });
+            providers.Add(new GetOverviewStatsResponse.ProviderRow { Provider = provider, Nickname = labels[provider] });
         }
 
         foreach (var provider in providers)
@@ -88,6 +98,10 @@ internal static class ProviderSampledRates
             provider.PeakSpeedSpark = provider.SampledSpeedSeries.Select(point => point.PeakMbPerSec).ToList();
         }
     }
+
+    private static long GetSampleStart(
+        GetOverviewStatsRequest.OverviewWindow window, long windowStart, long alignedStart) =>
+        window == GetOverviewStatsRequest.OverviewWindow.AllTime ? windowStart : alignedStart;
 
     private static GetOverviewStatsResponse.ProviderSampledSpeedPoint Aggregate(
         long bucket, IEnumerable<ProviderBytesTracker.ProviderRateSample> samples)
