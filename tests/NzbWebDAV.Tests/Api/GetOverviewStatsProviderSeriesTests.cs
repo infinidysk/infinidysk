@@ -55,6 +55,19 @@ public class GetOverviewStatsProviderSeriesTests
     }
 
     [Fact]
+    public void ResolveProviderSeriesGeometry_ExactBoundaryIncludesCurrentBucket()
+    {
+        const long nowMs = 10 * OneHour;
+        var geometry = GetOverviewStatsController.ResolveProviderSeriesGeometry(
+            GetOverviewStatsRequest.OverviewWindow.Last1Hour,
+            nowMs - OneHour,
+            nowMs);
+
+        Assert.Equal(nowMs + OneMinute, geometry.End);
+        Assert.InRange(nowMs, geometry.Start, geometry.End - geometry.BucketSize);
+    }
+
+    [Fact]
     public void BuildProvidersFromMinutes_ZeroFillsAndIsolatesProviders()
     {
         var windowStart = 1_700_000_000_000L;

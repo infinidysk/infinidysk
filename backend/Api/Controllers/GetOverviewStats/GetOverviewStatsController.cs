@@ -905,7 +905,7 @@ public class GetOverviewStatsController(
         }
 
         var alignedStart = windowStart - windowStart % bucketSize;
-        var alignedEnd = nowMs - nowMs % bucketSize + (nowMs % bucketSize > 0 ? bucketSize : 0);
+        var alignedEnd = nowMs - nowMs % bucketSize + bucketSize;
         return (alignedStart, Math.Max(alignedEnd, alignedStart + (long)count * bucketSize), bucketSize, truncated);
     }
 
