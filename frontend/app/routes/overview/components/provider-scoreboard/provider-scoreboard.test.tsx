@@ -54,6 +54,24 @@ describe("ProviderScoreboard", () => {
     expect(markup).toContain(">—<");
   });
 
+  it("connects sparse throughput activity to the zero baseline like retries", () => {
+    const active = {
+      ...provider(4),
+      peakSpeedSpark: [null, 4, null],
+    };
+    const markup = renderToStaticMarkup(
+      <MemoryRouter>
+        <ProviderScoreboard providers={[active]} window="1h" />
+      </MemoryRouter>,
+    );
+
+    expect(markup).toContain(
+      'd="M0.0,20.0 L55.0,2.0 L110.0,20.0" fill="none" stroke="var(--color-secondary)"',
+    );
+    expect(markup).toContain(">4.0<");
+    expect(markup).toContain(">2.0<");
+  });
+
   it("places the speed chart after the horizontal scroll wrapper", () => {
     const selected = {
       ...provider(2),

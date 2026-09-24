@@ -147,7 +147,11 @@ export function ProviderScoreboard({
                         <td className="min-w-0 px-1">
                           <Tooltip content={speedHelp}>
                             <div className="flex flex-col gap-0.5">
-                              <Sparkline values={p.peakSpeedSpark ?? []} tone="secondary" />
+                              <Sparkline
+                                values={(p.peakSpeedSpark ?? []).map((value) => value ?? 0)}
+                                tone="secondary"
+                                eventsOnly
+                              />
                               <div className="flex justify-between gap-2 text-[11px] text-secondary">
                                 <span>Peak</span>
                                 <span className="font-mono tabular-nums">
