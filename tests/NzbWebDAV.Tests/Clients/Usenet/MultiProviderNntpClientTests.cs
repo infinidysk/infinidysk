@@ -430,6 +430,287 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public async Task DecodedBodyAsync_OpenCircuitProviderSkipped_ThrowsInconclusiveMiss()
+    {
+        var skipped = new ScriptedNntpClient { BatchResponseCode = 222 };
+        var missing = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularException = id => new UsenetArticleNotFoundException(id),
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(skipped, host: "a.example", circuitBreaker: OpenBreaker("a.example")),
+            CreateProvider(missing, host: "b.example"),
+        ]);
+
+        var miss = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+            () => client.DecodedBodyAsync("segment", CancellationToken.None));
+
+        Assert.Equal(MultiProviderNntpClient.InconclusiveMissReason, miss.InconclusiveReason);
+        Assert.Equal(0, skipped.SingularRequests);
+        Assert.Equal(1, missing.SingularRequests);
+    }
+
+    [Fact]
+    public async Task DecodedBodyAsync_EveryEnabledProviderMisses_ThrowsConclusiveMiss()
+    {
+        var first = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularException = id => new UsenetArticleNotFoundException(id),
+        };
+        var second = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularException = id => new UsenetArticleNotFoundException(id),
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(first, host: "a.example"),
+            CreateProvider(second, host: "b.example"),
+        ]);
+
+        var miss = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+            () => client.DecodedBodyAsync("segment", CancellationToken.None));
+
+        Assert.Null(miss.InconclusiveReason);
+        Assert.Equal(1, first.SingularRequests);
+        Assert.Equal(1, second.SingularRequests);
+    }
+
+    [Fact]
+    public async Task DecodedBodyAsync_OpenCircuitProviderWithCachedMiss_ThrowsConclusiveMiss()
+    {
+        var cache = new ArticleMissNegativeCache(new ConfigManager());
+        cache.MarkMissing(ArticleMissNegativeCache.BuildKey(
+            "segment", "a.example", null, ArticleMissNegativeCache.ArticleMissOperation.Body));
+        var skipped = new ScriptedNntpClient { BatchResponseCode = 222 };
+        var missing = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularException = id => new UsenetArticleNotFoundException(id),
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(skipped, host: "a.example", circuitBreaker: OpenBreaker("a.example")),
+            CreateProvider(missing, host: "b.example"),
+        ], articleMissCache: cache);
+
+        var miss = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+            () => client.DecodedBodyAsync("segment", CancellationToken.None));
+
+        Assert.Null(miss.InconclusiveReason);
+        Assert.Equal(0, skipped.SingularRequests);
+    }
+
+    [Fact]
+    public async Task DecodedBodyAsync_OpenCircuitStorageGroupSibling_ThrowsConclusiveMiss()
+    {
+        var skipped = new ScriptedNntpClient { BatchResponseCode = 222 };
+        var sibling = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularException = id => new UsenetArticleNotFoundException(id),
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(skipped, host: "a.example", storageGroup: "omicron",
+                circuitBreaker: OpenBreaker("a.example")),
+            CreateProvider(sibling, host: "b.example", storageGroup: "omicron"),
+        ]);
+
+        var miss = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+            () => client.DecodedBodyAsync("segment", CancellationToken.None));
+
+        Assert.Null(miss.InconclusiveReason);
+        Assert.Equal(0, skipped.SingularRequests);
+    }
+
+    [Fact]
+    public async Task DecodedBodyAsync_DataCapProviderSkipped_ThrowsConclusiveMiss()
+    {
+        var capped = new ScriptedNntpClient { BatchResponseCode = 222 };
+        var missing = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularException = id => new UsenetArticleNotFoundException(id),
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(capped, host: "a.example", byteLimit: 1_000, bytesUsedOffset: 1_000),
+            CreateProvider(missing, host: "b.example"),
+        ], bytesTracker: new ProviderBytesTracker());
+
+        var miss = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+            () => client.DecodedBodyAsync("segment", CancellationToken.None));
+
+        Assert.Null(miss.InconclusiveReason);
+        Assert.Equal(0, capped.SingularRequests);
+    }
+
+    [Fact]
+    public async Task DecodedBodyAsync_CorruptThenMiss_ThrowsConclusiveMiss()
+    {
+        // A provider that returned a damaged copy did answer; the miss elsewhere must still
+        // reach the repair path (review note 1).
+        var corrupt = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularException = id => new UsenetCorruptArticleException(
+                id, "a.example", new InvalidDataException("crc mismatch")),
+        };
+        var missing = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularException = id => new UsenetArticleNotFoundException(id),
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(corrupt, host: "a.example"),
+            CreateProvider(missing, host: "b.example", providerType: ProviderType.BackupOnly),
+        ]);
+
+        var miss = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+            () => client.DecodedBodyAsync("segment", CancellationToken.None));
+
+        Assert.Null(miss.InconclusiveReason);
+        Assert.True(corrupt.SingularRequests >= 1);
+        Assert.Equal(1, missing.SingularRequests);
+    }
+
+    [Fact]
+    public async Task DecodedBodyAsync_ProviderFailureThenMiss_ThrowsInconclusiveMiss()
+    {
+        var failing = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularException = _ => new IOException("connection reset"),
+        };
+        var missing = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularException = id => new UsenetArticleNotFoundException(id),
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(failing, host: "a.example"),
+            CreateProvider(missing, host: "b.example", providerType: ProviderType.BackupOnly),
+        ]);
+
+        var miss = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+            () => client.DecodedBodyAsync("segment", CancellationToken.None));
+
+        Assert.Equal(MultiProviderNntpClient.InconclusiveMissReason, miss.InconclusiveReason);
+        Assert.True(failing.SingularRequests >= 1);
+        Assert.Equal(1, missing.SingularRequests);
+    }
+
+    [Fact]
+    public async Task DecodedBodyAsync_WithCompletion_OpenCircuitProviderSkipped_ThrowsInconclusiveMissAndCompletesOnce()
+    {
+        var skipped = new ScriptedNntpClient { BatchResponseCode = 222 };
+        var missing = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularException = id => new UsenetArticleNotFoundException(id),
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(skipped, host: "a.example", circuitBreaker: OpenBreaker("a.example")),
+            CreateProvider(missing, host: "b.example"),
+        ]);
+        var completions = 0;
+
+        var miss = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+            () => client.DecodedBodyAsync("segment", (_, _) => completions++, CancellationToken.None));
+
+        Assert.Equal(MultiProviderNntpClient.InconclusiveMissReason, miss.InconclusiveReason);
+        Assert.Equal(1, completions);
+    }
+
+    [Fact]
+    public async Task DecodedBodiesAsync_OpenCircuitProviderSkipped_ThrowsInconclusiveMiss()
+    {
+        var skipped = new ScriptedNntpClient { BatchResponseCode = 222 };
+        var missing = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularException = id => new UsenetArticleNotFoundException(id),
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(skipped, host: "a.example", circuitBreaker: OpenBreaker("a.example")),
+            CreateProvider(missing, host: "b.example"),
+        ]);
+
+        var batch = await client.DecodedBodiesAsync(
+            ["segment"], onConnectionReadyAgain: null, CancellationToken.None);
+        var miss = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() => batch.Responses[0]);
+
+        Assert.Equal(MultiProviderNntpClient.InconclusiveMissReason, miss.InconclusiveReason);
+        Assert.Equal(0, skipped.BatchRequests);
+        Assert.Equal(0, skipped.SingularRequests);
+    }
+
+    [Fact]
+    public async Task DecodedBodiesAsync_BatchFailureThenMiss_ThrowsInconclusiveMiss()
+    {
+        // MultiConnectionNntpClient retries a failed batch on a fresh connection before giving
+        // up, so the provider must fail every way it could be asked.
+        var failing = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            BatchException = _ => new IOException("connection reset"),
+            SingularException = _ => new IOException("connection reset"),
+        };
+        var missing = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularException = id => new UsenetArticleNotFoundException(id),
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(failing, host: "a.example"),
+            CreateProvider(missing, host: "b.example", providerType: ProviderType.BackupOnly),
+        ]);
+
+        var batch = await client.DecodedBodiesAsync(
+            ["segment"], onConnectionReadyAgain: null, CancellationToken.None);
+        var miss = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() => batch.Responses[0]);
+
+        Assert.Equal(MultiProviderNntpClient.InconclusiveMissReason, miss.InconclusiveReason);
+        Assert.True(failing.BatchRequests >= 1);
+        Assert.Equal(1, missing.SingularRequests);
+    }
+
+    [Fact]
+    public async Task DecodedBodiesAsync_EveryEnabledProviderMisses_ThrowsConclusiveMiss()
+    {
+        var first = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularException = id => new UsenetArticleNotFoundException(id),
+        };
+        var second = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularException = id => new UsenetArticleNotFoundException(id),
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(first, host: "a.example"),
+            CreateProvider(second, host: "b.example"),
+        ]);
+
+        var batch = await client.DecodedBodiesAsync(
+            ["segment"], onConnectionReadyAgain: null, CancellationToken.None);
+        var miss = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() => batch.Responses[0]);
+
+        Assert.Null(miss.InconclusiveReason);
+    }
+
+    [Fact]
     public async Task DecodedBodyAsync_CrossProviderRescue_RecordsFailoverMiss()
     {
         var writer = new MetricsWriter();
@@ -2920,7 +3201,9 @@ public class MultiProviderNntpClientTests
         ProviderType providerType = ProviderType.Pooled,
         int maxConnections = 1,
         int priority = 0,
-        int? maxTransferConnections = null)
+        int? maxTransferConnections = null,
+        long? byteLimit = null,
+        long bytesUsedOffset = 0)
     {
         var pool = new ConnectionPool<INntpClient>(
             maxConnections, _ => ValueTask.FromResult(connection));
@@ -2929,6 +3212,8 @@ public class MultiProviderNntpClientTests
             providerType,
             circuitBreaker ?? new ProviderCircuitBreaker(host),
             host,
+            byteLimit: byteLimit,
+            bytesUsedOffset: bytesUsedOffset,
             priority: priority,
             storageGroup: storageGroup,
             maxTransferConnections: maxTransferConnections);
@@ -2946,7 +3231,7 @@ public class MultiProviderNntpClientTests
     }
 
     /// <summary>Trips a breaker and leaves it inside its cooldown, fully open.</summary>
-    private static ProviderCircuitBreaker OpenBreaker(string host)
+    internal static ProviderCircuitBreaker OpenBreaker(string host)
     {
         var breaker = new ProviderCircuitBreaker(host);
         breaker.RecordFailure();
