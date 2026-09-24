@@ -1592,10 +1592,24 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             {
                 return;
             }
+            catch (Exception e) when (e is CircuitAdmissionRejectedException
+                or ProviderTransferAdmissionTimeoutException)
+            {
+                // Circuit admission and local acquisition waits are not provider failures.
+                return;
+            }
             catch (Exception e) when (e is not OutOfMemoryException)
             {
-                // Do not spin on a provider that is unavailable at startup. The next
-                // sweep retries the floor; connection-limit learning still applies.
+                // Do not spin: report a genuine open failure like explicit warm-up does,
+                // then leave the retry to the next sweep.
+                if (e is not OperationCanceledException
+                    && !cancellationToken.IsCancellationRequested
+                    && !IsDisposed)
+                {
+                    NotifyWarmConnectionFailure(
+                        e,
+                        e is ConnectionOpenTimeoutException timeout && timeout.FactoryStarted);
+                }
                 return;
             }
         }
