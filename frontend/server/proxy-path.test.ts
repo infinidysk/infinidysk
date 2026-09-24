@@ -71,9 +71,12 @@ describe("isBackendApiPath", () => {
 });
 
 describe("isReadOnlyDeniedBackendMutation", () => {
-  it.each(["/api/delete-webdav-item-preview", "/api/x/../delete-webdav-item-preview", "/%61pi/delete-webdav-item-preview/"])(
-    "blocks read-only GET access to %s",
-    (path) => expect(isReadOnlyDeniedBackendMutation("GET", path)).toBe(true),
+  it.each([
+    "/api/delete-webdav-item-preview",
+    "/api/x/../delete-webdav-item-preview",
+    "/%61pi/delete-webdav-item-preview/",
+  ])("blocks read-only GET access to %s", (path) =>
+    expect(isReadOnlyDeniedBackendMutation("GET", path)).toBe(true),
   );
   it.each([
     ["GET", "/api/delete-webdav-item"],
