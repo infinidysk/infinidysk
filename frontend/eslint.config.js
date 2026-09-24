@@ -112,4 +112,15 @@ export default tseslint.config(
     files: ["*.js", "*.ts", "*.mjs", "eslint-rules/**", "scripts/**/*.mjs"],
     ...tseslint.configs.disableTypeChecked,
   },
+  {
+    files: ["app/routes/resources.files/route.ts", "app/routes/explore/route.tsx"],
+    rules: {
+      "@typescript-eslint/only-throw-error": [
+        "error",
+        {
+          allow: [{ from: "package", package: "react-router", name: "DataWithResponseInit" }],
+        },
+      ],
+    },
+  },
 );

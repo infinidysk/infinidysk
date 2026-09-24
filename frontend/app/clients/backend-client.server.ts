@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  browseFilesResponseSchema,
+  recheckFileResponseSchema,
+  searchFileInArrResponseSchema,
+  deletePreviewResponseSchema,
+} from "./files-contract";
 import { getFrontendRuntimeConfig } from "../../server/runtime-config";
 import { adminApi } from "~/clients/admin-operations";
 import { toStreamTracingStatus, type StreamTracingStatus } from "~/utils/stream-tracing-status";
@@ -302,6 +308,51 @@ async function call<T = Record<string, unknown>>(
 }
 
 class BackendClient {
+  public async browseFiles(parameters: URLSearchParams, signal: AbortSignal) {
+    return call(
+      `${adminApi.browseFiles}?${parameters}`,
+      "Could not load files",
+      { method: "GET", signal },
+      browseFilesResponseSchema,
+    );
+  }
+  public async recheckFile(davItemId: string, signal: AbortSignal) {
+    return call(
+      adminApi.recheckFile,
+      "Could not queue the file recheck",
+      { method: "POST", body: form(["davItemId", davItemId]), signal },
+      recheckFileResponseSchema,
+    );
+  }
+  public async searchFileInArr(davItemId: string, signal: AbortSignal) {
+    return call(
+      adminApi.searchFileInArr,
+      "Could not request the Arr search",
+      { method: "POST", body: form(["davItemId", davItemId]), signal },
+      searchFileInArrResponseSchema,
+    );
+  }
+  public async previewFileRemoval(path: string, expectedDavItemId: string, signal: AbortSignal) {
+    return call(
+      `${adminApi.deleteWebdavItemPreview}?${new URLSearchParams({ path, expectedDavItemId })}`,
+      "Could not preview removal",
+      { method: "GET", signal },
+      deletePreviewResponseSchema,
+    );
+  }
+  public async removeFile(path: string, expectedDavItemId: string, signal: AbortSignal) {
+    return call(
+      adminApi.deleteWebdavItem,
+      "Could not remove the item",
+      {
+        method: "POST",
+        body: form(["path", path], ["expectedDavItemId", expectedDavItemId]),
+        signal,
+      },
+      z.object({ status: z.literal(true) }),
+    );
+  }
+
   public async isOnboarding(): Promise<boolean> {
     const data = await call<{ isOnboarding: boolean }>(
       adminApi.isOnboarding,

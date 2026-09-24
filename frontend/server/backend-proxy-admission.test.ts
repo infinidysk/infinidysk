@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { admitAndForwardBackendRequest } from "./backend-proxy-admission";
+import { isFilesBackendMutation, isReadOnlyDeniedBackendMutation } from "./proxy-path";
 
 function handlers(overrides: Partial<Parameters<typeof admitAndForwardBackendRequest>[1]> = {}) {
   return {
@@ -15,6 +16,25 @@ function handlers(overrides: Partial<Parameters<typeof admitAndForwardBackendReq
 }
 
 describe("backend proxy admission", () => {
+  it.each(["/api/recheck-file", "/API/SEARCH-FILE-IN-ARR/", "/%61pi/recheck-file/"])(
+    "does not inject a session key for Files mutation %s",
+    async (path) => {
+      const inject = vi.fn(() => Promise.resolve());
+      const callbacks = handlers({
+        injectApiKey: () => (isFilesBackendMutation("POST", path) ? Promise.resolve() : inject()),
+      });
+      await admitAndForwardBackendRequest(
+        {
+          requiresMetricsAuthentication: false,
+          isReadOnlyMutation: isReadOnlyDeniedBackendMutation("POST", path),
+          userAgent: undefined,
+        },
+        callbacks,
+      );
+      expect(inject).not.toHaveBeenCalled();
+      expect(callbacks.forward).toHaveBeenCalledOnce();
+    },
+  );
   it("does not observe or forward rejected metrics requests", async () => {
     const callbacks = handlers({
       isAuthenticated: vi.fn(() => Promise.resolve(false)),

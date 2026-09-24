@@ -39,6 +39,24 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
             });
         }
         operation.Responses ??= [];
+        if (route == "api/recheck-file")
+        {
+            operation.Responses.Remove("200");
+            AddProblemResponse(operation, "405", "POST required.");
+        }
+        if (route == "api/search-file-in-arr")
+        {
+            if (operation.Responses.TryGetValue("200", out var response)) response.Description = "Command processing completed. Inspect outcome and per-target receipts; partial and unconfirmed do not mean all searches were requested.";
+            AddProblemResponse(operation, "502", "Could not verify all Arr targets; no commands requested.");
+            AddProblemResponse(operation, "405", "POST required.");
+        }
+        if (route == "api/delete-webdav-item-preview")
+        {
+            operation.Parameters ??= [];
+            foreach (var name in new[] { "path", "expectedDavItemId", "healthCheckResultId" })
+                operation.Parameters.Add(new OpenApiParameter { Name = name, In = ParameterLocation.Query, Required = name == "path",
+                    Schema = new OpenApiSchema { Type = JsonSchemaType.String, Format = name == "path" ? null : "uuid" } });
+        }
         if (route == "api/trigger-health-check")
         {
             operation.Responses.Remove("200");
@@ -286,6 +304,8 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
             "api/authenticate" or "api/create-account" => ["username", "password", "type"],
             "api/get-config" => ["config-keys"],
             "api/list-webdav-directory" => ["directory"],
+            "api/recheck-file" or "api/search-file-in-arr" => ["davItemId"],
+            "api/delete-webdav-item" => ["path", "expectedDavItemId", "healthCheckResultId"],
             "api/search-indexers" => ["q", "limit"],
             "api/test-usenet-connection" =>
                 ["host", "user", "pass", "port", "use-ssl", "skip-tls-verification"],
@@ -319,7 +339,12 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
                 field => field,
                 _ => (IOpenApiSchema)new OpenApiSchema { Type = JsonSchemaType.String }),
             additionalProperties: false,
-            requiredProperties: route == "api/setup-wizard/complete" ? fields : null);
+            requiredProperties: route switch
+            {
+                "api/setup-wizard/complete" or "api/recheck-file" or "api/search-file-in-arr" => fields,
+                "api/delete-webdav-item" => ["path"],
+                _ => null,
+            });
     }
 
     private static OpenApiRequestBody FormBody(

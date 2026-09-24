@@ -9,6 +9,57 @@ namespace NzbWebDAV.Tests.Api;
 public sealed class FrontendProxyContractTests
 {
     [SkippableFact]
+    public async Task FilesMutationProxy_SessionCannotBypassResourceAction()
+    {
+        Skip.IfNot(RepoPaths.FrontendProductionBuildExists(), "Frontend production build required.");
+        await using var backend = new NzbDavWebApplicationFactory();
+        backend.UseKestrel(0);
+        using var backendClient = backend.CreateAuthenticatedClient();
+        using var accountForm = new MultipartFormDataContent();
+        accountForm.Add(new StringContent("files-admin"), "username");
+        accountForm.Add(new StringContent("synthetic-files-password"), "password");
+        accountForm.Add(new StringContent("Admin"), "type");
+        using var created = await backendClient.PostAsync("/api/create-account", accountForm);
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        await using var frontend = await FrontendProductionProcess.StartAsync(backend.ClientOptions.BaseAddress, NzbDavWebApplicationFactory.ApiKey, backend.ConfigPath);
+        using var handler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = true, CheckCertificateRevocationList = true };
+        using var client = new HttpClient(handler) { BaseAddress = frontend.BaseAddress };
+        using var login = new HttpRequestMessage(HttpMethod.Post, "/login")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["username"] = "files-admin", ["password"] = "synthetic-files-password" }),
+        };
+        login.Headers.Add("Origin", frontend.BaseAddress.GetLeftPart(UriPartial.Authority));
+        using var loggedIn = await client.SendAsync(login);
+        Assert.True(loggedIn.Headers.Contains("Set-Cookie"));
+        foreach (var path in new[] { "/api/recheck-file", "/api/search-file-in-arr", "/api/RECHECK-FILE/", "/%61pi/search-file-in-arr/" })
+        {
+            using var form = new MultipartFormDataContent();
+            form.Add(new StringContent(Guid.NewGuid().ToString()), "davItemId");
+            using var response = await client.PostAsync(path, form);
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+    }
+
+    [SkippableFact]
+    public async Task FilesMutationProxy_ExplicitApiKeyStillWorks()
+    {
+        Skip.IfNot(RepoPaths.FrontendProductionBuildExists(), "Frontend production build required.");
+        await using var backend = new NzbDavWebApplicationFactory();
+        backend.UseKestrel(0);
+        _ = backend.Services;
+        await using var frontend = await FrontendProductionProcess.StartAsync(backend.ClientOptions.BaseAddress, NzbDavWebApplicationFactory.ApiKey, backend.ConfigPath);
+        using var client = frontend.CreateClient();
+        client.DefaultRequestHeaders.Add("x-api-key", NzbDavWebApplicationFactory.ApiKey);
+        foreach (var path in new[] { "/api/recheck-file", "/api/search-file-in-arr" })
+        {
+            using var form = new MultipartFormDataContent();
+            form.Add(new StringContent(Guid.NewGuid().ToString()), "davItemId");
+            using var response = await client.PostAsync(path, form);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+    }
+
+    [SkippableFact]
     public async Task ProductionFrontend_ProxiesSabQueueAndWebDavContracts()
     {
         Skip.IfNot(

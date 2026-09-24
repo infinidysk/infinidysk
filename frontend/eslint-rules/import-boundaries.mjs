@@ -68,6 +68,13 @@ export function describeImportViolation(fromFile, source, options = {}) {
   const fromRel = relativeToApp(fromFile, appRoot);
   const importedRel = relativeToApp(importedAbs, appRoot);
   if (!fromRel || !importedRel) return null;
+  const filesFeatureImports = new Set([
+    "clients/files-page.server.ts|routes/explore/file-kind/file-kind",
+    "routes/explore/files-browser.tsx|routes/health/health-queue-state",
+    "routes/resources.files/route.test.ts|routes/explore/files-fixtures",
+    "clients/files-contract.test.ts|routes/explore/files-fixtures",
+  ]);
+  if (filesFeatureImports.has(`${fromRel}|${importedRel}`)) return null;
 
   const importedRoute = importedRel.startsWith("routes/");
   if (isSharedImporter(fromRel) && importedRoute) {

@@ -9,6 +9,42 @@ namespace NzbWebDAV.Tests.Api;
 public sealed class AdminOpenApiIntegrationTests(NzbDavWebApplicationFactory factory)
 {
     [Fact]
+    public async Task FilesOperations_ExposeTypedMethodsParametersAndResponses()
+    {
+        var previous = Environment.GetEnvironmentVariable("ENABLE_API_DOCS");
+        Environment.SetEnvironmentVariable("ENABLE_API_DOCS", "true");
+        try
+        {
+            using var docsFactory = factory.WithWebHostBuilder(_ => { });
+            using var client = docsFactory.CreateClient();
+            client.DefaultRequestHeaders.Add("x-api-key", NzbDavWebApplicationFactory.ApiKey);
+            using var response = await client.GetAsync("/openapi/admin.json");
+            using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+            var paths = json.RootElement.GetProperty("paths");
+            var browse = paths.GetProperty("/api/browse-files");
+            Assert.False(browse.TryGetProperty("post", out _));
+            var parameters = browse.GetProperty("get").GetProperty("parameters").EnumerateArray();
+            var limit = parameters.Single(parameter => parameter.GetProperty("name").GetString() == "limit").GetProperty("schema");
+            Assert.Equal(200, limit.GetProperty("maximum").GetInt32());
+            Assert.Equal(100, limit.GetProperty("default").GetInt32());
+            foreach (var path in new[] { "/api/recheck-file", "/api/search-file-in-arr" })
+            {
+                var operation = paths.GetProperty(path);
+                Assert.False(operation.TryGetProperty("get", out _));
+                var post = operation.GetProperty("post");
+                Assert.Contains(post.GetProperty("requestBody").GetProperty("content").GetProperty("multipart/form-data").GetProperty("schema").GetProperty("required").EnumerateArray(), value => value.GetString() == "davItemId");
+                Assert.True(post.GetProperty("responses").TryGetProperty(path == "/api/recheck-file" ? "202" : "200", out _));
+            }
+            var schemas = json.RootElement.GetProperty("components").GetProperty("schemas");
+            foreach (var name in new[] { "BrowseFilesResponse", "RecheckFileResponse", "SearchFileInArrResponse" }) Assert.True(schemas.TryGetProperty(name, out _));
+            var preview = paths.GetProperty("/api/delete-webdav-item-preview").GetProperty("get");
+            var identity = preview.GetProperty("parameters").EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "expectedDavItemId");
+            Assert.False(identity.TryGetProperty("required", out var required) && required.GetBoolean());
+        }
+        finally { Environment.SetEnvironmentVariable("ENABLE_API_DOCS", previous); }
+    }
+
+    [Fact]
     public async Task DocsAreNotMappedWithoutTheExplicitOptIn()
     {
         using var client = factory.CreateClient();
