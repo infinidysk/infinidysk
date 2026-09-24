@@ -91,7 +91,7 @@ function logProxyFailure(message: string, error: unknown) {
       const reason = isExpectedNetworkCode(code) ? code : "backend connection unavailable";
       logger.warn(`${message}. Reason: ${reason}`);
     } else {
-      logger.warn(message, error);
+      logger.warn(`${message}. Reason: unexpected backend proxy error`);
     }
     lastProxyFailureLogAt = now;
   }

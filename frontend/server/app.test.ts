@@ -158,12 +158,16 @@ describe("backend proxy error logging", () => {
     expectNoQuerySecrets();
   });
 
-  it("preserves unexpected-error diagnostics with a sanitized request path", () => {
-    const error = new Error("synthetic unexpected proxy failure");
+  it("omits unexpected error details that could contain query credentials", () => {
+    const error = new Error(`synthetic unexpected proxy failure for ${requestUrl}`, {
+      cause: new Error(requestUrl),
+    });
     const { res } = invokeProxyError(error);
 
     expect(harness.logger.warn).toHaveBeenCalledTimes(1);
-    expect(harness.logger.warn).toHaveBeenCalledWith("Backend proxy failed for GET /api", error);
+    expect(harness.logger.warn).toHaveBeenCalledWith(
+      "Backend proxy failed for GET /api. Reason: unexpected backend proxy error",
+    );
     expect(res.writeHead).toHaveBeenCalledWith(502, { "Content-Type": "text/plain" });
     expectNoQuerySecrets();
   });
