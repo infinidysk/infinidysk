@@ -347,22 +347,29 @@ public class MetricsRollupService(
                 minute, next, streamingWorkload, MetricsWriter.FailoverSaveEventKind, queueWorkload).ConfigureAwait(false);
 
         // BytesFetched and PeakFetchBytesPerSec are owned by ProviderBytesTracker.
+        // Aggregate in a plain read first: WAL readers never block writers, so a slow
+        // ReadSessions scan cannot hold the metrics write lock.
+        var totals = (await db.Database.SqlQueryRaw<MinuteTotals>(
+            """
+            SELECT
+                COALESCE((SELECT SUM(BytesServed) FROM ReadSessions WHERE EndedAt >= {0} AND EndedAt < {1}), 0) AS BytesServed,
+                COUNT(*) AS Articles,
+                COALESCE(SUM(CASE WHEN Workload = {2} THEN 1 ELSE 0 END), 0) AS ClientArticles,
+                COALESCE(SUM(CASE WHEN Workload = {3} THEN 1 ELSE 0 END), 0) AS QueueArticles,
+                COALESCE(SUM(CASE WHEN Status = 1 THEN 1 ELSE 0 END), 0) AS Misses,
+                COALESCE(SUM(CASE WHEN Status NOT IN (0, 1) THEN 1 ELSE 0 END), 0) AS Errors
+            FROM SegmentFetches
+            WHERE At >= {0} AND At < {1}
+            """,
+            minute, next, streamingWorkload, queueWorkload)
+            .ToListAsync().ConfigureAwait(false)).Single();
+
         // Write the completion marker after ProviderMinutes so a failed partial rollup
         // is retried rather than mistaken for finalized history during startup replay.
         await db.Database.ExecuteSqlRawAsync(
             """
             INSERT INTO ThroughputMinutes (Minute, BytesServed, BytesFetched, Articles, ClientArticles, QueueArticles, ClientArticlesFinalized, Misses, Errors, ActiveReadsMax)
-            SELECT
-                {0} AS Minute,
-                COALESCE((SELECT SUM(BytesServed) FROM ReadSessions WHERE EndedAt >= {0} AND EndedAt < {1}), 0) AS BytesServed,
-                0 AS BytesFetched,
-                COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1}), 0) AS Articles,
-                COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Workload = {2}), 0) AS ClientArticles,
-                COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Workload = {3}), 0) AS QueueArticles,
-                1 AS ClientArticlesFinalized,
-                COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Status = 1), 0) AS Misses,
-                COALESCE((SELECT COUNT(*) FROM SegmentFetches WHERE At >= {0} AND At < {1} AND Status NOT IN (0, 1)), 0) AS Errors,
-                0 AS ActiveReadsMax
+            VALUES ({0}, {1}, 0, {2}, {3}, {4}, 1, {5}, {6}, 0)
             ON CONFLICT(Minute) DO UPDATE SET
                 BytesServed  = excluded.BytesServed,
                 Articles     = MAX(ThroughputMinutes.Articles, excluded.Articles),
@@ -372,7 +379,18 @@ public class MetricsRollupService(
                 Misses       = excluded.Misses,
                 Errors       = excluded.Errors;
             """,
-            minute, next, streamingWorkload, queueWorkload).ConfigureAwait(false);
+            minute, totals.BytesServed, totals.Articles, totals.ClientArticles, totals.QueueArticles,
+            totals.Misses, totals.Errors).ConfigureAwait(false);
+    }
+
+    internal sealed class MinuteTotals
+    {
+        public long BytesServed { get; set; }
+        public long Articles { get; set; }
+        public long ClientArticles { get; set; }
+        public long QueueArticles { get; set; }
+        public long Misses { get; set; }
+        public long Errors { get; set; }
     }
 
     internal static async Task RollupHourAsync(MetricsDbContext db, long hour)

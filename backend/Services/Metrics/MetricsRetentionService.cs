@@ -62,19 +62,24 @@ public class MetricsRetentionService(ConfigManager configManager) : BackgroundSe
     }
 
     internal const int SegmentFetchDeleteBatchSize = 50_000;
+    private static readonly TimeSpan DeleteBatchPause = TimeSpan.FromMilliseconds(50);
     private const int IncrementalVacuumPages = 4_000;
+
+    private const string SegmentFetchesBatchDeleteSql =
+        "DELETE FROM SegmentFetches WHERE rowid IN (SELECT rowid FROM SegmentFetches WHERE At < {0} LIMIT {1})";
+    private const string ReadSessionsBatchDeleteSql =
+        "DELETE FROM ReadSessions WHERE rowid IN (SELECT rowid FROM ReadSessions WHERE EndedAt < {0} LIMIT {1})";
 
     internal static async Task SweepAsync(MetricsDbContext db, long nowMs, TimeSpan fetchTtl)
     {
-        await DeleteSegmentFetchesInBatchesAsync(db, Cutoff(nowMs, fetchTtl)).ConfigureAwait(false);
+        await DeleteInBatchesAsync(db, SegmentFetchesBatchDeleteSql, Cutoff(nowMs, fetchTtl)).ConfigureAwait(false);
         await db.Database.ExecuteSqlRawAsync(
             "DELETE FROM MetricEvents WHERE At < {0}", Cutoff(nowMs, EventTtl)).ConfigureAwait(false);
         await db.Database.ExecuteSqlRawAsync(
             "DELETE FROM ThroughputMinutes WHERE Minute < {0}", Cutoff(nowMs, MinuteRollupTtl)).ConfigureAwait(false);
         await db.Database.ExecuteSqlRawAsync(
             "DELETE FROM ProviderMinutes WHERE Minute < {0}", Cutoff(nowMs, MinuteRollupTtl)).ConfigureAwait(false);
-        await db.Database.ExecuteSqlRawAsync(
-            "DELETE FROM ReadSessions WHERE EndedAt < {0}", Cutoff(nowMs, SessionTtl)).ConfigureAwait(false);
+        await DeleteInBatchesAsync(db, ReadSessionsBatchDeleteSql, Cutoff(nowMs, SessionTtl)).ConfigureAwait(false);
         await FoldAndPruneProviderHourlyAsync(db, Cutoff(nowMs, HourlyRollupTtl)).ConfigureAwait(false);
         await db.Database.ExecuteSqlRawAsync(
             "DELETE FROM FailoverMisses WHERE At < {0}", Cutoff(nowMs, fetchTtl)).ConfigureAwait(false);
@@ -89,25 +94,22 @@ public class MetricsRetentionService(ConfigManager configManager) : BackgroundSe
     }
 
     /// <summary>
-    /// Rowid-batched DELETE so a multi-GB SegmentFetches sweep cannot hold the
-    /// write lock past MetricsWriter's 5s busy_timeout. Matches
+    /// Rowid-batched DELETE so a multi-GB sweep cannot hold the write lock past
+    /// other writers' busy timeouts. Matches
     /// <see cref="OverviewStatsReset.WipeProviderAsync"/>.
     /// </summary>
-    private static async Task DeleteSegmentFetchesInBatchesAsync(MetricsDbContext db, long cutoff)
+    private static async Task DeleteInBatchesAsync(MetricsDbContext db, string batchDeleteSql, long cutoff)
     {
         var batchSize = Math.Max(1, SegmentFetchDeleteBatchSize);
         int batch;
         do
         {
             batch = await db.Database.ExecuteSqlRawAsync(
-                """
-                DELETE FROM SegmentFetches WHERE rowid IN
-                    (SELECT rowid FROM SegmentFetches WHERE At < {0} LIMIT {1})
-                """,
-                new object[] { cutoff, batchSize }).ConfigureAwait(false);
-            if (batch > 0)
-                await Task.Yield();
-        } while (batch > 0);
+                batchDeleteSql, new object[] { cutoff, batchSize }).ConfigureAwait(false);
+            // Task.Yield alone re-takes the lock before writers in their busy-retry sleep wake up.
+            if (batch >= batchSize)
+                await Task.Delay(DeleteBatchPause).ConfigureAwait(false);
+        } while (batch >= batchSize);
     }
 
     private static async Task FoldAndPruneProviderHourlyAsync(MetricsDbContext db, long cutoff)
