@@ -352,6 +352,42 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task OpenCircuitProviderSkippedThen430_DefersWithActionNeeded_AndSeedsNothing()
+    {
+        var segments = NewSegmentIds(4);
+        var (item, blobId) = await AddVideoFileAsync(
+            "movie.mkv", segments, [10_000, 10_000, 10_000, 10_000]);
+        using var multi = new MultiProviderNntpClient(
+        [
+            MultiProviderNntpClientTests.CreateProvider(
+                new MultiProviderNntpClientTests.ScriptedNntpClient { BatchResponseCode = 223 },
+                host: "a.example",
+                circuitBreaker: MultiProviderNntpClientTests.OpenBreaker("a.example")),
+            MultiProviderNntpClientTests.CreateProvider(
+                new MultiProviderNntpClientTests.ScriptedNntpClient
+                {
+                    BatchResponseCode = 430,
+                    StatResponseCode = 430,
+                },
+                host: "b.example"),
+        ]);
+        var (service, _) = await NewServiceAsync(multi, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+        Assert.StartsWith("Health check deferred:", row.Message, StringComparison.Ordinal);
+        Assert.Contains("circuit", row.Message, StringComparison.OrdinalIgnoreCase);
+        var reloaded = ReloadItem(item.Id);
+        Assert.Equal(blobId, reloaded.FileBlobId);
+        Assert.True(reloaded.NextHealthCheck > DateTimeOffset.UtcNow.AddHours(12));
+        HealthCheckService.CheckCachedMissingSegmentIds(
+            segments, _configManager.GetUsenetProviderSnapshot().Generation);
+    }
+
+    [Fact]
     public async Task RoutineHealthCheck_DoesNotOverwriteConcurrentUrgentRepair()
     {
         var segments = NewSegmentIds(3);

@@ -1472,6 +1472,9 @@ public class MultiProviderNntpClient(
             LogProviderWalkOutcome(
                 walk, articleId, operation, terminalProvider, terminalFailure?.SourceException);
         terminalFailure?.Throw();
+        // A health check must not count a provider it never asked as a miss.
+        if (ConclusiveAvailabilityContext.IsActive && walk.UnaskedProviders > 0)
+            throw new CircuitAdmissionRejectedException();
         if (lastNoArticleResult is not null) return lastNoArticleResult;
         if (orderedProviders.Count == 0)
             throw new InvalidOperationException("There are no usenet providers configured.");
