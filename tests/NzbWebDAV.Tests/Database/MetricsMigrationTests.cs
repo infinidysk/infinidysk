@@ -82,4 +82,45 @@ public sealed class MetricsMigrationTests
             File.Delete(databasePath);
         }
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AddReadSessionsEndedAtIndex_ToleratesManuallyCreatedIndex(bool createManually)
+    {
+        var databasePath = Path.Join(
+            Path.GetTempPath(),
+            $"nzbdav-metrics-migration-{Guid.NewGuid():N}.sqlite");
+        var options = new DbContextOptionsBuilder<MetricsDbContext>()
+            .UseSqlite($"Data Source={databasePath};Pooling=False")
+            .AddInterceptors(new SqliteMetricsPragmas())
+            .ReplaceService<
+                IMigrationsSqlGenerator,
+                SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
+            .Options;
+
+        try
+        {
+            await using var context = new MetricsDbContext(options);
+            await context.Database.MigrateAsync("20260923160000_AddProviderSampledRates");
+            if (createManually)
+            {
+                await context.Database.ExecuteSqlRawAsync(
+                    "CREATE INDEX IX_ReadSessions_EndedAt ON ReadSessions(EndedAt);");
+            }
+
+            await context.Database.MigrateAsync();
+
+            var indexes = await context.Database
+                .SqlQueryRaw<string>(
+                    "SELECT name AS Value FROM sqlite_master WHERE type = 'index' AND tbl_name = 'ReadSessions'")
+                .ToListAsync();
+            Assert.Single(indexes, name => name == "IX_ReadSessions_EndedAt");
+            Assert.Empty(await context.Database.GetPendingMigrationsAsync());
+        }
+        finally
+        {
+            File.Delete(databasePath);
+        }
+    }
 }

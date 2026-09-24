@@ -89,6 +89,7 @@ public sealed class MetricsDbContext : DbContext
             e.Property(x => x.EndReason).HasConversion<int>().IsRequired();
 
             e.HasIndex(x => x.StartedAt);
+            e.HasIndex(x => x.EndedAt);
             e.HasIndex(x => x.Path);
         });
 

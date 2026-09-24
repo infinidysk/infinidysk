@@ -368,6 +368,8 @@ namespace NzbWebDAV.Database.MetricsMigrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("EndedAt");
+
                     b.HasIndex("Path");
 
                     b.HasIndex("StartedAt");
