@@ -100,6 +100,11 @@ because the backend process exits on failure.
 - Behind a proxy: TLS, `/ws` Upgrade, `SECURE_COOKIES`, Base URL / `TRUST_PROXY`.
 - Overview **Active Reads**: unexpected traffic → rclone VFS or media-server scans.
 - Try disabling segment cache or adjusting Max Download Connections — [WebDAV](../configuration/webdav.md).
+- `503 Service Unavailable` with `Retry-After`, logged as `could not be confirmed missing`
+  [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }: a
+  provider was skipped by its circuit breaker, or timed out or failed, while an article was looked
+  up. The client retries and no repair is scheduled. If it persists, check provider connectivity —
+  [Usenet settings](../configuration/usenet.md).
 
 ## Activity totals [since 1.4.3](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.3){ .nzbdav-since }
 

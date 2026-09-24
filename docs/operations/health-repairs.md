@@ -41,9 +41,16 @@ full-coverage health classification so those files are not reported healthy — 
 
 A segment counts as missing only when every eligible provider source is conclusively unavailable;
 cached negative results and storage-group sibling evidence can establish that without probing every
-provider. If a walk would otherwise conclude that the segment is missing but any provider timed out
-or failed to connect, the file is marked *Action needed* and rechecked later instead of being
-repaired or blocklisted.
+provider. If a walk would otherwise conclude that the segment is missing but any provider timed out,
+failed to connect, or was skipped because its circuit breaker was open
+[since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }, the
+file is marked *Action needed* and rechecked later instead of being repaired or blocklisted. A
+provider paused at its data cap does not count as unanswered.
+
+Playback follows the same rule [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }:
+a WebDAV read that would have failed with `404 Not Found` returns `503 Service Unavailable` with
+`Retry-After` instead, and a gap in the middle of a file is filled for that read only. Neither case
+schedules a repair or records the segment as missing.
 
 ### When files are rechecked
 
