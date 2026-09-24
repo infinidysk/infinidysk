@@ -9,6 +9,39 @@ import {
 } from "./files-state";
 import { makeFileRow, makeFilesPage } from "./files-fixtures";
 describe("Files state", () => {
+  it("clearsOrphanFocusWhenASelectedDescendantRemainsCached", () => {
+    const parent = makeFileRow({ key: "parent", isDirectory: true, path: "/content/tv" });
+    const child = makeFileRow({ key: "child", path: "/content/tv/video.mkv" });
+    let state = initialFilesState("query", makeFilesPage([parent]));
+    const job = {
+      branchKey: parent.key,
+      parentPath: parent.path,
+      offset: 0,
+      generation: 0,
+      requestId: 1,
+      parameters: new URLSearchParams(),
+    };
+    state = filesReducer(state, { type: "request", job });
+    state = filesReducer(state, {
+      type: "success",
+      job,
+      page: makeFilesPage([child], { parentPath: parent.path }),
+      loadedAt: 1,
+    });
+    state = filesReducer(state, { type: "select", key: child.key });
+    state = filesReducer(state, { type: "focus", key: child.key });
+    const rootJob = { ...job, branchKey: "root", parentPath: "/content", requestId: 2 };
+    state = filesReducer(state, { type: "request", job: rootJob });
+    state = filesReducer(state, {
+      type: "success",
+      job: rootJob,
+      page: makeFilesPage([]),
+      loadedAt: 2,
+    });
+    expect(state.focusedKey).toBeNull();
+    expect(state.selected.has(child.key)).toBe(true);
+    expect(state.branches[parent.key]).toBeUndefined();
+  });
   it("doesNotReopenCollapsedBranchOnLateResponse", () => {
     const parent = makeFileRow({ key: "parent", isDirectory: true, path: "/content/tv" });
     const child = makeFileRow({ key: "child", parentId: parent.id, path: "/content/tv/video.mkv" });
