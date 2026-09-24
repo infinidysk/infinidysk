@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultFilesFilters } from "~/clients/files-contract";
-import { makeFileRow, makeFilesPage } from "./files-fixtures";
+import { makeFileRow, makeFilesPage } from "~/clients/files-fixtures";
 const mocks = vi.hoisted(() => ({
   readonly: vi.fn(),
   fetch: vi.fn<(input: string, options?: RequestInit) => Promise<Response>>(),
@@ -76,12 +76,12 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-function mount(strict = false) {
+function mount(strict = false, initialPage = page) {
   const browser = (
     <MemoryRouter>
       <FilesBrowser
         scopePath="/content"
-        initialPage={page}
+        initialPage={initialPage}
         initialFilters={defaultFilesFilters}
         initialMode="tree"
         initialSort="name"
@@ -102,7 +102,7 @@ describe("Files browser", () => {
       hasChildren: true,
     });
     mocks.fetch.mockResolvedValue(Response.json(makeFilesPage([directory])));
-    mount();
+    mount(false, makeFilesPage([directory]));
     await screen.findByRole("button", { name: "Expand Unopened" });
     await userEvent.click(screen.getByText("Health", { selector: "summary" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Degraded" }));
@@ -121,17 +121,14 @@ describe("Files browser", () => {
     ).toBe(true);
   });
   it("showsUnknownMembershipOnFailedScan", async () => {
+    const failedPage = makeFilesPage([makeFileRow({ libraryState: "unknown" })], {
+      libraryScanState: "unknown",
+      libraryError: "Library scan unavailable.",
+    });
     mocks.fetch.mockImplementation(() =>
-      Promise.resolve(
-        Response.json(
-          makeFilesPage([makeFileRow({ libraryState: "unknown" })], {
-            libraryScanState: "unknown",
-            libraryError: "Library scan unavailable.",
-          }),
-        ),
-      ),
+      Promise.resolve(Response.json(failedPage)),
     );
-    mount();
+    mount(false, failedPage);
     await screen.findByText("Library scan unavailable.");
     expect(screen.getByText("Library: Unknown")).toBeTruthy();
     expect(screen.queryByRole("gridcell", { name: "Not in library" })).toBeNull();
@@ -204,7 +201,7 @@ describe("Files browser", () => {
         );
       return Promise.resolve(Response.json(makeFilesPage(remaining)));
     });
-    mount();
+    mount(false, makeFilesPage(remaining));
     await screen.findByRole("checkbox", { name: "Select Second.mkv" });
     await userEvent.click(screen.getByRole("checkbox", { name: "Select Synthetic.mkv" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Select Second.mkv" }));
@@ -217,8 +214,8 @@ describe("Files browser", () => {
     expect(removed.filter((id) => id === row.id)).toHaveLength(1);
     expect(removed.filter((id) => id === second.id)).toHaveLength(1);
     expect(
-      screen.getByRole("checkbox", { name: "Select Second.mkv" }).getAttribute("checked"),
-    ).not.toBe("false");
+      screen.getByRole<HTMLInputElement>("checkbox", { name: "Select Second.mkv" }).checked,
+    ).toBe(true);
   });
   it("closesPlayerWhenItsFileIsRemoved", async () => {
     let deleted = false;
@@ -242,9 +239,9 @@ describe("Files browser", () => {
     await waitFor(() => expect(screen.queryByTestId("player")).toBeNull());
   });
   it("refreshesOnlyVisibleBranchesAndPausesWhenHidden", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     mount();
     await screen.findByRole("button", { name: "Play Synthetic.mkv" });
-    vi.useFakeTimers();
     const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     const count = mocks.fetch.mock.calls.length;
     await act(() => vi.advanceTimersByTimeAsync(60000));
@@ -354,8 +351,9 @@ describe("Files browser", () => {
   it("strictModeCleanupDoesNotDisableTheRemountedReadCoordinator", async () => {
     mount(true);
     await screen.findByRole("button", { name: "Play Synthetic.mkv" });
+    expect(mocks.fetch).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Refresh Files" }));
-    await waitFor(() => expect(mocks.fetch.mock.calls.length).toBeGreaterThan(1));
+    await waitFor(() => expect(mocks.fetch).toHaveBeenCalledOnce());
     expect(screen.queryByRole("alert")).toBeNull();
   });
 });

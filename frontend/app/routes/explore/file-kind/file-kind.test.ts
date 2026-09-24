@@ -7,7 +7,7 @@ import {
   isAudioFile,
   isPlayableMedia,
   isVideoFile,
-} from "./file-kind";
+} from "~/utils/file-kind";
 
 describe("getExtension", () => {
   it("returns the lowercase-preserving extension for normal names", () => {

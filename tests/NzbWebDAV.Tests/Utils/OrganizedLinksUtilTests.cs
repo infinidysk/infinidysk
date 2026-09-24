@@ -14,8 +14,17 @@ public class OrganizedLinksUtilTests
         try
         {
             var id = Guid.NewGuid();
-            File.WriteAllText(Path.Join(root, "movie.strm"), $"http://localhost/view/.ids/{id}.mkv");
-            var links = OrganizedLinksUtil.GetLibraryDavItemLinks(root, "/synthetic/mount", CancellationToken.None);
+            File.CreateSymbolicLink(Path.Join(root, "movie.mkv"), $"/synthetic/mount/.ids/{id}.mkv");
+            var configManager = new ConfigManager();
+            configManager.UpdateValues([
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = root },
+                new ConfigItem { ConfigName = ConfigKeys.RcloneMountDir, ConfigValue = "/synthetic/mount" },
+            ]);
+            var links = OrganizedLinksUtil.GetLibraryDavItemLinks(configManager);
+            configManager.UpdateValues([
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = Path.Join(root, "missing") },
+                new ConfigItem { ConfigName = ConfigKeys.RcloneMountDir, ConfigValue = "/other/mount" },
+            ]);
             Assert.Equal(id, Assert.Single(links).DavItemId);
         }
         finally { Directory.Delete(root, true); }

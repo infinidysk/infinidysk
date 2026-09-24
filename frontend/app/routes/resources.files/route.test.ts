@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeFileRow, makeFilesPage } from "../explore/files-fixtures";
+import { makeFileRow, makeFilesPage } from "~/clients/files-fixtures";
 import { filesResourcePageSchema } from "~/clients/files-contract";
 const mocks = vi.hoisted(() => ({
   disabled: false,

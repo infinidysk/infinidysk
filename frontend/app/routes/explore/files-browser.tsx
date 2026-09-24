@@ -19,7 +19,7 @@ import { useWebsocketTopics } from "~/utils/shared-websocket";
 import {
   parseHealthItemProgressMessage,
   parseHealthItemStatusMessage,
-} from "~/routes/health/health-queue-state";
+} from "~/utils/health-queue-state";
 import {
   defaultFilesFilters,
   filesFiltersSchema,
@@ -46,7 +46,7 @@ import {
   topLevelRemovalTargets,
   type BranchPage,
 } from "./files-state";
-import { isPlayableMedia } from "./file-kind/file-kind";
+import { isPlayableMedia } from "~/utils/file-kind";
 import { MediaPreview } from "./media-preview/media-preview";
 import { appendQueryParam } from "./media-preview/media-utils";
 import styles from "./files-browser.module.css";
@@ -102,7 +102,7 @@ async function readPage(
   return page.data;
 }
 const scopeHref = (path: string) =>
-  withUrlBase(`/explore/${path.replace(/^\//, "").split("/").map(encodeURIComponent).join("/")}`);
+  `/explore/${path.replace(/^\//, "").split("/").map(encodeURIComponent).join("/")}`;
 const age = (value: string | null, now: number) =>
   value === null
     ? "Unknown"
@@ -139,6 +139,7 @@ export function FilesBrowser(props: Props) {
   const [messages, setMessages] = useState<Record<string, string>>({});
   const coordinator = useRef<FilesReadCoordinator | null>(null);
   const scopeRef = useRef(props.scopePath);
+  const queryKeyRef = useRef(queryKey);
   const rowsRef = useRef(new Map<string, HTMLButtonElement>());
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -171,6 +172,7 @@ export function FilesBrowser(props: Props) {
     };
   }, []);
   useEffect(() => {
+    if (queryKeyRef.current === queryKey && scopeRef.current === props.scopePath) return;
     const generation = coordinator.current!.beginGeneration();
     dispatch({
       type: "reset",
@@ -179,6 +181,7 @@ export function FilesBrowser(props: Props) {
       scopeChanged: scopeRef.current !== props.scopePath,
     });
     scopeRef.current = props.scopePath;
+    queryKeyRef.current = queryKey;
   }, [queryKey, props.scopePath]);
   const visible =
     mode === "tree"
@@ -440,7 +443,7 @@ export function FilesBrowser(props: Props) {
           <summary>WebDAV system views</summary>
           <nav className="flex flex-wrap gap-3 py-2">
             {["nzbs", "completed-symlinks", ".ids"].map((path) => (
-              <Link key={path} to={withUrlBase(`/explore/${path}`)}>
+              <Link key={path} to={`/explore/${path}`}>
                 {path}
               </Link>
             ))}
@@ -709,7 +712,7 @@ function BranchControls({
         <>
           <span role="alert">{branch.error}</span>
           {branch.error?.includes("Sign in") ? (
-            <Link to={withUrlBase("/login")}>Sign in</Link>
+            <Link to="/login">Sign in</Link>
           ) : (
             <Button size="xsmall" onClick={retry}>
               Retry

@@ -211,10 +211,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             if (item is null || !item.Path.StartsWith("/content/", StringComparison.Ordinal)) return FileRecheckOutcome.NotFound;
             if (item.Type != DavItem.ItemType.UsenetFile || !FilenameUtil.IsHealthCheckCandidate(item.Name)) return FileRecheckOutcome.Unsupported;
             if (_inProgress.ContainsKey(davItemId)) return FileRecheckOutcome.AlreadyRunning;
-            if (item.HealthRepairPending || item.NextHealthCheck == DateTimeOffset.UnixEpoch || item.NextHealthCheck == ForcedRecheckSentinel)
+            if (item.HealthRepairPending || item.NextHealthCheck == null || item.NextHealthCheck == DateTimeOffset.UnixEpoch || item.NextHealthCheck == ForcedRecheckSentinel)
                 return FileRecheckOutcome.AlreadyQueued;
             var updated = await context.Items.Where(file => file.Id == davItemId && file.Type == DavItem.ItemType.UsenetFile)
                 .Where(file => !file.HealthRepairPending)
+                .Where(file => file.NextHealthCheck != null)
                 .Where(file => file.NextHealthCheck != DateTimeOffset.UnixEpoch)
                 .Where(file => file.NextHealthCheck != ForcedRecheckSentinel)
                 .ExecuteUpdateAsync(setters => setters.SetProperty(file => file.NextHealthCheck, ForcedRecheckSentinel), cancellationToken)

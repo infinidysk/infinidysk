@@ -19,6 +19,7 @@ public sealed class AdminContractTests
         await using var factory = new NzbDavWebApplicationFactory();
         using var client = factory.CreateAuthenticatedClient();
         var selected = NewUncheckedUsenetFile("selected.mkv");
+        selected.NextHealthCheck = new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero);
         var other = NewUncheckedUsenetFile("other.mkv");
         other.NextHealthCheck = new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero);
         await factory.AddDavItemsAsync(selected, other);
@@ -32,6 +33,24 @@ public sealed class AdminContractTests
         var context = scope.ServiceProvider.GetRequiredService<DavDatabaseClient>().Ctx;
         Assert.Equal(HealthCheckService.ForcedRecheckSentinel, (await context.Items.FindAsync(selected.Id))!.NextHealthCheck);
         Assert.Equal(other.NextHealthCheck, (await context.Items.FindAsync(other.Id))!.NextHealthCheck);
+    }
+
+    [Fact]
+    public async Task FileRecheck_NeverCheckedFileKeepsInitialScanPriority()
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var client = factory.CreateAuthenticatedClient();
+        var file = NewUncheckedUsenetFile("unchecked.mkv");
+        await factory.AddDavItemsAsync(file);
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent(file.Id.ToString()), "davItemId");
+        using var response = await client.PostAsync("/api/recheck-file", form);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        Assert.Equal("already-queued", json.RootElement.GetProperty("state").GetString());
+        using var scope = factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<DavDatabaseClient>().Ctx;
+        Assert.Null((await context.Items.FindAsync(file.Id))!.NextHealthCheck);
     }
 
     [Fact]

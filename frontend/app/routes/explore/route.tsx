@@ -13,7 +13,7 @@ import { getFrontendRuntimeConfig } from "../../../server/runtime-config";
 import { Loading } from "~/components/loading/loading";
 import { formatFileSize } from "~/utils/file-size";
 import { parseExploreWebdavPath } from "~/utils/path";
-import { fileKindRank, getExtension, getIcon, isPlayableMedia } from "./file-kind/file-kind";
+import { fileKindRank, getExtension, getIcon, isPlayableMedia } from "~/utils/file-kind";
 import { ItemMenu } from "./item-menu/item-menu";
 import { MediaPreview } from "./media-preview/media-preview";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
@@ -152,7 +152,7 @@ export default function Explore({ loaderData }: Route.ComponentProps) {
       <section>
         <h1 className="text-xl font-semibold">Files</h1>
         <p role="alert">Directory not found: {loaderData.scopePath}</p>
-        <Link to={withUrlBase("/explore")}>Content root</Link>
+        <Link to="/explore">Content root</Link>
       </section>
     );
   return <LegacyBody {...loaderData.data} />;

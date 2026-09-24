@@ -104,7 +104,10 @@ public sealed class FilesLibraryIndex : IDisposable
             timeout.Token.ThrowIfCancellationRequested();
             Publish(configuration, new("ready", _timeProvider.GetUtcNow(), links, null));
         }
-        catch (OperationCanceledException) when (_stopping.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
+        {
+            Log.Debug("Files library scan stopped during shutdown");
+        }
         catch (OperationCanceledException)
         {
             PublishFailure(configuration, "Library scan timed out.");
@@ -115,11 +118,10 @@ public sealed class FilesLibraryIndex : IDisposable
             PublishFailure(configuration, "The configured library directory could not be scanned.");
             Log.Warning("Files library scan unavailable. Reason: {Reason}", "The configured library directory could not be scanned.");
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
         {
             PublishFailure(configuration, "Unexpected library scan failure.");
-            if (exception is OutOfMemoryException) Log.Fatal(exception, "Files library scan ran out of memory");
-            else Log.Error(exception, "Unexpected Files library scan failure");
+            Log.Error(exception, "Unexpected Files library scan failure");
         }
     }
 

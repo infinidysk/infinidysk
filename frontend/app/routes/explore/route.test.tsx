@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
 import type { Route } from "./+types/route";
-import { makeFilesPage } from "./files-fixtures";
+import { makeFilesPage } from "~/clients/files-fixtures";
 const mocks = vi.hoisted(() => ({ page: vi.fn(), directory: vi.fn() }));
 vi.mock("~/auth/authentication.server", () => ({ isAuthenticated: () => Promise.resolve(true) }));
 vi.mock("~/auth/downloads.server", () => ({ getDownloadKey: () => "synthetic" }));

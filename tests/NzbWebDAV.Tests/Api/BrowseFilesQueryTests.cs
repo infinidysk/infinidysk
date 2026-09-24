@@ -302,7 +302,9 @@ public sealed class BrowseFilesQueryTests : IAsyncLifetime
     {
         var category = Add("tv", directory: true);
         Add("video.mkv", category);
+        _config.UpdateValues([new ConfigItem { ConfigName = ConfigKeys.WebdavEnforceReadonly, ConfigValue = "false" }]);
         Assert.False((await Read()).Rows.Single(row => row.Id == category.Id).CanDelete);
+        Assert.True(Assert.Single((await Read("?mode=list")).Rows).CanDelete);
         _config.UpdateValues([new ConfigItem { ConfigName = ConfigKeys.WebdavEnforceReadonly, ConfigValue = "true" }]);
         Assert.False(Assert.Single((await Read("?mode=list")).Rows).CanDelete);
     }

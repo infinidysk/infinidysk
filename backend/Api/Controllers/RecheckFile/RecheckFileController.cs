@@ -12,7 +12,7 @@ public sealed class RecheckFileController(HealthCheckService healthCheckService,
 {
     internal static async Task<Guid> ReadItemIdAsync(HttpContext context)
     {
-        if (!context.Request.HasFormContentType || context.Request.ContentType?.StartsWith("multipart/form-data", StringComparison.OrdinalIgnoreCase) != true)
+        if (!context.Request.HasFormContentType || context.Request.ContentType?.StartsWith("multipart/form-data", StringComparison.OrdinalIgnoreCase) is not true)
             throw new BadHttpRequestException("Expected multipart davItemId.");
         var form = await context.Request.ReadFormAsync(context.RequestAborted).ConfigureAwait(false);
         var values = form["davItemId"];

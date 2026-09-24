@@ -16,6 +16,9 @@ describe("Files mutations", () => {
     "/api/search-file-in-arr",
     "/API/RECHECK-FILE/",
     "/%61pi/search-file-in-arr///",
+    "/api/x/../recheck-file",
+    "/api/x/%2e%2e/search-file-in-arr",
+    "/api/./search-file-in-arr",
   ])("guards %s", (path) => {
     expect(isFilesBackendMutation("POST", path)).toBe(true);
     expect(isReadOnlyDeniedBackendMutation("post", path)).toBe(true);
@@ -68,8 +71,19 @@ describe("isBackendApiPath", () => {
 });
 
 describe("isReadOnlyDeniedBackendMutation", () => {
+  it.each(["/api/delete-webdav-item-preview", "/api/x/../delete-webdav-item-preview", "/%61pi/delete-webdav-item-preview/"])(
+    "blocks read-only GET access to %s",
+    (path) => expect(isReadOnlyDeniedBackendMutation("GET", path)).toBe(true),
+  );
+  it.each([
+    ["GET", "/api/delete-webdav-item"],
+    ["POST", "/api/delete-webdav-item-preview"],
+  ])("blocks read-only legacy %s access to %s", (method, path) => {
+    expect(isReadOnlyDeniedBackendMutation(method, path)).toBe(true);
+  });
   it.each([
     "/api/delete-webdav-item",
+    "/api/x/../delete-webdav-item",
     "/api/delete-webdav-item/preview",
     "/api/remove-missing-payloads",
     "/api/remove-missing-payloads/",

@@ -33,8 +33,14 @@ public static class SymlinkAndStrmUtil
             {
                 if (!runningProcess.HasExited) runningProcess.Kill(entireProcessTree: true);
             }
-            catch (InvalidOperationException) { }
-            catch (System.ComponentModel.Win32Exception) { }
+            catch (InvalidOperationException exception)
+            {
+                Trace.WriteLine($"Library scan process already exited during cancellation: {exception.Message}");
+            }
+            catch (System.ComponentModel.Win32Exception exception)
+            {
+                Trace.WriteLine($"Library scan process could not be killed during cancellation: {exception.Message}");
+            }
         }, process);
 
         // Drain stderr asynchronously. Leaving it unread can fill the OS pipe buffer and
