@@ -158,10 +158,10 @@ export function AttentionSummary({
         >
           <Icon name="notifications" className="!text-[22px]" />
         </span>
-        {(hasAlerts || !isChecking) && (
+        {hasAlerts && (
           <span
             aria-hidden="true"
-            className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full ${hasAlerts ? "bg-warning" : "bg-success/75"}`}
+            className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-warning"
           />
         )}
       </summary>

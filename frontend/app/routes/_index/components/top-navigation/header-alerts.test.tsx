@@ -100,10 +100,11 @@ describe("HeaderAlerts live data", () => {
     expect(screen.queryByText("No issues need attention")).toBeNull();
   });
 
-  it("shows no alerts when all checks succeed and no providers or Arrs are configured", async () => {
+  it("does not show a notification dot when all checks succeed and no providers or Arrs are configured", async () => {
     renderAlerts(false);
     const trigger = await screen.findByLabelText("Alerts: no issues need attention");
-    expect(trigger.querySelector("span[class*='bg-success']")).not.toBeNull();
+    expect(trigger.querySelector("span[class*='bg-success']")).toBeNull();
+    expect(trigger.querySelector("span[class*='bg-warning']")).toBeNull();
     expect(socket.enabled).toBe(false);
     expect(screen.queryByText("Arr status unavailable")).toBeNull();
     expect(screen.queryByText("Provider status unavailable")).toBeNull();
