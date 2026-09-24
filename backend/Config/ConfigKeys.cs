@@ -193,6 +193,7 @@ public static class ConfigKeys
     public const string WatchtowerProfileToken = "watchtower.profile-token";
     public const string WatchtowerRanking = "watchtower.ranking";
     public const string WatchtowerResolveConcurrency = "watchtower.resolve-concurrency";
+    public const string WatchtowerSchedule = "watchtower.schedule";
     public const string WatchtowerSeasonBundleFallback = "watchtower.season-bundle-fallback";
     public const string WatchtowerSeasonBundleFallbackMaxEpisodes = "watchtower.season-bundle-fallback-max-episodes";
     public const string WatchtowerSeasonBundleFallbackRecentCount = "watchtower.season-bundle-fallback-recent-count";
