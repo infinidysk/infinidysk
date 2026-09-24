@@ -118,6 +118,7 @@ public class MultiConnectionNntpClient(
     public int MaxConnections => connectionPool.MaxConnections;
     public int EffectiveMaxConnections => connectionPool.EffectiveMaxConnections;
     internal int WarmConnectionFloor => connectionPool.WarmConnectionFloor;
+    internal void RetirePool() => connectionPool.Retire();
     internal int PrewarmConnectionCapacity => Math.Min(
         EffectiveMaxConnections,
         _connectionAdmission?.GetSnapshot().EffectiveTransferLimit ?? EffectiveMaxConnections);

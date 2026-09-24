@@ -394,6 +394,31 @@ public class ConnectionPoolWarmConnectionTests
     }
 
     [Fact]
+    public async Task Retire_StopsBackgroundKeepAlivesWithoutDisposingPool()
+    {
+        var keepAliveCalls = 0;
+        await using var pool = new ConnectionPool<TestConnection>(
+            maxConnections: 1,
+            connectionFactory: _ => ValueTask.FromResult(new TestConnection(1)),
+            idleTimeout: TimeSpan.FromMilliseconds(40),
+            warmConnectionFloor: 1,
+            keepAlive: (_, _) =>
+            {
+                Interlocked.Increment(ref keepAliveCalls);
+                return Task.CompletedTask;
+            });
+
+        await WaitUntilAsync(() => Volatile.Read(ref keepAliveCalls) > 0);
+        pool.Retire();
+        var retiredCallCount = Volatile.Read(ref keepAliveCalls);
+        await Task.Delay(TimeSpan.FromMilliseconds(100));
+
+        Assert.Equal(retiredCallCount, Volatile.Read(ref keepAliveCalls));
+        Assert.False(pool.IsDisposed);
+        Assert.Equal(1, pool.LiveConnections);
+    }
+
+    [Fact]
     public async Task FailedIdleKeepAlive_RecyclesConnectionAndRefillsFloor()
     {
         var first = new TestConnection(1) { FailKeepAlive = true };

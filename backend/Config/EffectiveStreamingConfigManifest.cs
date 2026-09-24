@@ -41,7 +41,9 @@ internal static class EffectiveStreamingConfigManifest
                 MaxConnections: provider.MaxConnections,
                 TlsEnabled: provider.UseSsl,
                 TlsVerification: !provider.SkipTlsVerification,
-                WarmConnectionFloor: configManager.GetWarmConnectionsFloor(provider.MaxConnections)));
+                WarmConnectionFloor: provider.Type == ProviderType.Disabled || !configManager.IsWarmConnectionsEnabled()
+                    ? 0
+                    : configManager.GetWarmConnectionsFloor(provider.MaxConnections)));
         }
 
         return new EffectiveStreamingConfigDocument(

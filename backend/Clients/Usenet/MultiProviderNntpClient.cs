@@ -2183,5 +2183,10 @@ public class MultiProviderNntpClient(
         GC.SuppressFinalize(this);
     }
 
-    internal override void Retire() => connectionPoolStats?.Deactivate();
+    internal override void Retire()
+    {
+        connectionPoolStats?.Deactivate();
+        foreach (var provider in providers)
+            provider.RetirePool();
+    }
 }

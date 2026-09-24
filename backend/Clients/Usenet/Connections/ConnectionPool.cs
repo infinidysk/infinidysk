@@ -101,6 +101,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private int _pendingConnectionCreations;
     private int _handshakeOperations;
     private int _disposed; // 0 == false, 1 == true
+    private int _retired;
     private int _effectiveMaxConnections;
     private int? _learnedConnectionLimit;
     private long _nextReplacementHandshakeAtMs;
@@ -1605,6 +1606,12 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     {
         if (conn is IDisposable d)
             d.Dispose();
+    }
+
+    internal void Retire()
+    {
+        if (Interlocked.Exchange(ref _retired, 1) == 0)
+            _sweepCts.Cancel();
     }
 
     /* -------------------------- IAsyncDisposable ---------------------------------- */
