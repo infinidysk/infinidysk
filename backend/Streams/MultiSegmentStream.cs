@@ -22,6 +22,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private const int BodyPipelineBatchSize = 4;
     private const int MaxBodyRetries = 2;
     private const int MaxCorruptionRetries = 3;
+    internal const string InconclusiveGapFillTemplate =
+        "Article {SegmentId} could not be confirmed missing while reading {FileName}. " +
+        "Filling the {Bytes}-byte gap for this read only; the segment is not recorded as missing because not every enabled provider answered.";
 
     private readonly Memory<string> _segmentIds;
     private readonly string[][]? _segmentFallbacks;
@@ -1169,7 +1172,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 catch (UsenetArticleNotFoundException e)
                 {
                     var fallback = await TryFallbackSegmentsAsync(
-                            segmentIndex, lease, cancellationToken)
+                            segmentIndex, lease, e, cancellationToken)
                         .ConfigureAwait(false);
                     if (fallback is not null)
                     {
@@ -1179,10 +1182,12 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
                     if (_failFastOnFirstSegment && isFirstSegment)
                     {
-                        e.LogWarningKnownOrStack(
-                            "First article {SegmentId} missing on all providers at playback start while reading {FileName}. " +
-                            "Failing the stream so the player surfaces an error.",
-                            segmentId, _fileName);
+                        // ExceptionMiddleware logs an inconclusive miss once as a retryable 503.
+                        if (e.InconclusiveReason is null)
+                            e.LogWarningKnownOrStack(
+                                "First article {SegmentId} missing on all providers at playback start while reading {FileName}. " +
+                                "Failing the stream so the player surfaces an error.",
+                                segmentId, _fileName);
                         throw;
                     }
 
@@ -1198,7 +1203,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     if (attempt >= GetCorruptionRetryLimit(segmentId))
                     {
                         var fallback = await TryFallbackSegmentsAsync(
-                                segmentIndex, lease, cancellationToken)
+                            segmentIndex, lease, primaryMiss: null, cancellationToken)
                             .ConfigureAwait(false);
                         if (fallback is not null)
                         {
@@ -1428,7 +1433,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         }
         catch (UsenetArticleNotFoundException e)
         {
-            var fallback = await TryFallbackSegmentsAsync(segmentIndex, lease, cancellationToken)
+            var fallback = await TryFallbackSegmentsAsync(segmentIndex, lease, e, cancellationToken)
                 .ConfigureAwait(false);
             if (fallback is not null)
             {
@@ -1671,7 +1676,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 }
             }
 
-            var fallback = await TryFallbackSegmentsAsync(segmentIndex, lease, cancellationToken)
+            var fallback = await TryFallbackSegmentsAsync(segmentIndex, lease, primaryMiss: null, cancellationToken)
                 .ConfigureAwait(false);
             if (fallback is not null)
             {
@@ -1694,10 +1699,12 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     /// When <paramref name="existingLease"/> is supplied it is retained across
     /// attempts; on success ownership transfers to the returned stream, on miss
     /// the caller still owns the lease.
+    /// An inconclusive alternate miss makes <paramref name="primaryMiss"/> inconclusive too.
     /// </summary>
     private async Task<DrainedSegment?> TryFallbackSegmentsAsync(
         int segmentIndex,
         ArticleByteLease? existingLease,
+        UsenetArticleNotFoundException? primaryMiss,
         CancellationToken cancellationToken)
     {
         var fallbacks = GetFallbacks(segmentIndex);
@@ -1744,9 +1751,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     lease = null;
                     return drained;
                 }
-                catch (UsenetArticleNotFoundException)
+                catch (UsenetArticleNotFoundException alternateMiss)
                 {
-                    // Try the next alternate MessageId.
+                    // An alternate that could not be confirmed missing leaves the segment unconfirmed.
+                    if (primaryMiss is not null)
+                        primaryMiss.InconclusiveReason ??= alternateMiss.InconclusiveReason;
                 }
                 catch (UsenetCorruptArticleException)
                 {
@@ -1824,9 +1833,12 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 fill, _fileName, segmentId);
         }
 
+        // An inconclusive miss fills this read only: no PAR2 zero-fill report, and the tracker
+        // does not remember the segment as missing.
+        var inconclusive = exception.IsInconclusiveArticleMiss();
         if (exception.TryGetCausingException(out UsenetCorruptArticleException? _))
             Par2RepairTriggerSink.ReportCorruption(_fileName, segmentId);
-        else
+        else if (!inconclusive)
             Par2RepairTriggerSink.Current?.ReportZeroFill(_fileName, segmentId, segmentIndex, fill);
 
         PlaybackHoleTracker.RecordHole(_fileName, segmentId, exception);
@@ -1834,7 +1846,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 #pragma warning disable CA2000 // gap-fill stream ownership transfers to the returned SegmentDownloadResult
         return SegmentDownloadResult.ZeroFill(
             CreateGapFillStream(fill, segmentIndex),
-            messageTemplate,
+            inconclusive ? InconclusiveGapFillTemplate : messageTemplate,
             segmentId,
             fill,
             exception,

@@ -589,6 +589,30 @@ public class NzbFileStreamTests
     }
 
     [Fact]
+    public async Task LegacySeek_InconclusivePrimaryWithConfirmedMissingFallback_KeepsInconclusiveCause()
+    {
+        var (segments, ranges) = NonUniformGeometry();
+        segments.Remove("two");
+        ranges.Remove("two");
+        var client = new FakeNntpClient(
+            segments, useCachedYencStreams: true, segmentRanges: ranges,
+            headerProbeFailure: (id, _) => id == "two"
+                ? new UsenetArticleNotFoundException(id) { InconclusiveReason = "provider skipped" }
+                : null);
+        await using var stream = new NzbFileStream(
+            SegmentIds, 12, client, articleBufferSize: 2, segmentByteRanges: null,
+            usePipelinedBodyRequests: false, fileName: "nonuniform.bin",
+            segmentFallbacks: [[], ["two-alt"], []], readBudgetOverride: 3);
+        stream.Seek(5, SeekOrigin.Begin);
+
+        var ex = await Assert.ThrowsAsync<SeekPositionNotFoundException>(
+            async () => await stream.ReadAtLeastAsync(new byte[3], 3, throwOnEndOfStream: false));
+        var missing = Assert.IsType<UsenetArticleNotFoundException>(ex.InnerException);
+        Assert.Equal("two", missing.SegmentId);
+        Assert.Equal("provider skipped", missing.InconclusiveReason);
+    }
+
+    [Fact]
     public async Task LegacySeek_BodyGeometryChangedAfterProbe_FailsBeforeEmittingBytes()
     {
         var (segments, ranges) = NonUniformGeometry();
