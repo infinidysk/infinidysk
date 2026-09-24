@@ -39,9 +39,7 @@ describe("ProviderSpeedChart", () => {
     expect(speedPathD(markup, "active-average")).toContain(baseline);
     if (values[0] === null) {
       expect(d).toBe("M0.0,156.0 L400.0,6.0 L800.0,156.0");
-      expect(speedPathD(markup, "active-average")).toBe(
-        "M0.0,156.0 L400.0,81.0 L800.0,156.0",
-      );
+      expect(speedPathD(markup, "active-average")).toBe("M0.0,156.0 L400.0,81.0 L800.0,156.0");
     }
     expect(markup).toContain('data-series="active-average"');
     expect(markup).toContain("Active avg");
