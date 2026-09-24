@@ -20,7 +20,12 @@ internal static class ProviderSampledRates
         await tracker.PeakPersistenceGate.WaitAsync().ConfigureAwait(false);
         try
         {
-            await using var transaction = await db.Database.BeginTransactionAsync().ConfigureAwait(false);
+            await db.Database.OpenConnectionAsync().ConfigureAwait(false);
+            var connection = (Microsoft.Data.Sqlite.SqliteConnection)db.Database.GetDbConnection();
+#pragma warning disable CA1849
+            await using var transaction = connection.BeginTransaction(deferred: true);
+#pragma warning restore CA1849
+            await db.Database.UseTransactionAsync(transaction).ConfigureAwait(false);
             var samples = useRollups
                 ? await db.ProviderHourly.AsNoTracking()
                     .Where(row => row.Hour >= windowStart && row.PeakBytesPerSec != null)
