@@ -1,8 +1,8 @@
 {
   "global": {
     "branches": 33,
-    "functions": 29,
-    "lines": 37,
+    "functions": 32,
+    "lines": 40,
     "statements": 36
   },
   "globs": {
