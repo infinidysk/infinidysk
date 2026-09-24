@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Net.Sockets;
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -335,6 +336,54 @@ public sealed class ArrHealthServiceTests
         Assert.False(backoff.IsInBackoff(host));
         backoff.RecordFailure(host, new SocketException());
         Assert.False(backoff.IsInBackoff(host));
+    }
+
+    [Fact]
+    public async Task Poll_LocalDbBusy_DefersImportHistoryWithoutMarkingArrOffline()
+    {
+        var host = "http://sonarr:8989";
+        var backoff = new ArrInstanceBackoff();
+        await using var harness = await DualDbHarness.CreateAsync();
+        harness.DavInterceptor = new BusyFailureInterceptor();
+        var client = new ScriptedArrClient(host)
+        {
+            QueueStatus = _ => Task.FromResult(new ArrQueueStatus { TotalCount = 3 }),
+            Queue = _ => Task.FromResult(new ArrQueue<ArrQueueRecord>
+            {
+                Records = [new ArrQueueRecord { Status = "completed", DownloadId = Guid.NewGuid().ToString() }],
+            }),
+        };
+        using var service = harness.CreateService(client, host, backoff);
+
+        var events = await CaptureAsync(async () =>
+        {
+            for (var cycle = 0; cycle < ArrHealthService.OfflineFailureThreshold + 1; cycle++)
+                Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+        });
+
+        var snapshot = Assert.Single(service.GetSnapshots());
+        Assert.Equal(ArrInstanceHealthStatus.Healthy, snapshot.Status);
+        Assert.Equal(3, snapshot.QueueCount);
+        Assert.Equal(ArrHealthService.LocalDatabaseBusyMessage, snapshot.LastError);
+        Assert.False(backoff.IsInBackoff(host));
+        Assert.DoesNotContain(events, e =>
+            e.MessageTemplate.Text.StartsWith("Arr health poll failed", StringComparison.Ordinal)
+            && e.Properties.TryGetValue("Host", out var loggedHost)
+            && loggedHost.ToString().Trim('"') == host);
+        Assert.All(
+            events.Where(e => e.Level == LogEventLevel.Warning
+                              && e.MessageTemplate.Text.StartsWith("Arr health import history", StringComparison.Ordinal)
+                              && e.Properties.TryGetValue("Host", out var loggedHost)
+                              && loggedHost.ToString().Trim('"') == host),
+            warning => Assert.Null(warning.Exception));
+    }
+
+    private sealed class BusyFailureInterceptor : DbCommandInterceptor
+    {
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default) =>
+            throw new SqliteException("SQLite Error 5: 'database is locked'.", 5);
     }
 
     private sealed class SocketFailureInterceptor : DbCommandInterceptor

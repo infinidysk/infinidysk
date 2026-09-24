@@ -212,9 +212,10 @@ public sealed class ArrHealthService : BackgroundService
 
         var queueSucceeded = false;
         var arrRequestFailed = false;
+        ArrQueueStatus? queueStatus = null;
         try
         {
-            var queueStatus = await CallAsync(
+            queueStatus = await CallAsync(
                 $"{appLabel} queue status", details.Host,
                 callCt => client.GetQueueStatusAsync(callCt), () => arrRequestFailed = true, ct).ConfigureAwait(false);
             var queue = await CallAsync(
@@ -277,6 +278,19 @@ public sealed class ArrHealthService : BackgroundService
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // shutdown — do not log or mark Offline
+        }
+        catch (Exception e) when (e is not OutOfMemoryException
+                                  && queueStatus is not null
+                                  && !arrRequestFailed
+                                  && e.IsTransientDatabaseException())
+        {
+            Log.Warning(
+                "Arr health import history for {Host} deferred; InfiniDysk's local database is busy. Reason: {Reason}",
+                details.Host,
+                e.TryGetKnownErrorMessage(out var reason) ? reason : e.Message);
+            Log.Debug(e, "Arr health local database contention details for {Host}", details.Host);
+            _backoff.RecordSuccess(details.Host);
+            RecordLocalDatabaseDeferral(key, appType, details.Host, displayName, queueStatus);
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
@@ -512,6 +526,48 @@ public sealed class ArrHealthService : BackgroundService
                 LastImportAtMs = previous?.LastImportAtMs,
                 LastPolledAt = DateTimeOffset.UtcNow,
                 LastError = DescribeFailure(exception),
+                MedianHandoffMs30d = previous?.MedianHandoffMs30d,
+                MedianSampleCount30d = previous?.MedianSampleCount30d ?? 0,
+                Awaiting = previous?.Awaiting ?? [],
+            };
+        }
+    }
+
+    internal const string LocalDatabaseBusyMessage =
+        "Import history was not updated because InfiniDysk's local database is busy; the instance itself responded normally.";
+
+    // The Arr answered, so reset the offline streak and refresh queue-derived fields;
+    // DB-derived fields (awaiting, medians) keep their last known values.
+    private void RecordLocalDatabaseDeferral(
+        string key,
+        string appType,
+        string host,
+        string displayName,
+        ArrQueueStatus queueStatus)
+    {
+        var hasWarnings = queueStatus.Warnings || queueStatus.UnknownWarnings;
+        var hasErrors = queueStatus.Errors || queueStatus.UnknownErrors;
+        lock (_snapshotLock)
+        {
+            _consecutiveFailures[key] = 0;
+            _snapshots.TryGetValue(key, out var previous);
+            var status = hasWarnings || hasErrors || previous?.Status == ArrInstanceHealthStatus.Degraded
+                ? ArrInstanceHealthStatus.Degraded
+                : ArrInstanceHealthStatus.Healthy;
+            _snapshots[key] = new ArrHealthSnapshot
+            {
+                InstanceKey = key,
+                DisplayName = displayName,
+                AppType = appType,
+                Host = host,
+                Status = status,
+                QueueCount = queueStatus.TotalCount,
+                AwaitingCount = previous?.AwaitingCount ?? 0,
+                HasWarnings = hasWarnings,
+                HasErrors = hasErrors,
+                LastImportAtMs = previous?.LastImportAtMs,
+                LastPolledAt = DateTimeOffset.UtcNow,
+                LastError = LocalDatabaseBusyMessage,
                 MedianHandoffMs30d = previous?.MedianHandoffMs30d,
                 MedianSampleCount30d = previous?.MedianSampleCount30d ?? 0,
                 Awaiting = previous?.Awaiting ?? [],
