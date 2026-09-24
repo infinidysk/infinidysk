@@ -17,10 +17,12 @@ export function AttentionSummary({
   arrLoading = false,
   updateAvailable,
 }: {
-  providers: Pick<
-    ProviderCircuitBreakerRow,
-    "provider" | "circuitState" | "nickname" | "lastFailureReason" | "consecutiveTrips"
-  >[] | null;
+  providers:
+    | Pick<
+        ProviderCircuitBreakerRow,
+        "provider" | "circuitState" | "nickname" | "lastFailureReason" | "consecutiveTrips"
+      >[]
+    | null;
   arrHealth: ArrHealthResponse | null;
   hasConfiguredArrs: boolean;
   providersLoading?: boolean;
@@ -135,6 +137,9 @@ export function AttentionSummary({
     : isChecking
       ? "Alerts: checking status"
       : "Alerts: no issues need attention";
+  const statusMessage = stalledProviders?.length
+    ? `${stalledProviders.length} provider ${stalledProviders.length === 1 ? "circuit" : "circuits"} repeatedly open`
+    : label;
 
   return (
     <details
@@ -176,7 +181,7 @@ export function AttentionSummary({
         )}
       </summary>
       <span className="sr-only" role="status" aria-live="polite">
-        {label}
+        {statusMessage}
       </span>
       <section
         aria-label="Alerts"
@@ -227,7 +232,8 @@ export function AttentionSummary({
               <div className="mb-3 flex items-center gap-2 text-sm text-warning">
                 <Icon name="cloud" className="shrink-0 !text-[18px]" />
                 <span className="min-w-0 flex-1">
-                  {stalledProviders.length} provider {stalledProviders.length === 1 ? "circuit" : "circuits"} repeatedly open
+                  {stalledProviders.length} provider{" "}
+                  {stalledProviders.length === 1 ? "circuit" : "circuits"} repeatedly open
                 </span>
               </div>
               <ul className="space-y-3 pb-2 text-sm">
@@ -243,8 +249,8 @@ export function AttentionSummary({
                     )}
                     <p className="text-base-content/80">
                       Missing-article checks are paused while this provider stays enabled: affected
-                      reads answer try again and repairs wait. Files parked as Action needed re-check
-                      on their own once it recovers.
+                      reads answer try again and repairs wait. Files parked as Action needed
+                      re-check on their own once it recovers.
                     </p>
                   </li>
                 ))}
