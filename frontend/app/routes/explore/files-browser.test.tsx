@@ -125,9 +125,7 @@ describe("Files browser", () => {
       libraryScanState: "unknown",
       libraryError: "Library scan unavailable.",
     });
-    mocks.fetch.mockImplementation(() =>
-      Promise.resolve(Response.json(failedPage)),
-    );
+    mocks.fetch.mockImplementation(() => Promise.resolve(Response.json(failedPage)));
     mount(false, failedPage);
     await screen.findByText("Library scan unavailable.");
     expect(screen.getByText("Library: Unknown")).toBeTruthy();
