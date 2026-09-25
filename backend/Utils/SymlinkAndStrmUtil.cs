@@ -67,7 +67,7 @@ public static class SymlinkAndStrmUtil
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var filePath = ReadNullTerminated(process.StandardOutput);
+                var filePath = ReadNextPath(process.StandardOutput, cancellationToken);
                 if (filePath is null)
                     break;
 
@@ -114,6 +114,20 @@ public static class SymlinkAndStrmUtil
             throw new InvalidOperationException(
                 $"Library symlink scan failed with exit code {process.ExitCode}" +
                 (string.IsNullOrWhiteSpace(stderr) ? "." : $": {stderr}"));
+        }
+    }
+
+    internal static string? ReadNextPath(TextReader reader, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return ReadNullTerminated(reader);
+        }
+        catch (Exception exception) when (
+            cancellationToken.IsCancellationRequested &&
+            exception is InvalidOperationException or IOException)
+        {
+            throw new OperationCanceledException("Library scan was cancelled.", exception, cancellationToken);
         }
     }
 
