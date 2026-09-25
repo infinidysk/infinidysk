@@ -68,6 +68,7 @@ public class MultiProviderNntpClient(
             .Select((provider, index) => (Provider: provider, Index: index))
             .Where(item => item.Provider.ProviderType == ProviderType.Pooled)
             .Where(item => item.Provider.GetCircuitBreakerSnapshot().State == ProviderCircuitState.Closed)
+            .Where(item => !item.Provider.IsHandshakeBackoffActive)
             .Where(item => !IsOverLimit(item.Provider))
             .OrderBy(item => item.Provider.Priority)
             .ThenBy(item => item.Index)

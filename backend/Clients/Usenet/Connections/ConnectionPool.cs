@@ -63,6 +63,13 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     public int ActiveConnections => _live - _idleConnections.Count;
     public int AvailableConnections => Math.Max(0, EffectiveMaxConnections - ActiveConnections);
     internal bool IsDisposed => Volatile.Read(ref _disposed) == 1;
+    /// <summary>
+    /// True from a failed TCP/TLS/AUTHINFO open until a later open succeeds or the failure pacing
+    /// window (5 s to 60 s) lapses. Read-start warm-up leaves such a provider alone.
+    /// </summary>
+    internal bool IsHandshakeBackoffActive =>
+        Volatile.Read(ref _consecutiveHandshakeFailures) > 0
+        && GetTimestampMilliseconds() < Volatile.Read(ref _replacementPacingUntilMs);
 
     /// <summary>
     /// Raised after live/idle/effective-max counts change. This is post-state telemetry:

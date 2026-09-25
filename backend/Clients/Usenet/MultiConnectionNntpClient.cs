@@ -122,6 +122,7 @@ public class MultiConnectionNntpClient(
     internal int PrewarmConnectionCapacity => Math.Min(
         EffectiveMaxConnections,
         _connectionAdmission?.GetSnapshot().EffectiveTransferLimit ?? EffectiveMaxConnections);
+    internal bool IsHandshakeBackoffActive => connectionPool.IsHandshakeBackoffActive;
     public int? LearnedConnectionLimit => connectionPool.LearnedConnectionLimit;
     public int LiveConnections => connectionPool.LiveConnections;
     public int IdleConnections => connectionPool.IdleConnections;
@@ -136,8 +137,9 @@ public class MultiConnectionNntpClient(
         int targetConnections,
         CancellationToken cancellationToken)
     {
-        if (targetConnections <= 0 ||
-            circuitBreaker.GetSnapshot().State != ProviderCircuitState.Closed)
+        if (targetConnections <= 0
+            || circuitBreaker.GetSnapshot().State != ProviderCircuitState.Closed
+            || connectionPool.IsHandshakeBackoffActive)
         {
             return Task.CompletedTask;
         }
