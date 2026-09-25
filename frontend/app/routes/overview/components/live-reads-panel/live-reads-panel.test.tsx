@@ -248,29 +248,48 @@ describe("LiveReadsPanel", () => {
     expect(markup).not.toContain("left</span>");
   });
 
-  it("does not lock height until the first snapshot is ready", () => {
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(rectWithHeight(240));
-
-    const { container } = render(
-      <LiveReadsPanelContent rows={fixtureRows.slice(0, 2)} snapshotReady={false} />,
-    );
-    const section = container.querySelector("section");
-    expect(section?.style.height).toBe("");
-  });
-
-  it("locks the first snapshot height when more reads arrive", () => {
+  it("follows the live read count instead of freezing the first snapshot height", () => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(rectWithHeight(240));
 
     const { container, rerender } = render(
-      <LiveReadsPanelContent rows={fixtureRows.slice(0, 2)} snapshotReady />,
+      <LiveReadsPanelContent rows={fixtureRows.slice(0, 4)} />,
     );
     const section = container.querySelector("section");
-    expect(section?.style.height).toBe("240px");
-    expect(section?.className).toContain("overflow-hidden");
+    expect(section?.style.height).toBe("");
+    expect(container.querySelectorAll("li")).toHaveLength(4);
 
-    rerender(<LiveReadsPanelContent rows={fixtureRows} snapshotReady />);
-    expect(section?.style.height).toBe("240px");
-    expect(container.querySelector("ul")?.className).toContain("overflow-y-auto");
+    rerender(<LiveReadsPanelContent rows={fixtureRows.slice(0, 3)} />);
+    expect(section?.style.height).toBe("");
+    expect(container.querySelectorAll("li")).toHaveLength(3);
+
+    rerender(<LiveReadsPanelContent rows={fixtureRows} />);
+    expect(section?.style.height).toBe("");
+    expect(container.querySelectorAll("li")).toHaveLength(5);
+  });
+
+  it("does not keep the empty-state height once reads start", () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(rectWithHeight(120));
+
+    const { container, rerender } = render(<LiveReadsPanelContent rows={[]} />);
+    const section = container.querySelector("section");
+    expect(section?.style.height).toBe("");
+
+    rerender(<LiveReadsPanelContent rows={fixtureRows.slice(0, 2)} />);
+    expect(section?.style.height).toBe("");
+    expect(container.querySelectorAll("li")).toHaveLength(2);
+
+    rerender(<LiveReadsPanelContent rows={[]} />);
+    expect(section?.style.height).toBe("");
+    expect(container.textContent).toContain("No files are being read right now.");
+  });
+
+  it("caps the read list height so extra sessions scroll inside the card", () => {
+    const { container } = render(<LiveReadsPanelContent rows={fixtureRows} />);
+
+    const list = container.querySelector("ul");
+    expect(list?.className).toContain("max-h-80");
+    expect(list?.className).toContain("overflow-y-auto");
+    expect(list?.className).toContain("yes-scrollbar");
   });
 });
 

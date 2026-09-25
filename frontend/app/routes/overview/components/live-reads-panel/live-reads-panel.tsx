@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ActiveRead, ActiveReadsMessage } from "~/clients/backend-client.server";
 import { formatBytes, formatSessionAge, formatTimeLeft } from "../../utils/format";
 import { displayNameForRead } from "../../utils/display-name";
@@ -23,8 +23,8 @@ const HISTORY_LIMIT = 60;
 
 /**
  * Live "right now" panel — full-width rows refreshed via the ActiveReads WS
- * topic. Sizes to the first snapshot of reads, then freezes that height until
- * the next page load so later sessions scroll instead of stretching the card.
+ * topic. The card grows and shrinks with the current reads; past the list's
+ * height cap, rows scroll instead of stretching the card.
  * When `paused`, the subscription is disabled so layout edit borders stay stable.
  */
 export function LiveReadsPanel({
@@ -36,7 +36,6 @@ export function LiveReadsPanel({
 }) {
   const [rows, setRows] = useState<LiveReadRow[]>([]);
   const [mockCount, setMockCount] = useState<number | null>(null);
-  const [snapshotReady, setSnapshotReady] = useState(false);
   // Track previous bytesRead per session for live MiB/s computation.
   const prevRef = useRef<Map<string, { bytes: number; at: number; rate: number }>>(new Map());
   // Per-session rate samples for the sparkline, keyed by session id.
@@ -47,7 +46,6 @@ export function LiveReadsPanel({
     if (count == null) return;
     setMockCount(count);
     setRows(mockLiveReadRows(count));
-    setSnapshotReady(true);
   }, []);
 
   useWebsocketTopic(
@@ -82,7 +80,6 @@ export function LiveReadsPanel({
         prevRef.current = next;
         historyRef.current = nextHistory;
         setRows(nextRows);
-        setSnapshotReady(true);
       } catch {
         /* ignore */
       }
@@ -90,52 +87,22 @@ export function LiveReadsPanel({
     { enabled: !paused && mockCount == null },
   );
 
-  return <LiveReadsPanelContent rows={rows} snapshotReady={snapshotReady} summary={summary} />;
+  return <LiveReadsPanelContent rows={rows} summary={summary} />;
 }
 
 export function LiveReadsPanelContent({
   rows,
-  snapshotReady = true,
   summary,
 }: {
   rows: LiveReadRow[];
-  snapshotReady?: boolean;
   summary?: ReactNode;
 }) {
   const displayedRows = [...rows].sort((a, b) => b.read.startedAt - a.read.startedAt);
-  const cardRef = useRef<HTMLElement>(null);
-  const [lockedHeight, setLockedHeight] = useState<number | null>(null);
-
-  useLayoutEffect(() => {
-    if (!snapshotReady || lockedHeight != null) return;
-    const card = cardRef.current;
-    if (!card) return;
-
-    const lockFromCard = (): boolean => {
-      const height = card.getBoundingClientRect().height;
-      if (height < 1) return false;
-      setLockedHeight(height);
-      return true;
-    };
-
-    if (lockFromCard()) return;
-
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => {
-      if (lockFromCard()) observer.disconnect();
-    });
-    observer.observe(card);
-    return () => observer.disconnect();
-  }, [snapshotReady, lockedHeight]);
-
-  const heightLocked = lockedHeight != null;
 
   return (
     <section
-      ref={cardRef}
       id="active-reads"
-      className={`card w-full min-w-0 scroll-mt-20 border border-base-content/10 bg-base-100 shadow-sm${heightLocked ? " overflow-hidden" : ""}`}
-      style={heightLocked ? { height: lockedHeight } : undefined}
+      className="card w-full min-w-0 scroll-mt-20 overflow-hidden border border-base-content/10 bg-base-100 shadow-sm"
     >
       <div className="card-body flex h-full min-h-0 flex-col gap-3 p-4">
         <div className="flex shrink-0 items-center gap-2.5">
@@ -155,13 +122,7 @@ export function LiveReadsPanelContent({
             No files are being read right now. Open a mounted file to see live progress here.
           </p>
         ) : (
-          <ul
-            className={
-              heightLocked
-                ? "yes-scrollbar m-0 min-h-0 w-full min-w-0 flex-1 list-none divide-y divide-base-content/10 overflow-x-hidden overflow-y-auto py-0 pr-4 pl-0"
-                : "m-0 w-full min-w-0 list-none divide-y divide-base-content/10 overflow-x-hidden py-0 pr-4 pl-0"
-            }
-          >
+          <ul className="yes-scrollbar m-0 max-h-80 w-full min-w-0 list-none divide-y divide-base-content/10 overflow-x-hidden overflow-y-auto py-0 pr-4 pl-0">
             {displayedRows.map(({ read, rate, history }) => (
               <ReadRow key={read.id} read={read} rate={rate} history={history} />
             ))}
