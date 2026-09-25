@@ -5,6 +5,23 @@ namespace NzbWebDAV.Tests.Services;
 
 public class ActiveReadRegistryEnrichmentTests
 {
+    [Theory]
+    [InlineData("/content/Movie Title/d.mkv", "Movie Title")]
+    [InlineData("/content/Movie Title/Disc 1/d.mkv", "Disc 1")]
+    [InlineData("/d.mkv", null)]
+    public void UpdateInfo_ResolvesParentWithoutChangingSessionPath(string resolvedPath, string? expectedParent)
+    {
+        var registry = new ActiveReadRegistry();
+        var id = registry.GetOrCreate("/.ids/id", "client", "id", null);
+        registry.UpdateInfo(id, "d.mkv", 100, resolvedPath);
+        registry.UpdateInfo(id, null, null);
+        Assert.Equal(id, registry.GetOrCreate("/.ids/id", "client", "id", 100));
+        var entry = Assert.Single(registry.Snapshot());
+        Assert.Equal(expectedParent, entry.ParentDirectoryName);
+        Assert.Equal("d.mkv", entry.FileName);
+        Assert.Equal("/.ids/id", entry.Path);
+    }
+
     [Fact]
     public void GetOrCreate_StoresClientMetadata()
     {

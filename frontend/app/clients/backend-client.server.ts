@@ -1301,6 +1301,7 @@ export type ActiveReadsMessage = {
 export type ActiveRead = {
   id: string;
   fileName: string;
+  parentDirectoryName?: string | null;
   path: string;
   startedAt: number;
   lastActivityAt: number;

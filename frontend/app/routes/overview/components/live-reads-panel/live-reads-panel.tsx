@@ -142,7 +142,7 @@ function ReadRow({
   rate: number;
   history: number[];
 }) {
-  const display = displayNameForRead(r.fileName, r.path);
+  const display = displayNameForRead(r.fileName, r.path, r.parentDirectoryName);
   // Use the latest read position (what the player is requesting right now) —
   // not cumulative bytes transferred — so the bar reflects actual playback
   // location, immune to seeks/replays.
@@ -162,7 +162,7 @@ function ReadRow({
       <div className="flex min-w-0 flex-col gap-1 lg:flex-row lg:items-center lg:gap-x-4">
         <Tooltip
           className="min-w-0 overflow-hidden lg:flex-1"
-          content={display.isReleaseFallback ? `${r.path}\n(obfuscated file name)` : r.path}
+          content={`${display.name}\n${r.path}`}
         >
           <span className="block truncate text-xs font-bold text-base-content">{display.name}</span>
         </Tooltip>

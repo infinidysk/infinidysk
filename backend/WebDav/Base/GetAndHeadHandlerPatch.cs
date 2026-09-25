@@ -307,6 +307,8 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                     var sessionId = _activeReadRegistry.GetOrCreate(
                         path, clientKey, fileName, stream.CanSeek ? stream.Length : null,
                         userAgent, clientIp);
+                    _activeReadRegistry.UpdateInfo(sessionId, fileName, stream.CanSeek ? stream.Length : null,
+                        (httpContext.Items["DavItem"] as NzbWebDAV.Database.Models.DavItem)?.Path);
                     var traceRange = _streamTrace.RangeOpen(
                         sessionId, path, request.Method, copyStart, copyEnd,
                         stream.CanSeek ? stream.Length : null, userAgent, clientIp, fileName);

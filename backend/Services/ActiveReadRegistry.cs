@@ -113,11 +113,16 @@ public class ActiveReadRegistry
     /// real filename/size are resolved from the dav store (the path passed to
     /// GetOrCreate is usually an opaque GUID for .ids/-style paths).
     /// </summary>
-    public void UpdateInfo(Guid id, string? fileName, long? fileSize)
+    public void UpdateInfo(Guid id, string? fileName, long? fileSize, string? resolvedPath = null)
     {
         if (!_entries.TryGetValue(id, out var entry)) return;
         if (!string.IsNullOrWhiteSpace(fileName)) entry.FileName = fileName;
         if (fileSize is { } size) entry.FileSize = size;
+        if (!string.IsNullOrEmpty(resolvedPath))
+        {
+            var segments = resolvedPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            entry.ParentDirectoryName = segments.Length >= 2 ? segments[^2] : null;
+        }
     }
 
     public IReadOnlyList<Entry> Snapshot()
@@ -174,6 +179,7 @@ public class ActiveReadRegistry
         public Guid Id { get; init; }
         public string Path { get; init; } = "";
         public string FileName { get; set; } = "";
+        public string? ParentDirectoryName { get; set; }
         public long? FileSize { get; set; }
         public string ClientKey { get; init; } = "";
         public string? ClientUserAgent { get; set; }

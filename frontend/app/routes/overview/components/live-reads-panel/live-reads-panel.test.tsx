@@ -233,11 +233,25 @@ describe("LiveReadsPanel", () => {
     expect(markup.match(/served</g)).toHaveLength(1);
   });
 
-  it("falls back to the release folder name for obfuscated file names", () => {
+  it("prefixes the parent folder while preserving the actual filename", () => {
     const markup = renderToStaticMarkup(<LiveReadsPanelContent rows={fixtureRows} />);
 
-    expect(markup).toContain("Interstellar.2014.1080p.BluRay.x264-GRP.mkv");
-    expect(markup).not.toContain("9f2c7a1e4b.mkv</span>");
+    expect(markup).toContain("Interstellar.2014.1080p.BluRay.x264-GRP/9f2c7a1e4b.mkv</span>");
+  });
+
+  it.each([
+    ["d.mkv", "Movie Title/d.mkv"],
+    ["MOVIE TITLE.mkv", "MOVIE TITLE.mkv"],
+  ])("uses resolved parent metadata for ID reads of %s", (fileName, expected) => {
+    const row = fixtureRows[0]!;
+    const rows = [
+      {
+        ...row,
+        read: { ...row.read, fileName, path: "/.ids/id", parentDirectoryName: "Movie Title" },
+      },
+    ];
+    const markup = renderToStaticMarkup(<LiveReadsPanelContent rows={rows} />);
+    expect(markup).toContain(`${expected}</span>`);
   });
 
   it("renders an em dash for time left when the rate stalls", () => {

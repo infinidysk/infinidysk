@@ -140,7 +140,8 @@ public class GetWebdavItemController(
         HttpContext.Items["playbackFileName"] = fileName;
 
         if (HttpContext.Items["readSessionId"] is Guid sid)
-            activeReadRegistry.UpdateInfo(sid, fileName, fileSize);
+            activeReadRegistry.UpdateInfo(sid, fileName, fileSize,
+                (HttpContext.Items["DavItem"] as NzbWebDAV.Database.Models.DavItem)?.Path);
 
         // set the content-type and content-disposition headers
         Response.Headers["Content-Type"] = ContentHeaderUtil.GetContentType(fileName);
