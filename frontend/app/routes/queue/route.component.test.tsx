@@ -7,14 +7,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type QueueTablePropsCapture = { onPageSizeSelected: (size: number) => void };
 
-const { isReadOnlyMock, openMock, dropzoneArgs, queueTableProps, setSearchParamsMock } =
-  vi.hoisted(() => ({
+const { isReadOnlyMock, openMock, dropzoneArgs, queueTableProps, setSearchParamsMock } = vi.hoisted(
+  () => ({
     isReadOnlyMock: vi.fn(),
     openMock: vi.fn(),
     dropzoneArgs: { current: [] as unknown[] },
     queueTableProps: { current: null as QueueTablePropsCapture | null },
     setSearchParamsMock: vi.fn(),
-  }));
+  }),
+);
 
 vi.mock("react-router", () => ({
   useRevalidator: () => ({ revalidate: vi.fn() }),
