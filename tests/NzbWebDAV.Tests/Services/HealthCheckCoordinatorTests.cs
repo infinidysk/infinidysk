@@ -35,7 +35,7 @@ public sealed class HealthCheckCoordinatorTests
         await using var connection = await harness.ConfigureEmptyDatabaseAsync();
         var originalFactory = harness.Service.CreateDbContextOverride!;
         await using var context = originalFactory();
-        var file = NewCandidate("urgent-race.mkv", null);
+        var file = NewCandidate("urgent-race.mkv", DateTimeOffset.UtcNow.AddDays(1));
         file.Path = "/content/urgent-race.mkv";
         context.Items.Add(file);
         await context.SaveChangesAsync();
