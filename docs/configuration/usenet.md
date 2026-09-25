@@ -142,7 +142,7 @@ mechanics and the header indicator.
 | Control | Config key | Default | Effect |
 |---------|------------|---------|--------|
 | Warm connections | `usenet.warm-connections.enabled` | on | Keep pre-connected sockets ready per provider |
-| Warm floor | `usenet.warm-connections.floor` | auto | Idle sockets kept ready per provider; auto derives one sixth of Max Connections, clamped to 1–8 |
+| Warm floor | `usenet.warm-connections.floor` | `2` | Idle sockets kept ready per provider, capped at Max Connections. Before 1.5.0 the default derived one sixth of Max Connections, clamped to 1–8 |
 
 Changes take effect on the next provider save or restart — connection pools are not
 rebuilt when these keys change alone.

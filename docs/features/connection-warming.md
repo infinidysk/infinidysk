@@ -4,7 +4,7 @@ Connection warming [since 1.2.0](https://github.com/infinidysk/infinidysk/releas
 
 ## How it works
 
-Each pooled provider gets a **warm floor**: a target count of idle, ready-to-use connections. By default the floor is derived from the provider's **Max Connections** — roughly one sixth of it, at least 1 and at most 8.
+Each pooled provider gets a **warm floor**: a target count of idle, ready-to-use connections. By default the floor is **2** (1 when **Max Connections** is 1) [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }; releases before 1.5.0 derived roughly one sixth of Max Connections, clamped to 1–8. An explicit `usenet.warm-connections.floor` value is unchanged.
 
 ```mermaid
 flowchart TD
@@ -40,7 +40,7 @@ Other states: a spinner with **Connecting** until the first update arrives, **Re
 | Setting | Config key | Default | Effect |
 |---------|------------|---------|--------|
 | Warm connections | `usenet.warm-connections.enabled` | on | Keep a small pool of pre-connected sockets per provider |
-| Warm floor | `usenet.warm-connections.floor` | auto | Idle sockets kept ready per provider; auto derives one sixth of Max Connections, clamped to 1–8 |
+| Warm floor | `usenet.warm-connections.floor` | `2` | Idle sockets kept ready per provider, capped at Max Connections. Before 1.5.0 the default derived one sixth of Max Connections, clamped to 1–8 |
 | Read-start warm-up [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.read-start-warmup.enabled` | on | For a long buffered read, open missing pooled-provider connections in parallel as the first segment starts |
 
 There is no settings-UI toggle; set the keys as [headless environment variables](../configuration/headless.md) (`NZBDAV_CONFIG__USENET__WARM_CONNECTIONS__ENABLED` / `NZBDAV_CONFIG__USENET__WARM_CONNECTIONS__FLOOR`). Changes take effect on the next provider save or restart — connection pools are not rebuilt when these keys change alone.
