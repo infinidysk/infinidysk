@@ -191,6 +191,7 @@ export function filesReducer(state: FilesState, action: FilesAction): FilesState
         loadedAt,
       );
       if (next === state) return state;
+      if (next.branches[job.branchKey]?.status === "error") return next;
       const branches = { ...next.branches };
       const expanded = new Set(next.expanded);
       let focusedKey = next.focusedKey;

@@ -167,6 +167,48 @@ describe("Files state", () => {
     expect(result.branches["root"]?.error).toBe("The server returned a different page.");
     expect(result.rows).toBe(state.rows);
   });
+  it("doesNotPruneTreeWhenTheServerReturnsADifferentParentPage", () => {
+    const parent = makeFileRow({ key: "parent", isDirectory: true, path: "/content/tv" });
+    const child = makeFileRow({ key: "child", path: "/content/tv/video.mkv" });
+    let state = initialFilesState("query", makeFilesPage([parent]));
+    const childJob = {
+      branchKey: parent.key,
+      parentPath: parent.path,
+      offset: 0,
+      generation: 0,
+      requestId: 1,
+      parameters: new URLSearchParams(),
+    };
+    state = filesReducer(state, { type: "request", job: childJob });
+    state = filesReducer(state, {
+      type: "success",
+      job: childJob,
+      page: makeFilesPage([child], { parentPath: parent.path }),
+      loadedAt: 1,
+    });
+    state = filesReducer(state, { type: "toggle", key: parent.key });
+    state = filesReducer(state, { type: "focus", key: child.key });
+
+    const rootJob = {
+      ...childJob,
+      branchKey: "root",
+      parentPath: "/content",
+      requestId: 2,
+    };
+    state = filesReducer(state, { type: "request", job: rootJob });
+    const result = filesReducer(state, {
+      type: "success",
+      job: rootJob,
+      page: makeFilesPage([], { parentPath: "/content/normalized" }),
+      loadedAt: 2,
+    });
+
+    expect(result.branches["root"]?.status).toBe("error");
+    expect(result.branches[parent.key]).toBeDefined();
+    expect(result.rows[child.key]).toEqual(child);
+    expect(result.expanded.has(parent.key)).toBe(true);
+    expect(result.focusedKey).toBe(child.key);
+  });
   it("expandsAndCollapsesOnlyOneBranch", () => {
     const parent = makeFileRow({ isDirectory: true });
     const state = initialFilesState("query", makeFilesPage([parent]));
