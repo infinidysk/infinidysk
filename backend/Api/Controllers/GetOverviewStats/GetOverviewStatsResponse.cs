@@ -11,8 +11,12 @@ public class GetOverviewStatsResponse
     public List<ThroughputPoint> Throughput { get; init; } = new();
     /// <summary>Chart bucket width in ms for normalizing throughput totals into rates.</summary>
     public long ThroughputBucketSizeMs { get; init; }
+    /// <summary>Highest 1-second aggregate fetch rate observed within the window (bytes/sec).</summary>
+    public long PeakFetchBytesPerSec { get; init; }
     public long TotalArticles { get; init; }
     public long TotalClientArticles { get; init; }
+    /// <summary>Article attempts made while importing queue items (initial download).</summary>
+    public long TotalQueueArticles { get; init; }
     public long TotalMisses { get; init; }
     public long TotalErrors { get; init; }
     public long TotalBytesFetched { get; init; }
@@ -64,6 +68,8 @@ public class GetOverviewStatsResponse
         public long Bucket { get; init; }
         public long Articles { get; init; }
         public long ClientArticles { get; init; }
+        /// <summary>Article attempts made while importing queue items (initial download).</summary>
+        public long QueueArticles { get; init; }
         public long Misses { get; init; }
         public long Errors { get; init; }
         public long BytesServed { get; init; }
@@ -89,6 +95,10 @@ public class GetOverviewStatsResponse
         public long Retries { get; init; }
         /// <summary>Decimal megabytes fetched per second over the selected window.</summary>
         public double? SpeedMbPerSec { get; set; }
+        public double? PeakMbPerSec { get; set; }
+        public double? ActiveAverageMbPerSec { get; set; }
+        public List<double?> PeakSpeedSpark { get; set; } = new();
+        public List<ProviderSampledSpeedPoint> SampledSpeedSeries { get; set; } = new();
         public List<double> SpeedSpark { get; init; } = new();
         /// <summary>Timestamped effective MB/s for the detail chart. Same metric as <see cref="SpeedMbPerSec"/>.</summary>
         public List<ProviderSpeedPoint> SpeedSeries { get; init; } = new();
@@ -111,6 +121,13 @@ public class GetOverviewStatsResponse
         public long TripCount { get; init; }
         public long FailureCount { get; init; }
         public long ArticleMissCount { get; init; }
+    }
+
+    public class ProviderSampledSpeedPoint
+    {
+        public long Bucket { get; init; }
+        public double? PeakMbPerSec { get; init; }
+        public double? ActiveAverageMbPerSec { get; init; }
     }
 
     public class CatalogueBlock

@@ -449,7 +449,8 @@ public class NzbFileStream(
                         return fallback;
                     firstNonContaining ??= fallback;
                 }
-                catch (UsenetArticleNotFoundException e) { missing = e; }
+                // An alternate confirmed missing cannot vouch for a primary that not every provider answered for.
+                catch (UsenetArticleNotFoundException e) { missing = missing is { InconclusiveReason: not null } ? missing : e; }
                 catch (Exception e) when (IsFallbackEligibleProbeFailure(e, ct))
                 {
                     transientProbeFailure = e;

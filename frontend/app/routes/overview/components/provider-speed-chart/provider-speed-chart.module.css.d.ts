@@ -4,6 +4,7 @@ declare const styles: {
   readonly svg: string;
   readonly gridline: string;
   readonly lineSpeed: string;
+  readonly lineAverage: string;
   readonly crosshair: string;
   readonly hoverTooltip: string;
   readonly hoverDotAnchor: string;

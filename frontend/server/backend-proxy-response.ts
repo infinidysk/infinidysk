@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { logger } from "./logger";
+import { logger, requestPathForLog } from "./logger";
 
 /**
  * Closes a proxied backend response downstream.
@@ -50,7 +50,7 @@ export function handleBackendProxyResponse(
     if (req.destroyed) return;
 
     logger.warn(
-      `Backend response for ${req.method ?? "?"} ${req.url ?? "?"} ended before its body was ` +
+      `Backend response for ${req.method ?? "?"} ${requestPathForLog(req.url)} ended before its body was ` +
         "complete; aborting the client transfer instead of ending it successfully.",
     );
     res.destroy();

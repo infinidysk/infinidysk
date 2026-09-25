@@ -43,12 +43,6 @@ internal static class StartupDatabaseMigrator
 
         await using var migrationLease = lease;
 
-        // A corrupt metrics file is quarantined here, before anything touches it, and
-        // recreated by the MigrateAsync calls below. The main database only gets a
-        // diagnostic (DatabaseIntegrityCheck): it is not disposable.
-        await MetricsDatabaseRecovery
-            .QuarantineIfCorruptAsync(metricsContext, cancellationToken)
-            .ConfigureAwait(false);
         await DatabaseStartupGuards
             .ClearAbandonedMigrationLockAsync(metricsContext, cancellationToken)
             .ConfigureAwait(false);

@@ -5,12 +5,14 @@ using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Streams;
+using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Tests.Fakes;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Tests.Streams;
 
+[Collection(nameof(ConfigPathCollection))]
 public class KnownCorruptFastPathTests
 {
     [Theory]

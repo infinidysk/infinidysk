@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Par2Recovery;
 using NzbWebDAV.Par2Recovery.Packets;
@@ -6,13 +7,39 @@ using NzbWebDAV.Queue;
 using NzbWebDAV.Queue.DeobfuscationSteps._1.FetchFirstSegment;
 using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
 using NzbWebDAV.Tests.Par2Recovery;
+using NzbWebDAV.Tests.TestUtils;
+using Serilog;
+using Serilog.Events;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Queue;
 
+[Collection(nameof(GlobalLoggerCollection))]
 public class GetFileInfosStepTests
 {
     private static readonly byte[] Rar4Magic = [0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00];
+
+    private static IReadOnlyList<LogEvent> CaptureRecoveryWarnings(Action action)
+    {
+        var sink = new CollectingLogEventSink();
+        using var logger = new LoggerConfiguration().WriteTo.Sink(sink).CreateLogger();
+        var previousLogger = Log.Logger;
+        try
+        {
+            Log.Logger = logger;
+            action();
+        }
+        finally
+        {
+            Log.Logger = previousLogger;
+        }
+        return sink.Events
+            .Where(logEvent => logEvent.MessageTemplate.Text.StartsWith("Conflicting yEnc metadata", StringComparison.Ordinal))
+            .ToList();
+    }
+
+    private static object? Scalar(LogEvent logEvent, string property) =>
+        Assert.IsType<ScalarValue>(logEvent.Properties[property]).Value;
 
     [Theory]
     [InlineData(1, 4103, false)]
@@ -79,11 +106,137 @@ public class GetFileInfosStepTests
         Assert.Null(descriptor.VerificationProof);
         var input = ProofFile(data, totalParts: 2, headerFileSize: 4104);
 
-        var result = Assert.Single(GetFileInfosStep.GetFileInfos([input], [descriptor]));
+        var result = default(GetFileInfosStep.FileInfo)!;
+        var warnings = CaptureRecoveryWarnings(() =>
+            result = Assert.Single(GetFileInfosStep.GetFileInfos([input], [descriptor])));
 
         Assert.Equal("verified.mkv", result.FileName);
         Assert.Equal(data.Length, result.FileSize);
         Assert.Null(result.NzbFile.VerificationProof);
+        Assert.Equal(GetFileInfosStep.NoProofReason, Scalar(Assert.Single(warnings), "Reason"));
+    }
+
+    [Fact]
+    public void GetFileInfos_ConflictWithoutDescriptors_WarnsRecoveryUnavailable()
+    {
+        var data = Enumerable.Range(0, 4103).Select(value => (byte)value).ToArray();
+        var input = ProofFile(data, totalParts: 2, headerFileSize: 4104);
+
+        var warning = Assert.Single(CaptureRecoveryWarnings(() => GetFileInfosStep.GetFileInfos([input], [])));
+
+        Assert.Equal(LogEventLevel.Warning, warning.Level);
+        Assert.Equal(1, Scalar(warning, "Count"));
+        Assert.Equal(GetFileInfosStep.NoDescriptorsReason, Scalar(warning, "Reason"));
+        Assert.Equal(
+            YencFileValidationContext.GetDiagnosticReference("video@example.com"),
+            Scalar(warning, "FileRef"));
+        Assert.Equal(2, Scalar(warning, "HeaderTotalParts"));
+        Assert.Equal(1, Scalar(warning, "NzbSegmentCount"));
+        Assert.Equal(4104L, Scalar(warning, "HeaderFileSize"));
+        Assert.Null(Scalar(warning, "Par2FileLength"));
+        Assert.Null(Scalar(warning, "Par2SliceSize"));
+        Assert.Equal(4200L, Scalar(warning, "NzbEncodedSize"));
+        Assert.Null(input.NzbFile.VerificationProof);
+        Assert.DoesNotContain("obfuscated.mkv", warning.RenderMessage(), StringComparison.Ordinal);
+        Assert.DoesNotContain("video@example.com", warning.RenderMessage(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetFileInfos_ConflictWithoutPrefixMatch_WarnsRecoveryUnavailable()
+    {
+        var data = Enumerable.Range(0, 4103).Select(value => (byte)value).ToArray();
+        var descriptor = await ReadProofDescriptor(data);
+        var prefix = data.ToArray();
+        prefix[0] ^= 1;
+        var input = ProofFile(prefix, totalParts: 2, headerFileSize: 4104);
+
+        var warning = Assert.Single(CaptureRecoveryWarnings(() => GetFileInfosStep.GetFileInfos([input], [descriptor])));
+
+        Assert.Equal(GetFileInfosStep.NoPrefixMatchReason, Scalar(warning, "Reason"));
+        Assert.Null(Scalar(warning, "Par2FileLength"));
+        Assert.Null(input.NzbFile.VerificationProof);
+    }
+
+    [Fact]
+    public async Task GetFileInfos_ConflictOutsideSizeWindow_WarnsRecoveryUnavailable()
+    {
+        var data = Enumerable.Range(0, 4103).Select(value => (byte)value).ToArray();
+        var descriptor = await ReadProofDescriptor(data);
+        var input = ProofFile(data, totalParts: 2, headerFileSize: 4104);
+        input.NzbFile.Segments[0] = new NzbSegment
+        {
+            MessageId = input.NzbFile.Segments[0].MessageId,
+            Bytes = 4400,
+        };
+
+        var warning = Assert.Single(CaptureRecoveryWarnings(() => GetFileInfosStep.GetFileInfos([input], [descriptor])));
+
+        Assert.Equal(GetFileInfosStep.SizeWindowReason, Scalar(warning, "Reason"));
+        Assert.Equal(4103UL, Scalar(warning, "Par2FileLength"));
+        Assert.Equal(4096UL, Scalar(warning, "Par2SliceSize"));
+        Assert.Equal(4400L, Scalar(warning, "NzbEncodedSize"));
+        Assert.Null(input.NzbFile.VerificationProof);
+    }
+
+    [Fact]
+    public async Task GetFileInfos_ConflictWithDescriptorWithoutProof_ReportsPar2Reason()
+    {
+        var data = Enumerable.Range(0, 4103).Select(value => (byte)value).ToArray();
+        var (index, _) = Par2TestEncoder.EncodeSet("verified.mkv", data, 4096, []);
+        var descriptor = Assert.Single(await Par2TestPackets.ReadFileDescsAsync(index));
+        descriptor.VerificationProofUnavailableReason = FileDesc.SliceSizeUnsupportedReason;
+        descriptor.SliceSize = 50_331_648UL;
+        var input = ProofFile(data, totalParts: 2, headerFileSize: 4104);
+
+        var warning = Assert.Single(CaptureRecoveryWarnings(() => GetFileInfosStep.GetFileInfos([input], [descriptor])));
+
+        Assert.Equal(FileDesc.SliceSizeUnsupportedReason, Scalar(warning, "Reason"));
+        Assert.Equal(4103UL, Scalar(warning, "Par2FileLength"));
+        Assert.Equal(50_331_648UL, Scalar(warning, "Par2SliceSize"));
+        Assert.Null(input.NzbFile.VerificationProof);
+    }
+
+    [Fact]
+    public async Task GetFileInfos_ConflictWithValidProof_AttachesWithoutWarning()
+    {
+        var data = Enumerable.Range(0, 4103).Select(value => (byte)value).ToArray();
+        var descriptor = await ReadProofDescriptor(data);
+        var input = ProofFile(data, totalParts: 2, headerFileSize: 4103);
+
+        var warnings = CaptureRecoveryWarnings(() => GetFileInfosStep.GetFileInfos([input], [descriptor]));
+
+        Assert.Empty(warnings);
+        Assert.Same(descriptor.VerificationProof, input.NzbFile.VerificationProof);
+    }
+
+    [Fact]
+    public async Task GetFileInfos_MatchingMetadataDoesNotWarn()
+    {
+        var data = Enumerable.Range(0, 4103).Select(value => (byte)value).ToArray();
+        var descriptor = await ReadProofDescriptor(data);
+        var input = ProofFile(data, totalParts: 1, headerFileSize: 4103);
+
+        var warnings = CaptureRecoveryWarnings(() => GetFileInfosStep.GetFileInfos([input], [descriptor]));
+
+        Assert.Empty(warnings);
+        Assert.Null(input.NzbFile.VerificationProof);
+    }
+
+    [Fact]
+    public void GetFileInfos_GroupsRecoveryWarningsByDiagnosticSample()
+    {
+        var first = ProofFile(Enumerable.Range(0, 64).Select(value => (byte)value).ToArray(), totalParts: 2, headerFileSize: 64);
+        var second = ProofFile(Enumerable.Range(64, 64).Select(value => (byte)value).ToArray(), totalParts: 3, headerFileSize: 64);
+
+        var warnings = CaptureRecoveryWarnings(() => GetFileInfosStep.GetFileInfos([first, second], []));
+
+        Assert.Equal(2, warnings.Count);
+        Assert.All(warnings, warning =>
+        {
+            Assert.Equal(1, Scalar(warning, "Count"));
+            Assert.Equal(GetFileInfosStep.NoDescriptorsReason, Scalar(warning, "Reason"));
+        });
+        Assert.Equal([2, 3], warnings.Select(warning => Scalar(warning, "HeaderTotalParts")).ToArray());
     }
 
     [Fact]

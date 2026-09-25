@@ -82,6 +82,35 @@ public sealed class SupportPackContentsTests : IDisposable
     }
 
     [Fact]
+    public async Task Pack_PseudonymizesFullNumericIpv6InBothLogLanes()
+    {
+        const string address = "2001:0000:0000:0000:0000:0000:0000:0001";
+        var mainSink = new LogBufferSink(10);
+        var warningBuffer = new WarningLogBuffer(new LogBufferSink(50));
+        using var logger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.Sink(mainSink)
+            .WriteTo.Sink(
+                warningBuffer.Sink,
+                restrictedToMinimumLevel: LogEventLevel.Warning)
+            .CreateLogger();
+
+        logger.Information("Connected from {Address:l}", address);
+        logger.Warning("Connection to [{Address:l}] closed", address);
+
+        var entries = await ReadPackEntriesAsync(mainSink, warningBuffer);
+
+        Assert.Contains("Connected from [IP-1]", entries["logs/backend.log"]);
+        Assert.Contains("Connection to [IP-1] closed", entries["logs/backend.log"]);
+        Assert.Contains("Connection to [IP-1] closed", entries["logs/warnings.log"]);
+        Assert.DoesNotContain("[[IP-1]]", entries["logs/backend.log"]);
+        Assert.DoesNotContain("[[IP-1]]", entries["logs/warnings.log"]);
+        foreach (var entry in entries.Values)
+            Assert.DoesNotContain(address, entry);
+    }
+
+
+    [Fact]
     public async Task Pack_ExplainsAnEmptyWarningLaneInsteadOfShippingAnEmptyFile()
     {
         var entries = await ReadPackEntriesAsync(new LogBufferSink(10), new WarningLogBuffer(new LogBufferSink(50)));

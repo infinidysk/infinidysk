@@ -177,8 +177,7 @@ internal sealed class NntpYencBodyDecoder(
                             if (drainedBytes > options.AbandonedBodyDrainLimit)
                             {
                                 consume = rawStart + rawLength;
-                                throw new UsenetProtocolException(
-                                    "The abandoned NNTP body exceeded the configured drain limit.");
+                                throw new UsenetBodyAbandonedException();
                             }
 
                             consume = rawStart + rawLength;

@@ -56,17 +56,66 @@ public sealed class MetricsMigrationTests
             var throughput = await context.ThroughputMinutes.AsNoTracking().SingleAsync();
             Assert.Equal(7, throughput.Misses);
             Assert.Equal(0, throughput.Errors);
+            Assert.Equal(0, throughput.PeakFetchBytesPerSec);
 
             var providerMinute = await context.ProviderMinutes.AsNoTracking().SingleAsync();
             Assert.Equal(5, providerMinute.Misses);
             Assert.Equal(0, providerMinute.Errors);
+            Assert.Null(providerMinute.PeakBytesPerSec);
+            Assert.Null(providerMinute.ActiveBytes);
+            Assert.Null(providerMinute.ActiveSeconds);
 
             var providerHour = await context.ProviderHourly.AsNoTracking().SingleAsync();
             Assert.Equal(9, providerHour.Misses);
             Assert.Equal(0, providerHour.Errors);
+            Assert.Null(providerHour.PeakBytesPerSec);
+            Assert.Null(providerHour.ActiveBytes);
+            Assert.Null(providerHour.ActiveSeconds);
 
             Assert.Empty(await context.ProviderQuotaUsage.AsNoTracking().ToListAsync());
+            Assert.Empty(await context.ThroughputHourly.AsNoTracking().ToListAsync());
 
+            Assert.Empty(await context.Database.GetPendingMigrationsAsync());
+        }
+        finally
+        {
+            File.Delete(databasePath);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AddReadSessionsEndedAtIndex_ToleratesManuallyCreatedIndex(bool createManually)
+    {
+        var databasePath = Path.Join(
+            Path.GetTempPath(),
+            $"nzbdav-metrics-migration-{Guid.NewGuid():N}.sqlite");
+        var options = new DbContextOptionsBuilder<MetricsDbContext>()
+            .UseSqlite($"Data Source={databasePath};Pooling=False")
+            .AddInterceptors(new SqliteMetricsPragmas())
+            .ReplaceService<
+                IMigrationsSqlGenerator,
+                SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
+            .Options;
+
+        try
+        {
+            await using var context = new MetricsDbContext(options);
+            await context.Database.MigrateAsync("20260923160000_AddProviderSampledRates");
+            if (createManually)
+            {
+                await context.Database.ExecuteSqlRawAsync(
+                    "CREATE INDEX IX_ReadSessions_EndedAt ON ReadSessions(EndedAt);");
+            }
+
+            await context.Database.MigrateAsync();
+
+            var indexes = await context.Database
+                .SqlQueryRaw<string>(
+                    "SELECT name AS Value FROM sqlite_master WHERE type = 'index' AND tbl_name = 'ReadSessions'")
+                .ToListAsync();
+            Assert.Single(indexes, name => name == "IX_ReadSessions_EndedAt");
             Assert.Empty(await context.Database.GetPendingMigrationsAsync());
         }
         finally

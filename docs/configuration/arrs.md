@@ -29,6 +29,31 @@ rules. Typical mappings:
 
 Any action other than **Do Nothing** tells the Arr to delete the queue record with `removeFromClient=true`. The Arr then removes the download from InfiniDysk History even when its own **Remove Completed** checkbox is off. That is independent of mounted files, which stay.
 
+## Docker hostnames and proxies [since 1.4.6](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.6){ #docker-hostnames-and-proxies .nzbdav-since }
+
+Radarr, Sonarr, and [Prowlarr](indexers.md#prowlarr-pull-sync) hosts whose hostname
+has **no dot** — Docker Compose service names such as `http://sonarr:8989` — are always
+contacted **directly**, even when the container has `HTTP_PROXY` / `HTTPS_PROXY` set.
+Names like that only resolve on the local container network, so sending them through a
+proxy produced connection failures that disappeared when the host was changed to an IP
+address. Dotted hostnames and IP literals keep the normal proxy policy, including
+`NO_PROXY`. This applies only to InfiniDysk's own Arr and Prowlarr management calls;
+imported indexer traffic still follows the per-indexer proxy settings.
+
+Connections to Arr and Prowlarr hosts are recycled after two minutes so a stale
+DNS answer or a recreated container cannot pin a dead connection.
+
+Request budgets are unchanged: Arr health polls allow 10 seconds per call, other Radarr/Sonarr
+requests 30 seconds, and Prowlarr requests 15 seconds. When one expires, logs, Test Conn, and
+the Overview Arr Health panel report it as a timeout with the routing used, for example:
+
+```text
+Arr health poll failed for "http://sonarr:8989". Reason: "Sonarr queue request to http://sonarr:8989 timed out after 10 seconds; routing: direct (single-label hostname)."
+```
+
+"Operation canceled" is no longer used for expired waits; it now indicates only a genuine
+shutdown or caller cancellation.
+
 ## Releases stuck in Awaiting import
 
 Sometimes Sonarr completes a download but refuses to import it because the

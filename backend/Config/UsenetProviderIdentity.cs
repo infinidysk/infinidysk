@@ -295,18 +295,27 @@ public static class UsenetProviderIdentity
         {
             await db.Database.ExecuteSqlRawAsync(
                 """
-                INSERT INTO ProviderMinutes (Minute, Provider, Articles, ClientArticles, ClientArticlesFinalized, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist)
-                SELECT Minute, {0}, Articles, ClientArticles, ClientArticlesFinalized, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist
+                INSERT INTO ProviderMinutes (Minute, Provider, Articles, ClientArticles, QueueArticles, ClientArticlesFinalized, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist, PeakBytesPerSec, ActiveBytes, ActiveSeconds)
+                SELECT Minute, {0}, Articles, ClientArticles, QueueArticles, ClientArticlesFinalized, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, Hist, PeakBytesPerSec, ActiveBytes, ActiveSeconds
                 FROM ProviderMinutes WHERE Provider = {1}
                 ON CONFLICT(Minute, Provider) DO UPDATE SET
                     Articles = ProviderMinutes.Articles + excluded.Articles,
                     ClientArticles = ProviderMinutes.ClientArticles + excluded.ClientArticles,
+                    QueueArticles = ProviderMinutes.QueueArticles + excluded.QueueArticles,
                     ClientArticlesFinalized = ProviderMinutes.ClientArticlesFinalized OR excluded.ClientArticlesFinalized,
                     BytesFetched = ProviderMinutes.BytesFetched + excluded.BytesFetched,
                     Misses = ProviderMinutes.Misses + excluded.Misses,
                     Errors = ProviderMinutes.Errors + excluded.Errors,
                     Retries = ProviderMinutes.Retries + excluded.Retries,
                     FailoverSaves = ProviderMinutes.FailoverSaves + excluded.FailoverSaves,
+                    PeakBytesPerSec = CASE
+                        WHEN ProviderMinutes.PeakBytesPerSec IS NULL THEN excluded.PeakBytesPerSec
+                        WHEN excluded.PeakBytesPerSec IS NULL THEN ProviderMinutes.PeakBytesPerSec
+                        ELSE MAX(ProviderMinutes.PeakBytesPerSec, excluded.PeakBytesPerSec) END,
+                    ActiveBytes = CASE WHEN ProviderMinutes.ActiveBytes IS NULL AND excluded.ActiveBytes IS NULL THEN NULL
+                        ELSE COALESCE(ProviderMinutes.ActiveBytes, 0) + COALESCE(excluded.ActiveBytes, 0) END,
+                    ActiveSeconds = CASE WHEN ProviderMinutes.ActiveSeconds IS NULL AND excluded.ActiveSeconds IS NULL THEN NULL
+                        ELSE COALESCE(ProviderMinutes.ActiveSeconds, 0) + COALESCE(excluded.ActiveSeconds, 0) END,
                     SumDurationMs = ProviderMinutes.SumDurationMs + excluded.SumDurationMs;
                 """,
                 new object[] { metricsKey, host }, ct).ConfigureAwait(false);
@@ -323,17 +332,26 @@ public static class UsenetProviderIdentity
         {
             await db.Database.ExecuteSqlRawAsync(
                 """
-                INSERT INTO ProviderHourly (Hour, Provider, Articles, ClientArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, P95DurationMs)
-                SELECT Hour, {0}, Articles, ClientArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, P95DurationMs
+                INSERT INTO ProviderHourly (Hour, Provider, Articles, ClientArticles, QueueArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, P95DurationMs, PeakBytesPerSec, ActiveBytes, ActiveSeconds)
+                SELECT Hour, {0}, Articles, ClientArticles, QueueArticles, BytesFetched, Misses, Errors, Retries, FailoverSaves, SumDurationMs, P95DurationMs, PeakBytesPerSec, ActiveBytes, ActiveSeconds
                 FROM ProviderHourly WHERE Provider = {1}
                 ON CONFLICT(Hour, Provider) DO UPDATE SET
                     Articles = ProviderHourly.Articles + excluded.Articles,
                     ClientArticles = ProviderHourly.ClientArticles + excluded.ClientArticles,
+                    QueueArticles = ProviderHourly.QueueArticles + excluded.QueueArticles,
                     BytesFetched = ProviderHourly.BytesFetched + excluded.BytesFetched,
                     Misses = ProviderHourly.Misses + excluded.Misses,
                     Errors = ProviderHourly.Errors + excluded.Errors,
                     Retries = ProviderHourly.Retries + excluded.Retries,
                     FailoverSaves = ProviderHourly.FailoverSaves + excluded.FailoverSaves,
+                    PeakBytesPerSec = CASE
+                        WHEN ProviderHourly.PeakBytesPerSec IS NULL THEN excluded.PeakBytesPerSec
+                        WHEN excluded.PeakBytesPerSec IS NULL THEN ProviderHourly.PeakBytesPerSec
+                        ELSE MAX(ProviderHourly.PeakBytesPerSec, excluded.PeakBytesPerSec) END,
+                    ActiveBytes = CASE WHEN ProviderHourly.ActiveBytes IS NULL AND excluded.ActiveBytes IS NULL THEN NULL
+                        ELSE COALESCE(ProviderHourly.ActiveBytes, 0) + COALESCE(excluded.ActiveBytes, 0) END,
+                    ActiveSeconds = CASE WHEN ProviderHourly.ActiveSeconds IS NULL AND excluded.ActiveSeconds IS NULL THEN NULL
+                        ELSE COALESCE(ProviderHourly.ActiveSeconds, 0) + COALESCE(excluded.ActiveSeconds, 0) END,
                     SumDurationMs = ProviderHourly.SumDurationMs + excluded.SumDurationMs;
                 """,
                 new object[] { metricsKey, host }, ct).ConfigureAwait(false);

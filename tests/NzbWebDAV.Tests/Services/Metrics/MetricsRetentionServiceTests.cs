@@ -148,6 +148,24 @@ public sealed class MetricsRetentionServiceTests
     }
 
     [Fact]
+    public async Task SweepAsync_PrunesReadSessionsOlderThanNinetyDays()
+    {
+        await using var harness = await MetricsHarness.CreateAsync();
+        var db = harness.Context;
+        var nowMs = 200L * OneDayMs;
+        var cutoff = MetricsRetentionService.Cutoff(nowMs, TimeSpan.FromDays(90));
+
+        db.ReadSessions.AddRange(
+            new ReadSession { Id = Guid.NewGuid(), StartedAt = cutoff - 2 * OneDayMs, EndedAt = cutoff - OneDayMs, Path = "/old" },
+            new ReadSession { Id = Guid.NewGuid(), StartedAt = cutoff - OneDayMs, EndedAt = cutoff + OneDayMs, Path = "/fresh" });
+        await db.SaveChangesAsync();
+
+        await MetricsRetentionService.SweepAsync(db, nowMs, TimeSpan.FromHours(24));
+
+        Assert.Equal("/fresh", await db.ReadSessions.Select(x => x.Path).SingleAsync());
+    }
+
+    [Fact]
     public async Task SweepAsync_UsesOneHourFloorWhenConfiguredRetentionIsZero()
     {
         await using var harness = await MetricsHarness.CreateAsync();

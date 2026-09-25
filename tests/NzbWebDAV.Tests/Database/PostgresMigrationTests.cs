@@ -28,6 +28,21 @@ namespace NzbWebDAV.Tests.Database;
 public sealed class PostgresMigrationTests
 {
     [SkippableFact]
+    public void ModelSnapshot_MatchesCurrentModel()
+    {
+        Skip.IfNot(
+            DatabaseProviderConfig.IsPostgres,
+            "PostgreSQL model tests require DATABASE_PROVIDER=postgres.");
+
+        var options = new DbContextOptionsBuilder<PostgresDavDatabaseContext>()
+            .UseNpgsql("Host=localhost;Database=unused")
+            .Options;
+        using var context = new PostgresDavDatabaseContext(options);
+
+        Assert.False(context.Database.HasPendingModelChanges());
+    }
+
+    [SkippableFact]
     public async Task MigrateAsync_AppliesFreshPostgresSchema()
     {
         Skip.IfNot(

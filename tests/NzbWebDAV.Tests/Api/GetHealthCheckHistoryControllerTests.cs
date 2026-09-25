@@ -192,6 +192,34 @@ public sealed class GetHealthCheckHistoryControllerTests : IAsyncLifetime
         Assert.Equal([secondActive.Id], response.Items.Select(item => item.Id));
     }
 
+    [Fact]
+    public async Task CurrentActionNeeded_LatestHistoryLookupUsesFileScopedIndex()
+    {
+        await _context.Database.OpenConnectionAsync();
+        await using var command = _context.Database.GetDbConnection().CreateCommand();
+        command.CommandText = """
+            EXPLAIN QUERY PLAN
+            SELECT "Id" FROM "HealthCheckResults"
+            WHERE "DavItemId" = $file
+            ORDER BY "CreatedAt" DESC, "Id" DESC
+            LIMIT 1
+            """;
+        var fileParameter = command.CreateParameter();
+        fileParameter.ParameterName = "$file";
+        fileParameter.Value = Guid.NewGuid().ToString();
+        command.Parameters.Add(fileParameter);
+
+        var details = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            details.Add(reader.GetString(3));
+
+        Assert.Contains(details, detail =>
+            detail.Contains("SEARCH", StringComparison.Ordinal) &&
+            detail.Contains("(DavItemId=?", StringComparison.Ordinal));
+        Assert.DoesNotContain(details, detail => detail.Contains("TEMP B-TREE", StringComparison.Ordinal));
+    }
+
     private async Task<GetHealthCheckHistoryResponse> InvokeAsync(string query)
     {
         var result = await InvokeActionAsync(query);

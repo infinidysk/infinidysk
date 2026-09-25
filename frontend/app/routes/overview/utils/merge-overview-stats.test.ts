@@ -38,6 +38,7 @@ describe("mergeOverviewStats", () => {
         includedSections: ["window"],
         totalArticles: 99,
         totalClientArticles: 30,
+        totalQueueArticles: 20,
         totalMisses: 40,
         totalErrors: 2,
         throughput: [
@@ -45,6 +46,7 @@ describe("mergeOverviewStats", () => {
             bucket: 1,
             articles: 5,
             clientArticles: 3,
+            queueArticles: 1,
             misses: 2,
             errors: 0,
             bytesServed: 10,
@@ -62,10 +64,12 @@ describe("mergeOverviewStats", () => {
 
     expect(withWindow.totalArticles).toBe(99);
     expect(withWindow.totalClientArticles).toBe(30);
+    expect(withWindow.totalQueueArticles).toBe(20);
     expect(withWindow.totalMisses).toBe(40);
     expect(withWindow.totalErrors).toBe(2);
     expect(withWindow.throughput).toHaveLength(1);
     expect(withWindow.throughput[0]?.clientArticles).toBe(3);
+    expect(withWindow.throughput[0]?.queueArticles).toBe(1);
     expect(withWindow.catalogue.fileCount).toBe(42);
     expect(withWindow.indexers).toHaveLength(1);
     expect(withWindow.includedSections).toEqual(expect.arrayContaining(["static", "window"]));
@@ -81,6 +85,7 @@ describe("mergeOverviewStats", () => {
             bucket: 1,
             articles: 5,
             clientArticles: 4,
+            queueArticles: 0,
             misses: 1,
             errors: 0,
             bytesServed: 10,

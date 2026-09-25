@@ -190,4 +190,87 @@ describe("AttentionSummary", () => {
     expect(document.activeElement).toBe(trigger);
     expect(trigger.className).toContain("text-warning");
   });
+
+  it("escalates at three consecutive trips with the provider name, reason, and recovery action", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ totalCount: 0 }) }),
+    );
+    const provider = {
+      provider: "news.example.com",
+      nickname: "Backup account",
+      circuitState: "open" as const,
+      lastFailureReason: "Connection refused",
+      consecutiveTrips: 2,
+    };
+    const view = render(
+      <MemoryRouter>
+        <AttentionSummary providers={[provider]} arrHealth={null} hasConfiguredArrs={false} />
+      </MemoryRouter>,
+    );
+    await screen.findByText("1 provider circuit open or recovering");
+    expect(screen.getByRole("status").textContent).toBe("Alerts: needs attention");
+    expect(screen.queryByText("Backup account unreachable")).toBeNull();
+
+    fireEvent.click(screen.getByLabelText("Alerts: needs attention"));
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText("Alerts: needs attention").querySelector("span[class*='animate-']"),
+      ).toBeNull(),
+    );
+    fireEvent.click(screen.getByLabelText("Alerts: needs attention"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Alerts: needs attention").closest("details")?.open).toBe(false),
+    );
+    view.rerender(
+      <MemoryRouter>
+        <AttentionSummary
+          providers={[{ ...provider, consecutiveTrips: 3 }]}
+          arrHealth={null}
+          hasConfiguredArrs={false}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByText("1 provider circuit open or recovering")).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("1 provider circuit repeatedly open");
+    expect(screen.getByText("Backup account unreachable")).toBeTruthy();
+    expect(screen.getByText("Connection refused")).toBeTruthy();
+    expect(screen.getByText(/Missing-article checks are paused/)).toBeTruthy();
+    expect(
+      screen
+        .getByRole("link", { name: "Disable or fix it in Usenet settings" })
+        .getAttribute("href"),
+    ).toBe("/settings");
+    expect(
+      screen.getByLabelText("Alerts: needs attention").querySelector("span[class*='animate-']"),
+    ).not.toBeNull();
+
+    view.rerender(
+      <MemoryRouter>
+        <AttentionSummary
+          providers={[
+            { ...provider, consecutiveTrips: 3 },
+            { ...provider, provider: "backup.example.com", consecutiveTrips: 3 },
+          ]}
+          arrHealth={null}
+          hasConfiguredArrs={false}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("status").textContent).toBe("2 provider circuits repeatedly open");
+  });
+
+  it("does not escalate when provider status is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
+    render(
+      <MemoryRouter>
+        <AttentionSummary providers={null} arrHealth={null} hasConfiguredArrs={false} />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText("Provider status unavailable");
+    expect(screen.queryByText(/repeatedly open/)).toBeNull();
+    expect(screen.queryByRole("link", { name: "Disable or fix it in Usenet settings" })).toBeNull();
+  });
 });

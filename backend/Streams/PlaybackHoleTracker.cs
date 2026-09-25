@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using NzbWebDAV.Extensions;
 
 namespace NzbWebDAV.Streams;
 
@@ -36,7 +37,10 @@ internal static class PlaybackHoleTracker
             Prune(state, now);
             state.LastEventUtc = now;
             state.HoleTimes.Add(now);
-            state.MissingSegmentIds.Add(segmentId);
+            // An inconclusive miss still counts toward consecutive-hole fail-fast, but later reads
+            // must ask the providers again instead of treating the segment as known-missing.
+            if (!exception.IsInconclusiveArticleMiss())
+                state.MissingSegmentIds.Add(segmentId);
             state.LastException = exception;
         }
 

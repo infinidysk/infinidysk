@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using NzbWebDAV.Clients;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Services;
@@ -650,6 +651,37 @@ public class RadarrSonarrClientTests
         Assert.Equal(TimeSpan.FromSeconds(30), ArrClient.RequestTimeout);
     }
 
+    [Fact]
+    public async Task HttpClientTimeout_SurfacesAsTimedOutRequest()
+    {
+        using var httpClient = new HttpClient(new HangUntilCancelledHandler())
+        {
+            Timeout = TimeSpan.FromMilliseconds(100),
+        };
+        var client = new TestSonarrClient("http://sonarr:8989", httpClient);
+
+        var ex = await Assert.ThrowsAsync<ArrRequestTimeoutException>(
+            () => client.GetQueueStatusAsync(CancellationToken.None));
+
+        Assert.Equal(
+            "GET /api/v3/queue/status request to http://sonarr:8989 timed out after 0.1 seconds; routing: direct (single-label hostname).",
+            ex.Message);
+        Assert.IsType<TimeoutException>(ex.InnerException?.InnerException);
+    }
+
+    [Fact]
+    public async Task CancellationWithoutTimeoutEvidence_IsNotReportedAsTimeout()
+    {
+        using var httpClient = new HttpClient(new ThrowingHandler(
+            new TaskCanceledException("handler gave up")));
+        var client = new TestSonarrClient("http://sonarr:8989", httpClient);
+
+        var ex = await Assert.ThrowsAsync<TaskCanceledException>(
+            () => client.GetQueueStatusAsync(CancellationToken.None));
+
+        Assert.IsNotType<ArrRequestTimeoutException>(ex);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -903,5 +935,13 @@ public class RadarrSonarrClientTests
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             throw new InvalidOperationException("Expected cancellation before a response.");
         }
+    }
+
+    private sealed class ThrowingHandler(Exception exception) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromException<HttpResponseMessage>(exception);
     }
 }

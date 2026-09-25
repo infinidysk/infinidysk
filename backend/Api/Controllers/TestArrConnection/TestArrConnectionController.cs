@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Net.Http;
 using Microsoft.AspNetCore.Mvc;
+using NzbWebDAV.Clients;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Config;
 
@@ -54,7 +55,7 @@ public class TestArrConnectionController(ConfigManager configManager) : BaseApiC
                 Error = error
             };
         }
-        catch (Exception e) when (e is HttpRequestException or IOException or TimeoutException or InvalidOperationException)
+        catch (Exception e) when (e is HttpRequestException or IOException or TimeoutException or InvalidOperationException or ArrRequestTimeoutException)
         {
             return new TestArrConnectionResponse
             {

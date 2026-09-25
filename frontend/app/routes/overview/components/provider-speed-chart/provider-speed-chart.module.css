@@ -37,6 +37,14 @@
   vector-effect: non-scaling-stroke;
 }
 
+.lineAverage {
+  stroke: var(--color-info);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
 .crosshair {
   position: absolute;
   top: 0;

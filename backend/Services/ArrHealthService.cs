@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
+using NzbWebDAV.Clients;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Config;
@@ -23,7 +24,6 @@ public sealed class ArrHealthService : BackgroundService
     internal const int MaxAwaitingPerInstance = 100;
     internal const int OfflineFailureThreshold = 2;
     internal const int ImportEventType = 3;
-    private static readonly TimeSpan PerCallTimeout = TimeSpan.FromSeconds(10);
     private static readonly HashSet<string> WakeConfigKeys =
     [
         ConfigKeys.ArrInstances,
@@ -39,6 +39,7 @@ public sealed class ArrHealthService : BackgroundService
     private TaskCompletionSource _wake = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     internal TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(60);
+    internal TimeSpan PerCallTimeout { get; set; } = TimeSpan.FromSeconds(10);
     internal Func<string, ArrConfig.ConnectionDetails, ArrClient> ClientFactory { get; set; } = CreateClient;
     internal Func<MetricsDbContext> MetricsContextFactory { get; set; } = static () => new MetricsDbContext();
     internal Func<DavDatabaseContext> DavContextFactory { get; set; }
@@ -184,6 +185,7 @@ public sealed class ArrHealthService : BackgroundService
     {
         var key = ArrConfig.MakeInstanceKey(appType, details.Host);
         var displayName = string.IsNullOrWhiteSpace(details.Name) ? details.Host : details.Name;
+        var appLabel = appType == "radarr" ? "Radarr" : "Sonarr";
 
         // Skip a host that is timing out or refusing connections until its backoff
         // elapses — polling a dying peer on the fixed cadence only adds load it cannot
@@ -208,18 +210,26 @@ public sealed class ArrHealthService : BackgroundService
             return;
         }
 
+        var queueSucceeded = false;
+        var arrRequestFailed = false;
+        ArrQueueStatus? queueStatus = null;
         try
         {
-            var queueStatus = await CallAsync(callCt => client.GetQueueStatusAsync(callCt), ct).ConfigureAwait(false);
-            var queue = await CallAsync(callCt => client.GetQueueAsync(callCt), ct).ConfigureAwait(false);
-            // Arr answered; clear reachability backoff before local DB/history work.
-            _backoff.RecordSuccess(details.Host);
+            queueStatus = await CallAsync(
+                $"{appLabel} queue status", details.Host,
+                callCt => client.GetQueueStatusAsync(callCt), () => arrRequestFailed = true, ct).ConfigureAwait(false);
+            var queue = await CallAsync(
+                $"{appLabel} queue", details.Host,
+                callCt => client.GetQueueAsync(callCt), () => arrRequestFailed = true, ct).ConfigureAwait(false);
+            queueSucceeded = true;
 
             await using var dav = DavContextFactory();
             await using var metrics = MetricsContextFactory();
 
             var awaiting = await BuildAwaitingAsync(queue.Records, dav, ct).ConfigureAwait(false);
-            await IngestHistoryAsync(key, client, dav, metrics, ct).ConfigureAwait(false);
+            await IngestHistoryAsync(key, appLabel, details.Host, client, dav, metrics,
+                () => arrRequestFailed = true, ct).ConfigureAwait(false);
+            _backoff.RecordSuccess(details.Host);
 
             var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var cutoff30d = nowMs - (long)ArrHealthMath.MedianWindow.TotalMilliseconds;
@@ -269,26 +279,69 @@ public sealed class ArrHealthService : BackgroundService
         {
             // shutdown — do not log or mark Offline
         }
+        catch (Exception e) when (e is not OutOfMemoryException
+                                  && queueStatus is not null
+                                  && !arrRequestFailed
+                                  && e.IsTransientDatabaseException())
+        {
+            Log.Warning(
+                "Arr health refresh for {Host} deferred due to local database contention. Reason: {Reason}",
+                details.Host,
+                e.TryGetKnownErrorMessage(out var reason) ? reason : e.Message);
+            Log.Debug(e, "Arr health local database contention details for {Host}", details.Host);
+            _backoff.RecordSuccess(details.Host);
+            RecordLocalDatabaseDeferral(key, appType, details.Host, displayName, queueStatus);
+        }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
-            e.LogWarningKnownOrStack("Arr health poll failed for {Host}", details.Host);
-            _backoff.RecordFailure(details.Host, e);
+            if (e.TryGetCausingException<ArrRequestTimeoutException>(out var timeout))
+            {
+                Log.Warning("Arr health poll failed for {Host}. Reason: {Reason}", details.Host, timeout!.Message);
+                Log.Debug(e, "Arr health poll timeout details for {Host}", details.Host);
+            }
+            else
+                e.LogWarningKnownOrStack("Arr health poll failed for {Host}", details.Host);
+            if (queueSucceeded && !arrRequestFailed)
+                _backoff.RecordSuccess(details.Host);
+            if (arrRequestFailed)
+                _backoff.RecordFailure(details.Host, e);
             RecordFailure(key, appType, details.Host, displayName, e);
         }
     }
 
-    private static async Task<T> CallAsync<T>(Func<CancellationToken, Task<T>> call, CancellationToken ct)
+    private async Task<T> CallAsync<T>(
+        string operation,
+        string host,
+        Func<CancellationToken, Task<T>> call,
+        Action onFailure,
+        CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(PerCallTimeout);
-        return await call(timeout.Token).ConfigureAwait(false);
+        try
+        {
+            return await call(timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException e) when (timeout.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            onFailure();
+            throw new ArrRequestTimeoutException(operation, host, PerCallTimeout, e);
+        }
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            onFailure();
+            throw;
+        }
     }
 
     private async Task IngestHistoryAsync(
         string instanceKey,
+        string appLabel,
+        string host,
         ArrClient client,
         DavDatabaseContext dav,
         MetricsDbContext metrics,
+        Action onRequestFailure,
         CancellationToken ct)
     {
         var cursor = await metrics.ArrImportEvents
@@ -299,8 +352,9 @@ public sealed class ArrHealthService : BackgroundService
         for (var page = 1; page <= MaxHistoryPages; page++)
         {
             var history = await CallAsync(
+                $"{appLabel} import history page {page}", host,
                 callCt => client.GetImportHistoryAsync(page, HistoryPageSize, callCt),
-                ct).ConfigureAwait(false);
+                onRequestFailure, ct).ConfigureAwait(false);
             var records = history.Records ?? [];
             if (records.Count == 0) break;
 
@@ -471,12 +525,61 @@ public sealed class ArrHealthService : BackgroundService
                 HasErrors = previous?.HasErrors ?? false,
                 LastImportAtMs = previous?.LastImportAtMs,
                 LastPolledAt = DateTimeOffset.UtcNow,
-                LastError = exception.TryGetKnownErrorMessage(out var reason) ? reason : exception.Message,
+                LastError = DescribeFailure(exception),
                 MedianHandoffMs30d = previous?.MedianHandoffMs30d,
                 MedianSampleCount30d = previous?.MedianSampleCount30d ?? 0,
                 Awaiting = previous?.Awaiting ?? [],
             };
         }
+    }
+
+    internal const string LocalDatabaseBusyMessage =
+        "Health refresh was deferred due to local database contention; the instance itself responded normally.";
+
+    // The Arr answered, so reset the offline streak and refresh queue-derived fields;
+    // DB-derived fields (awaiting, medians) keep their last known values.
+    private void RecordLocalDatabaseDeferral(
+        string key,
+        string appType,
+        string host,
+        string displayName,
+        ArrQueueStatus queueStatus)
+    {
+        var hasWarnings = queueStatus.Warnings || queueStatus.UnknownWarnings;
+        var hasErrors = queueStatus.Errors || queueStatus.UnknownErrors;
+        lock (_snapshotLock)
+        {
+            _consecutiveFailures[key] = 0;
+            _snapshots.TryGetValue(key, out var previous);
+            var status = hasWarnings || hasErrors || previous?.Status == ArrInstanceHealthStatus.Degraded
+                ? ArrInstanceHealthStatus.Degraded
+                : ArrInstanceHealthStatus.Healthy;
+            _snapshots[key] = new ArrHealthSnapshot
+            {
+                InstanceKey = key,
+                DisplayName = displayName,
+                AppType = appType,
+                Host = host,
+                Status = status,
+                QueueCount = queueStatus.TotalCount,
+                AwaitingCount = previous?.AwaitingCount ?? 0,
+                HasWarnings = hasWarnings,
+                HasErrors = hasErrors,
+                LastImportAtMs = previous?.LastImportAtMs,
+                LastPolledAt = DateTimeOffset.UtcNow,
+                LastError = LocalDatabaseBusyMessage,
+                MedianHandoffMs30d = previous?.MedianHandoffMs30d,
+                MedianSampleCount30d = previous?.MedianSampleCount30d ?? 0,
+                Awaiting = previous?.Awaiting ?? [],
+            };
+        }
+    }
+
+    private static string DescribeFailure(Exception exception)
+    {
+        if (exception.TryGetCausingException<ArrRequestTimeoutException>(out var timeout))
+            return timeout!.Message;
+        return exception.TryGetKnownErrorMessage(out var reason) ? reason : exception.Message;
     }
 
     private void PruneSnapshots(HashSet<string> enabledKeys)

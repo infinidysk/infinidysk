@@ -11,6 +11,7 @@
   min-width: 0;
   cursor: crosshair;
   touch-action: pan-y;
+  container-type: inline-size;
 }
 .chartArea:focus-visible {
   outline: 2px solid var(--color-primary);
@@ -44,6 +45,13 @@
   vector-effect: non-scaling-stroke;
 }
 
+.lineQueue {
+  stroke: var(--color-secondary);
+  stroke-width: 1.5;
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
 .lineErrors {
   stroke: var(--color-error);
   stroke-width: 1.5;
@@ -63,18 +71,22 @@
 
 .hoverTooltip {
   position: absolute;
+  left: clamp(min(9rem, 50%), var(--cursor-x), max(50%, calc(100% - 9rem)));
+  top: var(--cursor-y);
   transform: translate(-50%, -50%);
   pointer-events: none;
   z-index: 10;
 }
 
-.hoverDotAnchor {
-  display: block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-success);
-  box-shadow: 0 0 0 2px var(--color-base-100);
+.hoverTooltip > :global(.tooltip-content) {
+  width: min(18rem, 100cqw);
+  max-width: none;
+  overflow-wrap: anywhere;
+  transition: none;
+}
+
+.hoverTooltip::after {
+  display: none;
 }
 
 .hoverDot {
@@ -82,12 +94,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--color-success);
   transform: translate(-50%, -50%);
   pointer-events: none;
   box-shadow: 0 0 0 2px var(--color-base-100);
-}
-
-.hoverDotErr {
-  background: var(--color-error);
 }

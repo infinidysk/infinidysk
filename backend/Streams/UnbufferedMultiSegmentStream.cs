@@ -214,7 +214,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
                 catch (SeekPositionNotFoundException)
                 {
                     var fallback = await TryFallbackSegmentsAsync(
-                            segmentIndex, GetRecoveryState(segmentIndex, segmentId), cancellationToken)
+                            segmentIndex, GetRecoveryState(segmentIndex, segmentId), primaryMiss: null, cancellationToken)
                         .ConfigureAwait(false);
                     if (fallback is not null)
                     {
@@ -590,7 +590,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
             }
         }
 
-        var fallback = await TryFallbackSegmentsAsync(segmentIndex, state, cancellationToken)
+        var fallback = await TryFallbackSegmentsAsync(segmentIndex, state, primaryMiss: null, cancellationToken)
             .ConfigureAwait(false);
         if (fallback is not null)
         {
@@ -628,7 +628,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
     {
         var state = GetRecoveryState(segmentIndex, segmentId);
         await ResetCandidateAsync(segmentIndex).ConfigureAwait(false);
-        var fallback = await TryFallbackSegmentsAsync(segmentIndex, state, cancellationToken)
+        var fallback = await TryFallbackSegmentsAsync(segmentIndex, state, failure, cancellationToken)
             .ConfigureAwait(false);
         if (fallback is not null)
         {
@@ -689,7 +689,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
             }
             catch (SeekPositionNotFoundException)
             {
-                var fallback = await TryFallbackSegmentsAsync(segmentIndex, state, cancellationToken)
+                var fallback = await TryFallbackSegmentsAsync(segmentIndex, state, primaryMiss: null, cancellationToken)
                     .ConfigureAwait(false);
                 if (fallback is not null)
                 {
@@ -878,15 +878,18 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
         _consecutiveZeroFills++;
         _openSegmentHole = true;
         PlaybackHoleTracker.RecordHole(_fileName, segmentId, cause);
+        var inconclusive = !isCorruption && cause.IsInconclusiveArticleMiss();
         var template = isCorruption
             ? "Article {SegmentId} persistently corrupt while reading {FileName}. Filling the {Bytes}-byte gap to preserve later file offsets."
-            : "Article {SegmentId} missing on all providers while reading {FileName}. Filling the {Bytes}-byte gap to preserve later file offsets.";
+            : inconclusive
+                ? MultiSegmentStream.InconclusiveGapFillTemplate
+                : "Article {SegmentId} missing on all providers while reading {FileName}. Filling the {Bytes}-byte gap to preserve later file offsets.";
         ZeroFillLogLimiter.Write(template, segmentId, _fileName, fill, cause);
         if (MultiProviderNntpClient.CurrentReadSessionId is { } sessionId)
             StreamTrace.TryZeroFill(sessionId, segmentId, fill);
         if (isCorruption)
             Par2RepairTriggerSink.ReportCorruption(_fileName, segmentId);
-        else
+        else if (!inconclusive)
             Par2RepairTriggerSink.Current?.ReportZeroFill(_fileName, segmentId, segmentIndex, fill);
         var cap = _consecutiveZeroFills >= GapFillLimits.MaxConsecutiveZeroFills;
         var trackerFail = PlaybackHoleTracker.ShouldFailFast(_fileName, out var failFast);
@@ -914,6 +917,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
     private async Task<Stream?> TryFallbackSegmentsAsync(
         int segmentIndex,
         SegmentRecoveryState state,
+        UsenetArticleNotFoundException? primaryMiss,
         CancellationToken cancellationToken)
     {
         if (_segmentFallbacks is null ||
@@ -962,9 +966,12 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
             {
                 await DisposeBodyStreamAsync(fallbackStream).ConfigureAwait(false);
             }
-            catch (UsenetArticleNotFoundException)
+            catch (UsenetArticleNotFoundException alternateMiss)
             {
                 await DisposeBodyStreamAsync(fallbackStream).ConfigureAwait(false);
+                // An alternate that could not be confirmed missing leaves the segment unconfirmed.
+                if (primaryMiss is not null)
+                    primaryMiss.InconclusiveReason ??= alternateMiss.InconclusiveReason;
                 // A playback fail-fast raised by FetchBodyAsync must escape instead of
                 // walking every fallback ID and recording an extra hole per attempt.
                 if (PlaybackHoleTracker.ShouldFailFast(_fileName, out var failFast) && failFast is not null)

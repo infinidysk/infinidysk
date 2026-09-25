@@ -5,11 +5,10 @@ declare const styles: {
   readonly gridline: string;
   readonly lineApp: string;
   readonly lineClient: string;
+  readonly lineQueue: string;
   readonly lineErrors: string;
   readonly crosshair: string;
   readonly hoverTooltip: string;
-  readonly hoverDotAnchor: string;
   readonly hoverDot: string;
-  readonly hoverDotErr: string;
 };
 export = styles;

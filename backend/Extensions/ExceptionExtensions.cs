@@ -181,6 +181,15 @@ public static class ExceptionExtensions
     }
 
     /// <summary>
+    /// True when the chain contains a missing-article failure that not every enabled provider
+    /// confirmed (<see cref="UsenetArticleNotFoundException.InconclusiveReason"/>). Callers may
+    /// retry or gap-fill it for the current read but must not record it as missing-article evidence.
+    /// </summary>
+    public static bool IsInconclusiveArticleMiss(this Exception exception) =>
+        exception.TryGetCausingException(out UsenetArticleNotFoundException? miss)
+        && miss!.InconclusiveReason is not null;
+
+    /// <summary>
     /// Returns a human-readable message for known/expected failures (transport,
     /// download, and database corruption) so callers can log a single line without
     /// a stack dump. Walks the exception chain and prefers the innermost matching

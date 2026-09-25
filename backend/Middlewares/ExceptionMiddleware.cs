@@ -25,6 +25,7 @@ public class ExceptionMiddleware(
     IDbContextFactory<DavDatabaseContext>? dbContextFactory = null)
 {
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentMissingArticles = new();
+    private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentInconclusiveMissingArticles = new();
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentConnectionLimitErrors = new();
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentSeekErrors = new();
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentReadErrors = new();
@@ -36,6 +37,7 @@ public class ExceptionMiddleware(
     private static readonly TimeSpan RepairDedupeWindow = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan CleanupThreshold = TimeSpan.FromMinutes(5);
     private static int _callCount;
+    internal static readonly object CircuitAdmissionRejectedKey = new();
 
     internal Func<Guid, Task>? RepairScheduleCompletionHook { get; set; }
 
@@ -93,6 +95,43 @@ public class ExceptionMiddleware(
                     Log.Warning(warning, filePath, reason);
             });
             Log.Debug(e, "WebDAV streaming-write-timeout stack");
+        }
+        catch (Exception e) when (
+            e.TryGetCausingException(out UsenetArticleNotFoundException? inconclusive) &&
+            inconclusive!.InconclusiveReason is not null &&
+            e is not OutOfMemoryException)
+        {
+            // Not every provider answered, so the article is not proven missing: let the client
+            // retry and leave the fail-fast cache, streaming-failure count, and repair queue alone.
+            // The key also stops WebDavObservabilityMiddleware logging a second, generic failure.
+            context.Items[CircuitAdmissionRejectedKey] = true;
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                context.Response.Headers.RetryAfter = "5";
+            }
+
+            var filePath = GetRequestFilePath(context);
+            var dedupeKey = $"{filePath}|{inconclusive!.SegmentId}";
+            LogWithDedup(RecentInconclusiveMissingArticles, dedupeKey, suppressed =>
+            {
+                if (suppressed > 0)
+                    Log.Warning(
+                        "File {FilePath} article {SegmentId} could not be confirmed missing: {Reason}. Returning 503 so the client retries. (suppressed {SuppressedCount} duplicates in last 60s)",
+                        filePath,
+                        inconclusive.SegmentId,
+                        inconclusive.InconclusiveReason,
+                        suppressed);
+                else
+                    Log.Warning(
+                        "File {FilePath} article {SegmentId} could not be confirmed missing: {Reason}. Returning 503 so the client retries.",
+                        filePath,
+                        inconclusive.SegmentId,
+                        inconclusive.InconclusiveReason);
+            });
+            Log.Debug(e, "File {FilePath} inconclusive missing-article stack", filePath);
+            AbortStartedResponse(context);
         }
         catch (Exception e) when (e.TryGetCausingException(out UsenetArticleNotFoundException? notFound) && e is not OutOfMemoryException)
         {
@@ -248,6 +287,29 @@ public class ExceptionMiddleware(
             var filePath = GetRequestFilePath(context);
             Log.Error("File {FilePath} could not connect to usenet provider: {ErrorMessage}", filePath, e.Message);
             AbortStartedResponse(context);
+        }
+        catch (Exception e) when (
+            IsDavItemRequest(context) &&
+            e.TryGetCausingException(out CircuitAdmissionRejectedException? _) &&
+            e is not OutOfMemoryException)
+        {
+            context.Items[CircuitAdmissionRejectedKey] = true;
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                context.Response.Headers.RetryAfter = "5";
+            }
+            else
+            {
+                AbortStartedResponse(context);
+            }
+
+            var filePath = GetRequestFilePath(context);
+            LogWithDedup(RecentReadErrors, "circuit-admission|" + filePath, suppressed =>
+                Log.Warning(
+                    "WebDAV read deferred. Path={Path} Reason: {Reason} SuppressedCount={SuppressedCount}",
+                    filePath, "provider circuit admission unavailable", suppressed));
         }
         catch (Exception e) when (e.TryGetCausingException(out StreamingReadTimeoutException? _) && e is not OutOfMemoryException)
         {
@@ -843,6 +905,10 @@ public class ExceptionMiddleware(
         {
             if (kvp.Value.LastLogged < cutoff)
                 RecentMissingArticles.TryRemove(kvp.Key, out _);
+        }
+        foreach (var kvp in RecentInconclusiveMissingArticles.Where(kvp => kvp.Value.LastLogged < cutoff))
+        {
+            RecentInconclusiveMissingArticles.TryRemove(kvp.Key, out _);
         }
         foreach (var kvp in RecentConnectionLimitErrors)
         {

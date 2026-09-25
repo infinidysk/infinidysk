@@ -80,6 +80,7 @@ internal static class ProviderCircuitOverviewEnricher
                     cooldownRemainingSeconds = fields.CooldownRemainingSeconds,
                     lastFailureReason = fields.LastFailureReason,
                     tripCount = fields.TripCount,
+                    consecutiveTrips = fields.ConsecutiveTrips,
                     failureCount = fields.FailureCount,
                     articleMissCount = fields.ArticleMissCount,
                 };
@@ -92,6 +93,7 @@ internal static class ProviderCircuitOverviewEnricher
         int? CooldownRemainingSeconds,
         string? LastFailureReason,
         long TripCount,
+        long ConsecutiveTrips,
         long FailureCount,
         long ArticleMissCount) ToRowFields(ProviderCircuitBreakerSnapshot breaker)
     {
@@ -100,6 +102,7 @@ internal static class ProviderCircuitOverviewEnricher
             breaker.CooldownRemainingSeconds,
             breaker.LastFailureReason,
             breaker.TripCount,
+            breaker.ConsecutiveTrips,
             breaker.FailureCount,
             breaker.ArticleMissCount);
     }

@@ -1,4 +1,5 @@
 ﻿using System.Security.Cryptography;
+using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
@@ -6,11 +7,18 @@ using NzbWebDAV.Par2Recovery.Packets;
 using NzbWebDAV.Queue.DeobfuscationSteps._1.FetchFirstSegment;
 using NzbWebDAV.Utils;
 using Serilog;
+using UsenetSharp.Models;
 
 namespace NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
 
 public static class GetFileInfosStep
 {
+    internal const string NoDescriptorsReason = "no PAR2 file descriptors were discovered in this NZB";
+    internal const string NoPrefixMatchReason = "no PAR2 descriptor matches the first 16 KiB of the fetched article";
+    internal const string SizeWindowReason = "the matching PAR2 descriptor length is outside 95-100% of the NZB encoded size";
+    internal const string NoProofReason = "the matching PAR2 descriptor has no verification proof";
+    internal const string ProofInvalidReason = "the matching PAR2 verification proof is invalid for the descriptor length";
+
     public static List<FileInfo> GetFileInfos
     (
         List<FetchFirstSegmentsStep.NzbFileWithFirstSegment> files,
@@ -21,14 +29,21 @@ public static class GetFileInfosStep
         using var md5 = MD5.Create();
 #pragma warning restore CA5351
         var hashToFileDescMap = GetHashToFileDescMap(par2FileDescriptors);
+        var recoveryUnavailable = new Dictionary<RecoveryUnavailableKey, RecoveryUnavailableSummary>();
         var picks = files.Select(x =>
         {
-            var fileDesc = GetMatchingFileDescriptor(x, hashToFileDescMap, md5);
-            if (fileDesc?.VerificationProof is { } proof && proof.IsValidFor((long)fileDesc.FileLength)
-                && x.Header is { } header
-                && ((header.TotalParts > 0 && header.TotalParts != x.NzbFile.Segments.Count)
-                    || (header.FileSize > 0 && header.FileSize != proof.FileLength)))
-                x.NzbFile.VerificationProof = proof;
+            var fileDesc = GetMatchingFileDescriptor(
+                x, hashToFileDescMap, md5, out var rejectedDescriptor, out var unmatchedReason);
+            var comparisonDescriptor = fileDesc ?? rejectedDescriptor;
+            if (x.Header is { } header && HasMetadataConflict(header, x.NzbFile, comparisonDescriptor))
+            {
+                if (fileDesc?.VerificationProof is { } proof && proof.IsValidFor((long)fileDesc.FileLength))
+                    x.NzbFile.VerificationProof = proof;
+                else
+                    RecordRecoveryUnavailable(
+                        recoveryUnavailable, x.NzbFile, fileDesc ?? rejectedDescriptor, header,
+                        DescribeUnavailableProof(fileDesc, unmatchedReason));
+            }
             var info = GetFileInfo(x, fileDesc, out var par2SuppliedFileName);
             return new NamePick
             {
@@ -40,8 +55,93 @@ public static class GetFileInfosStep
             };
         }).ToList();
 
+        LogRecoveryUnavailable(recoveryUnavailable);
         RepairRarGroupNames(picks);
         return picks.Select(p => p.Info).ToList();
+    }
+
+    private static bool HasMetadataConflict(UsenetYencHeader header, NzbFile file, FileDesc? fileDesc) =>
+        (header.TotalParts > 0 && header.TotalParts != file.Segments.Count)
+        || (header.FileSize > 0 && fileDesc is not null && (ulong)header.FileSize != fileDesc.FileLength);
+
+    private static string DescribeUnavailableProof(FileDesc? fileDesc, string? unmatchedReason)
+    {
+        if (fileDesc is null) return unmatchedReason ?? NoPrefixMatchReason;
+        if (fileDesc.VerificationProof is null) return fileDesc.VerificationProofUnavailableReason ?? NoProofReason;
+        return ProofInvalidReason;
+    }
+
+    private static void RecordRecoveryUnavailable(
+        Dictionary<RecoveryUnavailableKey, RecoveryUnavailableSummary> summaries,
+        NzbFile file,
+        FileDesc? fileDesc,
+        UsenetYencHeader header,
+        string reason)
+    {
+        var fileRef = YencFileValidationContext.GetDiagnosticReference(
+            file.Segments.FirstOrDefault()?.MessageId);
+        var par2FileLength = fileDesc?.FileLength;
+        var par2SliceSize = fileDesc?.SliceSize;
+        var nzbEncodedSize = file.GetTotalYencodedSize();
+        var key = new RecoveryUnavailableKey(
+            reason, fileRef, header.TotalParts, file.Segments.Count, header.FileSize,
+            par2FileLength, par2SliceSize, nzbEncodedSize);
+        if (summaries.TryGetValue(key, out var existing))
+        {
+            existing.Count++;
+            return;
+        }
+
+        summaries.Add(key, new RecoveryUnavailableSummary
+        {
+            Count = 1,
+            Reason = reason,
+            FileRef = fileRef,
+            HeaderTotalParts = header.TotalParts,
+            NzbSegmentCount = file.Segments.Count,
+            HeaderFileSize = header.FileSize,
+            Par2FileLength = par2FileLength,
+            Par2SliceSize = par2SliceSize,
+            NzbEncodedSize = nzbEncodedSize,
+        });
+    }
+
+    private static void LogRecoveryUnavailable(
+        Dictionary<RecoveryUnavailableKey, RecoveryUnavailableSummary> summaries)
+    {
+        foreach (var summary in summaries.Values)
+        {
+            Log.Warning(
+                "Conflicting yEnc metadata in {Count} file(s) cannot use PAR2-verified recovery. Reason: {Reason}; " +
+                "FileRef: {FileRef}; HeaderTotalParts: {HeaderTotalParts}; NzbSegmentCount: {NzbSegmentCount}; " +
+                "HeaderFileSize: {HeaderFileSize}; Par2FileLength: {Par2FileLength}; Par2SliceSize: {Par2SliceSize}; " +
+                "NzbEncodedSize: {NzbEncodedSize}",
+                summary.Count, summary.Reason, summary.FileRef, summary.HeaderTotalParts, summary.NzbSegmentCount,
+                summary.HeaderFileSize, summary.Par2FileLength, summary.Par2SliceSize, summary.NzbEncodedSize);
+        }
+    }
+
+    private readonly record struct RecoveryUnavailableKey(
+        string Reason,
+        string? FileRef,
+        int HeaderTotalParts,
+        int NzbSegmentCount,
+        long HeaderFileSize,
+        ulong? Par2FileLength,
+        ulong? Par2SliceSize,
+        long NzbEncodedSize);
+
+    private sealed class RecoveryUnavailableSummary
+    {
+        public required int Count { get; set; }
+        public required string Reason { get; init; }
+        public required string? FileRef { get; init; }
+        public required int HeaderTotalParts { get; init; }
+        public required int NzbSegmentCount { get; init; }
+        public required long HeaderFileSize { get; init; }
+        public required ulong? Par2FileLength { get; init; }
+        public required ulong? Par2SliceSize { get; init; }
+        public required long NzbEncodedSize { get; init; }
     }
 
     private static Dictionary<string, LinkedList<FileDesc>> GetHashToFileDescMap(List<FileDesc> par2FileDescriptors)
@@ -116,16 +216,26 @@ public static class GetFileInfosStep
     (
         FetchFirstSegmentsStep.NzbFileWithFirstSegment file,
         Dictionary<string, LinkedList<FileDesc>> hashToFiledescMap,
-        MD5 md5
+        MD5 md5,
+        out FileDesc? rejectedDescriptor,
+        out string? unmatchedReason
     )
     {
+        rejectedDescriptor = null;
+        unmatchedReason = null;
         var hash = !file.MissingFirstSegment ? BitConverter.ToString(md5.ComputeHash(file.First16KB!)) : "";
-        if (!hashToFiledescMap.TryGetValue(hash, out var fileDescs)) return null;
+        if (!hashToFiledescMap.TryGetValue(hash, out var fileDescs))
+        {
+            unmatchedReason = hashToFiledescMap.Count == 0 ? NoDescriptorsReason : NoPrefixMatchReason;
+            return null;
+        }
         var fileDesc = fileDescs.First!.Value;
         if (fileDescs.Count > 1) fileDescs.RemoveFirst();
-        return IsCloseToYencodedSize((long)fileDesc.FileLength, file.NzbFile.GetTotalYencodedSize())
-            ? fileDesc
-            : null;
+        if (IsCloseToYencodedSize((long)fileDesc.FileLength, file.NzbFile.GetTotalYencodedSize()))
+            return fileDesc;
+        rejectedDescriptor = fileDesc;
+        unmatchedReason = SizeWindowReason;
+        return null;
     }
 
     private static bool IsCloseToYencodedSize(long fileSize, long totalYencodedSize)

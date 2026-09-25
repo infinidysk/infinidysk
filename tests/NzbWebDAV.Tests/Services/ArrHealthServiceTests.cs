@@ -1,7 +1,11 @@
+using System.Data.Common;
 using System.Net.Sockets;
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Migrations;
+using NzbWebDAV.Clients;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Config;
@@ -11,9 +15,13 @@ using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Database.Models.Metrics;
 using NzbWebDAV.Services;
+using NzbWebDAV.Tests.TestUtils;
+using Serilog;
+using Serilog.Events;
 
 namespace NzbWebDAV.Tests.Services;
 
+[Collection(nameof(GlobalLoggerCollection))]
 public sealed class ArrHealthServiceTests
 {
     [Fact]
@@ -305,6 +313,161 @@ public sealed class ArrHealthServiceTests
     }
 
     [Fact]
+    public async Task Poll_LocalDbFailureWithSocketCause_DoesNotBackoffHealthyArr()
+    {
+        var host = "http://sonarr:8989";
+        var backoff = new ArrInstanceBackoff();
+        await using var harness = await DualDbHarness.CreateAsync();
+        harness.DavInterceptor = new SocketFailureInterceptor();
+        var client = new ScriptedArrClient(host)
+        {
+            Queue = _ => Task.FromResult(new ArrQueue<ArrQueueRecord>
+            {
+                Records = [new ArrQueueRecord { Status = "completed", DownloadId = Guid.NewGuid().ToString() }],
+            }),
+        };
+        using var service = harness.CreateService(client, host, backoff);
+
+        Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+        Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+
+        Assert.Equal(2, ((SocketFailureInterceptor)harness.DavInterceptor).Attempts);
+        Assert.Equal(ArrInstanceHealthStatus.Offline, Assert.Single(service.GetSnapshots()).Status);
+        Assert.False(backoff.IsInBackoff(host));
+        backoff.RecordFailure(host, new SocketException());
+        Assert.False(backoff.IsInBackoff(host));
+    }
+
+    [Fact]
+    public async Task Poll_MetricsDbBusy_DefersHealthRefreshWithoutMarkingArrOffline()
+    {
+        var host = "http://sonarr:8989";
+        var backoff = new ArrInstanceBackoff();
+        await using var harness = await DualDbHarness.CreateAsync();
+        var interceptor = new BusyFailureInterceptor();
+        harness.MetricsInterceptor = interceptor;
+        var queueStatusCalls = 0;
+        var queueCalls = 0;
+        var client = new ScriptedArrClient(host)
+        {
+            QueueStatus = _ =>
+            {
+                queueStatusCalls++;
+                return Task.FromResult(new ArrQueueStatus { TotalCount = 3 });
+            },
+            Queue = _ =>
+            {
+                queueCalls++;
+                return Task.FromResult(new ArrQueue<ArrQueueRecord>
+                {
+                    Records = [new ArrQueueRecord { Status = "completed", DownloadId = Guid.NewGuid().ToString() }],
+                });
+            },
+        };
+        using var service = harness.CreateService(client, host, backoff);
+
+        var events = await CaptureAsync(async () =>
+        {
+            for (var cycle = 0; cycle < ArrHealthService.OfflineFailureThreshold + 1; cycle++)
+                Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+        });
+
+        var snapshot = Assert.Single(service.GetSnapshots());
+        Assert.Equal(ArrInstanceHealthStatus.Healthy, snapshot.Status);
+        Assert.Equal(3, snapshot.QueueCount);
+        Assert.Equal(ArrHealthService.LocalDatabaseBusyMessage, snapshot.LastError);
+        Assert.False(backoff.IsInBackoff(host));
+        Assert.Equal(ArrHealthService.OfflineFailureThreshold + 1, queueStatusCalls);
+        Assert.Equal(ArrHealthService.OfflineFailureThreshold + 1, queueCalls);
+        Assert.Equal(ArrHealthService.OfflineFailureThreshold + 1, interceptor.Attempts);
+        Assert.DoesNotContain(events, e =>
+            e.MessageTemplate.Text.StartsWith("Arr health poll failed", StringComparison.Ordinal)
+            && e.Properties.TryGetValue("Host", out var loggedHost)
+            && loggedHost.ToString().Trim('"') == host);
+        var warnings = events.Where(e => e.Level == LogEventLevel.Warning
+                                         && e.MessageTemplate.Text.StartsWith("Arr health refresh", StringComparison.Ordinal)
+                                         && e.Properties.TryGetValue("Host", out var loggedHost)
+                                         && loggedHost.ToString().Trim('"') == host)
+            .ToList();
+        Assert.Equal(ArrHealthService.OfflineFailureThreshold + 1, warnings.Count);
+        Assert.All(warnings, warning =>
+        {
+            Assert.Equal(
+                "Arr health refresh for {Host} deferred due to local database contention. Reason: {Reason}",
+                warning.MessageTemplate.Text);
+            Assert.Null(warning.Exception);
+        });
+    }
+
+    private sealed class BusyFailureInterceptor : DbCommandInterceptor
+    {
+        public int Attempts { get; private set; }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            Attempts++;
+            throw new SqliteException("SQLite Error 5: 'database is locked'.", 5);
+        }
+    }
+
+    private sealed class SocketFailureInterceptor : DbCommandInterceptor
+    {
+        public int Attempts { get; private set; }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            Attempts++;
+            throw new InvalidOperationException("database unavailable", new SocketException());
+        }
+    }
+
+    [Fact]
+    public async Task Poll_RepeatedImportHistoryTimeouts_EnterBackoff()
+    {
+        var host = "http://sonarr:8989";
+        var backoff = new ArrInstanceBackoff();
+        await using var harness = await DualDbHarness.CreateAsync();
+        var historyCalls = 0;
+        var client = new ScriptedArrClient(host)
+        {
+            ImportHistory = (_, _, _) =>
+            {
+                historyCalls++;
+                throw new ArrRequestTimeoutException("Sonarr import history", host,
+                    TimeSpan.FromSeconds(10), new TimeoutException());
+            },
+        };
+        using var service = harness.CreateService(client, host, backoff);
+
+        Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+        Assert.False(backoff.IsInBackoff(host));
+        Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+        Assert.True(backoff.IsInBackoff(host));
+        Assert.Equal(ArrInstanceHealthStatus.Offline, Assert.Single(service.GetSnapshots()).Status);
+        Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+        Assert.Equal(2, historyCalls);
+    }
+
+    [Fact]
+    public async Task Poll_CompleteSuccess_ClearsReachabilityStreak()
+    {
+        var host = "http://sonarr:8989";
+        var backoff = new ArrInstanceBackoff();
+        backoff.RecordFailure(host, new SocketException());
+        await using var harness = await DualDbHarness.CreateAsync();
+        using var service = harness.CreateService(new ScriptedArrClient(host), host, backoff);
+
+        Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+        Assert.Equal(ArrInstanceHealthStatus.Healthy, Assert.Single(service.GetSnapshots()).Status);
+        backoff.RecordFailure(host, new SocketException());
+        Assert.False(backoff.IsInBackoff(host));
+    }
+
+    [Fact]
     public async Task UniqueConstraint_OnDuplicateArrRecordId_IsTolerated()
     {
         await using var harness = await DualDbHarness.CreateAsync();
@@ -322,6 +485,109 @@ public sealed class ArrHealthServiceTests
         Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
         harness.Metrics.ChangeTracker.Clear();
         Assert.Equal(1, await harness.Metrics.ArrImportEvents.CountAsync());
+    }
+
+    [Fact]
+    public async Task Poll_PerCallDeadline_ReportsTimedOutOperation_AndEntersBackoff()
+    {
+        const string host = "http://sonarr:8989";
+        var backoff = new ArrInstanceBackoff();
+        await using var harness = await DualDbHarness.CreateAsync();
+        var client = new ScriptedArrClient(host)
+        {
+            Queue = async ct =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                return new ArrQueue<ArrQueueRecord>();
+            },
+        };
+        using var service = harness.CreateService(client, host, backoff);
+        service.PerCallTimeout = TimeSpan.FromMilliseconds(200);
+
+        var events = await CaptureAsync(async () =>
+        {
+            Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+            Assert.True(await service.TryRunCycleAsync(CancellationToken.None));
+        });
+
+        const string expected =
+            "Sonarr queue request to http://sonarr:8989 timed out after 0.2 seconds; routing: direct (single-label hostname).";
+        var snapshot = Assert.Single(service.GetSnapshots());
+        Assert.Equal(expected, snapshot.LastError);
+        Assert.Equal(ArrInstanceHealthStatus.Offline, snapshot.Status);
+        Assert.True(backoff.IsInBackoff(host));
+
+        var warnings = events
+            .Where(e => e.Level == LogEventLevel.Warning
+                        && e.MessageTemplate.Text.StartsWith("Arr health poll failed", StringComparison.Ordinal)
+                        && e.Properties.TryGetValue("Host", out var loggedHost)
+                        && loggedHost.ToString().Trim('"') == host)
+            .ToList();
+        Assert.Equal(2, warnings.Count);
+        foreach (var warning in warnings)
+        {
+            Assert.Null(warning.Exception);
+            var rendered = warning.RenderMessage();
+            Assert.Contains(expected, rendered);
+            Assert.DoesNotContain("cancel", rendered, StringComparison.OrdinalIgnoreCase);
+        }
+        var diagnostics = events.Where(logEvent =>
+            logEvent.Level == LogEventLevel.Debug
+            && logEvent.MessageTemplate.Text == "Arr health poll timeout details for {Host}"
+            && logEvent.Properties.TryGetValue("Host", out var loggedHost)
+            && loggedHost.ToString().Trim('"') == host).ToList();
+        Assert.Equal(2, diagnostics.Count);
+        Assert.All(diagnostics, diagnostic =>
+            Assert.IsType<ArrRequestTimeoutException>(diagnostic.Exception));
+    }
+
+    [Fact]
+    public async Task Poll_ShutdownCancellation_DoesNotLogOrRecordFailure()
+    {
+        const string host = "http://sonarr:8989";
+        var backoff = new ArrInstanceBackoff();
+        await using var harness = await DualDbHarness.CreateAsync();
+        var client = new ScriptedArrClient(host)
+        {
+            QueueStatus = async ct =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                return new ArrQueueStatus();
+            },
+        };
+        using var service = harness.CreateService(client, host, backoff);
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        var events = await CaptureAsync(async () =>
+            Assert.True(await service.TryRunCycleAsync(cts.Token)));
+
+        Assert.Empty(service.GetSnapshots());
+        Assert.DoesNotContain(events, e =>
+            e.Level >= LogEventLevel.Warning
+            && e.MessageTemplate.Text.StartsWith("Arr health poll failed", StringComparison.Ordinal));
+        backoff.RecordFailure(host, new SocketException());
+        Assert.False(backoff.IsInBackoff(host));
+    }
+
+    private static async Task<IReadOnlyList<LogEvent>> CaptureAsync(Func<Task> action)
+    {
+        var sink = new CollectingLogEventSink();
+        var previous = Log.Logger;
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        try
+        {
+            await action();
+        }
+        finally
+        {
+            Log.Logger = previous;
+        }
+
+        return sink.Events;
     }
 
     private static ArrHistoryRecord History(int id, Guid downloadId, DateTimeOffset date, string title) =>
@@ -395,6 +661,8 @@ public sealed class ArrHealthServiceTests
 
         public MetricsDbContext Metrics { get; }
         public DavDatabaseContext Dav { get; }
+        public DbCommandInterceptor? DavInterceptor { get; set; }
+        public DbCommandInterceptor? MetricsInterceptor { get; set; }
 
         public static async Task<DualDbHarness> CreateAsync()
         {
@@ -441,22 +709,22 @@ public sealed class ArrHealthServiceTests
 
         private MetricsDbContext CloneMetrics()
         {
-            var options = new DbContextOptionsBuilder<MetricsDbContext>()
+            var builder = new DbContextOptionsBuilder<MetricsDbContext>()
                 .UseSqlite($"Data Source={_metricsPath}")
                 .AddInterceptors(new SqliteMetricsPragmas())
-                .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
-                .Options;
-            return new MetricsDbContext(options);
+                .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>();
+            if (MetricsInterceptor is not null) builder.AddInterceptors(MetricsInterceptor);
+            return new MetricsDbContext(builder.Options);
         }
 
         private DavDatabaseContext CloneDav()
         {
-            var options = new DbContextOptionsBuilder<DavDatabaseContext>()
+            var builder = new DbContextOptionsBuilder<DavDatabaseContext>()
                 .UseSqlite($"Data Source={_davPath}")
                 .AddInterceptors(new SqliteForeignKeyEnabler())
-                .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
-                .Options;
-            return new DavDatabaseContext(options);
+                .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>();
+            if (DavInterceptor is not null) builder.AddInterceptors(DavInterceptor);
+            return new DavDatabaseContext(builder.Options);
         }
 
         public async ValueTask DisposeAsync()

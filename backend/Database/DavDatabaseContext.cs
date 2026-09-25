@@ -677,6 +677,9 @@ public class DavDatabaseContext : DbContext
             e.HasIndex(i => new { i.CreatedAt })
                 .IsUnique(false);
 
+            e.HasIndex(i => new { i.DavItemId, i.CreatedAt, i.Id })
+                .IsUnique(false);
+
             e.HasIndex(h => h.DavItemId)
                 .HasFilter("\"RepairStatus\" = 3")
                 .IsUnique(false);

@@ -62,19 +62,24 @@ public class MetricsRetentionService(ConfigManager configManager) : BackgroundSe
     }
 
     internal const int SegmentFetchDeleteBatchSize = 50_000;
+    private static readonly TimeSpan DeleteBatchPause = TimeSpan.FromMilliseconds(50);
     private const int IncrementalVacuumPages = 4_000;
+
+    private const string SegmentFetchesBatchDeleteSql =
+        "DELETE FROM SegmentFetches WHERE rowid IN (SELECT rowid FROM SegmentFetches WHERE At < {0} LIMIT {1})";
+    private const string ReadSessionsBatchDeleteSql =
+        "DELETE FROM ReadSessions WHERE rowid IN (SELECT rowid FROM ReadSessions WHERE EndedAt < {0} LIMIT {1})";
 
     internal static async Task SweepAsync(MetricsDbContext db, long nowMs, TimeSpan fetchTtl)
     {
-        await DeleteSegmentFetchesInBatchesAsync(db, Cutoff(nowMs, fetchTtl)).ConfigureAwait(false);
+        await DeleteInBatchesAsync(db, SegmentFetchesBatchDeleteSql, Cutoff(nowMs, fetchTtl)).ConfigureAwait(false);
         await db.Database.ExecuteSqlRawAsync(
             "DELETE FROM MetricEvents WHERE At < {0}", Cutoff(nowMs, EventTtl)).ConfigureAwait(false);
         await db.Database.ExecuteSqlRawAsync(
             "DELETE FROM ThroughputMinutes WHERE Minute < {0}", Cutoff(nowMs, MinuteRollupTtl)).ConfigureAwait(false);
         await db.Database.ExecuteSqlRawAsync(
             "DELETE FROM ProviderMinutes WHERE Minute < {0}", Cutoff(nowMs, MinuteRollupTtl)).ConfigureAwait(false);
-        await db.Database.ExecuteSqlRawAsync(
-            "DELETE FROM ReadSessions WHERE EndedAt < {0}", Cutoff(nowMs, SessionTtl)).ConfigureAwait(false);
+        await DeleteInBatchesAsync(db, ReadSessionsBatchDeleteSql, Cutoff(nowMs, SessionTtl)).ConfigureAwait(false);
         await FoldAndPruneProviderHourlyAsync(db, Cutoff(nowMs, HourlyRollupTtl)).ConfigureAwait(false);
         await db.Database.ExecuteSqlRawAsync(
             "DELETE FROM FailoverMisses WHERE At < {0}", Cutoff(nowMs, fetchTtl)).ConfigureAwait(false);
@@ -89,25 +94,22 @@ public class MetricsRetentionService(ConfigManager configManager) : BackgroundSe
     }
 
     /// <summary>
-    /// Rowid-batched DELETE so a multi-GB SegmentFetches sweep cannot hold the
-    /// write lock past MetricsWriter's 5s busy_timeout. Matches
+    /// Rowid-batched DELETE so a multi-GB sweep cannot hold the write lock past
+    /// other writers' busy timeouts. Matches
     /// <see cref="OverviewStatsReset.WipeProviderAsync"/>.
     /// </summary>
-    private static async Task DeleteSegmentFetchesInBatchesAsync(MetricsDbContext db, long cutoff)
+    private static async Task DeleteInBatchesAsync(MetricsDbContext db, string batchDeleteSql, long cutoff)
     {
         var batchSize = Math.Max(1, SegmentFetchDeleteBatchSize);
         int batch;
         do
         {
             batch = await db.Database.ExecuteSqlRawAsync(
-                """
-                DELETE FROM SegmentFetches WHERE rowid IN
-                    (SELECT rowid FROM SegmentFetches WHERE At < {0} LIMIT {1})
-                """,
-                new object[] { cutoff, batchSize }).ConfigureAwait(false);
-            if (batch > 0)
-                await Task.Yield();
-        } while (batch > 0);
+                batchDeleteSql, new object[] { cutoff, batchSize }).ConfigureAwait(false);
+            // Task.Yield alone re-takes the lock before writers in their busy-retry sleep wake up.
+            if (batch >= batchSize)
+                await Task.Delay(DeleteBatchPause).ConfigureAwait(false);
+        } while (batch >= batchSize);
     }
 
     private static async Task FoldAndPruneProviderHourlyAsync(MetricsDbContext db, long cutoff)
@@ -124,11 +126,15 @@ public class MetricsRetentionService(ConfigManager configManager) : BackgroundSe
                     BytesFetched = g.Sum(x => x.BytesFetched),
                     Articles = g.Sum(x => x.Articles),
                     ClientArticles = g.Sum(x => x.ClientArticles),
+                    QueueArticles = g.Sum(x => x.QueueArticles),
                     Misses = g.Sum(x => x.Misses),
                     Errors = g.Sum(x => x.Errors),
                     Retries = g.Sum(x => x.Retries),
                     SumDurationMs = g.Sum(x => x.SumDurationMs),
                     FailoverSaves = g.Sum(x => x.FailoverSaves),
+                    PeakBytesPerSec = g.Max(x => x.PeakBytesPerSec),
+                    ActiveBytes = g.Sum(x => x.ActiveBytes),
+                    ActiveSeconds = g.Sum(x => x.ActiveSeconds),
                     FirstHour = g.Min(x => x.Hour),
                 })
                 .ToListAsync().ConfigureAwait(false);
@@ -153,11 +159,18 @@ public class MetricsRetentionService(ConfigManager configManager) : BackgroundSe
                     total.BytesFetched += fold.BytesFetched;
                     total.Articles += fold.Articles;
                     total.ClientArticles += fold.ClientArticles;
+                    total.QueueArticles += fold.QueueArticles;
                     total.Misses += fold.Misses;
                     total.Errors += fold.Errors;
                     total.Retries += fold.Retries;
                     total.SumDurationMs += fold.SumDurationMs;
                     total.FailoverSaves += fold.FailoverSaves;
+                    if (fold.PeakBytesPerSec is not null)
+                    {
+                        total.PeakBytesPerSec = Math.Max(total.PeakBytesPerSec ?? 0, fold.PeakBytesPerSec.Value);
+                        total.ActiveBytes = (total.ActiveBytes ?? 0) + (fold.ActiveBytes ?? 0);
+                        total.ActiveSeconds = (total.ActiveSeconds ?? 0) + (fold.ActiveSeconds ?? 0);
+                    }
                     total.FirstHour = total.FirstHour is null
                         ? fold.FirstHour
                         : Math.Min(total.FirstHour.Value, fold.FirstHour);

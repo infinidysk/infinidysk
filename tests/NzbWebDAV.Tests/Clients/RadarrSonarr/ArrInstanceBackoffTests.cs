@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using NzbWebDAV.Clients;
 using NzbWebDAV.Clients.RadarrSonarr;
 
 namespace NzbWebDAV.Tests.Clients.RadarrSonarr;
@@ -63,6 +64,17 @@ public sealed class ArrInstanceBackoffTests
         var backoff = new ArrInstanceBackoff();
         backoff.RecordFailure("http://sonarr:8989", new TaskCanceledException("timed out"));
         backoff.RecordFailure("http://sonarr:8989", new TaskCanceledException("timed out"));
+
+        Assert.True(backoff.IsInBackoff("http://sonarr:8989"));
+    }
+
+    [Fact]
+    public void ContextualTimeout_CountsAsReachabilityFailure()
+    {
+        var backoff = new ArrInstanceBackoff();
+        var timeout = new ArrRequestTimeoutException("Sonarr queue", "http://sonarr:8989", TimeSpan.FromSeconds(10), null);
+        backoff.RecordFailure("http://sonarr:8989", timeout);
+        backoff.RecordFailure("http://sonarr:8989", timeout);
 
         Assert.True(backoff.IsInBackoff("http://sonarr:8989"));
     }

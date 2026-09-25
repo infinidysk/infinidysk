@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using NzbWebDAV.Clients;
 using NzbWebDAV.Clients.Prowlarr;
 using NzbWebDAV.Config;
 
@@ -24,14 +25,13 @@ public class TestProwlarrConnectionController(ConfigManager configManager) : Bas
                     : null,
             });
         }
-        catch (TaskCanceledException) when (!HttpContext.RequestAborted.IsCancellationRequested)
+        catch (ArrRequestTimeoutException e)
         {
-            // HttpClient timeout surfaces as TaskCanceledException, not TimeoutException.
             return Ok(new TestProwlarrConnectionResponse
             {
                 Status = true,
                 Connected = false,
-                Error = "Connection to Prowlarr timed out.",
+                Error = e.Message,
             });
         }
         catch (Exception e) when (e is ProwlarrClientException

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services.Metrics;
@@ -31,9 +32,9 @@ public class ProviderCircuitOverviewEnricherTests
         var snapshots = new List<ProviderCircuitRuntimeSnapshot>
         {
             new(KeyA, "news.example", ProviderType.Pooled, new ProviderCircuitBreakerSnapshot(
-                ProviderCircuitState.Open, 42, "3 failures in 3-sample window", 1, 3, 0)),
+                ProviderCircuitState.Open, 42, "3 failures in 3-sample window", 1, 1, 3, 0)),
             new(KeyB, "backup.example", ProviderType.BackupOnly, new ProviderCircuitBreakerSnapshot(
-                ProviderCircuitState.Closed, null, null, 0, 0, 2)),
+                ProviderCircuitState.Closed, null, null, 0, 0, 0, 2)),
         };
         var labels = new Dictionary<string, string?>
         {
@@ -61,5 +62,21 @@ public class ProviderCircuitOverviewEnricherTests
         Assert.Equal("Backup", backup.Nickname);
         Assert.Equal(2, backup.ArticleMissCount);
         Assert.Empty(backup.SpeedSeries);
+    }
+
+    [Fact]
+    public void ToLivePayload_IncludesConsecutiveTrips()
+    {
+        var snapshots = new List<ProviderCircuitRuntimeSnapshot>
+        {
+            new(KeyA, "news.example", ProviderType.Pooled, new ProviderCircuitBreakerSnapshot(
+                ProviderCircuitState.Open, 42, "connection refused", 5, 3, 8, 0)),
+        };
+
+        var payload = Assert.Single(ProviderCircuitOverviewEnricher.ToLivePayload(
+            snapshots, new Dictionary<string, string?> { [KeyA] = "Primary" }));
+        var json = JsonSerializer.SerializeToElement(payload);
+
+        Assert.Equal(3, json.GetProperty("consecutiveTrips").GetInt64());
     }
 }

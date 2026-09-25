@@ -62,6 +62,7 @@ public class ProviderCircuitBreaker
     private static readonly AsyncLocal<CircuitProbeLease> AmbientProbe = new();
     private string? _lastFailureReason;
     private long _tripCount;
+    private long _consecutiveTrips;
     private long _failureCount;
     private long _articleMissCount;
     private int _requiresFreshConnectionProbe;
@@ -347,7 +348,10 @@ public class ProviderCircuitBreaker
             _failureBurstStartedAtMs = long.MinValue;
             _trippedUntilMs = 0;
             if (resetsCooldownLadder)
+            {
                 _currentCooldown = _initialCooldown;
+                _consecutiveTrips = 0;
+            }
             _lastFailureReason = null;
             Volatile.Write(ref _requiresFreshConnectionProbe, 0);
             Volatile.Write(ref _allowsIdleConnectionReuse, 0);
@@ -430,6 +434,7 @@ public class ProviderCircuitBreaker
                 cooldownRemainingSeconds,
                 _lastFailureReason,
                 Volatile.Read(ref _tripCount),
+                _consecutiveTrips,
                 Volatile.Read(ref _failureCount),
                 Volatile.Read(ref _articleMissCount));
         }
@@ -567,6 +572,7 @@ public class ProviderCircuitBreaker
         var appliedCooldown = _currentCooldown;
         _lastFailureReason = reason;
         Interlocked.Increment(ref _tripCount);
+        _consecutiveTrips++;
         _trippedUntilMs = nowMs + (long)appliedCooldown.TotalMilliseconds;
         if (requiresFreshConnectionProbe)
             Volatile.Write(ref _requiresFreshConnectionProbe, 1);

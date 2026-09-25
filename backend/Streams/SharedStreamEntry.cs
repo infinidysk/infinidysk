@@ -2,6 +2,7 @@ using System.Diagnostics;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Logging;
 using NzbWebDAV.WebDav.Base;
 using Serilog;
@@ -14,6 +15,7 @@ namespace NzbWebDAV.Streams;
 /// </summary>
 internal sealed class SharedStreamEntry : IAsyncDisposable
 {
+    private static readonly LogThrottle CircuitFailureThrottle = new();
     private readonly object _lock = new();
     private readonly object _disposeGate = new();
     private readonly SharedStreamRingBuffer _ring;
@@ -320,7 +322,14 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            if (ex.TryGetKnownErrorMessage(out var reason))
+            if (ex.TryGetCausingException(out CircuitAdmissionRejectedException? _))
+            {
+                if (CircuitFailureThrottle.ShouldLog("circuit-admission", TimeSpan.FromSeconds(30), out var suppressed))
+                    Log.Warning(
+                        "Shared stream deferred by provider circuit. EntryId: {EntryId} Path: {Path} SuppressedCount: {SuppressedCount}",
+                        EntryId, Path, suppressed);
+            }
+            else if (ex.TryGetKnownErrorMessage(out var reason))
             {
                 Log.Warning(
                     "Shared stream pump failed. EntryId: {EntryId} Path: {Path} Anchor: {Anchor} Reason: {Reason}",

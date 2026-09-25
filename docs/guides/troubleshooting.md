@@ -100,19 +100,50 @@ because the backend process exits on failure.
 - Behind a proxy: TLS, `/ws` Upgrade, `SECURE_COOKIES`, Base URL / `TRUST_PROXY`.
 - Overview **Active Reads**: unexpected traffic → rclone VFS or media-server scans.
 - Try disabling segment cache or adjusting Max Download Connections — [WebDAV](../configuration/webdav.md).
+- `503 Service Unavailable` with `Retry-After`, logged as `could not be confirmed missing`
+  [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }: a
+  provider was skipped by its circuit breaker, or timed out or failed, while an article was looked
+  up. The client retries and no repair is scheduled. If it persists, check provider connectivity —
+  [Usenet settings](../configuration/usenet.md).
 
 ## Activity totals [since 1.4.3](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.3){ .nzbdav-since }
 
 The Overview Activity summary uses the selected time window:
 
 - **Successful reads** counts article retrievals reported successful, including segment-cache hits. It excludes recorded misses and errors, but is not a count of unique articles, completed files, or successful playback sessions.
-- **Peak download** is the highest average Usenet download rate among the displayed buckets: downloaded bytes divided by bucket duration. It is not an instantaneous peak. Older folded all-time history is excluded, and **N/A** means no chart data. This metric works with or without segment caching, including rclone installations.
+- **Peak download** is the highest 1-second Usenet download rate sampled in the window [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }. The sampler runs once per second and stores only the per-minute and per-hour maximum, so the value does not shrink when you widen the time range. History recorded before the sampler existed falls back to the highest bucket average (downloaded bytes divided by bucket duration). **N/A** means no chart data. This metric works with or without segment caching, including rclone installations.
 - **Errors** counts attempt errors other than provider misses. A retry or fallback can still recover the request.
 - **Served** counts bytes served by client read sessions ending in the window.
 
 The client/app chart lines and legend count **attempts**, including recorded misses and errors. Their totals therefore need not match Successful reads. Historical availability probes contribute failures but not successful checks, so these totals must not be used to calculate an availability rate.
 
 **Provider miss attempts** remain in Error breakdown and bucket details. Retries and multiple providers can produce several misses for one article that is eventually retrieved. Negative-cache skips do not add misses. Unexpected BODY responses are recorded as protocol errors going forward; existing history is not rewritten.
+
+## Provider throughput [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }
+
+The Overview provider table shows **Peak** and **Active avg** in decimal MB/s, combining
+all connections for each provider. Both use raw NNTP BODY byte-counter differences and
+actual elapsed time, sampled approximately once per second:
+
+- **Peak** is the highest observed sampled rate in the selected window. The sparkline
+  and solid detail-chart line show the peak in each chart interval.
+- **Active avg** divides sampled bytes by elapsed time in samples with transferred bytes.
+  Wholly idle samples are excluded; pauses within a nonempty sample still count. The
+  dashed detail-chart line shows this weighted average in each chart interval.
+
+For example, ten seconds at 100 MB/s followed by fifty idle seconds produces approximately
+100 MB/s for both values, not the 16.7 MB/s whole-minute average. This is observed workload
+throughput, not a benchmark of a provider's maximum capacity. Individual provider peaks
+may occur at different times, so adding them need not equal the overall download peak.
+
+Older history has no sampled provider rates and displays an unavailable value rather than
+an estimate. Windows spanning an upgrade use recorded samples only. Empty chart intervals
+remain gaps. Samples belong to the interval containing their endpoint; minute and hourly
+rollups preserve maxima and weighted active totals, and pruned hourly totals remain in the
+all-time summary. The expanded all-time chart covers retained history only. Persisted rates
+survive restart, but unflushed samples can be lost on shutdown or crash; downtime is not
+counted as active time. Back up `/config` before upgrading: an additive metrics migration
+stores these new measurements without rewriting existing history.
 
 ## Playback slowed but nothing failed
 

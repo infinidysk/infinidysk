@@ -293,11 +293,13 @@ public partial class UsenetClient
                     null => ArticleBodyResult.Retrieved,
                     OperationCanceledException when connectionReusable =>
                         ArticleBodyResult.Cancelled,
+                    UsenetBodyAbandonedException => ArticleBodyResult.Discarded,
                     _ => ArticleBodyResult.NotRetrieved
                 };
                 onConnectionReadyAgain?.Invoke(
                     result,
-                    result == ArticleBodyResult.NotRetrieved ? DescribeFailure(failure) : null);
+                    result is ArticleBodyResult.NotRetrieved or ArticleBodyResult.Discarded
+                        ? DescribeFailure(failure) : null);
             }
             catch
             {
@@ -387,8 +389,7 @@ public partial class UsenetClient
                     pendingDrainCharge += line.Length + 2;
                     if (drainedBytes > _options.AbandonedBodyDrainLimit)
                     {
-                        throw new UsenetProtocolException(
-                            "The abandoned NNTP body exceeded the configured drain limit.");
+                        throw new UsenetBodyAbandonedException();
                     }
 
                     if (pendingDrainCharge >= 64 * 1024)
@@ -474,7 +475,12 @@ public partial class UsenetClient
             try
             {
                 onConnectionReadyAgain?.Invoke(
-                    failure == null ? ArticleBodyResult.Retrieved : ArticleBodyResult.NotRetrieved,
+                    failure switch
+                    {
+                        null => ArticleBodyResult.Retrieved,
+                        UsenetBodyAbandonedException => ArticleBodyResult.Discarded,
+                        _ => ArticleBodyResult.NotRetrieved
+                    },
                     failure == null ? null : DescribeFailure(failure));
             }
             catch

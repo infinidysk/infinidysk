@@ -17,6 +17,7 @@ internal sealed class YencFileValidationContext : IDisposable
     private readonly NzbFile? _file;
     private readonly string[]? _segmentIds;
     private readonly string[][]? _segmentFallbacks;
+    private readonly Lazy<Dictionary<string, int>> _positionIndex;
     private readonly bool _deferToPar2Proof;
 
     private YencFileValidationContext(
@@ -32,6 +33,7 @@ internal sealed class YencFileValidationContext : IDisposable
         _file = file;
         _segmentIds = segmentIds;
         _segmentFallbacks = segmentFallbacks;
+        _positionIndex = new Lazy<Dictionary<string, int>>(CreatePositionIndex);
         _deferToPar2Proof = deferToPar2Proof;
         Active.Value = this;
     }
@@ -41,12 +43,38 @@ internal sealed class YencFileValidationContext : IDisposable
     public int ExpectedTotalParts { get; }
     public string Stage { get; }
 
-    public static bool MatchesExpectedFile(UsenetYencHeader header) =>
+    public static bool MatchesExpectedFile(UsenetYencHeader header, string? requestedId = null) =>
         Current?._deferToPar2Proof == true
         || CurrentExpectedTotalParts is not { } expectedTotalParts
         || (expectedTotalParts == 1 && header.TotalParts == 0)
         || (header.HasTotalParts == false && header.TotalParts == 0)
-        || header.TotalParts == expectedTotalParts;
+        || header.TotalParts == expectedTotalParts
+        || (requestedId is not null
+            && Current!.GetRequestDetails(requestedId).Position is { } position
+            && HasSelfContradictoryTotal(header, position));
+
+    // Some posters obfuscate total/size; a part at its requested ordinal whose own geometry
+    // cannot yield that total carries no evidence of belonging to another post.
+    internal static bool HasSelfContradictoryTotal(UsenetYencHeader header, int position)
+    {
+        if (header.PartNumber != position || header.TotalParts <= 0 || header.FileSize <= 0 || header.PartSize <= 0)
+            return false;
+
+        long regularPartSize;
+        if (position == 1)
+        {
+            if (header.PartOffset != 0) return false;
+            regularPartSize = header.PartSize;
+        }
+        else
+        {
+            if (header.PartOffset <= 0 || header.PartOffset % (position - 1L) != 0) return false;
+            regularPartSize = header.PartOffset / (position - 1L);
+            if (header.PartSize > regularPartSize) return false;
+        }
+
+        return (header.FileSize - 1) / regularPartSize + 1 != header.TotalParts;
+    }
 
     public static IDisposable Begin(int expectedTotalParts) =>
         new YencFileValidationContext(expectedTotalParts);
@@ -69,31 +97,17 @@ internal sealed class YencFileValidationContext : IDisposable
     {
         if (_file is { Segments.Count: > 0 })
         {
-            for (var index = 0; index < _file.Segments.Count; index++)
-            {
-                var segment = _file.Segments[index];
-                if (string.Equals(segment.MessageId, requestedId, StringComparison.Ordinal)
-                    || Array.IndexOf(segment.FallbackMessageIds, requestedId) >= 0)
-                    return (_file.Segments[0].MessageId, index + 1, segment.Number);
-            }
-
-            return (_file.Segments[0].MessageId, null, null);
+            var anchor = _file.Segments[0].MessageId;
+            return _positionIndex.Value.TryGetValue(NormalizeMessageId(requestedId), out var position)
+                ? (anchor, position, _file.Segments[position - 1].Number)
+                : (anchor, null, null);
         }
 
         if (_segmentIds is { Length: > 0 })
         {
-            var index = Array.IndexOf(_segmentIds, requestedId);
-            if (index >= 0) return (_segmentIds[0], index + 1, null);
-            if (_segmentFallbacks is not null)
-            {
-                for (index = 0; index < Math.Min(_segmentIds.Length, _segmentFallbacks.Length); index++)
-                {
-                    if (_segmentFallbacks[index] is { } fallbacks && Array.IndexOf(fallbacks, requestedId) >= 0)
-                        return (_segmentIds[0], index + 1, null);
-                }
-            }
-
-            return (_segmentIds[0], null, null);
+            return (_segmentIds[0],
+                _positionIndex.Value.TryGetValue(NormalizeMessageId(requestedId), out var position) ? position : null,
+                null);
         }
 
         return (null, null, null);
@@ -102,10 +116,12 @@ internal sealed class YencFileValidationContext : IDisposable
     public void ReportMismatch(string requestedId, string providerKey, int responseCode, UsenetYencHeader header)
     {
         var (fileAnchor, position, nzbNumber) = GetRequestDetails(requestedId);
-        var fileRef = Reference(fileAnchor);
-        var articleRef = Reference(requestedId);
-        var providerRef = Reference(providerKey);
-        var returnedNameRef = Reference(header.FileName);
+        var requestedIdKind = position is null ? "Unknown" : IsPrimaryRequest(requestedId, position) ? "Primary" : "Fallback";
+        var geometryImpliedTotalParts = GetGeometryImpliedTotalParts(header);
+        var fileRef = GetDiagnosticReference(fileAnchor);
+        var articleRef = GetDiagnosticReference(requestedId);
+        var providerRef = GetDiagnosticReference(providerKey);
+        var returnedNameRef = GetDiagnosticReference(header.FileName);
         var key = $"yenc-mismatch/{Stage}/{fileRef}/{articleRef}/{providerRef}/{position}/{nzbNumber}/" +
                   $"{ExpectedTotalParts}/{responseCode}/{returnedNameRef}/{header.PartNumber}/{header.TotalParts}/" +
                   $"{header.FileSize}/{header.PartOffset}/{header.PartSize}/{header.LineLength}";
@@ -113,18 +129,97 @@ internal sealed class YencFileValidationContext : IDisposable
             key,
             "Rejected yEnc article because its parsed total differs from the active file segment count. " +
             "Stage: {Stage}; FileRef: {FileRef}; ArticleRef: {ArticleRef}; ProviderRef: {ProviderRef}; " +
-            "RequestedSegmentPosition: {RequestedSegmentPosition}; NzbSegmentNumber: {NzbSegmentNumber}; " +
+            "RequestedIdKind: {RequestedIdKind}; RequestedSegmentPosition: {RequestedSegmentPosition}; " +
+            "NzbSegmentNumber: {NzbSegmentNumber}; " +
             "ExpectedTotalParts: {ExpectedTotalParts}; ResponseCode: {ResponseCode}; " +
+            "GeometryImpliedTotalParts: {GeometryImpliedTotalParts}; " +
             "ReturnedNameRef: {ReturnedNameRef}; ReturnedPartNumber: {ReturnedPartNumber}; " +
             "ReturnedTotalParts: {ReturnedTotalParts}; ReturnedFileSize: {ReturnedFileSize}; " +
             "ReturnedPartOffset: {ReturnedPartOffset}; ReturnedPartSize: {ReturnedPartSize}; " +
             "ReturnedLineLength: {ReturnedLineLength}; MetadataSource: ParsedYencHeader",
-            Stage, fileRef, articleRef, providerRef, position, nzbNumber, ExpectedTotalParts, responseCode,
+            Stage, fileRef, articleRef, providerRef, requestedIdKind, position, nzbNumber, ExpectedTotalParts, responseCode,
+            geometryImpliedTotalParts,
             returnedNameRef, header.PartNumber, header.TotalParts, header.FileSize, header.PartOffset,
             header.PartSize, header.LineLength);
     }
 
-    private static string? Reference(string? value) => value is null
+    private bool IsPrimaryRequest(string requestedId, int? position)
+    {
+        if (position is not > 0) return false;
+        var index = position.Value - 1;
+        if (_file is { } file && index < file.Segments.Count)
+            return string.Equals(NormalizeMessageId(file.Segments[index].MessageId), NormalizeMessageId(requestedId),
+                StringComparison.Ordinal);
+        return _segmentIds is not null && index < _segmentIds.Length
+            && string.Equals(NormalizeMessageId(_segmentIds[index]), NormalizeMessageId(requestedId),
+                StringComparison.Ordinal);
+    }
+
+    private Dictionary<string, int> CreatePositionIndex()
+    {
+        var index = new Dictionary<string, int>(StringComparer.Ordinal);
+        var segmentCount = _file?.Segments.Count ?? _segmentIds?.Length ?? 0;
+        for (var segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++)
+        {
+            var messageId = _file is { } file
+                ? file.Segments[segmentIndex].MessageId
+                : _segmentIds![segmentIndex];
+            index.TryAdd(NormalizeMessageId(messageId), segmentIndex + 1);
+        }
+
+        if (_file is { } nzbFile)
+        {
+            for (var segmentIndex = 0; segmentIndex < nzbFile.Segments.Count; segmentIndex++)
+            {
+                foreach (var fallbackId in nzbFile.Segments[segmentIndex].FallbackMessageIds)
+                    index.TryAdd(NormalizeMessageId(fallbackId), segmentIndex + 1);
+            }
+        }
+        else if (_segmentFallbacks is not null)
+        {
+            for (var segmentIndex = 0; segmentIndex < Math.Min(segmentCount, _segmentFallbacks.Length); segmentIndex++)
+            {
+                if (_segmentFallbacks[segmentIndex] is not { } fallbackIds) continue;
+                foreach (var fallbackId in fallbackIds)
+                    index.TryAdd(NormalizeMessageId(fallbackId), segmentIndex + 1);
+            }
+        }
+
+        return index;
+    }
+
+    private static string NormalizeMessageId(string messageId) => new SegmentId(messageId).ToString();
+
+    private static long? GetGeometryImpliedTotalParts(UsenetYencHeader header)
+    {
+        if (header.FileSize <= 0) return null;
+        long regularPartSize;
+        if (header.PartNumber == 1 && header.PartOffset == 0 && header.PartSize > 0)
+        {
+            regularPartSize = header.PartSize;
+        }
+        else if (header.PartNumber > 1 && header.PartOffset > 0
+                 && header.PartOffset % (header.PartNumber - 1L) == 0)
+        {
+            regularPartSize = header.PartOffset / (header.PartNumber - 1L);
+        }
+        else
+        {
+            return null;
+        }
+        if (regularPartSize <= 0) return null;
+
+        var impliedTotalParts = (header.FileSize - 1) / regularPartSize + 1;
+        if (header.PartNumber <= 0 || header.PartNumber > impliedTotalParts)
+            return null;
+
+        var remainingFileSize = header.FileSize - header.PartOffset;
+        if (remainingFileSize <= 0) return null;
+        var expectedPartSize = Math.Min(regularPartSize, remainingFileSize);
+        return header.PartSize == expectedPartSize ? impliedTotalParts : null;
+    }
+
+    internal static string? GetDiagnosticReference(string? value) => value is null
         ? null
         : Convert.ToHexString(HMACSHA256.HashData(DiagnosticKey, Encoding.UTF8.GetBytes(value)));
 

@@ -100,10 +100,11 @@ describe("HeaderAlerts live data", () => {
     expect(screen.queryByText("No issues need attention")).toBeNull();
   });
 
-  it("shows no alerts when all checks succeed and no providers or Arrs are configured", async () => {
+  it("does not show a notification dot when all checks succeed and no providers or Arrs are configured", async () => {
     renderAlerts(false);
     const trigger = await screen.findByLabelText("Alerts: no issues need attention");
-    expect(trigger.querySelector("span[class*='bg-success']")).not.toBeNull();
+    expect(trigger.querySelector("span[class*='bg-success']")).toBeNull();
+    expect(trigger.querySelector("span[class*='bg-warning']")).toBeNull();
     expect(socket.enabled).toBe(false);
     expect(screen.queryByText("Arr status unavailable")).toBeNull();
     expect(screen.queryByText("Provider status unavailable")).toBeNull();
@@ -128,6 +129,30 @@ describe("HeaderAlerts live data", () => {
     receiveProviders("closed");
     await screen.findByText("No issues need attention");
     expect(screen.queryByText("1 provider circuit open or recovering")).toBeNull();
+  });
+
+  it("passes consecutive trips and provider reason through the live socket message", async () => {
+    renderAlerts();
+    act(() =>
+      socket.receive(
+        JSON.stringify({
+          ts: Date.now(),
+          providerBreakers: [
+            {
+              provider: "news.example.com",
+              nickname: "Backup account",
+              circuitState: "halfOpen",
+              consecutiveTrips: 3,
+              lastFailureReason: "Login rejected",
+            },
+          ],
+        }),
+      ),
+    );
+
+    await screen.findByText("Backup account unreachable");
+    expect(screen.getByText("Login rejected")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Disable or fix it in Usenet settings" })).toBeTruthy();
   });
 
   it("keeps health alerts when Arr checks fail and recovers on visibility refresh", async () => {

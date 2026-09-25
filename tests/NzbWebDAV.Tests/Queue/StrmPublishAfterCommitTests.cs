@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -9,10 +10,14 @@ using NzbWebDAV.Database.Interceptors;
 using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Queue.PostProcessors;
 using NzbWebDAV.Services;
 using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Websocket;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace NzbWebDAV.Tests.Queue;
 
@@ -27,6 +32,16 @@ public sealed class StrmPublishAfterCommitTests : IAsyncLifetime
     private const string Category = "other";
     private const string JobName = "movie-job";
     private const string VideoFileName = "movie.mkv";
+    private const string NestedArchiveOnlyBase64 =
+        "N3q8ryccAAT/31JgFQAAAAAAAAB0AAAAAAAAAEfe5xhyYXItb25lcmFyLXR3b3ByZXZpZXcB" +
+        "BAYAAwkHBwcABwsDAAEBAAEBAAEBAAwHBwcACAAABQMRTwBpAG4AbgBlAHIALgByAGEAcgAA" +
+        "AGkAbgBuAGUAcgAuAHIAMAAwAAAAUwBhAG0AcABsAGUALwBwAHIAZQB2AGkAZQB3AC4AbQBr" +
+        "AHYAAAAAAA==";
+    private const string NestedArchiveWithMediaBase64 =
+        "N3q8ryccAARtZlqlHAAAAAAAAACNAAAAAAAAADTiUmFyYXItb25lcmFyLXR3b3ByZXZpZXdm" +
+        "ZWF0dXJlAQQGAAQJBwcHBwAHCwQAAQEAAQEAAQEAAQEADAcHBwcACAAABQQRYwBpAG4AbgBl" +
+        "AHIALgByAGEAcgAAAGkAbgBuAGUAcgAuAHIAMAAwAAAAUwBhAG0AcABsAGUALwBwAHIAZQB2" +
+        "AGkAZQB3AC4AbQBrAHYAAABtAG8AdgBpAGUALgBtAGsAdgAAAAAA";
 
     private readonly string _configRoot =
         Path.Join(Path.GetTempPath(), $"nzbdav-strm-cfg-{Guid.NewGuid():N}");
@@ -188,6 +203,97 @@ public sealed class StrmPublishAfterCommitTests : IAsyncLifetime
         Assert.Empty(Directory.GetFiles(_strmDir, "*.strm", SearchOption.AllDirectories));
     }
 
+    [Theory]
+    [InlineData(true, true, false, false, true, 0)]
+    [InlineData(false, true, false, false, false, 0)]
+    [InlineData(true, false, false, false, false, 1)]
+    [InlineData(true, true, true, false, false, 1)]
+    [InlineData(true, true, false, true, true, 0)]
+    public async Task RarInsideSevenZip_RespectsMediaPolicyAndRecordsSpecificFailure(
+        bool requireMedia,
+        bool sampleFilter,
+        bool includeMainMedia,
+        bool blockRarOutputs,
+        bool expectFailure,
+        int expectedStrmCount)
+    {
+        const string sourceName = "outer.7z";
+        var archiveBytes = CreateNestedSevenZipBytes(includeMainMedia);
+        await using var context = CreateContext();
+        var queueItem = await SeedQueueItemAsync(context, sourceName, archiveBytes);
+        var config = CreateConfig();
+        config.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.ApiEnsureImportableVideo,
+                ConfigValue = requireMedia ? "true" : "false",
+            },
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.ApiSampleFilterEnabled,
+                ConfigValue = sampleFilter ? "true" : "false",
+            },
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.ApiDownloadFileBlocklist,
+                ConfigValue = blockRarOutputs ? "*.rar, *.r??" : "",
+            },
+        ]);
+
+        var sink = new QueueFailureSink();
+        var previousLogger = Log.Logger;
+        using var logger = new LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        Log.Logger = logger;
+        try
+        {
+            await ProcessAsync(context, config, queueItem, sourceName, archiveBytes);
+        }
+        finally
+        {
+            Log.Logger = previousLogger;
+        }
+
+        context.ChangeTracker.Clear();
+        Assert.Empty(await context.QueueItems.AsNoTracking().ToListAsync());
+        var history = Assert.Single(await context.HistoryItems.AsNoTracking().ToListAsync());
+        Assert.Equal(
+            expectFailure ? HistoryItem.DownloadStatusOption.Failed : HistoryItem.DownloadStatusOption.Completed,
+            history.DownloadStatus);
+        Assert.Equal(expectedStrmCount,
+            Directory.GetFiles(_strmDir, "*.strm", SearchOption.AllDirectories).Length);
+
+        var terminalFailures = sink.Events
+            .Where(logEvent => logEvent.MessageTemplate.Text.StartsWith(
+                "Failed queue item ", StringComparison.Ordinal))
+            .ToList();
+        if (expectFailure)
+        {
+            Assert.Equal(EnsureImportableMediaValidator.NestedRarInSevenZipFailureMessage, history.FailMessage);
+            Assert.Contains("RAR members inside 7z", history.FailMessage!);
+            var failureLog = Assert.Single(terminalFailures);
+            Assert.Equal(LogEventLevel.Error, failureLog.Level);
+            Assert.Null(failureLog.Exception);
+            Assert.DoesNotContain(sink.Events, logEvent => logEvent.Exception is not null);
+            Assert.Equal(
+                new ScalarValue(EnsureImportableMediaValidator.NestedRarInSevenZipFailureMessage),
+                failureLog.Properties["Reason"]);
+            var mountPath = $"{DavItem.ContentFolder.Path.TrimEnd('/')}/{Category}/{JobName}";
+            Assert.False(await context.Items.AsNoTracking().AnyAsync(
+                item => item.Path == mountPath || item.Path.StartsWith(mountPath + "/")));
+        }
+        else
+        {
+            Assert.Null(history.FailMessage);
+            Assert.Empty(terminalFailures);
+            if (!blockRarOutputs)
+                Assert.True(await context.Items.AsNoTracking().AnyAsync(item => item.Name == "inner.rar"));
+        }
+    }
+
     private ConfigManager CreateConfig()
     {
         var config = new ConfigManager();
@@ -213,16 +319,20 @@ public sealed class StrmPublishAfterCommitTests : IAsyncLifetime
                 SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
             .Options);
 
-    private async Task<QueueItem> SeedQueueItemAsync(DavDatabaseContext context)
+    private async Task<QueueItem> SeedQueueItemAsync(
+        DavDatabaseContext context,
+        string sourceFileName = VideoFileName,
+        byte[]? sourcePayload = null)
     {
+        var payload = sourcePayload ?? _payload;
         var queueItem = new QueueItem
         {
             Id = Guid.NewGuid(),
             CreatedAt = DateTime.UtcNow,
             FileName = $"{JobName}.nzb",
             JobName = JobName,
-            NzbFileSize = CreateNzbBytes().Length,
-            TotalSegmentBytes = _payload.Length,
+            NzbFileSize = CreateNzbBytes(sourceFileName, payload).Length,
+            TotalSegmentBytes = payload.Length,
             Category = Category,
             Priority = QueueItem.PriorityOption.Normal,
             PostProcessing = QueueItem.PostProcessingOption.None,
@@ -233,15 +343,22 @@ public sealed class StrmPublishAfterCommitTests : IAsyncLifetime
         return await context.QueueItems.SingleAsync(q => q.Id == queueItem.Id);
     }
 
-    private async Task ProcessAsync(DavDatabaseContext context, ConfigManager config, QueueItem queueItem)
+    private async Task ProcessAsync(
+        DavDatabaseContext context,
+        ConfigManager config,
+        QueueItem queueItem,
+        string sourceFileName = VideoFileName,
+        byte[]? sourcePayload = null)
     {
-        await using var nzbStream = new MemoryStream(CreateNzbBytes());
+        var payload = sourcePayload ?? _payload;
+        await using var nzbStream = new MemoryStream(CreateNzbBytes(sourceFileName, payload));
         using var healthCheckConnectionGate = new HealthCheckConnectionGate(config);
+        using var client = new ScriptedVideoNntpClient(sourceFileName, _segmentId, payload);
         var processor = new QueueItemProcessor(
             queueItem,
             nzbStream,
             new DavDatabaseClient(context),
-            new ScriptedVideoNntpClient(VideoFileName, _segmentId, _payload),
+            client,
             config,
             new WebsocketManager(),
             new Progress<int>(),
@@ -250,18 +367,36 @@ public sealed class StrmPublishAfterCommitTests : IAsyncLifetime
         await processor.ProcessAsync();
     }
 
-    private byte[] CreateNzbBytes() => Encoding.UTF8.GetBytes(
+    private byte[] CreateNzbBytes(
+        string sourceFileName = VideoFileName,
+        byte[]? sourcePayload = null)
+    {
+        var payload = sourcePayload ?? _payload;
+        return Encoding.UTF8.GetBytes(
         $"""
         <?xml version="1.0" encoding="utf-8"?>
         <nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
-          <file subject="&quot;{VideoFileName}&quot; yEnc (1/1)">
+          <file subject="&quot;{sourceFileName}&quot; yEnc (1/1)">
             <groups><group>alt.binaries.test</group></groups>
             <segments>
-              <segment bytes="{_payload.Length}" number="1">{_segmentId}</segment>
+              <segment bytes="{payload.Length}" number="1">{_segmentId}</segment>
             </segments>
           </file>
         </nzb>
         """);
+    }
+
+    private static byte[] CreateNestedSevenZipBytes(bool includeMainMedia) =>
+        Convert.FromBase64String(includeMainMedia
+            ? NestedArchiveWithMediaBase64
+            : NestedArchiveOnlyBase64);
+
+    private sealed class QueueFailureSink : ILogEventSink
+    {
+        public ConcurrentQueue<LogEvent> Events { get; } = new();
+
+        public void Emit(LogEvent logEvent) => Events.Enqueue(logEvent);
+    }
 
     /// <summary>
     /// Simulates a finalize-commit failure: any save that deletes a queue item

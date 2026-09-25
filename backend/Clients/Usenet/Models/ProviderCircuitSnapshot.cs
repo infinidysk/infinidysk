@@ -15,6 +15,7 @@ public sealed record ProviderCircuitBreakerSnapshot(
     int? CooldownRemainingSeconds,
     string? LastFailureReason,
     long TripCount,
+    long ConsecutiveTrips,
     long FailureCount,
     long ArticleMissCount);
 

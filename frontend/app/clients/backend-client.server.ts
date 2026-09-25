@@ -1041,8 +1041,10 @@ export type OverviewStatsResponse = {
   };
   throughput: ThroughputPoint[];
   throughputBucketSizeMs: number;
+  peakFetchBytesPerSec?: number;
   totalArticles: number;
   totalClientArticles: number;
+  totalQueueArticles: number;
   totalMisses: number;
   totalErrors: number;
   totalBytesFetched: number;
@@ -1193,6 +1195,7 @@ export type ThroughputPoint = {
   bucket: number;
   articles: number;
   clientArticles: number;
+  queueArticles: number;
   misses: number;
   errors: number;
   bytesServed: number;
@@ -1215,6 +1218,10 @@ export type ProviderRow = {
   errors: number;
   retries: number;
   speedMbPerSec?: number | null | undefined;
+  peakMbPerSec?: number | null;
+  activeAverageMbPerSec?: number | null;
+  peakSpeedSpark?: (number | null)[];
+  sampledSpeedSeries?: ProviderSampledSpeedPoint[];
   speedSpark?: number[];
   speedSeries?: ProviderSpeedPoint[];
   avgDurationMs: number;
@@ -1231,6 +1238,12 @@ export type ProviderRow = {
   articleMissCount?: number | undefined;
 };
 
+export type ProviderSampledSpeedPoint = {
+  bucket: number;
+  peakMbPerSec: number | null;
+  activeAverageMbPerSec: number | null;
+};
+
 export type ProviderCircuitBreakerRow = {
   provider: string;
   nickname?: string | null | undefined;
@@ -1239,6 +1252,7 @@ export type ProviderCircuitBreakerRow = {
   cooldownRemainingSeconds?: number | null | undefined;
   lastFailureReason?: string | null | undefined;
   tripCount?: number;
+  consecutiveTrips?: number;
   failureCount?: number;
   articleMissCount?: number;
 };

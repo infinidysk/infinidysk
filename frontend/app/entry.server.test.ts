@@ -82,10 +82,13 @@ describe("entry.server handleError", () => {
     const loggerWarnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const request = new Request("http://localhost:3000/login.data", {
-      method: "POST",
-      headers: { Origin: "https://public.example.com" },
-    });
+    const request = new Request(
+      "http://localhost:3000/login.data?apikey=synthetic-api-key&token=synthetic-url-token",
+      {
+        method: "POST",
+        headers: { Origin: "https://public.example.com" },
+      },
+    );
     const error = new Error("Bad Request");
 
     handleError(error, {
@@ -97,6 +100,9 @@ describe("entry.server handleError", () => {
     expect(loggerWarnSpy).toHaveBeenCalledTimes(1);
     const warning = loggerWarnSpy.mock.calls[0]?.[0];
     expect(warning).toContain("Action request origin rejected");
+    expect(warning).toContain("Request URL: /login.data");
+    expect(warning).not.toContain("synthetic-api-key");
+    expect(warning).not.toContain("synthetic-url-token");
     expect(warning).toContain("set the public Base URL");
     expect(warning).toContain("Trust reverse-proxy headers");
     expect(consoleErrorSpy).not.toHaveBeenCalled();

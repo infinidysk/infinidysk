@@ -41,9 +41,40 @@ full-coverage health classification so those files are not reported healthy — 
 
 A segment counts as missing only when every eligible provider source is conclusively unavailable;
 cached negative results and storage-group sibling evidence can establish that without probing every
-provider. If a walk would otherwise conclude that the segment is missing but any provider timed out
-or failed to connect, the file is marked *Action needed* and rechecked later instead of being
-repaired or blocklisted.
+provider. If a walk would otherwise conclude that the segment is missing but any provider timed out,
+failed to connect, or was skipped because its circuit breaker was open
+[since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }, the
+file is marked *Action needed* and rechecked later instead of being repaired or blocklisted. A
+provider paused at its data cap does not count as unanswered.
+
+Playback follows the same rule [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }:
+a WebDAV read that would have failed with `404 Not Found` returns `503 Service Unavailable` with
+`Retry-After` instead, and a gap in the middle of a file is filled for that read only. Neither case
+schedules a repair or records the segment as missing.
+
+### When files are rechecked
+
+After a successful health check, InfiniDysk schedules the next routine check after an
+interval equal to the release's current age, measured from its release date rather than
+when it was imported into InfiniDysk.
+
+| Release age when checked | Next routine check due |
+|--------------------------|------------------------|
+| 1 week | In 1 week |
+| 2 weeks | In 2 weeks |
+| 1 year | In 1 year |
+
+For example, a one-week-old release is checked again in one week. It is then two weeks
+old, so the following check is scheduled two weeks later. Older releases are therefore
+checked less frequently. Degraded files use this same age-based schedule.
+
+The minimum interval is **one hour**, with no maximum interval. Missing or future release
+dates use the one-hour minimum. Failed checks and repairs use separate retry rules, and
+[health-check windows](../configuration/repairs.md#health-check-and-repair-windows-since-130)
+may delay when a due routine check actually runs.
+
+This schedule is independent of **Check older releases less thoroughly**, which changes
+how many segments are checked, not how often checks occur.
 
 ## Health-check retention
 

@@ -32,7 +32,7 @@ public class HeaderCachingNntpClient(INntpClient usenetClient) : WrappingNntpCli
     {
         if (_cache.TryGetValue(segmentId, out var cached))
         {
-            if (YencFileValidationContext.MatchesExpectedFile(cached))
+            if (YencFileValidationContext.MatchesExpectedFile(cached, segmentId))
                 return cached;
 
             _cache.TryRemove(segmentId, out _);
@@ -48,7 +48,7 @@ public class HeaderCachingNntpClient(INntpClient usenetClient) : WrappingNntpCli
             }
         }
 
-        if (YencFileValidationContext.MatchesExpectedFile(header))
+        if (YencFileValidationContext.MatchesExpectedFile(header, segmentId))
             _cache.TryAdd(segmentId, header);
         return header;
     }

@@ -28,35 +28,43 @@ public class ClearOverviewStatsController(
                 p.ProviderId != Guid.Empty && UsenetProviderIdentity.MetricsKey(p) == providerKey))
             throw new BadHttpRequestException("Unknown provider");
 
-        // 1. Pause flushes and abandon any in-flight drained batch, then drop
-        //    queued rows so they cannot reappear after the wipe.
-        await using var resetLease = await metricsWriter.BeginResetAsync(ct).ConfigureAwait(false);
-
-        if (providerKey == null) metricsWriter.DiscardQueuedAndResetStats();
-        else metricsWriter.DiscardQueuedForProvider(providerKey);
-
-        // 2. Wipe metrics tables (all, or provider-keyed rows only).
-        await using var db = new MetricsDbContext();
-        var deletedRows = providerKey == null
-            ? await OverviewStatsReset.WipeAsync(db, ct).ConfigureAwait(false)
-            : await OverviewStatsReset.WipeProviderAsync(db, providerKey, ct).ConfigureAwait(false);
-
-        // 3. Zero in-memory analytics counters and pending minute buckets.
-        if (providerKey == null)
+        await bytesTracker.PeakPersistenceGate.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            bytesTracker.ResetCounters();
-            latencyTracker.ResetCounters();
+            // 1. Pause flushes and abandon any in-flight drained batch, then drop
+            //    queued rows so they cannot reappear after the wipe.
+            await using var resetLease = await metricsWriter.BeginResetAsync(ct).ConfigureAwait(false);
+
+            if (providerKey == null) metricsWriter.DiscardQueuedAndResetStats();
+            else metricsWriter.DiscardQueuedForProvider(providerKey);
+
+            // 2. Wipe metrics tables (all, or provider-keyed rows only).
+            await using var db = new MetricsDbContext();
+            var deletedRows = providerKey == null
+                ? await OverviewStatsReset.WipeAsync(db, ct).ConfigureAwait(false)
+                : await OverviewStatsReset.WipeProviderAsync(db, providerKey, ct).ConfigureAwait(false);
+
+            // 3. Zero in-memory analytics counters and pending minute buckets.
+            if (providerKey == null)
+            {
+                bytesTracker.ResetCounters();
+                latencyTracker.ResetCounters();
+            }
+            else
+            {
+                bytesTracker.ResetProvider(providerKey);
+                latencyTracker.ResetProvider(providerKey);
+            }
+
+            // 4. Drop anything enqueued during the wipe window.
+            if (providerKey == null) metricsWriter.DiscardQueuedAndResetStats();
+            else metricsWriter.DiscardQueuedForProvider(providerKey);
+
+            return Ok(new ClearOverviewStatsResponse { Status = true, DeletedRows = deletedRows });
         }
-        else
+        finally
         {
-            bytesTracker.ResetProvider(providerKey);
-            latencyTracker.ResetProvider(providerKey);
+            bytesTracker.PeakPersistenceGate.Release();
         }
-
-        // 4. Drop anything enqueued during the wipe window.
-        if (providerKey == null) metricsWriter.DiscardQueuedAndResetStats();
-        else metricsWriter.DiscardQueuedForProvider(providerKey);
-
-        return Ok(new ClearOverviewStatsResponse { Status = true, DeletedRows = deletedRows });
     }
 }

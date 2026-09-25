@@ -22,7 +22,7 @@ Add one or more accounts. Each provider supports:
 | Transfer Connections | Hard cap for concurrent `BODY` / `ARTICLE` work | blank = legacy shared pool |
 | Metadata Capacity | Read-only base-to-burst range calculated from the two limits | shown when Transfer Connections is set |
 | Pipeline depth | Per-provider override when pipelining on | blank = global `8` |
-| Type | Disabled / Pool Connections / Backup Only | Pool |
+| Type | Disabled / Pool Connections / Backup Only. A disabled provider is never contacted — no connections are opened or kept warm | Pool |
 | Use SSL | TLS for NNTP | on |
 | Skip TLS certificate verification | Accept an invalid provider certificate | off |
 | Data Cap | Block-account limit; auto-pauses near ~95% | uncapped |

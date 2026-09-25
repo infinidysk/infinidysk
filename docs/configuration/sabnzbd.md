@@ -22,7 +22,7 @@ SABnzbd-compatible download client API used by Radarr/Sonarr. See also [API comp
 | Rename a single video to the release name [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `api.rename-single-video-to-release` | on | When a job mounts exactly one video, rename it to `{release-folder}{extension}`. Season packs and collisions keep the original name. New imports only. |
 | Behavior for Duplicate NZBs | `api.duplicate-nzb-behavior` | `increment` | increment / mark-failed |
 | Trusted local hosts [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | `api.addurl-trusted-hosts` | env `TRUSTED_INTERNAL_HOSTS` | SSRF allowlist for private addurl |
-| Fail downloads without video or audio | `api.ensure-importable-video` | on | Reject NZBs with no media files |
+| Fail downloads without video or audio | `api.ensure-importable-video` | on | Reject NZBs with no media after configured filtering; failures identify [RAR-inside-7z limitations](../features/archives.md) when applicable. Disabling this permits raw archive mounts, not nested-archive playback. |
 | Fail when non-media missing articles | inverse of `api.skip-non-video-on-missing-articles` | skip non-media by default | Media files (video/audio) always fail on missing articles; companion files are skipped unless this is enabled |
 | Article health check categories [since 1.2.5](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.5){ .nzbdav-since } | `api.ensure-article-existence-categories` | empty (off) | Per-category STAT checks plus a final direct-media BODY readiness read; may be slow |
 | Article health check mode | `api.article-existence-check-mode` | `full` | Full or per-file sampled verification |

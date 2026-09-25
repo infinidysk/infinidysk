@@ -240,8 +240,6 @@ internal sealed partial class SupportPackRedactor
     [GeneratedRegex(@"(?<![A-Za-z\d.])(?<![A-Za-z]/)\d{1,3}(?:\.\d{1,3}){3}(?![\d.])")]
     private static partial Regex Ipv4Regex();
 
-    // Avoid treating timestamps, version numbers, and counters as IPv6. Full
-    // numeric IPv6 addresses are still recognized when they use compression.
-    [GeneratedRegex(@"(?<![A-Za-z0-9])(?:\[[0-9A-Fa-f:.]*[A-Fa-f][0-9A-Fa-f:.]*\]|[0-9A-Fa-f]*::[0-9A-Fa-f:]*|[0-9A-Fa-f]*[A-Fa-f][0-9A-Fa-f]*(?::[0-9A-Fa-f]+)+)(?![A-Za-z0-9])")]
+    [GeneratedRegex(@"(?<![A-Za-z0-9_])(?:\[(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\]|(?<!:)(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}(?!:)|\[[0-9A-Fa-f:.]*[A-Fa-f][0-9A-Fa-f:.]*\]|[0-9A-Fa-f]*::[0-9A-Fa-f:]*|[0-9A-Fa-f]*[A-Fa-f][0-9A-Fa-f]*(?::[0-9A-Fa-f]+)+)(?![A-Za-z0-9_])")]
     private static partial Regex Ipv6Regex();
 }

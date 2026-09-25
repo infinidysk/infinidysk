@@ -1,6 +1,7 @@
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Config;
 using NzbWebDAV.Exceptions;
 using UsenetSharp.Exceptions;
 using UsenetSharp.Models;
@@ -10,7 +11,7 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 public sealed class MultiProviderNntpClientConclusiveWalkTests
 {
     [Fact]
-    public async Task Stat_TransportThen430_ReturnsMissingByDefault()
+    public async Task Stat_TransportThen430_ThrowsInconclusiveMissByDefault()
     {
         var flaky = new MultiProviderNntpClientTests.ScriptedNntpClient
         {
@@ -28,9 +29,10 @@ public sealed class MultiProviderNntpClientConclusiveWalkTests
             MultiProviderNntpClientTests.CreateProvider(missing, host: "b.example"),
         ]);
 
-        var response = await client.StatAsync("seg@conclusive", CancellationToken.None);
+        var miss = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+            () => client.StatAsync("seg@conclusive", CancellationToken.None));
 
-        Assert.True(UsenetArticleAvailability.IsDefinitiveMissing(response));
+        Assert.Equal(MultiProviderNntpClient.InconclusiveMissReason, miss.InconclusiveReason);
     }
 
     [Fact]
@@ -188,6 +190,123 @@ public sealed class MultiProviderNntpClientConclusiveWalkTests
 
         Assert.Equal(1, first.SingularRequests);
         Assert.Equal(0, sibling.SingularRequests);
+    }
+
+    [Fact]
+    public async Task Stat_OpenCircuitProviderSkipped_UnderConclusiveScope_ThrowsCircuitAdmissionRejected()
+    {
+        var skipped = new MultiProviderNntpClientTests.ScriptedNntpClient
+        {
+            BatchResponseCode = 223,
+            StatResponseCode = 223,
+        };
+        var missing = new MultiProviderNntpClientTests.ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            StatResponseCode = 430,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            MultiProviderNntpClientTests.CreateProvider(
+                skipped, host: "a.example",
+                circuitBreaker: MultiProviderNntpClientTests.OpenBreaker("a.example")),
+            MultiProviderNntpClientTests.CreateProvider(missing, host: "b.example"),
+        ]);
+
+        using (ConclusiveAvailabilityContext.Begin())
+            await Assert.ThrowsAsync<CircuitAdmissionRejectedException>(
+                () => client.StatAsync("seg@conclusive", CancellationToken.None));
+
+        Assert.Equal(0, skipped.SingularRequests);
+        Assert.Equal(1, missing.SingularRequests);
+    }
+
+    [Fact]
+    public async Task Stat_OpenCircuitProviderSkipped_OutsideConclusiveScope_ThrowsInconclusiveMiss()
+    {
+        var skipped = new MultiProviderNntpClientTests.ScriptedNntpClient
+        {
+            BatchResponseCode = 223,
+            StatResponseCode = 223,
+        };
+        var missing = new MultiProviderNntpClientTests.ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            StatResponseCode = 430,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            MultiProviderNntpClientTests.CreateProvider(
+                skipped, host: "a.example",
+                circuitBreaker: MultiProviderNntpClientTests.OpenBreaker("a.example")),
+            MultiProviderNntpClientTests.CreateProvider(missing, host: "b.example"),
+        ]);
+
+        var miss = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+            () => client.StatAsync("seg@conclusive", CancellationToken.None));
+
+        Assert.Equal(MultiProviderNntpClient.InconclusiveMissReason, miss.InconclusiveReason);
+    }
+
+    [Fact]
+    public async Task Stat_OpenCircuitProviderWithCachedMiss_UnderConclusiveScope_StillReturnsMissing()
+    {
+        var cache = new ArticleMissNegativeCache(new ConfigManager());
+        cache.MarkMissing(ArticleMissNegativeCache.BuildKey(
+            "seg@conclusive", "a.example", null, ArticleMissNegativeCache.ArticleMissOperation.Stat));
+        var skipped = new MultiProviderNntpClientTests.ScriptedNntpClient
+        {
+            BatchResponseCode = 223,
+            StatResponseCode = 223,
+        };
+        var missing = new MultiProviderNntpClientTests.ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            StatResponseCode = 430,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            MultiProviderNntpClientTests.CreateProvider(
+                skipped, host: "a.example",
+                circuitBreaker: MultiProviderNntpClientTests.OpenBreaker("a.example")),
+            MultiProviderNntpClientTests.CreateProvider(missing, host: "b.example"),
+        ], articleMissCache: cache);
+
+        using (ConclusiveAvailabilityContext.Begin())
+        {
+            var response = await client.StatAsync("seg@conclusive", CancellationToken.None);
+            Assert.True(UsenetArticleAvailability.IsDefinitiveMissing(response));
+        }
+    }
+
+    [Fact]
+    public async Task Stat_OpenCircuitStorageGroupSibling_UnderConclusiveScope_StillReturnsMissing()
+    {
+        var skipped = new MultiProviderNntpClientTests.ScriptedNntpClient
+        {
+            BatchResponseCode = 223,
+            StatResponseCode = 223,
+        };
+        var sibling = new MultiProviderNntpClientTests.ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            StatResponseCode = 430,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            MultiProviderNntpClientTests.CreateProvider(
+                skipped, host: "a.example", storageGroup: "g",
+                circuitBreaker: MultiProviderNntpClientTests.OpenBreaker("a.example")),
+            MultiProviderNntpClientTests.CreateProvider(sibling, host: "b.example", storageGroup: "g"),
+        ]);
+
+        using (ConclusiveAvailabilityContext.Begin())
+        {
+            var response = await client.StatAsync("seg@conclusive", CancellationToken.None);
+            Assert.True(UsenetArticleAvailability.IsDefinitiveMissing(response));
+        }
+
+        Assert.Equal(0, skipped.SingularRequests);
     }
 
     [Fact]

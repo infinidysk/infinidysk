@@ -58,12 +58,16 @@ public static class GetPar2FileDescriptorsStep
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
         var remainingBytes = MaxPrefixBytes;
         var remainingArticles = MaxArticles;
+        var metadataFilesAttempted = 0;
+        var articlesRequested = 0;
+        long bytesDownloaded = 0;
         var fallbackCandidates = par2Candidates.Except(par2Indexes).ToList();
         foreach (var par2Index in par2Indexes.Concat(fallbackCandidates))
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (fallbackCandidates.Contains(par2Index) && fileDescriptors.Count > 0)
                 break;
+            metadataFilesAttempted++;
             try
             {
                 using var prefix = new MemoryStream();
@@ -76,6 +80,7 @@ public static class GetPar2FileDescriptorsStep
                     if (remainingArticles-- <= 0 || remainingBytes <= 0)
                         throw new InvalidDataException("PAR2 metadata download budget exhausted.");
 
+                    articlesRequested++;
                     var response = await usenetClient.DecodedBodyAsync(segment.MessageId, deadline.Token)
                         .ConfigureAwait(false);
                     await using (var article = response.Stream
@@ -90,6 +95,7 @@ public static class GetPar2FileDescriptorsStep
                                 deadline.Token).ConfigureAwait(false);
                             if (read == 0)
                                 break;
+                            bytesDownloaded += read;
                             articleBytes += read;
                             remainingBytes -= read;
                             if (articleBytes > MaxArticleBytes || remainingBytes < 0)
@@ -132,6 +138,30 @@ public static class GetPar2FileDescriptorsStep
                 progress?.Report(++completed * 100 / total);
             if (deadline.IsCancellationRequested || remainingArticles <= 0 || remainingBytes <= 0)
                 break;
+        }
+
+        if (par2Candidates.Count > 0)
+        {
+            var verifiedProofs = fileDescriptors.Count(descriptor => descriptor.VerificationProof is not null);
+            var distinctSliceSizes = fileDescriptors
+                .Where(descriptor => descriptor.SliceSize is not null)
+                .Select(descriptor => descriptor.SliceSize!.Value)
+                .Distinct()
+                .Order()
+                .ToArray();
+            var reportedSliceSizes = string.Join(",", distinctSliceSizes.Take(8));
+            Log.Information(
+                "PAR2 metadata discovery finished. Candidates: {Candidates}; IndexCandidates: {IndexCandidates}; " +
+                "MetadataFilesAttempted: {MetadataFilesAttempted}; Descriptors: {Descriptors}; " +
+                "VerifiedProofs: {VerifiedProofs}; UnverifiedDescriptors: {UnverifiedDescriptors}; " +
+                "SliceSizeCount: {SliceSizeCount}; SliceSizes: {SliceSizes}; " +
+                "SliceSizesTruncated: {SliceSizesTruncated}; ArticlesRequested: {ArticlesRequested}; " +
+                "BytesDownloaded: {BytesDownloaded}; DeadlineExceeded: {DeadlineExceeded}",
+                par2Candidates.Count, par2Indexes.Count, metadataFilesAttempted, fileDescriptors.Count,
+                verifiedProofs, fileDescriptors.Count - verifiedProofs,
+                distinctSliceSizes.Length, reportedSliceSizes.Length == 0 ? null : reportedSliceSizes,
+                distinctSliceSizes.Length > 8, articlesRequested, bytesDownloaded,
+                deadline.IsCancellationRequested);
         }
 
         return fileDescriptors;
