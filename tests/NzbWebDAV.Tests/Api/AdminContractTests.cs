@@ -109,13 +109,14 @@ public sealed class AdminContractTests
         Assert.Equal(HttpStatusCode.BadRequest, duplicate.StatusCode);
         using var serviceScope = factory.Services.CreateScope();
         serviceScope.ServiceProvider.GetRequiredService<ConfigManager>().UpdateValues([new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "false" }]);
-        var unsupported = NewUncheckedUsenetFile("notes.nfo");
-        await factory.AddDavItemsAsync(unsupported);
+        var disabledFile = NewUncheckedUsenetFile("disabled.mkv");
+        await factory.AddDavItemsAsync(disabledFile);
         using var disabledForm = new MultipartFormDataContent();
-        disabledForm.Add(new StringContent(unsupported.Id.ToString()), "davItemId");
+        disabledForm.Add(new StringContent(disabledFile.Id.ToString()), "davItemId");
         using var disabled = await client.PostAsync("/api/recheck-file", disabledForm);
-        Assert.Equal(HttpStatusCode.Conflict, disabled.StatusCode);
-        Assert.Null((await serviceScope.ServiceProvider.GetRequiredService<DavDatabaseClient>().Ctx.Items.FindAsync(unsupported.Id))!.NextHealthCheck);
+        await AdminProblemAssertions.AssertProblemAsync(
+            disabled, HttpStatusCode.Conflict, "Enable Background Repairs is off");
+        Assert.Null((await serviceScope.ServiceProvider.GetRequiredService<DavDatabaseClient>().Ctx.Items.FindAsync(disabledFile.Id))!.NextHealthCheck);
     }
 
     [Fact]
