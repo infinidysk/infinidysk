@@ -16,6 +16,14 @@ InfiniDysk is designed as a **drop-in upgrade** from the NZB/WebDAV streaming li
 4. Start the new container and wait for database maintenance / health to pass.
 5. Confirm **Settings** (Usenet, WebDAV, SABnzbd API key), then spot-check queue/history and a WebDAV playback.
 
+!!! warning "Migrating behind a reverse proxy"
+
+    If you access InfiniDysk through a trusted reverse proxy, enable **Trust reverse-proxy headers** [since 1.4.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.0){ .nzbdav-since } under **Settings → General → Reverse proxy**, then click **Save**. The change applies without restarting.
+
+    If you cannot sign in to change the setting, set `TRUST_PROXY=1` in the InfiniDysk container environment. In Compose, add `TRUST_PROXY: "1"` to the service's `environment` mapping, then recreate the container and retry signing in. This environment override enables proxy-header trust and locks the Settings toggle while configured; it does not save an enabled value to Settings.
+
+    Enable this only behind a trusted proxy that sends correct `X-Forwarded-Host` and `X-Forwarded-Proto` headers. See [Reverse proxy](docker.md#reverse-proxy) for configuration details and the **Base URL** alternative.
+
 *Arr download-client settings usually stay the same (host, port `3000`, API key) if networking is unchanged.
 
 Older than `0.6.0` installs may hit larger schema migrations — take a full `/config` backup and prefer stepping through a known-good intermediate if you are far behind.
