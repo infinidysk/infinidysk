@@ -63,6 +63,23 @@ public sealed class SymlinkAndStrmUtilTests
     }
 
     [Fact]
+    public void ReadNextPath_ConvertsPartialRecordFailureOnlyWhenCancelled()
+    {
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        using var cancelledReader = new StringReader("partial-without-nul");
+
+        var cancellation = Assert.Throws<OperationCanceledException>(
+            () => SymlinkAndStrmUtil.ReadNextPath(cancelledReader, cancelled.Token));
+        Assert.IsType<InvalidOperationException>(cancellation.InnerException);
+
+        using var activeReader = new StringReader("partial-without-nul");
+        var failure = Assert.Throws<InvalidOperationException>(
+            () => SymlinkAndStrmUtil.ReadNextPath(activeReader, CancellationToken.None));
+        Assert.Contains("truncated NUL-terminated path", failure.Message);
+    }
+
+    [Fact]
     public void ReadStrmTargetUrl_SelectsFirstNonEmptyLineAndBoundsInspection()
     {
         var root = CreateTempDirectory();
