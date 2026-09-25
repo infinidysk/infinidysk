@@ -705,6 +705,7 @@ public class ConnectionPoolWarmConnectionTests
 
         Assert.Equal(2, Volatile.Read(ref attempts));
         Assert.Equal(1, Volatile.Read(ref warmFailures));
+        Assert.True(pool.IsHandshakeBackoffActive);
         var snapshot = breaker.GetSnapshot();
         Assert.Equal(ProviderCircuitState.Closed, snapshot.State);
         Assert.Equal(0, snapshot.FailureCount);

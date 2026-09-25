@@ -71,6 +71,13 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         Volatile.Read(ref _consecutiveHandshakeFailures) > 0
         && GetTimestampMilliseconds() < Volatile.Read(ref _replacementPacingUntilMs);
 
+    internal void RecordWarmHandshakeFailure()
+    {
+        Interlocked.Increment(ref _handshakeFailures);
+        var consecutiveFailures = Interlocked.Increment(ref _consecutiveHandshakeFailures);
+        ArmReplacementPacing(GetHandshakeFailureBackoffMs(consecutiveFailures));
+    }
+
     /// <summary>
     /// Raised after live/idle/effective-max counts change. This is post-state telemetry:
     /// handlers cannot vote on admission or replacement. Subscriber failures are isolated

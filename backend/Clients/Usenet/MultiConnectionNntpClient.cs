@@ -1452,6 +1452,9 @@ public class MultiConnectionNntpClient(
         if (exception is ConnectionOpenTimeoutException && !factoryStarted)
             return;
 
+        if (exception is ConnectionOpenTimeoutException && factoryStarted)
+            connectionPool.RecordWarmHandshakeFailure();
+
         if (connectionPool.LiveConnections > 0)
         {
             LogWarmConnectionFailureOnLivePool(exception);
