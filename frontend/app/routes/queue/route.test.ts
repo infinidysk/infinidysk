@@ -172,12 +172,12 @@ describe("queue route loader", () => {
     expect(result.pageSize).toBe(50);
   });
 
-  it("falls back to the remembered page size when qps is not an offered size", async () => {
+  it("falls back to the remembered page size when qps is malformed", async () => {
     getQueueMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
     getHistoryMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
     getConfigMock.mockResolvedValueOnce([]);
 
-    const result = await loader(loaderRequest("?qps=10", "queue-page-size=25"));
+    const result = await loader(loaderRequest("?qps=25junk", "queue-page-size=25"));
 
     expect(getQueueMock).toHaveBeenCalledWith(26, 0, expect.anything());
     expect(result.pageSize).toBe(25);

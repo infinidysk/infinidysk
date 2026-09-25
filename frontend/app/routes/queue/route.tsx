@@ -36,8 +36,7 @@ function parsePage(value: string | null): number {
 
 function parsePageSize(value: string | null): number | null {
   if (value === null) return null;
-  const size = parseInt(value, 10);
-  return (PAGE_SIZE_OPTIONS as readonly number[]).includes(size) ? size : null;
+  return PAGE_SIZE_OPTIONS.find((size) => value === String(size)) ?? null;
 }
 
 function readCookie(cookieHeader: string | null, name: string): string | null {
