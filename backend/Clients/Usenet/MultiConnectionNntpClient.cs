@@ -161,6 +161,9 @@ public class MultiConnectionNntpClient(
     private int _pendingTransferSelections;
     private int _pendingMetadataSelections;
     private int _retiredPoolWarningLogged;
+    private static readonly long WarmFailureWarningIntervalMs =
+        (long)TimeSpan.FromMinutes(5).TotalMilliseconds;
+    private long _nextWarmFailureWarningAtMs;
     public int PendingSelections => Volatile.Read(ref _pendingSelections);
     internal void ReservePending(NntpOperation operation)
     {
@@ -1432,12 +1435,28 @@ public class MultiConnectionNntpClient(
             RecordProviderFailure(reason);
     }
 
+    /// <summary>
+    /// Classifies a failed warm-up open (warm-floor refill or read-start warm-up). Warm-up has no
+    /// waiting caller, so while the provider still has an established connection the failure is
+    /// left to the pool's handshake backoff and only logged. A cold pool keeps the immediate trip
+    /// so an unreachable provider is benched before the first request needs it.
+    /// </summary>
     internal void RecordWarmConnectionFailure(Exception exception, bool factoryStarted)
     {
         if (exception is CircuitAdmissionRejectedException or ProviderTransferAdmissionTimeoutException)
             return;
 
-        if (exception is ConnectionOpenTimeoutException timeout && factoryStarted)
+        // The budget ran out before TCP/TLS/AUTHINFO even started; that says nothing about the provider.
+        if (exception is ConnectionOpenTimeoutException && !factoryStarted)
+            return;
+
+        if (connectionPool.LiveConnections > 0)
+        {
+            LogWarmConnectionFailureOnLivePool(exception);
+            return;
+        }
+
+        if (exception is ConnectionOpenTimeoutException timeout)
         {
             RecordProviderConnectionFailure(
                 $"warm-open-timeout-phase-{timeout.Phase}: {timeout.Message}",
@@ -1445,10 +1464,28 @@ public class MultiConnectionNntpClient(
             return;
         }
 
-        if (exception is ConnectionOpenTimeoutException)
-            return;
-
         RecordProviderFailure($"warm-connection-{exception.GetType().Name}");
+    }
+
+    private void LogWarmConnectionFailureOnLivePool(Exception exception)
+    {
+        var reason = exception.TryGetKnownErrorMessage(out var known) ? known : exception.Message;
+        var now = Environment.TickCount64;
+        var next = Volatile.Read(ref _nextWarmFailureWarningAtMs);
+        var warn = now >= next
+                   && Interlocked.CompareExchange(
+                       ref _nextWarmFailureWarningAtMs, now + WarmFailureWarningIntervalMs, next) == next;
+        if (warn)
+        {
+            Log.Warning(
+                "Warm-up could not open a new connection to {Provider}; established connections keep serving and warm-up retries after the pool's handshake backoff. Reason: {Reason}",
+                Host, reason);
+            return;
+        }
+
+        Log.Debug(
+            "Warm-up open failure for {Provider} (warning throttled). Reason: {Reason}",
+            Host, reason);
     }
 
     private void RecordProviderConnectionFailure(
