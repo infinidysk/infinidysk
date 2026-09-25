@@ -9,6 +9,7 @@ import type { WebSocketServer } from "ws";
 import { getFrontendRuntimeConfig, installFrontendRuntimeConfig } from "./runtime-config";
 import {
   isBackendApiDocsPath,
+  isFilesBackendMutation,
   isReadOnlyDeniedBackendMutation,
   safeDecodePath,
   shouldProxyToBackend,
@@ -174,7 +175,12 @@ app.use(async (req, res, next) => {
       {
         isAuthenticated: () => isAuthenticated(req),
         injectApiKey: () =>
-          setApiKeyForAuthenticatedRequests(req, getFrontendRuntimeConfig().frontendBackendApiKey),
+          isFilesBackendMutation(req.method, req.path)
+            ? Promise.resolve()
+            : setApiKeyForAuthenticatedRequests(
+                req,
+                getFrontendRuntimeConfig().frontendBackendApiKey,
+              ),
         getRole: async () => (await getSessionUser(req))?.role ?? null,
         rejectMetrics: () => {
           res.status(401).type("text/plain").send("Metrics authentication required.");

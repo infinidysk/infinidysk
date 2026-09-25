@@ -15,6 +15,12 @@ The **Health** page puts action-needed files first. Expand **Diagnostic details*
 the complete recovery message with touch, mouse, or keyboard. Small nonzero outcome
 percentages are preserved instead of rounding down to zero.
 
+For file-scoped administration, [Files administration](../features/webdav-filesystem.md#files-administration-since-150)
+adds **Recheck** and **Search in Arr** [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }.
+A row recheck preserves observed health and respects the existing work windows and worker
+admission rules. Search validates current library ownership and requests a non-destructive
+Arr search; it does not remove or blocklist the current file or guarantee a replacement.
+
 ## Background repairs
 
 **Settings → Repairs** monitors mounted media, reconstructs missing segments from PAR2 parity, and

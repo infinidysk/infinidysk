@@ -16,6 +16,7 @@ export type ConfirmModalProps = {
   confirmText?: string;
   /** Defaults to danger for destructive confirms. Pass `false` for a default `btn`. */
   confirmVariant?: "danger" | "primary" | false;
+  isConfirmDisabled?: boolean;
   onCancel: () => void;
   onConfirm: (isCheckboxChecked?: boolean) => void;
 };
@@ -56,7 +57,9 @@ export function ConfirmModal(props: ConfirmModalProps) {
             {...(props.confirmVariant === false
               ? {}
               : { variant: props.confirmVariant ?? "danger" })}
-            disabled={confirmDisabled(props.requireCheckbox, isCheckboxChecked)}
+            disabled={
+              props.isConfirmDisabled || confirmDisabled(props.requireCheckbox, isCheckboxChecked)
+            }
             onClick={() => onConfirm(isCheckboxChecked)}
           >
             {props.confirmText || "Confirm Removal"}

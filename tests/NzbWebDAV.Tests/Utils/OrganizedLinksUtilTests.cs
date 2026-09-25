@@ -7,6 +7,30 @@ namespace NzbWebDAV.Tests.Utils;
 public class OrganizedLinksUtilTests
 {
     [Fact]
+    public void CapturedRoots_DoNotReadChangedConfigurationMidScan()
+    {
+        var root = Path.Join(Path.GetTempPath(), $"files-captured-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var id = Guid.NewGuid();
+            File.WriteAllText(Path.Join(root, "movie.strm"), $"http://localhost/view/.ids/{id}.mkv");
+            var configManager = new ConfigManager();
+            configManager.UpdateValues([
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = root },
+                new ConfigItem { ConfigName = ConfigKeys.RcloneMountDir, ConfigValue = "/synthetic/mount" },
+            ]);
+            var links = OrganizedLinksUtil.GetLibraryDavItemLinks(configManager);
+            configManager.UpdateValues([
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = Path.Join(root, "missing") },
+                new ConfigItem { ConfigName = ConfigKeys.RcloneMountDir, ConfigValue = "/other/mount" },
+            ]);
+            Assert.Equal(id, Assert.Single(links).DavItemId);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void GetLink_WithoutLibraryDirectory_ReturnsNullWithoutScanning()
     {
         var configManager = new ConfigManager();

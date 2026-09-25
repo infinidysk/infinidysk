@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Alert, Button, Icon, Modal } from "~/components/ui";
 import { formatFileSize } from "~/utils/file-size";
 import { generateUuid } from "~/utils/uuid";
-import { isVideoFile } from "../file-kind/file-kind";
+import { isVideoFile } from "~/utils/file-kind";
 import { MediaDiagnostics } from "./media-diagnostics";
 import { appendQueryParam, buildMediaSrc, formatClock } from "./media-utils";
 import { useMediaPlayer } from "./use-media-player";

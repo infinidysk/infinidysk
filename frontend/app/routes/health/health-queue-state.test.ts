@@ -9,7 +9,7 @@ import {
   parseHealthItemStatusMessage,
   type HealthQueueState,
   updateHealthCheckProgress,
-} from "./health-queue-state";
+} from "~/utils/health-queue-state";
 
 function queueItem(id: string, nextHealthCheck: string | null): HealthCheckQueueItem {
   return {

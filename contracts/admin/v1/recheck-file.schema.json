@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/recheck-file.schema.json",
+  "type": "object",
+  "required": ["status", "davItemId", "state"],
+  "properties": {
+    "status": { "const": true }, "error": { "type": ["string", "null"] },
+    "davItemId": { "type": "string", "format": "uuid" },
+    "state": { "enum": ["queued", "already-queued", "already-running"] }
+  }
+}

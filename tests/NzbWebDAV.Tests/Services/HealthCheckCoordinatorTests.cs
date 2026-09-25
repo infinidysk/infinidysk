@@ -29,6 +29,104 @@ namespace NzbWebDAV.Tests.Services;
 public sealed class HealthCheckCoordinatorTests
 {
     [Fact]
+    public async Task QueueFileRecheckAsync_ConcurrentUrgentWriteIsNotOverwritten()
+    {
+        using var harness = new Harness(workers: 1, fullySplit: false);
+        await using var connection = await harness.ConfigureEmptyDatabaseAsync();
+        var originalFactory = harness.Service.CreateDbContextOverride!;
+        await using var context = originalFactory();
+        var file = NewCandidate("urgent-race.mkv", DateTimeOffset.UtcNow.AddDays(1));
+        file.Path = "/content/urgent-race.mkv";
+        context.Items.Add(file);
+        await context.SaveChangesAsync();
+        var interceptor = new UrgentWriteInterceptor(async () =>
+        {
+            await using var concurrent = originalFactory();
+            await concurrent.Items.Where(item => item.Id == file.Id).ExecuteUpdateAsync(setters => setters
+                .SetProperty(item => item.NextHealthCheck, DateTimeOffset.UnixEpoch)
+                .SetProperty(item => item.UrgentRepairFailures, 9));
+        });
+        var options = new DbContextOptionsBuilder<DavDatabaseContext>().UseSqlite(connection).AddInterceptors(interceptor).Options;
+        harness.Service.CreateDbContextOverride = () => new DavDatabaseContext(options);
+        Assert.Equal(HealthCheckService.FileRecheckOutcome.AlreadyQueued, await harness.Service.QueueFileRecheckAsync(file.Id, CancellationToken.None));
+        await context.Entry(file).ReloadAsync();
+        Assert.Equal(DateTimeOffset.UnixEpoch, file.NextHealthCheck);
+        Assert.Equal(9, file.UrgentRepairFailures);
+    }
+
+    private sealed class UrgentWriteInterceptor(Func<Task> write) : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+    {
+        private bool _written;
+        public override async ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int>> NonQueryExecutingAsync(
+            System.Data.Common.DbCommand command, Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (!_written) { _written = true; await write(); }
+            return result;
+        }
+    }
+
+    [Fact]
+    public async Task QueueFileRecheckAsync_AlreadyRunningDoesNotQueueAgain()
+    {
+        using var harness = new Harness(workers: 1, fullySplit: false);
+        await using var connection = await harness.ConfigureEmptyDatabaseAsync();
+        await using var context = harness.Service.CreateDbContextOverride!();
+        var active = NewCandidate("active.mkv", DateTimeOffset.UtcNow.AddDays(1));
+        active.Path = "/content/active.mkv";
+        context.Items.Add(active);
+        await context.SaveChangesAsync();
+        var blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Service.SelectCandidateOverride = (_, _, _) => Task.FromResult<Guid?>(active.Id);
+        harness.Service.ProcessCandidateOverride = (_, token) => blocker.Task.WaitAsync(token);
+        await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+        try
+        {
+            Assert.Equal(HealthCheckService.FileRecheckOutcome.AlreadyRunning,
+                await harness.Service.QueueFileRecheckAsync(active.Id, CancellationToken.None));
+            Assert.Single(harness.Service.InProgressHealthCheckIds);
+        }
+        finally
+        {
+            blocker.TrySetResult();
+            await ReapUntilAsync(harness.Service, () => harness.Service.InProgressHealthCheckIds.Count == 0);
+        }
+    }
+
+    [Fact]
+    public async Task QueueFileRecheckAsync_CoordinatesWithWorkerAdmission()
+    {
+        using var harness = new Harness(workers: 1, fullySplit: false);
+        await using var connection = await harness.ConfigureEmptyDatabaseAsync();
+        await using var context = harness.Service.CreateDbContextOverride!();
+        var active = NewCandidate("active.mkv", null);
+        active.Path = "/content/active.mkv";
+        context.Items.Add(active);
+        await context.SaveChangesAsync();
+        var selecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var admit = new TaskCompletionSource<Guid?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Service.SelectCandidateOverride = (_, _, _) => { selecting.TrySetResult(); return admit.Task; };
+        harness.Service.ProcessCandidateOverride = (_, token) => blocker.Task.WaitAsync(token);
+        var refill = harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+        await selecting.Task;
+        var recheck = harness.Service.QueueFileRecheckAsync(active.Id, CancellationToken.None);
+        Assert.False(recheck.IsCompleted);
+        admit.SetResult(active.Id);
+        await refill;
+        try
+        {
+            Assert.Equal(HealthCheckService.FileRecheckOutcome.AlreadyRunning, await recheck);
+            Assert.Single(harness.Service.InProgressHealthCheckIds);
+        }
+        finally
+        {
+            blocker.TrySetResult();
+            await ReapUntilAsync(harness.Service, () => harness.Service.InProgressHealthCheckIds.Count == 0);
+        }
+    }
+
+    [Fact]
     public async Task QueueSnapshot_PrioritizesActiveWorkerAndPreservesLastCheck()
     {
         using var harness = new Harness(workers: 1, fullySplit: false);

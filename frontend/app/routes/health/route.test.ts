@@ -32,7 +32,7 @@ vi.mock("~/components/ui", () => ({
   Icon: vi.fn(),
 }));
 
-vi.mock("./health-queue-state", () => ({
+vi.mock("~/utils/health-queue-state", () => ({
   completeHealthCheck: vi.fn(),
 }));
 
