@@ -27,7 +27,7 @@ describe("displayNameForRead", () => {
     ["abcdefghi.mkv", "abcdefghij", "abcdefghij/abcdefghi.mkv"],
     ["d.mkv", null, "d.mkv"],
   ])("formats %s with resolved parent %s", (fileName, parent, expected) => {
-    expect(displayNameForRead(fileName!, "/.ids/id", parent).name).toBe(expected);
+    expect(displayNameForRead(fileName, "/.ids/id", parent).name).toBe(expected);
   });
 
   it("uses only the direct parent and safely decodes URL segments", () => {
