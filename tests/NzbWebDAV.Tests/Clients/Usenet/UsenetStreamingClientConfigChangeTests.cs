@@ -12,6 +12,18 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 
 public class UsenetStreamingClientConfigChangeTests
 {
+    [Theory]
+    [InlineData(1, 10)]
+    [InlineData(3, 10)]
+    [InlineData(10, 10)]
+    [InlineData(15, 15)]
+    public void ResolveWarmFloorOpenTimeout_IsAtLeastTenSeconds(int configuredSeconds, int expectedSeconds)
+    {
+        var resolved = UsenetStreamingClient.ResolveWarmFloorOpenTimeout(TimeSpan.FromSeconds(configuredSeconds));
+
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), resolved);
+    }
+
     [Fact]
     public void DisabledProvider_OpensNoWarmConnections_WhileWarmConnectionsEnabled()
     {

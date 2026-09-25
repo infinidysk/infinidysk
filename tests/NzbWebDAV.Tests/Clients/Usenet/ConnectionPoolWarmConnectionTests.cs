@@ -669,6 +669,243 @@ public class ConnectionPoolWarmConnectionTests
     }
 
     [Fact]
+    public async Task WarmTo_OpenTimeoutWithEstablishedConnectionDoesNotTripCircuit()
+    {
+        const string provider = "news.live-pool.example";
+        var breaker = new ProviderCircuitBreaker(provider);
+        var attempts = 0;
+        var warmFailures = 0;
+        MultiConnectionNntpClient? providerClient = null;
+        await using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 4,
+            connectionFactory: async cancellationToken =>
+            {
+                if (Interlocked.Increment(ref attempts) == 1)
+                    return new FakeNntpClient(new Dictionary<string, byte[]>());
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return new FakeNntpClient(new Dictionary<string, byte[]>());
+            },
+            idleTimeout: TimeSpan.FromMinutes(1),
+            warmConnectionFloor: 1,
+            diagnosticName: provider,
+            connectionOpenTimeout: () => TimeSpan.FromMilliseconds(100),
+            connectionOpenProvider: provider,
+            onWarmConnectionFailure: (error, started) =>
+            {
+                Interlocked.Increment(ref warmFailures);
+                providerClient!.RecordWarmConnectionFailure(error, started);
+            },
+            circuitBreaker: breaker);
+        await WaitUntilAsync(() => pool.LiveConnections == 1 && pool.IdleConnections == 1);
+        using var client = new MultiConnectionNntpClient(pool, ProviderType.Pooled, breaker, provider);
+        providerClient = client;
+
+        await pool.WarmToAsync(2).WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => pool.PendingConnectionCreations == 0);
+
+        Assert.Equal(2, Volatile.Read(ref attempts));
+        Assert.Equal(1, Volatile.Read(ref warmFailures));
+        var snapshot = breaker.GetSnapshot();
+        Assert.Equal(ProviderCircuitState.Closed, snapshot.State);
+        Assert.Equal(0, snapshot.FailureCount);
+        Assert.Equal(0, snapshot.TripCount);
+        Assert.Null(snapshot.LastFailureReason);
+        Assert.False(breaker.RequiresFreshConnectionProbe);
+        Assert.Equal(1, pool.LiveConnections);
+        Assert.Equal(1, pool.IdleConnections);
+    }
+
+    [Fact]
+    public async Task RecordWarmConnectionFailure_OpenTimeoutOnColdPool_TripsAndRequiresFreshProbe()
+    {
+        const string provider = "news.cold-pool.example";
+        var breaker = new ProviderCircuitBreaker(provider);
+        await using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 4,
+            connectionFactory: _ => ValueTask.FromResult<INntpClient>(
+                new FakeNntpClient(new Dictionary<string, byte[]>())),
+            idleTimeout: TimeSpan.FromMinutes(1),
+            circuitBreaker: breaker);
+        using var client = new MultiConnectionNntpClient(pool, ProviderType.Pooled, breaker, provider);
+        Assert.Equal(0, pool.LiveConnections);
+
+        client.RecordWarmConnectionFailure(
+            new ConnectionOpenTimeoutException(provider, "Factory", TimeSpan.FromSeconds(3), factoryStarted: true),
+            factoryStarted: true);
+
+        var snapshot = breaker.GetSnapshot();
+        Assert.Equal(ProviderCircuitState.Open, snapshot.State);
+        Assert.Equal(1, snapshot.FailureCount);
+        Assert.Equal(1, snapshot.TripCount);
+        Assert.Contains("warm-open-timeout-phase-Factory", snapshot.LastFailureReason);
+        Assert.True(breaker.RequiresFreshConnectionProbe);
+        Assert.True(breaker.AllowsIdleConnectionReuse);
+    }
+
+    [Fact]
+    public async Task RecordWarmConnectionFailure_OpenTimeoutWithEstablishedConnection_LeavesCircuitClosed()
+    {
+        const string provider = "news.live-timeout.example";
+        var breaker = new ProviderCircuitBreaker(provider);
+        await using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 4,
+            connectionFactory: _ => ValueTask.FromResult<INntpClient>(
+                new FakeNntpClient(new Dictionary<string, byte[]>())),
+            idleTimeout: TimeSpan.FromMinutes(1),
+            warmConnectionFloor: 1,
+            circuitBreaker: breaker);
+        await WaitUntilAsync(() => pool.LiveConnections == 1 && pool.IdleConnections == 1);
+        using var client = new MultiConnectionNntpClient(pool, ProviderType.Pooled, breaker, provider);
+
+        client.RecordWarmConnectionFailure(
+            new ConnectionOpenTimeoutException(provider, "Factory", TimeSpan.FromSeconds(3), factoryStarted: true),
+            factoryStarted: true);
+
+        var snapshot = breaker.GetSnapshot();
+        Assert.Equal(ProviderCircuitState.Closed, snapshot.State);
+        Assert.Equal(0, snapshot.FailureCount);
+        Assert.Equal(0, snapshot.TripCount);
+        Assert.False(breaker.RequiresFreshConnectionProbe);
+        Assert.Equal(1, pool.LiveConnections);
+    }
+
+    [Fact]
+    public async Task RecordWarmConnectionFailure_FactoryFailureWithEstablishedConnection_LeavesCircuitClosed()
+    {
+        const string provider = "news.live-refused.example";
+        var breaker = new ProviderCircuitBreaker(provider);
+        await using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 4,
+            connectionFactory: _ => ValueTask.FromResult<INntpClient>(
+                new FakeNntpClient(new Dictionary<string, byte[]>())),
+            idleTimeout: TimeSpan.FromMinutes(1),
+            warmConnectionFloor: 1,
+            circuitBreaker: breaker);
+        await WaitUntilAsync(() => pool.LiveConnections == 1 && pool.IdleConnections == 1);
+        using var client = new MultiConnectionNntpClient(pool, ProviderType.Pooled, breaker, provider);
+
+        client.RecordWarmConnectionFailure(new IOException("connection refused"), factoryStarted: false);
+
+        var snapshot = breaker.GetSnapshot();
+        Assert.Equal(ProviderCircuitState.Closed, snapshot.State);
+        Assert.Equal(0, snapshot.FailureCount);
+        Assert.Equal(0, snapshot.TripCount);
+    }
+
+    [Fact]
+    public async Task RecordWarmConnectionFailure_FactoryFailureOnColdPool_AddsOneWindowSampleWithoutTripping()
+    {
+        const string provider = "news.cold-refused.example";
+        var breaker = new ProviderCircuitBreaker(provider);
+        await using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 4,
+            connectionFactory: _ => ValueTask.FromResult<INntpClient>(
+                new FakeNntpClient(new Dictionary<string, byte[]>())),
+            idleTimeout: TimeSpan.FromMinutes(1),
+            circuitBreaker: breaker);
+        using var client = new MultiConnectionNntpClient(pool, ProviderType.Pooled, breaker, provider);
+
+        client.RecordWarmConnectionFailure(new IOException("connection refused"), factoryStarted: false);
+
+        var snapshot = breaker.GetSnapshot();
+        Assert.Equal(ProviderCircuitState.Closed, snapshot.State);
+        Assert.Equal(1, snapshot.FailureCount);
+        Assert.Equal(0, snapshot.TripCount);
+    }
+
+    [Fact]
+    public async Task RecordWarmConnectionFailure_OpenTimeoutBeforeFactoryStarted_IsIgnored()
+    {
+        const string provider = "news.cold-queue.example";
+        var breaker = new ProviderCircuitBreaker(provider);
+        await using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 4,
+            connectionFactory: _ => ValueTask.FromResult<INntpClient>(
+                new FakeNntpClient(new Dictionary<string, byte[]>())),
+            idleTimeout: TimeSpan.FromMinutes(1),
+            circuitBreaker: breaker);
+        using var client = new MultiConnectionNntpClient(pool, ProviderType.Pooled, breaker, provider);
+
+        client.RecordWarmConnectionFailure(
+            new ConnectionOpenTimeoutException(provider, "HandshakeQueue", TimeSpan.FromSeconds(3), factoryStarted: false),
+            factoryStarted: false);
+
+        Assert.Equal(0, breaker.GetSnapshot().FailureCount);
+        Assert.Equal(ProviderCircuitState.Closed, breaker.GetSnapshot().State);
+    }
+
+    [Fact]
+    public async Task WarmFloor_RefillUsesWarmFloorOpenTimeout()
+    {
+        var failures = 0;
+        await using var pool = new ConnectionPool<TestConnection>(
+            maxConnections: 4,
+            connectionFactory: async cancellationToken =>
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(300), cancellationToken);
+                return new TestConnection(1);
+            },
+            idleTimeout: TimeSpan.FromMinutes(1),
+            warmConnectionFloor: 1,
+            connectionOpenTimeout: () => TimeSpan.FromMilliseconds(100),
+            onWarmConnectionFailure: (_, _) => Interlocked.Increment(ref failures),
+            warmFloorOpenTimeout: () => TimeSpan.FromSeconds(2));
+
+        await WaitUntilAsync(() => pool.LiveConnections == 1 && pool.IdleConnections == 1);
+
+        Assert.Equal(0, Volatile.Read(ref failures));
+        Assert.Equal(0, pool.GetChurn().HandshakeFailures);
+    }
+
+    [Fact]
+    public async Task WarmTo_KeepsForegroundOpenTimeoutWhenWarmFloorBudgetIsLonger()
+    {
+        var reported = new TaskCompletionSource<(Exception Error, bool FactoryStarted)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var pool = new ConnectionPool<TestConnection>(
+            maxConnections: 4,
+            connectionFactory: async cancellationToken =>
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(300), cancellationToken);
+                return new TestConnection(1);
+            },
+            idleTimeout: TimeSpan.FromMinutes(1),
+            connectionOpenTimeout: () => TimeSpan.FromMilliseconds(100),
+            onWarmConnectionFailure: (error, started) => reported.TrySetResult((error, started)),
+            warmFloorOpenTimeout: () => TimeSpan.FromSeconds(2));
+
+        await pool.WarmToAsync(1).WaitAsync(TimeSpan.FromSeconds(5));
+        var (error, factoryStarted) = await reported.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var timeout = Assert.IsType<ConnectionOpenTimeoutException>(error);
+        Assert.True(factoryStarted);
+        Assert.Equal("Factory", timeout.Phase);
+        await WaitUntilAsync(() => pool.PendingConnectionCreations == 0);
+        Assert.Equal(0, pool.LiveConnections);
+    }
+
+    [Fact]
+    public async Task IsHandshakeBackoffActive_TracksFailedThenRecoveredOpens()
+    {
+        var attempts = 0;
+        await using var pool = new ConnectionPool<TestConnection>(
+            maxConnections: 2,
+            connectionFactory: _ => Interlocked.Increment(ref attempts) == 1
+                ? ValueTask.FromException<TestConnection>(new IOException("handshake refused"))
+                : ValueTask.FromResult(new TestConnection(attempts)),
+            idleTimeout: TimeSpan.FromMinutes(1));
+        Assert.False(pool.IsHandshakeBackoffActive);
+
+        await Assert.ThrowsAsync<IOException>(() => pool.GetConnectionLockAsync(SemaphorePriority.High));
+        Assert.True(pool.IsHandshakeBackoffActive);
+
+        using (await pool.GetConnectionLockAsync(SemaphorePriority.High).WaitAsync(TimeSpan.FromSeconds(5)))
+        {
+            Assert.False(pool.IsHandshakeBackoffActive);
+        }
+    }
+
+    [Fact]
     public async Task InFlightKeepAliveReservesPhysicalPoolCapacity()
     {
         var created = 0;

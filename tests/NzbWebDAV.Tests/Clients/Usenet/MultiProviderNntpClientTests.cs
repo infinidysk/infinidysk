@@ -256,6 +256,34 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public async Task PrewarmConnectionsAsync_SkipsProviderInHandshakeBackoff()
+    {
+        var healthy = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 },
+            host: "healthy",
+            maxConnections: 4);
+        var attempts = 0;
+        var backingOffPool = new ConnectionPool<INntpClient>(
+            maxConnections: 4,
+            connectionFactory: _ => Interlocked.Increment(ref attempts) == 1
+                ? ValueTask.FromException<INntpClient>(new IOException("handshake refused"))
+                : ValueTask.FromResult<INntpClient>(new ScriptedNntpClient { BatchResponseCode = 222 }));
+        var backingOff = new MultiConnectionNntpClient(
+            backingOffPool, ProviderType.Pooled, new ProviderCircuitBreaker("backing-off"), "backing-off");
+        await Assert.ThrowsAsync<IOException>(
+            () => backingOffPool.GetConnectionLockAsync(SemaphorePriority.High));
+        Assert.True(backingOff.IsHandshakeBackoffActive);
+        using var client = new MultiProviderNntpClient([healthy, backingOff]);
+
+        await client.PrewarmConnectionsAsync(3, CancellationToken.None);
+
+        Assert.Equal(3, healthy.LiveConnections);
+        Assert.Equal(0, backingOff.LiveConnections);
+        Assert.Equal(1, Volatile.Read(ref attempts));
+        Assert.Equal(ProviderCircuitState.Closed, backingOff.GetCircuitBreakerSnapshot().State);
+    }
+
+    [Fact]
     public void BeginStreamTraceRangeScope_RestoresNestedContext()
     {
         var rangeA = new StreamTraceRangeContext(Guid.NewGuid(), 1);
