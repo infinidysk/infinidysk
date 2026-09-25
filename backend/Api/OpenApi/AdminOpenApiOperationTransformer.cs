@@ -25,6 +25,7 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
 
         operation.OperationId = $"{verb}-{routeName}";
         operation.Summary = HumanizeControllerName(descriptor.ControllerName);
+        AddKnownJsonRequestBody(operation, route, verb);
         AddKnownFormRequestBody(operation, route, verb);
         if (route == "api/get-health-check-history")
         {
@@ -244,6 +245,65 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
                 : character.ToString()));
     }
 
+    private static void AddKnownJsonRequestBody(OpenApiOperation operation, string route, string verb)
+    {
+        if (verb != "post" || route != "api/playback/native")
+            return;
+
+        operation.RequestBody = new OpenApiRequestBody
+        {
+            Required = true,
+            Description =
+                "Report or end an InfiniDysk-native playback session. " +
+                "playerSession is always required. event defaults to Report when omitted; " +
+                "Report events require a concrete state. End events only require playerSession/event.",
+            Content = new Dictionary<string, OpenApiMediaType>
+            {
+                ["application/json"] = new OpenApiMediaType
+                {
+                    Schema = new OpenApiSchema
+                    {
+                        Type = JsonSchemaType.Object,
+                        Properties = new Dictionary<string, IOpenApiSchema>
+                        {
+                            ["playerSession"] = new OpenApiSchema { Type = JsonSchemaType.String },
+                            ["event"] = new OpenApiSchema
+                            {
+                                Type = JsonSchemaType.String,
+                                Description = "Report or End. Omit to use Report.",
+                            },
+                            ["state"] = new OpenApiSchema
+                            {
+                                Type = JsonSchemaType.String,
+                                Description = "For Report events, must be Playing, Paused, or Buffering.",
+                            },
+                            ["positionMs"] = new OpenApiSchema
+                            {
+                                Type = JsonSchemaType.Integer | JsonSchemaType.Null,
+                                Format = "int64",
+                            },
+                            ["durationMs"] = new OpenApiSchema
+                            {
+                                Type = JsonSchemaType.Integer | JsonSchemaType.Null,
+                                Format = "int64",
+                            },
+                            ["title"] = new OpenApiSchema
+                            {
+                                Type = JsonSchemaType.String | JsonSchemaType.Null,
+                            },
+                            ["mediaType"] = new OpenApiSchema
+                            {
+                                Type = JsonSchemaType.String | JsonSchemaType.Null,
+                            },
+                        },
+                        Required = new HashSet<string> { "playerSession" },
+                        AdditionalPropertiesAllowed = true,
+                    },
+                },
+            },
+        };
+    }
+
     private static void AddKnownFormRequestBody(OpenApiOperation operation, string route, string verb)
     {
         if (verb != "post") return;
@@ -260,6 +320,7 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
             "api/test-indexer-connection" =>
                 ["url", "apiKey", "userAgent", "proxyUrl", "timeoutSeconds", "skipTlsVerification"],
             "api/test-prowlarr-connection" => ["url", "apiKey"],
+            "api/test-media-server-connection" => ["type", "baseUrl", "token"],
             "api/test-rclone-connection" => ["host", "user", "pass"],
             "api/setup-wizard/complete" => ["strategy", "ingestionMethods", "config"],
             "api/set-stream-tracing" => ["enabled", "minutes", "capacity"],
@@ -286,7 +347,11 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
                 field => field,
                 _ => (IOpenApiSchema)new OpenApiSchema { Type = JsonSchemaType.String }),
             additionalProperties: false,
-            requiredProperties: route == "api/setup-wizard/complete" ? fields : null);
+            requiredProperties: route switch
+            {
+                "api/setup-wizard/complete" or "api/test-media-server-connection" => fields,
+                _ => null,
+            });
     }
 
     private static OpenApiRequestBody FormBody(

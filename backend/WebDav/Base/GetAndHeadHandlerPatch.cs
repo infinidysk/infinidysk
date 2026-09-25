@@ -306,7 +306,7 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                     };
                     var sessionId = _activeReadRegistry.GetOrCreate(
                         path, clientKey, fileName, stream.CanSeek ? stream.Length : null,
-                        userAgent, clientIp);
+                        userAgent, clientIp, davItemId: (entry as DatabaseStoreIdFile)?.DavItemId);
                     var traceRange = _streamTrace.RangeOpen(
                         sessionId, path, request.Method, copyStart, copyEnd,
                         stream.CanSeek ? stream.Length : null, userAgent, clientIp, fileName);
