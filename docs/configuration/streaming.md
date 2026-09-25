@@ -45,7 +45,7 @@ is saturated.
 | In-flight article budget (MiB) [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since } | `usenet.in-flight-article-budget-mb` | auto | Host-wide decoded-byte cap. Auto uses 25% of the detected managed-heap ceiling, clamped to 64–8192 MiB; explicit values also range from 64–8192 MiB |
 | Global Usenet bandwidth limit (Mbit/s) [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.bandwidth-limit-mbps` | unlimited | Process-wide cap on live provider BODY/ARTICLE payload ingress for queue and WebDAV. Empty or `0` is unlimited. 1 Mbit/s = 125,000 bytes/s. Provider speed tests, cache hits, and LAN delivery are never limited. Takes effect immediately. A cap cannot raise a latency-limited workload. |
 | Idle connection timeout | `usenet.idle-connection-timeout-seconds` | `60` | Close unused connections after 15–300 seconds; also sets the [connection warming](../features/connection-warming.md) sweep and keepalive cadence |
-| Read-start warm-up [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.read-start-warmup.enabled` | on | Expand pooled-provider connections in parallel when a long buffered WebDAV read starts; captured when each stream opens |
+| Read-start warm-up [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.read-start-warmup.enabled` | on | Expand pooled-provider connections in parallel when a long buffered WebDAV read starts; captured when each stream opens. Skipped for a provider that is backing off after a failed connection open |
 | NNTP response timeout [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.nntp-read-timeout-seconds` | `30` | Stalled-read inactivity deadline for BODY, ARTICLE, STAT, authentication, and other NNTP responses, 5–120 seconds. This is not a total transfer deadline. Streaming segment/read budgets and the 15-second connect/auth ceiling can expire first. Takes effect on the next provider-pool rebuild or restart. |
 | Fresh connection open timeout [since 1.4.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.0){ .nzbdav-since } | `usenet.connection-open-timeout-seconds` | `3` | Advanced budget for fresh TCP/TLS/AUTHINFO connection creation, 1-15 seconds. Applies to subsequent attempts without rebuilding live pools. |
 | Replacement reconnect spacing [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.reconnect-delay-milliseconds` | `500` | Minimum spacing between replacement handshakes after a poisoned connection is closed, 0–5000 milliseconds. Zero disables ordinary replacement spacing; TCP/TLS/AUTHINFO factory failures still back off from a 500ms floor, doubling up to 60 seconds. Takes effect on the next provider-pool rebuild or restart. |
@@ -80,10 +80,21 @@ a successful fresh-connection probe after cooldown. Command-failure circuits do
 not have this idle-socket exception. Warm-up does not open new sockets while the
 circuit is open or half-open.
 
+Warm-up opens are judged differently from foreground opens [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }.
+While the provider has at least one established connection, a failed or timed-out warm-up
+open (warm-floor refill or read-start warm-up) never trips the circuit: the pool backs off
+its own handshakes (500 ms doubling to 60 seconds), warm-up retries on a later sweep, and a
+throttled warning names the reason. On a provider with no established connections a warm-up
+open timeout still trips the circuit, so an unreachable provider is skipped before the first
+request. Warm-floor refills use a connection-open budget of at least 10 seconds; read-start
+warm-up keeps the configured fresh connection-open budget because it shares handshake slots
+with playback.
+
 The fresh TCP/TLS/AUTHINFO budget defaults to 3 seconds, with the same supported
 1-15 second range. Valid saved or environment-managed values are unchanged; an
 explicit 15 remains 15. An absent or unparsable value now resolves to 3 instead
-of 15. The value applies to subsequent opens without a pool rebuild. It does not
+of 15. The value applies to subsequent opens without a pool rebuild. Warm-floor
+refills use the larger of this value and 10 seconds. It does not
 change transfer deadlines, and the acquisition and socket-open budgets are
 separate, not one total timeout.
 

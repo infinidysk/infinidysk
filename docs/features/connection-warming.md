@@ -21,7 +21,8 @@ flowchart TD
 - Warm connections never hold download permits, so the full configured connection width stays available to real work.
 - Disabled providers are never warmed [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }: InfiniDysk opens no connections to a disabled account and sends no keep-alives until the provider is enabled again. Backup providers keep their floor so failover skips the handshake.
 - If a provider is unreachable at startup, warming does not spin or block startup — retries resume once the provider circuit permits new opens. When InfiniDysk learns that a provider's real connection limit is lower than configured, the floor shrinks with it.
-- Pending warm-up work has a 15-second acquisition budget and stops when its provider circuit trips. Factories already opening keep their own socket-open deadline. Warm-up never claims the half-open recovery probe. A connection-open timeout pauses new sockets without discarding healthy established ones; see [provider acquisition waits](../configuration/streaming.md#provider-acquisition-waits).
+- Pending warm-up work has a 15-second acquisition budget and stops when its provider circuit trips. Factories already opening keep their own socket-open deadline. Warm-up never claims the half-open recovery probe.
+- Warm-up opens are judged differently from foreground opens [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }. While a provider still has at least one established connection, a warm-up open that fails or times out never trips the circuit: the pool backs off its own handshakes (500 ms doubling to 60 seconds), the floor refills on a later sweep, and a warning naming the reason is logged at most once every five minutes per provider. Only a warm-up failure on a provider with **no** established connections reaches the circuit, so an unreachable provider is still benched before the first request needs it. Floor refills use a connection-open budget of at least 10 seconds (the configured [fresh connection open timeout](../configuration/streaming.md) when that is longer); read-start warm-up keeps the configured budget because it shares handshake slots with playback. See [provider acquisition waits](../configuration/streaming.md#provider-acquisition-waits).
 
 ## What you see in the header
 
@@ -48,7 +49,8 @@ There is no settings-UI toggle; set the keys as [headless environment variables]
 Read-start warm-up is enabled by default. Each newly opened WebDAV stream
 snapshots the value. Reads below
 8 MiB, reads needing fewer than two connection batches, backup-only providers,
-and providers with an open circuit are skipped. The target is bounded by the
+providers with an open circuit, and providers that are backing off after a failed
+connection open [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since } are skipped. The target is bounded by the
 stream's article window, download limit, provider connection limits, and any
 per-provider transfer cap. Opened sockets return to the normal idle pool; the
 warm floor still decides how many remain connected later. Set
@@ -58,7 +60,7 @@ demand-only expansion.
 ## Cost and trade-offs
 
 - Warm sockets are real connections and count against the provider plan's connection limit, even while idle.
-- Read-start warm-up can create up to three TCP/TLS/AUTHINFO sessions at once. Turn it off if a provider rejects legal connection bursts.
+- Read-start warm-up can create up to three TCP/TLS/AUTHINFO sessions at once and pauses by itself while a provider is backing off after a failed open. Turn it off if a provider rejects legal connection bursts.
 - Keepalive traffic is negligible: one tiny `DATE` exchange per warm socket per sweep.
 - On very small plans or [memory-constrained hosts](../operations/memory-constrained-hosts.md), lower the floor or disable warming entirely.
 
