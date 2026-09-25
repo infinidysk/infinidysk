@@ -44,9 +44,12 @@ vi.mock("~/auth/authorization", () => ({
   useIsReadOnly: vi.fn(),
 }));
 
-function loaderRequest(search = ""): Parameters<typeof loader>[0] {
+function loaderRequest(search = "", cookie?: string): Parameters<typeof loader>[0] {
   return {
-    request: new Request(`http://localhost/queue${search}`),
+    request: new Request(
+      `http://localhost/queue${search}`,
+      cookie === undefined ? {} : { headers: { cookie } },
+    ),
   } as Parameters<typeof loader>[0];
 }
 
@@ -143,6 +146,53 @@ describe("queue route loader", () => {
       page: 1,
       pageSize: 100,
     });
+  });
+
+  it("uses the remembered page size cookie when the URL has no qps", async () => {
+    getQueueMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
+    getHistoryMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
+    getConfigMock.mockResolvedValueOnce([]);
+
+    const result = await loader(loaderRequest("", "__session=abc; queue-page-size=25"));
+
+    expect(getQueueMock).toHaveBeenCalledWith(26, 0, expect.anything());
+    expect(getHistoryMock).toHaveBeenCalledWith(25, 0, expect.anything());
+    expect(result.pageSize).toBe(25);
+  });
+
+  it("prefers an explicit qps over the remembered page size cookie", async () => {
+    getQueueMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
+    getHistoryMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
+    getConfigMock.mockResolvedValueOnce([]);
+
+    const result = await loader(loaderRequest("?qps=50", "queue-page-size=25"));
+
+    expect(getQueueMock).toHaveBeenCalledWith(51, 0, expect.anything());
+    expect(getHistoryMock).toHaveBeenCalledWith(50, 0, expect.anything());
+    expect(result.pageSize).toBe(50);
+  });
+
+  it("falls back to the remembered page size when qps is not an offered size", async () => {
+    getQueueMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
+    getHistoryMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
+    getConfigMock.mockResolvedValueOnce([]);
+
+    const result = await loader(loaderRequest("?qps=10", "queue-page-size=25"));
+
+    expect(getQueueMock).toHaveBeenCalledWith(26, 0, expect.anything());
+    expect(result.pageSize).toBe(25);
+  });
+
+  it("ignores a page size cookie that is not one of the offered sizes", async () => {
+    getQueueMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
+    getHistoryMock.mockResolvedValueOnce({ slots: [], noofslots: 0 });
+    getConfigMock.mockResolvedValueOnce([]);
+
+    const result = await loader(loaderRequest("", "queue-page-size=10"));
+
+    expect(getQueueMock).toHaveBeenCalledWith(101, 0, expect.anything());
+    expect(getHistoryMock).toHaveBeenCalledWith(100, 0, expect.anything());
+    expect(result.pageSize).toBe(100);
   });
 
   it("routes an active status filter to the queue and skips history", async () => {
