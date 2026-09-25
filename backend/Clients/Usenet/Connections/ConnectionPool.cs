@@ -86,6 +86,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private readonly string _connectionOpenProvider;
     private readonly Action<Exception, bool>? _onWarmConnectionFailure;
     private readonly ProviderCircuitBreaker? _circuitBreaker;
+    private readonly Func<TimeSpan>? _warmFloorOpenTimeout;
 
     /* --------------------------------- state --------------------------------------- */
 
@@ -151,7 +152,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         Func<TimeSpan>? connectionOpenTimeout = null,
         string? connectionOpenProvider = null,
         Action<Exception, bool>? onWarmConnectionFailure = null,
-        ProviderCircuitBreaker? circuitBreaker = null)
+        ProviderCircuitBreaker? circuitBreaker = null,
+        Func<TimeSpan>? warmFloorOpenTimeout = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConnections);
 
@@ -181,6 +183,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         _connectionOpenProvider = connectionOpenProvider ?? _diagnosticName;
         _onWarmConnectionFailure = onWarmConnectionFailure;
         _circuitBreaker = circuitBreaker;
+        _warmFloorOpenTimeout = warmFloorOpenTimeout;
         _gate = new PrioritizedSemaphore(maxConnections, maxConnections, priorityOdds);
         _sweeperTask = Task.Run(SweepLoop); // background idle-reaper
     }
@@ -381,7 +384,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         long? acquisitionStarted = null,
         TimeSpan? acquisitionWaitTimeout = null,
         ProviderCircuitBreaker.AcquisitionLease? acquisition = null,
-        bool retireIdleForFreshProbe = false
+        bool retireIdleForFreshProbe = false,
+        TimeSpan? openTimeoutOverride = null
     )
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -498,7 +502,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         // Need a fresh connection. Pace handshakes so a cold burst of borrowers
         // does not open dozens of TLS sessions in parallel. While waiting, other
         // connections may return to the idle stack — prefer those over a new handshake.
-        var openTimeout = _connectionOpenTimeout?.Invoke();
+        var openTimeout = openTimeoutOverride ?? _connectionOpenTimeout?.Invoke();
         var openStarted = Stopwatch.GetTimestamp();
         long? factoryStarted = null;
         var openPhase = "HandshakeQueue";
@@ -618,7 +622,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 if (openTimeout is { } timeout)
                     factoryLifetime.CancelAfter(timeout);
                 factoryTask = _factory(factoryLifetime.Token).AsTask();
-                conn = _connectionOpenTimeout is null
+                conn = openTimeout is null
                     ? await factoryTask.ConfigureAwait(false)
                     : await factoryTask.WaitAsync(factoryLifetime.Token).ConfigureAwait(false);
             }
@@ -1582,7 +1586,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                            preferIdle: false,
                            cancellationToken: cancellationToken,
                            acquisitionStarted: acquisitionStarted,
-                           acquisitionWaitTimeout: TransferAdmissionFailoverContext.DefaultWaitTimeout)
+                           acquisitionWaitTimeout: TransferAdmissionFailoverContext.DefaultWaitTimeout,
+                           openTimeoutOverride: _warmFloorOpenTimeout?.Invoke())
                            .ConfigureAwait(false))
                 {
                     // Returning the lock to the pool establishes one idle warm connection.
