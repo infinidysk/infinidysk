@@ -11,13 +11,17 @@ import {
   updateHealthCheckProgress,
 } from "./health-queue-state";
 
-function queueItem(id: string, nextHealthCheck: string | null): HealthCheckQueueItem {
+function queueItem(
+  id: string,
+  nextHealthCheck: string | null,
+  lastHealthCheck: string | null = null,
+): HealthCheckQueueItem {
   return {
     id,
     name: `${id}.mkv`,
     path: `/content/${id}.mkv`,
     releaseDate: null,
-    lastHealthCheck: null,
+    lastHealthCheck,
     nextHealthCheck,
   };
 }
@@ -35,17 +39,32 @@ describe("completeHealthCheck", () => {
     });
   });
 
-  it("does not decrement the pending count for a recheck", () => {
+  it("decrements the pending count for a never-checked item queued by a forced recheck", () => {
     const state: HealthQueueState = {
-      items: [queueItem("recheck", "2026-07-31T12:00:00Z")],
+      items: [queueItem("forced", "1970-01-01T00:00:01+00:00")],
       uncheckedCount: 10,
     };
 
-    expect(completeHealthCheck(state, "recheck")).toEqual({
+    expect(completeHealthCheck(state, "forced")).toEqual({
       items: [],
-      uncheckedCount: 10,
+      uncheckedCount: 9,
     });
   });
+
+  it.each([null, "1970-01-01T00:00:01+00:00", "2026-09-30T12:00:00Z"])(
+    "does not decrement the pending count for a previously scanned recheck (%s)",
+    (nextHealthCheck) => {
+      const state: HealthQueueState = {
+        items: [queueItem("recheck", nextHealthCheck, "2026-07-31T12:00:00Z")],
+        uncheckedCount: 10,
+      };
+
+      expect(completeHealthCheck(state, "recheck")).toEqual({
+        items: [],
+        uncheckedCount: 10,
+      });
+    },
+  );
 
   it("ignores duplicate or unknown completion events", () => {
     const state: HealthQueueState = {

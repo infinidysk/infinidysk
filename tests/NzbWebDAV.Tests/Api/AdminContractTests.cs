@@ -91,7 +91,9 @@ public sealed class AdminContractTests
         Assert.Equal(
             HealthCheckService.ForcedRecheckSentinel,
             resetItem.GetProperty("nextHealthCheck").GetDateTimeOffset());
-        Assert.True(afterJson.RootElement.GetProperty("uncheckedCount").GetInt32() >= 1);
+        // The file has a LastHealthCheck, so its forced recheck is pending work but not an
+        // initial scan; the never-checked total must stay at zero (#1571).
+        Assert.Equal(0, afterJson.RootElement.GetProperty("uncheckedCount").GetInt32());
     }
 
     [Fact]
@@ -115,6 +117,50 @@ public sealed class AdminContractTests
         using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(3, json.RootElement.GetProperty("uncheckedCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task HealthCheckQueue_UncheckedCountExcludesPreviouslyCheckedFiles()
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var client = factory.CreateAuthenticatedClient();
+
+        // 21 previously scanned files queued by the maintenance re-run (forced sentinel) and
+        // 5 previously scanned files made due by "Run all checks now" (null). None of the 26
+        // may count as never checked.
+        var previouslyChecked = Enumerable.Range(1, 21)
+            .Select(i => NewCheckedUsenetFile($"rechecked-forced-{i}.mkv", HealthCheckService.ForcedRecheckSentinel))
+            .Concat(Enumerable.Range(1, 5)
+                .Select(i => NewCheckedUsenetFile($"rechecked-due-{i}.mkv", nextHealthCheck: null)))
+            .ToArray();
+
+        var pendingRepair = NewUncheckedUsenetFile("fresh-pending-repair.mkv");
+        pendingRepair.HealthRepairPending = true;
+        var freshForced = NewUncheckedUsenetFile("fresh-forced.rar");
+        freshForced.NextHealthCheck = HealthCheckService.ForcedRecheckSentinel;
+        var freshForcedSidecar = NewUncheckedUsenetFile("fresh-cover.jpg");
+        freshForcedSidecar.NextHealthCheck = HealthCheckService.ForcedRecheckSentinel;
+
+        await factory.AddDavItemsAsync(previouslyChecked);
+        await factory.AddDavItemsAsync(
+            NewUncheckedUsenetFile("fresh-1.mkv"),
+            NewUncheckedUsenetFile("fresh-2.mkv"),
+            freshForced,
+            NewUncheckedUsenetFile("fresh.nfo"),
+            freshForcedSidecar,
+            pendingRepair);
+
+        using var response = await client.GetAsync("/api/get-health-check-queue?pageSize=30");
+        using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        JsonContractValidator.AssertMatchesSchema(
+            json.RootElement, "admin/v1/health-check-queue.schema.json");
+        // fresh-1.mkv, fresh-2.mkv, fresh-forced.rar. Sidecars, the pending repair, and all
+        // 26 previously scanned files are excluded.
+        Assert.Equal(3, json.RootElement.GetProperty("uncheckedCount").GetInt32());
+        Assert.Equal(
+            1,
+            json.RootElement.GetProperty("schedule").GetProperty("pendingRepairCount").GetInt32());
     }
 
     [Fact]
@@ -167,6 +213,23 @@ public sealed class AdminContractTests
         lastHealthCheck: null,
         historyItemId: null,
         fileBlobId: null);
+
+    private static DavItem NewCheckedUsenetFile(string name, DateTimeOffset? nextHealthCheck)
+    {
+        var item = DavItem.New(
+            Guid.NewGuid(),
+            DavItem.ContentFolder,
+            name,
+            fileSize: 100,
+            DavItem.ItemType.UsenetFile,
+            DavItem.ItemSubType.NzbFile,
+            releaseDate: DateTimeOffset.UtcNow.AddDays(-2),
+            lastHealthCheck: DateTimeOffset.UtcNow.AddDays(-1),
+            historyItemId: null,
+            fileBlobId: null);
+        item.NextHealthCheck = nextHealthCheck;
+        return item;
+    }
 
     private static DavItem NewScheduledUsenetFile(string name)
     {

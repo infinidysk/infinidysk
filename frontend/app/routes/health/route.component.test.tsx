@@ -129,12 +129,12 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
 });
 
-function renderHealth(options: { isEnabled?: boolean } = {}) {
+function renderHealth(options: { isEnabled?: boolean; uncheckedCount?: number } = {}) {
   return render(
     <Health
       {...({
         loaderData: {
-          uncheckedCount: 0,
+          uncheckedCount: options.uncheckedCount ?? 0,
           queueItems: Array.from({ length: 15 }, (_, index) => ({ id: `queue-${index}` })),
           historyStats: [],
           historyItems: [],
@@ -356,5 +356,22 @@ describe("Health action-needed re-check", () => {
     renderHealth();
 
     expect(screen.queryByRole("button", { name: "Re-check action needed" })).toBeNull();
+  });
+});
+
+describe("Health initial scan banner", () => {
+  beforeEach(() => {
+    fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
+  });
+
+  it("stays hidden at exactly 20 never-checked files", () => {
+    renderHealth({ uncheckedCount: 20 });
+    expect(screen.queryByText("Initial health scan pending")).toBeNull();
+  });
+
+  it("appears once more than 20 files have never been health-checked", () => {
+    renderHealth({ uncheckedCount: 21 });
+    expect(screen.getByText("Initial health scan pending")).toBeTruthy();
+    expect(screen.getByText(/About 21 files have never been health-checked/)).toBeTruthy();
   });
 });

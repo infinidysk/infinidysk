@@ -29,8 +29,8 @@ public class ResetHealthCheckQueueController(DavDatabaseClient dbClient) : BaseA
                 HttpContext.RequestAborted)
             .ConfigureAwait(false);
 
-        // Report only the files the checker will actually process (media/archive candidates),
-        // matching the Health page pending count. Marked non-media sidecar files are skipped
+        // Report only the files the checker will actually process (media/archive candidates).
+        // Marked non-media sidecar files are skipped
         // by the candidate filter and swept at startup. The candidate check is not
         // SQL-translatable, so stream names like GetHealthCheckQueueController does.
         var resetCount = 0;
