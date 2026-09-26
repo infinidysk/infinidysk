@@ -578,6 +578,54 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public async Task StatAsync_EveryEnabledProviderCapped_IsNotReportedAsNoProviders()
+    {
+        // A byte cap is per-provider and lifts on its own; only the absence of any enabled
+        // provider is an instance-wide state that health checks may treat as such.
+        var capped = new ScriptedNntpClient { BatchResponseCode = 222 };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(capped, host: "a.example", byteLimit: 1_000, bytesUsedOffset: 1_000),
+            CreateProvider(new ScriptedNntpClient { BatchResponseCode = 222 }, host: "b.example", providerType: ProviderType.Disabled),
+        ], bytesTracker: new ProviderBytesTracker());
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.StatAsync("segment", CancellationToken.None));
+
+        Assert.IsNotType<NoUsenetProvidersConfiguredException>(thrown);
+        Assert.Equal(0, capped.SingularRequests);
+    }
+
+    [Fact]
+    public async Task DecodedBodyAsync_EveryEnabledProviderCapped_IsNotReportedAsNoProviders()
+    {
+        var capped = new ScriptedNntpClient { BatchResponseCode = 222 };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(capped, host: "a.example", byteLimit: 1_000, bytesUsedOffset: 1_000),
+        ], bytesTracker: new ProviderBytesTracker());
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.DecodedBodyAsync("segment", CancellationToken.None));
+
+        Assert.IsNotType<NoUsenetProvidersConfiguredException>(thrown);
+    }
+
+    [Fact]
+    public async Task StatAsync_EveryProviderDisabled_ReportsNoProviders()
+    {
+        var disabled = new ScriptedNntpClient { BatchResponseCode = 222 };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(disabled, host: "a.example", providerType: ProviderType.Disabled),
+        ]);
+
+        await Assert.ThrowsAsync<NoUsenetProvidersConfiguredException>(
+            () => client.StatAsync("segment", CancellationToken.None));
+        Assert.Equal(0, disabled.SingularRequests);
+    }
+
+    [Fact]
     public async Task DecodedBodyAsync_CorruptThenMiss_ThrowsConclusiveMiss()
     {
         // A provider that returned a damaged copy did answer; the miss elsewhere must still

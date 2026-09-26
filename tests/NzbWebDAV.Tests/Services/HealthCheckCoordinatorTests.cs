@@ -410,6 +410,78 @@ public sealed class HealthCheckCoordinatorTests
             harness.Service.GetCoordinatorWaitInterval(outcome));
     }
 
+    [Theory]
+    [InlineData(new ProviderType[0])]
+    [InlineData(new[] { ProviderType.Disabled })]
+    [InlineData(new[] { ProviderType.Disabled, ProviderType.Disabled })]
+    public async Task NoEnabledProvider_BlocksWithoutSelectingACandidate(ProviderType[] providers)
+    {
+        using var harness = new Harness(workers: 2, fullySplit: false);
+        harness.SetProviderTypes(providers);
+        var selectorCalls = 0;
+        harness.Service.SelectCandidateOverride = (_, _, _) =>
+        {
+            Interlocked.Increment(ref selectorCalls);
+            return Task.FromResult<Guid?>(Guid.NewGuid());
+        };
+
+        var outcome = await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+
+        Assert.Equal(HealthCheckRefillOutcome.Blocked, outcome);
+        Assert.Equal(
+            harness.Service.CoordinatorIdleInterval,
+            harness.Service.GetCoordinatorWaitInterval(outcome));
+        Assert.Equal(0, Volatile.Read(ref selectorCalls));
+        Assert.Empty(harness.Service.InProgressHealthCheckIds);
+    }
+
+    [Fact]
+    public async Task NoEnabledProvider_DoesNotQueryTheLibrary()
+    {
+        using var harness = new Harness(workers: 1, fullySplit: false);
+        harness.SetProviderTypes(ProviderType.Disabled);
+        var contextsOpened = 0;
+        harness.Service.CreateDbContextOverride = () =>
+        {
+            Interlocked.Increment(ref contextsOpened);
+            throw new InvalidOperationException("the candidate query must not run");
+        };
+
+        for (var i = 0; i < 3; i++)
+        {
+            var outcome = await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+            Assert.Equal(HealthCheckRefillOutcome.Blocked, outcome);
+        }
+
+        Assert.Equal(0, Volatile.Read(ref contextsOpened));
+    }
+
+    [Theory]
+    [InlineData(ProviderType.Pooled)]
+    [InlineData(ProviderType.BackupAndStats)]
+    [InlineData(ProviderType.BackupOnly)]
+    public async Task EnablingAProvider_ResumesSelection(ProviderType enabledType)
+    {
+        using var harness = new Harness(workers: 1, fullySplit: false);
+        harness.SetProviderTypes(ProviderType.Disabled);
+        var id = Guid.NewGuid();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Service.SelectCandidateOverride = (_, _, _) => Task.FromResult<Guid?>(id);
+        harness.Service.ProcessCandidateOverride = (_, ct) => release.Task.WaitAsync(ct);
+
+        var blocked = await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+        harness.SetProviderTypes(ProviderType.Disabled, enabledType);
+        var resumed = await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None);
+
+        Assert.Equal(HealthCheckRefillOutcome.Blocked, blocked);
+        Assert.Equal(HealthCheckRefillOutcome.Started, resumed);
+        Assert.Equal([id], harness.Service.InProgressHealthCheckIds);
+        release.TrySetResult();
+        await ReapUntilAsync(
+            harness.Service,
+            () => harness.Service.InProgressHealthCheckIds.Count == 0);
+    }
+
     [Fact]
     public async Task ClosedSchedules_BlockNewWorkers()
     {
@@ -907,21 +979,12 @@ public sealed class HealthCheckCoordinatorTests
         {
             Directory.CreateDirectory(_root);
             Config = new ConfigManager();
-            var providerConfig = new UsenetProviderConfig();
-            if (fullySplit)
-            {
-                providerConfig.Providers.Add(new UsenetProviderConfig.ConnectionDetails
-                {
-                    ProviderId = Guid.NewGuid(),
-                    Type = ProviderType.Pooled,
-                    Host = "split.example",
-                    Port = 563,
-                    UseSsl = true,
-                    User = "user",
-                    Pass = "pass",
-                    MaxConnections = 10,
-                });
-            }
+            // Health checks stay idle without an enabled provider. A backup-only provider
+            // satisfies that without adding pooled connections, so the non-split harness
+            // keeps its single-connection health budget.
+            var providerConfig = fullySplit
+                ? NewProviderConfig(ProviderType.Pooled)
+                : NewProviderConfig(ProviderType.BackupOnly);
 
             var values = new List<ConfigItem>
             {
@@ -1005,6 +1068,38 @@ public sealed class HealthCheckCoordinatorTests
                     ConfigValue = count.ToString(),
                 },
             ]);
+        }
+
+        public void SetProviderTypes(params ProviderType[] types)
+        {
+            Config.UpdateValues([
+                new ConfigItem
+                {
+                    ConfigName = ConfigKeys.UsenetProviders,
+                    ConfigValue = JsonSerializer.Serialize(NewProviderConfig(types)),
+                },
+            ]);
+        }
+
+        private static UsenetProviderConfig NewProviderConfig(params ProviderType[] types)
+        {
+            var providerConfig = new UsenetProviderConfig();
+            for (var i = 0; i < types.Length; i++)
+            {
+                providerConfig.Providers.Add(new UsenetProviderConfig.ConnectionDetails
+                {
+                    ProviderId = Guid.NewGuid(),
+                    Type = types[i],
+                    Host = $"provider{i}.example",
+                    Port = 563,
+                    UseSsl = true,
+                    User = "user",
+                    Pass = "pass",
+                    MaxConnections = 10,
+                });
+            }
+
+            return providerConfig;
         }
 
         public void SetRepairEnabled(bool enabled)

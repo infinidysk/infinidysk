@@ -958,6 +958,27 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ProvidersRemovedMidCheck_LeavesScheduleAndHistoryUntouched()
+    {
+        var segments = NewSegmentIds(3);
+        var (item, blobId) = await AddVideoFileAsync("movie.mkv", segments, [10_000, 10_000, 10_000]);
+        var before = ReloadItem(item.Id);
+        var client = new NoProvidersNntpClient(NewFakeClient(segments, missing: []));
+        var (service, par2) = await NewServiceAsync(client, par2Outcome: false);
+
+        await Assert.ThrowsAsync<NoUsenetProvidersConfiguredException>(
+            () => service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None));
+
+        Assert.True(client.StatRequestCount > 0);
+        Assert.Empty(GetHealthRows(item.Id));
+        Assert.Empty(par2.Requests);
+        var reloaded = ReloadItem(item.Id);
+        Assert.Equal(before.NextHealthCheck, reloaded.NextHealthCheck);
+        Assert.Equal(before.LastHealthCheck, reloaded.LastHealthCheck);
+        Assert.Equal(blobId, reloaded.FileBlobId);
+    }
+
+    [Fact]
     public async Task ToleranceDisabled_UsesLegacyPath()
     {
         _configManager.UpdateValues(
@@ -1734,6 +1755,33 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
                 ResponseMessage = "400 service temporarily unavailable",
                 ArticleExists = false,
             });
+        }
+    }
+
+    private sealed class NoProvidersNntpClient(INntpClient inner) : WrappingNntpClient(inner)
+    {
+        public int StatRequestCount { get; private set; }
+
+        public override Task<UsenetStatResponse> StatAsync(
+            SegmentId segmentId,
+            CancellationToken cancellationToken)
+        {
+            StatRequestCount++;
+            throw new NoUsenetProvidersConfiguredException();
+        }
+
+        public override Task<UsenetHeadResponse> HeadAsync(
+            SegmentId segmentId,
+            CancellationToken cancellationToken) =>
+            throw new NoUsenetProvidersConfiguredException();
+
+        public override IAsyncEnumerable<PipelinedStatResult> StatsPipelinedAsync(
+            IReadOnlyList<string> segmentIds,
+            int depth,
+            CancellationToken cancellationToken)
+        {
+            StatRequestCount++;
+            throw new NoUsenetProvidersConfiguredException();
         }
     }
 
