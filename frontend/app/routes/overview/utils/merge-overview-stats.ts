@@ -172,6 +172,7 @@ export function mergeProviderCircuitBreakers(
       tripCount: breaker.tripCount,
       failureCount: breaker.failureCount,
       articleMissCount: breaker.articleMissCount,
+      providerType: breaker.providerType ?? existing?.providerType,
     };
     if (!existing?.nickname && breaker.nickname) merged.nickname = breaker.nickname;
     byKey.set(breaker.provider, merged);

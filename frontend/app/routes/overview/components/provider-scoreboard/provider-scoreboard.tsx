@@ -104,6 +104,11 @@ export function ProviderScoreboard({
                                 <span className="min-w-0 truncate">
                                   {p.nickname?.trim() || p.provider}
                                 </span>
+                                {isBackupProvider(p.providerType) && (
+                                  <span className="badge badge-ghost badge-sm shrink-0">
+                                    Backup
+                                  </span>
+                                )}
                                 {circuitState !== "closed" && (
                                   <span
                                     className={`badge badge-sm shrink-0 ${badgeClass(circuitState)}`}
@@ -254,8 +259,21 @@ function circuitLabel(state: ProviderCircuitState, cooldownRemainingSeconds?: nu
   return "Healthy";
 }
 
+function isBackupProvider(providerType: string | null | undefined) {
+  return providerType === "BackupOnly" || providerType === "BackupAndStats";
+}
+
+function providerRoleLine(providerType: string | null | undefined) {
+  if (providerType === "BackupOnly") return "Role: Backup only — tried after pooled providers.";
+  if (providerType === "BackupAndStats")
+    return "Role: Backup and stats — tried after pooled providers.";
+  return null;
+}
+
 function buildProviderTooltip(p: ProviderRow, state: ProviderCircuitState) {
   const lines = [p.nickname?.trim() || p.provider];
+  const role = providerRoleLine(p.providerType);
+  if (role) lines.push(role);
   if (state === "open") {
     lines.push("Circuit open — provider temporarily skipped after repeated failures.");
     if (p.cooldownRemainingSeconds != null && p.cooldownRemainingSeconds > 0)
