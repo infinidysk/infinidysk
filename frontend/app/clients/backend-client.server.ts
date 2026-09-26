@@ -1236,6 +1236,7 @@ export type ProviderRow = {
   tripCount?: number | undefined;
   failureCount?: number | undefined;
   articleMissCount?: number | undefined;
+  providerType?: string | undefined;
 };
 
 export type ProviderSampledSpeedPoint = {
