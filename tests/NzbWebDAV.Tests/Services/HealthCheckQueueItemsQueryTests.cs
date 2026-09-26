@@ -175,7 +175,7 @@ public sealed class HealthCheckQueueItemsQueryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task UncheckedCount_ExcludesNonMediaFiles()
+    public async Task UncheckedCount_ExcludesNonMediaAndPreviouslyCheckedFiles()
     {
         var videoFile = NewUsenetFile("movie.mkv", Guid.NewGuid(), nextHealthCheck: null);
         var audioFile = NewUsenetFile("track.flac", null, nextHealthCheck: null);
@@ -188,17 +188,23 @@ public sealed class HealthCheckQueueItemsQueryTests : IAsyncLifetime
         var forcedImage = NewUsenetFile("forced-cover.jpg", null, HealthCheckService.ForcedRecheckSentinel);
         var pendingMedia = NewUsenetFile("pending-repair.mkv", null, nextHealthCheck: null);
         pendingMedia.HealthRepairPending = true;
+        var recheckedForced = NewUsenetFile("rechecked-forced.mkv", null, HealthCheckService.ForcedRecheckSentinel);
+        recheckedForced.LastHealthCheck = DateTimeOffset.UtcNow.AddDays(-3);
+        var recheckedDue = NewUsenetFile("rechecked-due.mkv", null, nextHealthCheck: null);
+        recheckedDue.LastHealthCheck = DateTimeOffset.UtcNow.AddDays(-3);
 
         _context.Items.AddRange(
             videoFile, audioFile, archiveFile, imageFile, subtitleFile, nfoFile, scheduledMedia,
-            forcedMedia, forcedImage, pendingMedia);
+            forcedMedia, forcedImage, pendingMedia, recheckedForced, recheckedDue);
         await _context.SaveChangesAsync();
         _context.ChangeTracker.Clear();
 
-        // Mirror GetHealthCheckQueueController uncheckedCount: never-checked and operator-forced
-        // files that HealthCheckService will actually process.
+        // Mirror GetHealthCheckQueueController uncheckedCount: never-checked candidates
+        // (null or operator-forced NextHealthCheck) that HealthCheckService will actually
+        // process; previously scanned rechecks are excluded.
         var uncheckedCount = (await HealthCheckService.GetHealthCheckQueueItemsQuery(_dbClient)
             .Where(x => !x.HealthRepairPending &&
+            x.LastHealthCheck == null &&
                 (x.NextHealthCheck == null ||
                  x.NextHealthCheck == HealthCheckService.ForcedRecheckSentinel))
             .Select(x => x.Name)
