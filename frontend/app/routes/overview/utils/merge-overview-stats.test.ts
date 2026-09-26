@@ -13,6 +13,30 @@ function partial(
 }
 
 describe("mergeOverviewStats", () => {
+  it("applies live provider type changes and keeps the HTTP value when the live row omits it", () => {
+    const pooled = {
+      provider: "provider-1",
+      providerType: "Pooled",
+      articles: 5,
+      bytesFetched: 100,
+      errors: 0,
+      retries: 0,
+      avgDurationMs: 0,
+      errorRate: 0,
+      spark: [],
+    };
+    const breaker = { provider: "provider-1", circuitState: "closed" as const };
+
+    expect(
+      mergeProviderCircuitBreakers([pooled], [{ ...breaker, providerType: "BackupOnly" }])[0]
+        ?.providerType,
+    ).toBe("BackupOnly");
+    expect(
+      mergeProviderCircuitBreakers([{ ...pooled, providerType: "BackupOnly" }], [breaker])[0]
+        ?.providerType,
+    ).toBe("BackupOnly");
+  });
+
   it("merges window section without wiping static data", () => {
     const withStatic = mergeOverviewStats(
       EMPTY_OVERVIEW_STATS,

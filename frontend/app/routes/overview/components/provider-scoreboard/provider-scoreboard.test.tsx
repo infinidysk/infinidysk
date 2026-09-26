@@ -21,6 +21,74 @@ const provider = (speedMbPerSec: number | null): ProviderRow => ({
 });
 
 describe("ProviderScoreboard", () => {
+  it("does not mark pooled or disabled providers as backups", () => {
+    const markup = renderToStaticMarkup(
+      <MemoryRouter>
+        <ProviderScoreboard
+          providers={[
+            { ...provider(1), provider: "pooled", providerType: "Pooled" },
+            { ...provider(1), provider: "disabled", providerType: "Disabled" },
+            { ...provider(1), provider: "unknown", providerType: undefined },
+          ]}
+          window="1h"
+        />
+      </MemoryRouter>,
+    );
+
+    expect(markup).not.toContain(">Backup<");
+  });
+
+  it("marks backup-only providers with a Backup badge and role tooltip", () => {
+    const markup = renderToStaticMarkup(
+      <MemoryRouter>
+        <ProviderScoreboard
+          providers={[{ ...provider(1), providerType: "BackupOnly" }]}
+          window="1h"
+        />
+      </MemoryRouter>,
+    );
+
+    expect(markup).toContain(">Backup<");
+    expect(markup).toContain("Role: Backup only");
+  });
+
+  it("marks backup-and-stats providers with a Backup badge and distinct role tooltip", () => {
+    const markup = renderToStaticMarkup(
+      <MemoryRouter>
+        <ProviderScoreboard
+          providers={[{ ...provider(1), providerType: "BackupAndStats" }]}
+          window="1h"
+        />
+      </MemoryRouter>,
+    );
+
+    expect(markup).toContain(">Backup<");
+    expect(markup).toContain("Role: Backup and stats");
+  });
+
+  it("keeps the backup badge separate from the circuit badge", () => {
+    const markup = renderToStaticMarkup(
+      <MemoryRouter>
+        <ProviderScoreboard
+          providers={[
+            {
+              ...provider(1),
+              providerType: "BackupOnly",
+              circuitState: "open",
+              cooldownRemainingSeconds: 12,
+            },
+          ]}
+          window="1h"
+        />
+      </MemoryRouter>,
+    );
+
+    expect(markup).toContain(">Backup<");
+    expect(markup).toContain("Tripped · 12s");
+    expect(markup.indexOf(">Backup<")).toBeLessThan(markup.indexOf("Tripped"));
+    expect(markup).toContain("status-error");
+  });
+
   it("shows peak and active average, with an em dash when unavailable", () => {
     const active = renderToStaticMarkup(
       <MemoryRouter>
