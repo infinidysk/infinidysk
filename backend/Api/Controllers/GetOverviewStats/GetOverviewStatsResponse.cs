@@ -121,6 +121,8 @@ public class GetOverviewStatsResponse
         public long TripCount { get; init; }
         public long FailureCount { get; init; }
         public long ArticleMissCount { get; init; }
+        /// <summary>Configured <see cref="NzbWebDAV.Models.ProviderType"/> name; null when no runtime provider matches.</summary>
+        public string? ProviderType { get; init; }
     }
 
     public class ProviderSampledSpeedPoint
