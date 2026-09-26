@@ -432,6 +432,192 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public async Task BatchResponse_RepeatedPrimaryMiss_RecordsOneFailoverMissForPrimary()
+    {
+        // A misses on the batch, is re-probed and misses again, then B delivers.
+        // Overview must see one miss for A and one rescue by B, not two misses (#1570).
+        var writer = new MetricsWriter();
+        var primary = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularResponseCode = 430,
+        };
+        var backup = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+        };
+        using var client = new MultiProviderNntpClient(
+            [
+                CreateProvider(primary, host: "a.example"),
+                CreateProvider(backup, host: "b.example", providerType: ProviderType.BackupOnly),
+            ],
+            metricsWriter: writer);
+
+        var batch = await client.DecodedBodiesAsync(
+            ["segment"], onConnectionReadyAgain: null, CancellationToken.None);
+        var response = await batch.Responses[0];
+        Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, response.ResponseType);
+        await response.Stream!.DisposeAsync();
+        await batch.Completion;
+
+        Assert.Equal(1, primary.SingularRequests);
+        Assert.Equal(1, backup.SingularRequests);
+
+        Assert.Equal(1, writer.Stats.QueuedFailoverMisses);
+        var save = Assert.Single(writer.SnapshotQueuedEvents(MetricsWriter.FailoverSaveEventKind));
+        Assert.Equal("b.example", save.Tag1);
+
+        // Attempt-level evidence is untouched: two Missing rows for A, one Ok row for B
+        // whose Retries still counts both prior attempts.
+        var fetches = writer.SnapshotQueuedFetches();
+        Assert.Equal(3, fetches.Count);
+        Assert.Equal(2, fetches.Count(f =>
+            f.Provider == "a.example" && f.Status == SegmentFetch.FetchStatus.Missing));
+        var rescue = Assert.Single(fetches, f => f.Provider == "b.example");
+        Assert.Equal(SegmentFetch.FetchStatus.Ok, rescue.Status);
+        Assert.Equal(2, rescue.Retries);
+    }
+
+    [Fact]
+    public async Task BatchResponse_DistinctProviderMisses_RecordOneFailoverMissEach()
+    {
+        // A misses twice (batch + re-probe), B misses once, C delivers: one edge for A,
+        // one edge for B, both pointing at C. Cascade + priorities make the walk order
+        // deterministic (A → B → C).
+        var writer = new MetricsWriter();
+        var first = new ScriptedNntpClient { BatchResponseCode = 430, SingularResponseCode = 430 };
+        var second = new ScriptedNntpClient { BatchResponseCode = 430, SingularResponseCode = 430 };
+        var third = new ScriptedNntpClient { BatchResponseCode = 222, SingularResponseCode = 222 };
+        using var client = new MultiProviderNntpClient(
+            [
+                CreateProvider(first, host: "a.example", priority: 0),
+                CreateProvider(second, host: "b.example", providerType: ProviderType.BackupOnly, priority: 1),
+                CreateProvider(third, host: "c.example", providerType: ProviderType.BackupOnly, priority: 2),
+            ],
+            metricsWriter: writer,
+            cascadeEnabled: () => true);
+
+        var batch = await client.DecodedBodiesAsync(
+            ["segment"], onConnectionReadyAgain: null, CancellationToken.None);
+        var response = await batch.Responses[0];
+        Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, response.ResponseType);
+        await response.Stream!.DisposeAsync();
+        await batch.Completion;
+
+        Assert.Equal(1, first.SingularRequests);
+        Assert.Equal(1, second.SingularRequests);
+        Assert.Equal(1, third.SingularRequests);
+
+        // Priorities pin the walk order, so the two edges are A→C and B→C.
+        Assert.Equal(2, writer.Stats.QueuedFailoverMisses);
+        var save = Assert.Single(writer.SnapshotQueuedEvents(MetricsWriter.FailoverSaveEventKind));
+        Assert.Equal("c.example", save.Tag1);
+        // A, A, B Missing + C Ok.
+        Assert.Equal(4, writer.Stats.QueuedFetches);
+    }
+
+    [Fact]
+    public async Task BatchResponse_PrimaryNetworkFailureThenMiss_RecordsOneEdgeForPrimary()
+    {
+        // A's batch task faults (Network), the re-probe answers 430 (Missing), B delivers.
+        // Mixed reasons on one provider still collapse to a single edge.
+        var writer = new MetricsWriter();
+        var primary = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 430,
+            FaultBatchResponsesWith = () => new IOException("connection reset"),
+        };
+        var backup = new ScriptedNntpClient { BatchResponseCode = 222, SingularResponseCode = 222 };
+        using var client = new MultiProviderNntpClient(
+            [
+                CreateProvider(primary, host: "a.example"),
+                CreateProvider(backup, host: "b.example", providerType: ProviderType.BackupOnly),
+            ],
+            metricsWriter: writer);
+
+        var batch = await client.DecodedBodiesAsync(
+            ["segment"], onConnectionReadyAgain: null, CancellationToken.None);
+        var response = await batch.Responses[0];
+        Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, response.ResponseType);
+        await response.Stream!.DisposeAsync();
+        await batch.Completion;
+
+        Assert.Equal(1, primary.SingularRequests);
+        Assert.Equal(1, writer.Stats.QueuedFailoverMisses);
+
+        // Both attempt classifications survive as raw rows.
+        var fetches = writer.SnapshotQueuedFetches();
+        Assert.Contains(fetches, f =>
+            f.Provider == "a.example" && f.Status == SegmentFetch.FetchStatus.Network);
+        Assert.Contains(fetches, f =>
+            f.Provider == "a.example" && f.Status == SegmentFetch.FetchStatus.Missing);
+    }
+
+    [Fact]
+    public async Task BatchResponse_AllProvidersMiss_RecordsNoFailoverMissAndKeepsAttemptRows()
+    {
+        // Exhausted walk: nothing was rescued, so no FailoverMiss edge and no save event.
+        // Every attempt (A, A re-probe, B) still has its own SegmentFetch row.
+        var writer = new MetricsWriter();
+        var primary = new ScriptedNntpClient { BatchResponseCode = 430, SingularResponseCode = 430 };
+        var backup = new ScriptedNntpClient { BatchResponseCode = 430, SingularResponseCode = 430 };
+        using var client = new MultiProviderNntpClient(
+            [
+                CreateProvider(primary, host: "a.example"),
+                CreateProvider(backup, host: "b.example", providerType: ProviderType.BackupOnly),
+            ],
+            metricsWriter: writer);
+
+        var batch = await client.DecodedBodiesAsync(
+            ["segment"], onConnectionReadyAgain: null, CancellationToken.None);
+        await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() => batch.Responses[0]);
+
+        Assert.Equal(1, primary.SingularRequests);
+        Assert.Equal(1, backup.SingularRequests);
+        Assert.Equal(0, writer.Stats.QueuedFailoverMisses);
+        Assert.Empty(writer.SnapshotQueuedEvents(MetricsWriter.FailoverSaveEventKind));
+
+        var fetches = writer.SnapshotQueuedFetches();
+        Assert.Equal(3, fetches.Count);
+        Assert.All(fetches, f => Assert.Equal(SegmentFetch.FetchStatus.Missing, f.Status));
+        Assert.Equal(2, fetches.Count(f => f.Provider == "a.example"));
+        Assert.Equal(1, fetches.Count(f => f.Provider == "b.example"));
+    }
+
+    [Fact]
+    public async Task BatchResponse_IndependentFetches_RecordOneFailoverMissEach()
+    {
+        // Deduplication is scoped to one logical fetch: two separate fetches that each go
+        // A miss → A retry miss → B success produce two edges (one per fetch).
+        var writer = new MetricsWriter();
+        var primary = new ScriptedNntpClient { BatchResponseCode = 430, SingularResponseCode = 430 };
+        var backup = new ScriptedNntpClient { BatchResponseCode = 222, SingularResponseCode = 222 };
+        using var client = new MultiProviderNntpClient(
+            [
+                CreateProvider(primary, host: "a.example"),
+                CreateProvider(backup, host: "b.example", providerType: ProviderType.BackupOnly),
+            ],
+            metricsWriter: writer);
+
+        foreach (var segmentId in new[] { "segment-1", "segment-2" })
+        {
+            var batch = await client.DecodedBodiesAsync(
+                [segmentId], onConnectionReadyAgain: null, CancellationToken.None);
+            var response = await batch.Responses[0];
+            Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, response.ResponseType);
+            await response.Stream!.DisposeAsync();
+            await batch.Completion;
+        }
+
+        Assert.Equal(2, primary.SingularRequests);
+        Assert.Equal(2, backup.SingularRequests);
+        Assert.Equal(2, writer.Stats.QueuedFailoverMisses);
+        Assert.Equal(2, writer.SnapshotQueuedEvents(MetricsWriter.FailoverSaveEventKind).Count);
+    }
+
+    [Fact]
     public async Task DecodedBodyAsync_OpenPrimaryCircuit_UsesBackupOnly()
     {
         var openPrimary = new ScriptedNntpClient
