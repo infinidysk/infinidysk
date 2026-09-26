@@ -546,6 +546,8 @@ public class MultiProviderNntpClientTests
 
         Assert.Equal(1, primary.SingularRequests);
         Assert.Equal(1, writer.Stats.QueuedFailoverMisses);
+        var failoverMiss = Assert.Single(writer.SnapshotQueuedFailoverMisses());
+        Assert.Equal(SegmentFetch.FetchStatus.Network, failoverMiss.Reason);
 
         // Both attempt classifications survive as raw rows.
         var fetches = writer.SnapshotQueuedFetches();
