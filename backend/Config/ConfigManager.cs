@@ -1690,7 +1690,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     public TimeSpan GetConnectionOpenTimeout()
     {
         var value = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetConnectionOpenTimeoutSeconds));
-        var seconds = int.TryParse(value, out var parsed) ? Math.Clamp(parsed, 1, 15) : 3;
+        var seconds = int.TryParse(value, out var parsed) ? Math.Clamp(parsed, 1, 15) : 5;
         return TimeSpan.FromSeconds(seconds);
     }
 

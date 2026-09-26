@@ -445,7 +445,7 @@ export function StreamingSettings({
               inputMode="numeric"
               id="connection-open-timeout-input"
               aria-describedby="connection-open-timeout-help"
-              placeholder="3"
+              placeholder="5"
               value={config["usenet.connection-open-timeout-seconds"]}
               onChange={(e) =>
                 setNewConfig({
@@ -458,7 +458,7 @@ export function StreamingSettings({
               className="text-[11px] leading-relaxed text-base-content/45"
               id="connection-open-timeout-help"
             >
-              Advanced: bounds fresh TCP/TLS/AUTHINFO connection creation (1-15s, default 3). Local
+              Advanced: bounds fresh TCP/TLS/AUTHINFO connection creation (1-15s, default 5). Local
               admission, handshake queueing, creation-capacity waits, replacement pacing, and
               BODY/ARTICLE transfer time are excluded. Transfers have a separate 15s acquisition
               budget when another provider has capacity. A provider trip cancels pending

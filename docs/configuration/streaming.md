@@ -47,7 +47,7 @@ is saturated.
 | Idle connection timeout | `usenet.idle-connection-timeout-seconds` | `60` | Close unused connections after 15–300 seconds; also sets the [connection warming](../features/connection-warming.md) sweep and keepalive cadence |
 | Read-start warm-up [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.read-start-warmup.enabled` | on | Expand pooled-provider connections in parallel when a long buffered WebDAV read starts; captured when each stream opens. Skipped for a provider that is backing off after a failed connection open |
 | NNTP response timeout [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.nntp-read-timeout-seconds` | `30` | Stalled-read inactivity deadline for BODY, ARTICLE, STAT, authentication, and other NNTP responses, 5–120 seconds. This is not a total transfer deadline. Streaming segment/read budgets and the 15-second connect/auth ceiling can expire first. Takes effect on the next provider-pool rebuild or restart. |
-| Fresh connection open timeout [since 1.4.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.0){ .nzbdav-since } | `usenet.connection-open-timeout-seconds` | `3` | Advanced budget for fresh TCP/TLS/AUTHINFO connection creation, 1-15 seconds. Applies to subsequent attempts without rebuilding live pools. |
+| Fresh connection open timeout [since 1.4.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.0){ .nzbdav-since } | `usenet.connection-open-timeout-seconds` | `5` | Advanced budget for fresh TCP/TLS/AUTHINFO connection creation, 1-15 seconds. Applies to subsequent attempts without rebuilding live pools. |
 | Replacement reconnect spacing [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `usenet.reconnect-delay-milliseconds` | `500` | Minimum spacing between replacement handshakes after a poisoned connection is closed, 0–5000 milliseconds. Zero disables ordinary replacement spacing; TCP/TLS/AUTHINFO factory failures still back off from a 500ms floor, doubling up to 60 seconds. Takes effect on the next provider-pool rebuild or restart. |
 | Batched article downloads | `usenet.pipelined-body-requests` | on | Fetch WebDAV BODY requests in small batches |
 | Streaming batch width [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `usenet.streaming-body-batch-width` | `4` | Maximum articles per BODY batch (1–8) |
@@ -90,13 +90,14 @@ request. Warm-floor refills use a connection-open budget of at least 10 seconds;
 warm-up keeps the configured fresh connection-open budget because it shares handshake slots
 with playback.
 
-The fresh TCP/TLS/AUTHINFO budget defaults to 3 seconds, with the same supported
-1-15 second range. Valid saved or environment-managed values are unchanged; an
-explicit 15 remains 15. An absent or unparsable value now resolves to 3 instead
-of 15. The value applies to subsequent opens without a pool rebuild. Warm-floor
-refills use the larger of this value and 10 seconds. It does not
-change transfer deadlines, and the acquisition and socket-open budgets are
-separate, not one total timeout.
+The fresh TCP/TLS/AUTHINFO budget defaults to 5 seconds
+[since 1.5.1](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.1){ .nzbdav-since }
+(3 seconds in 1.4.3–1.5.0), with the same supported 1-15 second range. The new default applies
+only when the setting is unset or unparsable; saved values (including an explicit 3) and
+environment-managed values are unchanged. The value applies to subsequent opens without a pool
+rebuild. Warm-floor refills use the larger of this value and 10 seconds. It does not change
+transfer deadlines, and the acquisition and socket-open budgets are separate, not one total
+timeout.
 
 ### Segment-cache storage
 
