@@ -240,7 +240,7 @@ public sealed class MultiProviderNntpClientTerminalMissLoggingTests
         var events = await CaptureLogsAsync(async () =>
         {
             using var client = new MultiProviderNntpClient([]);
-            var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            var thrown = await Assert.ThrowsAsync<NoUsenetProvidersConfiguredException>(
                 () => client.DecodedBodyAsync(segmentId, CancellationToken.None));
             Assert.Contains("no usenet providers", thrown.Message, StringComparison.OrdinalIgnoreCase);
         });

@@ -1,6 +1,8 @@
+using System.Text.Json;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Models;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Repair;
@@ -78,9 +80,27 @@ public sealed class HealthCheckWorkerAdmissionTests
         {
             var patchDirectory = Path.Join(Path.GetTempPath(), $"nzbdav-health-worker-{Guid.NewGuid():N}");
             var config = new ConfigManager();
+            // Health checks stay idle without an enabled provider; backup-only adds no
+            // pooled connections, so the health budget is unchanged.
+            var providers = new UsenetProviderConfig();
+            providers.Providers.Add(new UsenetProviderConfig.ConnectionDetails
+            {
+                Type = ProviderType.BackupOnly,
+                Host = "backup.example",
+                Port = 563,
+                UseSsl = true,
+                User = "user",
+                Pass = "pass",
+                MaxConnections = 1,
+            });
             config.UpdateValues(
             [
                 new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "true" },
+                new ConfigItem
+                {
+                    ConfigName = ConfigKeys.UsenetProviders,
+                    ConfigValue = JsonSerializer.Serialize(providers),
+                },
             ]);
             var patchStore = new RepairPatchStore(patchDirectory, 1024 * 1024);
             await patchStore.EnsureCatalogLoadedAsync(CancellationToken.None);

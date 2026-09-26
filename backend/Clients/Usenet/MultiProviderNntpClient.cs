@@ -628,7 +628,7 @@ public class MultiProviderNntpClient(
 
             ArticleBodyCompletion.InvokeContained(CompleteBatchFetches, ArticleBodyResult.NotRetrieved);
             lastException?.Throw();
-            throw new InvalidOperationException("There are no usenet providers configured.");
+            throw CreateNoProvidersAvailableException();
         }
     }
 
@@ -1323,7 +1323,7 @@ public class MultiProviderNntpClient(
         terminalFailure?.Throw();
         if (lastNoArticleResult is not null) return lastNoArticleResult;
         if (orderedProviders.Count == 0)
-            throw new InvalidOperationException("There are no usenet providers configured.");
+            throw CreateNoProvidersAvailableException();
         if (lastException is not null)
         {
             MarkInconclusiveMiss(lastException.SourceException, walk);
@@ -1535,7 +1535,7 @@ public class MultiProviderNntpClient(
         if (lastNoArticleResult is not null && !walk.HasUnansweredProviders)
             return lastNoArticleResult;
         if (orderedProviders.Count == 0)
-            throw new InvalidOperationException("There are no usenet providers configured.");
+            throw CreateNoProvidersAvailableException();
         if (lastException is not null)
         {
             MarkInconclusiveMiss(lastException.SourceException, walk);
@@ -1547,7 +1547,7 @@ public class MultiProviderNntpClient(
             {
                 ProviderGeneration = providerGeneration,
             }, walk);
-        throw new InvalidOperationException("There are no usenet providers configured.");
+        throw CreateNoProvidersAvailableException();
     }
 
     private static async Task RejectMismatchedYencFileAsync(
@@ -2274,6 +2274,17 @@ public class MultiProviderNntpClient(
         var bytesPerMs = bytesTracker?.GetBytesPerMs(provider.MetricsKey) ?? 0d;
         return bytesPerMs > 0 ? inFlight / bytesPerMs : inFlight;
     }
+
+    /// <summary>
+    /// The exception for an operation that found no provider to ask. Only the absence of any
+    /// enabled provider is reported as <see cref="NoUsenetProvidersConfiguredException"/>; when
+    /// enabled providers exist but were all filtered out (for example by their byte caps), the
+    /// state is per-provider and transient, so callers keep their existing failure handling.
+    /// </summary>
+    private InvalidOperationException CreateNoProvidersAvailableException() =>
+        providers.Any(provider => provider.ProviderType != ProviderType.Disabled)
+            ? new InvalidOperationException("There are no usenet providers configured.")
+            : new NoUsenetProvidersConfiguredException();
 
     private bool IsOverLimit(MultiConnectionNntpClient client)
     {
