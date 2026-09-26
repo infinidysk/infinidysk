@@ -119,6 +119,8 @@ The client/app chart lines and legend count **attempts**, including recorded mis
 
 **Provider miss attempts** remain in Error breakdown and bucket details. Retries and multiple providers can produce several misses for one article that is eventually retrieved. Negative-cache skips do not add misses. Unexpected BODY responses are recorded as protocol errors going forward; existing history is not rewritten.
 
+**Backup rescues** counts each provider once per rescued article [since 1.5.1](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.1){ .nzbdav-since }. When a provider misses, is re-probed, and misses again before a different provider delivers the article, the card total, **Needed rescuing**, and **Why they missed** record one miss for that provider, with the reason of its first failed attempt. The extra attempt still appears in the provider table's miss and retry counts and in stream traces. Rescue counts recorded before this release are not rewritten; use **Reset Overview Statistics** under Maintenance if you want a clean baseline.
+
 ## Provider throughput [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }
 
 The Overview provider table shows **Peak** and **Active avg** in decimal MB/s, combining
