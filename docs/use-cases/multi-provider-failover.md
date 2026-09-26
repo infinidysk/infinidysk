@@ -10,7 +10,7 @@
 
 1. Add each provider under **Settings → Usenet** with accurate max connections.
 2. Enable **cascade routing** if you want priority order (thinly-spared primaries can still yield to idle peers); leave off to share a pool.
-3. Mark pure backups as **Backup Only**.
+3. Mark pure backups as **Backup Only**. The Overview **Providers** card labels them **Backup** [since 1.6.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.0){ .nzbdav-since }.
 4. Set **storage groups** only for true same-upstream resellers.
 5. Optional data caps + usage offsets when migrating mid-block.
 6. Run Auto-tune / benchmarks; consider [NNTP pipelining](../features/nntp-pipelining.md).
