@@ -61,10 +61,11 @@ export function completeHealthCheck(state: HealthQueueState, davItemId: string):
   const completedItem = state.items.find((item) => item.id === davItemId);
   if (!completedItem) return state;
 
+  // uncheckedCount is the backend's never-checked total; only a first-ever completion lowers it.
   return {
     items: state.items.filter((item) => item.id !== davItemId),
     uncheckedCount:
-      completedItem.nextHealthCheck === null
+      completedItem.lastHealthCheck === null
         ? Math.max(0, state.uncheckedCount - 1)
         : state.uncheckedCount,
   };
