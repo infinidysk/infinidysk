@@ -91,7 +91,9 @@ public sealed class AdminContractTests
         Assert.Equal(
             HealthCheckService.ForcedRecheckSentinel,
             resetItem.GetProperty("nextHealthCheck").GetDateTimeOffset());
-        Assert.True(afterJson.RootElement.GetProperty("uncheckedCount").GetInt32() >= 1);
+        // The file has a LastHealthCheck, so its forced recheck is pending work but not an
+        // initial scan; the never-checked total must stay at zero (#1571).
+        Assert.Equal(0, afterJson.RootElement.GetProperty("uncheckedCount").GetInt32());
     }
 
     [Fact]

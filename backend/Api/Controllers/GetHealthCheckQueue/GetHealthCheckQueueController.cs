@@ -46,11 +46,12 @@ public class GetHealthCheckQueueController(
         // Match HealthCheckService.ExecuteAsync: only media/archive candidates are ever
         // processed, so non-media files (nfo/srt/jpg/…) must not inflate this count or
         // the Health UI "initial scan pending" banner never clears. Pending repairs are
-        // counted separately on the schedule snapshot, while operator-forced rechecks
-        // count as pending alongside never-checked files.
+        // counted separately on the schedule snapshot, and previously scanned files queued
+        // for another pass (null or forced NextHealthCheck) are rechecks, not initial scans.
         var uncheckedCount = 0;
         await foreach (var name in HealthCheckService.GetHealthCheckQueueItemsQuery(dbClient)
             .Where(x => !x.HealthRepairPending &&
+            x.LastHealthCheck == null &&
                 (x.NextHealthCheck == null ||
                  x.NextHealthCheck == HealthCheckService.ForcedRecheckSentinel))
             .Select(x => x.Name)
