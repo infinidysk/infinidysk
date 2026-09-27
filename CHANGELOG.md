@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.5.1](https://github.com/infinidysk/infinidysk/compare/v1.5.0...v1.5.1) (2026-09-27)
+
+
+### Bug Fixes
+
+* **db:** database backups no longer include metrics history ([#1589](https://github.com/infinidysk/infinidysk/issues/1589)) ([190eace](https://github.com/infinidysk/infinidysk/commit/190eace08a758f9af3cdcddfa38e429e99e9e479))
+* **deps:** Bump github/codeql-action in the github-actions group ([#1569](https://github.com/infinidysk/infinidysk/issues/1569)) ([ad86990](https://github.com/infinidysk/infinidysk/commit/ad86990931fad0a1233c98a97167a67b2aaab949))
+* **deps:** Bump the nuget-minor-and-patch group with 1 update ([#1568](https://github.com/infinidysk/infinidysk/issues/1568)) ([90b2713](https://github.com/infinidysk/infinidysk/commit/90b27138af36e26beafe17e324e015fc2b426925))
+* **health:** Health page no longer reports previously scanned files as awaiting their initial scan ([#1577](https://github.com/infinidysk/infinidysk/issues/1577)) ([12a3415](https://github.com/infinidysk/infinidysk/commit/12a34153ec3cefca240119d32959209c1e344b81))
+* **health:** stay idle when no usenet provider is enabled ([#1573](https://github.com/infinidysk/infinidysk/issues/1573)) ([8f67a44](https://github.com/infinidysk/infinidysk/commit/8f67a442bfe0db110d5972894cccb5ec6f9ca920))
+* **metrics:** Overview Backup rescues counts a retried provider once per rescued article ([#1576](https://github.com/infinidysk/infinidysk/issues/1576)) ([48d772f](https://github.com/infinidysk/infinidysk/commit/48d772fdb827c4274472a6a396c8b39cfed5a068))
+* **ui:** mark backup providers on the Overview Providers card ([#1579](https://github.com/infinidysk/infinidysk/issues/1579)) ([abb18af](https://github.com/infinidysk/infinidysk/commit/abb18afd6b152e005274621f67af2bbc6356a2ca))
+* **usenet:** slower provider handshakes no longer trip the provider circuit under default settings ([#1578](https://github.com/infinidysk/infinidysk/issues/1578)) ([58eeecc](https://github.com/infinidysk/infinidysk/commit/58eeecc41958574057bee64ed9275a721179a558))
+
+
+### Performance Improvements
+
+* **usenet:** report payload bytes per chunk instead of per line ([#1580](https://github.com/infinidysk/infinidysk/issues/1580)) ([e6761e5](https://github.com/infinidysk/infinidysk/commit/e6761e57cc452ebf73783bb908d9f76330acc539))
+
 ## [1.5.0](https://github.com/infinidysk/infinidysk/compare/v1.4.5...v1.5.0) (2026-09-25)
 
 
