@@ -1,4 +1,4 @@
-# Plex and Smart Prefetch
+# Plex and Smart Prefetch [since unreleased](https://github.com/infinidysk/infinidysk/pull/1586){ .nzbdav-since }
 
 Connect a Plex account from **Settings → Streaming** to discover owned and shared servers. Choose a server and save it explicitly. Refresh discovery only updates the available choices; it does not change the saved server. Reconnecting, disconnecting, or editing an existing server is available from the same settings page. Tokens are masked in API responses and excluded from support packs.
 
