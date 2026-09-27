@@ -191,8 +191,10 @@ public sealed class LibraryCatalogScanner(
             return exists ? LibraryLinkStatus.Valid : LibraryLinkStatus.Broken;
         }
 
-        // External target missing from disk counts as broken, but never probe
-        // paths under the rclone mount (following them can recurse into WebDAV).
+        // Never probe paths under the rclone mount (following them can recurse
+        // into WebDAV). External paths may point to a host mount that is not
+        // available inside this container, so only call a missing target
+        // broken when its parent directory is visible here.
         var absolute = classified.TargetText;
         if (!Path.IsPathRooted(absolute))
             return LibraryLinkStatus.Unchecked;
@@ -200,9 +202,12 @@ public sealed class LibraryCatalogScanner(
             return LibraryLinkStatus.Unchecked;
         try
         {
-            return File.Exists(absolute) || Directory.Exists(absolute)
-                ? LibraryLinkStatus.Valid
-                : LibraryLinkStatus.Broken;
+            if (File.Exists(absolute) || Directory.Exists(absolute))
+                return LibraryLinkStatus.Valid;
+            var parent = Path.GetDirectoryName(absolute);
+            return parent is not null && Directory.Exists(parent)
+                ? LibraryLinkStatus.Broken
+                : LibraryLinkStatus.Unchecked;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

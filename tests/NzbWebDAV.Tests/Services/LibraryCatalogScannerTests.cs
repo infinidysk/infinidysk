@@ -59,6 +59,29 @@ public sealed class LibraryCatalogScannerTests : IAsyncLifetime
         Assert.Equal("linked.mkv", row.LinkPath);
         Assert.Equal(LibraryMappingType.External, row.MappingType);
         Assert.Null(row.DavItemId);
+        Assert.Equal(LibraryLinkStatus.Valid, row.Status);
+    }
+
+    [Fact]
+    public async Task ReconcileOnce_MissingExternalTarget_IsBrokenOnlyWhenParentIsVisible()
+    {
+        var visibleParent = Path.Join(_libraryRoot, "visible");
+        Directory.CreateDirectory(visibleParent);
+        File.CreateSymbolicLink(Path.Join(_libraryRoot, "missing-file.mkv"),
+            Path.Join(visibleParent, "missing.mkv"));
+        File.CreateSymbolicLink(Path.Join(_libraryRoot, "unavailable-mount.mkv"),
+            Path.Join(_libraryRoot, "unavailable", "missing.mkv"));
+        var config = new ConfigManager();
+        config.UpdateValues([new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = _libraryRoot }]);
+        var factory = _provider.GetRequiredService<IDbContextFactory<DavDatabaseContext>>();
+        var scanner = new LibraryCatalogScanner(config, factory);
+
+        await scanner.ReconcileOnceAsync(CancellationToken.None);
+
+        await using var context = factory.CreateDbContext();
+        var rows = await context.LinkMaps.ToDictionaryAsync(row => row.LinkPath);
+        Assert.Equal(LibraryLinkStatus.Broken, rows["missing-file.mkv"].Status);
+        Assert.Equal(LibraryLinkStatus.Unchecked, rows["unavailable-mount.mkv"].Status);
     }
 
     [Fact]
