@@ -9,6 +9,85 @@ public sealed class NativeCacheStoreTests : IDisposable
     public NativeCacheStoreTests() => Directory.CreateDirectory(_root);
 
     [Fact]
+    public async Task ChunkFiles_RetainPerEntryGeometryAcrossSettingChangesAndCatalogueScan()
+    {
+        var folder = CreateFolder();
+        var identity = new NativeCacheIdentity("chunked", "v1", NativeCacheStore.BlockSize * 4L);
+        var block = new byte[NativeCacheStore.BlockSize];
+        block[0] = 42;
+        var catalogue = Path.Combine(_root, "chunked.db");
+        await using (var store = new NativeCacheStore(catalogue, [folder], chunkSizeMb: 8))
+        {
+            Assert.True(await store.WriteBlockAsync(identity, 0, block));
+            Assert.True(await store.WriteBlockAsync(identity, NativeCacheStore.BlockSize * 2L, block));
+        }
+        var entryPath = Path.Combine(folder.Path, "v1", identity.Key[..2], identity.Key);
+        Assert.True(File.Exists(Path.Combine(entryPath, "chunk-0000000000000000.data")));
+        Assert.True(File.Exists(Path.Combine(entryPath, "chunk-0000000000000001.data")));
+        Assert.False(File.Exists(Path.Combine(entryPath, "content.data")));
+
+        await using (var changed = new NativeCacheStore(catalogue, [folder], chunkSizeMb: 16))
+        {
+            Assert.Equal(block.Length, await changed.ReadBlockAsync(identity, 0, new byte[block.Length]));
+            Assert.True(await changed.WriteBlockAsync(identity, NativeCacheStore.BlockSize, block));
+            Assert.True(await changed.WriteBlockAsync(identity, NativeCacheStore.BlockSize * 3L, block));
+            var newIdentity = new NativeCacheIdentity("chunked-after-change", "v1", NativeCacheStore.BlockSize * 3L);
+            Assert.True(await changed.WriteBlockAsync(newIdentity, 0, block));
+            Assert.True(await changed.WriteBlockAsync(newIdentity, NativeCacheStore.BlockSize * 2L, block));
+            var newPath = Path.Combine(folder.Path, "v1", newIdentity.Key[..2], newIdentity.Key);
+            Assert.Single(Directory.GetFiles(newPath, "chunk-*.data"));
+        }
+        Assert.Equal(2, Directory.GetFiles(entryPath, "chunk-*.data").Length);
+
+        await using var recovered = new NativeCacheStore(Path.Combine(_root, "recovered.db"), [folder], chunkSizeMb: 16);
+        Assert.Equal(2, await recovered.ScanAsync(folder.Id));
+        Assert.Equal(identity.Length, await recovered.GetCoverageAsync(identity));
+        Assert.Equal(block.Length, await recovered.ReadBlockAsync(identity, NativeCacheStore.BlockSize * 3L, new byte[block.Length]));
+        Assert.Equal(2, await recovered.EvictAsync(folder.Id, clear: true));
+        Assert.False(Directory.Exists(entryPath));
+    }
+
+    [Fact]
+    public async Task LegacyEntry_RemainsReadableAndWritableAfterChunkSettingChange()
+    {
+        var folder = CreateFolder();
+        var identity = new NativeCacheIdentity("legacy-chunk", "v1", NativeCacheStore.BlockSize + 3L);
+        var catalogue = Path.Combine(_root, "legacy.db");
+        await using (var legacy = new NativeCacheStore(catalogue, [folder]))
+            Assert.True(await legacy.WriteBlockAsync(identity, 0, new byte[NativeCacheStore.BlockSize]));
+        await using (var changed = new NativeCacheStore(catalogue, [folder], chunkSizeMb: 64))
+        {
+            Assert.Equal(NativeCacheStore.BlockSize, await changed.ReadBlockAsync(identity, 0, new byte[NativeCacheStore.BlockSize]));
+            Assert.True(await changed.WriteBlockAsync(identity, NativeCacheStore.BlockSize, new byte[3]));
+        }
+        var entryPath = Path.Combine(folder.Path, "v1", identity.Key[..2], identity.Key);
+        Assert.True(File.Exists(Path.Combine(entryPath, "content.data")));
+        Assert.Empty(Directory.GetFiles(entryPath, "chunk-*.data"));
+    }
+
+    [Fact]
+    public async Task ChunkFileScan_DiscardsOnlyCorruptedIntegrityBlock()
+    {
+        var folder = CreateFolder();
+        var identity = new NativeCacheIdentity("chunk-corruption", "v1", NativeCacheStore.BlockSize * 2L);
+        await using (var initial = new NativeCacheStore(Path.Combine(_root, "initial.db"), [folder], chunkSizeMb: 8))
+        {
+            Assert.True(await initial.WriteBlockAsync(identity, 0, new byte[NativeCacheStore.BlockSize]));
+            Assert.True(await initial.WriteBlockAsync(identity, NativeCacheStore.BlockSize, new byte[NativeCacheStore.BlockSize]));
+        }
+        var chunk = Path.Combine(folder.Path, "v1", identity.Key[..2], identity.Key, "chunk-0000000000000000.data");
+        await using (var file = new FileStream(chunk, FileMode.Open, FileAccess.Write))
+            await file.WriteAsync(new byte[] { 1 });
+
+        await using var recovered = new NativeCacheStore(Path.Combine(_root, "recovered.db"), [folder], chunkSizeMb: 16);
+        Assert.Equal(1, await recovered.ScanAsync(folder.Id));
+        Assert.Equal(NativeCacheStore.BlockSize, await recovered.GetCoverageAsync(identity));
+        Assert.Equal(0, await recovered.ReadBlockAsync(identity, 0, new byte[NativeCacheStore.BlockSize]));
+        Assert.Equal(NativeCacheStore.BlockSize, await recovered.ReadBlockAsync(identity,
+            NativeCacheStore.BlockSize, new byte[NativeCacheStore.BlockSize]));
+    }
+
+    [Fact]
     public async Task StatusDeadline_CoalescesStalledCalls_AndRecovers()
     {
         var folder = CreateFolder();

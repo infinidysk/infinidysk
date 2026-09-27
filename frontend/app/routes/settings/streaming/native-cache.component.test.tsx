@@ -7,7 +7,15 @@ import { ManagedEnvProvider } from "~/components/ui";
 import { NativeCacheSettings } from "./native-cache";
 import { nativeSettingsValid } from "./native-cache-model";
 
-function Harness({ managed = false, native = false }: { managed?: boolean; native?: boolean }) {
+function Harness({
+  managed = false,
+  managedSizing = false,
+  native = false,
+}: {
+  managed?: boolean;
+  managedSizing?: boolean;
+  native?: boolean;
+}) {
   const [config, setConfig] = useState<Record<string, string>>({
     "cache.mode": native ? "native" : "segment",
     "usenet.segment-cache.enabled": native ? "false" : "true",
@@ -29,7 +37,18 @@ function Harness({ managed = false, native = false }: { managed?: boolean; nativ
       : "[]",
   });
   return (
-    <ManagedEnvProvider value={managed ? { "cache.mode": "NZBDAV_CONFIG__CACHE__MODE" } : {}}>
+    <ManagedEnvProvider
+      value={
+        managed
+          ? { "cache.mode": "NZBDAV_CONFIG__CACHE__MODE" }
+          : managedSizing
+            ? {
+                "cache.native.min-file-mb": "NZBDAV_CONFIG__CACHE__NATIVE__MIN_FILE_MB",
+                "cache.native.chunk-mb": "NZBDAV_CONFIG__CACHE__NATIVE__CHUNK_MB",
+              }
+            : {}
+      }
+    >
       <NativeCacheSettings config={config} setNewConfig={setConfig} />
       <output data-testid="config">{JSON.stringify(config)}</output>
     </ManagedEnvProvider>
@@ -83,18 +102,27 @@ describe("native cache folder editor", () => {
     ).toBe(true);
   });
 
-  it("configures minimum file size and warming chunk size", async () => {
+  it("configures minimum file size and cache chunk size", async () => {
     render(<Harness native />);
     await userEvent.click(screen.getByText(/Local metadata and stream buffer/));
     await userEvent.clear(screen.getByLabelText(/Minimum file size to cache/));
     await userEvent.type(screen.getByLabelText(/Minimum file size to cache/), "256");
-    await userEvent.clear(screen.getByLabelText(/Warming chunk size/));
-    await userEvent.type(screen.getByLabelText(/Warming chunk size/), "32");
+    await userEvent.clear(screen.getByLabelText(/Cache chunk size/));
+    await userEvent.type(screen.getByLabelText(/Cache chunk size/), "32");
     const saved = JSON.parse(screen.getByTestId("config").textContent) as Record<string, string>;
     expect(saved["cache.native.min-file-mb"]).toBe("256");
     expect(saved["cache.native.chunk-mb"]).toBe("32");
     expect(nativeSettingsValid(saved)).toBe(true);
     expect(nativeSettingsValid({ ...saved, "cache.native.chunk-mb": "6" })).toBe(false);
+  });
+
+  it("pins environment-owned sizing controls", async () => {
+    render(<Harness native managedSizing />);
+    await userEvent.click(screen.getByText(/Local metadata and stream buffer/));
+    expect(screen.getByLabelText(/Minimum file size to cache/).closest("fieldset")?.disabled).toBe(
+      true,
+    );
+    expect(screen.getByLabelText(/Cache chunk size/).closest("fieldset")?.disabled).toBe(true);
   });
 
   it("shows measured probe capabilities separately from the storage hint and aggregate counters", async () => {

@@ -14,6 +14,20 @@ namespace NzbWebDAV.Services.NativeCache;
 public sealed partial class NativeCacheStore : IAsyncDisposable
 {
     public const int BlockSize = 4 * 1024 * 1024;
+    private readonly int _newEntryChunkSize;
+    private static bool ValidChunkSize(int bytes) => bytes >= BlockSize && bytes <= 256 * 1024 * 1024 && bytes % BlockSize == 0;
+    private static string DataFileName(long offset, int chunkSize) => chunkSize == 0
+        ? "content.data" : $"chunk-{offset / chunkSize:x16}.data";
+    private static bool IsChunkFile(string name)
+    {
+        if (name.Length != 27 || !name.StartsWith("chunk-", StringComparison.Ordinal)
+            || !name.EndsWith(".data", StringComparison.Ordinal)) return false;
+        for (var index = 6; index < 22; index++)
+            if (name[index] is not (>= '0' and <= '9' or >= 'a' and <= 'f')) return false;
+        return true;
+    }
+    private static IEnumerable<string> PayloadFileNames(NativeFileSystem.PinnedDirectory directory) =>
+        directory.EnumerateFileNames().Where(IsChunkFile);
     private const long EntryOverhead = 64 * 1024;
     // FlushAsync only flushes managed buffers; publication requires durable fsync.
     private static void FlushToDisk(FileStream stream) => stream.Flush(flushToDisk: true);
@@ -269,8 +283,11 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
         }
     }
 
-    public NativeCacheStore(string cataloguePath, IReadOnlyList<NativeCacheFolder> folders)
+    public NativeCacheStore(string cataloguePath, IReadOnlyList<NativeCacheFolder> folders, int chunkSizeMb = 0)
     {
+        _newEntryChunkSize = checked(chunkSizeMb * 1024 * 1024);
+        if (_newEntryChunkSize != 0 && !ValidChunkSize(_newEntryChunkSize))
+            throw new ArgumentOutOfRangeException(nameof(chunkSizeMb));
         NativeCacheFolder.Validate(folders);
         _folders = folders.OrderByDescending(folder => folder.Priority).ToArray();
         NativeFileSystem.RequireLocalMetadata(cataloguePath);
@@ -362,17 +379,20 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
         NativeCacheFolder? folder = null;
         byte[]? expected = null;
         var count = 0;
+        var chunkSize = 0;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            using var command = Command("SELECT e.Folder, b.Count, b.Hash FROM Blocks b JOIN Entries e ON e.Key=b.Key WHERE b.Key=$key AND b.Offset=$offset",
+            using var command = Command("SELECT e.Folder, b.Count, b.Hash, e.ChunkSize FROM Blocks b JOIN Entries e ON e.Key=b.Key WHERE b.Key=$key AND b.Offset=$offset",
                 ("$key", identity.Key), ("$offset", offset));
             using var reader = command.ExecuteReader();
             if (!reader.Read()) return 0;
             folder = _folders.FirstOrDefault(folder => folder.Id == reader.GetString(0) && folder.Enabled);
             if (folder is null) return 0;
             count = reader.GetInt32(1);
+            chunkSize = reader.GetInt32(3);
+            if (chunkSize != 0 && !ValidChunkSize(chunkSize)) return 0;
             if (destination.Length < count) throw new ArgumentException("Destination must hold a full integrity block.", nameof(destination));
             expected = (byte[])reader[2];
             reader.Close();
@@ -395,8 +415,8 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
         try
         {
             using var directory = OpenEntry(folder, identity.Key);
-            await using var data = directory.OpenFile("content.data", FileMode.Open, FileAccess.Read);
-            data.Position = offset;
+            await using var data = directory.OpenFile(DataFileName(offset, chunkSize), FileMode.Open, FileAccess.Read);
+            data.Position = chunkSize == 0 ? offset : offset % chunkSize;
             await data.ReadExactlyAsync(destination[..count], cancellationToken).ConfigureAwait(false);
             if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(destination.Span[..count]), expected))
             {
@@ -432,8 +452,12 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             catalogueHeld = true;
             ObjectDisposedException.ThrowIf(_disposed, this);
-            using var lookup = Command("SELECT Folder FROM Entries WHERE Key=$key", ("$key", identity.Key));
-            var folderId = lookup.ExecuteScalar() as string;
+            using var lookup = Command("SELECT Folder,ChunkSize FROM Entries WHERE Key=$key", ("$key", identity.Key));
+            using var entry = lookup.ExecuteReader();
+            var folderId = entry.Read() ? entry.GetString(0) : null;
+            var chunkSize = folderId is null ? _newEntryChunkSize : entry.GetInt32(1);
+            entry.Close();
+            if (chunkSize != 0 && !ValidChunkSize(chunkSize)) return false;
             var allocation = RoundAllocation(data.Length);
             using var exists = Command("SELECT 1 FROM Blocks WHERE Key=$key AND Offset=$offset", ("$key", identity.Key), ("$offset", offset));
             if (exists.ExecuteScalar() is not null) return true;
@@ -455,9 +479,17 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
             using var directory = OpenEntry(folder, identity.Key, create: true);
             if (folderId is null)
             {
+                // A missing local catalogue row does not authorize changing a payload's
+                // recorded geometry. Explicit scan must recover an existing manifest.
+                try
+                {
+                    using var existing = directory.OpenFile("manifest.json", FileMode.Open, FileAccess.Read);
+                    return false;
+                }
+                catch (IOException exception) when (NativeFileSystem.IsMissing(exception)) { }
                 await using (var manifest = directory.OpenFile("manifest.json", FileMode.Create, FileAccess.Write))
                 {
-                    await manifest.WriteAsync(JsonSerializer.SerializeToUtf8Bytes(new Manifest(1, identity)), cancellationToken).ConfigureAwait(false);
+                    await manifest.WriteAsync(JsonSerializer.SerializeToUtf8Bytes(new Manifest(chunkSize == 0 ? 1 : 2, identity, chunkSize)), cancellationToken).ConfigureAwait(false);
                     FlushToDisk(manifest);
                 }
             }
@@ -472,10 +504,10 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
             // short local transaction, even while another folder is stalled.
             if (folderId is null)
             {
-                Execute("INSERT INTO Entries(Key,Folder,Length,Bytes,Access,Dirty,ItemId,Generation,DisplayName) VALUES($key,$folder,$length,$bytes,$access,1,$item,$generation,$name)",
+                Execute("INSERT INTO Entries(Key,Folder,Length,Bytes,Access,Dirty,ItemId,Generation,DisplayName,ChunkSize) VALUES($key,$folder,$length,$bytes,$access,1,$item,$generation,$name,$chunk)",
                     ("$key", identity.Key), ("$folder", folder.Id), ("$length", identity.Length),
                     ("$bytes", EntryOverhead), ("$access", DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 300), ("$item", identity.ItemId),
-                    ("$generation", identity.Generation), ("$name", SafeDisplayName(identity.DisplayName)));
+                    ("$generation", identity.Generation), ("$name", SafeDisplayName(identity.DisplayName)), ("$chunk", chunkSize));
             }
             else Execute("UPDATE Entries SET Dirty=1,Generation=$generation,DisplayName=CASE WHEN $name='' THEN DisplayName ELSE $name END WHERE Key=$key",
                 ("$key", identity.Key), ("$generation", identity.Generation), ("$name", SafeDisplayName(identity.DisplayName)));
@@ -489,9 +521,9 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
             // in other folders. The writer gate and activity lease protect publication.
             _gate.Release();
             catalogueHeld = false;
-            await using (var stream = directory.OpenFile("content.data", FileMode.OpenOrCreate, FileAccess.Write))
+            await using (var stream = directory.OpenFile(DataFileName(offset, chunkSize), FileMode.OpenOrCreate, FileAccess.Write))
             {
-                stream.Position = offset;
+                stream.Position = chunkSize == 0 ? offset : offset % chunkSize;
                 await stream.WriteAsync(data, cancellationToken).ConfigureAwait(false);
                 FlushToDisk(stream);
             }
@@ -647,6 +679,7 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
             while (reader.Read()) columns.Add(reader.GetString(1));
         if (!columns.Contains("ItemId")) Execute("ALTER TABLE Entries ADD COLUMN ItemId TEXT NOT NULL DEFAULT ''");
         if (!columns.Contains("PendingBytes")) Execute("ALTER TABLE Entries ADD COLUMN PendingBytes INTEGER NOT NULL DEFAULT 0");
+        if (!columns.Contains("ChunkSize")) Execute("ALTER TABLE Entries ADD COLUMN ChunkSize INTEGER NOT NULL DEFAULT 0");
         if (!columns.Contains("Generation")) Execute("ALTER TABLE Entries ADD COLUMN Generation TEXT");
         if (!columns.Contains("VerifiedBytes"))
         {
@@ -859,6 +892,7 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
                     using var shard = _roots[folderId].OpenDirectory($"v1/{key[..2]}");
 #pragma warning restore CA2000
                     using var directory = shard.OpenDirectory(key);
+                    foreach (var name in PayloadFileNames(directory)) directory.DeleteFile(name);
                     foreach (var name in new[] { "content.data", "ranges.journal", "manifest.json", "ranges.checkpoint.tmp" }) directory.DeleteFile(name);
                     shard.DeleteDirectory(key);
                     shard.Flush();
@@ -935,9 +969,10 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
                     var manifestBytes = new byte[checked((int)manifestStream.Length)];
                     await manifestStream.ReadExactlyAsync(manifestBytes, cancellationToken).ConfigureAwait(false);
                     var manifest = JsonSerializer.Deserialize<Manifest>(manifestBytes);
-                    if (manifest is not { Version: 1, Identity: { ItemId: not null, Generation: not null } } || manifest.Identity.Length <= 0
+                    if (manifest is not { Identity: { ItemId: not null, Generation: not null } }
+                        || (manifest.Version == 1 ? manifest.ChunkSize != 0 : manifest.Version != 2 || !ValidChunkSize(manifest.ChunkSize))
+                        || manifest.Identity.Length <= 0
                         || !string.Equals(key, manifest.Identity.Key, StringComparison.Ordinal) || !IsVolumeCurrent(folder)) continue;
-                    await using var data = directory.OpenFile("content.data", FileMode.Open, FileAccess.Read);
                     await using var journal = directory.OpenFile("ranges.journal", FileMode.Open, FileAccess.Read);
                     var physicalBytes = PhysicalEntryBytes(directory);
                     await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -954,42 +989,59 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
                             // Drop its local coverage before verifying the newly registered root.
                             Execute("DELETE FROM Entries WHERE Key=$key", ("$key", key));
                         }
-                        Execute("INSERT OR IGNORE INTO Entries(Key,Folder,Length,Bytes,Access,ItemId,Dirty,DisplayName) VALUES($key,$folder,$length,$bytes,$access,$item,1,$name)",
+                        Execute("INSERT OR IGNORE INTO Entries(Key,Folder,Length,Bytes,Access,ItemId,Dirty,DisplayName,ChunkSize) VALUES($key,$folder,$length,$bytes,$access,$item,1,$name,$chunk)",
                             ("$key", manifest.Identity.Key), ("$folder", folder.Id), ("$length", manifest.Identity.Length),
                             ("$bytes", physicalBytes), ("$access", DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 300), ("$item", manifest.Identity.ItemId),
-                            ("$name", SafeDisplayName(manifest.Identity.DisplayName)));
-                        Execute("UPDATE Entries SET Bytes=MAX(Bytes,$bytes),Dirty=1,Generation=$generation WHERE Key=$key",
-                            ("$key", key), ("$bytes", physicalBytes), ("$generation", manifest.Identity.Generation));
+                            ("$name", SafeDisplayName(manifest.Identity.DisplayName)), ("$chunk", manifest.ChunkSize));
+                        Execute("UPDATE Entries SET Bytes=MAX(Bytes,$bytes),Dirty=1,Generation=$generation,ChunkSize=$chunk WHERE Key=$key",
+                            ("$key", key), ("$bytes", physicalBytes), ("$generation", manifest.Identity.Generation), ("$chunk", manifest.ChunkSize));
                         // Rebuild coverage from this scan's verified bytes; stale catalogue
                         // blocks must not survive a failed checksum or a truncated data file.
                         Execute("DELETE FROM Blocks WHERE Key=$key", ("$key", key));
                     }
                     finally { _gate.Release(); }
                     using var lines = new StreamReader(journal);
-                    while (await ReadJournalLineAsync(lines, cancellationToken).ConfigureAwait(false) is { } line)
+                    FileStream? data = null;
+                    string? dataName = null;
+                    try
                     {
-                        JournalBlock? block;
-                        try { block = JsonSerializer.Deserialize<JournalBlock>(line); }
-                        catch (JsonException) { continue; } // Includes incomplete trailing writes.
-                        if (block is null || block.Offset < 0 || block.Offset >= manifest.Identity.Length
-                            || block.Offset % BlockSize != 0 || block.Count != Math.Min(BlockSize, manifest.Identity.Length - block.Offset)
-                            || block.Hash is not { Length: 64 }) continue;
-                        data.Position = block.Offset;
-                        try { await data.ReadExactlyAsync(buffer.AsMemory(0, block.Count), cancellationToken).ConfigureAwait(false); }
-                        catch (EndOfStreamException) { continue; }
-                        var hash = SHA256.HashData(buffer.AsSpan(0, block.Count));
-                        if (!string.Equals(Convert.ToHexString(hash), block.Hash, StringComparison.Ordinal)) continue;
-                        if (!IsVolumeCurrent(folder)) break;
-                        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-                        try
+                        while (await ReadJournalLineAsync(lines, cancellationToken).ConfigureAwait(false) is { } line)
                         {
-                            ObjectDisposedException.ThrowIf(_disposed, this);
-                            using var insert = Command("INSERT OR IGNORE INTO Blocks(Key,Offset,Count,Hash) VALUES($key,$offset,$count,$hash)",
-                                ("$key", manifest.Identity.Key), ("$offset", block.Offset), ("$count", block.Count), ("$hash", hash));
-                            insert.ExecuteNonQuery();
+                            JournalBlock? block;
+                            try { block = JsonSerializer.Deserialize<JournalBlock>(line); }
+                            catch (JsonException) { continue; } // Includes incomplete trailing writes.
+                            if (block is null || block.Offset < 0 || block.Offset >= manifest.Identity.Length
+                                || block.Offset % BlockSize != 0 || block.Count != Math.Min(BlockSize, manifest.Identity.Length - block.Offset)
+                                || block.Hash is not { Length: 64 }) continue;
+                            try
+                            {
+                                var name = DataFileName(block.Offset, manifest.ChunkSize);
+                                if (name != dataName || data is null)
+                                {
+                                    if (data is not null) await data.DisposeAsync().ConfigureAwait(false);
+                                    data = null;
+                                    dataName = name;
+                                    data = directory.OpenFile(name, FileMode.Open, FileAccess.Read);
+                                }
+                                data!.Position = manifest.ChunkSize == 0 ? block.Offset : block.Offset % manifest.ChunkSize;
+                                await data.ReadExactlyAsync(buffer.AsMemory(0, block.Count), cancellationToken).ConfigureAwait(false);
+                            }
+                            catch (IOException) { continue; }
+                            var hash = SHA256.HashData(buffer.AsSpan(0, block.Count));
+                            if (!string.Equals(Convert.ToHexString(hash), block.Hash, StringComparison.Ordinal)) continue;
+                            if (!IsVolumeCurrent(folder)) break;
+                            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                            try
+                            {
+                                ObjectDisposedException.ThrowIf(_disposed, this);
+                                using var insert = Command("INSERT OR IGNORE INTO Blocks(Key,Offset,Count,Hash) VALUES($key,$offset,$count,$hash)",
+                                    ("$key", manifest.Identity.Key), ("$offset", block.Offset), ("$count", block.Count), ("$hash", hash));
+                                insert.ExecuteNonQuery();
+                            }
+                            finally { _gate.Release(); }
                         }
-                        finally { _gate.Release(); }
                     }
+                    finally { if (data is not null) await data.DisposeAsync().ConfigureAwait(false); }
                     cancellationToken.ThrowIfCancellationRequested();
                     if (!IsVolumeCurrent(folder)) continue;
                     if (!folder.ReadOnly)
@@ -1101,8 +1153,10 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
 
     private static long PhysicalEntryBytes(NativeFileSystem.PinnedDirectory directory)
     {
-        var bytes = checked(directory.AllocatedBytes("content.data") + directory.AllocatedBytes("manifest.json")
-            + directory.AllocatedBytes("ranges.journal") + EntryOverhead);
+        var bytes = checked(directory.AllocatedBytes("manifest.json") + directory.AllocatedBytes("ranges.journal") + EntryOverhead);
+        foreach (var name in PayloadFileNames(directory)) bytes = checked(bytes + directory.AllocatedBytes(name));
+        try { bytes = checked(bytes + directory.AllocatedBytes("content.data")); }
+        catch (IOException exception) when (NativeFileSystem.IsMissing(exception)) { }
         try { return checked(bytes + directory.AllocatedBytes("ranges.checkpoint.tmp")); }
         catch (IOException exception) when (NativeFileSystem.IsMissing(exception)) { return bytes; }
     }
@@ -1324,6 +1378,7 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
             using var shard = _roots[folder.Id].OpenDirectory($"v1/{key[..2]}");
 #pragma warning restore CA2000
             using var directory = shard.OpenDirectory(key);
+            foreach (var name in PayloadFileNames(directory)) directory.DeleteFile(name);
             directory.DeleteFile("content.data");
             directory.DeleteFile("ranges.journal");
             directory.DeleteFile("manifest.json");
@@ -1603,7 +1658,7 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
         // and observe _disposed, and repeated disposal is supported. No WaitHandle is used.
     }
 
-    private sealed record Manifest(int Version, NativeCacheIdentity Identity);
+    private sealed record Manifest(int Version, NativeCacheIdentity Identity, int ChunkSize = 0);
     private sealed record JournalBlock(long Offset, int Count, string Hash);
 }
 

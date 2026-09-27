@@ -171,6 +171,13 @@ public static class NativeFileSystem
                 .Select(path => Path.GetFileName(path));
         }
 
+        public IEnumerable<string> EnumerateFileNames()
+        {
+            ObjectDisposedException.ThrowIf(_handle.IsClosed, this);
+            return Directory.EnumerateFiles($"/proc/self/fd/{_handle.DangerousGetHandle()}")
+                .Select(Path.GetFileName).OfType<string>();
+        }
+
         public void DeleteFile(string name)
         {
             Leaf(name);

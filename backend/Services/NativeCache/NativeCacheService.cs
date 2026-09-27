@@ -29,7 +29,7 @@ public sealed class NativeCacheService : IAsyncDisposable
     internal Task InitializationCompletion => Task.WhenAll(_initialization, _cleanup);
 
     public NativeCacheService(ConfigManager config, IBlobStore blobs, RepairPatchStore repairs)
-        : this(config, blobs, repairs, settings => new NativeCacheStore(Path.Combine(settings.MetadataPath, "catalogue.db"), settings.Folders)) { }
+        : this(config, blobs, repairs, settings => new NativeCacheStore(Path.Combine(settings.MetadataPath, "catalogue.db"), settings.Folders, settings.ChunkMb)) { }
 
     internal NativeCacheService(ConfigManager config, IBlobStore blobs, RepairPatchStore repairs,
         Func<NativeCacheSettings, NativeCacheStore> storeFactory)

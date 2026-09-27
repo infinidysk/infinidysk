@@ -117,7 +117,7 @@ public sealed record NativeCacheSettings(NativeCacheFolder[] Folders, string Met
     {
         if (string.IsNullOrWhiteSpace(value)) return 64;
         if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var mb) || mb is < 4 or > 256 || mb % 4 != 0)
-            throw new ArgumentException("Native cache warming chunk size must be a multiple of 4 MiB between 4 and 256 MiB.");
+            throw new ArgumentException("Native cache chunk size must be a multiple of 4 MiB between 4 and 256 MiB.");
         return mb;
     }
 }

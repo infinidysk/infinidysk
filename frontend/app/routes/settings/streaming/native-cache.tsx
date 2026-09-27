@@ -411,7 +411,7 @@ export function NativeCacheSettings({
               </ManagedSetting>
               <ManagedSetting configKey="cache.native.chunk-mb">
                 <label className="flex flex-col gap-2 text-sm">
-                  Warming chunk size (MiB)
+                  Cache chunk size (MiB)
                   <Input
                     type="number"
                     min={4}
@@ -423,8 +423,8 @@ export function NativeCacheSettings({
                     }
                   />
                   <span className="text-xs text-base-content/60">
-                    Background warming reserves storage in chunks of this size. Existing 4 MiB
-                    integrity blocks keep their format.
+                    New cache entries store data in chunk files of this size. Existing entries keep
+                    their original layout. Background warming reserves one chunk at a time.
                   </span>
                 </label>
               </ManagedSetting>
