@@ -186,6 +186,21 @@ function indexAge(value: string | null | undefined): string {
     : `Scanned ${time.toLocaleString()}`;
 }
 
+function mappingLabel(item: LibraryCatalogItem): "Internal" | "External" | "Broken" {
+  if (item.mappings.some((mapping) => mapping.status === "broken" || mapping.status === "stale"))
+    return "Broken";
+  return item.kind === "internal" ? "Internal" : "External";
+}
+
+function mappingBadgeClass(item: LibraryCatalogItem): string {
+  const mapping = mappingLabel(item);
+  return mapping === "Broken"
+    ? "badge-error"
+    : mapping === "External"
+      ? "badge-info"
+      : "badge-success";
+}
+
 const categories: { value: Category; label: string }[] = [
   { value: "all", label: "All media" },
   { value: "shows", label: "TV shows" },
@@ -613,17 +628,16 @@ export default function Library({ loaderData }: Route.ComponentProps) {
             </span>
           </div>
           <div className="overflow-x-auto rounded-xl border border-base-content/10 bg-base-200">
-            <table className="table table-sm w-full min-w-[960px]">
+            <table className="table table-sm w-full min-w-[1200px] table-fixed">
               <thead>
                 <tr>
-                  <th>File / path</th>
+                  <th className="w-[34rem]">File / path</th>
                   <th>Show / movie title</th>
                   <th>Season</th>
                   <th>Episode</th>
                   <th>Type</th>
                   <th>Size</th>
                   <th>Mapping</th>
-                  <th>Details</th>
                 </tr>
               </thead>
               <tbody>
@@ -633,21 +647,22 @@ export default function Library({ loaderData }: Route.ComponentProps) {
                       row.item.davItemId ?? row.item.mappings[0]?.linkPath ?? row.item.displayName
                     }
                   >
-                    <td className="max-w-64">
+                    <td className="w-[34rem] max-w-[34rem] align-top">
                       <button
                         type="button"
-                        className="link block max-w-64 truncate text-left font-medium"
-                        title={row.item.displayName}
+                        className="link block w-full whitespace-normal text-left font-medium"
+                        title={
+                          row.item.contentPath ??
+                          row.item.mappings[0]?.linkPath ??
+                          row.item.displayName
+                        }
                         onClick={() => openModal(row.item)}
                       >
-                        {row.item.displayName}
+                        <span className="block break-all leading-snug">{row.item.displayName}</span>
+                        <span className="mt-1 block break-all text-xs font-normal text-base-content/50">
+                          {row.item.contentPath ?? row.item.mappings[0]?.linkPath ?? "—"}
+                        </span>
                       </button>
-                      <span
-                        className="block max-w-64 truncate text-xs text-base-content/50"
-                        title={row.item.contentPath ?? row.item.mappings[0]?.linkPath ?? ""}
-                      >
-                        {row.item.contentPath ?? row.item.mappings[0]?.linkPath ?? "—"}
-                      </span>
                     </td>
                     <td>{row.title ?? <span className="text-base-content/45">Unmatched</span>}</td>
                     <td>{row.season == null ? "—" : row.season}</td>
@@ -661,16 +676,9 @@ export default function Library({ loaderData }: Route.ComponentProps) {
                     </td>
                     <td>{row.item.size == null ? "—" : formatFileSize(row.item.size)}</td>
                     <td>
-                      <Badge>{row.item.health}</Badge>
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn btn-xs btn-outline"
-                        onClick={() => openModal(row.item)}
-                      >
-                        Details
-                      </button>
+                      <Badge className={mappingBadgeClass(row.item)}>
+                        {mappingLabel(row.item)}
+                      </Badge>
                     </td>
                   </tr>
                 ))}
