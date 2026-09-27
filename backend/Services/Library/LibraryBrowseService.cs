@@ -43,9 +43,11 @@ public sealed class LibraryBrowseService(LibraryCatalogService catalog, IPlexLib
         {
             var search = query.Search.Trim();
             var exact = candidates.Where(item => MatchesSearch(item, search)).ToList();
-            candidates = exact.Count > 0 || search.Length < 5 || search.Any(char.IsWhiteSpace)
+            candidates = search.Length < 5 || search.Any(char.IsWhiteSpace) ||
+                exact.Any(item => HasExactTitleToken(item, search))
                 ? exact
-                : candidates.Where(item => MatchesApproximateTitle(item, search)).ToList();
+                : exact.Concat(candidates.Where(item => !MatchesSearch(item, search) &&
+                    MatchesApproximateTitle(item, search))).ToList();
         }
         var currentCoverage = query.Cache == "all"
             ? null : await LoadCurrentCoverageAsync(candidates.Select(i => i.Item), ct).ConfigureAwait(false);
@@ -200,9 +202,18 @@ public sealed class LibraryBrowseService(LibraryCatalogService catalog, IPlexLib
              (item.PlexMatch.Episode is { } episode &&
               $"S{season:00}E{episode:00}".Contains(search, StringComparison.OrdinalIgnoreCase))));
 
-    // A single mistyped letter in a title should still find a film or show.
-    // Run this only when the full catalogue has no exact match, so exact
-    // searches retain their existing precision and path matching behavior.
+    // A substring hit inside another word (for example, Aladin in Paladin)
+    // must not prevent a one-letter title typo from finding Aladdin. An exact
+    // title token still takes precedence over approximate matches.
+    private static bool HasExactTitleToken(ClassifiedItem item, string search) =>
+        HasExactToken(item.Item.DisplayName, search)
+        || HasExactToken(item.PlexMatch?.Title, search)
+        || HasExactToken(item.PlexMatch?.ShowName, search);
+
+    private static bool HasExactToken(string? text, string search) =>
+        !string.IsNullOrEmpty(text) && Regex.Matches(text, @"[\p{L}\p{Nd}]+")
+            .Any(match => match.Value.Equals(search, StringComparison.OrdinalIgnoreCase));
+
     private static bool MatchesApproximateTitle(ClassifiedItem item, string search) =>
         OneEditFromToken(item.Item.DisplayName, search)
         || OneEditFromToken(item.PlexMatch?.Title, search)

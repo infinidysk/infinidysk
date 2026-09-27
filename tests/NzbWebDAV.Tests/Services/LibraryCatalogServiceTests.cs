@@ -290,6 +290,28 @@ public sealed class LibraryCatalogServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Browse_FindsTitleTypo_WhenAnotherTitleContainsTheQuery()
+    {
+        foreach (var name in new[] { "Aladdin.1992.mkv", "Paladin.2024.mkv" })
+            _context.Items.Add(DavItem.New(Guid.NewGuid(), DavItem.ContentFolder, name, 100,
+                DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile,
+                null, null, null, null));
+        await _context.SaveChangesAsync();
+
+        var browse = new LibraryBrowseService(new LibraryCatalogService(_context), new FakePlexIndex([]));
+        foreach (var search in new[] { "Aladin", "aladin", "ALADIN" })
+        {
+            var result = await browse.QueryAsync(new LibraryBrowseQuery
+            {
+                View = "files", Category = "all", Search = search,
+            });
+            Assert.Equal(2, result.TotalFiles);
+            Assert.Contains(result.Files!, file => file.Item.DisplayName == "Aladdin.1992.mkv");
+            Assert.Contains(result.Files!, file => file.Item.DisplayName == "Paladin.2024.mkv");
+        }
+    }
+
+    [Fact]
     public async Task Browse_ClassifiesSuffixedLibraryRoots_AndLeavesUnknownRootsUnmatched()
     {
         var paths = new[]
