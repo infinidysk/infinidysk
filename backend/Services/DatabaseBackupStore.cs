@@ -103,7 +103,7 @@ public sealed class DatabaseBackupStore
     {
         var backupId = GetStagingBackupId(stagingPath);
         var files = new List<DatabaseBackupFileEntry>();
-        foreach (var sqlName in new[] { DbSqlName, MetricsSqlName, WardenSqlName })
+        foreach (var sqlName in new[] { DbSqlName, WardenSqlName })
         {
             var path = Path.Join(stagingPath, sqlName);
             if (!File.Exists(path))

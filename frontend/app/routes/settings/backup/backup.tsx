@@ -371,9 +371,9 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
           <div>
             <p className="font-semibold">PostgreSQL main database is externally managed</p>
             <p className="mt-0.5 text-xs opacity-80">
-              This page backs up and restores only the local SQLite metrics and warden databases.
-              The main PostgreSQL database is not included; use your PostgreSQL provider&apos;s
-              backup and restore tooling for it.
+              This page backs up and restores only the local SQLite warden database. Metrics history
+              is not included and is left unchanged by a restore. The main PostgreSQL database is
+              not included; use your PostgreSQL provider&apos;s backup and restore tooling for it.
             </p>
           </div>
         </Alert>
@@ -419,7 +419,7 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
               <Tooltip
                 placement="bottom"
                 className="tooltip-start"
-                content="Writes a logical .sql dump of all databases under the config volume once per day."
+                content="Writes logical .sql dumps of the backed-up databases once per day. Metrics history (metrics.sqlite) is not included."
               >
                 <Toggle
                   id="backup-schedule-enabled"
@@ -780,21 +780,20 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
             {mainDatabaseProvider === "postgres" ? (
               <>
                 Backups include only the local{" "}
-                <code className="font-mono text-base-content/70">metrics.sqlite</code> and{" "}
-                <code className="font-mono text-base-content/70">warden.db</code> databases as
-                logical SQL dumps. The PostgreSQL main database is externally managed and is not
+                <code className="font-mono text-base-content/70">warden.db</code> database as a
+                logical SQL dump. The PostgreSQL main database is externally managed and is not
                 included.{" "}
               </>
             ) : (
               <>
-                Backups include <code className="font-mono text-base-content/70">db.sqlite</code>,{" "}
-                <code className="font-mono text-base-content/70">metrics.sqlite</code>, and{" "}
-                <code className="font-mono text-base-content/70">warden.db</code> as logical SQL
+                Backups include <code className="font-mono text-base-content/70">db.sqlite</code>{" "}
+                and <code className="font-mono text-base-content/70">warden.db</code> as logical SQL
                 dumps.{" "}
               </>
             )}
-            <code className="font-mono text-base-content/70">blobs/</code> folder is not included —
-            restoring an older dump may leave some items with missing blob files.
+            Metrics history (<code className="font-mono text-base-content/70">metrics.sqlite</code>)
+            and the <code className="font-mono text-base-content/70">blobs/</code> folder are not
+            included — restoring an older dump may leave some items with missing blob files.
           </p>
         </div>
       </section>
@@ -823,9 +822,9 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
           mainDatabaseProvider === "postgres" ? (
             <>
               Restoring <span className="font-mono">{confirmRestoreId}</span> replaces only the
-              local metrics and warden SQLite databases. The externally managed PostgreSQL main
-              database is not changed. A pre-restore safety backup is created automatically. The
-              server will restart into maintenance mode to apply the swap.
+              local warden SQLite database. The externally managed PostgreSQL main database and the
+              metrics history are not changed. A pre-restore safety backup is created automatically.
+              The server will restart into maintenance mode to apply the swap.
             </>
           ) : (
             <>

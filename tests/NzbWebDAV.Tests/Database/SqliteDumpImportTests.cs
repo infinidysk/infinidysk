@@ -1,9 +1,13 @@
 using System.Text;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
+using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Backup;
 using NzbWebDAV.Services;
+using NzbWebDAV.Tasks;
+using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Tests.Database;
 
@@ -321,6 +325,55 @@ public sealed class SqliteDumpImportTests
 public sealed class DatabaseBackupStoreTests
 {
     [Fact]
+    public void CommitStaging_ListsOnlyMainAndWardenDumps()
+    {
+        var root = Path.Join(Path.GetTempPath(), $"nzbdav-store-{Guid.NewGuid():N}");
+        var previous = Environment.GetEnvironmentVariable("CONFIG_PATH");
+        Environment.SetEnvironmentVariable("CONFIG_PATH", root);
+        try
+        {
+            var store = new DatabaseBackupStore();
+            var staging = store.CreateStaging("manual");
+            foreach (var name in new[] { DatabaseBackupStore.DbSqlName, DatabaseBackupStore.WardenSqlName, DatabaseBackupStore.MetricsSqlName })
+                File.WriteAllText(Path.Join(staging, name), $"dump for {name}");
+
+            var manifest = store.CommitStaging(staging, "manual", null, false, "test", null);
+
+            Assert.Equal(["db.sql", "warden.sql"], manifest.Files.Select(file => file.Name));
+            foreach (var file in manifest.Files)
+                Assert.Equal(new FileInfo(Path.Join(store.GetBackupDirectory(manifest.Id), file.Name)).Length, file.Bytes);
+            Assert.True(File.Exists(Path.Join(store.GetBackupDirectory(manifest.Id), DatabaseBackupStore.MetricsSqlName)));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CONFIG_PATH", previous);
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
+    public void CommitStaging_RejectsMetricsOnlyStaging()
+    {
+        var root = Path.Join(Path.GetTempPath(), $"nzbdav-store-{Guid.NewGuid():N}");
+        var previous = Environment.GetEnvironmentVariable("CONFIG_PATH");
+        Environment.SetEnvironmentVariable("CONFIG_PATH", root);
+        try
+        {
+            var store = new DatabaseBackupStore();
+            var staging = store.CreateStaging("manual");
+            File.WriteAllText(Path.Join(staging, DatabaseBackupStore.MetricsSqlName), "legacy metrics");
+
+            Assert.Throws<InvalidOperationException>(() => store.CommitStaging(staging, "manual", null, false, "test", null));
+            Assert.Empty(store.List());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CONFIG_PATH", previous);
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
     public void Retention_RespectsPreservedAndZeroDisablesPruning()
     {
         var root = Path.Join(Path.GetTempPath(), $"nzbdav-store-{Guid.NewGuid():N}");
@@ -406,6 +459,214 @@ public sealed class DatabaseBackupStoreTests
         {
             // best effort
         }
+    }
+}
+
+[Collection(nameof(ConfigPathCollection))]
+public sealed class DatabaseBackupTaskTests : IDisposable
+{
+    private static readonly byte[] MetricsSentinel = Encoding.UTF8.GetBytes("not-a-sqlite-file");
+    private readonly string _root = Path.Join(Path.GetTempPath(), $"nzbdav-backup-task-{Guid.NewGuid():N}");
+    private readonly string? _previousConfigPath = Environment.GetEnvironmentVariable("CONFIG_PATH");
+    private readonly int _previousExitCode = Environment.ExitCode;
+    private readonly DatabaseBackupStore _store = new();
+
+    public DatabaseBackupTaskTests()
+    {
+        Directory.CreateDirectory(_root);
+        Environment.SetEnvironmentVariable("CONFIG_PATH", _root);
+        DavDatabaseContext.ResetOptionsForTests();
+        _store.EnsureInitialized();
+    }
+
+    [Fact]
+    public async Task RunInternalAsync_DoesNotDumpMetrics()
+    {
+        await CreateMarkerDatabaseAsync(DavDatabaseContext.DatabaseFilePath, "live-main", withMigrationsHistory: true);
+        await CreateMarkerDatabaseAsync(Path.Join(DavDatabaseContext.ConfigPath, "warden.db"), "live-warden", withMigrationsHistory: false);
+        SeedMetricsSentinel();
+
+        var manifest = await new DatabaseBackupTask(
+            new ConfigManager(), new WebsocketManager(), _store, DatabaseBackupKinds.Manual).RunInternalAsync();
+
+        Assert.Equal(["db.sql", "warden.sql"], manifest.Files.Select(file => file.Name));
+        var dir = _store.GetBackupDirectory(manifest.Id);
+        Assert.True(File.Exists(Path.Join(dir, DatabaseBackupStore.DbSqlName)));
+        Assert.True(File.Exists(Path.Join(dir, DatabaseBackupStore.WardenSqlName)));
+        Assert.False(File.Exists(Path.Join(dir, DatabaseBackupStore.MetricsSqlName)));
+        AssertMetricsUntouched();
+    }
+
+    [Fact]
+    public async Task ExecuteInternal_LegacyBackupWithMetricsDump_StagesOnlyMainAndWarden()
+    {
+        await CreateMarkerDatabaseAsync(DavDatabaseContext.DatabaseFilePath, "live-main", withMigrationsHistory: true);
+        await CreateMarkerDatabaseAsync(Path.Join(DavDatabaseContext.ConfigPath, "warden.db"), "live-warden", withMigrationsHistory: false);
+        SeedMetricsSentinel();
+
+        var fixtures = Path.Join(DavDatabaseContext.ConfigPath, "fixtures");
+        Directory.CreateDirectory(fixtures);
+        await CreateMarkerDatabaseAsync(Path.Join(fixtures, "main.sqlite"), "backup-main", withMigrationsHistory: true);
+        await CreateMarkerDatabaseAsync(Path.Join(fixtures, "warden.sqlite"), "backup-warden", withMigrationsHistory: false);
+        await SqliteDumper.DumpToFileAsync(Path.Join(fixtures, "main.sqlite"), Path.Join(fixtures, "db.sql"));
+        await SqliteDumper.DumpToFileAsync(Path.Join(fixtures, "warden.sqlite"), Path.Join(fixtures, "warden.sql"));
+        var legacy = CreateLegacyBackup(
+            dbSql: await File.ReadAllTextAsync(Path.Join(fixtures, "db.sql")),
+            wardenSql: await File.ReadAllTextAsync(Path.Join(fixtures, "warden.sql")),
+            metricsSql: "THIS IS NOT SQL;");
+
+        var lifetime = new RecordingLifetime();
+        var task = new TestRestoreStageTask(
+            new ConfigManager(),
+            new WebsocketManager(),
+            _store,
+            new RestartService(lifetime, new ProcessExitCoordinator()),
+            legacy.Id);
+        await task.RunAsync();
+        await lifetime.Stopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var intent = _store.ReadPendingRestore();
+        Assert.NotNull(intent);
+        Assert.Equal(["db.sqlite", "warden.db"], intent!.StagedFiles);
+        Assert.False(File.Exists(Path.Join(_store.RestoreStagingRoot, "metrics.sqlite")));
+        Assert.Equal("backup-main", await ReadMarkerAsync(Path.Join(_store.RestoreStagingRoot, "db.sqlite")));
+        Assert.Equal("backup-warden", await ReadMarkerAsync(Path.Join(_store.RestoreStagingRoot, "warden.db")));
+        Assert.Equal("live-main", await ReadMarkerAsync(DavDatabaseContext.DatabaseFilePath));
+        AssertMetricsUntouched();
+
+        var pre = _store.Get(intent.PreRestoreBackupId);
+        Assert.NotNull(pre);
+        Assert.True(pre!.Preserved);
+        Assert.Equal(["db.sql", "warden.sql"], pre.Files.Select(file => file.Name));
+        Assert.False(File.Exists(Path.Join(_store.GetBackupDirectory(pre.Id), DatabaseBackupStore.MetricsSqlName)));
+        Assert.True(File.Exists(Path.Join(_store.GetBackupDirectory(legacy.Id), DatabaseBackupStore.MetricsSqlName)));
+    }
+
+    public void Dispose()
+    {
+        SqliteConnection.ClearAllPools();
+        Environment.SetEnvironmentVariable("CONFIG_PATH", _previousConfigPath);
+        DavDatabaseContext.ResetOptionsForTests();
+        Environment.ExitCode = _previousExitCode;
+        try
+        {
+            if (Directory.Exists(_root))
+                Directory.Delete(_root, recursive: true);
+        }
+        catch
+        {
+            // best effort
+        }
+    }
+
+    private static async Task CreateMarkerDatabaseAsync(string path, string marker, bool withMigrationsHistory)
+    {
+        var cs = new SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            Pooling = false,
+        }.ToString();
+        await using var connection = new SqliteConnection(cs);
+        await connection.OpenAsync();
+
+        await using (var schema = connection.CreateCommand())
+        {
+            schema.CommandText = withMigrationsHistory
+                ? """
+                  CREATE TABLE "__EFMigrationsHistory" ("MigrationId" TEXT NOT NULL PRIMARY KEY, "ProductVersion" TEXT NOT NULL);
+                  CREATE TABLE Marker(Value TEXT);
+                  """
+                : "CREATE TABLE Marker(Value TEXT);";
+            await schema.ExecuteNonQueryAsync();
+        }
+
+        await using var insert = connection.CreateCommand();
+        insert.CommandText = "INSERT INTO Marker(Value) VALUES ($marker);";
+        insert.Parameters.AddWithValue("$marker", marker);
+        await insert.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<string> ReadMarkerAsync(string path)
+    {
+        var cs = new SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        }.ToString();
+        await using var connection = new SqliteConnection(cs);
+        await connection.OpenAsync();
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT Value FROM Marker;";
+        return (string)(await cmd.ExecuteScalarAsync())!;
+    }
+
+    private static void SeedMetricsSentinel() =>
+        File.WriteAllBytes(MetricsDbContext.DatabaseFilePath, MetricsSentinel);
+
+    private static void AssertMetricsUntouched()
+    {
+        Assert.Equal(MetricsSentinel, File.ReadAllBytes(MetricsDbContext.DatabaseFilePath));
+        Assert.False(File.Exists(MetricsDbContext.DatabaseFilePath + "-wal"));
+        Assert.False(File.Exists(MetricsDbContext.DatabaseFilePath + "-shm"));
+    }
+
+    private DatabaseBackupManifest CreateLegacyBackup(string? dbSql, string? wardenSql, string? metricsSql)
+    {
+        var id = $"legacy-{Guid.NewGuid():N}";
+        var dir = _store.GetBackupDirectory(id);
+        Directory.CreateDirectory(dir);
+        var files = new List<DatabaseBackupFileEntry>();
+        foreach (var (name, text) in new[]
+                 {
+                     (DatabaseBackupStore.DbSqlName, dbSql),
+                     (DatabaseBackupStore.WardenSqlName, wardenSql),
+                     (DatabaseBackupStore.MetricsSqlName, metricsSql),
+                 })
+        {
+            if (text is null)
+                continue;
+            var path = Path.Join(dir, name);
+            File.WriteAllText(path, text);
+            files.Add(new DatabaseBackupFileEntry { Name = name, Bytes = new FileInfo(path).Length });
+        }
+
+        var manifest = new DatabaseBackupManifest
+        {
+            Id = id,
+            CreatedAt = DateTimeOffset.UtcNow,
+            Kind = DatabaseBackupKinds.Uploaded,
+            Preserved = false,
+            AppVersion = "legacy",
+            LastMainMigration = null,
+            Files = files,
+        };
+        _store.SaveManifest(manifest);
+        return manifest;
+    }
+
+    private sealed class RecordingLifetime : IHostApplicationLifetime
+    {
+        public TaskCompletionSource<bool> Stopped { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+        public CancellationToken ApplicationStopping => CancellationToken.None;
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+
+        public void StopApplication() => Stopped.TrySetResult(true);
+    }
+
+    private sealed class TestRestoreStageTask(
+        ConfigManager configManager,
+        WebsocketManager websocketManager,
+        DatabaseBackupStore store,
+        RestartService restartService,
+        string backupId)
+        : DatabaseRestoreStageTask(configManager, websocketManager, store, restartService, backupId)
+    {
+        public Task RunAsync() => ExecuteInternal();
     }
 }
 

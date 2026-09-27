@@ -2,7 +2,7 @@
 
 ## In-app Backup & Restore
 
-**Settings → Backup & Restore** dumps SQLite databases (`db.sqlite`, `metrics.sqlite`, `warden.db`) as `.sql` under `{CONFIG_PATH}/backups/`.
+**Settings → Backup & Restore** dumps SQLite databases (`db.sqlite`, `warden.db`) as `.sql` under `{CONFIG_PATH}/backups/`. Metrics history (`metrics.sqlite`) is not included and is left unchanged by a restore.
 
 - Create on demand, schedule daily, set retention, preserve important snapshots.
 - Download as zip; upload a previous zip/`.sql`.
@@ -16,9 +16,9 @@ See [Backup settings](../configuration/backup.md).
 
 ## PostgreSQL main database
 
-When `DATABASE_PROVIDER=postgres`, the in-app backup includes only the SQLite
-auxiliary stores (`metrics.sqlite` and `warden.db`). Back up the main database
-with `pg_dump`; see [PostgreSQL](../operations/postgresql.md).
+When `DATABASE_PROVIDER=postgres`, the in-app backup includes only the local
+`warden.db`. Back up the main database with `pg_dump`; see
+[PostgreSQL](../operations/postgresql.md).
 
 ## Config volume
 

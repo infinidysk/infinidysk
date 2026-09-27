@@ -47,11 +47,11 @@ public class DatabaseRestoreStageTask(
             }
 
             if (DatabaseProviderConfig.IsPostgres
-                && !File.Exists(Path.Join(backupDir, DatabaseBackupStore.MetricsSqlName))
                 && !File.Exists(Path.Join(backupDir, DatabaseBackupStore.WardenSqlName)))
             {
                 throw new InvalidOperationException(
-                    "Backup has no local metrics or warden SQLite dumps to restore. Restore the PostgreSQL main database with PostgreSQL tooling.");
+                    "Backup has no local warden SQLite dump to restore. Metrics history is not restored from backups. " +
+                    "Restore the PostgreSQL main database with PostgreSQL tooling.");
             }
 
             if (!DatabaseProviderConfig.IsPostgres)
@@ -84,13 +84,6 @@ public class DatabaseRestoreStageTask(
             {
                 Report("Skipping main database restore (PostgreSQL is externally managed)");
             }
-
-            await ImportOptionalAsync(
-                Path.Join(backupDir, DatabaseBackupStore.MetricsSqlName),
-                Path.Join(store.RestoreStagingRoot, "metrics.sqlite"),
-                requireMigrationsHistory: false,
-                "metrics database",
-                stagedFiles).ConfigureAwait(false);
 
             await ImportOptionalAsync(
                 Path.Join(backupDir, DatabaseBackupStore.WardenSqlName),

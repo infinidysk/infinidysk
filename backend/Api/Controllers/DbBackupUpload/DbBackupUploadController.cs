@@ -43,7 +43,7 @@ public class DbBackupUploadController(DatabaseBackupStore store) : BaseApiContro
             {
                 throw new BadHttpRequestException(
                     "Standalone SQLite SQL dumps cannot be uploaded while PostgreSQL is the main database. " +
-                    "Use PostgreSQL tooling for the main database, or upload an archive containing only local metrics/warden dumps.");
+                    "Use PostgreSQL tooling for the main database, or upload an archive containing a local warden dump.");
             }
 
             if (fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
@@ -103,7 +103,6 @@ public class DbBackupUploadController(DatabaseBackupStore store) : BaseApiContro
 
             var fileName = Path.GetFileName(relative);
             if (fileName is not (DatabaseBackupStore.DbSqlName
-                or DatabaseBackupStore.MetricsSqlName
                 or DatabaseBackupStore.WardenSqlName
                 or DatabaseBackupStore.ManifestFileName))
                 continue;
@@ -153,7 +152,6 @@ public class DbBackupUploadController(DatabaseBackupStore store) : BaseApiContro
         var sqlFiles = new[]
         {
             DatabaseBackupStore.DbSqlName,
-            DatabaseBackupStore.MetricsSqlName,
             DatabaseBackupStore.WardenSqlName,
         };
 
@@ -183,7 +181,10 @@ public class DbBackupUploadController(DatabaseBackupStore store) : BaseApiContro
         }
 
         if (!found)
-            throw new BadHttpRequestException("Upload did not contain any recognized .sql dump files.");
+        {
+            throw new BadHttpRequestException(
+                "Upload did not contain db.sql or warden.sql. Metrics history cannot be restored from a database backup.");
+        }
     }
 
     private static BadHttpRequestException PayloadTooLarge(string message) =>
