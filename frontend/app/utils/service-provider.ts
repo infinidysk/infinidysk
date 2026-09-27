@@ -18,6 +18,7 @@ export const NAV_FEATURE_IDS = [
   "settings.queue",
   "settings.sabnzbd",
   "settings.streaming",
+  "settings.native-cache",
   "settings.webdav",
   "settings.watchdog",
   "settings.preflight",

@@ -81,6 +81,38 @@ public sealed class NativeCacheServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task LastModified_ReusesBlobGenerationUntilContentChanges()
+    {
+        using var fileStore = new FileBlobStore();
+        var blobId = Guid.NewGuid();
+        await fileStore.WriteBlob(blobId, new DavNzbFile { Id = blobId, SegmentIds = ["first"] });
+        var counting = new CountingBlobs(fileStore);
+        var item = new DavItem { Id = Guid.NewGuid(), Name = "movie", FileSize = 3,
+            FileBlobId = blobId, SubType = DavItem.ItemSubType.NzbFile,
+            CreatedAt = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc) };
+        using var repairs = new RepairPatchStore(Path.Combine(_root, "patches"), 100);
+        await using var service = new NativeCacheService(Config("native"), counting, repairs);
+        Assert.True(await service.WaitForInitializationAsync());
+        var initial = await service.GetLastModifiedAsync(item, CancellationToken.None);
+        Assert.Equal(initial, await service.GetLastModifiedAsync(item, CancellationToken.None));
+        Assert.Equal(1, counting.RawReads);
+        await fileStore.WriteBlob(blobId, new DavNzbFile { Id = blobId, SegmentIds = ["second"] });
+        Assert.True(await service.GetLastModifiedAsync(item, CancellationToken.None) > initial);
+        Assert.Equal(2, counting.RawReads);
+    }
+
+    private sealed class CountingBlobs(IBlobStore inner) : IBlobStore
+    {
+        public int RawReads { get; private set; }
+        public Task WriteBlob(Guid id, Stream stream, CancellationToken ct = default) => inner.WriteBlob(id, stream, ct);
+        public Task WriteBlob<T>(Guid id, T blob, CancellationToken ct = default) => inner.WriteBlob(id, blob, ct);
+        public Stream? ReadBlob(Guid id) { RawReads++; return inner.ReadBlob(id); }
+        public Task<T?> ReadBlob<T>(Guid id) => inner.ReadBlob<T>(id);
+        public bool Exists(Guid id) => inner.Exists(id);
+        public bool Delete(Guid id) => inner.Delete(id);
+    }
+
+    [Fact]
     public async Task SaturatedStreams_StillServeCachedBytesWithoutOpeningSource()
     {
         using var blobs = new FileBlobStore();
