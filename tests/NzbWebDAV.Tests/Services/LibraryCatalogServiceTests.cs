@@ -264,6 +264,14 @@ public sealed class LibraryCatalogServiceTests : IAsyncLifetime
             View = "files", Category = "all", Search = "Aladin",
         });
         Assert.Equal("Aladdin.1992.mkv", Assert.Single(approximate.Files!).Item.DisplayName);
+        foreach (var search in new[] { "aladdin", "ALADDIN", "aladin", "ALADIN" })
+        {
+            var result = await browse.QueryAsync(new LibraryBrowseQuery
+            {
+                View = "files", Category = "all", Search = search,
+            });
+            Assert.Equal("Aladdin.1992.mkv", Assert.Single(result.Files!).Item.DisplayName);
+        }
 
         _context.Items.Add(DavItem.New(Guid.NewGuid(), DavItem.ContentFolder, "Aladin.Exact.mkv", 100,
             DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile,
@@ -274,6 +282,11 @@ public sealed class LibraryCatalogServiceTests : IAsyncLifetime
             View = "files", Category = "all", Search = "Aladin",
         });
         Assert.Equal("Aladin.Exact.mkv", Assert.Single(exact.Files!).Item.DisplayName);
+        var upperExact = await browse.QueryAsync(new LibraryBrowseQuery
+        {
+            View = "files", Category = "all", Search = "ALADIN",
+        });
+        Assert.Equal("Aladin.Exact.mkv", Assert.Single(upperExact.Files!).Item.DisplayName);
     }
 
     [Fact]
