@@ -22,6 +22,7 @@ import { formatFileSize } from "~/utils/file-size";
 import { withUrlBase } from "~/utils/url-base";
 import { Alert, Badge, Button, Input, PageHeader } from "~/components/ui";
 import { LibraryFileModal, type LibraryModalFeedback } from "./file-modal";
+import { fileName, libraryPath } from "./library-path";
 import { MediaPreview } from "~/components/media-preview";
 import { plexRequest } from "~/utils/plex-request";
 
@@ -48,6 +49,7 @@ export type LibraryPageData = {
   browse: LibraryBrowseResponse;
   previewUrls: Record<string, string>;
   nativeCacheActive: boolean;
+  libraryRoot: string | null;
 };
 
 function parseCategory(value: string | null): Category {
@@ -90,7 +92,7 @@ function parseSeason(value: string | null): number | null {
 }
 
 export async function loader({ request }: Route.LoaderArgs): Promise<LibraryPageData | Response> {
-  const settings = await backendClient.getConfig(["media.library-enabled"]);
+  const settings = await backendClient.getConfig(["media.library-enabled", "media.library-dir"]);
   if (
     settings.some(
       (item) =>
@@ -98,6 +100,8 @@ export async function loader({ request }: Route.LoaderArgs): Promise<LibraryPage
     )
   )
     return redirect("/settings?tab=library");
+  const libraryRoot =
+    settings.find((item) => item.configName === "media.library-dir")?.configValue.trim() || null;
   const url = new URL(request.url);
   const query = {
     q: url.searchParams.get("q")?.trim() ?? "",
@@ -150,7 +154,7 @@ export async function loader({ request }: Route.LoaderArgs): Promise<LibraryPage
   } catch {
     // The catalog remains usable if the optional cache status cannot be loaded.
   }
-  return { query, browse, previewUrls, nativeCacheActive };
+  return { query, browse, previewUrls, nativeCacheActive, libraryRoot };
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -186,10 +190,13 @@ function indexAge(value: string | null | undefined): string {
     : `Scanned ${time.toLocaleString()}`;
 }
 
-function mappingLabel(item: LibraryCatalogItem): "Internal" | "External" | "Broken" | "Unmapped" {
+function mappingLabel(
+  item: LibraryCatalogItem,
+): "Internal" | "External" | "Broken" | "Unmapped" | "Unverified" {
   if (item.mappingCount === 0 || item.mappings.length === 0) return "Unmapped";
   if (item.mappings.some((mapping) => mapping.status === "broken" || mapping.status === "stale"))
     return "Broken";
+  if (item.mappings.some((mapping) => mapping.status === "unchecked")) return "Unverified";
   return item.kind === "internal" ? "Internal" : "External";
 }
 
@@ -197,6 +204,7 @@ function mappingBadgeClass(item: LibraryCatalogItem): string {
   const mapping = mappingLabel(item);
   if (mapping === "Broken") return "badge-error";
   if (mapping === "Unmapped") return "badge-warning";
+  if (mapping === "Unverified") return "badge-warning";
   if (mapping === "External") return "badge-info";
   return "badge-success";
 }
@@ -215,7 +223,7 @@ export default function Library({ loaderData }: Route.ComponentProps) {
   const revalidator = useRevalidator();
   const fetcher = useFetcher<{ status: boolean; error?: string }>();
   const groupFetcher = useFetcher<LibraryPageData>();
-  const { query, browse, previewUrls, nativeCacheActive } = loaderData;
+  const { query, browse, previewUrls, nativeCacheActive, libraryRoot } = loaderData;
   const [expandedKey, setExpandedKey] = useState<string | null>(query.group);
   const [selected, setSelected] = useState<LibraryCatalogItem | null>(null);
   const [details, setDetails] = useState<LibraryFileDetails | null>(null);
@@ -641,47 +649,52 @@ export default function Library({ loaderData }: Route.ComponentProps) {
                 </tr>
               </thead>
               <tbody>
-                {(browse.files ?? []).map((row) => (
-                  <tr
-                    key={
-                      row.item.davItemId ?? row.item.mappings[0]?.linkPath ?? row.item.displayName
-                    }
-                  >
-                    <td className="w-[34rem] max-w-[34rem] align-top">
-                      <button
-                        type="button"
-                        className="link block w-full whitespace-normal text-left font-medium"
-                        title={
-                          row.item.contentPath ??
-                          row.item.mappings[0]?.linkPath ??
-                          row.item.displayName
-                        }
-                        onClick={() => openModal(row.item)}
-                      >
-                        <span className="block break-all leading-snug">{row.item.displayName}</span>
-                        <span className="mt-1 block break-all text-xs font-normal text-base-content/50">
-                          {row.item.contentPath ?? row.item.mappings[0]?.linkPath ?? "—"}
-                        </span>
-                      </button>
-                    </td>
-                    <td>{row.title ?? <span className="text-base-content/45">Unmatched</span>}</td>
-                    <td>{row.season == null ? "—" : row.season}</td>
-                    <td>{row.episode == null ? "—" : row.episode}</td>
-                    <td>
-                      {row.category === "shows"
-                        ? "TV"
-                        : row.category === "movies"
-                          ? "Movie"
-                          : "Unmatched"}
-                    </td>
-                    <td>{row.item.size == null ? "—" : formatFileSize(row.item.size)}</td>
-                    <td>
-                      <Badge className={mappingBadgeClass(row.item)}>
-                        {mappingLabel(row.item)}
-                      </Badge>
-                    </td>
-                  </tr>
-                ))}
+                {(browse.files ?? []).map((row) => {
+                  const path = libraryPath(row.item, libraryRoot);
+                  return (
+                    <tr
+                      key={
+                        row.item.davItemId ?? row.item.mappings[0]?.linkPath ?? row.item.displayName
+                      }
+                    >
+                      <td className="w-[34rem] max-w-[34rem] align-top">
+                        <button
+                          type="button"
+                          className="link block w-full whitespace-normal text-left font-medium"
+                          title={path ?? row.item.displayName}
+                          onClick={() => openModal(row.item)}
+                        >
+                          <span className="block break-all leading-snug">
+                            {fileName(row.item.displayName)}
+                          </span>
+                          {path && (
+                            <span className="mt-1 block break-all text-xs font-normal text-base-content/50">
+                              {path}
+                            </span>
+                          )}
+                        </button>
+                      </td>
+                      <td>
+                        {row.title ?? <span className="text-base-content/45">Unmatched</span>}
+                      </td>
+                      <td>{row.season == null ? "—" : row.season}</td>
+                      <td>{row.episode == null ? "—" : row.episode}</td>
+                      <td>
+                        {row.category === "shows"
+                          ? "TV"
+                          : row.category === "movies"
+                            ? "Movie"
+                            : "Unmatched"}
+                      </td>
+                      <td>{row.item.size == null ? "—" : formatFileSize(row.item.size)}</td>
+                      <td>
+                        <Badge className={mappingBadgeClass(row.item)}>
+                          {mappingLabel(row.item)}
+                        </Badge>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
             {!browse.files?.length && (
@@ -921,6 +934,7 @@ export default function Library({ loaderData }: Route.ComponentProps) {
       {selected ? (
         <LibraryFileModal
           item={selected}
+          libraryRoot={libraryRoot}
           quality={
             (browse.files ?? []).find(
               ({ item }) =>

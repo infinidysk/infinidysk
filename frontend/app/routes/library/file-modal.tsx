@@ -1,6 +1,7 @@
 import { Alert, Badge, Button, Icon, Modal } from "~/components/ui";
 import { formatFileSize } from "~/utils/file-size";
 import type { LibraryCatalogItem, LibraryFileDetails } from "~/clients/backend-client.server";
+import { fileName, fullLibraryLinkPath } from "./library-path";
 
 export type LibraryModalActionState = "idle" | "pending";
 
@@ -11,6 +12,7 @@ export type LibraryModalFeedback = {
 
 export type LibraryFileModalProps = {
   item: LibraryCatalogItem;
+  libraryRoot: string | null;
   quality: "4k" | "1080p" | "720p" | "sd" | "unknown";
   cachePercentage: number | null;
   details: LibraryFileDetails | null;
@@ -38,7 +40,7 @@ export function LibraryFileModal(props: LibraryFileModalProps) {
   const sourcePath = details?.contentPath ?? item.contentPath ?? item.mappings[0]?.targetText;
 
   return (
-    <Modal open title={item.displayName} onClose={props.onClose} size="wide">
+    <Modal open title={fileName(item.displayName)} onClose={props.onClose} size="wide">
       <div className="flex flex-col gap-5">
         <div className="rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/15 via-base-200 to-base-200 p-5">
           <div className="flex flex-wrap items-start gap-4">
@@ -50,7 +52,7 @@ export function LibraryFileModal(props: LibraryFileModalProps) {
                 Library file
               </p>
               <p className="mt-1 break-all text-lg font-semibold leading-snug">
-                {item.displayName}
+                {fileName(item.displayName)}
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Badge>{item.health}</Badge>
@@ -86,6 +88,22 @@ export function LibraryFileModal(props: LibraryFileModalProps) {
             />
           </div>
         ) : null}
+
+        {item.mappings.length > 0 && (
+          <section className="rounded-xl border border-base-content/10 bg-base-200 p-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-base-content/55">
+              Library path
+            </h3>
+            {item.mappings.map((mapping) => (
+              <p
+                key={mapping.linkPath}
+                className="mt-2 break-all font-mono text-xs leading-relaxed"
+              >
+                {fullLibraryLinkPath(mapping.linkPath, props.libraryRoot)}
+              </p>
+            ))}
+          </section>
+        )}
 
         {sourcePath ? (
           <section className="rounded-xl border border-base-content/10 bg-base-200 p-4">
@@ -192,7 +210,9 @@ export function LibraryFileModal(props: LibraryFileModalProps) {
                   <Badge>{m.mappingType}</Badge>
                   <Badge>{m.status}</Badge>
                 </div>
-                <p className="break-all font-medium">{m.linkPath}</p>
+                <p className="break-all font-medium">
+                  {fullLibraryLinkPath(m.linkPath, props.libraryRoot)}
+                </p>
                 <p className="mt-1 break-all font-mono text-xs text-base-content/55">
                   → {m.targetText}
                 </p>

@@ -60,6 +60,7 @@ const page: LibraryPageData = {
   },
   previewUrls: {},
   nativeCacheActive: true,
+  libraryRoot: "/mnt/plex",
 };
 
 describe("Library accordion", () => {
@@ -140,6 +141,64 @@ describe("Library accordion", () => {
     expect(screen.getByRole("link", { name: "Movies" })).toBeTruthy();
     expect(screen.getByRole("cell", { name: "Film" })).toBeTruthy();
     expect(screen.getAllByRole("cell", { name: "—" })).toHaveLength(2);
+  });
+
+  it("shows an external file name once with its full library path and unverified status", async () => {
+    const relativePath = "TV-HD/Happy Family/Season 1/Happy Family - S01E01.mkv";
+    const externalItem = {
+      kind: "external" as const,
+      davItemId: null,
+      displayName: relativePath,
+      contentPath: null,
+      size: null,
+      mappingCount: 1,
+      health: "attention",
+      mappings: [
+        {
+          linkPath: relativePath,
+          targetText: "/mnt/remote/nzbdav/.ids/missing",
+          mappingType: "external" as const,
+          status: "unchecked" as const,
+        },
+      ],
+    };
+    const tablePage: LibraryPageData = {
+      ...page,
+      query: { ...page.query, view: "files", category: "all" },
+      browse: {
+        ...page.browse,
+        groups: [],
+        totalGroups: 0,
+        pageSize: 50,
+        totalFiles: 1,
+        files: [
+          {
+            item: externalItem,
+            title: "Happy Family",
+            season: 1,
+            episode: 1,
+            category: "shows",
+            quality: "1080p",
+            cachePercentage: null,
+          },
+        ],
+      },
+    };
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/library",
+          loader: () => tablePage,
+          element: <Library {...({ loaderData: tablePage } as Parameters<typeof Library>[0])} />,
+        },
+      ],
+      { initialEntries: ["/library?view=files&category=all"] },
+    );
+    render(<RouterProvider router={router} />);
+    expect(await screen.findByText("Happy Family - S01E01.mkv")).toBeTruthy();
+    expect(screen.getByText(`/mnt/plex/${relativePath}`)).toBeTruthy();
+    expect(screen.queryByText(relativePath)).toBeNull();
+    expect(screen.getByText("Unverified")).toBeTruthy();
   });
 
   it("loads files inline without changing the location", async () => {

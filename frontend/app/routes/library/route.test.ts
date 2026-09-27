@@ -57,6 +57,16 @@ function requestFor(path: string): Request {
 }
 
 describe("library browse loader", () => {
+  it("loads the configured library root for full mapping paths", async () => {
+    configMock().mockResolvedValue([
+      { configName: "media.library-dir", configValue: "/mnt/plex/" },
+    ]);
+    const result = await loader({ request: requestFor("/library"), params: {} } as never);
+    if (result instanceof Response) throw new Error("Expected library data.");
+    expect(result.libraryRoot).toBe("/mnt/plex/");
+    expect(configMock()).toHaveBeenCalledWith(["media.library-enabled", "media.library-dir"]);
+  });
+
   it("redirects to settings when Media Library is disabled", async () => {
     configMock().mockResolvedValue([
       {
