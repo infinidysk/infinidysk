@@ -7,6 +7,30 @@ namespace NzbWebDAV.Tests.Utils;
 public sealed class SymlinkAndStrmUtilTests
 {
     [Fact]
+    public void GetAllSymlinksAndStrms_CancellationStopsTraversal()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(Path.Join(root, "first.strm"), "http://localhost/view/.ids/10000000-0000-0000-0000-000000000001.mkv");
+            File.WriteAllText(Path.Join(root, "second.strm"), "http://localhost/view/.ids/10000000-0000-0000-0000-000000000002.mkv");
+            using var cancellation = new CancellationTokenSource();
+            using var iterator = SymlinkAndStrmUtil.GetAllSymlinksAndStrms(root, cancellation.Token).GetEnumerator();
+            Assert.True(iterator.MoveNext());
+            cancellation.Cancel();
+            Assert.ThrowsAny<OperationCanceledException>(() => iterator.MoveNext());
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [SkippableFact]
+    public void LinuxTraversal_CancellationDisposesChildProcess()
+    {
+        Skip.IfNot(OperatingSystem.IsLinux());
+        GetAllSymlinksAndStrms_CancellationStopsTraversal();
+    }
+
+    [Fact]
     public void LinuxFindStartInfo_PassesHostileRootAsOneOpaqueArgument()
     {
         var hostileRoot = Path.Join(
@@ -36,6 +60,23 @@ public sealed class SymlinkAndStrmUtilTests
         var error = Assert.Throws<InvalidOperationException>(
             () => SymlinkAndStrmUtil.ReadNullTerminated(truncated));
         Assert.Contains("truncated NUL-terminated path", error.Message);
+    }
+
+    [Fact]
+    public void ReadNextPath_ConvertsPartialRecordFailureOnlyWhenCancelled()
+    {
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        using var cancelledReader = new StringReader("partial-without-nul");
+
+        var cancellation = Assert.Throws<OperationCanceledException>(
+            () => SymlinkAndStrmUtil.ReadNextPath(cancelledReader, cancelled.Token));
+        Assert.IsType<InvalidOperationException>(cancellation.InnerException);
+
+        using var activeReader = new StringReader("partial-without-nul");
+        var failure = Assert.Throws<InvalidOperationException>(
+            () => SymlinkAndStrmUtil.ReadNextPath(activeReader, CancellationToken.None));
+        Assert.Contains("truncated NUL-terminated path", failure.Message);
     }
 
     [Fact]

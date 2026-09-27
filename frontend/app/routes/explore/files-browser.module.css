@@ -1,0 +1,193 @@
+.browser {
+  min-width: 0;
+}
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+  padding-block: 10px;
+}
+.toolbar label {
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+  min-width: 0;
+}
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+  padding-block: 8px;
+  border-block: 1px solid var(--color-base-300);
+}
+.filters label {
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+}
+.filters input,
+.filters select {
+  width: 170px;
+  max-width: 100%;
+}
+.viewport {
+  min-width: 0;
+  max-height: 68vh;
+  overflow: auto;
+  scrollbar-color: var(--color-base-300) transparent;
+  overflow-anchor: auto;
+}
+.grid {
+  min-width: 1060px;
+  color: var(--color-base-content);
+}
+.row {
+  display: grid;
+  grid-template-columns: minmax(300px, 1fr) 120px 156px 88px 88px 116px 176px;
+  min-height: 30px;
+  align-items: center;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-base-content) 12%, transparent);
+  font-size: 0.8125rem;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.row > [role="gridcell"],
+.row > [role="cell"] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row:nth-child(even) {
+  background: color-mix(in srgb, var(--color-base-content) 3%, transparent);
+}
+.row:hover,
+.row:focus-within {
+  background: color-mix(in srgb, var(--color-base-content) 8%, transparent);
+}
+.row[aria-selected="true"] {
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+.listRow {
+  min-height: 40px;
+}
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--color-base-200);
+  font-size: 12px;
+  font-weight: 600;
+}
+.header:hover,
+.header:focus-within {
+  background: var(--color-base-200);
+}
+.name {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 4px;
+  padding-inline-start: min(160px, calc(var(--depth, 0) * 16px));
+}
+.nameText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: start;
+}
+.nameText:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+.path {
+  display: block;
+  font-size: 10px;
+  line-height: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: color-mix(in srgb, var(--color-base-content) 70%, transparent);
+}
+.actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+.browser .action {
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  flex: 0 0 26px;
+}
+.action span {
+  font-size: 18px;
+}
+.branch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding-inline-start: min(160px, calc(var(--depth, 0) * 16px));
+  font-size: 12px;
+}
+.details {
+  border-top: 1px solid var(--color-base-300);
+  padding-block: 10px;
+  font-size: 12px;
+}
+.details dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px 16px;
+}
+.details dt {
+  color: color-mix(in srgb, var(--color-base-content) 70%, transparent);
+}
+.details dd {
+  overflow-wrap: anywhere;
+}
+.healthMenu {
+  position: relative;
+  font-size: 12px;
+}
+.healthOptions {
+  position: absolute;
+  top: 100%;
+  z-index: 4;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  min-width: 180px;
+  background: var(--color-base-200);
+  border: 1px solid var(--color-base-300);
+  border-radius: 4px;
+}
+.healthOptions label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+@media (min-width: 1200px) {
+  .name {
+    position: sticky;
+    left: 0;
+    background: var(--color-base-100);
+    z-index: 1;
+  }
+}
+@media (pointer: coarse) {
+  .row {
+    min-height: 40px;
+    grid-template-columns: minmax(300px, 1fr) 120px 156px 88px 88px 116px 228px;
+  }
+  .browser .action {
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+    flex-basis: 36px;
+  }
+}

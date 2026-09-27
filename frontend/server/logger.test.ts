@@ -66,6 +66,8 @@ afterEach(() => {
 describe("requestPathForLog", () => {
   it.each([
     ["/api", "/api"],
+    ["/api/../content/file.mkv", "/api/../content/file.mkv"],
+    ["//backup/path?apikey=synthetic-1441-api-key", "//backup/path"],
     ["/api?apikey=synthetic-1441-api-key&apikey=another-synthetic-key", "/api"],
     ["/prefix/api?%61PiKeY=synthetic-1441-api-key&APIKEY=second-key", "/prefix/api"],
     [requestUrl, "/prefix/api"],

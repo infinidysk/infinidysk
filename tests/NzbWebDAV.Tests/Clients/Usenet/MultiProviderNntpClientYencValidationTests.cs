@@ -120,6 +120,23 @@ public sealed class MultiProviderNntpClientYencValidationTests
     }
 
     [Fact]
+    public void ValidationContext_StreamingReusesFirstWinsPositionIndexAcrossReads()
+    {
+        string[] segmentIds = ["duplicate", "duplicate"];
+        string[][] fallbacks = [[], ["alternate"]];
+        var positionIndex = YencFileValidationContext.CreatePositionIndex(segmentIds, fallbacks);
+
+        using (YencFileValidationContext.BeginStreaming(segmentIds, fallbacks, positionIndex))
+            Assert.Equal(1, YencFileValidationContext.Current!.GetRequestDetails("duplicate").Position);
+
+        using (YencFileValidationContext.BeginStreaming(segmentIds, fallbacks, positionIndex))
+        {
+            Assert.Equal(1, YencFileValidationContext.Current!.GetRequestDetails("duplicate").Position);
+            Assert.Equal(2, YencFileValidationContext.Current.GetRequestDetails("alternate").Position);
+        }
+    }
+
+    [Fact]
     public void ValidationContext_Streaming_NormalizesBracketedIdsAndPrefersPrimaryIds()
     {
         using var validation = YencFileValidationContext.BeginStreaming(

@@ -28,7 +28,7 @@ import {
   parseHealthItemStatusMessage,
   type HealthQueueState,
   updateHealthCheckProgress,
-} from "./health-queue-state";
+} from "~/utils/health-queue-state";
 import { withUrlBase } from "~/utils/url-base";
 import { parseConfigBoolean } from "~/utils/config-bool";
 
