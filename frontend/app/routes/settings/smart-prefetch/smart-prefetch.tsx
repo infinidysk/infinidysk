@@ -1,7 +1,8 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
+import { withUrlBase } from "~/utils/url-base";
 import { Alert, Button, ManagedSetting, SettingsCard } from "~/components/ui";
 import { PlexSources } from "./plex-sources";
-import { PrefetchQueue } from "./prefetch-queue";
+import { PrefetchQueue } from "~/components/prefetch-queue";
 import {
   PREFETCH_KEY,
   hasSmartPrefetchSettingsChanged,
@@ -108,6 +109,12 @@ export function SmartPrefetchSettings({
       <details className="collapse collapse-arrow border border-base-content/10 bg-base-200/40">
         <summary className="collapse-title text-sm font-semibold">Prefetch activity</summary>
         <div className="collapse-content">
+          <p className="mb-3 text-sm text-base-content/65">
+            Follow live warming and review recent outcomes on the Smart Prefetch page.
+          </p>
+          <a className="btn btn-sm btn-outline" href={withUrlBase("/smart-prefetch")}>
+            View Smart Prefetch activity
+          </a>
           <PrefetchQueue />
         </div>
       </details>

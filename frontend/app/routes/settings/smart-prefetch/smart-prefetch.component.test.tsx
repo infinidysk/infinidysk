@@ -219,7 +219,7 @@ describe("Smart Prefetch settings", () => {
     const activity = screen.getByText("Prefetch activity").closest("details");
     expect(activity?.open).toBe(false);
     expect(
-      activity?.contains(await screen.findByRole("button", { name: "Preview policies" })),
+      activity?.contains(screen.getByRole("link", { name: "View Smart Prefetch activity" })),
     ).toBe(true);
     await userEvent.click(screen.getByText("Advanced settings"));
     expect(details?.open).toBe(true);

@@ -8,6 +8,18 @@ public sealed class PrefetchJobStoreTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "prefetch-jobs-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public void DailyBudgetUsed_ReflectsReturnedCredit()
+    {
+        using var jobs = new PrefetchJobStore(Path.Combine(_root, "jobs.db"));
+        var day = DateTime.UtcNow.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Equal(0, jobs.GetDailyBudgetUsed());
+        Assert.Equal(100, jobs.ReserveDailyCredit(100, 200, day));
+        Assert.Equal(100, jobs.GetDailyBudgetUsed());
+        jobs.ReturnDailyCredit(40, day);
+        Assert.Equal(60, jobs.GetDailyBudgetUsed());
+    }
+
+    [Fact]
     public void BridgingQueuedRanges_CoalescesTransitively_WithOwnersAndPriority()
     {
         using var jobs = new PrefetchJobStore(Path.Combine(_root, "jobs.db"));

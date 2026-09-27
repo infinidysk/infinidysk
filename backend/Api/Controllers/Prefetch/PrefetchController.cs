@@ -14,12 +14,14 @@ public sealed class PrefetchController(PrefetchRuntime runtime, PlexPrefetchServ
         await runtime.WaitForInitializationAsync(HttpContext.RequestAborted).ConfigureAwait(false);
         IReadOnlyList<PrefetchJob> jobs = [];
         var paused = true;
+        var dailyBudgetUsed = 0L;
         try
         {
             if (runtime.Healthy && runtime.Jobs is { } store)
             {
                 jobs = store.List();
                 paused = store.Paused;
+                dailyBudgetUsed = store.GetDailyBudgetUsed();
             }
         }
         catch (Exception exception) when (exception is IOException or Microsoft.Data.Sqlite.SqliteException or InvalidOperationException)
@@ -35,7 +37,7 @@ public sealed class PrefetchController(PrefetchRuntime runtime, PlexPrefetchServ
             Source = PlexPrefetchService.SourceLabel(job.Trigger),
             Reason = PlexPrefetchService.RangeReason(job.Trigger, job.Length)
         }),
-        settings = runtime.Settings(), policies.LastSuccess, policies.LastError
+        settings = runtime.Settings(), dailyBudgetUsed, policies.LastSuccess, policies.LastError
         });
     }
 }

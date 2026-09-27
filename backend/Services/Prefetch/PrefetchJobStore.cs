@@ -251,6 +251,16 @@ public sealed class PrefetchJobStore : IDisposable
         lock (_gate) Execute("UPDATE DailyBudget SET Bytes=MAX(0,Bytes-$bytes) WHERE Day=$day", ("$day", day), ("$bytes", bytes));
     }
 
+    public long GetDailyBudgetUsed()
+    {
+        lock (_gate)
+        {
+            var day = DateTime.UtcNow.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            using var lookup = Command("SELECT Bytes FROM DailyBudget WHERE Day=$day", ("$day", day));
+            return lookup.ExecuteScalar() as long? ?? 0;
+        }
+    }
+
     public PrefetchJob? ClaimNext()
     {
         lock (_gate)
