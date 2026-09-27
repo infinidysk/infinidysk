@@ -64,7 +64,7 @@ public sealed class DbBackupUploadTests : IDisposable
             if (Directory.Exists(_root))
                 Directory.Delete(_root, recursive: true);
         }
-        catch
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // best effort
         }

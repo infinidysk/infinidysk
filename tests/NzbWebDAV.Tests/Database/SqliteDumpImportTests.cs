@@ -553,7 +553,7 @@ public sealed class DatabaseBackupTaskTests : IDisposable
             if (Directory.Exists(_root))
                 Directory.Delete(_root, recursive: true);
         }
-        catch
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // best effort
         }
@@ -674,6 +674,52 @@ public sealed class DatabaseBackupTaskTests : IDisposable
 public sealed class DatabaseRestoreRunnerTests
 {
     [Fact]
+    public async Task ApplyPendingRestore_DiscardsLegacyMetricsOnlyIntent()
+    {
+        var root = Path.Join(Path.GetTempPath(), $"nzbdav-restore-{Guid.NewGuid():N}");
+        var previous = Environment.GetEnvironmentVariable("CONFIG_PATH");
+        Environment.SetEnvironmentVariable("CONFIG_PATH", root);
+        try
+        {
+            Directory.CreateDirectory(root);
+            var store = new DatabaseBackupStore();
+            store.EnsureInitialized();
+            store.PrepareRestoreStaging();
+            File.WriteAllText(MetricsDbContext.DatabaseFilePath, "live-metrics");
+            File.WriteAllText(Path.Join(store.RestoreStagingRoot, "metrics.sqlite"), "staged-metrics");
+            store.WritePendingRestore(new PendingRestoreIntent
+            {
+                BackupId = "legacy-metrics-only",
+                PreRestoreBackupId = "pre",
+                StagedFiles = ["metrics.sqlite"],
+                CreatedAt = DateTimeOffset.UtcNow,
+            });
+
+            var progress = new MigrationProgress();
+            progress.Initialize(DatabaseRestoreRunner.GetRestoreSteps(store.ReadPendingRestore()!));
+            await DatabaseRestoreRunner.ApplyPendingRestoreAsync(progress);
+
+            Assert.False(store.HasPendingRestore());
+            Assert.False(Directory.Exists(store.RestoreStagingRoot));
+            Assert.Equal("live-metrics", File.ReadAllText(MetricsDbContext.DatabaseFilePath));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CONFIG_PATH", previous);
+            SqliteConnection.ClearAllPools();
+            try
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(root, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // best effort
+            }
+        }
+    }
+
+    [Fact]
     public async Task ApplyPendingRestore_DiscardsMissingStagingFiles()
     {
         var root = Path.Join(Path.GetTempPath(), $"nzbdav-restore-{Guid.NewGuid():N}");
@@ -726,6 +772,7 @@ public sealed class DatabaseRestoreRunnerTests
             Directory.CreateDirectory(root);
             var store = new DatabaseBackupStore();
             store.EnsureInitialized();
+            File.WriteAllText(MetricsDbContext.DatabaseFilePath, "live-metrics");
 
             // Live DB
             await using (var live = new SqliteConnection($"Data Source={DavDatabaseContext.DatabaseFilePath};Pooling=False"))
@@ -744,6 +791,7 @@ public sealed class DatabaseRestoreRunnerTests
             // Staged restored DB
             store.PrepareRestoreStaging();
             var stagedPath = Path.Join(store.RestoreStagingRoot, "db.sqlite");
+            File.WriteAllText(Path.Join(store.RestoreStagingRoot, "metrics.sqlite"), "staged-metrics");
             await using (var staged = new SqliteConnection($"Data Source={stagedPath};Pooling=False"))
             {
                 await staged.OpenAsync();
@@ -761,7 +809,7 @@ public sealed class DatabaseRestoreRunnerTests
             {
                 BackupId = "swap-test",
                 PreRestoreBackupId = pre.Id,
-                StagedFiles = ["db.sqlite"],
+                StagedFiles = ["db.sqlite", "metrics.sqlite"],
                 CreatedAt = DateTimeOffset.UtcNow,
             });
 
@@ -770,6 +818,7 @@ public sealed class DatabaseRestoreRunnerTests
             await DatabaseRestoreRunner.ApplyPendingRestoreAsync(progress);
 
             Assert.False(store.HasPendingRestore());
+            Assert.Equal("live-metrics", File.ReadAllText(MetricsDbContext.DatabaseFilePath));
             await using (var live = new SqliteConnection($"Data Source={DavDatabaseContext.DatabaseFilePath};Pooling=False"))
             {
                 await live.OpenAsync();

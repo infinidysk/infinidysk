@@ -19,7 +19,7 @@ Actions: Create / Upload / Download / Preserve / Restore / Delete.
 
 !!! warning
 
-    Dumps include `db.sqlite` and `warden.db` as SQL — **not** `metrics.sqlite` (metrics history) or `blobs/`. Copy `metrics.sqlite` from the config volume yourself if you want to keep metrics history; a restore leaves the current metrics database unchanged, even when an older backup still contains `metrics.sql`. Missing blobs after restore are reported in the UI. Restore replaces settings, queue, history, and WebDAV tree metadata; creates a pre-restore safety backup; server restarts into maintenance.
+    In SQLite mode, dumps include `db.sqlite` and `warden.db` as SQL. In PostgreSQL mode, in-app backups include only the local `warden.db`; back up the PostgreSQL main database separately with `pg_dump`. Neither mode includes `metrics.sqlite` (metrics history) or `blobs/`. Copy `metrics.sqlite` from the config volume yourself if you want to keep metrics history; a restore leaves the current metrics database unchanged, even when an older backup still contains `metrics.sql`. Missing blobs after restore are reported in the UI. Restore replaces settings, queue, history, and WebDAV tree metadata in SQLite mode; creates a pre-restore safety backup; server restarts into maintenance.
 
 !!! note "Migration database is disposable"
 

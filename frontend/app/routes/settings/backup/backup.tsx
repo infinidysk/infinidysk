@@ -836,8 +836,8 @@ export function BackupSettings({ config, setNewConfig }: BackupSettingsProps) {
         }
         checkboxMessage={
           mainDatabaseProvider === "postgres"
-            ? "I understand this will replace the local SQLite databases"
-            : "I understand this will replace the current databases"
+            ? "I understand this will replace warden.db, but leave metrics history unchanged"
+            : "I understand this will replace db.sqlite and warden.db, but leave metrics history unchanged"
         }
         cancelText="Cancel"
         confirmText="Restore"
