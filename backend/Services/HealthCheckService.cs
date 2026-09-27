@@ -1064,6 +1064,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         }
     }
 
+    internal static bool CountsTowardUncheckedCount(DavItem item) =>
+        !item.HealthRepairPending &&
+        item.LastHealthCheck is null &&
+        (item.NextHealthCheck is null || item.NextHealthCheck == ForcedRecheckSentinel) &&
+        FilenameUtil.IsHealthCheckCandidate(item.Name);
+
     public static IOrderedQueryable<DavItem> GetHealthCheckQueueItems(DavDatabaseClient dbClient)
     {
         // Playback-triggered urgent and schedule-deferred repairs stay first. Never-checked

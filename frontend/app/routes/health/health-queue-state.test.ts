@@ -15,6 +15,7 @@ function queueItem(
   id: string,
   nextHealthCheck: string | null,
   lastHealthCheck: string | null = null,
+  countsTowardUncheckedCount = true,
 ): HealthCheckQueueItem {
   return {
     id,
@@ -23,6 +24,7 @@ function queueItem(
     releaseDate: null,
     lastHealthCheck,
     nextHealthCheck,
+    countsTowardUncheckedCount,
   };
 }
 
@@ -55,7 +57,7 @@ describe("completeHealthCheck", () => {
     "does not decrement the pending count for a previously scanned recheck (%s)",
     (nextHealthCheck) => {
       const state: HealthQueueState = {
-        items: [queueItem("recheck", nextHealthCheck, "2026-07-31T12:00:00Z")],
+        items: [queueItem("recheck", nextHealthCheck, "2026-07-31T12:00:00Z", false)],
         uncheckedCount: 10,
       };
 
@@ -65,6 +67,15 @@ describe("completeHealthCheck", () => {
       });
     },
   );
+
+  it("does not decrement for a never-checked item excluded by backend eligibility", () => {
+    const state: HealthQueueState = {
+      items: [queueItem("pending-repair", null, null, false)],
+      uncheckedCount: 10,
+    };
+
+    expect(completeHealthCheck(state, "pending-repair").uncheckedCount).toBe(10);
+  });
 
   it("ignores duplicate or unknown completion events", () => {
     const state: HealthQueueState = {

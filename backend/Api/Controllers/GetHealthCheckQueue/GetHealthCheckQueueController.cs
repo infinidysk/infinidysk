@@ -87,6 +87,7 @@ public class GetHealthCheckQueueController(
                 ReleaseDate = x.ReleaseDate,
                 LastHealthCheck = x.LastHealthCheck,
                 NextHealthCheck = x.NextHealthCheck,
+                CountsTowardUncheckedCount = HealthCheckService.CountsTowardUncheckedCount(x),
                 Progress = activeProgress.TryGetValue(x.Id, out var progress) ? progress : null,
             }).ToList(),
         };

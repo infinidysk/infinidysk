@@ -975,6 +975,7 @@ export type HealthCheckQueueItem = {
   releaseDate: string | null;
   lastHealthCheck: string | null;
   nextHealthCheck: string | null;
+  countsTowardUncheckedCount: boolean;
   progress?: number | null;
 };
 

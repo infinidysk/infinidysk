@@ -30,6 +30,7 @@ public class GetActiveHealthChecksController(
             ReleaseDate = item.ReleaseDate,
             LastHealthCheck = item.LastHealthCheck,
             NextHealthCheck = item.NextHealthCheck,
+            CountsTowardUncheckedCount = HealthCheckService.CountsTowardUncheckedCount(item),
             Progress = activeProgress.TryGetValue(item.Id, out var progress) ? progress : null,
         }).ToList();
 

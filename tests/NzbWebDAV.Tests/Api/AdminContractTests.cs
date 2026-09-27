@@ -94,6 +94,7 @@ public sealed class AdminContractTests
         // The file has a LastHealthCheck, so its forced recheck is pending work but not an
         // initial scan; the never-checked total must stay at zero (#1571).
         Assert.Equal(0, afterJson.RootElement.GetProperty("uncheckedCount").GetInt32());
+        Assert.False(resetItem.GetProperty("countsTowardUncheckedCount").GetBoolean());
     }
 
     [Fact]
@@ -150,7 +151,7 @@ public sealed class AdminContractTests
             freshForcedSidecar,
             pendingRepair);
 
-        using var response = await client.GetAsync("/api/get-health-check-queue?pageSize=30");
+        using var response = await client.GetAsync("/api/get-health-check-queue?pageSize=50");
         using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         JsonContractValidator.AssertMatchesSchema(
@@ -161,6 +162,20 @@ public sealed class AdminContractTests
         Assert.Equal(
             1,
             json.RootElement.GetProperty("schedule").GetProperty("pendingRepairCount").GetInt32());
+
+        var queueItems = json.RootElement.GetProperty("items").EnumerateArray().ToArray();
+        Assert.True(Assert.Single(queueItems, item =>
+            item.GetProperty("name").GetString() == "fresh-1.mkv")
+            .GetProperty("countsTowardUncheckedCount").GetBoolean());
+        Assert.True(Assert.Single(queueItems, item =>
+            item.GetProperty("name").GetString() == "fresh-forced.rar")
+            .GetProperty("countsTowardUncheckedCount").GetBoolean());
+        Assert.False(Assert.Single(queueItems, item =>
+            item.GetProperty("name").GetString() == "fresh-pending-repair.mkv")
+            .GetProperty("countsTowardUncheckedCount").GetBoolean());
+        Assert.False(Assert.Single(queueItems, item =>
+            item.GetProperty("name").GetString() == "rechecked-forced-1.mkv")
+            .GetProperty("countsTowardUncheckedCount").GetBoolean());
     }
 
     [Fact]
