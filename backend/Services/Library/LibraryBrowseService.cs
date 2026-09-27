@@ -20,32 +20,10 @@ public sealed class LibraryBrowseService(LibraryCatalogService catalog, IPlexLib
         CancellationToken ct = default)
     {
         var all = await catalog.LoadAllAsync(ct).ConfigureAwait(false);
-        Dictionary<string, int?>? currentCoverage = null;
-        if (nativeCache?.InitializationPending == true)
-            await nativeCache.WaitForInitializationAsync(ct).ConfigureAwait(false);
-        if (nativeCache?.Store is { } store)
-        {
-            try
-            {
-                currentCoverage = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
-                var cachedIds = await store.GetCachedItemIdsAsync(ct).ConfigureAwait(false);
-                var ids = all.Where(item => item.DavItemId is { } id && cachedIds.Contains(id.ToString("N")))
-                    .Select(item => item.DavItemId!.Value).ToArray();
-                foreach (var item in await catalog.LoadItemsByIdsAsync(ids, ct).ConfigureAwait(false))
-                {
-                    try { currentCoverage[item.Id.ToString("N")] = await nativeCache.GetCurrentCoverageAsync(item, ct).ConfigureAwait(false); }
-                    catch (Exception error) when (error is IOException or UnauthorizedAccessException or SqliteException
-                        or NzbWebDAV.Exceptions.CorruptedBlobPayloadException or ObjectDisposedException)
-                    { currentCoverage[item.Id.ToString("N")] = null; }
-                }
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException or SqliteException or ObjectDisposedException)
-            {
-                // Cache information is optional; a catalogue problem must not hide the library.
-                currentCoverage = null;
-            }
-        }
-        var matched = all
+        // Cache filters need coverage for the whole catalogue. Ordinary browsing
+        // only displays it for the current page, so defer the expensive source
+        // revision checks until the visible files are known.
+        var candidates = all
             .Where(i => query.TypeFilter switch
             {
                 "internal" => i.Kind == "internal",
@@ -58,12 +36,15 @@ public sealed class LibraryBrowseService(LibraryCatalogService catalog, IPlexLib
             .Select(i =>
             {
                 var plex = Match(i, plexMetadata);
-                int? cachePercentage = i.DavItemId is { } id && currentCoverage is not null
-                    ? currentCoverage.GetValueOrDefault(id.ToString("N"), 0) : null;
-                return new ClassifiedItem(i, Classify(i, plex), plex, cachePercentage);
+                return new ClassifiedItem(i, Classify(i, plex), plex, null);
             })
             .Where(i => string.IsNullOrWhiteSpace(query.Search) ||
                 MatchesSearch(i, query.Search.Trim()))
+            .ToList();
+        var currentCoverage = query.Cache == "all"
+            ? null : await LoadCurrentCoverageAsync(candidates.Select(i => i.Item), ct).ConfigureAwait(false);
+        var matched = candidates
+            .Select(i => i with { CachePercentage = CachePercentage(i.Item, currentCoverage) })
             .Where(i => query.Cache switch
             {
                 "any" => i.CachePercentage > 0,
@@ -88,12 +69,16 @@ public sealed class LibraryBrowseService(LibraryCatalogService catalog, IPlexLib
                 .ToList();
             var filePage = Math.Clamp(query.Page, 1,
                 Math.Max(1, (selectedFiles.Count + TablePageSize - 1) / TablePageSize));
-            var files = selectedFiles.Skip((filePage - 1) * TablePageSize).Take(TablePageSize)
+            var visibleFiles = selectedFiles.Skip((filePage - 1) * TablePageSize).Take(TablePageSize).ToList();
+            var fileCoverage = query.Cache == "all"
+                ? await LoadCurrentCoverageAsync(visibleFiles.Select(i => i.Item), ct).ConfigureAwait(false)
+                : currentCoverage;
+            var files = visibleFiles
                 .Select(i => new LibraryBrowseFileRowDto(i.Item,
                     i.PlexMatch is null ? null :
                         i.Identity.Category == "shows" ? i.PlexMatch.ShowName : i.PlexMatch.Title,
                     i.PlexMatch?.Season, i.PlexMatch?.Episode, i.Identity.Category,
-                    QualityFromName(i.Item.DisplayName), i.CachePercentage))
+                    QualityFromName(i.Item.DisplayName), CachePercentage(i.Item, fileCoverage)))
                 .ToList();
             return new LibraryBrowseResult([], 0, filePage, TablePageSize,
                 matched.Count, matched.Count(i => IsHealthy(i.Item)),
@@ -115,26 +100,32 @@ public sealed class LibraryBrowseService(LibraryCatalogService catalog, IPlexLib
             .ToList();
         var pageSize = Math.Clamp(query.PageSize, 1, 24);
         var page = Math.Clamp(query.Page, 1, Math.Max(1, (groups.Count + pageSize - 1) / pageSize));
-        var pageGroups = groups.Skip((page - 1) * pageSize).Take(pageSize)
+        var visibleGroups = groups.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        var expandedGroup = groups.FirstOrDefault(g =>
+            string.Equals(g.Key, query.GroupKey, StringComparison.OrdinalIgnoreCase));
+        var groupPage = expandedGroup is null ? 1 : Math.Clamp(query.GroupPage, 1,
+            Math.Max(1, (expandedGroup.Items.Count + GroupFilePageSize - 1) / GroupFilePageSize));
+        var expandedFiles = expandedGroup?.Items
+            .OrderBy(i => i.PlexMatch?.Season ?? 999)
+            .ThenBy(i => i.PlexMatch?.Episode ?? 9999)
+            .ThenBy(i => i.Item.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .Skip((groupPage - 1) * GroupFilePageSize)
+            .Take(GroupFilePageSize).ToList() ?? [];
+        var visibleCoverage = query.Cache == "all"
+            ? await LoadCurrentCoverageAsync(visibleGroups.Where(g => g.Items.Count == 1)
+                .Select(g => g.Items[0].Item).Concat(expandedFiles.Select(i => i.Item)), ct).ConfigureAwait(false)
+            : currentCoverage;
+        var pageGroups = visibleGroups
             .Select(g => new LibraryBrowseGroupDto(g.Key, g.Title, g.Category,
                 g.Items.Count, g.Items.Count(i => IsHealthy(i.Item)), g.Items.Count(i => NeedsAttention(i.Item)),
                 g.Items.Count == 1 ? QualityFromName(g.Items[0].Item.DisplayName) : null,
-                g.Items.Count == 1 ? g.Items[0].CachePercentage : null))
+                g.Items.Count == 1 ? CachePercentage(g.Items[0].Item, visibleCoverage) : null))
             .ToList();
 
         LibraryBrowseExpandedGroupDto? expanded = null;
-        var expandedGroup = groups.FirstOrDefault(g =>
-            string.Equals(g.Key, query.GroupKey, StringComparison.OrdinalIgnoreCase));
         if (expandedGroup is not null)
         {
-            var groupPage = Math.Clamp(query.GroupPage, 1,
-                Math.Max(1, (expandedGroup.Items.Count + GroupFilePageSize - 1) / GroupFilePageSize));
-            var files = expandedGroup.Items
-                .OrderBy(i => i.PlexMatch?.Season ?? 999)
-                .ThenBy(i => i.PlexMatch?.Episode ?? 9999)
-                .ThenBy(i => i.Item.DisplayName, StringComparer.OrdinalIgnoreCase)
-                .Skip((groupPage - 1) * GroupFilePageSize)
-                .Take(GroupFilePageSize)
+            var files = expandedFiles
                 .Select(i =>
                 {
                     var season = i.PlexMatch?.Season;
@@ -142,7 +133,7 @@ public sealed class LibraryBrowseService(LibraryCatalogService catalog, IPlexLib
                     return new LibraryBrowseFileDto(i.Item,
                         season.HasValue ? $"Season {season}" : null,
                         season.HasValue && episode.HasValue ? $"S{season:00}E{episode:00}" : null,
-                        QualityFromName(i.Item.DisplayName), i.CachePercentage);
+                        QualityFromName(i.Item.DisplayName), CachePercentage(i.Item, visibleCoverage));
                 })
                 .ToList();
             expanded = new LibraryBrowseExpandedGroupDto(expandedGroup.Key,
@@ -155,6 +146,38 @@ public sealed class LibraryBrowseService(LibraryCatalogService catalog, IPlexLib
             plexMetadata.Status.Ready ? matched.Count(i => i.Identity.Category == "unmatched") : 0, expanded,
             scanner?.LastSuccessfulScanAt, scanner?.LastScanWarning, plexMetadata.Status);
     }
+
+    private async Task<Dictionary<string, int?>?> LoadCurrentCoverageAsync(
+        IEnumerable<LibraryCatalogItemDto> items, CancellationToken ct)
+    {
+        if (nativeCache?.InitializationPending == true)
+            await nativeCache.WaitForInitializationAsync(ct).ConfigureAwait(false);
+        if (nativeCache?.Store is not { } store) return null;
+        try
+        {
+            var coverage = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
+            var cachedIds = await store.GetCachedItemIdsAsync(ct).ConfigureAwait(false);
+            var ids = items.Where(item => item.DavItemId is { } id && cachedIds.Contains(id.ToString("N")))
+                .Select(item => item.DavItemId!.Value).Distinct().ToArray();
+            foreach (var item in await catalog.LoadItemsByIdsAsync(ids, ct).ConfigureAwait(false))
+            {
+                try { coverage[item.Id.ToString("N")] = await nativeCache.GetCurrentCoverageAsync(item, ct).ConfigureAwait(false); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or SqliteException
+                    or NzbWebDAV.Exceptions.CorruptedBlobPayloadException or ObjectDisposedException)
+                { coverage[item.Id.ToString("N")] = null; }
+            }
+            return coverage;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or SqliteException or ObjectDisposedException)
+        {
+            // Cache information is optional; a catalogue problem must not hide the library.
+            return null;
+        }
+    }
+
+    private static int? CachePercentage(LibraryCatalogItemDto item, IReadOnlyDictionary<string, int?>? coverage) =>
+        item.DavItemId is { } id && coverage is not null
+            ? coverage.GetValueOrDefault(id.ToString("N"), 0) : null;
 
     private static bool IsHealthy(LibraryCatalogItemDto item) =>
         item.Health == "healthy";
