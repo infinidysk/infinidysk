@@ -57,6 +57,7 @@ public sealed class PrefetchPreviewController(PlexPrefetchService policies) : Ge
 public sealed class PrefetchOperationController(PrefetchRuntime runtime, DavDatabaseClient database, PlexPrefetchService policies) : PostOnlyApiController
 {
     public sealed record OperationRequest(string Operation, Guid[]? ItemIds, string? JobId, int? Priority, long Start = 0, long Length = 0);
+    public sealed record ItemOutcome(Guid ItemId, string Status, string? JobId, long Start, long Length, string? Reason);
     protected override async Task<IActionResult> HandleRequest()
     {
         try { return await HandleOperationAsync().ConfigureAwait(false); }
@@ -91,19 +92,35 @@ public sealed class PrefetchOperationController(PrefetchRuntime runtime, DavData
             return Ok(new { status = true });
         }
         if (request.ItemIds is not { Length: > 0 and <= 32 }) throw new ArgumentException("Select 1–32 imported media files.");
+        if (request.Priority is < -100 or > 100 || request.Start < 0 || request.Length < 0
+            || request.Start > long.MaxValue - request.Length) throw new ArgumentException("Invalid warming priority or range.");
         var selected = request.ItemIds.Distinct().ToArray();
-        var items = await database.GetItemsByIdsBatchedAsync(selected, ct: HttpContext.RequestAborted).ConfigureAwait(false);
-        if (items.Count != selected.Length || items.Any(item => item.FileSize is not > 0 || item.FileSize > runtime.Settings().MaxBytesPerItem
-            || item.SubType is not (NzbWebDAV.Database.Models.DavItem.ItemSubType.NzbFile or NzbWebDAV.Database.Models.DavItem.ItemSubType.RarFile or NzbWebDAV.Database.Models.DavItem.ItemSubType.MultipartFile)
-            || request.Start < 0 || request.Start >= item.FileSize || request.Length < 0 || request.Length > item.FileSize - request.Start))
-            throw new ArgumentException("Select imported streamable files and valid ranges within the per-file cap.");
+        var items = (await database.GetItemsByIdsBatchedAsync(selected, ct: HttpContext.RequestAborted).ConfigureAwait(false)).ToDictionary(item => item.Id);
         var accepted = new List<PrefetchJob>();
         var rejected = new List<Guid>();
-        foreach (var item in items)
+        var outcomes = new List<ItemOutcome>();
+        foreach (var id in selected)
         {
-            try { accepted.Add(jobs.Enqueue(item.Id, "manual", request.Priority ?? 50, request.Start, request.Length)); }
-            catch (ArgumentException) { rejected.Add(item.Id); }
+            var item = items.GetValueOrDefault(id);
+            string? reason = item is null || item.FileBlobId is null || item.FileSize is not > 0
+                || item.SubType is not (NzbWebDAV.Database.Models.DavItem.ItemSubType.NzbFile or NzbWebDAV.Database.Models.DavItem.ItemSubType.RarFile or NzbWebDAV.Database.Models.DavItem.ItemSubType.MultipartFile)
+                ? "Not an available imported streamable file."
+                : item.FileSize > runtime.Settings().MaxBytesPerItem ? "File exceeds the configured per-item warming cap."
+                : request.Start >= item.FileSize || request.Length > item.FileSize - request.Start ? "Requested range is outside this file." : null;
+            if (reason is null)
+            {
+                try
+                {
+                    var result = jobs.EnqueueWithOutcome(id, "manual", request.Priority ?? 50, request.Start, request.Length);
+                    accepted.Add(result.Job);
+                    outcomes.Add(new(id, result.Created ? "accepted" : "deduplicated", result.Job.Id, result.Job.Start, result.Job.Length, null));
+                    continue;
+                }
+                catch (ArgumentException) { reason = "Queue or ownership capacity reached; retry after existing work finishes."; }
+            }
+            rejected.Add(id);
+            outcomes.Add(new(id, "rejected", null, request.Start, request.Length, reason));
         }
-        return Accepted(value: new { jobs = accepted, rejected });
+        return Accepted(value: new { jobs = accepted, rejected, outcomes });
     }
 }

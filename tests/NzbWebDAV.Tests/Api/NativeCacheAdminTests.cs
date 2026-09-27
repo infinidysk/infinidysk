@@ -24,7 +24,9 @@ public sealed class NativeCacheAdminTests
     [InlineData("/api/native-cache/activity")]
     [InlineData("/api/native-cache/transfers")]
     [InlineData("/api/native-cache/evictions")]
-    public async Task CacheViews_RequireAuthentication(string path)
+    [InlineData("/api/prefetch")]
+    [InlineData("/api/prefetch/preview")]
+    public async Task CacheAndPrefetchViews_RequireAuthentication(string path)
     {
         await using var factory = new NzbDavWebApplicationFactory();
         using var client = factory.CreateClient();
@@ -34,6 +36,7 @@ public sealed class NativeCacheAdminTests
 
     [Theory]
     [InlineData("/api/native-cache/operations")]
+    [InlineData("/api/prefetch/operations")]
     public async Task CacheOperations_RequireAuthentication(string path)
     {
         await using var factory = new NzbDavWebApplicationFactory();
