@@ -21,6 +21,13 @@ internal sealed partial class SupportPackRedactor
         ConfigKeys.RclonePass,
         ConfigKeys.WebdavPass,
         ConfigKeys.WatchtowerProfileToken,
+        // These optional integration settings contain viewing selections, account
+        // identities and private mount mappings. Export aggregate diagnostics only.
+        ConfigKeys.PlexAccounts,
+        ConfigKeys.PlexServers,
+        ConfigKeys.SmartPrefetchSettings,
+        ConfigKeys.NativeCacheFolders,
+        ConfigKeys.NativeCacheMetadataPath,
     ];
 
     private static readonly HashSet<string> SecretPropertyNames =

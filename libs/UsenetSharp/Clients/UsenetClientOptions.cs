@@ -85,6 +85,13 @@ public sealed record UsenetClientOptions
     public Action<int>? PayloadBytesObserver { get; init; }
 
     /// <summary>
+    /// Optional awaited accounting checkpoint after a bounded raw body read batch,
+    /// including metadata-only bodies and malformed payloads. Does not charge the
+    /// bandwidth limiter again; implementations settle bytes observed above.
+    /// </summary>
+    public Func<CancellationToken, ValueTask>? PayloadAccountingCheckpoint { get; init; }
+
+    /// <summary>
     /// Gets how cancelled body transfers release the connection.
     /// </summary>
     /// <remarks>
@@ -96,6 +103,19 @@ public sealed record UsenetClientOptions
     /// </remarks>
     public ConnectionReleasePolicy CancellationPolicy { get; init; } =
         ConnectionReleasePolicy.DrainToReuse;
+
+    /// <summary>
+    /// Optional operation-context override for pooled clients. Evaluated in the
+    /// transfer's execution context, never captured when the connection is created.
+    /// Return null to retain the configured policy. Must be non-blocking.
+    /// </summary>
+    public Func<ConnectionReleasePolicy?>? CancellationPolicyResolver { get; init; }
+
+    internal ConnectionReleasePolicy GetCancellationPolicy()
+    {
+        try { return CancellationPolicyResolver?.Invoke() ?? CancellationPolicy; }
+        catch { return ConnectionReleasePolicy.AbandonConnection; }
+    }
 
     /// <summary>
     /// Gets the maximum number of commands that may be in flight in one pipelined batch.

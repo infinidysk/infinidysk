@@ -106,7 +106,7 @@ public partial class UsenetClient
         catch (OperationCanceledException exception)
             when (cancellationToken.IsCancellationRequested && writeStarted)
         {
-            if (_options.CancellationPolicy == ConnectionReleasePolicy.AbandonConnection)
+            if (_options.GetCancellationPolicy() == ConnectionReleasePolicy.AbandonConnection)
             {
                 RecordConnectionFailure(exception);
                 throw;

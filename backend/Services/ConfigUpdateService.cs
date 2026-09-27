@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Config;
@@ -10,18 +11,78 @@ namespace NzbWebDAV.Services;
 
 public sealed class ConfigUpdateService(
     DavDatabaseClient dbClient,
-    ConfigManager configManager)
+    ConfigManager configManager,
+    NativeCache.NativeCacheService? nativeCache = null)
 {
-    public async Task<ConfigUpdateBatch> StageAsync(
+    // ConfigManager is the process singleton; services/DbContexts are scoped. A weak key also
+    // keeps isolated managers independent in tests. Only async waits are used, never WaitHandle.
+    private static readonly ConditionalWeakTable<ConfigManager, SemaphoreSlim> WriteGates = new();
+    private static readonly ConditionalWeakTable<ConfigManager, SemaphoreSlim> NativeValidationGates = new();
+
+    internal static async Task ValidateNativeStorageAsync(ConfigManager config, Action validate, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var admission = NativeValidationGates.GetValue(config, static _ => new SemaphoreSlim(1, 1));
+        if (!admission.Wait(0, cancellationToken)) throw new ArgumentException("A previous native storage validation is still waiting on the filesystem. Restore the mount before retrying.");
+        var pending = Task.Run(() =>
+        {
+            try { validate(); }
+            finally { admission.Release(); }
+        }, CancellationToken.None);
+        _ = pending.ContinueWith(static completed => { _ = completed.Exception; }, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        try { await pending.WaitAsync(timeout, cancellationToken).ConfigureAwait(false); }
+        catch (TimeoutException) { throw new ArgumentException("Native storage validation timed out. Check mounts and local metadata storage before retrying."); }
+    }
+
+    public Task<ConfigUpdateBatch> StageAsync(
         IReadOnlyCollection<ConfigItem> configItems,
+        CancellationToken cancellationToken = default) =>
+        StageAsync(() => configItems, cancellationToken);
+
+    /// <summary>Prepares and stages settings under a lease held until publish or batch disposal.</summary>
+    public async Task<ConfigUpdateBatch> StageAsync(
+        Func<IReadOnlyCollection<ConfigItem>> prepare,
         CancellationToken cancellationToken = default)
+    {
+        var gate = WriteGates.GetValue(configManager, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await StageCoreAsync(prepare(), () => gate.Release(), cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            gate.Release();
+            throw;
+        }
+    }
+
+    private async Task<ConfigUpdateBatch> StageCoreAsync(
+        IReadOnlyCollection<ConfigItem> configItems,
+        Action release,
+        CancellationToken cancellationToken)
     {
         RejectEnvironmentManagedItems(configItems);
         ConfigManager.ValidateConfigItems(configItems);
+        configItems = CacheModeResolver.NormalizeUpdate(configManager, configItems);
+        RejectEnvironmentManagedItems(configItems);
+        if (configItems.Any(item => item.ConfigName is ConfigKeys.CacheMode or ConfigKeys.NativeCacheFolders
+                or ConfigKeys.NativeCacheMetadataPath or ConfigKeys.NativeCacheWriterMb)
+            && CacheModeResolver.Parse(configItems.FirstOrDefault(item => item.ConfigName == ConfigKeys.CacheMode)?.ConfigValue
+                ?? configManager.GetCacheMode().ToString().ToLowerInvariant()) == CacheMode.Native)
+            await ValidateNativeStorageAsync(configManager,
+                () => NativeCache.NativeCacheSettings.ValidateProposed(configManager, configItems),
+                TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+        await ValidatePrefetchReadinessAsync(configItems, cancellationToken).ConfigureAwait(false);
         configManager.ValidateQueueAdmissionSettings(configItems);
+        var activeMode = configManager.GetActiveCacheMode();
+        var submittedMode = configItems.FirstOrDefault(item => item.ConfigName == ConfigKeys.CacheMode);
+        var configuredMode = submittedMode is null ? configManager.GetCacheMode()
+            : CacheModeResolver.Parse(submittedMode.ConfigValue);
 
         if (configItems.Count == 0)
-            return new ConfigUpdateBatch([]);
+            return new ConfigUpdateBatch([], activeMode, configuredMode, release);
 
         var configNames = configItems
             .Select(item => item.ConfigName)
@@ -76,21 +137,62 @@ public sealed class ConfigUpdateService(
             }
         }
 
-        return new ConfigUpdateBatch(resolvedItems);
+        return new ConfigUpdateBatch(resolvedItems, activeMode, configuredMode, release);
+    }
+
+    private async Task ValidatePrefetchReadinessAsync(IReadOnlyCollection<ConfigItem> items, CancellationToken cancellationToken)
+    {
+        if (!items.Any(item => item.ConfigName is ConfigKeys.SmartPrefetchSettings or ConfigKeys.CacheMode
+            or ConfigKeys.NativeCacheFolders or ConfigKeys.NativeCacheMetadataPath or ConfigKeys.NativeCacheWriterMb)) return;
+        string? Value(string key) => items.FirstOrDefault(item => item.ConfigName == key)?.ConfigValue
+            ?? configManager.GetEffectiveConfigValue(key);
+        if (!Prefetch.PrefetchSettings.Parse(Value(ConfigKeys.SmartPrefetchSettings)).Enabled) return;
+        if (CacheModeResolver.Resolve(Value(ConfigKeys.CacheMode), Value(ConfigKeys.UsenetSegmentCacheEnabled),
+                configManager.IsEnvironmentManaged(ConfigKeys.UsenetSegmentCacheEnabled)) != CacheMode.Native
+            || nativeCache?.ActiveMode != CacheMode.Native)
+            throw new ArgumentException("Smart Prefetch requires active Native cache. Disable Smart Prefetch to change mode, or save Native settings and restart before enabling it.");
+        var proposed = NativeCache.NativeCacheSettings.FromValues(Value);
+        if (JsonSerializer.Serialize(proposed) != JsonSerializer.Serialize(nativeCache.ActiveSettings))
+            throw new ArgumentException("Disable Smart Prefetch, save the Native folder settings, and restart before enabling it with the new storage configuration.");
+        if (!await nativeCache.WaitForInitializationAsync(cancellationToken).ConfigureAwait(false) || nativeCache.Store is not { } store)
+            throw new ArgumentException("Native cache is not ready. Check storage initialization before enabling Smart Prefetch.");
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(5));
+        try
+        {
+            foreach (var folder in proposed.Folders.Where(folder => folder.Enabled && !folder.ReadOnly))
+            {
+                var probe = await NativeCache.NativeCacheOperations.RunProbeWithDeadlineAsync(
+                    token => store.ProbeAsync(folder.Id, token), TimeSpan.FromSeconds(5), deadline.Token).ConfigureAwait(false);
+                if (probe.Writable && probe.DurableWriteVerified && probe.Error is null) return;
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException) { }
+        throw new ArgumentException("Smart Prefetch requires an enabled writable Native folder that passes the bounded storage probe. Check mounts, permissions and free-space reserves.");
     }
 
     public async Task<ConfigUpdateBatch> ApplyAsync(
         IReadOnlyCollection<ConfigItem> configItems,
         CancellationToken cancellationToken = default)
     {
-        var batch = await StageAsync(configItems, cancellationToken).ConfigureAwait(false);
+        using var batch = await StageAsync(configItems, cancellationToken).ConfigureAwait(false);
         await dbClient.Ctx.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         Publish(batch);
         return batch;
     }
 
-    public void Publish(ConfigUpdateBatch batch) =>
-        configManager.UpdateValues(batch.ResolvedItems.ToList());
+    public void Publish(ConfigUpdateBatch batch)
+    {
+        try
+        {
+            configManager.UpdateValues(batch.ResolvedItems.ToList());
+        }
+        finally
+        {
+            batch.Dispose();
+        }
+    }
 
     private void RejectEnvironmentManagedItems(IEnumerable<ConfigItem> configItems)
     {
@@ -135,7 +237,18 @@ public sealed class ConfigUpdateService(
 }
 
 
-public sealed class ConfigUpdateBatch(IReadOnlyList<ConfigItem> resolvedItems)
+public sealed class ConfigUpdateBatch(
+    IReadOnlyList<ConfigItem> resolvedItems,
+    CacheMode activeCacheMode,
+    CacheMode configuredCacheMode,
+    Action release) : IDisposable
 {
+    private Action? _release = release;
     public IReadOnlyList<ConfigItem> ResolvedItems { get; } = resolvedItems;
+    public CacheMode ActiveCacheMode { get; } = activeCacheMode;
+    public CacheMode ConfiguredCacheMode { get; } = configuredCacheMode;
+    public bool RestartRequired => ActiveCacheMode != ConfiguredCacheMode
+        || (ActiveCacheMode == CacheMode.Native && ResolvedItems.Any(item => item.ConfigName is
+            ConfigKeys.NativeCacheFolders or ConfigKeys.NativeCacheMetadataPath or ConfigKeys.NativeCacheWriterMb));
+    public void Dispose() => Interlocked.Exchange(ref _release, null)?.Invoke();
 }

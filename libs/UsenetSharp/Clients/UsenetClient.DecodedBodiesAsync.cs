@@ -367,7 +367,7 @@ public partial class UsenetClient
                     bodyReadResult.Failure is OperationCanceledException &&
                     callerCancellationToken.IsCancellationRequested;
                 if (cancelledByCaller &&
-                    _options.CancellationPolicy == ConnectionReleasePolicy.AbandonConnection)
+                    _options.GetCancellationPolicy() == ConnectionReleasePolicy.AbandonConnection)
                 {
                     RecordConnectionFailure(bodyReadResult.Failure);
                     completionResult = ArticleBodyResult.NotRetrieved;
@@ -401,7 +401,7 @@ public partial class UsenetClient
         catch (OperationCanceledException exception) when (callerCancellationToken.IsCancellationRequested)
         {
             failure = exception;
-            if (_options.CancellationPolicy == ConnectionReleasePolicy.AbandonConnection)
+            if (_options.GetCancellationPolicy() == ConnectionReleasePolicy.AbandonConnection)
             {
                 RecordConnectionFailure(exception);
                 completionResult = ArticleBodyResult.NotRetrieved;

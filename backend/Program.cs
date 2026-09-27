@@ -341,6 +341,31 @@ public sealed partial class Program
                 .AddSingleton(sp => new ConcurrentReadTracker(
                     configManager: sp.GetRequiredService<ConfigManager>()))
                 .AddSingleton<SharedStreamRegistry>()
+                .AddSingleton<NzbWebDAV.Services.NativeCache.NativeCacheService>()
+                .AddHostedService<NzbWebDAV.Services.NativeCache.NativeCacheBrowserMaintenance>()
+                .AddSingleton<NzbWebDAV.Services.NativeCache.NativeCacheOperations>()
+                .AddHostedService(sp => sp.GetRequiredService<NzbWebDAV.Services.NativeCache.NativeCacheOperations>())
+                .AddSingleton<NzbWebDAV.Services.Prefetch.PrefetchRuntime>()
+                .AddHostedService(sp => sp.GetRequiredService<NzbWebDAV.Services.Prefetch.PrefetchRuntime>())
+                .AddSingleton(_ => new NzbWebDAV.Services.Prefetch.PlexPlaybackRegistry(TimeProvider.System))
+                .AddSingleton<NzbWebDAV.Services.Prefetch.PlexPrefetchService>()
+                .AddHostedService(sp => sp.GetRequiredService<NzbWebDAV.Services.Prefetch.PlexPrefetchService>())
+                .AddScoped<DavContentStreamFactory>()
+                .AddScoped<IDavContentStreamFactory>(sp => sp.GetRequiredService<DavContentStreamFactory>())
+                .AddHttpClient("Plex", client => client.Timeout = TimeSpan.FromSeconds(15))
+                .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+                .Services
+                .AddSingleton(sp => new NzbWebDAV.Services.Plex.PlexApiClient(
+                    sp.GetRequiredService<IHttpClientFactory>().CreateClient("Plex"),
+                    NzbWebDAV.Services.Plex.PlexInstallationIdentity.LoadOrCreate(DavDatabaseContext.ConfigPath)))
+                .AddSingleton(sp => new NzbWebDAV.Services.Plex.PlexAccountService(
+                    sp.GetRequiredService<NzbWebDAV.Services.Plex.PlexApiClient>(), TimeProvider.System))
+                .AddSingleton(_ => new NzbWebDAV.Services.Plex.PlexOwnerAuthenticator(
+                    EnvironmentUtil.GetRequiredVariable("FRONTEND_BACKEND_API_KEY"), TimeProvider.System))
+                .AddSingleton(sp => new NzbWebDAV.Services.Plex.PlexCatalogueService(
+                    sp.GetRequiredService<NzbWebDAV.Services.Plex.PlexApiClient>(), TimeProvider.System))
+                .AddScoped<NzbWebDAV.Services.Plex.PlexServerConfigService>()
+                .AddScoped<NzbWebDAV.Services.Plex.PlexAccountConfigService>()
                 .AddSingleton<StreamingReadinessCheck>()
                 .AddSingleton(_ => new RuntimeUsageTracker())
                 .AddSingleton(sp => new GcDiagnosticsStore(TimeProvider.System))
@@ -388,7 +413,8 @@ public sealed partial class Program
                     var cfg = sp.GetRequiredService<ConfigManager>();
                     return new RepairPatchStore(
                         cfg.GetRepairPatchStorePath(),
-                        cfg.GetPar2MaxPatchBytes());
+                        cfg.GetPar2MaxPatchBytes(),
+                        NzbWebDAV.Services.NativeCache.NativeCacheSettings.RepairRevisionPath(cfg));
                 })
                 .AddSingleton<Par2RepairService>()
                 .AddHostedService(sp => sp.GetRequiredService<Par2RepairService>())

@@ -7,7 +7,7 @@ namespace NzbWebDAV.Api.OpenApi;
 /// </summary>
 public static class AdminApiContractCatalog
 {
-    public const string ContractVersion = "2.1.0";
+    public const string ContractVersion = "2.3.0";
     public const string RelativeContractPath = "contracts/openapi/admin-v1.json";
 
     public sealed record Operation(string Method, string Path, string OperationId);
@@ -48,6 +48,11 @@ public static class AdminApiContractCatalog
         new("GET", "/api/get-watchtower", "get-api-get-watchtower"),
         new("POST", "/api/watchtower-mutate", "post-api-watchtower-mutate"),
         new("POST", "/api/watchtower-discover-catalogs", "post-api-watchtower-discover-catalogs"),
+        new("GET", "/api/native-cache/summary", "get-api-native-cache-summary"),
+        new("GET", "/api/native-cache/files", "get-api-native-cache-files"),
+        new("GET", "/api/native-cache/activity", "get-api-native-cache-activity"),
+        new("GET", "/api/native-cache/transfers", "get-api-native-cache-transfers"),
+        new("GET", "/api/native-cache/evictions", "get-api-native-cache-evictions"),
     ];
 
     public static IReadOnlySet<string> CanonicalMethods(string path)

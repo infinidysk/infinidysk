@@ -122,12 +122,14 @@ export async function login(request: Request): Promise<SessionResponseInit> {
   const user = await authenticate(request);
   const session = await sessionStorage.getSession(request.headers.get("cookie"));
   session.set("user", user);
+  session.set("plexOwnerNonce", globalThis.crypto.randomUUID());
   return { headers: { "Set-Cookie": await sessionStorage.commitSession(session) } };
 }
 
 export async function logout(request: Request | IncomingMessage): Promise<SessionResponseInit> {
   const session = await sessionStorage.getSession(getCookieHeader(request));
   session.unset("user");
+  session.unset("plexOwnerNonce");
   return { headers: { "Set-Cookie": await sessionStorage.commitSession(session) } };
 }
 
@@ -138,8 +140,29 @@ export async function setSessionUser(
 ): Promise<SessionResponseInit> {
   const session = await sessionStorage.getSession(getCookieHeader(request));
   session.set("user", { username, role });
+  session.set("plexOwnerNonce", globalThis.crypto.randomUUID());
   session.unset("oidcFlow");
   return { headers: { "Set-Cookie": await sessionStorage.commitSession(session) } };
+}
+
+/** Plex account handles belong to one verified admin login, never a supplied header. */
+export async function ensurePlexOwnerSession(request: Request | IncomingMessage): Promise<{ owner: string | null; cookie?: string }> {
+  const session = await sessionStorage.getSession(getCookieHeader(request));
+  const user = session.get("user") as User | undefined;
+  if (!IS_FRONTEND_AUTH_DISABLED && (!user?.username || user.role === "readonly")) return { owner: null };
+  const existing: unknown = session.get("plexOwnerNonce");
+  if (typeof existing === "string" && existing.length > 0) return { owner: existing };
+  const owner = crypto.randomUUID();
+  session.set("plexOwnerNonce", owner);
+  return { owner, cookie: await sessionStorage.commitSession(session) };
+}
+
+export async function getPlexOwnerSession(request: Request | IncomingMessage): Promise<string | null> {
+  if (IS_FRONTEND_AUTH_DISABLED) return null;
+  const session = await sessionStorage.getSession(getCookieHeader(request));
+  const user = session.get("user") as User | undefined;
+  const nonce: unknown = session.get("plexOwnerNonce");
+  return user?.username && user.role !== "readonly" && typeof nonce === "string" ? nonce : null;
 }
 
 export async function setOidcFlowState(
