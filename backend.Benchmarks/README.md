@@ -23,67 +23,6 @@ dotnet run --project backend.Benchmarks -c Release
 Use the same machine and runtime when comparing BenchmarkDotNet results across
 UsenetSharp or streaming changes.
 
-## Native-cache catalogue scale (metadata only)
-
-Run the small smoke shape first:
-
-```bash
-dotnet run --project backend.Benchmarks -c Release -- \
-  --native-cache-scale-report --shape smoke --samples 10 \
-  --json /tmp/native-cache-scale-smoke.json
-```
-
-The full shape represents **50 TB decimal**: 5,000 logical files of 10 GB,
-with 11,924,999 synthetic 4 MiB integrity-block records. One final block is
-intentionally omitted to check that range queries preserve holes. It creates
-**no payload files**, but the real SQLite catalogue and indexes need several
-GiB of local scratch space and may take minutes to seed:
-
-```bash
-dotnet run --project backend.Benchmarks -c Release -- \
-  --native-cache-scale-report --shape 50tb --samples 10 \
-  --json /tmp/native-cache-scale-50tb.json
-```
-
-The report always creates its own unique temporary directory. It never accepts
-a production cache or database path, never scans a NAS, and removes its fixture
-on completion or cancellation. Ctrl+C requests cancellation; the CLI also
-requests cancellation after 15 minutes (an in-progress filesystem call must
-return before cleanup can finish). Output JSON uses create-new semantics: choose another
-filename to retain and compare a second run. On hosts where native build
-auto-detection selects an unsupported Ubuntu RID, add
-`-p:RapidYencRuntimeIdentifier=linux-x64` before `--`.
-
-The fixture uses the production schema, triggers, and store APIs. It measures
-catalogue reopen, a keyset entry page, aggregate coverage, missing bytes for one
-file, a verified-range page, and the bounded pressure-eviction candidate query.
-It does **not** perform eviction or claim the synthetic hashes represent real
-verified media. Query plans are included to expose accidental table scans or
-temporary sorting. `catalogueBytes` includes database/WAL/shared-memory file
-lengths; `catalogueAllocatedBytes` reports their physical allocation.
-
-Timing samples run with a warm OS cache. Each measurement reports sample count,
-median and maximum wall time, plus total process managed allocation across all
-samples (not per-operation allocation). RSS and peak working set include fixture
-seeding and runtime overhead. These are manual diagnostics, not CI timing gates,
-cold-start guarantees, NAS throughput measurements, or hardware durability
-evidence. Compare timings only on the same otherwise-idle host and runtime.
-
-### Recorded scale run
-
-The [2026-09-20 report](Reports/native-cache-scale-50tb-2026-09-20.json)
-completed the full metadata shape on Ubuntu 24.04 / .NET 10.0.12. Seeding took
-160.8 seconds; the catalogue occupied 2,544,488,448 bytes, final process RSS was
-64,323,584 bytes, and peak working set was 76,193,792 bytes. No payload files
-were created. All recorded query plans selected indexes; median warm-catalogue
-reopen was 1.40 ms and the bounded read-query medians were below 0.34 ms.
-
-This run used the report and store sources through an isolated CLI harness on
-a shared development host with concurrent build/test activity. It establishes
-the fixture size, measured memory footprint, and indexed-query behavior for
-that run; it is not a dedicated-runner performance baseline or production
-acceptance result. The fixture was removed after the report completed.
-
 ## NNTP decoded BODY (`NntpDecodedBodyBenchmarks`)
 
 This measures the playback decode path in
