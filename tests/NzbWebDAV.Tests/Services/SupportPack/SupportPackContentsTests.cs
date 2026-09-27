@@ -29,6 +29,18 @@ namespace NzbWebDAV.Tests.Services.SupportPack;
 [Collection(nameof(ConfigPathCollection))]
 public sealed class SupportPackContentsTests : IDisposable
 {
+    [Fact]
+    public async Task Pack_ContainsIdentityFreeNativeCacheAndPrefetchCounters()
+    {
+        var entries = await ReadPackEntriesAsync(new LogBufferSink(10), new WarningLogBuffer(new LogBufferSink(50)));
+        using var json = JsonDocument.Parse(entries["metrics/native-cache-prefetch.json"]);
+        Assert.Equal(0, json.RootElement.GetProperty("reservedBufferBytes").GetInt64());
+        Assert.Equal(0, json.RootElement.GetProperty("counters").GetProperty("hitBlocks").GetInt64());
+        Assert.Empty(json.RootElement.GetProperty("queueStates").EnumerateArray());
+        Assert.DoesNotContain("token", json.RootElement.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("path", json.RootElement.GetRawText(), StringComparison.OrdinalIgnoreCase);
+    }
+
     private readonly string _configRoot =
         Path.Join(Path.GetTempPath(), $"nzbdav-support-{Guid.NewGuid():N}");
 
