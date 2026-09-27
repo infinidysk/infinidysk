@@ -186,7 +186,8 @@ function indexAge(value: string | null | undefined): string {
     : `Scanned ${time.toLocaleString()}`;
 }
 
-function mappingLabel(item: LibraryCatalogItem): "Internal" | "External" | "Broken" {
+function mappingLabel(item: LibraryCatalogItem): "Internal" | "External" | "Broken" | "Unmapped" {
+  if (item.mappingCount === 0 || item.mappings.length === 0) return "Unmapped";
   if (item.mappings.some((mapping) => mapping.status === "broken" || mapping.status === "stale"))
     return "Broken";
   return item.kind === "internal" ? "Internal" : "External";
@@ -194,11 +195,10 @@ function mappingLabel(item: LibraryCatalogItem): "Internal" | "External" | "Brok
 
 function mappingBadgeClass(item: LibraryCatalogItem): string {
   const mapping = mappingLabel(item);
-  return mapping === "Broken"
-    ? "badge-error"
-    : mapping === "External"
-      ? "badge-info"
-      : "badge-success";
+  if (mapping === "Broken") return "badge-error";
+  if (mapping === "Unmapped") return "badge-warning";
+  if (mapping === "External") return "badge-info";
+  return "badge-success";
 }
 
 const categories: { value: Category; label: string }[] = [
