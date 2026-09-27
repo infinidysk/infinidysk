@@ -20,9 +20,6 @@ import { useWebsocketTopic } from "~/utils/shared-websocket";
 import { withUrlBase } from "~/utils/url-base";
 import { isPositiveInteger } from "../validation";
 import { cacheMode } from "./native-cache-model";
-import { PlexSettings } from "../plex/plex";
-import { SmartPrefetchSettings } from "../smart-prefetch/smart-prefetch";
-import { hasSmartPrefetchSettingsChanged, isSmartPrefetchSettingsValid } from "../smart-prefetch/smart-prefetch-model";
 
 export const SEGMENT_CACHE_READ_AHEAD_WARNING_KEY = "segment-cache-read-ahead-warning-dismissed";
 
@@ -246,9 +243,6 @@ export function StreamingSettings({
         </ManagedSetting>
       </SettingsCard>
 
-      <NativeCacheSettings config={config} setNewConfig={setNewConfig} />
-      <PlexSettings />
-      <SmartPrefetchSettings config={config} setNewConfig={setNewConfig} />
       <SettingsCard
         icon="speed"
         title="Streaming performance"
@@ -1070,7 +1064,6 @@ export function isStreamingSettingsUpdated(
   newConfig: Record<string, string>,
 ): boolean {
   return (
-    hasSmartPrefetchSettingsChanged(config, newConfig) ||
     config["usenet.max-download-connections"] !== newConfig["usenet.max-download-connections"] ||
     config["usenet.max-download-connections-per-stream"] !==
       newConfig["usenet.max-download-connections-per-stream"] ||
@@ -1121,7 +1114,6 @@ export function isStreamingSettingsValid(config: Record<string, string>): boolea
     (isValidSegmentCachePath(config["usenet.segment-cache.path"] ?? "") &&
       isPositiveInteger(config["usenet.segment-cache.max-gb"] ?? ""));
   return (
-    isSmartPrefetchSettingsValid(config) &&
     isValidMaxDownloadConnections(config["usenet.max-download-connections"]) &&
     isValidStreamingPriority(config["usenet.streaming-priority"] ?? "") &&
     isValidStreamingSegmentTimeout(config["usenet.streaming-segment-timeout-seconds"] ?? "") &&

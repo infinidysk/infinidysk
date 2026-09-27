@@ -42,8 +42,7 @@ public sealed class SupportPackService(
     SegmentCacheStatistics? segmentCacheStatistics = null,
     MemoryComponentSnapshotBuilder? memoryComponentSnapshotBuilder = null,
     HealthCheckService? healthCheckService = null,
-    NativeCache.NativeCacheService? nativeCache = null,
-    Prefetch.PrefetchRuntime? prefetch = null)
+    NativeCache.NativeCacheService? nativeCache = null)
 {
     private const long MinuteMs = 60_000;
     private const long HourMs = 60 * MinuteMs;
@@ -194,17 +193,12 @@ public sealed class SupportPackService(
 
         try
         {
-            var jobs = prefetch?.Jobs;
             await WriteJsonAsync(archive, "metrics/native-cache-prefetch.json", new
             {
                 GeneratedAt = generatedAt,
                 ActiveMode = nativeCache?.ActiveMode.ToString().ToLowerInvariant() ?? "unavailable",
                 ReservedBufferBytes = nativeCache?.ReservedBufferBytes ?? 0,
-                Counters = (nativeCache?.Statistics ?? new NativeCache.NativeCacheStatistics()).Snapshot(),
-                WarmingPaused = jobs?.Paused ?? true,
-                AccountingBlocked = jobs?.WireBudgetBlocked ?? false,
-                QueueStates = (jobs?.List() ?? []).GroupBy(job => job.State)
-                    .Select(group => new { State = group.Key, Count = group.Count() }).ToArray()
+                Counters = (nativeCache?.Statistics ?? new NativeCache.NativeCacheStatistics()).Snapshot()
             }, redactor, cancellationToken).ConfigureAwait(false);
             sectionStatus["nativeCachePrefetch"] = "included";
         }

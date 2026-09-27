@@ -7,7 +7,6 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Services.NativeCache;
-using NzbWebDAV.Services.Prefetch;
 using NzbWebDAV.Tests.TestUtils;
 
 namespace NzbWebDAV.Tests.Api;
@@ -24,9 +23,7 @@ public sealed class NativeCacheAdminTests
     [InlineData("/api/native-cache/activity")]
     [InlineData("/api/native-cache/transfers")]
     [InlineData("/api/native-cache/evictions")]
-    [InlineData("/api/prefetch")]
-    [InlineData("/api/prefetch/preview")]
-    public async Task CacheAndPrefetchViews_RequireAuthentication(string path)
+    public async Task CacheViews_RequireAuthentication(string path)
     {
         await using var factory = new NzbDavWebApplicationFactory();
         using var client = factory.CreateClient();
@@ -36,70 +33,12 @@ public sealed class NativeCacheAdminTests
 
     [Theory]
     [InlineData("/api/native-cache/operations")]
-    [InlineData("/api/prefetch/operations")]
     public async Task CacheOperations_RequireAuthentication(string path)
     {
         await using var factory = new NzbDavWebApplicationFactory();
         using var client = factory.CreateClient();
         using var response = await client.PostAsJsonAsync(path, new { operation = "pause-all" });
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task PrefetchOperations_ExposeImportedNamesAndRespectPauseAndCancellation()
-    {
-        await using var factory = new NzbDavWebApplicationFactory();
-        var folder = Path.Combine(factory.ConfigPath, "media");
-        Directory.CreateDirectory(folder);
-        await using (var context = new DavDatabaseContext(new DbContextOptionsBuilder<DavDatabaseContext>()
-            .UseSqlite("Data Source=" + Path.Combine(factory.ConfigPath, "db.sqlite")).Options))
-        {
-            foreach (var (name, value) in new[] { (ConfigKeys.CacheMode, "native"), (ConfigKeys.NativeCacheFolders,
-                JsonSerializer.Serialize(new[] { new NativeCacheFolder { Id = "disk", Path = folder, MinFreeBytes = 0 } })) })
-            {
-                var existing = await context.ConfigItems.SingleOrDefaultAsync(item => item.ConfigName == name);
-                if (existing is null) context.ConfigItems.Add(new ConfigItem { ConfigName = name, ConfigValue = value });
-                else existing.ConfigValue = value;
-            }
-            await context.SaveChangesAsync();
-        }
-        using var client = factory.CreateAuthenticatedClient();
-        var runtime = factory.Services.GetRequiredService<PrefetchRuntime>();
-        using var paused = await client.PostAsJsonAsync("/api/prefetch/operations", new { operation = "pause-all" });
-        paused.EnsureSuccessStatusCode();
-        Assert.True(runtime.Jobs!.Paused);
-        var id = Guid.NewGuid();
-        await factory.AddDavItemsAsync(new DavItem { Id = id, IdPrefix = id.ToString("N")[..5], Name = "Episode.mkv",
-            Path = "/Episode.mkv", Type = DavItem.ItemType.UsenetFile, SubType = DavItem.ItemSubType.NzbFile,
-            FileBlobId = Guid.NewGuid(), FileSize = 100 });
-        using var warmed = await client.PostAsJsonAsync("/api/prefetch/operations", new { operation = "warm", itemIds = new[] { id } });
-        Assert.Equal(HttpStatusCode.Accepted, warmed.StatusCode);
-        using (var result = JsonDocument.Parse(await warmed.Content.ReadAsStringAsync()))
-            Assert.Equal("accepted", result.RootElement.GetProperty("outcomes")[0].GetProperty("status").GetString());
-        var absent = Guid.NewGuid();
-        using (var bulk = await client.PostAsJsonAsync("/api/prefetch/operations", new { operation = "warm", itemIds = new[] { id, absent } }))
-        {
-            Assert.Equal(HttpStatusCode.Accepted, bulk.StatusCode);
-            using var result = JsonDocument.Parse(await bulk.Content.ReadAsStringAsync());
-            var outcomes = result.RootElement.GetProperty("outcomes");
-            Assert.Equal("deduplicated", outcomes[0].GetProperty("status").GetString());
-            Assert.Equal("rejected", outcomes[1].GetProperty("status").GetString());
-            Assert.Contains("imported", outcomes[1].GetProperty("reason").GetString());
-        }
-        var job = Assert.Single(runtime.Jobs.List());
-        Assert.Equal("queued", job.State);
-        using var status = await client.GetAsync("/api/prefetch");
-        status.EnsureSuccessStatusCode();
-        using var json = JsonDocument.Parse(await status.Content.ReadAsStringAsync());
-        Assert.Equal("Episode.mkv", json.RootElement.GetProperty("jobs")[0].GetProperty("displayName").GetString());
-        using var preview = await client.GetAsync("/api/prefetch/preview");
-        preview.EnsureSuccessStatusCode();
-        Assert.Single(runtime.Jobs.List()); // Preview cannot enqueue or mutate paused manual work.
-        using var cancelled = await client.PostAsJsonAsync("/api/prefetch/operations", new { operation = "cancel", jobId = job.Id });
-        cancelled.EnsureSuccessStatusCode();
-        Assert.Equal("cancelled", Assert.Single(runtime.Jobs.List()).State);
-        using var invalid = await client.PostAsJsonAsync("/api/prefetch/operations", new { operation = "warm", itemIds = new[] { Guid.NewGuid() } });
-        Assert.Equal(HttpStatusCode.Accepted, invalid.StatusCode);
     }
 
     [Fact]
