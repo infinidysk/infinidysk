@@ -874,7 +874,7 @@ public sealed partial class NativeCacheStore : IAsyncDisposable
             await _gate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                using var query = Command("SELECT r.Key FROM RetiredEntries r LEFT JOIN Entries e ON e.Key=r.Key WHERE r.Folder=$folder AND ($clear=1 OR e.VerifiedBytes=e.Length) LIMIT 32", ("$folder", folderId), ("$clear", clear ? 1 : 0));
+                using var query = Command("SELECT r.Key FROM RetiredEntries r LEFT JOIN Entries e ON e.Key=r.Key WHERE r.Folder=$folder AND ($clear=1 OR e.Key IS NULL OR e.VerifiedBytes=e.Length) LIMIT 32", ("$folder", folderId), ("$clear", clear ? 1 : 0));
                 using var reader = query.ExecuteReader();
                 while (reader.Read()) keys.Add(reader.GetString(0));
             }

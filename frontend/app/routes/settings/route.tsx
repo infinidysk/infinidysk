@@ -85,7 +85,6 @@ const defaultConfig = {
   "cache.native.writer-mb": "32",
   "cache.native.min-file-mb": "100",
   "cache.native.chunk-mb": "64",
-  "smart-prefetch.settings": "{}",
   "general.base-url": "",
   "general.trust-proxy": "false",
   "api.key": "",

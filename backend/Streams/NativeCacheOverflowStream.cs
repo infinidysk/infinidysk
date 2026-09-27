@@ -12,6 +12,8 @@ internal sealed class NativeCacheOverflowStream(NativeCacheStore store, NativeCa
     private long _position;
     private bool _disposed;
     private Stream? _source;
+    private NativeCachedStream? _cachedStream;
+    private long _cachedBlock = -1;
     private long _lastSourceBlock = -1;
     public string GenerationIdentity => identity.Key;
     public bool IsSourceCurrent => current();
@@ -25,6 +27,22 @@ internal sealed class NativeCacheOverflowStream(NativeCacheStore store, NativeCa
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (destination.IsEmpty || _position == Length) return 0;
         if (!current()) throw new IOException("Media source changed during this response. Retry the range.");
+        var currentBlock = _position / NativeCacheStore.BlockSize;
+        if (_cachedStream is not null && _cachedBlock != currentBlock)
+        {
+            await _cachedStream.DisposeAsync().ConfigureAwait(false);
+            _cachedStream = null;
+            _cachedBlock = -1;
+        }
+        if (_cachedStream is not null)
+        {
+            _cachedStream.Position = _position;
+            var cached = await _cachedStream.ReadAsync(destination, cancellationToken).ConfigureAwait(false);
+            if (!current()) throw new IOException("Media source changed during this response. Retry the range.");
+            _position += cached;
+            await ReleaseCompletedBlockAsync().ConfigureAwait(false);
+            return cached;
+        }
         // This slot is reserved inside the configured budget. Idle overflow streams
         // retain no buffers, and warming cannot consume the reserved hit capacity.
         if (!await slots.WaitAsync(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false))
@@ -41,12 +59,22 @@ internal sealed class NativeCacheOverflowStream(NativeCacheStore store, NativeCa
             _position += read;
             return read;
         }
-        await using var stream = new NativeCachedStream(store, identity, open, current,
+        _cachedStream = new NativeCachedStream(store, identity, open, current,
             new SlotLease(slots), statistics: statistics) { Position = _position };
-        var count = await stream.ReadAsync(destination, cancellationToken).ConfigureAwait(false);
+        _cachedBlock = currentBlock;
+        var count = await _cachedStream.ReadAsync(destination, cancellationToken).ConfigureAwait(false);
         if (!current()) throw new IOException("Media source changed during this response. Retry the range.");
         _position += count;
+        await ReleaseCompletedBlockAsync().ConfigureAwait(false);
         return count;
+    }
+
+    private async Task ReleaseCompletedBlockAsync()
+    {
+        if (_cachedStream is null || (_position < Length && _position / NativeCacheStore.BlockSize == _cachedBlock)) return;
+        await _cachedStream.DisposeAsync().ConfigureAwait(false);
+        _cachedStream = null;
+        _cachedBlock = -1;
     }
 
     public override long Seek(long offset, SeekOrigin origin)
@@ -68,10 +96,25 @@ internal sealed class NativeCacheOverflowStream(NativeCacheStore store, NativeCa
         if (disposing && !_disposed)
         {
             _disposed = true;
-            try { _source?.Dispose(); }
+            try { _cachedStream?.Dispose(); _source?.Dispose(); }
             finally { try { watch.Dispose(); } finally { _lease.Dispose(); } }
         }
         base.Dispose(disposing);
+    }
+
+    public override async ValueTask DisposeAsync()
+    {
+        if (!_disposed)
+        {
+            _disposed = true;
+            try
+            {
+                if (_cachedStream is not null) await _cachedStream.DisposeAsync().ConfigureAwait(false);
+                if (_source is not null) await _source.DisposeAsync().ConfigureAwait(false);
+            }
+            finally { try { watch.Dispose(); } finally { _lease.Dispose(); } }
+        }
+        await base.DisposeAsync().ConfigureAwait(false);
     }
 
     private sealed class SlotLease(SemaphoreSlim slots) : IDisposable

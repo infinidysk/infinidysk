@@ -23,12 +23,13 @@ export function parseNativeFolders(value: string | undefined): NativeFolder[] {
   const parsed: unknown = JSON.parse(value?.trim() || "[]");
   if (!Array.isArray(parsed)) throw new Error("Native cache folders must be an array.");
   // Accept backend serialization and frontend edits without changing the persisted shape.
-  return parsed.map(
-    (item: Record<string, unknown>) =>
-      Object.fromEntries(
-        Object.entries(item).map(([key, val]) => [key[0]!.toLowerCase() + key.slice(1), val]),
-      ) as NativeFolder,
-  );
+  return parsed.map((item: unknown) => {
+    if (item === null || typeof item !== "object" || Array.isArray(item))
+      throw new Error("Native cache folders must contain folder objects.");
+    return Object.fromEntries(
+      Object.entries(item).map(([key, val]) => [key[0]!.toLowerCase() + key.slice(1), val]),
+    ) as NativeFolder;
+  });
 }
 
 export function validateNativeFolders(folders: NativeFolder[]): string | null {
@@ -91,9 +92,13 @@ export function isNativeCacheSettingsUpdated(
 export function nativeSettingsValid(config: Record<string, string>): boolean {
   try {
     const folders = parseNativeFolders(config["cache.native.folders"]);
-    const budget = Number(config["cache.native.writer-mb"] || "32");
-    const minFile = Number(config["cache.native.min-file-mb"] || "100");
-    const chunk = Number(config["cache.native.chunk-mb"] || "64");
+    const decimal = (value: string | undefined, fallback: string) => {
+      const text = value || fallback;
+      return /^\d+$/.test(text) ? Number(text) : NaN;
+    };
+    const budget = decimal(config["cache.native.writer-mb"], "32");
+    const minFile = decimal(config["cache.native.min-file-mb"], "100");
+    const chunk = decimal(config["cache.native.chunk-mb"], "64");
     return (
       validateNativeFolders(folders) === null &&
       Number.isInteger(budget) &&

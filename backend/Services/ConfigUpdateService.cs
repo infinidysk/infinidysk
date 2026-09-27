@@ -66,7 +66,11 @@ public sealed class ConfigUpdateService(
         ConfigManager.ValidateConfigItems(configItems);
         configItems = CacheModeResolver.NormalizeUpdate(configManager, configItems);
         RejectEnvironmentManagedItems(configItems);
-        NzbWebDAV.Services.NativeCache.NativeCacheSettings.ValidateProposed(configManager, configItems);
+        var nativeSettings = NzbWebDAV.Services.NativeCache.NativeCacheSettings.ProposedForUpdate(configManager, configItems);
+        if (nativeSettings is not null)
+            await ValidateNativeStorageAsync(configManager,
+                () => NzbWebDAV.Services.NativeCache.NativeCacheSettings.ValidateStorage(nativeSettings),
+                TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
         configManager.ValidateQueueAdmissionSettings(configItems);
         var activeMode = configManager.GetActiveCacheMode();
         var submittedMode = configItems.FirstOrDefault(item => item.ConfigName == ConfigKeys.CacheMode);
@@ -209,6 +213,7 @@ public sealed class ConfigUpdateBatch(
     public CacheMode ConfiguredCacheMode { get; } = configuredCacheMode;
     public bool RestartRequired => ActiveCacheMode != ConfiguredCacheMode
         || (ActiveCacheMode == CacheMode.Native && ResolvedItems.Any(item => item.ConfigName is
-            ConfigKeys.NativeCacheFolders or ConfigKeys.NativeCacheMetadataPath or ConfigKeys.NativeCacheWriterMb));
+            ConfigKeys.NativeCacheFolders or ConfigKeys.NativeCacheMetadataPath or ConfigKeys.NativeCacheWriterMb
+            or ConfigKeys.NativeCacheChunkMb));
     public void Dispose() => Interlocked.Exchange(ref _release, null)?.Invoke();
 }

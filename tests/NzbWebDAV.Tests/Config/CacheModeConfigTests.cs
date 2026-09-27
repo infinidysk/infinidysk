@@ -18,6 +18,15 @@ public sealed class CacheModeConfigTests
         Assert.Equal(CacheMode.Off, config.GetCacheMode());
     }
 
+    [Theory]
+    [InlineData("yes")]
+    [InlineData("1")]
+    public void InvalidLegacyValue_FallsBackToOffWithoutThrowing(string legacy)
+    {
+        Assert.Equal(CacheMode.Off, CacheModeResolver.Resolve(null, legacy, false));
+        Assert.Equal(CacheMode.Native, CacheModeResolver.Resolve("native", legacy, false));
+    }
+
     [Fact]
     public void BlankPersistedMode_IsUnset()
     {

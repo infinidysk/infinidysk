@@ -105,6 +105,7 @@ export function NativeCacheSettings({
   };
   const browse = async (folderId: string, after?: string) => {
     setBusy(true);
+    setError(null);
     try {
       const query = new URLSearchParams({ folderId, limit: "50", ...(after ? { after } : {}) });
       const response = await fetch(withUrlBase(`/api/native-cache/entries?${query}`));
@@ -120,6 +121,7 @@ export function NativeCacheSettings({
   };
   const pin = async (entry: CacheEntry) => {
     setBusy(true);
+    setError(null);
     try {
       const response = await fetch(withUrlBase("/api/native-cache/operations"), {
         method: "POST",
@@ -442,10 +444,13 @@ export function NativeCacheSettings({
             <div className="space-y-4">
               {folders.map((folder) => {
                 const live = status?.folders.find((item) => item.id === folder.id);
-                const usedPercent = Math.min(
-                  100,
-                  Math.max(0, ((live?.committedBytes ?? 0) / folder.maxBytes) * 100),
-                );
+                const usedPercent =
+                  Number.isFinite(folder.maxBytes) && folder.maxBytes > 0
+                    ? Math.min(
+                        100,
+                        Math.max(0, ((live?.committedBytes ?? 0) / folder.maxBytes) * 100),
+                      )
+                    : 0;
                 return (
                   <div
                     key={folder.id}

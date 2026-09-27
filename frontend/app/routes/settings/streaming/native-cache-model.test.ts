@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { cacheMode, parseNativeFolders, validateNativeFolders } from "./native-cache-model";
+import {
+  cacheMode,
+  nativeSettingsValid,
+  parseNativeFolders,
+  validateNativeFolders,
+} from "./native-cache-model";
 
 describe("native cache settings", () => {
   it("uses an explicit exclusive mode before the legacy alias", () => {
@@ -27,11 +32,26 @@ describe("native cache settings", () => {
       /overlap/i,
     );
     expect(validateNativeFolders([{ ...first, maxBytes: -1 }])).toMatch(/quota/i);
-    expect(validateNativeFolders([{ ...first, highWaterPercent: 60, lowWaterPercent: 60 }])).toMatch(/watermark/i);
-    expect(validateNativeFolders([{ ...first, highWaterPercent: 101, lowWaterPercent: 50 }])).toMatch(/watermark/i);
-    expect(validateNativeFolders([{ ...first, highWaterPercent: 75, lowWaterPercent: 50 }])).toBeNull();
+    expect(
+      validateNativeFolders([{ ...first, highWaterPercent: 60, lowWaterPercent: 60 }]),
+    ).toMatch(/watermark/i);
+    expect(
+      validateNativeFolders([{ ...first, highWaterPercent: 101, lowWaterPercent: 50 }]),
+    ).toMatch(/watermark/i);
+    expect(
+      validateNativeFolders([{ ...first, highWaterPercent: 75, lowWaterPercent: 50 }]),
+    ).toBeNull();
   });
   it("does not silently replace malformed saved folders with an empty list", () => {
     expect(() => parseNativeFolders("not json")).toThrow();
+    expect(() => parseNativeFolders("[null]")).toThrow(/folder objects/i);
+    expect(() => parseNativeFolders('[["nested"]]')).toThrow(/folder objects/i);
+  });
+  it("accepts only decimal digits for native sizing settings", () => {
+    const base = { "cache.native.folders": "[]", "cache.mode": "off" };
+    expect(nativeSettingsValid({ ...base, "cache.native.writer-mb": "32" })).toBe(true);
+    expect(nativeSettingsValid({ ...base, "cache.native.writer-mb": "0x20" })).toBe(false);
+    expect(nativeSettingsValid({ ...base, "cache.native.min-file-mb": "1e2" })).toBe(false);
+    expect(nativeSettingsValid({ ...base, "cache.native.chunk-mb": "0x40" })).toBe(false);
   });
 });

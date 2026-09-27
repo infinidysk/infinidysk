@@ -261,8 +261,8 @@ export function StreamingSettings({
             </p>
             <Alert className="alert-soft items-start text-xs" variant="warning">
               InfiniDysk cannot automatically determine whether the configured path is slow storage
-              or flash with limited write endurance. Segment Cache is enabled by default; disable it
-              or set Cache path to local SSD/NVMe or other storage where the additional writes are
+              or flash with limited write endurance. Set Disk cache mode to Off or Native, or set
+              Cache path to local SSD/NVMe or other storage where the additional writes are
               acceptable.
             </Alert>
             {showReadAheadWarning && (
@@ -275,7 +275,8 @@ export function StreamingSettings({
                   Your library uses Symlinks, which stream through an rclone mount. If that mount
                   runs with <code>--vfs-read-ahead</code>, rclone already buffers ahead and Segment
                   Cache duplicates that work with extra disk writes. InfiniDysk cannot always detect
-                  whether read-ahead is enabled, so disable Segment Cache if it is. The{" "}
+                  whether read-ahead is enabled, so set Disk cache mode to Off or Native if it is.
+                  The{" "}
                   <a
                     className="link font-medium"
                     href={withUrlBase(

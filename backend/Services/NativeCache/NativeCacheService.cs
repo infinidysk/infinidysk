@@ -19,6 +19,10 @@ public sealed class NativeCacheService : IAsyncDisposable
     private readonly SemaphoreSlim _hitSlot = new(1, 1);
     private readonly int _capacity;
     private readonly object _lifetimeGate = new();
+    private readonly Lock _revisionGate = new();
+    private readonly Dictionary<Guid, (CachedRevision Value, LinkedListNode<Guid> Node)> _revisions = [];
+    private readonly LinkedList<Guid> _revisionOrder = new();
+    private const int RevisionCacheLimit = 256;
     private Task _initialization = Task.CompletedTask;
     private Task _cleanup = Task.CompletedTask;
     private NativeCacheStore? _store;
@@ -174,16 +178,118 @@ public sealed class NativeCacheService : IAsyncDisposable
     {
         if (InitializationPending) await WaitForInitializationAsync(ct).ConfigureAwait(false);
         if (Store is not { } store || item.FileBlobId is not { } blobId) return item.CreatedAt;
-        using var watch = ContentRevisionTracker.Watch(blobId);
-        await using var blob = _blobs.ReadBlob(blobId);
-        if (blob is null) return item.CreatedAt;
-        var hash = await SHA256.HashDataAsync(blob, ct).ConfigureAwait(false);
-        var dependencies = await GetSourceSegmentsAsync(item, blobId).ConfigureAwait(false);
-        if (dependencies is null) return item.CreatedAt;
-        var revision = _repairs.CaptureNativeRevisions(dependencies);
-        if (!watch.IsCurrent || !revision.IsCurrent) throw new IOException("Media revision is changing; retry metadata refresh.");
-        return await store.ModificationTimeAsync(item.Id.ToString("N"),
-            $"{blobId:N}:{Convert.ToHexString(hash)}:{revision.Fingerprint}", item.CreatedAt, ct).ConfigureAwait(false);
+        CachedRevision? cached = null;
+        lock (_revisionGate)
+            if (_revisions.TryGetValue(blobId, out var slot) && slot.Value.Acquire()) cached = slot.Value;
+        if (cached is not null)
+        {
+            try
+            {
+                if (cached.IsCurrent)
+                {
+                    var modified = await store.ModificationTimeAsync(item.Id.ToString("N"),
+                        cached.Generation, item.CreatedAt, ct).ConfigureAwait(false);
+                    if (!cached.IsCurrent) throw new IOException("Media revision changed during metadata refresh.");
+                    return modified;
+                }
+            }
+            finally { cached.Release(); }
+            RemoveRevision(blobId, cached);
+        }
+
+        var watch = ContentRevisionTracker.Watch(blobId);
+        try
+        {
+            await using var blob = _blobs.ReadBlob(blobId);
+            if (blob is null) return item.CreatedAt;
+            var hash = await SHA256.HashDataAsync(blob, ct).ConfigureAwait(false);
+            var dependencies = await GetSourceSegmentsAsync(item, blobId).ConfigureAwait(false);
+            if (dependencies is null) return item.CreatedAt;
+            var repair = _repairs.CaptureNativeRevisions(dependencies);
+            if (!watch.IsCurrent || !repair.IsCurrent) throw new IOException("Media revision is changing; retry metadata refresh.");
+            cached = new CachedRevision(watch, repair,
+                $"{blobId:N}:{Convert.ToHexString(hash)}:{repair.Fingerprint}");
+            watch = null!; // The bounded cache now owns this revision watch.
+            cached.Acquire();
+            InsertRevision(blobId, cached);
+            try
+            {
+                var modified = await store.ModificationTimeAsync(item.Id.ToString("N"),
+                    cached.Generation, item.CreatedAt, ct).ConfigureAwait(false);
+                if (!cached.IsCurrent) throw new IOException("Media revision changed during metadata refresh.");
+                return modified;
+            }
+            finally { cached.Release(); }
+        }
+        finally { watch?.Dispose(); }
+    }
+
+    private void RemoveRevision(Guid blobId, CachedRevision expected)
+    {
+        lock (_revisionGate)
+        {
+            if (!_revisions.TryGetValue(blobId, out var slot) || !ReferenceEquals(slot.Value, expected)) return;
+            _revisions.Remove(blobId);
+            _revisionOrder.Remove(slot.Node);
+            slot.Value.Retire();
+        }
+    }
+
+    private void InsertRevision(Guid blobId, CachedRevision revision)
+    {
+        lock (_revisionGate)
+        {
+            if (_revisions.Remove(blobId, out var old))
+            {
+                _revisionOrder.Remove(old.Node);
+                old.Value.Retire();
+            }
+            var node = _revisionOrder.AddLast(blobId);
+            _revisions[blobId] = (revision, node);
+            while (_revisions.Count > RevisionCacheLimit)
+            {
+                var oldest = _revisionOrder.First!;
+                _revisionOrder.RemoveFirst();
+                var evicted = _revisions[oldest.Value];
+                _revisions.Remove(oldest.Value);
+                evicted.Value.Retire();
+            }
+        }
+    }
+
+    private sealed class CachedRevision(ContentRevisionTracker.RevisionWatch watch,
+        RepairRevisionStore.Snapshot repair, string generation)
+    {
+        private readonly Lock _gate = new();
+        private int _readers;
+        private bool _retired;
+        public string Generation { get; } = generation;
+        public bool IsCurrent => watch.IsCurrent && repair.IsCurrent;
+        public bool Acquire()
+        {
+            lock (_gate)
+            {
+                if (_retired) return false;
+                _readers++;
+                return true;
+            }
+        }
+        public void Release()
+        {
+            lock (_gate)
+            {
+                if (--_readers == 0 && _retired) watch.Dispose();
+            }
+        }
+        public void Retire()
+        {
+            lock (_gate)
+            {
+                if (_retired) return;
+                _retired = true;
+                if (_readers == 0) watch.Dispose();
+            }
+        }
     }
 
     private async Task<IEnumerable<string>?> GetSourceSegmentsAsync(DavItem item, Guid blobId)
@@ -209,6 +315,12 @@ public sealed class NativeCacheService : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        lock (_revisionGate)
+        {
+            foreach (var entry in _revisions.Values) entry.Value.Retire();
+            _revisions.Clear();
+            _revisionOrder.Clear();
+        }
         lock (_lifetimeGate)
         {
             if (_disposed) return;

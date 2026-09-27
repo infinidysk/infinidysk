@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { withUrlBase } from "~/utils/url-base";
 import { settingsPath } from "~/navigation/settings-tabs";
@@ -263,6 +263,8 @@ export default function NativeCachePage() {
   const [evictHistory, setEvictHistory] = useState<(number | null)[]>([]);
   const [evictError, setEvictError] = useState<string | null>(null);
   const selectedKey = selected?.key;
+  const selectedKeyRef = useRef(selectedKey);
+  selectedKeyRef.current = selectedKey;
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 250);
@@ -1005,8 +1007,9 @@ export default function NativeCachePage() {
                   onClick={() => {
                     void (async () => {
                       if (!selected) return;
+                      const fileKey = selected.key;
                       const query = new URLSearchParams({
-                        key: selected.key,
+                        key: fileKey,
                         afterOffset: String(rangeCursor),
                         limit: "100",
                       });
@@ -1014,10 +1017,12 @@ export default function NativeCachePage() {
                         const data = await getJson<{ ranges: Range[]; nextAfter: number | null }>(
                           `/api/native-cache/ranges?${query}`,
                         );
+                        if (selectedKeyRef.current !== fileKey) return;
                         setRanges((old) => [...old, ...data.ranges]);
                         setRangeCursor(data.nextAfter);
                       } catch {
-                        setRangeError("Could not load more ranges.");
+                        if (selectedKeyRef.current === fileKey)
+                          setRangeError("Could not load more ranges.");
                       }
                     })();
                   }}

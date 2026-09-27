@@ -173,8 +173,14 @@ public sealed class NativeCachedStreamTests : IDisposable
     {
         await using var store = CreateStore();
         var id = new NativeCacheIdentity("id", "version", 3);
-        await using var stream = new NativeCachedStream(store, id, _ => Task.FromResult<Stream>(new EvidenceStream(evidence)), () => current);
+        var opens = 0;
+        await using var stream = new NativeCachedStream(store, id, _ =>
+        {
+            opens++;
+            return Task.FromResult<Stream>(new EvidenceStream(evidence));
+        }, () => current);
         Assert.Equal(3, await stream.ReadAsync(new byte[3]));
+        Assert.Equal(!evidence && current ? 2 : 1, opens);
         Assert.Equal(0, await store.GetCoverageAsync(id));
     }
 

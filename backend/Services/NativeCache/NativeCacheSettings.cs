@@ -30,17 +30,20 @@ public sealed record NativeCacheSettings(NativeCacheFolder[] Folders, string Met
         return Path.Combine(DavDatabaseContext.ConfigPath, "native-cache-metadata", "repair-revisions.db");
     }
 
-    public static void ValidateProposed(ConfigManager config, IReadOnlyCollection<ConfigItem> items)
+    public static NativeCacheSettings? ProposedForUpdate(ConfigManager config, IReadOnlyCollection<ConfigItem> items)
     {
         if (!items.Any(item => item.ConfigName is ConfigKeys.CacheMode or ConfigKeys.NativeCacheFolders
                 or ConfigKeys.NativeCacheMetadataPath or ConfigKeys.NativeCacheWriterMb
-                or ConfigKeys.NativeCacheMinFileMb or ConfigKeys.NativeCacheChunkMb)) return;
+                or ConfigKeys.NativeCacheMinFileMb or ConfigKeys.NativeCacheChunkMb)) return null;
         string? Value(string key) => items.FirstOrDefault(item => item.ConfigName == key)?.ConfigValue
             ?? config.GetEffectiveConfigValue(key);
         var mode = CacheModeResolver.Resolve(Value(ConfigKeys.CacheMode), Value(ConfigKeys.UsenetSegmentCacheEnabled),
             config.IsEnvironmentManaged(ConfigKeys.UsenetSegmentCacheEnabled));
-        if (mode != CacheMode.Native) return;
-        var settings = FromValues(Value);
+        return mode == CacheMode.Native ? FromValues(Value) : null;
+    }
+
+    public static void ValidateStorage(NativeCacheSettings settings)
+    {
         if (!settings.Folders.Any(folder => folder.Enabled && Directory.Exists(folder.Path)))
             throw new ArgumentException("Native mode requires at least one enabled, existing cache folder. Mount the storage before applying.");
         NativeFileSystem.RequireLocalMetadata(settings.MetadataPath);

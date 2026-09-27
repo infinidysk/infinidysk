@@ -18,11 +18,11 @@ public static class CacheModeResolver
 
     public static CacheMode Resolve(string? mode, string? legacy, bool legacyEnvironmentManaged)
     {
+        var legacyEnabled = bool.TryParse(legacy, out var parsed) && parsed;
         if (string.IsNullOrWhiteSpace(mode))
-            return !string.IsNullOrWhiteSpace(legacy) && bool.Parse(legacy) ? CacheMode.Segment : CacheMode.Off;
+            return legacyEnabled ? CacheMode.Segment : CacheMode.Off;
         var resolved = Parse(mode);
-        if (legacyEnvironmentManaged &&
-            (!string.IsNullOrWhiteSpace(legacy) && bool.Parse(legacy)) != (resolved == CacheMode.Segment))
+        if (legacyEnvironmentManaged && legacyEnabled != (resolved == CacheMode.Segment))
             throw new ArgumentException(
                 "cache.mode conflicts with environment-managed usenet.segment-cache.enabled. " +
                 "Reconcile NZBDAV_CONFIG__CACHE__MODE and NZBDAV_CONFIG__USENET__SEGMENT_CACHE__ENABLED, then restart.");

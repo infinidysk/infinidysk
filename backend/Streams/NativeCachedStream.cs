@@ -20,6 +20,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
     private readonly NativeCacheStatistics? _statistics;
     private NativeCacheStatistics.NativeCacheTransfer? _transfer;
     private Stream? _source;
+    private bool _sourceOpenedInNativeMode;
     private byte[]? _buffer;
     private long _bufferStart = -1;
     private int _bufferCount;
@@ -145,7 +146,11 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
                 {
                 using var verifiedRead = new NativeCacheReadContext();
                 _bufferFromCache = false;
-                _source ??= await _openSource(cancellationToken).ConfigureAwait(false);
+                if (_source is null)
+                {
+                    _source = await _openSource(cancellationToken).ConfigureAwait(false);
+                    _sourceOpenedInNativeMode = true;
+                }
                 _source.Position = blockStart;
                 _bufferCount = 0;
                 _bufferVerified = true;
@@ -158,6 +163,11 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
                     _bufferVerified &= _source is ICacheReadEvidence { LastReadCacheable: true };
                     _bufferCount += read;
                 }
+                // The full-block read may include speculative bytes. If any byte
+                // lacks source evidence, re-read only the requested range through
+                // ordinary playback so its hole tracking remains active.
+                if (!_bufferVerified)
+                    throw new IOException("Native block is not verifiable; retry the requested range directly.");
                 if (_bufferVerified && _generationIsCurrent())
                 {
                     try
@@ -200,6 +210,7 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
                         catch (Exception teardown) when (teardown is not OutOfMemoryException) { }
                     }
                     _source = null;
+                    _sourceOpenedInNativeMode = false;
                     _bufferCount = 0;
                     _bufferVerified = false;
                     _bypassFill = true;
@@ -279,6 +290,14 @@ public sealed class NativeCachedStream : FastReadOnlyStream, ICacheReadEvidence,
 
     private async ValueTask<int> ReadSourceRangeAsync(Memory<byte> destination, CancellationToken cancellationToken)
     {
+        // A source opened under NativeCacheReadContext may retain a bounded
+        // read-ahead plan. Reopen it before ordinary direct playback reads.
+        if (_sourceOpenedInNativeMode)
+        {
+            await _source!.DisposeAsync().ConfigureAwait(false);
+            _source = null;
+            _sourceOpenedInNativeMode = false;
+        }
         _source ??= await _openSource(cancellationToken).ConfigureAwait(false);
         if (_source.Position != _position) _source.Position = _position;
         var start = _position;
