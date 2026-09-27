@@ -250,6 +250,33 @@ public sealed class LibraryCatalogServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Browse_FindsSingleLetterTitleTypo_OnlyWhenNoExactMatchExists()
+    {
+        var aladdin = DavItem.New(Guid.NewGuid(), DavItem.ContentFolder, "Aladdin.1992.mkv", 100,
+            DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile,
+            null, null, null, null);
+        _context.Items.Add(aladdin);
+        await _context.SaveChangesAsync();
+
+        var browse = new LibraryBrowseService(new LibraryCatalogService(_context), new FakePlexIndex([]));
+        var approximate = await browse.QueryAsync(new LibraryBrowseQuery
+        {
+            View = "files", Category = "all", Search = "Aladin",
+        });
+        Assert.Equal("Aladdin.1992.mkv", Assert.Single(approximate.Files!).Item.DisplayName);
+
+        _context.Items.Add(DavItem.New(Guid.NewGuid(), DavItem.ContentFolder, "Aladin.Exact.mkv", 100,
+            DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile,
+            null, null, null, null));
+        await _context.SaveChangesAsync();
+        var exact = await browse.QueryAsync(new LibraryBrowseQuery
+        {
+            View = "files", Category = "all", Search = "Aladin",
+        });
+        Assert.Equal("Aladin.Exact.mkv", Assert.Single(exact.Files!).Item.DisplayName);
+    }
+
+    [Fact]
     public async Task Browse_ClassifiesSuffixedLibraryRoots_AndLeavesUnknownRootsUnmatched()
     {
         var paths = new[]

@@ -1,6 +1,15 @@
 import type { Route } from "./+types/route";
-import { useCallback, useEffect, useState } from "react";
-import { Form, Link, redirect, useFetcher, useRevalidator, useSearchParams } from "react-router";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  Form,
+  Link,
+  redirect,
+  useFetcher,
+  useNavigate,
+  useRevalidator,
+  useSearchParams,
+  useSubmit,
+} from "react-router";
 import {
   backendClient,
   type LibraryBrowseResponse,
@@ -74,6 +83,12 @@ function parsePage(value: string | null): number {
   return Number.isSafeInteger(page) && page > 0 ? page : 1;
 }
 
+function parseSeason(value: string | null): number | null {
+  if (value === null || value.trim() === "") return null;
+  const season = Number(value);
+  return Number.isInteger(season) && season >= 0 && season <= 1000 ? season : null;
+}
+
 export async function loader({ request }: Route.LoaderArgs): Promise<LibraryPageData | Response> {
   const settings = await backendClient.getConfig(["media.library-enabled"]);
   if (
@@ -96,15 +111,7 @@ export async function loader({ request }: Route.LoaderArgs): Promise<LibraryPage
       url.searchParams.get("match") === "matched" || url.searchParams.get("match") === "unmatched"
         ? (url.searchParams.get("match") as "matched" | "unmatched")
         : ("all" as const),
-    season: (() => {
-      const value = Number(url.searchParams.get("season"));
-      return url.searchParams.has("season") &&
-        Number.isInteger(value) &&
-        value >= 0 &&
-        value <= 1000
-        ? value
-        : null;
-    })(),
+    season: parseSeason(url.searchParams.get("season")),
     type: parseType(url.searchParams.get("type")),
     quality: parseQuality(url.searchParams.get("quality")),
     cache: parseCache(url.searchParams.get("cache")),
@@ -188,6 +195,8 @@ const categories: { value: Category; label: string }[] = [
 
 export default function Library({ loaderData }: Route.ComponentProps) {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const submit = useSubmit();
   const revalidator = useRevalidator();
   const fetcher = useFetcher<{ status: boolean; error?: string }>();
   const groupFetcher = useFetcher<LibraryPageData>();
@@ -351,6 +360,26 @@ export default function Library({ loaderData }: Route.ComponentProps) {
   const totalPages = Math.max(1, Math.ceil(browse.totalGroups / browse.pageSize));
   const filePages = Math.max(1, Math.ceil((browse.totalFiles ?? 0) / browse.pageSize));
 
+  const applyFilters = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const searchValue = form.get("q");
+    const search = typeof searchValue === "string" ? searchValue.trim() : "";
+    if (search) {
+      form.set("q", search);
+      form.set("category", "all");
+      form.set("view", "files");
+    } else form.delete("q");
+    const seasonValue = form.get("season");
+    if (typeof seasonValue !== "string" || !seasonValue.trim()) form.delete("season");
+    void submit(form, { method: "get" });
+  };
+
+  const clearSearch = () => {
+    if (!query.q) return;
+    void navigate(withParams(searchParams, { q: null, page: null, group: null, groupPage: null }));
+  };
+
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-8 md:px-6">
       <PageHeader
@@ -469,6 +498,7 @@ export default function Library({ loaderData }: Route.ComponentProps) {
 
       <Form
         method="get"
+        onSubmit={applyFilters}
         className="flex flex-wrap items-end gap-3 rounded-xl border border-base-content/10 bg-base-200 p-4"
       >
         <input type="hidden" name="category" value={query.category} />
@@ -476,12 +506,25 @@ export default function Library({ loaderData }: Route.ComponentProps) {
         <label className="min-w-48 flex-1 text-xs font-semibold text-base-content/70">
           Search media and paths
           <Input
+            key={query.q}
             name="q"
+            type="search"
             defaultValue={query.q}
             placeholder="Show, movie, file, or link path…"
             className="mt-1 w-full"
+            onChange={(event) => {
+              if (event.currentTarget.value === "") clearSearch();
+            }}
           />
         </label>
+        {query.q ? (
+          <Link
+            className="btn btn-outline"
+            to={withParams(searchParams, { q: null, page: null, group: null, groupPage: null })}
+          >
+            Clear search
+          </Link>
+        ) : null}
         <label className="text-xs font-semibold text-base-content/70">
           Mapping
           <select

@@ -38,9 +38,15 @@ public sealed class LibraryBrowseService(LibraryCatalogService catalog, IPlexLib
                 var plex = Match(i, plexMetadata);
                 return new ClassifiedItem(i, Classify(i, plex), plex, null);
             })
-            .Where(i => string.IsNullOrWhiteSpace(query.Search) ||
-                MatchesSearch(i, query.Search.Trim()))
             .ToList();
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var search = query.Search.Trim();
+            var exact = candidates.Where(item => MatchesSearch(item, search)).ToList();
+            candidates = exact.Count > 0 || search.Length < 5 || search.Any(char.IsWhiteSpace)
+                ? exact
+                : candidates.Where(item => MatchesApproximateTitle(item, search)).ToList();
+        }
         var currentCoverage = query.Cache == "all"
             ? null : await LoadCurrentCoverageAsync(candidates.Select(i => i.Item), ct).ConfigureAwait(false);
         var matched = candidates
@@ -193,6 +199,43 @@ public sealed class LibraryBrowseService(LibraryCatalogService catalog, IPlexLib
             ($"Season {season}".Contains(search, StringComparison.OrdinalIgnoreCase) ||
              (item.PlexMatch.Episode is { } episode &&
               $"S{season:00}E{episode:00}".Contains(search, StringComparison.OrdinalIgnoreCase))));
+
+    // A single mistyped letter in a title should still find a film or show.
+    // Run this only when the full catalogue has no exact match, so exact
+    // searches retain their existing precision and path matching behavior.
+    private static bool MatchesApproximateTitle(ClassifiedItem item, string search) =>
+        OneEditFromToken(item.Item.DisplayName, search)
+        || OneEditFromToken(item.PlexMatch?.Title, search)
+        || OneEditFromToken(item.PlexMatch?.ShowName, search);
+
+    private static bool OneEditFromToken(string? text, string search)
+    {
+        if (string.IsNullOrEmpty(text)) return false;
+        foreach (Match match in Regex.Matches(text, @"[\p{L}\p{Nd}]+"))
+            if (IsOneEditAway(match.Value.AsSpan(), search.AsSpan())) return true;
+        return false;
+    }
+
+    private static bool IsOneEditAway(ReadOnlySpan<char> value, ReadOnlySpan<char> search)
+    {
+        if (Math.Abs(value.Length - search.Length) > 1) return false;
+        var valueIndex = 0;
+        var searchIndex = 0;
+        var edits = 0;
+        while (valueIndex < value.Length && searchIndex < search.Length)
+        {
+            if (char.ToUpperInvariant(value[valueIndex]) == char.ToUpperInvariant(search[searchIndex]))
+            {
+                valueIndex++;
+                searchIndex++;
+                continue;
+            }
+            if (++edits > 1) return false;
+            if (value.Length >= search.Length) valueIndex++;
+            if (search.Length >= value.Length) searchIndex++;
+        }
+        return edits + value.Length - valueIndex + search.Length - searchIndex == 1;
+    }
 
     internal static string QualityFromName(string name)
     {

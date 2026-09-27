@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import Library, { type LibraryPageData } from "./route";
 
@@ -64,6 +64,43 @@ const page: LibraryPageData = {
 
 describe("Library accordion", () => {
   afterEach(cleanup);
+
+  it("searches all media without a blank season filter and clears the query immediately", async () => {
+    const searchPage: LibraryPageData = {
+      ...page,
+      query: { ...page.query, q: "Aladin", category: "shows", view: "files" },
+      browse: { ...page.browse, files: [], totalFiles: 0, pageSize: 50 },
+    };
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/library",
+          loader: () => searchPage,
+          element: <Library {...({ loaderData: searchPage } as Parameters<typeof Library>[0])} />,
+        },
+      ],
+      { initialEntries: ["/library?view=files&category=shows&q=Aladin"] },
+    );
+    render(<RouterProvider router={router} />);
+
+    const search = await screen.findByRole("searchbox", { name: "Search media and paths" });
+    fireEvent.change(search, { target: { value: "Aladdin" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+    await waitFor(() => {
+      const params = new URLSearchParams(router.state.location.search);
+      expect(params.get("q")).toBe("Aladdin");
+      expect(params.get("category")).toBe("all");
+      expect(params.get("view")).toBe("files");
+      expect(params.has("season")).toBe(false);
+    });
+
+    fireEvent.change(await screen.findByRole("searchbox", { name: "Search media and paths" }), {
+      target: { value: "" },
+    });
+    await waitFor(() =>
+      expect(new URLSearchParams(router.state.location.search).has("q")).toBe(false),
+    );
+  });
 
   it("shows the file table with a visible movie switch and title column", async () => {
     const tablePage: LibraryPageData = {

@@ -109,6 +109,27 @@ describe("library browse loader", () => {
     });
   });
 
+  it("does not turn an empty season field into Season 0 when searching or clearing search", async () => {
+    const searched = await loader({
+      request: requestFor("/library?view=files&category=all&q=Aladdin&season="),
+      params: {},
+    } as never);
+    if (searched instanceof Response) throw new Error("Expected library data.");
+    expect(searched.query.season).toBeNull();
+    expect(browseMock()).toHaveBeenLastCalledWith(expect.not.objectContaining({ season: 0 }));
+
+    const cleared = await loader({
+      request: requestFor("/library?view=files&category=all&q=&season="),
+      params: {},
+    } as never);
+    if (cleared instanceof Response) throw new Error("Expected library data.");
+    expect(cleared.query.q).toBe("");
+    expect(cleared.query.season).toBeNull();
+    expect(browseMock()).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ season: 0, q: "Aladdin" }),
+    );
+  });
+
   it("signs preview URLs for files in the expanded group", async () => {
     browseMock().mockResolvedValue({
       groups: [
