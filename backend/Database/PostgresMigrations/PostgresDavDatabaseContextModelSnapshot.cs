@@ -569,6 +569,47 @@ namespace NzbWebDAV.Database.PostgresMigrations
                     b.ToTable("Par2RepairJobs", (string)null);
                 });
 
+            modelBuilder.Entity("NzbWebDAV.Database.Models.LibraryLinkMap", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("DavItemId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LinkPath")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TargetText")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("MappingType")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<long?>("Size")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("LastSeenUtc")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<DateTime?>("LastCheckedUtc")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LinkPath")
+                        .IsUnique();
+
+                    b.HasIndex("DavItemId");
+
+                    b.ToTable("LibraryLinkMaps", (string)null);
+                });
+
             modelBuilder.Entity("NzbWebDAV.Database.Models.QueueItem", b =>
                 {
                     b.Property<Guid>("Id")

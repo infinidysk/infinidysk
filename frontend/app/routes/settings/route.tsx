@@ -57,12 +57,16 @@ import {
 import { isWardenSettingsUpdated, WardenSettings } from "./warden/warden";
 import { isRcloneSettingsUpdated, RcloneSettings } from "./rclone/rclone";
 import { SupportSettings } from "./support/support";
+import { NativeCacheSettings } from "./streaming/native-cache";
+import { isNativeCacheSettingsUpdated, nativeSettingsValid } from "./streaming/native-cache-model";
+import { isLibrarySettingsUpdated, LibrarySettings } from "./library/library";
 import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import {
   useBlocker,
   useNavigate,
   useOutletContext,
   useRouteLoaderData,
+  useRevalidator,
   useSearchParams,
 } from "react-router";
 import type { loader as rootLoader } from "~/root";
@@ -77,6 +81,13 @@ import { parseConfigBoolean } from "~/utils/config-bool";
 import { getTrustProxyEnvironmentOverride } from "../../../server/trust-proxy-env.server";
 
 const defaultConfig = {
+  "cache.mode": "",
+  "cache.native.folders": "[]",
+  "cache.native.metadata-path": "",
+  "cache.native.writer-mb": "32",
+  "cache.native.min-file-mb": "100",
+  "cache.native.chunk-mb": "64",
+  "smart-prefetch.settings": "{}",
   "general.base-url": "",
   "general.trust-proxy": "false",
   "api.key": "",
@@ -147,6 +158,10 @@ const defaultConfig = {
   "rclone.pass": "",
   "rclone.mount-dir": "",
   "media.library-dir": "",
+  "media.library-scan-dirs": "[]",
+  "media.library-enabled": "true",
+  "media.library-scan-interval-minutes": "15",
+  "media.library-plex-server-ids": "",
   "arr.instances": '{"RadarrInstances":[],"SonarrInstances":[],"QueueRules":[]}',
   "arr.health-enabled": "true",
   "indexers.instances": '{"Indexers":[]}',
@@ -398,6 +413,7 @@ type BodyProps = {
 };
 
 function Body(props: BodyProps) {
+  const revalidator = useRevalidator();
   const { role } = useOutletContext<AppOutletContext>();
   const appData = useRouteLoaderData<typeof rootLoader>("root");
   const isReadOnly = role === "readonly";
@@ -428,6 +444,8 @@ function Body(props: BodyProps) {
   const isQueueUpdated = isQueueSettingsUpdated(config, newConfig);
   const isSabnzbdUpdated = isSabnzbdSettingsUpdated(config, newConfig);
   const isStreamingUpdated = isStreamingSettingsUpdated(config, newConfig);
+  const isNativeCacheUpdated = isNativeCacheSettingsUpdated(config, newConfig);
+  const isLibraryUpdated = isLibrarySettingsUpdated(config, newConfig);
   const isWebdavUpdated = isWebdavSettingsUpdated(config, newConfig);
   const isArrsUpdated = isArrsSettingsUpdated(config, newConfig);
   const isIndexersUpdated = isIndexersSettingsUpdated(config, newConfig);
@@ -447,6 +465,8 @@ function Body(props: BodyProps) {
     isQueueUpdated ||
     isSabnzbdUpdated ||
     isStreamingUpdated ||
+    isNativeCacheUpdated ||
+    isLibraryUpdated ||
     isWebdavUpdated ||
     isArrsUpdated ||
     isIndexersUpdated ||
@@ -473,19 +493,21 @@ function Body(props: BodyProps) {
             ? "Invalid SABnzbd settings"
             : isStreamingUpdated && !isStreamingSettingsValid(newConfig)
               ? "Invalid Streaming settings"
-              : isWebdavUpdated && !isWebdavSettingsValid(newConfig)
-                ? "Invalid WebDAV settings"
-                : isArrsUpdated && !isArrsSettingsValid(newConfig)
-                  ? "Invalid Arrs settings"
-                  : isIndexersUpdated && !isIndexersSettingsValid(newConfig)
-                    ? "Invalid Indexers settings"
-                    : isProfilesUpdated && !isProfilesSettingsValid(newConfig)
-                      ? "Invalid Search Profiles settings"
-                      : isRepairsUpdated && !isRepairsSettingsValid(newConfig)
-                        ? "Invalid Repairs settings"
-                        : isWatchtowerUpdated && !isWatchtowerSettingsValid(newConfig)
-                          ? "Invalid Watchtower settings"
-                          : "Save";
+              : isNativeCacheUpdated && !nativeSettingsValid(newConfig)
+                ? "Invalid Native Cache settings"
+                : isWebdavUpdated && !isWebdavSettingsValid(newConfig)
+                  ? "Invalid WebDAV settings"
+                  : isArrsUpdated && !isArrsSettingsValid(newConfig)
+                    ? "Invalid Arrs settings"
+                    : isIndexersUpdated && !isIndexersSettingsValid(newConfig)
+                      ? "Invalid Indexers settings"
+                      : isProfilesUpdated && !isProfilesSettingsValid(newConfig)
+                        ? "Invalid Search Profiles settings"
+                        : isRepairsUpdated && !isRepairsSettingsValid(newConfig)
+                          ? "Invalid Repairs settings"
+                          : isWatchtowerUpdated && !isWatchtowerSettingsValid(newConfig)
+                            ? "Invalid Watchtower settings"
+                            : "Save";
   const saveButtonVariant =
     saveButtonLabel === "Save" ? "primary" : saveButtonLabel === "Saved" ? "success" : "secondary";
   const isSaveButtonDisabled = saveButtonLabel !== "Save";
@@ -525,6 +547,7 @@ function Body(props: BodyProps) {
       await postConfigUpdate(changedConfig);
       setConfig(newConfig);
       setIsSaved(true);
+      if ("media.library-enabled" in changedConfig) void revalidator.revalidate();
       if ("usenet.providers" in changedConfig) {
         setShowProviderChangeNotice(true);
         setHealthQueueResetCount(null);
@@ -535,7 +558,7 @@ function Body(props: BodyProps) {
     } finally {
       setIsSaving(false);
     }
-  }, [config, newConfig, managedEnv, postConfigUpdate]);
+  }, [config, newConfig, managedEnv, postConfigUpdate, revalidator]);
 
   const persistConfigPatch = useCallback(
     async (patch: Record<string, string>) => {
@@ -657,8 +680,26 @@ function Body(props: BodyProps) {
             {activeTab === "streaming" && (
               <StreamingSettings
                 config={newConfig}
+                savedConfig={config}
                 setNewConfig={setNewConfig}
+                persistConfigPatch={persistConfigPatch}
                 effectiveArticleBudgetBytes={props.inFlightArticleBudgetBytes}
+              />
+            )}
+            {activeTab === "native-cache" && (
+              <SettingsPage>
+                <SettingsIntro>
+                  Choose a cache mode and manage Native Cache storage, limits, and folder
+                  operations. Storage changes require a restart.
+                </SettingsIntro>
+                <NativeCacheSettings config={newConfig} setNewConfig={setNewConfig} />
+              </SettingsPage>
+            )}
+            {activeTab === "library" && (
+              <LibrarySettings
+                savedConfig={config}
+                config={newConfig}
+                setNewConfig={setNewConfig}
               />
             )}
             {activeTab === "webdav" && (

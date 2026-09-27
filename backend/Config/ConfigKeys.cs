@@ -73,6 +73,15 @@ public static class ConfigKeys
     // Temporary canary control for the exact finite-range scheduler. No settings UI.
     public const string UsenetFiniteRangeSchedulerEnabled = "usenet.finite-range-scheduler";
     public const string UsenetProviders = "usenet.providers";
+    public const string CacheMode = "cache.mode";
+    public const string NativeCacheFolders = "cache.native.folders";
+    public const string NativeCacheMetadataPath = "cache.native.metadata-path";
+    public const string NativeCacheWriterMb = "cache.native.writer-mb";
+    public const string NativeCacheMinFileMb = "cache.native.min-file-mb";
+    public const string NativeCacheChunkMb = "cache.native.chunk-mb";
+    public const string PlexServers = "plex.servers";
+    public const string PlexAccounts = "plex.accounts";
+    public const string SmartPrefetchSettings = "smart-prefetch.settings";
     public const string UsenetSegmentCacheEnabled = "usenet.segment-cache.enabled";
     public const string UsenetSegmentCacheMaxGb = "usenet.segment-cache.max-gb";
     public const string UsenetSegmentCachePath = "usenet.segment-cache.path";
@@ -100,6 +109,11 @@ public static class ConfigKeys
 
     // media / repair / arr
     public const string MediaLibraryDir = "media.library-dir";
+    public const string MediaLibraryScanDirs = "media.library-scan-dirs";
+    public const string MediaLibraryEnabled = "media.library-enabled";
+    public const string MediaLibraryVideoOnly = "media.library-video-only";
+    public const string MediaLibraryScanIntervalMinutes = "media.library-scan-interval-minutes";
+    public const string MediaLibraryPlexServerIds = "media.library-plex-server-ids";
     public const string RepairEnable = "repair.enable";
     public const string RepairHealthcheckConcurrency = "repair.healthcheck-concurrency";
     public const string RepairHealthcheckWorkers = "repair.healthcheck-workers";

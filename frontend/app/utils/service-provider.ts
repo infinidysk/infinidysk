@@ -7,6 +7,8 @@ export const NAV_FEATURE_IDS = [
   "watchdog",
   "watchtower",
   "explore",
+  "native-cache",
+  "library",
   "health",
   "logs",
   "search",

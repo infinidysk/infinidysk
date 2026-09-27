@@ -49,6 +49,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     private IReadOnlyList<Regex>? _compiledExcludeCache;
     private ConfigEnvironmentOverlay _environmentOverlay = ConfigEnvironmentOverlay.Empty;
     private long _providerGeneration;
+    private CacheMode? _activeCacheMode;
 
     public ConfigManager()
     {
@@ -123,6 +124,18 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         lock (_config)
         {
             var wasProviderManaged = _environmentOverlay.IsManaged(ConfigKeys.UsenetProviders);
+            try
+            {
+                CacheModeResolver.Resolve(
+                    overlay.Values.GetValueOrDefault(ConfigKeys.CacheMode) ?? _config.GetValueOrDefault(ConfigKeys.CacheMode),
+                    overlay.Values.GetValueOrDefault(ConfigKeys.UsenetSegmentCacheEnabled)
+                        ?? _config.GetValueOrDefault(ConfigKeys.UsenetSegmentCacheEnabled),
+                    overlay.IsManaged(ConfigKeys.UsenetSegmentCacheEnabled));
+            }
+            catch (ArgumentException exception)
+            {
+                throw new ConfigEnvironmentException(exception.Message);
+            }
             var previousProviderValue = wasProviderManaged
                 ? _environmentOverlay.Values[ConfigKeys.UsenetProviders]
                 : _config.GetValueOrDefault(ConfigKeys.UsenetProviders);
@@ -457,6 +470,36 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         var jsonOptions = rejectUnknownJsonProperties ? RejectUnknownPropertiesJsonOptions : null;
         foreach (var item in configItems)
         {
+            NzbWebDAV.Services.Plex.PlexSettings.ValidateItem(item.ConfigName, item.ConfigValue, rejectUnknownJsonProperties);
+            if (item.ConfigName == ConfigKeys.SmartPrefetchSettings)
+            {
+                _ = NzbWebDAV.Services.Prefetch.PrefetchSettings.Parse(item.ConfigValue);
+                continue;
+            }
+            if (NzbWebDAV.Services.NativeCache.NativeCacheSettings.ValidateItem(item)) continue;
+            if (item.ConfigName == ConfigKeys.CacheMode)
+            {
+                CacheModeResolver.Parse(item.ConfigValue);
+                continue;
+            }
+            if (item.ConfigName == ConfigKeys.MediaLibraryPlexServerIds)
+            {
+                _ = MediaLibraryOptions.ParsePlexServerIds(item.ConfigValue);
+                continue;
+            }
+            if (item.ConfigName == ConfigKeys.MediaLibraryScanDirs)
+            {
+                _ = MediaLibraryOptions.ParseScanDirectories(item.ConfigValue);
+                continue;
+            }
+            if (item.ConfigName == ConfigKeys.MediaLibraryScanIntervalMinutes)
+            {
+                if (!string.IsNullOrWhiteSpace(item.ConfigValue) &&
+                    (!int.TryParse(item.ConfigValue, out var interval) ||
+                     !MediaLibraryOptions.ScanIntervalsMinutes.Contains(interval)))
+                    throw new ArgumentException("Media Library scan interval must be 5, 15, 30, 60, or 360 minutes.");
+                continue;
+            }
             var value = StringUtil.EmptyToNull(item.ConfigValue);
             if (value == null) continue;
 
@@ -635,6 +678,8 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                 case ConfigKeys.WardenHideDead:
                 case ConfigKeys.WardenBackboneScope:
                 case ConfigKeys.RepairEnable:
+                case ConfigKeys.MediaLibraryEnabled:
+                case ConfigKeys.MediaLibraryVideoOnly:
                 case ConfigKeys.RepairPar2Enabled:
                 case ConfigKeys.RepairPar2PreferredOverArr:
                 case ConfigKeys.RepairHealthcheckAging:
@@ -998,6 +1043,21 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     {
         return StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.MediaLibraryDir));
     }
+
+    public IReadOnlyList<string> GetMediaLibraryScanDirs() =>
+        MediaLibraryOptions.ParseScanDirectories(GetConfigValue(ConfigKeys.MediaLibraryScanDirs));
+
+    public bool IsMediaLibraryEnabled() =>
+        !bool.TryParse(GetConfigValue(ConfigKeys.MediaLibraryEnabled), out var enabled) || enabled;
+
+    public bool IsMediaLibraryVideoOnly() =>
+        bool.TryParse(GetConfigValue(ConfigKeys.MediaLibraryVideoOnly), out var videoOnly) && videoOnly;
+
+    public TimeSpan GetMediaLibraryScanInterval() => TimeSpan.FromMinutes(
+        MediaLibraryOptions.ParseScanInterval(GetConfigValue(ConfigKeys.MediaLibraryScanIntervalMinutes)));
+
+    public IReadOnlySet<string>? GetMediaLibraryPlexServerIds() =>
+        MediaLibraryOptions.ParsePlexServerIds(GetConfigValue(ConfigKeys.MediaLibraryPlexServerIds));
 
     // The total connection budget used for webdav streaming. "0" or empty means
     // "auto": use the combined connection limit of the primary Pool providers
@@ -1523,12 +1583,24 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         return configValue == null || bool.Parse(configValue);
     }
 
-    public bool IsSegmentCacheEnabled()
+    public bool HasExplicitCacheMode() => !string.IsNullOrWhiteSpace(GetConfigValue(ConfigKeys.CacheMode));
+
+    public CacheMode GetCacheMode()
     {
-        // Off by default for new installs; a data migration pins "true" for pre-existing installs.
-        var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetSegmentCacheEnabled));
-        return v != null && bool.Parse(v);
+        lock (_config)
+            return CacheModeResolver.Resolve(GetConfigValue(ConfigKeys.CacheMode),
+                GetConfigValue(ConfigKeys.UsenetSegmentCacheEnabled),
+                IsEnvironmentManaged(ConfigKeys.UsenetSegmentCacheEnabled));
     }
+
+    /// <summary>Captures the startup mode; settings saves cannot activate another cache before restart.</summary>
+    public CacheMode GetActiveCacheMode()
+    {
+        lock (_config)
+            return _activeCacheMode ??= GetCacheMode();
+    }
+
+    public bool IsSegmentCacheEnabled() => GetCacheMode() == CacheMode.Segment;
 
     public string GetSegmentCachePath()
     {

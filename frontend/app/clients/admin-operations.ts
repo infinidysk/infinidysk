@@ -95,6 +95,34 @@ export const adminFrontendOperations = [
     path: "/api/watchtower-discover-catalogs",
     operationId: "post-api-watchtower-discover-catalogs",
   },
+  { method: "get", path: "/api/native-cache", operationId: "get-api-native-cache" },
+  { method: "get", path: "/api/native-cache/summary", operationId: "get-api-native-cache-summary" },
+  { method: "get", path: "/api/native-cache/files", operationId: "get-api-native-cache-files" },
+  {
+    method: "get",
+    path: "/api/native-cache/activity",
+    operationId: "get-api-native-cache-activity",
+  },
+  {
+    method: "get",
+    path: "/api/native-cache/transfers",
+    operationId: "get-api-native-cache-transfers",
+  },
+  {
+    method: "get",
+    path: "/api/native-cache/evictions",
+    operationId: "get-api-native-cache-evictions",
+  },
+  {
+    method: "get",
+    path: "/api/get-library-catalog",
+    operationId: "get-api-get-library-catalog",
+  },
+  {
+    method: "get",
+    path: "/api/get-library-file-details",
+    operationId: "get-api-get-library-file-details",
+  },
 ] as const satisfies readonly AdminFrontendOperation[];
 
 export const adminApi = {
@@ -125,4 +153,8 @@ export const adminApi = {
   getWatchtower: "/api/get-watchtower",
   watchtowerMutate: "/api/watchtower-mutate",
   discoverStremioCatalogs: "/api/watchtower-discover-catalogs",
+  libraryCatalog: "/api/get-library-catalog",
+  libraryFileDetails: "/api/get-library-file-details",
+  nativeCache: "/api/native-cache",
+  prefetchOperations: "/api/prefetch/operations",
 } as const satisfies Record<string, AdminApiPath>;

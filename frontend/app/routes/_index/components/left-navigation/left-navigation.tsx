@@ -20,6 +20,7 @@ import {
 
 export type LeftNavigationProps = {
   isWatchdogEnabled?: boolean;
+  isMediaLibraryEnabled?: boolean;
   serviceProvider?: ServiceProviderConfig | null;
   version?: string;
   updateAvailable?: UpdateAvailable | null;
@@ -34,6 +35,7 @@ type NavItem = {
 
 export function LeftNavigation({
   isWatchdogEnabled,
+  isMediaLibraryEnabled = true,
   serviceProvider,
   version,
   updateAvailable,
@@ -83,6 +85,17 @@ export function LeftNavigation({
       : []),
     { target: "/watchtower", icon: "cell_tower", label: "Watchtower", featureId: "watchtower" },
     { target: "/explore", icon: "folder_open", label: "Files", featureId: "explore" },
+    ...(isMediaLibraryEnabled
+      ? [
+          {
+            target: "/library",
+            icon: "video_library",
+            label: "Media Library",
+            featureId: "library" as const,
+          },
+        ]
+       : []),
+    { target: "/native-cache", icon: "storage", label: "Native Cache", featureId: "native-cache" },
     { target: "/health", icon: "health_and_safety", label: "Health", featureId: "health" },
     { target: "/logs", icon: "description", label: "Logs", featureId: "logs" },
     { target: "/search", icon: "search", label: "Search", featureId: "search" },

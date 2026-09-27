@@ -64,7 +64,11 @@ export async function loader({ request }: Route.LoaderArgs) {
     if (setupRedirect) return redirect(setupRedirect);
   }
 
-  const config = await backendClient.getConfig(["usenet.providers", "play.watchdog-enabled"]);
+  const config = await backendClient.getConfig([
+    "usenet.providers",
+    "play.watchdog-enabled",
+    "media.library-enabled",
+  ]);
 
   const version = await getAppVersion();
   const serviceProvider = getServiceProvider();
@@ -87,6 +91,10 @@ export async function loader({ request }: Route.LoaderArgs) {
     isWatchdogEnabled:
       config
         .find((item) => item.configName === "play.watchdog-enabled")
+        ?.configValue?.toLowerCase() !== "false",
+    isMediaLibraryEnabled:
+      config
+        .find((item) => item.configName === "media.library-enabled")
         ?.configValue?.toLowerCase() !== "false",
     serviceProvider,
   };
@@ -151,6 +159,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
     isOidcEnabled,
     hasUsenetProviders,
     isWatchdogEnabled,
+    isMediaLibraryEnabled,
     serviceProvider,
   } = loaderData;
   const location = useLocation();
@@ -199,6 +208,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
         leftNavChild={
           <LeftNavigation
             {...(isWatchdogEnabled !== undefined ? { isWatchdogEnabled } : {})}
+            {...(isMediaLibraryEnabled !== undefined ? { isMediaLibraryEnabled } : {})}
             {...(version !== undefined ? { version } : {})}
             {...(updateAvailable !== undefined ? { updateAvailable } : {})}
             serviceProvider={serviceProvider}
