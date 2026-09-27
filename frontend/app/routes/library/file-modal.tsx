@@ -1,7 +1,20 @@
 import { Alert, Badge, Button, Icon, Modal } from "~/components/ui";
 import { formatFileSize } from "~/utils/file-size";
 import type { LibraryCatalogItem, LibraryFileDetails } from "~/clients/backend-client.server";
-import { fileName, fullLibraryLinkPath } from "./library-path";
+
+export function fileName(path: string): string {
+  return path.split("/").pop() || path;
+}
+
+export function fullLibraryLinkPath(linkPath: string, libraryRoot: string | null): string {
+  if (linkPath.startsWith("/") || !libraryRoot) return linkPath;
+  return `${libraryRoot.replace(/\/+$/, "")}/${linkPath}`;
+}
+
+export function libraryPath(item: LibraryCatalogItem, libraryRoot: string | null): string | null {
+  const linkPath = item.mappings[0]?.linkPath;
+  return linkPath ? fullLibraryLinkPath(linkPath, libraryRoot) : (item.contentPath ?? null);
+}
 
 export type LibraryModalActionState = "idle" | "pending";
 
