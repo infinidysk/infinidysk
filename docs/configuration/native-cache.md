@@ -1,4 +1,4 @@
-# Native Cache
+# Native Cache [since unreleased](https://github.com/infinidysk/infinidysk/pull/1585){ .nzbdav-since }
 
 Native Cache stores verified ranges of final media files on configured local or NAS volumes. It is an alternative to the existing Segment cache. A read of a verified range uses the cache; a gap reads from the Usenet source and can fill the missing blocks. A range is marked verified only after its bytes are committed. If metadata or a cache volume is unavailable, ordinary source streaming remains available.
 
