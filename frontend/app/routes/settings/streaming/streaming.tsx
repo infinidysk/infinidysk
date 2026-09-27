@@ -19,8 +19,7 @@ import { className } from "~/utils/styling";
 import { useWebsocketTopic } from "~/utils/shared-websocket";
 import { withUrlBase } from "~/utils/url-base";
 import { isPositiveInteger } from "../validation";
-import { NativeCacheSettings } from "./native-cache";
-import { cacheMode, NATIVE_CACHE_KEYS, nativeSettingsValid } from "./native-cache-model";
+import { cacheMode } from "./native-cache-model";
 import { PlexSettings } from "../plex/plex";
 import { SmartPrefetchSettings } from "../smart-prefetch/smart-prefetch";
 import { hasSmartPrefetchSettingsChanged, isSmartPrefetchSettingsValid } from "../smart-prefetch/smart-prefetch-model";
@@ -1071,7 +1070,6 @@ export function isStreamingSettingsUpdated(
   newConfig: Record<string, string>,
 ): boolean {
   return (
-    NATIVE_CACHE_KEYS.some((key) => config[key] !== newConfig[key]) ||
     hasSmartPrefetchSettingsChanged(config, newConfig) ||
     config["usenet.max-download-connections"] !== newConfig["usenet.max-download-connections"] ||
     config["usenet.max-download-connections-per-stream"] !==
@@ -1143,8 +1141,7 @@ export function isStreamingSettingsValid(config: Record<string, string>): boolea
     isValidSharedStreamsRingMb(config["usenet.shared-streams.ring-mb"]) &&
     isValidSharedStreamsGraceSeconds(config["usenet.shared-streams.grace-seconds"]) &&
     isValidSharedStreamsSmallRangeMaxMb(config["usenet.shared-streams.small-range-max-mb"]) &&
-    segmentCacheValid &&
-    nativeSettingsValid(config)
+    segmentCacheValid
   );
 }
 

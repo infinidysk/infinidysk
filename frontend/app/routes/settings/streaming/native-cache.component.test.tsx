@@ -5,6 +5,7 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ManagedEnvProvider } from "~/components/ui";
 import { NativeCacheSettings } from "./native-cache";
+import { nativeSettingsValid } from "./native-cache-model";
 
 function Harness({ managed = false, native = false }: { managed?: boolean; native?: boolean }) {
   const [config, setConfig] = useState<Record<string, string>>({
@@ -80,6 +81,20 @@ describe("native cache folder editor", () => {
     expect(
       screen.getByLabelText("Cache mode (restart required)").closest("fieldset")?.disabled,
     ).toBe(true);
+  });
+
+  it("configures minimum file size and warming chunk size", async () => {
+    render(<Harness native />);
+    await userEvent.click(screen.getByText(/Local metadata and stream buffer/));
+    await userEvent.clear(screen.getByLabelText(/Minimum file size to cache/));
+    await userEvent.type(screen.getByLabelText(/Minimum file size to cache/), "256");
+    await userEvent.clear(screen.getByLabelText(/Warming chunk size/));
+    await userEvent.type(screen.getByLabelText(/Warming chunk size/), "32");
+    const saved = JSON.parse(screen.getByTestId("config").textContent) as Record<string, string>;
+    expect(saved["cache.native.min-file-mb"]).toBe("256");
+    expect(saved["cache.native.chunk-mb"]).toBe("32");
+    expect(nativeSettingsValid(saved)).toBe(true);
+    expect(nativeSettingsValid({ ...saved, "cache.native.chunk-mb": "6" })).toBe(false);
   });
 
   it("shows measured probe capabilities separately from the storage hint and aggregate counters", async () => {

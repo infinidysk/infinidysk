@@ -518,7 +518,7 @@ export default function NativeCachePage() {
             title="Cache folders"
             subtitle="Capacity, placement, and storage health."
             action={
-              <Link className="btn btn-sm btn-outline" to={settingsPath("streaming")}>
+              <Link className="btn btn-sm btn-outline" to={settingsPath("native-cache")}>
                 Manage folders
               </Link>
             }

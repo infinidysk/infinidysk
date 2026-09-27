@@ -77,6 +77,8 @@ public static class ConfigKeys
     public const string NativeCacheFolders = "cache.native.folders";
     public const string NativeCacheMetadataPath = "cache.native.metadata-path";
     public const string NativeCacheWriterMb = "cache.native.writer-mb";
+    public const string NativeCacheMinFileMb = "cache.native.min-file-mb";
+    public const string NativeCacheChunkMb = "cache.native.chunk-mb";
     public const string PlexServers = "plex.servers";
     public const string PlexAccounts = "plex.accounts";
     public const string SmartPrefetchSettings = "smart-prefetch.settings";

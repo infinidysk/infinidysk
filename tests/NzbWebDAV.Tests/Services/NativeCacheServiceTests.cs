@@ -22,6 +22,35 @@ public sealed class NativeCacheServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task MinimumSize_BypassesSmallPlaybackFilesAndRejectsWarming()
+    {
+        using var blobs = new FileBlobStore();
+        using var repairs = new RepairPatchStore(Path.Combine(_root, "patches"), 100);
+        var config = Config("native");
+        config.UpdateValues([new ConfigItem { ConfigName = ConfigKeys.NativeCacheMinFileMb, ConfigValue = "100" }]);
+        await using var native = new NativeCacheService(config, blobs, repairs);
+        var blobId = Guid.NewGuid();
+        var item = new DavItem { Id = Guid.NewGuid(), Name = "short.mkv", FileSize = 3,
+            FileBlobId = blobId, SubType = DavItem.ItemSubType.NzbFile };
+        await using var playback = await native.WrapAsync(item,
+            _ => Task.FromResult<Stream>(new VerifiedStream()), CancellationToken.None);
+        Assert.IsNotType<NativeCachedStream>(playback);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => native.WrapAsync(item,
+            _ => throw new InvalidOperationException("Opened source for warming"),
+            CancellationToken.None, requireNative: true));
+    }
+
+    [Theory]
+    [InlineData(ConfigKeys.NativeCacheMinFileMb, "-1")]
+    [InlineData(ConfigKeys.NativeCacheChunkMb, "6")]
+    [InlineData(ConfigKeys.NativeCacheChunkMb, "260")]
+    public void NativeSizing_RejectsInvalidValues(string key, string value)
+    {
+        Assert.Throws<ArgumentException>(() => NativeCacheSettings.ValidateItem(
+            new ConfigItem { ConfigName = key, ConfigValue = value }));
+    }
+
+    [Fact]
     public async Task LastModified_ChangesForSameSizeRepair_AndSurvivesRestart()
     {
         using var blobs = new FileBlobStore();
@@ -193,7 +222,9 @@ public sealed class NativeCacheServiceTests : IDisposable
         {
             FileName = "another.mkv", FileSize = 3, PartSize = 3, PartOffset = 0, PartNumber = 1, TotalParts = 1, LineLength = 128
         });
-        await using var reopened = new NativeCacheService(Config("native"), blobs, repair);
+        var reopenedConfig = Config("native");
+        reopenedConfig.UpdateValues([new ConfigItem { ConfigName = ConfigKeys.NativeCacheChunkMb, ConfigValue = "16" }]);
+        await using var reopened = new NativeCacheService(reopenedConfig, blobs, repair);
         await using var hit = await reopened.WrapAsync(item, _ => throw new InvalidOperationException("Opened media on cache hit"), CancellationToken.None);
         Assert.Equal(3, await hit.ReadAsync(new byte[3]));
     }
@@ -247,6 +278,7 @@ public sealed class NativeCacheServiceTests : IDisposable
         var config = new ConfigManager();
         config.UpdateValues([
             new ConfigItem { ConfigName = ConfigKeys.CacheMode, ConfigValue = mode },
+            new ConfigItem { ConfigName = ConfigKeys.NativeCacheMinFileMb, ConfigValue = "0" },
             new ConfigItem { ConfigName = ConfigKeys.NativeCacheMetadataPath, ConfigValue = Path.Combine(_root, "index") },
             new ConfigItem { ConfigName = ConfigKeys.NativeCacheFolders, ConfigValue = JsonSerializer.Serialize(new[] {
                 new NativeCacheFolder { Id = "media", Path = Path.Combine(_root, "media"), MinFreeBytes = 0 }

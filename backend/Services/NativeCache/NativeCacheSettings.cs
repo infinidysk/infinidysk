@@ -6,11 +6,15 @@ using NzbWebDAV.Database.Models;
 
 namespace NzbWebDAV.Services.NativeCache;
 
-public sealed record NativeCacheSettings(NativeCacheFolder[] Folders, string MetadataPath, int BufferMb)
+public sealed record NativeCacheSettings(NativeCacheFolder[] Folders, string MetadataPath, int BufferMb,
+    int MinFileMb, int ChunkMb)
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     public static NativeCacheSettings FromConfig(ConfigManager config) => FromValues(config.GetEffectiveConfigValue);
+
+    public static long MinimumFileBytes(ConfigManager config) =>
+        ParseMinFileMb(config.GetEffectiveConfigValue(ConfigKeys.NativeCacheMinFileMb)) * 1024L * 1024L;
 
     public static string RepairRevisionPath(ConfigManager config)
     {
@@ -29,7 +33,8 @@ public sealed record NativeCacheSettings(NativeCacheFolder[] Folders, string Met
     public static void ValidateProposed(ConfigManager config, IReadOnlyCollection<ConfigItem> items)
     {
         if (!items.Any(item => item.ConfigName is ConfigKeys.CacheMode or ConfigKeys.NativeCacheFolders
-                or ConfigKeys.NativeCacheMetadataPath or ConfigKeys.NativeCacheWriterMb)) return;
+                or ConfigKeys.NativeCacheMetadataPath or ConfigKeys.NativeCacheWriterMb
+                or ConfigKeys.NativeCacheMinFileMb or ConfigKeys.NativeCacheChunkMb)) return;
         string? Value(string key) => items.FirstOrDefault(item => item.ConfigName == key)?.ConfigValue
             ?? config.GetEffectiveConfigValue(key);
         var mode = CacheModeResolver.Resolve(Value(ConfigKeys.CacheMode), Value(ConfigKeys.UsenetSegmentCacheEnabled),
@@ -54,7 +59,9 @@ public sealed record NativeCacheSettings(NativeCacheFolder[] Folders, string Met
             if (fullPath == root || fullPath.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
                 throw new ArgumentException("Native cache metadata must be separate from media cache folders, on local storage.");
         }
-        return new(folders, fullPath, ParseBufferMb(value(ConfigKeys.NativeCacheWriterMb)));
+        return new(folders, fullPath, ParseBufferMb(value(ConfigKeys.NativeCacheWriterMb)),
+            ParseMinFileMb(value(ConfigKeys.NativeCacheMinFileMb)),
+            ParseChunkMb(value(ConfigKeys.NativeCacheChunkMb)));
     }
 
     public static bool ValidateItem(ConfigItem item)
@@ -66,6 +73,12 @@ public sealed record NativeCacheSettings(NativeCacheFolder[] Folders, string Met
                 return true;
             case ConfigKeys.NativeCacheWriterMb:
                 ParseBufferMb(item.ConfigValue);
+                return true;
+            case ConfigKeys.NativeCacheMinFileMb:
+                ParseMinFileMb(item.ConfigValue);
+                return true;
+            case ConfigKeys.NativeCacheChunkMb:
+                ParseChunkMb(item.ConfigValue);
                 return true;
             case ConfigKeys.NativeCacheMetadataPath:
                 if (!string.IsNullOrWhiteSpace(item.ConfigValue) && !Path.IsPathFullyQualified(item.ConfigValue))
@@ -89,6 +102,22 @@ public sealed record NativeCacheSettings(NativeCacheFolder[] Folders, string Met
         if (string.IsNullOrWhiteSpace(value)) return 32;
         if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var mb) || mb is < 4 or > 256)
             throw new ArgumentException("Native cache buffer budget must be between 4 and 256 MiB.");
+        return mb;
+    }
+
+    private static int ParseMinFileMb(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return 100;
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var mb) || mb is < 0 or > 1_048_576)
+            throw new ArgumentException("Native cache minimum file size must be between 0 and 1,048,576 MiB.");
+        return mb;
+    }
+
+    private static int ParseChunkMb(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return 64;
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var mb) || mb is < 4 or > 256 || mb % 4 != 0)
+            throw new ArgumentException("Native cache warming chunk size must be a multiple of 4 MiB between 4 and 256 MiB.");
         return mb;
     }
 }

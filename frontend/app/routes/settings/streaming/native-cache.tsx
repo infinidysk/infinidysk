@@ -391,6 +391,43 @@ export function NativeCacheSettings({
                   />
                 </label>
               </ManagedSetting>
+              <ManagedSetting configKey="cache.native.min-file-mb">
+                <label className="flex flex-col gap-2 text-sm">
+                  Minimum file size to cache (MiB)
+                  <Input
+                    type="number"
+                    min={0}
+                    max={1048576}
+                    value={config["cache.native.min-file-mb"] ?? "100"}
+                    onChange={(event) =>
+                      setNewConfig({ ...config, "cache.native.min-file-mb": event.target.value })
+                    }
+                  />
+                  <span className="text-xs text-base-content/60">
+                    Files below this size stream from the source without caching. Use 0 to include
+                    every file.
+                  </span>
+                </label>
+              </ManagedSetting>
+              <ManagedSetting configKey="cache.native.chunk-mb">
+                <label className="flex flex-col gap-2 text-sm">
+                  Warming chunk size (MiB)
+                  <Input
+                    type="number"
+                    min={4}
+                    max={256}
+                    step={4}
+                    value={config["cache.native.chunk-mb"] ?? "64"}
+                    onChange={(event) =>
+                      setNewConfig({ ...config, "cache.native.chunk-mb": event.target.value })
+                    }
+                  />
+                  <span className="text-xs text-base-content/60">
+                    Background warming reserves storage in chunks of this size. Existing 4 MiB
+                    integrity blocks keep their format.
+                  </span>
+                </label>
+              </ManagedSetting>
             </div>
           </details>
           <div className="flex flex-wrap items-center justify-between gap-2">

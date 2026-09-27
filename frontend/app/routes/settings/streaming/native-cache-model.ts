@@ -73,20 +73,39 @@ export function validateNativeFolders(folders: NativeFolder[]): string | null {
 
 export const NATIVE_CACHE_KEYS = [
   "cache.mode",
+  "usenet.segment-cache.enabled",
   "cache.native.folders",
   "cache.native.metadata-path",
   "cache.native.writer-mb",
+  "cache.native.min-file-mb",
+  "cache.native.chunk-mb",
 ];
+
+export function isNativeCacheSettingsUpdated(
+  saved: Record<string, string>,
+  draft: Record<string, string>,
+): boolean {
+  return NATIVE_CACHE_KEYS.some((key) => saved[key] !== draft[key]);
+}
 
 export function nativeSettingsValid(config: Record<string, string>): boolean {
   try {
     const folders = parseNativeFolders(config["cache.native.folders"]);
     const budget = Number(config["cache.native.writer-mb"] || "32");
+    const minFile = Number(config["cache.native.min-file-mb"] || "100");
+    const chunk = Number(config["cache.native.chunk-mb"] || "64");
     return (
       validateNativeFolders(folders) === null &&
       Number.isInteger(budget) &&
       budget >= 4 &&
       budget <= 256 &&
+      Number.isInteger(minFile) &&
+      minFile >= 0 &&
+      minFile <= 1048576 &&
+      Number.isInteger(chunk) &&
+      chunk >= 4 &&
+      chunk <= 256 &&
+      chunk % 4 === 0 &&
       (cacheMode(config) !== "native" || folders.some((folder) => folder.enabled))
     );
   } catch {
