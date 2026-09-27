@@ -67,12 +67,10 @@ public sealed class ConfigUpdateService(
         ConfigManager.ValidateConfigItems(configItems);
         configItems = CacheModeResolver.NormalizeUpdate(configManager, configItems);
         RejectEnvironmentManagedItems(configItems);
-        if (configItems.Any(item => item.ConfigName is ConfigKeys.CacheMode or ConfigKeys.NativeCacheFolders
-                or ConfigKeys.NativeCacheMetadataPath or ConfigKeys.NativeCacheWriterMb)
-            && CacheModeResolver.Parse(configItems.FirstOrDefault(item => item.ConfigName == ConfigKeys.CacheMode)?.ConfigValue
-                ?? configManager.GetCacheMode().ToString().ToLowerInvariant()) == CacheMode.Native)
+        var nativeSettings = NativeCache.NativeCacheSettings.ProposedForUpdate(configManager, configItems);
+        if (nativeSettings is not null)
             await ValidateNativeStorageAsync(configManager,
-                () => NativeCache.NativeCacheSettings.ValidateProposed(configManager, configItems),
+                () => NativeCache.NativeCacheSettings.ValidateStorage(nativeSettings),
                 TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
         await ValidatePrefetchReadinessAsync(configItems, cancellationToken).ConfigureAwait(false);
         configManager.ValidateQueueAdmissionSettings(configItems);
