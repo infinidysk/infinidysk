@@ -97,7 +97,7 @@ public sealed class PrefetchCoordinatorTests : IDisposable
             };
         });
         using var coordinator = new PrefetchCoordinator(store, executor,
-            () => new() { MaxConcurrentJobs = 2 }, () => true, applicationStopping.Token);
+            () => new() { MaxConcurrentJobs = 2 }, () => true, applicationStopping: applicationStopping.Token);
         await coordinator.RunOnceAsync(CancellationToken.None);
         await coordinator.RunOnceAsync(CancellationToken.None);
         Assert.Equal(1, calls);
@@ -117,7 +117,7 @@ public sealed class PrefetchCoordinatorTests : IDisposable
         store.Enqueue(Guid.NewGuid(), "manual", 0);
         var executor = new BlockingExecutor();
         using var coordinator = new PrefetchCoordinator(store, executor, () => new(), () => true,
-            applicationStopping.Token);
+            applicationStopping: applicationStopping.Token);
         var run = coordinator.RunOnceAsync(CancellationToken.None);
         await executor.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         applicationStopping.Cancel();

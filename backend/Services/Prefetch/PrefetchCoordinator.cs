@@ -9,8 +9,8 @@ public interface IPrefetchExecutor
 }
 
 public sealed class PrefetchCoordinator(PrefetchJobStore store, IPrefetchExecutor executor,
-    Func<PrefetchSettings> settings, Func<bool> admission, CancellationToken applicationStopping = default,
-    ILogger? logger = null) : BackgroundService
+    Func<PrefetchSettings> settings, Func<bool> admission, ILogger? logger = null,
+    CancellationToken applicationStopping = default) : BackgroundService
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<string, CancellationTokenSource> _running = [];
