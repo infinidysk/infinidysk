@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -15,8 +16,10 @@ namespace NzbWebDAV.Tests.Services;
 [Collection(nameof(ConfigPathCollection))]
 public sealed class PrefetchRuntimeFaultTests
 {
-    [Fact]
-    public async Task MetadataClaimFailure_LeavesHostedRuntimeAlive_UnhealthyAndCancellable()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MetadataClaimFailure_LeavesHostedRuntimeAlive_UnhealthyAndCancellable(bool applicationStopping)
     {
         var root = Directory.CreateTempSubdirectory("prefetch-runtime-fault-").FullName;
         var previous = Environment.GetEnvironmentVariable("CONFIG_PATH");
@@ -35,7 +38,9 @@ public sealed class PrefetchRuntimeFaultTests
             using var repairs = new RepairPatchStore(Path.Combine(root, "patches"), 100);
             await using var native = new NativeCacheService(config, blobs, repairs);
             using var services = new ServiceCollection().BuildServiceProvider();
-            using var runtime = new PrefetchRuntime(config, native, services.GetRequiredService<IServiceScopeFactory>(), new ActiveReadRegistry());
+            using var lifetime = new TestLifetime();
+            using var runtime = new PrefetchRuntime(config, native, services.GetRequiredService<IServiceScopeFactory>(),
+                new ActiveReadRegistry(), applicationLifetime: lifetime);
             await runtime.WaitForInitializationAsync(CancellationToken.None);
             runtime.Jobs!.Enqueue(Guid.NewGuid(), "manual", 0);
             using (var database = new SqliteConnection("Data Source=" + Path.Combine(native.ActiveSettings!.MetadataPath, "prefetch.db")))
@@ -58,11 +63,25 @@ public sealed class PrefetchRuntimeFaultTests
             }
             finally
             {
+                if (applicationStopping)
+                {
+                    lifetime.StopApplication();
+                    await runtime.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(3));
+                }
                 using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(3));
                 await runtime.StopAsync(stop.Token);
             }
             Assert.True(runtime.ExecuteTask!.IsCompletedSuccessfully);
         }
         finally { Environment.SetEnvironmentVariable("CONFIG_PATH", previous); Directory.Delete(root, recursive: true); }
+    }
+    private sealed class TestLifetime : IHostApplicationLifetime, IDisposable
+    {
+        private readonly CancellationTokenSource _stopping = new();
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+        public CancellationToken ApplicationStopping => _stopping.Token;
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+        public void StopApplication() => _stopping.Cancel();
+        public void Dispose() => _stopping.Dispose();
     }
 }
