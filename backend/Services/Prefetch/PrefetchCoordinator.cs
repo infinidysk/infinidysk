@@ -8,7 +8,7 @@ public interface IPrefetchExecutor
 }
 
 public sealed class PrefetchCoordinator(PrefetchJobStore store, IPrefetchExecutor executor,
-    Func<PrefetchSettings> settings, Func<bool> admission) : BackgroundService
+    Func<PrefetchSettings> settings, Func<bool> admission, CancellationToken applicationStopping = default) : BackgroundService
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<string, CancellationTokenSource> _running = [];
@@ -21,7 +21,9 @@ public sealed class PrefetchCoordinator(PrefetchJobStore store, IPrefetchExecuto
     }
     public async Task RunOnceAsync(CancellationToken ct)
     {
-        if (RuntimeError is not null) return;
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(ct, applicationStopping);
+        ct = stopping.Token;
+        if (RuntimeError is not null || ct.IsCancellationRequested) return;
         var tasks = new List<Task>();
         try
         {
@@ -29,6 +31,7 @@ public sealed class PrefetchCoordinator(PrefetchJobStore store, IPrefetchExecuto
             if (!admission() || store.Paused) return;
             for (var index = 0; index < settings().MaxConcurrentJobs; index++)
             {
+                ct.ThrowIfCancellationRequested();
                 if (RuntimeError is not null) break;
                 var job = store.ClaimNext();
                 if (job is null) break;
@@ -60,8 +63,15 @@ public sealed class PrefetchCoordinator(PrefetchJobStore store, IPrefetchExecuto
                 store.Defer(job.Id, "Warming is paused or foreground playback has priority.", TimeSpan.FromMinutes(1), consumeAttempt: false);
                 return;
             }
-            try { await executor.ExecuteAsync(job, cancellation.Token).ConfigureAwait(false); }
-            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            try
+            {
+                cancellation.Token.ThrowIfCancellationRequested();
+                await executor.ExecuteAsync(job, cancellation.Token).ConfigureAwait(false);
+                cancellation.Token.ThrowIfCancellationRequested();
+            }
+            // Source operations can observe host shutdown before their own token, or
+            // surface disposal/transport errors while cancellation is unwinding.
+            catch (Exception exception) when (exception is not OutOfMemoryException && cancellation.IsCancellationRequested)
             {
                 store.Defer(job.Id, "Interrupted; verified coverage retained.", TimeSpan.FromSeconds(30), consumeAttempt: false);
                 return;

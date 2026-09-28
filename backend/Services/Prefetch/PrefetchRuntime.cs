@@ -7,7 +7,8 @@ namespace NzbWebDAV.Services.Prefetch;
 
 /// <summary>Optional feature lifetime: cache/index failures cannot prevent ordinary source streaming.</summary>
 public sealed class PrefetchRuntime(ConfigManager config, NativeCacheService native, IServiceScopeFactory scopes,
-    ActiveReadRegistry activeReads, PlexPlaybackRegistry? playback = null) : BackgroundService
+    ActiveReadRegistry activeReads, PlexPlaybackRegistry? playback = null,
+    IHostApplicationLifetime? applicationLifetime = null) : BackgroundService
 {
     private readonly Lock _gate = new();
     private PrefetchJobStore? _jobs;
@@ -44,7 +45,8 @@ public sealed class PrefetchRuntime(ConfigManager config, NativeCacheService nat
                 _jobs = new PrefetchJobStore(Path.Combine(native.ActiveSettings.MetadataPath, "prefetch.db"), settings: Settings);
                 _coordinator = new PrefetchCoordinator(_jobs, new NativePrefetchExecutor(scopes, native, config, _jobs, activeReads, playback, Settings),
                     Settings, () => native.ActiveSettings.Folders.Any(folder => folder.Enabled && !folder.ReadOnly)
-                        && (!Settings().PauseDuringPlayback || activeReads.Snapshot().Count == 0 && playback?.HasActivePlayback != true));
+                        && (!Settings().PauseDuringPlayback || activeReads.Snapshot().Count == 0 && playback?.HasActivePlayback != true),
+                    applicationLifetime?.ApplicationStopping ?? CancellationToken.None);
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException or ArgumentException)
             {
@@ -66,6 +68,9 @@ public sealed class PrefetchRuntime(ConfigManager config, NativeCacheService nat
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken,
+            applicationLifetime?.ApplicationStopping ?? CancellationToken.None);
+        stoppingToken = stopping.Token;
         try
         {
             while (!stoppingToken.IsCancellationRequested)

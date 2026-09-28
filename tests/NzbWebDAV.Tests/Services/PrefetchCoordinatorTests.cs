@@ -72,6 +72,60 @@ public sealed class PrefetchCoordinatorTests : IDisposable
         Assert.True(coordinator.ExecuteTask.IsCompletedSuccessfully);
     }
 
+    [Theory]
+    [InlineData("foreign-cancellation")]
+    [InlineData("disposal")]
+    [InlineData("late-success")]
+    public async Task ApplicationStopping_BeforeWorkerStop_RetainsCoverageWithoutRetryOrFurtherClaims(string outcome)
+    {
+        using var applicationStopping = new CancellationTokenSource();
+        using var store = new PrefetchJobStore(Path.Combine(_root, "jobs.db"),
+            settings: () => new() { MaxRetries = 0 });
+        var first = store.Enqueue(Guid.NewGuid(), "manual", 10);
+        var second = store.Enqueue(Guid.NewGuid(), "manual", 0);
+        var calls = 0;
+        var executor = new CallbackExecutor((job, _) =>
+        {
+            calls++;
+            store.Progress(job.Id, "generation", 4096);
+            applicationStopping.Cancel(); // The hosted worker's StopAsync has not run yet.
+            return outcome switch
+            {
+                "foreign-cancellation" => Task.FromException(new OperationCanceledException(new CancellationToken(true))),
+                "disposal" => Task.FromException(new ObjectDisposedException("source")),
+                _ => Task.CompletedTask
+            };
+        });
+        using var coordinator = new PrefetchCoordinator(store, executor,
+            () => new() { MaxConcurrentJobs = 2 }, () => true, applicationStopping.Token);
+        await coordinator.RunOnceAsync(CancellationToken.None);
+        await coordinator.RunOnceAsync(CancellationToken.None);
+        Assert.Equal(1, calls);
+        Assert.Null(coordinator.RuntimeError);
+        var interrupted = store.List().Single(job => job.Id == first.Id);
+        Assert.Equal("queued", interrupted.State); // MaxRetries=0 would fail if interruption consumed an attempt.
+        Assert.Equal(4096, interrupted.CommittedBytes);
+        Assert.Contains("Interrupted", interrupted.Error);
+        Assert.Equal("queued", store.List().Single(job => job.Id == second.Id).State);
+    }
+
+    [Fact]
+    public async Task ApplicationStopping_CancelsInFlightIoBeforeHostedStop()
+    {
+        using var applicationStopping = new CancellationTokenSource();
+        using var store = new PrefetchJobStore(Path.Combine(_root, "jobs.db"));
+        store.Enqueue(Guid.NewGuid(), "manual", 0);
+        var executor = new BlockingExecutor();
+        using var coordinator = new PrefetchCoordinator(store, executor, () => new(), () => true,
+            applicationStopping.Token);
+        var run = coordinator.RunOnceAsync(CancellationToken.None);
+        await executor.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        applicationStopping.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("queued", Assert.Single(store.List()).State);
+        Assert.Null(coordinator.RuntimeError);
+    }
+
     private static void ExecuteSql(string path, string sql)
     {
         using var database = new SqliteConnection("Data Source=" + path);
