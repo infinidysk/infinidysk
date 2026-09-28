@@ -43,7 +43,7 @@ public sealed class PrefetchFailureDiagnosticsTests : IDisposable
         Assert.Contains(category, saved.Error);
         Assert.Contains(exception.GetType().Name, saved.Error);
         Assert.DoesNotContain(secret, saved.Error);
-        var warning = Assert.Single(sink.Events.Where(e => e.Level == LogEventLevel.Warning));
+        var warning = Assert.Single(sink.Events, e => e.Level == LogEventLevel.Warning);
         Assert.Contains(job.Id, warning.RenderMessage());
         Assert.Contains(job.ItemId.ToString(), warning.RenderMessage());
         Assert.All(sink.Events, e =>
