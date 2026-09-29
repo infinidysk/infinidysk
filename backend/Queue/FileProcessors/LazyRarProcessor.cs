@@ -50,6 +50,10 @@ public class LazyRarProcessor(
         var sorted = SortByFilename(fileInfos);
         if (sorted is null || sorted.Count == 0) return null;
 
+        if (sorted.Any(info => !info.FileSize.HasValue &&
+            info.NzbFile.Segments.Any(segment => NzbWebDAV.Models.Nzb.NzbFile.IsOmittedSegmentId(segment.MessageId))))
+            return null;
+
         var firstInfo = sorted[0];
         var firstFileSize = firstInfo.FileSize
             ?? await usenetClient.GetFileSizeAsync(firstInfo.NzbFile, ct).ConfigureAwait(false);

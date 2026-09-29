@@ -110,6 +110,27 @@ public class LazyRarProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_OmittedSegmentWithoutPar2Size_FallsBackToEager()
+    {
+        var volumeBytes = BuildRar4SplitFirstVolume("movie.mkv", 1_000, 3_000);
+        var first = FileInfoFor("vol.rar", "first@example.com", volumeBytes.Length, volumeBytes.Length);
+        var trailing = FileInfoFor("vol.r00", "r00@example.com", 2_100, fileSize: null);
+        trailing.NzbFile.Segments.Add(new NzbSegment
+        {
+            MessageId = NzbFile.CreateOmittedSegmentId("r00@example.com", 2),
+            Number = 2,
+            Bytes = 2_100,
+        });
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["first@example.com"] = volumeBytes,
+        });
+
+        Assert.Null(await new LazyRarProcessor([first, trailing], client, password: null, CancellationToken.None)
+            .ProcessAsync());
+    }
+
+    [Fact]
     public async Task ProcessAsync_UnderestimatedFirstVolumeSize_ContainsPackedRange()
     {
         const int packed = 1_000;

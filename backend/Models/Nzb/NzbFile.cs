@@ -189,6 +189,8 @@ public class NzbFile
                 Segments[probeIndex].ByteRange = probeRange;
             }
 
+            if (probeIndex > 2) return;
+
             if (probeIndex == Segments.Count - 1)
             {
                 if (Segments.Count == 3 && firstRange.StartInclusive == 0 && probeRange.Count > 0

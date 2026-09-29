@@ -122,7 +122,7 @@ public sealed class OmittedSegmentImportTests : IAsyncLifetime
         Assert.Equal(Enumerable.Range(0, totalParts).Select(index => new LongRange(index * partSize, (index + 1) * partSize)), blob.SegmentByteRanges);
         Assert.Equal(omitted ? 1 : 0, blob.SegmentIds.Count(NzbFile.IsOmittedSegmentId));
         await using var stream = new NzbFileStream(blob.SegmentIds, item.FileSize!.Value, client, 4,
-            blob.SegmentByteRanges, segmentByteRangesTrusted: blob.SegmentByteRangesTrusted == true);
+            blob.SegmentByteRanges, segmentByteRangesTrusted: blob.SegmentByteRangesTrusted.GetValueOrDefault());
         await using var output = new MemoryStream();
         await stream.CopyToAsync(output, cancellation.Token);
         if (omitted) bytes.AsSpan(8192, 4096).Clear();

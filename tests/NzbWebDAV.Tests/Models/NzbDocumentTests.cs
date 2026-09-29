@@ -155,6 +155,25 @@ public class NzbDocumentTests
     }
 
     [Fact]
+    public async Task ProbeSecondSegmentRangeAsync_AdjacentOmissionsDoNotTrustInferredRanges()
+    {
+        var file = await ParseSparseFileAsync("1,4,5");
+        using var client = new OmittedHeaderClient(OmittedHeader(5, true, 15) with
+        {
+            PartNumber = 4, PartOffset = 9,
+        });
+        Assert.True(await file.TryFillOmittedSegmentsAsync(OmittedHeader(5, true, 15), client, CancellationToken.None));
+        file.Segments[0].ByteRange = new LongRange(0, 3);
+        file.Segments[^1].ByteRange = new LongRange(12, 15);
+
+        await file.ProbeSecondSegmentRangeAsync(client, 15, CancellationToken.None);
+
+        Assert.Null(file.GetSegmentByteRangeIndex().Ranges);
+        Assert.Equal(["part-4@example"], client.Probes);
+        Assert.Equal(new LongRange(9, 12), file.Segments[3].ByteRange);
+    }
+
+    [Fact]
     public void OmittedSegmentId_HasExactRecognizableShape()
     {
         var marker = NzbFile.CreateOmittedSegmentId("part-1@example", 3);

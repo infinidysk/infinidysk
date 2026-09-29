@@ -538,11 +538,10 @@ public class QueueItemProcessor(
             "first-segment",
             () => FetchFirstSegmentsStep.FetchFirstSegments(
                 nzbFiles, usenetClient, configManager, ct, part1Progress)).ConfigureAwait(false);
-        foreach (var firstSegment in segments)
+        foreach (var (file, header) in segments
+            .Where(segment => !segment.MissingFirstSegment && segment.Header is not null)
+            .Select(segment => (segment.NzbFile, segment.Header!)))
         {
-            if (firstSegment.MissingFirstSegment || firstSegment.Header is not { } header)
-                continue;
-            var file = firstSegment.NzbFile;
             var listedCount = file.Segments.Count;
             if (!await file.TryFillOmittedSegmentsAsync(header, usenetClient, ct).ConfigureAwait(false))
                 continue;
