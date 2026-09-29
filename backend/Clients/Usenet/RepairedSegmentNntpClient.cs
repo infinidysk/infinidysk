@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Services.Observability;
 using NzbWebDAV.Services.Repair;
 using UsenetSharp.Models;
@@ -24,7 +25,13 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
     public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
         SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken ct)
     {
-        if (MultiProviderNntpClient.AttributionContext.Value != null)
+        var omitted = NzbFile.IsOmittedSegmentId(segmentId);
+        if (omitted && ct.IsCancellationRequested)
+        {
+            ArticleBodyCompletion.InvokeContained(onConnectionReadyAgain, ArticleBodyResult.Cancelled);
+            ct.ThrowIfCancellationRequested();
+        }
+        if (!omitted && MultiProviderNntpClient.AttributionContext.Value != null)
             return await base.DecodedBodyAsync(segmentId, onConnectionReadyAgain, ct).ConfigureAwait(false);
 
         if (TryGetPatchedResponse(segmentId, out var patched))
@@ -34,13 +41,20 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
             return patched!;
         }
 
+        if (omitted)
+        {
+            ArticleBodyCompletion.InvokeContained(onConnectionReadyAgain, ArticleBodyResult.NotFound);
+            throw new UsenetArticleNotFoundException(segmentId);
+        }
         return await base.DecodedBodyAsync(segmentId, onConnectionReadyAgain, ct).ConfigureAwait(false);
     }
 
     public override async Task<UsenetDecodedBodyResponse?> TryGetLocalDecodedBodyAsync(
         SegmentId segmentId, CancellationToken ct)
     {
-        if (MultiProviderNntpClient.AttributionContext.Value != null)
+        var omitted = NzbFile.IsOmittedSegmentId(segmentId);
+        if (omitted) ct.ThrowIfCancellationRequested();
+        if (!omitted && MultiProviderNntpClient.AttributionContext.Value != null)
             return await base.TryGetLocalDecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
 
         if (TryGetPatchedResponse(segmentId, out var patched))
@@ -49,14 +63,23 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
             return patched;
         }
 
-        return await base.TryGetLocalDecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
+        return omitted ? null : await base.TryGetLocalDecodedBodyAsync(segmentId, ct).ConfigureAwait(false);
     }
 
     public override Task<UsenetStatResponse> StatAsync(SegmentId segmentId, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (MultiProviderNntpClient.AttributionContext.Value is not null || !_patchStore.HasUsablePatch(segmentId))
+        {
+            if (NzbFile.IsOmittedSegmentId(segmentId))
+                return Task.FromResult(new UsenetStatResponse
+                {
+                    ResponseCode = (int)UsenetResponseType.NoArticleWithThatMessageId,
+                    ResponseMessage = "430 omitted NZB part",
+                    ArticleExists = false,
+                });
             return base.StatAsync(segmentId, cancellationToken);
+        }
         return Task.FromResult(new UsenetStatResponse
         {
             ResponseCode = (int)UsenetResponseType.ArticleExists,
@@ -68,20 +91,22 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
     public override async IAsyncEnumerable<PipelinedStatResult> StatsPipelinedAsync(
         IReadOnlyList<string> segmentIds, int depth, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        if (MultiProviderNntpClient.AttributionContext.Value is not null)
+        var attribution = MultiProviderNntpClient.AttributionContext.Value is not null;
+        if (attribution && !segmentIds.Any(NzbFile.IsOmittedSegmentId))
         {
             await foreach (var result in base.StatsPipelinedAsync(segmentIds, depth, cancellationToken).ConfigureAwait(false))
                 yield return result;
             yield break;
         }
 
-        var local = new bool[segmentIds.Count];
+        var local = new bool?[segmentIds.Count];
         var misses = new List<string>();
         for (var index = 0; index < segmentIds.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            local[index] = _patchStore.HasUsablePatch(segmentIds[index]);
-            if (!local[index]) misses.Add(segmentIds[index]);
+            local[index] = !attribution && _patchStore.HasUsablePatch(segmentIds[index])
+                ? true : NzbFile.IsOmittedSegmentId(segmentIds[index]) ? false : null;
+            if (local[index] is null) misses.Add(segmentIds[index]);
         }
 
         await using var remote = misses.Count == 0 ? null
@@ -89,9 +114,9 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
         for (var index = 0; index < segmentIds.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (local[index])
+            if (local[index] is { } exists)
             {
-                yield return new PipelinedStatResult { SegmentId = segmentIds[index], Exists = true };
+                yield return new PipelinedStatResult { SegmentId = segmentIds[index], Exists = exists };
                 continue;
             }
             if (remote is null || !await remote.MoveNextAsync().ConfigureAwait(false)
@@ -106,7 +131,13 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
     public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
         SegmentId segmentId, UsenetExclusiveConnection exclusiveConnection, CancellationToken ct)
     {
-        if (MultiProviderNntpClient.AttributionContext.Value != null)
+        var omitted = NzbFile.IsOmittedSegmentId(segmentId);
+        if (omitted && ct.IsCancellationRequested)
+        {
+            ArticleBodyCompletion.InvokeContained(exclusiveConnection.OnConnectionReadyAgain, ArticleBodyResult.Cancelled);
+            ct.ThrowIfCancellationRequested();
+        }
+        if (!omitted && MultiProviderNntpClient.AttributionContext.Value != null)
             return await base.DecodedBodyAsync(segmentId, exclusiveConnection, ct).ConfigureAwait(false);
 
         if (TryGetPatchedResponse(segmentId, out var patched))
@@ -117,6 +148,11 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
             return patched!;
         }
 
+        if (omitted)
+        {
+            ArticleBodyCompletion.InvokeContained(exclusiveConnection.OnConnectionReadyAgain, ArticleBodyResult.NotFound);
+            throw new UsenetArticleNotFoundException(segmentId);
+        }
         return await base.DecodedBodyAsync(segmentId, exclusiveConnection, ct).ConfigureAwait(false);
     }
 
@@ -125,7 +161,8 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
         ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
     {
-        if (MultiProviderNntpClient.AttributionContext.Value is not null)
+        if (MultiProviderNntpClient.AttributionContext.Value is not null
+            && !segmentIds.Any(id => NzbFile.IsOmittedSegmentId(id)))
             return base.DecodedBodiesAsync(segmentIds, onConnectionReadyAgain, cancellationToken);
 
         return LocalDataBatchOverlay.ExecuteAsync(
@@ -142,7 +179,8 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
         UsenetExclusiveConnection exclusiveConnection,
         CancellationToken cancellationToken)
     {
-        if (MultiProviderNntpClient.AttributionContext.Value is not null)
+        if (MultiProviderNntpClient.AttributionContext.Value is not null
+            && !segmentIds.Any(id => NzbFile.IsOmittedSegmentId(id)))
             return base.DecodedBodiesAsync(segmentIds, exclusiveConnection, cancellationToken);
 
         return LocalDataBatchOverlay.ExecuteAsync(
@@ -158,7 +196,15 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
     private LocalLookupResult TryOpenPatchedResponse(SegmentId segmentId)
     {
         if (!TryGetPatchedResponse(segmentId, out var patched) || patched is null)
-            return LocalLookupResult.Miss;
+            return NzbFile.IsOmittedSegmentId(segmentId)
+                ? LocalLookupResult.Hit(new UsenetDecodedBodyResponse
+                {
+                    SegmentId = segmentId,
+                    ResponseCode = (int)UsenetResponseType.NoArticleWithThatMessageId,
+                    ResponseMessage = "430 omitted NZB part",
+                    Stream = null,
+                })
+                : LocalLookupResult.Miss;
 
         PrometheusMetrics.Current?.RecordPar2PatchHit();
         return LocalLookupResult.Hit(patched);
@@ -166,7 +212,24 @@ public sealed class RepairedSegmentNntpClient : WrappingNntpClient
 
     private bool TryGetPatchedResponse(SegmentId segmentId, out UsenetDecodedBodyResponse? response)
     {
+        if (MultiProviderNntpClient.AttributionContext.Value is not null)
+        {
+            response = null;
+            return false;
+        }
         string id = segmentId;
         return _patchStore.TryGet(id, out response);
+    }
+
+    public override async Task<UsenetYencHeader> GetYencHeadersAsync(string segmentId, CancellationToken cancellationToken)
+    {
+        if (!NzbFile.IsOmittedSegmentId(segmentId))
+            return await base.GetYencHeadersAsync(segmentId, cancellationToken).ConfigureAwait(false);
+
+        var response = await DecodedBodyAsync(segmentId, cancellationToken).ConfigureAwait(false);
+        await using var stream = response.Stream!;
+        var headers = await stream.GetYencHeadersAsync(cancellationToken).ConfigureAwait(false);
+        return headers ?? throw new NonRetryableDownloadException(
+            $"Article <{segmentId}> is not yEnc-encoded; only yEnc binaries are supported.");
     }
 }

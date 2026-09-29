@@ -6,6 +6,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Models;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Par2Recovery;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Tests.Fakes;
@@ -16,7 +17,7 @@ namespace NzbWebDAV.Tests.Services.Repair;
 internal sealed class Par2RepairTestReleaseBuilder(ConfigManager config, string configRoot)
 {
     internal sealed record SourceFile(string Name, byte[] Data, int[] Sizes,
-        int[]? Missing = null, string? Subject = null, byte[]? FileHashOverride = null);
+        int[]? Missing = null, string? Subject = null, byte[]? FileHashOverride = null, int[]? Omitted = null);
     internal sealed record PostedFile(SourceFile Source, string[] Ids, LongRange[] Ranges);
 
     internal async Task<SeededRelease> BuildAsync(
@@ -49,8 +50,16 @@ internal sealed class Par2RepairTestReleaseBuilder(ConfigManager config, string 
             for (var index = 0; index < file.Sizes.Length; index++)
             {
                 var id = $"content-{token}-{fileIndex}-{index}@test";
-                ids[index] = id;
                 ranges[index] = LongRange.FromStartAndSize(offset, file.Sizes[index]);
+                if (file.Omitted?.Contains(index) == true)
+                {
+                    if (index == 0 || index == file.Sizes.Length - 1)
+                        throw new ArgumentException("Only interior omissions are supported.", nameof(files));
+                    ids[index] = NzbFile.CreateOmittedSegmentId(ids[0], index + 1);
+                    offset += file.Sizes[index];
+                    continue;
+                }
+                ids[index] = id;
                 if (file.Missing?.Contains(index) != true)
                     payloads[id] = file.Data.AsSpan(offset, file.Sizes[index]).ToArray();
                 headers[id] = Header(file.Name, file.Data.Length, index, file.Sizes.Length, ranges[index]);

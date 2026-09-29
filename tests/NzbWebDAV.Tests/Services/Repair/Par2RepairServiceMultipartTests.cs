@@ -6,6 +6,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Models;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Par2Recovery;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Streams;
@@ -43,6 +44,98 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
         DavDatabaseContext.ResetOptionsForTests();
         Directory.Delete(_root, true);
         return Task.CompletedTask;
+    }
+
+    [Theory]
+    [InlineData(DavItem.ItemSubType.NzbFile, true)]
+    [InlineData(DavItem.ItemSubType.MultipartFile, true)]
+    [InlineData(DavItem.ItemSubType.NzbFile, false)]
+    [InlineData(DavItem.ItemSubType.MultipartFile, false)]
+    public async Task StoredOmission_IsReconstructedFromParity(DavItem.ItemSubType subtype, bool trusted)
+    {
+        var data = Data(4096 * 6, "omitted-parity");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("movie.mkv", data, Sizes(data.Length), Omitted: [3]),
+        ], [0], subtype, trustedRanges: trusted);
+        var marker = release.ContentSegmentIds[3];
+        Assert.True(NzbFile.IsOmittedSegmentId(marker));
+        await using (var retained = BlobStore.ReadBlob(release.Item.NzbBlobId!.Value)!)
+        {
+            var document = await NzbDocument.LoadAsync(retained);
+            var source = Assert.Single(document.Files, file => file.GetSubjectFileName() == "movie.mkv");
+            Assert.Equal(5, source.Segments.Count);
+            Assert.DoesNotContain(source.GetSegmentIds(), NzbFile.IsOmittedSegmentId);
+        }
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        Assert.Equal(Par2RepairOutcome.Repaired,
+            await release.Service.TryPar2RepairAsync(release.Item, [marker], cancellation.Token));
+        await AssertPatchAsync(release, 0, 3);
+        Assert.Equal(1, (await ReadJobAsync()).SlicesReconstructed);
+        using var repaired = new RepairedSegmentNntpClient(release.Fake, release.Store);
+        await using var output = new MemoryStream();
+        if (subtype == DavItem.ItemSubType.NzbFile)
+        {
+            var blob = await BlobStore.ReadBlob<DavNzbFile>(release.Item.FileBlobId!.Value);
+            Assert.NotNull(blob);
+            await using var stream = new NzbFileStream(blob.SegmentIds, data.Length, repaired, 0,
+                blob.SegmentByteRanges, segmentByteRangesTrusted: blob.SegmentByteRangesTrusted == true);
+            await stream.CopyToAsync(output, cancellation.Token);
+        }
+        else
+        {
+            var blob = await BlobStore.ReadBlob<DavMultipartFile>(release.Item.FileBlobId!.Value);
+            Assert.NotNull(blob);
+            await using var stream = new DavMultipartFileStream(blob, repaired, 0, null, false, release.Item.Path);
+            await stream.CopyToAsync(output, cancellation.Token);
+        }
+        Assert.Equal(data, output.ToArray());
+        Assert.DoesNotContain(marker, release.Fake.RequestedSegmentIds);
+    }
+
+    [Theory]
+    [InlineData(DavItem.ItemSubType.NzbFile)]
+    [InlineData(DavItem.ItemSubType.MultipartFile)]
+    public async Task LegacySparsePayload_IsNotExpandedDuringRepair(DavItem.ItemSubType subtype)
+    {
+        var data = Data(4096 * 6, "legacy-omitted-parity");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("movie.mkv", data, Sizes(data.Length), Omitted: [3]),
+        ], [0], subtype);
+        var marker = release.ContentSegmentIds[3];
+        var realIds = release.ContentSegmentIds.Where(id => !NzbFile.IsOmittedSegmentId(id)).ToArray();
+        if (subtype == DavItem.ItemSubType.NzbFile)
+        {
+            var blob = await BlobStore.ReadBlob<DavNzbFile>(release.Item.FileBlobId!.Value);
+            Assert.NotNull(blob);
+            blob.SegmentIds = realIds;
+            blob.SegmentByteRanges = null;
+            blob.SegmentByteRangesTrusted = false;
+            await BlobStore.WriteBlob(release.Item.FileBlobId.Value, blob);
+        }
+        else
+        {
+            var blob = await BlobStore.ReadBlob<DavMultipartFile>(release.Item.FileBlobId!.Value);
+            Assert.NotNull(blob);
+            var part = Assert.Single(blob.Metadata.FileParts);
+            part.SegmentIds = realIds;
+            part.SegmentByteRanges = null;
+            part.SegmentByteRangesTrusted = false;
+            await BlobStore.WriteBlob(release.Item.FileBlobId.Value, blob);
+        }
+        await using (var retained = BlobStore.ReadBlob(release.Item.NzbBlobId!.Value)!)
+        {
+            var document = await NzbDocument.LoadAsync(retained);
+            var source = Assert.Single(document.Files, file => file.GetSubjectFileName() == "movie.mkv");
+            Assert.False(source.RestoreStoredOmittedSegments(realIds.ToHashSet(), _ => Assert.Fail("Legacy payload must not expand")));
+            Assert.Equal(realIds, source.GetSegmentIds());
+        }
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        Assert.Equal(Par2RepairOutcome.NotRepaired,
+            await release.Service.TryPar2RepairAsync(release.Item, [realIds[2]], cancellation.Token));
+        Assert.False(release.Store.Contains(marker));
+        Assert.Equal(0, release.Store.EntryCount);
+        Assert.DoesNotContain(marker, release.Fake.RequestedSegmentIds);
+        Assert.False(string.IsNullOrWhiteSpace((await ReadJobAsync()).FailureReason));
     }
 
     [Theory]

@@ -79,6 +79,11 @@ public partial class Par2RepairService
     private async Task<(Par2SetContext Set, List<SourceLayout> Layouts)> ResolveRecoverySetAsync(
         NzbDocument document, RepairPayload payload, RepairReadContext reads, CancellationToken ct)
     {
+        if (payload.SegmentIds.Any(NzbFile.IsOmittedSegmentId))
+        {
+            foreach (var file in document.Files)
+                file.RestoreStoredOmittedSegments(payload.SegmentIds, reads.Budget.Charge);
+        }
         var owners = new Dictionary<string, NzbFile?>(StringComparer.Ordinal);
         foreach (var file in document.Files)
         foreach (var segment in file.Segments)

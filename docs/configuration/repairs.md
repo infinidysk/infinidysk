@@ -149,6 +149,16 @@ health checks.
 
 ## Degraded damage tolerance [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }
 
+When numbered NZB entries omit an interior part and the articles' yEnc metadata
+corroborates that posted layout, import preserves a missing slot. Playback uses
+the existing gap-fill behavior to keep later bytes at their correct offsets.
+The real articles are still checked; the generated slot is handled locally and
+assessed by the normal health/repair workflow under the configured schedules.
+Small holes may remain playable, and matching PAR2 data may repair them.
+Playback and repair are not guaranteed, especially for archive metadata or
+damage beyond configured limits. Existing mounts need reimport to gain the
+corrected layout; they are not rewritten during upgrade.
+
 Health checks of plain video files no longer treat every missing Usenet segment as fatal.
 When a Standard, Enhanced, or Deep check covers **every** segment of an eligible file (files up
 to 8000 segments before aging, or any larger file whose sample still covers everything),

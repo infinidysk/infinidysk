@@ -1,5 +1,6 @@
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Tests.Fakes;
 
@@ -7,6 +8,28 @@ namespace NzbWebDAV.Tests.Queue;
 
 public sealed class QueueArticleExistenceSelectionTests
 {
+    [Theory]
+    [InlineData("full")]
+    [InlineData("sampled")]
+    public async Task OmittedSegment_SelectionExcludesOnlyExactMarkers(string mode)
+    {
+        var marker = NzbFile.CreateOmittedSegmentId("part-1@example", 3);
+        IReadOnlyList<string>[] files =
+        [
+            ["part-1@example", "ordinary@omitted.nzbdav.invalid", marker, "part-4@example"],
+        ];
+        var articles = QueueItemProcessor.SelectArticlesForExistenceCheck(files, mode);
+        Assert.Equal(["part-1@example", "ordinary@omitted.nzbdav.invalid", "part-4@example"], articles);
+        Assert.Equal(marker, QueueItemProcessor.SelectMidpointPreflightSegment(files));
+        using var client = new FakeNntpClient(articles.ToDictionary(id => id, _ => Array.Empty<byte>()));
+
+        await QueueItemProcessor.CheckExistenceWithOptionalMidpointPreflightAsync(
+            client, files, articles, mode, 1, null, CancellationToken.None);
+
+        Assert.Equal(articles, client.StatRequestOrder);
+        Assert.All(client.StatRequestCounts.Values, count => Assert.Equal(1, count));
+    }
+
     [Fact]
     public void SampledMode_IncludesFirstAndLastSegmentOfEveryFile()
     {

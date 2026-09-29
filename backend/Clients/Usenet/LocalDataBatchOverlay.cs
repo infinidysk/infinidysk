@@ -1,5 +1,6 @@
 using System.Runtime.ExceptionServices;
 using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Exceptions;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
@@ -265,6 +266,13 @@ internal static class LocalDataBatchOverlay
                 if (localByIndex[index] is { } local)
                 {
                     response = local.Response;
+                    if (UsenetArticleAvailability.IsDefinitiveMissing(response))
+                    {
+                        state.ObserveResponse(response);
+                        output[index].TrySetException(new UsenetArticleNotFoundException(requested[index]));
+                        previousTerminal = Task.CompletedTask;
+                        continue;
+                    }
                 }
                 else
                 {

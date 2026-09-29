@@ -17,6 +17,7 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
@@ -514,15 +515,35 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             [], allowChecks: true, allowRepairs: true, maximumCount: 1, CancellationToken.None));
     }
 
-    [Fact]
-    public async Task BoundedHole_MarksDegraded_PersistsHoles_AndSkipsRepair()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BoundedHole_OmittedSegment_MarksDegraded_PersistsHoles_AndSkipsRepair(bool omitted)
     {
         var segments = NewSegmentIds(6);
         var sizes = new long[] { 10_000, 10_000, 50, 10_000, 10_000, 10_000 };
+        if (omitted)
+        {
+            var file = new NzbFile { Subject = "movie.mkv" };
+            file.Segments.AddRange(segments.Select((id, index) => new NzbSegment
+            {
+                MessageId = id, Number = index + 1, Bytes = sizes[index],
+            }).Where(segment => segment.Number != 3));
+            using var probe = NewFakeClient(segments, missing: [2]);
+            Assert.True(await file.TryFillOmittedSegmentsAsync(new UsenetYencHeader
+            {
+                FileName = "movie.mkv", FileSize = sizes.Sum(), LineLength = 128,
+                PartNumber = 1, TotalParts = 6, HasTotalParts = true, PartOffset = 0, PartSize = sizes[0],
+            }, probe, CancellationToken.None));
+            segments = file.GetSegmentIds();
+        }
         var (item, oldBlobId) = await AddVideoFileAsync("movie.mkv", segments, sizes);
         var fake = NewFakeClient(segments, missing: [2]);
         _failureTracker.RecordFailure(item.Id);
-        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+        var (service, par2) = await NewServiceAsync(
+            omitted ? new RepairedSegmentNntpClient(fake, _patchStore) : fake, par2Outcome: false);
+        var arrCalls = 0;
+        service.CreateRepairArrClientsOverride = () => { arrCalls++; return []; };
 
         await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
 
@@ -552,6 +573,12 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.True(persisted.NextHealthCheck > DateTimeOffset.UtcNow);
         Assert.Equal(1, _failureTracker.GetFailureCount(item.Id));
         HealthCheckService.CheckCachedMissingSegmentIds([segments[2]]);
+        Assert.Equal(0, arrCalls);
+        if (omitted)
+        {
+            Assert.DoesNotContain(segments[2], fake.RequestedSegmentIds);
+            Assert.DoesNotContain(segments[2], fake.StatRequestOrder);
+        }
     }
 
     [Fact]

@@ -3,6 +3,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
@@ -13,6 +14,242 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 
 public sealed class RepairedSegmentNntpClientTests
 {
+    [Fact]
+    public async Task OmittedSegment_IsLocalMissingUntilPatched()
+    {
+        var dir = Path.Join(Path.GetTempPath(), "omitted-patch-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            var marker = NzbFile.CreateOmittedSegmentId("first@example", 2);
+            var inner = new FakeNntpClient(new Dictionary<string, byte[]>(), useCachedYencStreams: true);
+            using var client = new RepairedSegmentNntpClient(inner, store);
+            await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() => client.DecodedBodyAsync(marker, CancellationToken.None));
+            Assert.False((await client.StatAsync(marker, CancellationToken.None)).ArticleExists);
+            Assert.Null(await client.TryGetLocalDecodedBodyAsync(marker, CancellationToken.None));
+            await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() => client.GetYencHeadersAsync(marker, CancellationToken.None));
+            Assert.Equal(0, store.HitCount);
+
+            byte[] bytes = [4, 5, 6];
+            var header = HeaderFor(bytes) with { FileSize = 9, PartNumber = 2, TotalParts = 3, PartOffset = 3 };
+            store.CommitPatch(marker, bytes, header);
+            Assert.True((await client.StatAsync(marker, CancellationToken.None)).ArticleExists);
+            Assert.Equal(header, await client.GetYencHeadersAsync(marker, CancellationToken.None));
+            var body = await client.DecodedBodyAsync(marker, CancellationToken.None);
+            Assert.Equal(bytes, await ReadOmittedResponseAsync(body));
+            var local = await client.TryGetLocalDecodedBodyAsync(marker, CancellationToken.None);
+            Assert.NotNull(local);
+            Assert.Equal(bytes, await ReadOmittedResponseAsync(local));
+            Assert.Empty(inner.RequestedSegmentIds);
+            Assert.Empty(inner.StatRequestOrder);
+            Assert.Equal(0, inner.HeaderProbeCount);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, true, true)]
+    public async Task OmittedSegment_CompletionFiresExactlyOnce(bool exclusive, bool throwing, bool cancelled)
+    {
+        var dir = Path.Join(Path.GetTempPath(), "omitted-callback-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            var marker = NzbFile.CreateOmittedSegmentId("first@example", 2);
+            if (cancelled) store.CommitPatch(marker, [1], HeaderFor([1]));
+            var inner = new FakeNntpClient(new Dictionary<string, byte[]>());
+            using var client = new RepairedSegmentNntpClient(inner, store);
+            using var cancellation = new CancellationTokenSource();
+            if (cancelled) cancellation.Cancel();
+            var recorder = new ArticleBodyCompletionRecorder(throwOnInvoke: throwing);
+            Task<UsenetDecodedBodyResponse> ReadAsync() => exclusive
+                ? client.DecodedBodyAsync(marker, new UsenetExclusiveConnection(recorder.Invoke), cancellation.Token)
+                : client.DecodedBodyAsync(marker, recorder.Invoke, cancellation.Token);
+            if (cancelled) await Assert.ThrowsAnyAsync<OperationCanceledException>(ReadAsync);
+            else await Assert.ThrowsAsync<UsenetArticleNotFoundException>(ReadAsync);
+            Assert.Equal(1, recorder.Count);
+            Assert.Equal(cancelled ? ArticleBodyResult.Cancelled : ArticleBodyResult.NotFound, recorder.Result);
+            Assert.Empty(inner.RequestedSegmentIds);
+            Assert.Equal(0, store.HitCount);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OmittedSegment_BatchPreservesNeighboursAndOrder(bool exclusive)
+    {
+        var dir = Path.Join(Path.GetTempPath(), "omitted-batch-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            var marker = NzbFile.CreateOmittedSegmentId("first@example", 2);
+            var patched = NzbFile.CreateOmittedSegmentId("first@example", 4);
+            store.CommitPatch(patched, [4], HeaderFor([4]));
+            var inner = new FakeNntpClient(new Dictionary<string, byte[]>
+            {
+                ["first@example"] = [1], ["third@example"] = [3],
+            }, useCachedYencStreams: true);
+            using var client = new RepairedSegmentNntpClient(inner, store);
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var recorder = new ArticleBodyCompletionRecorder(throwOnInvoke: true);
+            SegmentId[] ids = ["first@example", marker, "third@example", patched];
+            var batch = exclusive
+                ? await client.DecodedBodiesAsync(ids, new UsenetExclusiveConnection(recorder.Invoke), cancellation.Token)
+                : await client.DecodedBodiesAsync(ids, recorder.Invoke, cancellation.Token);
+            Assert.Equal(4, batch.Responses.Count);
+            Assert.Equal(new byte[] { 1 }, await ReadOmittedResponseAsync(await batch.Responses[0].WaitAsync(cancellation.Token)));
+            var missing = await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() => batch.Responses[1].WaitAsync(cancellation.Token));
+            Assert.Equal(marker, missing.SegmentId);
+            Assert.Equal(new byte[] { 3 }, await ReadOmittedResponseAsync(await batch.Responses[2].WaitAsync(cancellation.Token)));
+            Assert.Equal(new byte[] { 4 }, await ReadOmittedResponseAsync(await batch.Responses[3].WaitAsync(cancellation.Token)));
+            await batch.Completion.WaitAsync(cancellation.Token);
+            Assert.All(batch.Responses, response => Assert.True(response.IsCompleted));
+            Assert.Equal(1, recorder.Count);
+            Assert.Equal(ArticleBodyResult.NotFound, recorder.Result);
+            Assert.Equal(["first@example", "third@example"], inner.RequestedSegmentIds.Order(StringComparer.Ordinal));
+            Assert.Equal(1, inner.BatchRequestCount);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, true, true)]
+    public async Task OmittedSegment_AllLocalBatchNeedsNoProvider(bool exclusive, bool withPatch, bool cancelled)
+    {
+        var dir = Path.Join(Path.GetTempPath(), "omitted-local-batch-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            var marker = NzbFile.CreateOmittedSegmentId("first@example", 2);
+            store.CommitPatch("patched@example", [1, 2, 3], HeaderFor([1, 2, 3]));
+            var inner = new FakeNntpClient(new Dictionary<string, byte[]>());
+            using var client = new RepairedSegmentNntpClient(inner, store);
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            if (cancelled) cancellation.Cancel();
+            var recorder = new ArticleBodyCompletionRecorder();
+            SegmentId[] ids = withPatch ? [marker, "patched@example", marker] : [marker, marker];
+            Task<UsenetDecodedBodyBatch> FetchAsync() => exclusive
+                ? client.DecodedBodiesAsync(ids, new UsenetExclusiveConnection(recorder.Invoke), cancellation.Token)
+                : client.DecodedBodiesAsync(ids, recorder.Invoke, cancellation.Token);
+            if (cancelled) await Assert.ThrowsAnyAsync<OperationCanceledException>(FetchAsync);
+            else
+            {
+                var batch = await FetchAsync();
+                for (var index = 0; index < ids.Length; index++)
+                {
+                    if (NzbFile.IsOmittedSegmentId(ids[index]))
+                        await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() => batch.Responses[index].WaitAsync(cancellation.Token));
+                    else
+                    {
+                        var response = await batch.Responses[index].WaitAsync(cancellation.Token);
+                        await response.Stream!.DisposeAsync();
+                    }
+                }
+                await batch.Completion.WaitAsync(cancellation.Token);
+                Assert.All(batch.Responses, response => Assert.True(response.IsCompleted));
+            }
+            Assert.Equal(1, recorder.Count);
+            Assert.Equal(cancelled ? ArticleBodyResult.Cancelled : ArticleBodyResult.NotFound, recorder.Result);
+            Assert.Equal(0, inner.BatchRequestCount);
+            Assert.Empty(inner.RequestedSegmentIds);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public async Task OmittedSegment_StatPipelinePreservesOrder()
+    {
+        var dir = Path.Join(Path.GetTempPath(), "omitted-stat-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            store.CommitPatch("patched@example", [1], HeaderFor([1]));
+            var marker = NzbFile.CreateOmittedSegmentId("first@example", 2);
+            using var inner = new TrackingStatClient("normal");
+            using var client = new RepairedSegmentNntpClient(inner, store);
+            var results = new List<PipelinedStatResult>();
+            await foreach (var result in client.StatsPipelinedAsync(["patched@example", marker, "remote@example"], 3, CancellationToken.None))
+                results.Add(result);
+            Assert.Equal(["patched@example", marker, "remote@example"], results.Select(result => result.SegmentId));
+            Assert.Equal([true, false, true], results.Select(result => result.Exists));
+            Assert.Equal(["remote@example"], inner.Requested);
+            Assert.True(inner.Disposed);
+            Assert.Equal(0, store.HitCount);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OmittedSegment_AttributionNeverProbesSyntheticId(bool exclusive)
+    {
+        var dir = Path.Join(Path.GetTempPath(), "omitted-attribution-" + Guid.NewGuid().ToString("N"));
+        var previous = MultiProviderNntpClient.AttributionContext.Value;
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            var marker = NzbFile.CreateOmittedSegmentId("first@example", 2);
+            store.CommitPatch(marker, [2], HeaderFor([2]));
+            store.CommitPatch("real@example", [99], HeaderFor([99]));
+            var inner = new FakeNntpClient(new Dictionary<string, byte[]> { ["real@example"] = [1] }, useCachedYencStreams: true);
+            using var client = new RepairedSegmentNntpClient(inner, store);
+            MultiProviderNntpClient.AttributionContext.Value = new MultiProviderNntpClient.ResponderAttribution();
+            var recorder = new ArticleBodyCompletionRecorder();
+            await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() => exclusive
+                ? client.DecodedBodyAsync(marker, new UsenetExclusiveConnection(recorder.Invoke), CancellationToken.None)
+                : client.DecodedBodyAsync(marker, recorder.Invoke, CancellationToken.None));
+            Assert.Equal(1, recorder.Count);
+            Assert.False((await client.StatAsync(marker, CancellationToken.None)).ArticleExists);
+            Assert.Null(await client.TryGetLocalDecodedBodyAsync(marker, CancellationToken.None));
+            await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() => client.GetYencHeadersAsync(marker, CancellationToken.None));
+            var batch = exclusive
+                ? await client.DecodedBodiesAsync([marker, "real@example"], new UsenetExclusiveConnection(null), CancellationToken.None)
+                : await client.DecodedBodiesAsync([marker, "real@example"], onConnectionReadyAgain: null, CancellationToken.None);
+            await Assert.ThrowsAsync<UsenetArticleNotFoundException>(() => batch.Responses[0]);
+            Assert.Equal(new byte[] { 1 }, await ReadOmittedResponseAsync(await batch.Responses[1]));
+            await batch.Completion;
+            var results = new List<PipelinedStatResult>();
+            await foreach (var result in client.StatsPipelinedAsync([marker, "real@example"], 2, CancellationToken.None))
+                results.Add(result);
+            Assert.Equal([false, true], results.Select(result => result.Exists));
+            Assert.Equal(["real@example"], inner.RequestedSegmentIds);
+            Assert.Equal(["real@example"], inner.StatRequestOrder);
+            Assert.Equal(0, store.HitCount);
+        }
+        finally
+        {
+            MultiProviderNntpClient.AttributionContext.Value = previous;
+            Directory.Delete(dir, true);
+        }
+    }
+
+    private static async Task<byte[]> ReadOmittedResponseAsync(UsenetDecodedBodyResponse response)
+    {
+        await using var stream = response.Stream!;
+        await using var output = new MemoryStream();
+        await stream.CopyToAsync(output);
+        return output.ToArray();
+    }
+
     [Fact]
     public async Task Stat_UsesUsablePatchWithoutHitMetrics_AndDropsMissingHeader()
     {
