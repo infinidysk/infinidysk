@@ -346,16 +346,18 @@ public class GetWebdavItemController(
         // throughput rate populates correctly.
         var buffer = new byte[StreamingResponseWriteWatchdog.CopyChunkBytes];
         var position = startOffset;
+        var bytesRemaining = Response.ContentLength ?? long.MaxValue;
         var writeWatchdog = new StreamingResponseWriteWatchdog(
             configManager.GetStreamingWriteTimeout(),
             readCts,
             inFlightArticleBudget ?? InFlightArticleBudget.Current);
-        while (true)
+        while (bytesRemaining > 0)
         {
             int read;
             try
             {
-                read = await src.ReadAsync(buffer, ct).ConfigureAwait(false);
+                var requestedBytes = (int)Math.Min(bytesRemaining, buffer.Length);
+                read = await src.ReadAsync(buffer.AsMemory(0, requestedBytes), ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -376,6 +378,7 @@ public class GetWebdavItemController(
             if (read <= 0) break;
             var writeStarted = Stopwatch.GetTimestamp();
             await writeWatchdog.WriteAsync(dest, buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+            bytesRemaining -= read;
             onBytesServed(read);
             streamTrace.AddStall(
                 traceRange, StreamStallKind.ClientWrite, Stopwatch.GetElapsedTime(writeStarted));

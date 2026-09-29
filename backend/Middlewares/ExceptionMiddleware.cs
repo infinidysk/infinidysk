@@ -567,13 +567,21 @@ public class ExceptionMiddleware(
 
             // Known download errors carry a human-readable message;
             // reserve full stack traces for unexpected failures.
-            var isKnown = IsKnownDownloadException(e, out var knownError);
+            var isContentLengthOverrun = e is InvalidOperationException &&
+                e.Message.StartsWith(
+                    "Response Content-Length mismatch: too many bytes written (",
+                    StringComparison.Ordinal);
+            var isKnown = IsKnownDownloadException(e, out var knownError) || isContentLengthOverrun;
+            if (isContentLengthOverrun)
+                knownError = e.Message;
             var reason = isKnown ? knownError : e.GetType().Name;
             // Transient segment exhaustion (all retries spent, player will retry the range)
             // and incomplete multipart data are expected operational conditions, so they
             // warn rather than error. Other retryable failures (e.g. unknown-length
             // segments that need repair) stay at Error.
-            var knownLevel = isIncompleteData || e is TransientSegmentExhaustionException
+            var knownLevel = isIncompleteData ||
+                e is TransientSegmentExhaustionException ||
+                isContentLengthOverrun
                 ? LogEventLevel.Warning
                 : LogEventLevel.Error;
             var dedupeKey = $"{filePath}|{seekPosition}|{reason}";
