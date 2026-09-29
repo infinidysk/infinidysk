@@ -93,6 +93,7 @@ public class ActiveReadsBroadcaster(
             {
                 id = e.Id,
                 fileName = e.FileName,
+                parentDirectoryName = e.ParentDirectoryName,
                 path = e.Path,
                 startedAt = e.StartedAt.ToUnixTimeMilliseconds(),
                 lastActivityAt = e.LastActivityAt.ToUnixTimeMilliseconds(),

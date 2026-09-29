@@ -49,6 +49,7 @@ public class ProviderCircuitOverviewEnricherTests
         Assert.Equal("open", primary.CircuitState);
         Assert.Equal(42, primary.CooldownRemainingSeconds);
         Assert.Equal(10, primary.Articles);
+        Assert.Equal("Pooled", primary.ProviderType);
         Assert.Equal([0L, 1L], primary.ErrorSpark);
         Assert.Equal([2L, 0L], primary.RetrySpark);
         var seriesPoint = Assert.Single(primary.SpeedSeries);
@@ -61,7 +62,39 @@ public class ProviderCircuitOverviewEnricherTests
         Assert.Equal(0, backup.Articles);
         Assert.Equal("Backup", backup.Nickname);
         Assert.Equal(2, backup.ArticleMissCount);
+        Assert.Equal("BackupOnly", backup.ProviderType);
         Assert.Empty(backup.SpeedSeries);
+    }
+
+    [Fact]
+    public void EnrichProviders_UsesRuntimeProviderTypeForRole()
+    {
+        var providers = new List<ProviderOverviewRow> { new() { Provider = KeyA, Articles = 5 } };
+        var snapshots = new List<ProviderCircuitRuntimeSnapshot>
+        {
+            new(KeyA, "news.example", ProviderType.BackupAndStats, new ProviderCircuitBreakerSnapshot(
+                ProviderCircuitState.Closed, null, null, 0, 0, 0, 0)),
+            new(KeyB, "disabled.example", ProviderType.Disabled, new ProviderCircuitBreakerSnapshot(
+                ProviderCircuitState.Closed, null, null, 0, 0, 0, 0)),
+        };
+
+        var enriched = ProviderCircuitOverviewEnricher.EnrichProviders(providers, snapshots, new Dictionary<string, string?>());
+
+        var backup = enriched.Single(p => p.Provider == KeyA);
+        Assert.Equal("BackupAndStats", backup.ProviderType);
+        Assert.Equal(5, backup.Articles);
+        Assert.Equal("Disabled", enriched.Single(p => p.Provider == KeyB).ProviderType);
+    }
+
+    [Fact]
+    public void EnrichProviders_LeavesProviderTypeNullWithoutRuntimeSnapshot()
+    {
+        var enriched = ProviderCircuitOverviewEnricher.EnrichProviders(
+            [new ProviderOverviewRow { Provider = KeyA }],
+            [],
+            new Dictionary<string, string?>());
+
+        Assert.Null(Assert.Single(enriched).ProviderType);
     }
 
     [Fact]

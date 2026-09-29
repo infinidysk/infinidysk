@@ -56,6 +56,26 @@ public class CurrentActivityComposerTests
     }
 
     [Fact]
+    public void TransportParentDirectoryMetadata_FlowsIntoCurrentActivity()
+    {
+        var active = new ActiveReadRegistry();
+        var readId = active.GetOrCreate("/.ids/movie", "rclone", "movie.mkv", 100);
+        active.UpdateInfo(
+            readId,
+            "movie.mkv",
+            100,
+            resolvedPath: "/content/Movie.Release/movie.mkv");
+
+        var snapshot = new CurrentActivityComposer(
+            new PlaybackSessionRegistry(),
+            active,
+            new ProviderUsageTracker(active),
+            new ConfigManager()).Compose();
+
+        Assert.Equal("Movie.Release", Assert.Single(snapshot.Reads).ParentDirectoryName);
+    }
+
+    [Fact]
     public void NativePlayerSession_HasSessionLevelCorrelation()
     {
         var playback = new PlaybackSessionRegistry();

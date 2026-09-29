@@ -7,16 +7,16 @@ namespace NzbWebDAV.Tests.Config;
 public sealed class ConnectionOpenTimeoutConfigTests
 {
     [Fact]
-    public void GetConnectionOpenTimeout_DefaultsToThreeSeconds()
+    public void GetConnectionOpenTimeout_DefaultsToFiveSeconds()
     {
-        Assert.Equal(TimeSpan.FromSeconds(3), new ConfigManager().GetConnectionOpenTimeout());
+        Assert.Equal(TimeSpan.FromSeconds(5), new ConfigManager().GetConnectionOpenTimeout());
     }
 
     [Theory]
-    [InlineData("", 3)]
-    [InlineData("invalid", 3)]
-    [InlineData("1.5", 3)]
-    [InlineData("2147483648", 3)]
+    [InlineData("", 5)]
+    [InlineData("invalid", 5)]
+    [InlineData("1.5", 5)]
+    [InlineData("2147483648", 5)]
     [InlineData("-4", 1)]
     [InlineData("0", 1)]
     [InlineData("1", 1)]

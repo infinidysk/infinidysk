@@ -66,5 +66,6 @@ internal static class ProviderOverviewRowMapper
         TripCount = row.TripCount,
         FailureCount = row.FailureCount,
         ArticleMissCount = row.ArticleMissCount,
+        ProviderType = row.ProviderType,
     };
 }

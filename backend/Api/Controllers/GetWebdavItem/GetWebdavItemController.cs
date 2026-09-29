@@ -139,8 +139,11 @@ public class GetWebdavItemController(
         var fileName = idFile?.FriendlyName ?? item.Name;
         HttpContext.Items["playbackFileName"] = fileName;
 
+        var resolvedDavItem = HttpContext.Items["DavItem"] as NzbWebDAV.Database.Models.DavItem;
         if (HttpContext.Items["readSessionId"] is Guid sid)
-            activeReadRegistry.UpdateInfo(sid, fileName, fileSize, idFile?.DavItemId);
+            activeReadRegistry.UpdateInfo(sid, fileName, fileSize,
+                davItemId: idFile?.DavItemId ?? resolvedDavItem?.Id,
+                resolvedPath: resolvedDavItem?.Path);
 
         // set the content-type and content-disposition headers
         Response.Headers["Content-Type"] = ContentHeaderUtil.GetContentType(fileName);
@@ -345,16 +348,18 @@ public class GetWebdavItemController(
         // progress when an intermediary such as rclone is reading ahead.
         var buffer = new byte[StreamingResponseWriteWatchdog.CopyChunkBytes];
         var position = startOffset;
+        var bytesRemaining = Response.ContentLength ?? long.MaxValue;
         var writeWatchdog = new StreamingResponseWriteWatchdog(
             configManager.GetStreamingWriteTimeout(),
             readCts,
             inFlightArticleBudget ?? InFlightArticleBudget.Current);
-        while (true)
+        while (bytesRemaining > 0)
         {
             int read;
             try
             {
-                read = await src.ReadAsync(buffer, ct).ConfigureAwait(false);
+                var requestedBytes = (int)Math.Min(bytesRemaining, buffer.Length);
+                read = await src.ReadAsync(buffer.AsMemory(0, requestedBytes), ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -375,6 +380,7 @@ public class GetWebdavItemController(
             if (read <= 0) break;
             var writeStarted = Stopwatch.GetTimestamp();
             await writeWatchdog.WriteAsync(dest, buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+            bytesRemaining -= read;
             onBytesServed(read);
             streamTrace.AddStall(
                 traceRange, StreamStallKind.ClientWrite, Stopwatch.GetElapsedTime(writeStarted));

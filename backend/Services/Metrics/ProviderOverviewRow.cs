@@ -38,4 +38,5 @@ internal sealed class ProviderOverviewRow
     public long TripCount { get; init; }
     public long FailureCount { get; init; }
     public long ArticleMissCount { get; init; }
+    public string? ProviderType { get; init; }
 }

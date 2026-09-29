@@ -74,9 +74,9 @@ reports `terminalMigration: null`, `migrationCount: 0`, and
 
 ## Backups
 
-The Settings backup page continues to back up the SQLite auxiliary stores, but
-does not back up the PostgreSQL main database. Back it up independently with
-your normal PostgreSQL tooling:
+The Settings backup page backs up only the local `warden.db`; it does not back
+up the PostgreSQL main database or metrics history. Back up PostgreSQL
+independently with your normal PostgreSQL tooling:
 
 ```bash
 pg_dump --format=custom --file=infinidysk.dump \

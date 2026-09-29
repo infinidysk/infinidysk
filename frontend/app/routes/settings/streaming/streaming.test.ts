@@ -23,7 +23,7 @@ const validConfig = {
   "usenet.streaming-priority": "80",
   "usenet.streaming-segment-timeout-seconds": "8",
   "usenet.streaming-read-timeout-seconds": "30",
-  "usenet.connection-open-timeout-seconds": "3",
+  "usenet.connection-open-timeout-seconds": "5",
   "usenet.streaming-write-timeout-seconds": "60",
   "usenet.streaming-segment-retries": "3",
   "usenet.article-buffer-size": "40",
@@ -71,11 +71,13 @@ describe("Streaming settings", () => {
     const input = screen.getByRole<HTMLInputElement>("textbox", {
       name: "Fresh Connection Open Timeout",
     });
-    expect(input.value).toBe("3");
+    expect(input.value).toBe("5");
+    expect(input.getAttribute("placeholder")).toBe("5");
     expect(input.getAttribute("aria-describedby")).toBe("connection-open-timeout-help");
 
     const help = document.getElementById("connection-open-timeout-help");
     const text = help?.textContent?.replace(/\s+/g, " ").trim();
+    expect(text).toContain("(1-15s, default 5)");
     expect(text).toContain("bounds fresh TCP/TLS/AUTHINFO connection creation");
     expect(text).toContain(
       "Local admission, handshake queueing, creation-capacity waits, replacement pacing, and BODY/ARTICLE transfer time are excluded.",

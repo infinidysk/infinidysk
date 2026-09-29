@@ -25,15 +25,29 @@ import { PREVIEW_HISTORY_SLOTS, PREVIEW_QUEUE_SLOTS } from "./queue-preview";
 
 export const PAGE_SIZE_OPTIONS = [25, 50, 100, 250] as const;
 const DEFAULT_PAGE_SIZE = 100;
+// Remembers the "Per page" choice for links that reach /queue without a qps query param.
+export const QUEUE_PAGE_SIZE_COOKIE = "queue-page-size";
+const QUEUE_PAGE_SIZE_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 
 function parsePage(value: string | null): number {
   const page = parseInt(value ?? "1", 10);
   return Number.isFinite(page) && page > 0 ? page : 1;
 }
 
-function parsePageSize(value: string | null): number {
-  const size = parseInt(value ?? String(DEFAULT_PAGE_SIZE), 10);
-  return (PAGE_SIZE_OPTIONS as readonly number[]).includes(size) ? size : DEFAULT_PAGE_SIZE;
+function parsePageSize(value: string | null): number | null {
+  if (value === null) return null;
+  return PAGE_SIZE_OPTIONS.find((size) => value === String(size)) ?? null;
+}
+
+function readCookie(cookieHeader: string | null, name: string): string | null {
+  if (!cookieHeader) return null;
+  for (const pair of cookieHeader.split(";")) {
+    const separator = pair.indexOf("=");
+    if (separator === -1) continue;
+    if (pair.slice(0, separator).trim() !== name) continue;
+    return pair.slice(separator + 1).trim();
+  }
+  return null;
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -43,7 +57,10 @@ export async function loader({ request }: Route.LoaderArgs) {
   }
 
   const page = parsePage(url.searchParams.get("qp"));
-  const pageSize = parsePageSize(url.searchParams.get("qps"));
+  const pageSize =
+    parsePageSize(url.searchParams.get("qps")) ??
+    parsePageSize(readCookie(request.headers.get("cookie"), QUEUE_PAGE_SIZE_COOKIE)) ??
+    DEFAULT_PAGE_SIZE;
   const listParams = parseJobsListParams(url.searchParams);
   const includeQueue = statusAppliesToQueue(listParams.status);
   const includeHistory = statusAppliesToHistory(listParams.status);
@@ -246,6 +263,7 @@ export default function Queue(props: Route.ComponentProps) {
 
   const onPageSizeSelected = useCallback(
     (size: number) => {
+      document.cookie = `${QUEUE_PAGE_SIZE_COOKIE}=${size}; Path=/; Max-Age=${QUEUE_PAGE_SIZE_COOKIE_MAX_AGE_SECONDS}; SameSite=Lax`;
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);

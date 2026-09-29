@@ -67,6 +67,40 @@ public class NntpYencBodyDecoderTests
     }
 
     [Test]
+    public async Task DecodeAsync_PayloadBytesObserver_ReportsLargeBodiesInCoalescedChunks()
+    {
+        var decoded = Enumerable.Range(0, 1_200_000).Select(index => (byte)(index * 7)).ToArray();
+        var body = YencWireBodies.SinglePart(decoded);
+        var calls = new List<int>();
+        var result = await DecodeAsync(
+            body.Wire,
+            [4096],
+            payloadBytesObserver: calls.Add);
+
+        AssertSuccessful(result, body);
+        var observed = calls.Sum();
+        Assert.That(observed, Is.EqualTo(body.Wire.Length - 3));
+        // One report per full threshold plus the final partial one, not one per wire line.
+        Assert.That(calls.Count, Is.LessThanOrEqualTo(observed / PayloadBytesObserver.CoalesceThreshold + 1));
+        Assert.That(calls.Take(calls.Count - 1), Has.All.GreaterThanOrEqualTo(PayloadBytesObserver.CoalesceThreshold));
+    }
+
+    [Test]
+    public async Task DecodeAsync_PayloadBytesObserver_ReportsConsumedLinesWhenTheBodyFails()
+    {
+        var body = YencWireBodies.SinglePart([0x04, 0x05, 0x06]);
+        var truncated = body.Wire[..^3];
+        var observed = 0;
+        var result = await DecodeAsync(
+            truncated,
+            [int.MaxValue],
+            payloadBytesObserver: bytes => observed += bytes);
+
+        Assert.That(result.ProducerException, Is.InstanceOf<UsenetProtocolException>());
+        Assert.That(observed, Is.EqualTo(truncated.Length));
+    }
+
+    [Test]
     public async Task DecodeAsync_AllByteValues_RoundTrips()
     {
         var decoded = Enumerable.Range(0, 256).Select(value => (byte)value).ToArray();

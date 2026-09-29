@@ -64,6 +64,7 @@ public sealed class CurrentActivityComposer(
                 Id = read.Id,
                 DavItemId = read.DavItemId,
                 FileName = read.FileName,
+                ParentDirectoryName = read.ParentDirectoryName,
                 Path = read.Path,
                 StartedAt = read.StartedAt,
                 LastActivityAt = read.LastActivityAt,

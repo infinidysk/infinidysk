@@ -337,6 +337,7 @@ public partial class UsenetClient
         CancellationToken callerCancellationToken)
     {
         Exception? failure = null;
+        var pendingObservedBytes = 0;
         try
         {
             if (_reader == null)
@@ -379,8 +380,9 @@ public partial class UsenetClient
                     break;
                 }
 
-                PayloadBytesObserver.InvokeContained(
+                PayloadBytesObserver.Accumulate(
                     _options.PayloadBytesObserver,
+                    ref pendingObservedBytes,
                     line.Length + 2);
 
                 if (!shouldWrite)
@@ -469,6 +471,7 @@ public partial class UsenetClient
         }
         finally
         {
+            PayloadBytesObserver.Flush(_options.PayloadBytesObserver, ref pendingObservedBytes);
             await writer.CompleteAsync(failure).ConfigureAwait(false);
             operationCts.Dispose();
             _commandLock.Release();
@@ -492,6 +495,7 @@ public partial class UsenetClient
 
     private async Task<Exception?> TryDrainBodyAsync()
     {
+        var pendingObservedBytes = 0;
         try
         {
             using var drainCts = CreateOperationTokenSource(CancellationToken.None);
@@ -529,8 +533,9 @@ public partial class UsenetClient
                     return null;
                 }
 
-                PayloadBytesObserver.InvokeContained(
+                PayloadBytesObserver.Accumulate(
                     _options.PayloadBytesObserver,
+                    ref pendingObservedBytes,
                     bytes.Length + 2);
 
                 drainedBytes += bytes.Length + 2;
@@ -551,6 +556,10 @@ public partial class UsenetClient
         catch (Exception e) when (e is not OutOfMemoryException)
         {
             return e;
+        }
+        finally
+        {
+            PayloadBytesObserver.Flush(_options.PayloadBytesObserver, ref pendingObservedBytes);
         }
     }
 

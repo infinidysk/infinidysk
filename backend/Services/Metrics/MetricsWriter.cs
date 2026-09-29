@@ -223,6 +223,8 @@ public class MetricsWriter : BackgroundService
 
     internal IReadOnlyList<SegmentFetch> SnapshotQueuedFetches() => _fetches.ToArray();
 
+    internal IReadOnlyList<FailoverMiss> SnapshotQueuedFailoverMisses() => _failoverMisses.ToArray();
+
     public IReadOnlyList<MetricEvent> SnapshotQueuedEvents(string kind)
     {
         return _events.ToArray()

@@ -1460,16 +1460,19 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         return configured is null || bool.Parse(configured);
     }
 
+    // Two ready sockets cover the first batches after idle; more only adds idle load on the provider.
+    internal const int DefaultWarmConnectionsFloor = 2;
+
     /// <summary>
-    /// Idle NNTP sockets to keep ready per provider. An unset value derives a small
-    /// floor from the provider width; explicit values are clamped to that width.
+    /// Idle NNTP sockets to keep ready per provider. An unset value keeps two sockets, capped by
+    /// the provider width; explicit values are clamped to that width.
     /// </summary>
     public int GetWarmConnectionsFloor(int maxConnections)
     {
         maxConnections = Math.Max(1, maxConnections);
         var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetWarmConnectionsFloor));
         if (configured is null || !int.TryParse(configured, out var value))
-            return Math.Clamp(maxConnections / 6, 1, 8);
+            return Math.Min(DefaultWarmConnectionsFloor, maxConnections);
         return Math.Clamp(value, 1, maxConnections);
     }
 
@@ -1706,7 +1709,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     public TimeSpan GetConnectionOpenTimeout()
     {
         var value = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.UsenetConnectionOpenTimeoutSeconds));
-        var seconds = int.TryParse(value, out var parsed) ? Math.Clamp(parsed, 1, 15) : 3;
+        var seconds = int.TryParse(value, out var parsed) ? Math.Clamp(parsed, 1, 15) : 5;
         return TimeSpan.FromSeconds(seconds);
     }
 

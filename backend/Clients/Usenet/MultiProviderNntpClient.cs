@@ -68,6 +68,7 @@ public class MultiProviderNntpClient(
             .Select((provider, index) => (Provider: provider, Index: index))
             .Where(item => item.Provider.ProviderType == ProviderType.Pooled)
             .Where(item => item.Provider.GetCircuitBreakerSnapshot().State == ProviderCircuitState.Closed)
+            .Where(item => !item.Provider.IsHandshakeBackoffActive)
             .Where(item => !IsOverLimit(item.Provider))
             .OrderBy(item => item.Provider.Priority)
             .ThenBy(item => item.Index)
@@ -1938,7 +1939,7 @@ public class MultiProviderNntpClient(
 
     /// <summary>
     /// Same-provider self-retries (timeout → re-probe primary) are not backup rescues.
-    /// Overview FailoverSaves / FailoverMisses only keep misses from a different provider.
+    /// Overview FailoverSaves / FailoverMisses keep one edge per other provider per fetch.
     /// </summary>
     private static List<(string Host, SegmentFetch.FetchStatus Reason)>? FilterCrossProviderMisses(
         List<(string Host, SegmentFetch.FetchStatus Reason)>? priorMisses,
@@ -1948,6 +1949,8 @@ public class MultiProviderNntpClient(
         List<(string Host, SegmentFetch.FetchStatus Reason)>? cross = null;
         foreach (var miss in priorMisses.Where(miss => !string.Equals(miss.Host, rescuer, StringComparison.OrdinalIgnoreCase)))
         {
+            if (cross?.Exists(edge => string.Equals(edge.Host, miss.Host, StringComparison.OrdinalIgnoreCase)) == true)
+                continue;
             (cross ??= []).Add(miss);
         }
         return cross;

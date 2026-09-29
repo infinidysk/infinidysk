@@ -26,6 +26,7 @@ public sealed record CurrentTransportActivity
     public Guid Id { get; init; }
     public Guid? DavItemId { get; init; }
     public required string FileName { get; init; }
+    public string? ParentDirectoryName { get; init; }
     public required string Path { get; init; }
     public DateTimeOffset StartedAt { get; init; }
     public DateTimeOffset LastActivityAt { get; init; }

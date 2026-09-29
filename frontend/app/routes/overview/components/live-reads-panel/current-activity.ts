@@ -49,6 +49,7 @@ export type CurrentTransportActivity = {
   id: string;
   davItemId: string | null;
   fileName: string;
+  parentDirectoryName?: string | null;
   path: string;
   startedAt: string;
   lastActivityAt: string;

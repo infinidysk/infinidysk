@@ -15,7 +15,7 @@ public class ActiveReadDavItemIdentityTests
         Assert.Equal(initialId, registry.Snapshot().Single().DavItemId);
 
         var resolvedId = Guid.NewGuid();
-        registry.UpdateInfo(session, "friendly.mkv", 200, resolvedId);
+        registry.UpdateInfo(session, "friendly.mkv", 200, davItemId: resolvedId);
         var entry = registry.Snapshot().Single();
         Assert.Equal(resolvedId, entry.DavItemId);
         Assert.Equal("friendly.mkv", entry.FileName);
@@ -33,7 +33,7 @@ public class ActiveReadDavItemIdentityTests
         var before = registry.Snapshot().Single();
 
         var resolvedId = Guid.NewGuid();
-        registry.UpdateInfo(session, "friendly.mkv", 200, resolvedId);
+        registry.UpdateInfo(session, "friendly.mkv", 200, davItemId: resolvedId);
         registry.Touch(session, 25, currentOffset: 50);
 
         Assert.Equal(initialId, before.DavItemId);
@@ -67,9 +67,9 @@ public class ActiveReadDavItemIdentityTests
             for (var i = 0; i < 10_000; i++)
             {
                 if ((i & 1) == 0)
-                    registry.UpdateInfo(session, "first.mkv", 100, firstId);
+                    registry.UpdateInfo(session, "first.mkv", 100, davItemId: firstId);
                 else
-                    registry.UpdateInfo(session, "second.mkv", 200, secondId);
+                    registry.UpdateInfo(session, "second.mkv", 200, davItemId: secondId);
             }
         });
 

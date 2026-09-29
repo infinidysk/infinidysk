@@ -975,6 +975,7 @@ export type HealthCheckQueueItem = {
   releaseDate: string | null;
   lastHealthCheck: string | null;
   nextHealthCheck: string | null;
+  countsTowardUncheckedCount: boolean;
   progress?: number | null;
 };
 
@@ -1236,6 +1237,7 @@ export type ProviderRow = {
   tripCount?: number | undefined;
   failureCount?: number | undefined;
   articleMissCount?: number | undefined;
+  providerType?: string | undefined;
 };
 
 export type ProviderSampledSpeedPoint = {
@@ -1301,6 +1303,7 @@ export type ActiveReadsMessage = {
 export type ActiveRead = {
   id: string;
   fileName: string;
+  parentDirectoryName?: string | null;
   path: string;
   startedAt: number;
   lastActivityAt: number;

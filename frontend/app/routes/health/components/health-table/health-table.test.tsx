@@ -15,6 +15,7 @@ describe("HealthTable", () => {
             releaseDate: null,
             lastHealthCheck: null,
             nextHealthCheck: null,
+            countsTowardUncheckedCount: true,
             progress,
           },
         ]}

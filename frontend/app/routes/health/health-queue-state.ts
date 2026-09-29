@@ -63,10 +63,9 @@ export function completeHealthCheck(state: HealthQueueState, davItemId: string):
 
   return {
     items: state.items.filter((item) => item.id !== davItemId),
-    uncheckedCount:
-      completedItem.nextHealthCheck === null
-        ? Math.max(0, state.uncheckedCount - 1)
-        : state.uncheckedCount,
+    uncheckedCount: completedItem.countsTowardUncheckedCount
+      ? Math.max(0, state.uncheckedCount - 1)
+      : state.uncheckedCount,
   };
 }
 

@@ -3,7 +3,10 @@ using System.Xml.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using NWebDav.Server;
 using NzbWebDAV.Api.Controllers.GetWebdavItem;
+using NzbWebDAV.Config;
+using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Models;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Tests.TestUtils;
 using NzbWebDAV.WebDav;
@@ -192,6 +195,115 @@ public sealed class DatabaseStoreHttpIntegrationTests(NzbDavWebApplicationFactor
             if (!wasEnabled)
                 trace.StopRecording();
         }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetView_OverlongMultipartContent_RespectsContentLength(bool sharedStreamsEnabled)
+    {
+        const int declaredFileSize = 262_135;
+        var packedBytes = Enumerable.Range(0, declaredFileSize + 9)
+            .Select(index => (byte)(index % 251)).ToArray();
+        await using var testFactory = NzbDavWebApplicationFactory.CreateWithFakeNntp(
+            new Dictionary<string, byte[]> { ["issue-1591-volume"] = packedBytes });
+        var config = testFactory.Services.GetRequiredService<ConfigManager>();
+        config.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.UsenetSharedStreamsEnabled,
+                ConfigValue = sharedStreamsEnabled ? "true" : "false",
+            },
+        ]);
+        Assert.Equal(sharedStreamsEnabled, config.IsSharedStreamsEnabled());
+        Assert.False(config.IsFiniteRangeSchedulerEnabled());
+
+        var trace = testFactory.Services.GetRequiredService<StreamTraceBuffer>();
+        trace.EnableFor(TimeSpan.Zero, 1000, StreamTraceBuffer.SourceEnv);
+        var itemPath = await AddOverlongMultipartFileAsync(
+            testFactory, declaredFileSize, packedBytes.Length);
+        var downloadKey = GetWebdavItemRequest.GenerateDownloadKey(
+            NzbDavWebApplicationFactory.ApiKey, itemPath);
+        using var client = testFactory.CreateClient();
+        var cases = new (string? RangeHeader, int Start, int Count)[]
+        {
+            (null, 0, declaredFileSize),
+            ("bytes=62144-", 62_144, 199_991),
+            ("bytes=258752-", 258_752, 3_383),
+            ("bytes=100-199", 100, 100),
+            ("bytes=-3383", 258_752, 3_383),
+        };
+
+        foreach (var testCase in cases)
+        {
+            var userAgent = $"view-length-test-{Guid.NewGuid():N}";
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get, $"/view/{itemPath}?downloadKey={downloadKey}");
+            request.Headers.TryAddWithoutValidation("User-Agent", userAgent);
+            if (testCase.RangeHeader is not null)
+                request.Headers.TryAddWithoutValidation("Range", testCase.RangeHeader);
+
+            using var response = await client.SendAsync(request);
+            var body = await response.Content.ReadAsByteArrayAsync();
+            Assert.Equal(
+                testCase.RangeHeader is null ? HttpStatusCode.OK : HttpStatusCode.PartialContent,
+                response.StatusCode);
+            Assert.Equal((long)testCase.Count, response.Content.Headers.ContentLength);
+            string? expectedContentRange = testCase.RangeHeader is null
+                ? null
+                : $"bytes {testCase.Start}-{testCase.Start + testCase.Count - 1}/{declaredFileSize}";
+            Assert.Equal(expectedContentRange, response.Content.Headers.ContentRange?.ToString());
+            Assert.Equal(testCase.Count, body.Length);
+            Assert.Equal(packedBytes[testCase.Start..(testCase.Start + testCase.Count)], body);
+
+            var events = trace.ListSessions(500)
+                .SelectMany(session => trace.GetSessionEvents(session.SessionId)).ToArray();
+            var opened = Assert.Single(events,
+                entry => entry.Kind == "RangeOpen" && entry.UserAgent == userAgent);
+            var ended = Assert.Single(events, entry =>
+                entry.Kind == "RangeEnd" && entry.SessionId == opened.SessionId &&
+                entry.RangeGeneration == opened.RangeGeneration);
+            Assert.Equal((long)testCase.Count, ended.BytesServed);
+            Assert.Equal("Completed", ended.EndReason);
+            long? expectedTraceFileSize = testCase.RangeHeader is null ||
+                testCase.RangeHeader.EndsWith('-')
+                ? declaredFileSize
+                : null;
+            Assert.Equal(expectedTraceFileSize, opened.FileSize);
+        }
+    }
+
+    private static async Task<string> AddOverlongMultipartFileAsync(
+        NzbDavWebApplicationFactory testFactory, int declaredFileSize, int packedLength)
+    {
+        var item = DavItem.New(
+            Guid.NewGuid(), DavItem.ContentFolder, "synthetic-overlong.mkv", declaredFileSize,
+            DavItem.ItemType.UsenetFile, DavItem.ItemSubType.MultipartFile,
+            null, null, null, null);
+        var multipart = new DavMultipartFile
+        {
+            Id = item.Id,
+            Metadata = new DavMultipartFile.Meta
+            {
+                ExpectedFileSize = declaredFileSize,
+                FileParts =
+                [
+                    new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = ["issue-1591-volume"],
+                        SegmentIdByteRange = LongRange.FromStartAndSize(0, packedLength),
+                        FilePartByteRange = LongRange.FromStartAndSize(0, packedLength),
+                    },
+                ],
+            },
+        };
+        using var scope = testFactory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<DavDatabaseContext>();
+        context.Items.Add(item);
+        context.MultipartFiles.Add(multipart);
+        await context.SaveChangesAsync();
+        return DatabaseStoreSymlinkFile.GetTargetPath(item.Id, '/');
     }
 
     private async Task<DavItem> AddIdsFileAsync(string name)

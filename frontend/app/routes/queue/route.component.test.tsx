@@ -5,19 +5,28 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode, SelectHTMLAttributes } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { isReadOnlyMock, openMock, dropzoneArgs } = vi.hoisted(() => ({
-  isReadOnlyMock: vi.fn(),
-  openMock: vi.fn(),
-  dropzoneArgs: { current: [] as unknown[] },
-}));
+type QueueTablePropsCapture = { onPageSizeSelected: (size: number) => void };
+
+const { isReadOnlyMock, openMock, dropzoneArgs, queueTableProps, setSearchParamsMock } = vi.hoisted(
+  () => ({
+    isReadOnlyMock: vi.fn(),
+    openMock: vi.fn(),
+    dropzoneArgs: { current: [] as unknown[] },
+    queueTableProps: { current: null as QueueTablePropsCapture | null },
+    setSearchParamsMock: vi.fn(),
+  }),
+);
 
 vi.mock("react-router", () => ({
   useRevalidator: () => ({ revalidate: vi.fn() }),
-  useSearchParams: () => [new URLSearchParams(), vi.fn()],
+  useSearchParams: () => [new URLSearchParams(), setSearchParamsMock],
 }));
 
 vi.mock("./components/queue-table/queue-table", () => ({
-  QueueTable: () => <div data-testid="queue-table" />,
+  QueueTable: (props: QueueTablePropsCapture) => {
+    queueTableProps.current = props;
+    return <div data-testid="queue-table" />;
+  },
 }));
 
 vi.mock("./controllers/events-controller", () => ({
@@ -168,5 +177,32 @@ describe("Queue upload control", () => {
     expect(screen.queryByRole("button", { name: "Upload NZB" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Upload category" })).toBeNull();
     expect(screen.queryByText("Category")).toBeNull();
+  });
+});
+
+describe("Queue page size preference", () => {
+  beforeEach(() => {
+    isReadOnlyMock.mockReset();
+    isReadOnlyMock.mockReturnValue(false);
+    setSearchParamsMock.mockReset();
+    queueTableProps.current = null;
+    document.cookie = "queue-page-size=; Path=/; Max-Age=0";
+  });
+
+  it("remembers the selected page size in a cookie and returns to page 1", () => {
+    renderQueue();
+
+    queueTableProps.current!.onPageSizeSelected(25);
+
+    expect(document.cookie).toContain("queue-page-size=25");
+    expect(setSearchParamsMock).toHaveBeenCalledOnce();
+    const [updater] = setSearchParamsMock.mock.calls[0] as [
+      (previous: URLSearchParams) => URLSearchParams,
+      unknown,
+    ];
+    const next = updater(new URLSearchParams("qp=3&qq=show"));
+    expect(next.get("qps")).toBe("25");
+    expect(next.get("qp")).toBe("1");
+    expect(next.get("qq")).toBe("show");
   });
 });

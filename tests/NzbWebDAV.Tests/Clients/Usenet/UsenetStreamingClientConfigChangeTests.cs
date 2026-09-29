@@ -12,6 +12,18 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 
 public class UsenetStreamingClientConfigChangeTests
 {
+    [Theory]
+    [InlineData(1, 10)]
+    [InlineData(3, 10)]
+    [InlineData(10, 10)]
+    [InlineData(15, 15)]
+    public void ResolveWarmFloorOpenTimeout_IsAtLeastTenSeconds(int configuredSeconds, int expectedSeconds)
+    {
+        var resolved = UsenetStreamingClient.ResolveWarmFloorOpenTimeout(TimeSpan.FromSeconds(configuredSeconds));
+
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), resolved);
+    }
+
     [Fact]
     public void DisabledProvider_OpensNoWarmConnections_WhileWarmConnectionsEnabled()
     {
@@ -32,9 +44,9 @@ public class UsenetStreamingClientConfigChangeTests
     }
 
     [Theory]
-    [InlineData(ProviderType.Pooled, 8)]
-    [InlineData(ProviderType.BackupAndStats, 8)]
-    [InlineData(ProviderType.BackupOnly, 8)]
+    [InlineData(ProviderType.Pooled, 2)]
+    [InlineData(ProviderType.BackupAndStats, 2)]
+    [InlineData(ProviderType.BackupOnly, 2)]
     [InlineData(ProviderType.Disabled, 0)]
     public void ResolveWarmConnectionFloor_SkipsOnlyDisabledProviders(ProviderType type, int expectedFloor)
     {
@@ -44,6 +56,39 @@ public class UsenetStreamingClientConfigChangeTests
         var floor = UsenetStreamingClient.ResolveWarmConnectionFloor(config, MakeProvider(type, maxConnections: 50));
 
         Assert.Equal(expectedFloor, floor);
+    }
+
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(2, 2)]
+    [InlineData(12, 2)]
+    [InlineData(50, 2)]
+    public void GetWarmConnectionsFloor_DefaultsToTwoCappedByProviderWidth(int maxConnections, int expectedFloor)
+    {
+        var config = new ConfigManager();
+
+        Assert.Equal(expectedFloor, config.GetWarmConnectionsFloor(maxConnections));
+    }
+
+    [Theory]
+    [InlineData("6", 50, 6)]
+    [InlineData("99", 50, 50)]
+    [InlineData("0", 50, 1)]
+    [InlineData("-3", 50, 1)]
+    public void GetWarmConnectionsFloor_ExplicitValueIsClampedToProviderWidth(
+        string configured, int maxConnections, int expectedFloor)
+    {
+        var config = new ConfigManager();
+        config.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.UsenetWarmConnectionsFloor,
+                ConfigValue = configured,
+            },
+        ]);
+
+        Assert.Equal(expectedFloor, config.GetWarmConnectionsFloor(maxConnections));
     }
 
     [Theory]

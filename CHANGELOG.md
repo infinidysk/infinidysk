@@ -1,5 +1,62 @@
 # Changelog
 
+## [1.5.1](https://github.com/infinidysk/infinidysk/compare/v1.5.0...v1.5.1) (2026-09-27)
+
+
+### Bug Fixes
+
+* **db:** database backups no longer include metrics history ([#1589](https://github.com/infinidysk/infinidysk/issues/1589)) ([190eace](https://github.com/infinidysk/infinidysk/commit/190eace08a758f9af3cdcddfa38e429e99e9e479))
+* **deps:** Bump github/codeql-action in the github-actions group ([#1569](https://github.com/infinidysk/infinidysk/issues/1569)) ([ad86990](https://github.com/infinidysk/infinidysk/commit/ad86990931fad0a1233c98a97167a67b2aaab949))
+* **deps:** Bump the nuget-minor-and-patch group with 1 update ([#1568](https://github.com/infinidysk/infinidysk/issues/1568)) ([90b2713](https://github.com/infinidysk/infinidysk/commit/90b27138af36e26beafe17e324e015fc2b426925))
+* **health:** Health page no longer reports previously scanned files as awaiting their initial scan ([#1577](https://github.com/infinidysk/infinidysk/issues/1577)) ([12a3415](https://github.com/infinidysk/infinidysk/commit/12a34153ec3cefca240119d32959209c1e344b81))
+* **health:** stay idle when no usenet provider is enabled ([#1573](https://github.com/infinidysk/infinidysk/issues/1573)) ([8f67a44](https://github.com/infinidysk/infinidysk/commit/8f67a442bfe0db110d5972894cccb5ec6f9ca920))
+* **metrics:** Overview Backup rescues counts a retried provider once per rescued article ([#1576](https://github.com/infinidysk/infinidysk/issues/1576)) ([48d772f](https://github.com/infinidysk/infinidysk/commit/48d772fdb827c4274472a6a396c8b39cfed5a068))
+* **ui:** mark backup providers on the Overview Providers card ([#1579](https://github.com/infinidysk/infinidysk/issues/1579)) ([abb18af](https://github.com/infinidysk/infinidysk/commit/abb18afd6b152e005274621f67af2bbc6356a2ca))
+* **usenet:** slower provider handshakes no longer trip the provider circuit under default settings ([#1578](https://github.com/infinidysk/infinidysk/issues/1578)) ([58eeecc](https://github.com/infinidysk/infinidysk/commit/58eeecc41958574057bee64ed9275a721179a558))
+
+
+### Performance Improvements
+
+* **usenet:** report payload bytes per chunk instead of per line ([#1580](https://github.com/infinidysk/infinidysk/issues/1580)) ([e6761e5](https://github.com/infinidysk/infinidysk/commit/e6761e57cc452ebf73783bb908d9f76330acc539))
+
+## [1.5.0](https://github.com/infinidysk/infinidysk/compare/v1.4.5...v1.5.0) (2026-09-25)
+
+
+### Features
+
+* **ui:** Activity chart shows import downloads separately from maintenance ([#1535](https://github.com/infinidysk/infinidysk/issues/1535)) ([ae7da05](https://github.com/infinidysk/infinidysk/commit/ae7da05c38c4623d1ccdae6eb79679d2a6bf5c82))
+* **ui:** peak download now shows the true 1-second maximum and no longer shrinks when widening the time range ([#1536](https://github.com/infinidysk/infinidysk/issues/1536)) ([5b6a969](https://github.com/infinidysk/infinidysk/commit/5b6a969ace140ced0539b198f7cd219f1bb0bdb4))
+* **ui:** show provider bytes fetched on the overview activity card ([#1528](https://github.com/infinidysk/infinidysk/issues/1528)) ([70a122f](https://github.com/infinidysk/infinidysk/commit/70a122f2f7954e50497f8c6288b91fadcb789696))
+* **ui:** warn when a provider repeatedly blocks missing-article checks ([#1551](https://github.com/infinidysk/infinidysk/issues/1551)) ([612fcdb](https://github.com/infinidysk/infinidysk/commit/612fcdb995be1c3e41a70d0da31cfc9be29de8b2))
+
+
+### Bug Fixes
+
+* **api:** hide full numeric-only IPv6 addresses in support packs ([#1524](https://github.com/infinidysk/infinidysk/issues/1524)) ([181a8ae](https://github.com/infinidysk/infinidysk/commit/181a8aec2b666ec55e63d8cad6d3c32b1cd2b4dc))
+* **arr:** Arr and Prowlarr connections work with Docker hostnames behind a proxy and report timeouts clearly ([#1537](https://github.com/infinidysk/infinidysk/issues/1537)) ([d480668](https://github.com/infinidysk/infinidysk/commit/d4806683c050c8702d6fee5646e8e18090549a27))
+* **arr:** Arr Health no longer shows instances offline with 'database is locked' on large installs ([#1556](https://github.com/infinidysk/infinidysk/issues/1556)) ([916b1e5](https://github.com/infinidysk/infinidysk/commit/916b1e5be7dc390eeebbc06a3be4126495a047d4))
+* **auth:** keep API keys and URL tokens out of frontend request logs ([#1526](https://github.com/infinidysk/infinidysk/issues/1526)) ([bfc7f20](https://github.com/infinidysk/infinidysk/commit/bfc7f2030cba9148c15f4bb9206b4f52b81dabf5))
+* **deps:** Bump the npm-minor-and-patch group across 1 directory with 13 updates ([#1532](https://github.com/infinidysk/infinidysk/issues/1532)) ([f478af7](https://github.com/infinidysk/infinidysk/commit/f478af794abe3275a9e3078733ca7edc2d52576b))
+* **deps:** Bump the nuget-minor-and-patch group with 9 updates ([#1533](https://github.com/infinidysk/infinidysk/issues/1533)) ([ded1d4e](https://github.com/infinidysk/infinidysk/commit/ded1d4e0734edf4d4daab46df07d619f440efe3c))
+* **deps:** Bump zensical from 0.0.61 to 0.0.62 in the docs-python group ([#1530](https://github.com/infinidysk/infinidysk/issues/1530)) ([e71d7d1](https://github.com/infinidysk/infinidysk/commit/e71d7d1316a61647609f9ace1da8a32fb078fd8e))
+* **metrics:** retain historical statistics across backend restarts ([#1525](https://github.com/infinidysk/infinidysk/issues/1525)) ([cd638ce](https://github.com/infinidysk/infinidysk/commit/cd638ce1245f22357b7f66e9c68bcc56ea7f705f))
+* **nntp:** releases with obfuscated yEnc headers play instead of hanging and being removed ([#1548](https://github.com/infinidysk/infinidysk/issues/1548)) ([a40a071](https://github.com/infinidysk/infinidysk/commit/a40a07159467a286ac8291b80c492e3e0949b80a))
+* **queue:** keep replacement uploads within the configured queue limit ([#1527](https://github.com/infinidysk/infinidysk/issues/1527)) ([d8aaf2d](https://github.com/infinidysk/infinidysk/commit/d8aaf2d2e58970b9eda8606ea93f33ab8ba27e3f))
+* **ui:** connect expanded provider speed paths through zero ([#1554](https://github.com/infinidysk/infinidysk/issues/1554)) ([4a50932](https://github.com/infinidysk/infinidysk/commit/4a50932365bc75bd46157b41b91cecb71c4f3a33))
+* **ui:** connect sparse provider throughput graph to zero baseline ([#1553](https://github.com/infinidysk/infinidysk/issues/1553)) ([a533693](https://github.com/infinidysk/infinidysk/commit/a533693a4e3f4f290c8e66176dbcf748ffb100c5))
+* **ui:** hide all-clear alert indicator ([#1549](https://github.com/infinidysk/infinidysk/issues/1549)) ([401c8c3](https://github.com/infinidysk/infinidysk/commit/401c8c3d404d1560476ac466f159cb99b3a6485e))
+* **ui:** identify active media reads with parent folder names ([#1562](https://github.com/infinidysk/infinidysk/issues/1562)) ([b81c13f](https://github.com/infinidysk/infinidysk/commit/b81c13f4d23c65033fdd39922aa6ff5880a94b02))
+* **ui:** lock live read card height above the scrollport ([#1563](https://github.com/infinidysk/infinidysk/issues/1563)) ([d64e7f9](https://github.com/infinidysk/infinidysk/commit/d64e7f933a22950187a7b0766c3cf76b441602f9))
+* **ui:** make overlapping and low-volume activity easier to inspect ([#1538](https://github.com/infinidysk/infinidysk/issues/1538)) ([d4a1be8](https://github.com/infinidysk/infinidysk/commit/d4a1be83a2bc1428a44ece8916501173bf0a4323))
+* **ui:** queue remembers your per-page size after leaving and returning to the page ([#1564](https://github.com/infinidysk/infinidysk/issues/1564)) ([b7c341d](https://github.com/infinidysk/infinidysk/commit/b7c341d08beb040353188b96cfbd74b8f258d910))
+* **ui:** size the Right now card to its live reads instead of the first snapshot ([#1558](https://github.com/infinidysk/infinidysk/issues/1558)) ([671f422](https://github.com/infinidysk/infinidysk/commit/671f42295a58cace2005ec8a44b2a60a44e1200b))
+* **usenet:** disabled providers no longer keep connections open or send keep-alives ([#1542](https://github.com/infinidysk/infinidysk/issues/1542)) ([6c742f5](https://github.com/infinidysk/infinidysk/commit/6c742f517ecea0ba32277bec482a6a50db5a7698))
+* **usenet:** files are no longer reported missing or sent for repair while a provider is temporarily unavailable ([#1550](https://github.com/infinidysk/infinidysk/issues/1550)) ([59cc144](https://github.com/infinidysk/infinidysk/commit/59cc1441104bb29e2c9e56e1f0f02243d9944958))
+* **usenet:** keep fewer idle warm connections open per provider by default ([#1561](https://github.com/infinidysk/infinidysk/issues/1561)) ([313acc3](https://github.com/infinidysk/infinidysk/commit/313acc34374e59b939753bbb00a68c9b4468ee9f))
+* **usenet:** providers that time out during background connection warming are paused until they recover ([#1555](https://github.com/infinidysk/infinidysk/issues/1555)) ([aca5770](https://github.com/infinidysk/infinidysk/commit/aca5770e69a40040e56e08652a0ffb2df64873ac))
+* **usenet:** show accurate provider peak and active-average speeds ([#1540](https://github.com/infinidysk/infinidysk/issues/1540)) ([b5e7d26](https://github.com/infinidysk/infinidysk/commit/b5e7d26ac6f49c20857c3a48385c3d07807ac17d))
+* **usenet:** slow background warm-up connections no longer trip a healthy provider's circuit breaker ([#1560](https://github.com/infinidysk/infinidysk/issues/1560)) ([cf39766](https://github.com/infinidysk/infinidysk/commit/cf3976678030e1ac214c1cb7b4d1d21f1dac8003))
+
 ## [1.4.5](https://github.com/infinidysk/infinidysk/compare/v1.4.4...v1.4.5) (2026-09-23)
 
 

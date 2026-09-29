@@ -25,6 +25,7 @@ public sealed class EffectiveStreamingConfigManifestTests
         Assert.Equal(30, document.Streaming.ReadTimeoutSeconds);
         Assert.Equal(60, document.Streaming.WriteTimeoutSeconds);
         Assert.Equal(8, document.Streaming.SegmentTimeoutSeconds);
+        Assert.Equal(5, document.Streaming.ConnectionOpenTimeoutSeconds);
         Assert.Equal(config.GetMaxDownloadConnections(), document.Connections.EffectiveTotalDownloadLimit);
         Assert.False(document.Connections.PerStreamModeEnabled);
         Assert.True(document.Connections.WarmConnectionsEnabled);

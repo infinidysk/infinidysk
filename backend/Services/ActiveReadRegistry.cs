@@ -119,10 +119,11 @@ public class ActiveReadRegistry
     /// real filename/size are resolved from the dav store (the path passed to
     /// GetOrCreate is usually an opaque GUID for .ids/-style paths).
     /// </summary>
-    public void UpdateInfo(Guid id, string? fileName, long? fileSize, Guid? davItemId = null)
+    public void UpdateInfo(Guid id, string? fileName, long? fileSize, string? resolvedPath = null,
+        Guid? davItemId = null)
     {
         if (_entries.TryGetValue(id, out var entry))
-            entry.TryUpdateInfo(fileName, fileSize, davItemId);
+            entry.TryUpdateInfo(fileName, fileSize, davItemId, resolvedPath);
     }
 
     public bool TryResolveDavItemIdForPlayerSession(string playerSession, out Guid davItemId)
@@ -214,6 +215,7 @@ public class ActiveReadRegistry
         public Guid Id { get; init; }
         public string Path { get; init; } = "";
         public string FileName { get; init; } = "";
+        public string? ParentDirectoryName { get; init; }
         public long? FileSize { get; init; }
         public string ClientKey { get; init; } = "";
         public string? ClientUserAgent { get; init; }
@@ -238,6 +240,7 @@ public class ActiveReadRegistry
         private readonly object _gate = new();
         private bool _removed;
         private string _fileName;
+        private string? _parentDirectoryName;
         private long? _fileSize;
         private string? _clientUserAgent;
         private string? _clientIp;
@@ -336,7 +339,7 @@ public class ActiveReadRegistry
                 return _bytesRead;
         }
 
-        public bool TryUpdateInfo(string? fileName, long? fileSize, Guid? davItemId)
+        public bool TryUpdateInfo(string? fileName, long? fileSize, Guid? davItemId, string? resolvedPath)
         {
             lock (_gate)
             {
@@ -344,6 +347,11 @@ public class ActiveReadRegistry
                 if (!string.IsNullOrWhiteSpace(fileName)) _fileName = fileName;
                 if (fileSize is { } size) _fileSize = size;
                 if (davItemId is { } resolvedId) _davItemId = resolvedId;
+                if (!string.IsNullOrEmpty(resolvedPath))
+                {
+                    var segments = resolvedPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                    _parentDirectoryName = segments.Length >= 2 ? segments[^2] : null;
+                }
                 return true;
             }
         }
@@ -400,6 +408,7 @@ public class ActiveReadRegistry
             Id = Id,
             Path = Path,
             FileName = _fileName,
+            ParentDirectoryName = _parentDirectoryName,
             FileSize = _fileSize,
             ClientKey = ClientKey,
             ClientUserAgent = _clientUserAgent,

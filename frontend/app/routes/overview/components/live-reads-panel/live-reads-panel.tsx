@@ -33,6 +33,9 @@ export type LiveReadRow = {
  * Trustworthy "Right now" panel. Playback membership/state comes only from
  * CurrentActivity's authoritative playback registry; transport rows remain
  * transport diagnostics and are never promoted to viewers by byte activity.
+ * The card grows and shrinks with activity; rows scroll past the list's height
+ * cap. Its height locks while its top is above the reading area, until it returns.
+ * When `paused`, the subscription and height lock are disabled for layout editing.
  */
 export function LiveReadsPanel({
   paused = false,
@@ -45,7 +48,7 @@ export function LiveReadsPanel({
   const [rows, setRows] = useState<LiveReadRow[]>([]);
   const [authorities, setAuthorities] = useState<PlaybackAuthoritySnapshot[]>([]);
   const [mockCount, setMockCount] = useState<number | null>(null);
-  const [snapshotReady, setSnapshotReady] = useState(false);
+  // Track previous bytesRead per session for live MiB/s computation.
   const prevRef = useRef<Map<string, { bytes: number; at: number; rate: number }>>(new Map());
   const historyRef = useRef<Map<string, number[]>>(new Map());
 
@@ -62,6 +65,7 @@ export function LiveReadsPanel({
           davItemId: null,
           fileName: read.fileName,
           path: read.path,
+          parentDirectoryName: read.parentDirectoryName ?? null,
           startedAt: new Date(read.startedAt).toISOString(),
           lastActivityAt: new Date(read.lastActivityAt).toISOString(),
           bytesRead: read.bytesRead,
@@ -71,7 +75,7 @@ export function LiveReadsPanel({
           clientIp: read.clientIp ?? null,
           clientUserAgent: read.clientUserAgent ?? null,
           playerSession: null,
-          correlationScope: 0,
+          correlationScope: "None",
           matchingPlaybackSessionCount: 0,
           shared: false,
           providers: read.providers.map((provider) => ({
@@ -84,7 +88,6 @@ export function LiveReadsPanel({
         history,
       })),
     );
-    setSnapshotReady(true);
   }, []);
 
   useWebsocketTopic(
@@ -123,7 +126,6 @@ export function LiveReadsPanel({
         setPlayback(payload.playback ?? []);
         setAuthorities(payload.authorities ?? []);
         setRows(nextRows);
-        setSnapshotReady(true);
       } catch {
         // Ignore malformed frames; the next replayable state snapshot can recover.
       }
@@ -136,7 +138,7 @@ export function LiveReadsPanel({
       playback={playback}
       rows={rows}
       authorities={authorities}
-      snapshotReady={snapshotReady}
+      paused={paused}
       summary={summary}
     />
   );
@@ -146,14 +148,14 @@ export function LiveReadsPanelContent({
   playback,
   rows,
   authorities = [],
-  snapshotReady = true,
   summary,
+  paused = false,
 }: {
   playback: CurrentPlaybackActivity[];
   rows: LiveReadRow[];
   authorities?: PlaybackAuthoritySnapshot[];
-  snapshotReady?: boolean;
   summary?: ReactNode;
+  paused?: boolean;
 }) {
   const readById = new Map(rows.map((row) => [row.read.id, row]));
   const displayedPlayback = [...playback].sort(comparePlayback);
@@ -165,12 +167,12 @@ export function LiveReadsPanelContent({
   );
 
   const playing = playback.filter(({ session }) => session.state === "Playing").length;
-  const paused = playback.filter(({ session }) => session.state === "Paused").length;
+  const pausedCount = playback.filter(({ session }) => session.state === "Paused").length;
   const buffering = playback.filter(({ session }) => session.state === "Buffering").length;
   const includeOtherReadCount = summary == null || playback.length > 0;
   const activitySummary = [
     playing > 0 ? `${playing} playing` : null,
-    paused > 0 ? `${paused} paused` : null,
+    pausedCount > 0 ? `${pausedCount} paused` : null,
     buffering > 0 ? `${buffering} buffering` : null,
     includeOtherReadCount && transportOnlyRows.length > 0
       ? `${transportOnlyRows.length} other reads`
@@ -179,42 +181,16 @@ export function LiveReadsPanelContent({
     .filter(Boolean)
     .join(" · ");
 
-  const cardRef = useRef<HTMLElement>(null);
-  const [lockedHeight, setLockedHeight] = useState<number | null>(null);
-
-  useLayoutEffect(() => {
-    if (!snapshotReady || lockedHeight != null) return;
-    const card = cardRef.current;
-    if (!card) return;
-
-    const lockFromCard = (): boolean => {
-      const height = card.getBoundingClientRect().height;
-      if (height < 1) return false;
-      setLockedHeight(height);
-      return true;
-    };
-
-    if (lockFromCard()) return;
-
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => {
-      if (lockFromCard()) observer.disconnect();
-    });
-    observer.observe(card);
-    return () => observer.disconnect();
-  }, [snapshotReady, lockedHeight]);
-
-  const heightLocked = lockedHeight != null;
+  const cardRef = useScrollHeightLock(paused);
   const hasActivity = displayedPlayback.length > 0 || transportOnlyRows.length > 0;
 
   return (
     <section
       ref={cardRef}
       id="active-reads"
-      className={`card w-full min-w-0 scroll-mt-20 border border-base-content/10 bg-base-100 shadow-sm${heightLocked ? " overflow-hidden" : ""}`}
-      style={heightLocked ? { height: lockedHeight } : undefined}
+      className="card box-border w-full min-w-0 scroll-mt-20 overflow-hidden border border-base-content/10 bg-base-100 shadow-sm"
     >
-      <div className="card-body flex h-full min-h-0 flex-col gap-3 p-4">
+      <div className="card-body yes-scrollbar flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
         <div className="flex shrink-0 items-center gap-2.5">
           <span className="status status-success animate-pulse" aria-hidden="true" />
           <h3 className="card-title m-0 text-base">Right now</h3>
@@ -241,17 +217,11 @@ export function LiveReadsPanelContent({
         )}
 
         {!hasActivity ? (
-          <p className="m-0 text-sm text-base-content/50">
+          <p className="m-0 shrink-0 text-sm text-base-content/50">
             No confirmed playback or active InfiniDysk reads right now.
           </p>
         ) : (
-          <ul
-            className={
-              heightLocked
-                ? "yes-scrollbar m-0 min-h-0 w-full min-w-0 flex-1 list-none divide-y divide-base-content/10 overflow-x-hidden overflow-y-auto py-0 pr-4 pl-0"
-                : "m-0 w-full min-w-0 list-none divide-y divide-base-content/10 overflow-x-hidden py-0 pr-4 pl-0"
-            }
-          >
+          <ul className="yes-scrollbar m-0 max-h-80 min-h-0 w-full min-w-0 list-none divide-y divide-base-content/10 overflow-x-hidden overflow-y-auto py-0 pr-4 pl-0 [scrollbar-gutter:stable]">
             {displayedPlayback.map((activity) => (
               <PlaybackRow
                 key={`${activity.session.key.sourceInstanceId}:${activity.session.nativeSessionId}`}
@@ -267,6 +237,70 @@ export function LiveReadsPanelContent({
       </div>
     </section>
   );
+}
+
+function useScrollHeightLock(disabled: boolean) {
+  const cardRef = useRef<HTMLElement>(null);
+  const synchronizeRef = useRef<(() => void) | null>(null);
+
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    if (!card || disabled) return;
+    const scrollRoot = card.closest("main");
+    const scrollTarget = scrollRoot ?? window;
+    let lastHeight: number | null = null;
+    let lastWidth: number | null = null;
+
+    const naturalHeight = () => {
+      const height = Number.parseFloat(getComputedStyle(card).height);
+      return Number.isFinite(height) && height > 0 ? height : card.getBoundingClientRect().height;
+    };
+
+    const synchronize = () => {
+      let bounds = card.getBoundingClientRect();
+      if (bounds.height <= 0 || bounds.width <= 0) return;
+      const rootBounds = scrollRoot?.getBoundingClientRect();
+      const rootTop = (rootBounds?.top ?? 0) + (scrollRoot?.clientTop ?? 0);
+      const rootBottom = rootBounds?.bottom ?? window.innerHeight;
+      const above = bounds.top < rootTop;
+
+      if (lastWidth !== null && lastWidth !== bounds.width) {
+        card.style.height = "";
+        bounds = card.getBoundingClientRect();
+        if (lastHeight !== null) lastHeight = naturalHeight();
+      }
+      lastWidth = bounds.width;
+
+      if (above) {
+        if (lastHeight !== null) card.style.height = `${Math.ceil(lastHeight)}px`;
+      } else {
+        card.style.height = "";
+        if (bounds.top < rootBottom) lastHeight = naturalHeight();
+      }
+    };
+
+    synchronizeRef.current = synchronize;
+    synchronize();
+    scrollTarget.addEventListener("scroll", synchronize, { passive: true });
+    window.addEventListener("resize", synchronize);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(synchronize);
+    observer?.observe(card);
+    if (scrollRoot) observer?.observe(scrollRoot);
+
+    return () => {
+      scrollTarget.removeEventListener("scroll", synchronize);
+      window.removeEventListener("resize", synchronize);
+      observer?.disconnect();
+      synchronizeRef.current = null;
+      card.style.height = "";
+    };
+  }, [disabled]);
+
+  useLayoutEffect(() => {
+    synchronizeRef.current?.();
+  });
+
+  return cardRef;
 }
 
 function PlaybackRow({
@@ -358,7 +392,7 @@ function PlaybackRow({
 
 function TransportOnlyRow({ row }: { row: LiveReadRow }) {
   const { read, rate, history } = row;
-  const display = displayNameForRead(read.fileName, read.path);
+  const display = displayNameForRead(read.fileName, read.path, read.parentDirectoryName);
   const pct =
     read.fileSize && read.fileSize > 0
       ? Math.min(100, Math.max(0, (read.sourceOffset / read.fileSize) * 100))
@@ -373,7 +407,7 @@ function TransportOnlyRow({ row }: { row: LiveReadRow }) {
           <span className="badge badge-ghost badge-xs shrink-0">READ</span>
           <Tooltip
             className="min-w-0 overflow-hidden"
-            content={display.isReleaseFallback ? `${read.path}\n(obfuscated file name)` : read.path}
+            content={`${display.name}\n${read.path}`}
           >
             <span className="block truncate text-xs font-bold text-base-content">
               {display.name}

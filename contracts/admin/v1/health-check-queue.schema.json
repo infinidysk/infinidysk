@@ -12,14 +12,15 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "name", "path"],
+        "required": ["id", "name", "path", "countsTowardUncheckedCount"],
         "properties": {
           "id": { "type": "string", "minLength": 1 },
           "name": { "type": "string" },
           "path": { "type": "string" },
           "releaseDate": { "type": ["string", "null"] },
           "lastHealthCheck": { "type": ["string", "null"] },
-          "nextHealthCheck": { "type": ["string", "null"] }
+          "nextHealthCheck": { "type": ["string", "null"] },
+          "countsTowardUncheckedCount": { "type": "boolean" }
         }
       }
     }

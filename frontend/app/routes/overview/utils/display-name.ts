@@ -1,10 +1,3 @@
-/**
- * Display-name resolution for active reads. The queue deobfuscates most
- * video files at import time, but when an obfuscated leaf survives (e.g.
- * "b082fa0beaa644d3aa01045d5b8d0b36.mkv") the release folder in the WebDAV
- * path is a far more useful label than the leaf.
- */
-
 // Structural mount roots that are never useful as display names.
 const IGNORED_PARENTS = new Set(["content", "nzbs", ".ids", "completed-symlinks"]);
 
@@ -38,21 +31,31 @@ export function isProbablyObfuscated(fileName: string): boolean {
 
 export type DisplayName = {
   name: string;
-  /** True when the name comes from the release folder because the leaf is obfuscated. */
-  isReleaseFallback: boolean;
+  hasParentPrefix: boolean;
 };
 
-export function displayNameForRead(fileName: string, path: string): DisplayName {
+export function displayNameForRead(
+  fileName: string,
+  path: string,
+  parentDirectoryName?: string | null,
+): DisplayName {
   const leaf = fileName || lastPathSegment(path);
-  if (!isProbablyObfuscated(leaf)) return { name: leaf, isReleaseFallback: false };
-
   const segments = path.split("/").filter(Boolean);
-  const parent = segments.length >= 2 ? segments[segments.length - 2]! : "";
+  let parent = parentDirectoryName ?? "";
+  if (parentDirectoryName === undefined && !segments.includes(".ids")) {
+    parent = segments.length >= 2 ? segments[segments.length - 2]! : "";
+    try {
+      parent = decodeURIComponent(parent);
+    } catch {
+      parent = "";
+    }
+  }
   if (parent === "" || IGNORED_PARENTS.has(parent.toLowerCase()))
-    return { name: leaf, isReleaseFallback: false };
+    return { name: leaf, hasParentPrefix: false };
 
-  const ext = leaf.includes(".") ? leaf.slice(leaf.lastIndexOf(".")) : "";
-  return { name: parent + ext, isReleaseFallback: true };
+  const prefix = Array.from(parent).slice(0, 10).join("").toLowerCase();
+  if (leaf.toLowerCase().includes(prefix)) return { name: leaf, hasParentPrefix: false };
+  return { name: `${parent}/${leaf}`, hasParentPrefix: true };
 }
 
 export function lastPathSegment(path: string): string {

@@ -31,6 +31,7 @@ internal sealed class NntpYencBodyDecoder(
     {
         byte[]? ybeginBuffer = null;
         byte[]? yendBuffer = null;
+        var pendingObservedBytes = 0;
         try
         {
             var unflushedDecodedBytes = 0;
@@ -165,8 +166,9 @@ internal sealed class NntpYencBodyDecoder(
                             break;
                         }
 
-                        PayloadBytesObserver.InvokeContained(
+                        PayloadBytesObserver.Accumulate(
                             options.PayloadBytesObserver,
+                            ref pendingObservedBytes,
                             contentLength + 2);
 
                         if (!shouldWrite)
@@ -335,6 +337,8 @@ internal sealed class NntpYencBodyDecoder(
         }
         finally
         {
+            PayloadBytesObserver.Flush(options.PayloadBytesObserver, ref pendingObservedBytes);
+
             if (ybeginBuffer != null)
             {
                 ArrayPool<byte>.Shared.Return(ybeginBuffer);

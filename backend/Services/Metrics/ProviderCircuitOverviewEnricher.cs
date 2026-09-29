@@ -40,6 +40,7 @@ internal static class ProviderCircuitOverviewEnricher
                     TripCount = fields.TripCount,
                     FailureCount = fields.FailureCount,
                     ArticleMissCount = fields.ArticleMissCount,
+                    ProviderType = runtime.ProviderType.ToString(),
                 };
                 continue;
             }
@@ -54,6 +55,7 @@ internal static class ProviderCircuitOverviewEnricher
                 TripCount = fields.TripCount,
                 FailureCount = fields.FailureCount,
                 ArticleMissCount = fields.ArticleMissCount,
+                ProviderType = runtime.ProviderType.ToString(),
             };
         }
 

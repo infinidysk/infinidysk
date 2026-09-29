@@ -36,6 +36,49 @@ public class ExceptionMiddlewareTests
         Assert.Null(logged.Exception);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ContentLengthOverrun_WarnsWithoutStackAndPreservesFailureResponse(bool hasStarted)
+    {
+        const string reason =
+            "Response Content-Length mismatch: too many bytes written (3392 of 3383).";
+        var lifetime = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted, lifetime);
+        var item = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        item.Path = $"/content/overrun-{Guid.NewGuid():N}.mkv";
+        var middleware = CreateMiddleware(_ => throw new InvalidOperationException(reason));
+
+        var events = await CaptureLogsAsync(() => middleware.InvokeAsync(context));
+
+        var logged = Assert.Single(events, entry => entry.Level >= LogEventLevel.Warning);
+        Assert.Equal(LogEventLevel.Warning, logged.Level);
+        Assert.Null(logged.Exception);
+        Assert.Equal(reason, Assert.IsType<ScalarValue>(logged.Properties["Reason"]).Value);
+        Assert.Equal(hasStarted, lifetime.Aborted);
+        if (!hasStarted)
+            Assert.Equal(StatusCodes.Status500InternalServerError, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UnrelatedInvalidOperation_RetainsErrorAndStack()
+    {
+        var lifetime = new TestHttpRequestLifetimeFeature();
+        var context = CreateDavItemContext(hasStarted: false, lifetime);
+        var item = Assert.IsType<DavItem>(context.Items["DavItem"]);
+        item.Path = $"/content/unexpected-{Guid.NewGuid():N}.mkv";
+        var failure = new InvalidOperationException("Synthetic unexpected state.");
+        var middleware = CreateMiddleware(_ => throw failure);
+
+        var events = await CaptureLogsAsync(() => middleware.InvokeAsync(context));
+
+        var logged = Assert.Single(events, entry => entry.Level >= LogEventLevel.Warning);
+        Assert.Equal(LogEventLevel.Error, logged.Level);
+        Assert.Same(failure, logged.Exception);
+        Assert.Equal(StatusCodes.Status500InternalServerError, context.Response.StatusCode);
+        Assert.False(lifetime.Aborted);
+    }
+
     private static async Task<IReadOnlyList<LogEvent>> CaptureLogsAsync(Func<Task> action)
     {
         var sink = new CollectingSink();

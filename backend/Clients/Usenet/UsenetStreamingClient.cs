@@ -386,6 +386,7 @@ public class UsenetStreamingClient : WrappingNntpClient
                 ? connectionDetails.Host
                 : connectionDetails.Nickname,
             circuitBreaker: circuitBreaker,
+            warmFloorOpenTimeout: () => ResolveWarmFloorOpenTimeout(connectionOpenTimeout()),
             onWarmConnectionFailure: (exception, factoryStarted) =>
             {
                 MultiConnectionNntpClient? client;
@@ -487,7 +488,8 @@ public class UsenetStreamingClient : WrappingNntpClient
         Func<TimeSpan>? connectionOpenTimeout = null,
         string? connectionOpenProvider = null,
         Action<Exception, bool>? onWarmConnectionFailure = null,
-        ProviderCircuitBreaker? circuitBreaker = null
+        ProviderCircuitBreaker? circuitBreaker = null,
+        Func<TimeSpan>? warmFloorOpenTimeout = null
     )
     {
         var idleTimeout = TimeSpan.FromSeconds(idleTimeoutSeconds);
@@ -504,7 +506,8 @@ public class UsenetStreamingClient : WrappingNntpClient
             connectionOpenTimeout: connectionOpenTimeout,
             connectionOpenProvider: connectionOpenProvider,
             onWarmConnectionFailure: onWarmConnectionFailure,
-            circuitBreaker: circuitBreaker);
+            circuitBreaker: circuitBreaker,
+            warmFloorOpenTimeout: warmFloorOpenTimeout);
         connectionPool.OnConnectionPoolChanged += onConnectionPoolChanged;
         var args = new ConnectionPoolStats.ConnectionPoolChangedEventArgs(0, 0, maxConnections);
         SynchronousObserverInvoker.Invoke(
@@ -528,6 +531,14 @@ public class UsenetStreamingClient : WrappingNntpClient
     // Hard ceiling for TCP/TLS connect + AUTHINFO. Long enough for slow providers,
     // short enough that three stuck handshakes cannot pin the pool forever.
     // Settable for tests so timeout coverage does not wait a full 15s.
+    // Floor refills have no waiting caller; a slow TLS+AUTHINFO gets more room than a foreground open.
+    internal static readonly TimeSpan MinimumWarmFloorOpenTimeout = TimeSpan.FromSeconds(10);
+
+    internal static TimeSpan ResolveWarmFloorOpenTimeout(TimeSpan foregroundOpenTimeout) =>
+        foregroundOpenTimeout > MinimumWarmFloorOpenTimeout
+            ? foregroundOpenTimeout
+            : MinimumWarmFloorOpenTimeout;
+
     internal static TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(15);
 
     internal static bool ShouldWarnCleartextCredentials(bool useSsl, string? user) =>

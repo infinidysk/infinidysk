@@ -44,11 +44,13 @@ public static class DatabaseRestoreRunner
         if (intent is null)
             return;
 
+        intent.StagedFiles.RemoveAll(name => string.Equals(name, "metrics.sqlite", StringComparison.Ordinal));
+
         if (intent.StagedFiles.Count == 0 ||
             !intent.StagedFiles.All(name => File.Exists(Path.Join(store.RestoreStagingRoot, name))))
         {
             Log.Warning(
-                "Pending restore intent {BackupId} is missing staged files; discarding and continuing startup",
+                "Pending restore intent {BackupId} has no supported or complete staged files; discarding and continuing startup",
                 intent.BackupId);
             store.ClearPendingRestore();
             store.ClearRestoreStaging();

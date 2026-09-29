@@ -55,11 +55,6 @@ public class DatabaseBackupTask(
                     "main database").ConfigureAwait(false);
             }
 
-            await DumpIfExistsAsync(
-                MetricsDbContext.DatabaseFilePath,
-                Path.Join(stagingPath, DatabaseBackupStore.MetricsSqlName),
-                "metrics database").ConfigureAwait(false);
-
             var wardenPath = Path.Join(DavDatabaseContext.ConfigPath, "warden.db");
             await DumpIfExistsAsync(
                 wardenPath,
