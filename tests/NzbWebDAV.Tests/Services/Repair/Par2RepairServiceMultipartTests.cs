@@ -139,6 +139,66 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MixedOmissionPayload_RepairsOnlyIndependentlySelectableCompleteFile(bool independentSets)
+    {
+        var legacy = Data(4096 * 6, "mixed-legacy");
+        var complete = Data(4096 * 7, "mixed-complete");
+        var main = Par2TestEncoder.EncodeSet(independentSets
+            ? [("complete.rar", complete)]
+            : [("legacy.rar", legacy), ("complete.rar", complete)], 4096, [0u, 1u]);
+        var legacySet = Par2TestEncoder.EncodeSet([("legacy.rar", legacy)], 4096, [0u]);
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("legacy.rar", legacy, Sizes(legacy.Length), Omitted: [3]),
+            new("complete.rar", complete, Sizes(complete.Length), Omitted: [4]),
+        ], [], DavItem.ItemSubType.MultipartFile, parity: main,
+            additionalParity: independentSets
+                ? [("legacy.par2", legacySet.indexBytes), ("legacy.vol00+01.par2", legacySet.volumeBytes)]
+                : []);
+        var legacyMarker = release.Files[0].Ids[3];
+        var completeMarker = release.Files[1].Ids[4];
+        var legacyIds = release.Files[0].Ids.Where(id => !NzbFile.IsOmittedSegmentId(id)).ToArray();
+        var payload = await BlobStore.ReadBlob<DavMultipartFile>(release.Item.FileBlobId!.Value);
+        Assert.NotNull(payload);
+        // Simulate a part imported before omitted article slots were persisted.
+        var legacyPart = payload.Metadata.FileParts[0];
+        legacyPart.SegmentIds = legacyIds;
+        legacyPart.SegmentByteRanges = null;
+        legacyPart.SegmentByteRangesTrusted = false;
+        await BlobStore.WriteBlob(release.Item.FileBlobId.Value, payload);
+        Assert.Contains(completeMarker, payload.Metadata.FileParts[1].SegmentIds);
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var result = await release.Service.TryPar2RepairAsync(release.Item, [completeMarker], cancellation.Token);
+        var job = await ReadJobAsync();
+        if (independentSets)
+        {
+            Assert.Equal(Par2RepairOutcome.Repaired, result);
+            await AssertPatchAsync(release, 1, 4);
+            Assert.Equal(1, release.Store.EntryCount);
+            Assert.Equal(1, job.SlicesReconstructed);
+            Assert.Equal(Par2RepairJob.RepairJobState.Succeeded, job.State);
+        }
+        else
+        {
+            Assert.Equal(Par2RepairOutcome.NotRepaired, result);
+            Assert.Equal(0, release.Store.EntryCount);
+            Assert.Equal(0, job.SlicesReconstructed);
+            Assert.Equal(Par2RepairJob.RepairJobState.Infeasible, job.State);
+        }
+        Assert.False(release.Store.Contains(legacyMarker));
+        Assert.DoesNotContain(legacyMarker, release.Fake.RequestedSegmentIds);
+        Assert.DoesNotContain(completeMarker, release.Fake.RequestedSegmentIds);
+        var stored = await BlobStore.ReadBlob<DavMultipartFile>(release.Item.FileBlobId.Value);
+        Assert.NotNull(stored);
+        Assert.Equal(legacyIds, stored.Metadata.FileParts[0].SegmentIds);
+        Assert.Null(stored.Metadata.FileParts[0].SegmentByteRanges);
+        Assert.False(stored.Metadata.FileParts[0].SegmentByteRangesTrusted);
+        Assert.Equal(release.Files[1].Ids, stored.Metadata.FileParts[1].SegmentIds);
+    }
+
+    [Theory]
     [InlineData(DavItem.ItemSubType.MultipartFile)]
     [InlineData(DavItem.ItemSubType.RarFile)]
     public async Task TwoDamagedVolumes_ReconstructOneUnionAndSurviveRestart(DavItem.ItemSubType subtype)
