@@ -51,7 +51,7 @@ public class SplitVideoGroupingTests
             Info("release.nfo"),
         };
 
-        var groups = QueueItemProcessor.GroupFilesForProcessing(files);
+        var groups = ArchiveImportPlanner.GroupFilesForProcessing(files);
         var splitGroups = groups
             .Where(g => g.Key.StartsWith("split-video:", StringComparison.Ordinal))
             .ToList();
@@ -91,7 +91,7 @@ public class SplitVideoGroupingTests
 
     private static List<IGrouping<string, GetFileInfosStep.FileInfo>> SplitGroups(
         IReadOnlyList<GetFileInfosStep.FileInfo> files) =>
-        QueueItemProcessor.GroupFilesForProcessing(files)
+        ArchiveImportPlanner.GroupFilesForProcessing(files)
             .Where(g => g.Key.StartsWith("split-video:", StringComparison.Ordinal))
             .ToList();
 
