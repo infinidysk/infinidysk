@@ -57,6 +57,8 @@ import {
 import { isWardenSettingsUpdated, WardenSettings } from "./warden/warden";
 import { isRcloneSettingsUpdated, RcloneSettings } from "./rclone/rclone";
 import { SupportSettings } from "./support/support";
+import { NativeCacheSettings } from "./streaming/native-cache";
+import { isNativeCacheSettingsUpdated, nativeSettingsValid } from "./streaming/native-cache-model";
 import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import {
   useBlocker,
@@ -77,6 +79,12 @@ import { parseConfigBoolean } from "~/utils/config-bool";
 import { getTrustProxyEnvironmentOverride } from "../../../server/trust-proxy-env.server";
 
 const defaultConfig = {
+  "cache.mode": "",
+  "cache.native.folders": "[]",
+  "cache.native.metadata-path": "",
+  "cache.native.writer-mb": "32",
+  "cache.native.min-file-mb": "100",
+  "cache.native.chunk-mb": "64",
   "general.base-url": "",
   "general.trust-proxy": "false",
   "api.key": "",
@@ -428,6 +436,7 @@ function Body(props: BodyProps) {
   const isQueueUpdated = isQueueSettingsUpdated(config, newConfig);
   const isSabnzbdUpdated = isSabnzbdSettingsUpdated(config, newConfig);
   const isStreamingUpdated = isStreamingSettingsUpdated(config, newConfig);
+  const isNativeCacheUpdated = isNativeCacheSettingsUpdated(config, newConfig);
   const isWebdavUpdated = isWebdavSettingsUpdated(config, newConfig);
   const isArrsUpdated = isArrsSettingsUpdated(config, newConfig);
   const isIndexersUpdated = isIndexersSettingsUpdated(config, newConfig);
@@ -447,6 +456,7 @@ function Body(props: BodyProps) {
     isQueueUpdated ||
     isSabnzbdUpdated ||
     isStreamingUpdated ||
+    isNativeCacheUpdated ||
     isWebdavUpdated ||
     isArrsUpdated ||
     isIndexersUpdated ||
@@ -473,19 +483,21 @@ function Body(props: BodyProps) {
             ? "Invalid SABnzbd settings"
             : isStreamingUpdated && !isStreamingSettingsValid(newConfig)
               ? "Invalid Streaming settings"
-              : isWebdavUpdated && !isWebdavSettingsValid(newConfig)
-                ? "Invalid WebDAV settings"
-                : isArrsUpdated && !isArrsSettingsValid(newConfig)
-                  ? "Invalid Arrs settings"
-                  : isIndexersUpdated && !isIndexersSettingsValid(newConfig)
-                    ? "Invalid Indexers settings"
-                    : isProfilesUpdated && !isProfilesSettingsValid(newConfig)
-                      ? "Invalid Search Profiles settings"
-                      : isRepairsUpdated && !isRepairsSettingsValid(newConfig)
-                        ? "Invalid Repairs settings"
-                        : isWatchtowerUpdated && !isWatchtowerSettingsValid(newConfig)
-                          ? "Invalid Watchtower settings"
-                          : "Save";
+              : isNativeCacheUpdated && !nativeSettingsValid(newConfig)
+                ? "Invalid Native Cache settings"
+                : isWebdavUpdated && !isWebdavSettingsValid(newConfig)
+                  ? "Invalid WebDAV settings"
+                  : isArrsUpdated && !isArrsSettingsValid(newConfig)
+                    ? "Invalid Arrs settings"
+                    : isIndexersUpdated && !isIndexersSettingsValid(newConfig)
+                      ? "Invalid Indexers settings"
+                      : isProfilesUpdated && !isProfilesSettingsValid(newConfig)
+                        ? "Invalid Search Profiles settings"
+                        : isRepairsUpdated && !isRepairsSettingsValid(newConfig)
+                          ? "Invalid Repairs settings"
+                          : isWatchtowerUpdated && !isWatchtowerSettingsValid(newConfig)
+                            ? "Invalid Watchtower settings"
+                            : "Save";
   const saveButtonVariant =
     saveButtonLabel === "Save" ? "primary" : saveButtonLabel === "Saved" ? "success" : "secondary";
   const isSaveButtonDisabled = saveButtonLabel !== "Save";
@@ -660,6 +672,15 @@ function Body(props: BodyProps) {
                 setNewConfig={setNewConfig}
                 effectiveArticleBudgetBytes={props.inFlightArticleBudgetBytes}
               />
+            )}
+            {activeTab === "native-cache" && (
+              <SettingsPage>
+                <SettingsIntro>
+                  Choose a cache mode and manage Native Cache storage, limits, and folder
+                  operations. Storage changes require a restart.
+                </SettingsIntro>
+                <NativeCacheSettings config={newConfig} setNewConfig={setNewConfig} />
+              </SettingsPage>
             )}
             {activeTab === "webdav" && (
               <WebdavSettings config={newConfig} setNewConfig={setNewConfig} />

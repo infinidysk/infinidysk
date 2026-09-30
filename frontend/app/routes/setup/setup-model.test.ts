@@ -10,6 +10,16 @@ import {
 } from "./setup-model";
 
 describe("setup model", () => {
+  it("preserves explicit Native on wizard reruns", () => {
+    const baseline = {
+      ...SETUP_DEFAULT_CONFIG,
+      "cache.mode": "native",
+      "usenet.segment-cache.enabled": "false",
+    };
+    const next = applyStrategy(baseline, "strm", {});
+    expect(next["cache.mode"]).toBe("native");
+    expect(next["usenet.segment-cache.enabled"]).toBe("false");
+  });
   it("derives segment cache from the final library strategy", () => {
     const baseline = { ...SETUP_DEFAULT_CONFIG, "usenet.segment-cache.enabled": "true" };
 

@@ -10,6 +10,28 @@ namespace NzbWebDAV.Tests.Streams;
 
 public class Par2VerifiedFileStreamTests
 {
+    [Fact]
+    public async Task NativeRead_VerifiesAPar2SliceLargerThanTheCacheBlock()
+    {
+        const int segmentSize = 1024 * 1024;
+        var data = Enumerable.Repeat((byte)37, 8 * segmentSize).ToArray();
+        var ids = Enumerable.Range(0, 8).Select(index => "segment-" + index).ToArray();
+        var ranges = Enumerable.Range(0, 8).Select(index =>
+            new LongRange((long)index * segmentSize, (long)(index + 1) * segmentSize)).ToArray();
+        using var client = new FakeNntpClient(ids.Select((id, index) =>
+                (id, bytes: data[(index * segmentSize)..((index + 1) * segmentSize)]))
+            .ToDictionary(item => item.id, item => item.bytes), useCachedYencStreams: true,
+            segmentRanges: ids.Select((id, index) => (id, range: ranges[index]))
+                .ToDictionary(item => item.id, item => item.range));
+        await using var stream = new NzbFileStream(ids, data.Length, client, 1, ranges,
+            usePipelinedBodyRequests: false,
+            segmentByteRangesTrusted: true, verificationProof: CreateProof(data, data.Length));
+        using var native = new NativeCacheReadContext();
+        Assert.Equal(16, await stream.ReadAsync(new byte[16]));
+        Assert.True(Assert.IsAssignableFrom<ICacheReadEvidence>(stream).LastReadCacheable);
+        Assert.Contains("segment-7", client.RequestedSegmentIds);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -48,6 +70,7 @@ public class Par2VerifiedFileStreamTests
         {
             Assert.Equal(4, await stream.ReadAsync(output));
             Assert.Equal(data[..4], output);
+            Assert.True(Assert.IsAssignableFrom<ICacheReadEvidence>(stream).LastReadCacheable);
         }
         Assert.DoesNotContain("tail", client.RequestedSegmentIds);
 
@@ -57,6 +80,7 @@ public class Par2VerifiedFileStreamTests
             async () => await stream.ReadAsync(output));
         Assert.Equal(new byte[] { 255, 255, 255, 255 }, output);
         Assert.Equal(16384, stream.Position);
+        Assert.False(Assert.IsAssignableFrom<ICacheReadEvidence>(stream).LastReadCacheable);
     }
 
     [Fact]

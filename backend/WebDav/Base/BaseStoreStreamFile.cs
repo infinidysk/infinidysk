@@ -7,18 +7,24 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Streams;
+using NzbWebDAV.Services.NativeCache;
 
 namespace NzbWebDAV.WebDav.Base;
 
 public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager configManager)
     : BaseStoreReadonlyItem, IDetachedStreamSource
 {
+    public virtual DavItem? DavItem => null;
     public virtual SharedContentIdentity ContentIdentity =>
-        new(UniqueKey, NzbBlobId, FileSize);
+        new(UniqueKey, DavItem?.FileBlobId, FileSize);
     // Derived stream files must use these properties instead of capturing
     // the primary-constructor parameters (CS9107 double-capture).
     protected HttpContext Context => context;
     protected ConfigManager Config => configManager;
+
+    public override Task<DateTime> GetLastModifiedAsync(CancellationToken ct)
+        => DavItem is { } item && context.RequestServices?.GetService<NativeCacheService>() is { } native
+            ? native.GetLastModifiedAsync(item, ct) : base.GetLastModifiedAsync(ct);
 
     protected abstract Task<Stream> GetStreamAsync(CancellationToken cancellationToken);
 
@@ -32,7 +38,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
 
         try
         {
-            return await GetStreamAsync(cancellationToken).ConfigureAwait(false);
+            return await OpenFinalStreamAsync(cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -46,7 +52,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
         var ownership = CreateStreamingScope(cancellationToken);
         try
         {
-            var stream = await GetStreamAsync(cancellationToken).ConfigureAwait(false);
+            var stream = await OpenFinalStreamAsync(cancellationToken).ConfigureAwait(false);
             return new DetachedStreamLease
             {
                 Stream = stream,
@@ -62,17 +68,35 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
         }
     }
 
+    private Task<Stream> OpenFinalStreamAsync(CancellationToken cancellationToken)
+    {
+        if (DavItem is not { } item) return GetStreamAsync(cancellationToken);
+        // Publish attribution before opening: a native hit deliberately never opens
+        // the source and must still participate in read/session accounting.
+        Context.Items["DavItem"] = item;
+        var native = Context.RequestServices?.GetService<NativeCacheService>();
+        return native is null ? GetStreamAsync(cancellationToken)
+            : native.WrapAsync(item, GetStreamAsync, cancellationToken);
+    }
+
     /// <summary>
     /// Request-token or entry-token contexts plus the per-stream semaphore.
     /// Each call allocates fresh instances so the response-registered path and
     /// the entry-owned path never share disposables.
     /// </summary>
-    private StreamingScope CreateStreamingScope(CancellationToken token)
+    private IAsyncDisposable CreateStreamingScope(CancellationToken token) =>
+        BeginReadScope(configManager, Context.RequestServices, SemaphorePriority.High, null, token);
+
+    /// <summary>Shared ownership for response, detached playback, and bounded low-priority warming.</summary>
+    public static IAsyncDisposable BeginReadScope(ConfigManager configManager, IServiceProvider services,
+        SemaphorePriority priority, int? connectionLimit, CancellationToken token)
     {
-        var streamSemaphore = CreatePerStreamSemaphore();
+        var streamSemaphore = connectionLimit is { } limit
+            ? new PrioritizedSemaphore(limit, limit, configManager.GetStreamingPriority())
+            : CreatePerStreamSemaphore(configManager);
         var downloadPriorityContext = new DownloadPriorityContext()
         {
-            Priority = SemaphorePriority.High,
+            Priority = priority,
             StreamSemaphore = streamSemaphore,
         };
 #pragma warning disable CA2000 // ownership handle disposes the token-keyed context
@@ -91,7 +115,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
         IDisposable? scopedSchedulingContext = null;
         if (configManager.IsFiniteRangeSchedulerEnabled())
         {
-            var capacityProvider = Context.RequestServices
+            var capacityProvider = services
                 .GetRequiredService<StreamingCapacitySnapshotProvider>();
 #pragma warning disable CA2000 // ownership handle is disposed by StreamingScope
             scopedSchedulingContext = token.SetContext(new StreamingSchedulingContext
@@ -107,7 +131,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
         // and (in auto mode) the provider pool. The per-stream enable toggle is
         // intentionally excluded: the mode is decided once per stream at start.
         EventHandler<ConfigManager.ConfigEventArgs>? onConfigChanged = null;
-        if (streamSemaphore is { } perStreamSemaphore)
+        if (connectionLimit is null && streamSemaphore is { } perStreamSemaphore)
         {
             onConfigChanged = (_, e) =>
             {
@@ -137,7 +161,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
     // so concurrent streams don't share a single global budget. Returns null when
     // the mode is disabled — the shared global semaphore in DownloadingNntpClient
     // is used instead. The provider connection pool still caps real connections.
-    private PrioritizedSemaphore? CreatePerStreamSemaphore()
+    private static PrioritizedSemaphore? CreatePerStreamSemaphore(ConfigManager configManager)
     {
         if (!configManager.IsMaxDownloadConnectionsPerStream()) return null;
         var max = configManager.GetMaxDownloadConnectionsPerStreamCount();

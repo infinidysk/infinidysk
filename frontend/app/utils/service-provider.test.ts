@@ -21,6 +21,7 @@ describe("isNavFeatureId", () => {
     "settings.rclone",
     "settings.queue",
     "settings.streaming",
+    "settings.native-cache",
     "settings.migration",
   ])("accepts known identifier %s", (value) => {
     expect(isNavFeatureId(value)).toBe(true);

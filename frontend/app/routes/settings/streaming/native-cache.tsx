@@ -1,0 +1,824 @@
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  Alert,
+  Button,
+  Input,
+  ManagedSetting,
+  Select,
+  SettingsCard,
+  Toggle,
+} from "~/components/ui";
+import { withUrlBase } from "~/utils/url-base";
+import {
+  cacheMode,
+  parseNativeFolders,
+  validateNativeFolders,
+  type NativeFolder,
+} from "./native-cache-model";
+
+type CacheStatus = {
+  activeMode: string;
+  configuredMode: string;
+  restartRequired: boolean;
+  initializationError?: string;
+  initializationPending?: boolean;
+  reservedBufferBytes: number;
+  counters?: {
+    hitBlocks: number;
+    missBlocks: number;
+    committedBytes: number;
+    fallbacks: number;
+    ioTimeouts: number;
+  };
+  folders: {
+    id: string;
+    online: boolean;
+    writable: boolean;
+    committedBytes: number;
+    entries: number;
+    error?: string;
+  }[];
+  jobs: {
+    id: string;
+    folderId: string;
+    operation: string;
+    state: string;
+    result?: number;
+    error?: string;
+    probe?: {
+      fileSystem: string;
+      capability: string;
+      readable: boolean;
+      writable: boolean;
+      durableWriteVerified: boolean;
+      availableBytes: number;
+      error?: string;
+    };
+  }[];
+};
+
+type CacheEntry = {
+  key: string;
+  itemId: string;
+  name?: string;
+  generation?: string;
+  length: number;
+  allocatedBytes: number;
+  verifiedBytes: number;
+  pinned: boolean;
+};
+type RangePage = { ranges: { offset: number; count: number }[]; nextAfter: number | null };
+
+export function NativeCacheSettings({
+  config,
+  setNewConfig,
+}: {
+  config: Record<string, string>;
+  setNewConfig: Dispatch<SetStateAction<Record<string, string>>>;
+}) {
+  const [status, setStatus] = useState<CacheStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set());
+  const [cachePage, setCachePage] = useState<{
+    folderId: string;
+    entries: CacheEntry[];
+    nextAfter: string | null;
+  } | null>(null);
+  const [rangePage, setRangePage] = useState<(RangePage & { key: string }) | null>(null);
+  const pendingEvictions = useRef(new Map<string, { folderId: string; key: string }>());
+  const openFolderId = useRef<string | null>(null);
+  openFolderId.current = cachePage?.folderId ?? null;
+  const inspectRanges = async (key: string, afterOffset = -1) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const query = new URLSearchParams({ key, afterOffset: String(afterOffset), limit: "50" });
+      const response = await fetch(withUrlBase(`/api/native-cache/ranges?${query}`));
+      if (!response.ok) throw new Error("Could not load verified cache ranges.");
+      setRangePage({ ...((await response.json()) as RangePage), key });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Range listing failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const browse = async (folderId: string, after?: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const query = new URLSearchParams({ folderId, limit: "50", ...(after ? { after } : {}) });
+      const response = await fetch(withUrlBase(`/api/native-cache/entries?${query}`));
+      if (!response.ok) throw new Error("Could not load cached files.");
+      const page = (await response.json()) as { entries: CacheEntry[]; nextAfter: string | null };
+      setCachePage({ ...page, folderId });
+      setRangePage(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Cache listing failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const pin = async (entry: CacheEntry) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(withUrlBase("/api/native-cache/operations"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operation: "pin", cacheKey: entry.key, pinned: !entry.pinned }),
+      });
+      if (!response.ok) throw new Error("Could not update cache retention.");
+      setCachePage(
+        (current) =>
+          current && {
+            ...current,
+            entries: current.entries.map((item) =>
+              item.key === entry.key ? { ...item, pinned: !item.pinned } : item,
+            ),
+          },
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Pin operation failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const evict = async (entry: CacheEntry) => {
+    if (
+      !cachePage ||
+      entry.pinned ||
+      !globalThis.confirm(
+        `Evict Native Cache for ${entry.name ?? entry.itemId}? Source media is not deleted. Active playback may delay eviction.`,
+      )
+    )
+      return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(withUrlBase("/api/native-cache/operations"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operation: "evict",
+          folderId: cachePage.folderId,
+          cacheKey: entry.key,
+          confirmCacheKey: entry.key,
+        }),
+      });
+      if (!response.ok) throw new Error("Could not queue file eviction.");
+      const job = (await response.json()) as { id: string };
+      pendingEvictions.current.set(job.id, { folderId: cachePage.folderId, key: entry.key });
+      const next = await fetch(withUrlBase("/api/native-cache"));
+      if (next.ok) setStatus((await next.json()) as CacheStatus);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "File eviction failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => {
+    if (!status) return;
+    for (const job of status.jobs) {
+      const pending = pendingEvictions.current.get(job.id);
+      if (!pending || !["completed", "failed", "cancelled"].includes(job.state)) continue;
+      pendingEvictions.current.delete(job.id);
+      if (job.state !== "completed" || job.result !== 1) {
+        setError(job.error || `File eviction ${job.state}; the cached file was retained.`);
+        continue;
+      }
+      if (openFolderId.current !== pending.folderId) continue;
+      const query = new URLSearchParams({ folderId: pending.folderId, limit: "50" });
+      void (async () => {
+        try {
+          const response = await fetch(withUrlBase(`/api/native-cache/entries?${query}`));
+          if (!response.ok)
+            throw new Error("File eviction completed, but the catalogue could not refresh.");
+          const page = (await response.json()) as {
+            entries: CacheEntry[];
+            nextAfter: string | null;
+          };
+          setCachePage((current) =>
+            current?.folderId === pending.folderId
+              ? { ...page, folderId: pending.folderId }
+              : current,
+          );
+          setRangePage((current) => (current?.key === pending.key ? null : current));
+        } catch (cause) {
+          setError(cause instanceof Error ? cause.message : "Cache listing failed.");
+        }
+      })();
+    }
+  }, [status]);
+  useEffect(() => {
+    const abort = new AbortController();
+    const refresh = async () => {
+      try {
+        const response = await fetch(withUrlBase("/api/native-cache"), { signal: abort.signal });
+        if (!response.ok) throw new Error("Could not load native cache status.");
+        setStatus((await response.json()) as CacheStatus);
+      } catch (cause) {
+        if (!abort.signal.aborted)
+          setError(cause instanceof Error ? cause.message : "Status unavailable.");
+      }
+    };
+    void refresh();
+    const timer = setInterval(() => void refresh(), 10_000);
+    return () => {
+      abort.abort();
+      clearInterval(timer);
+    };
+  }, []);
+  let folders: NativeFolder[] = [];
+  let parseError: string | null = null;
+  try {
+    folders = parseNativeFolders(config["cache.native.folders"]);
+  } catch {
+    parseError =
+      "Saved folder configuration is invalid. Correct it through the API or environment before editing.";
+  }
+  const validation = parseError ?? validateNativeFolders(folders);
+  const enabledFolders = folders.filter((folder) => folder.enabled);
+  const totalQuota = enabledFolders.reduce((sum, folder) => sum + folder.maxBytes, 0);
+  const allocated = (status?.folders ?? []).reduce((sum, folder) => sum + folder.committedBytes, 0);
+  const formatTb = (bytes: number) => {
+    const tb = bytes / 1e12;
+    return `${tb > 0 && tb < 0.01 ? tb.toFixed(3) : tb.toFixed(2)} TB`;
+  };
+  const update = (next: NativeFolder[]) =>
+    setNewConfig({ ...config, "cache.native.folders": JSON.stringify(next) });
+  const edit = (id: string, patch: Partial<NativeFolder>) =>
+    update(folders.map((folder) => (folder.id === id ? { ...folder, ...patch } : folder)));
+  const operate = async (folderId: string, operation: string, jobId?: string) => {
+    if (
+      operation === "clear" &&
+      !globalThis.confirm(
+        "Clear application-owned cached files in this folder? Active and pinned files will be retained. Source media is not deleted.",
+      )
+    )
+      return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(withUrlBase("/api/native-cache/operations"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          folderId,
+          operation,
+          jobId,
+          confirmFolderId: operation === "clear" ? folderId : undefined,
+        }),
+      });
+      if (!response.ok)
+        throw new Error(
+          "Cache operation was rejected. Check that the saved folder is active and writable.",
+        );
+      const next = await fetch(withUrlBase("/api/native-cache"));
+      if (next.ok) setStatus((await next.json()) as CacheStatus);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Cache operation failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <SettingsCard
+      icon="storage"
+      title="Disk cache"
+      description="Select one cache engine. Native cache keeps verified final movie/episode bytes in large files; Segment cache keeps decoded Usenet articles."
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4 rounded-xl border border-base-content/10 bg-base-200/40 p-4">
+        <div className="space-y-1">
+          <p className="font-semibold">Cache storage</p>
+          {status && (
+            <p className="text-sm">
+              Running: {status.activeMode}; saved: {status.configuredMode}
+              {status.restartRequired ? " — restart required" : ""}.
+              {status.initializationPending
+                ? " Storage initialization pending; source playback remains available."
+                : ""}
+            </p>
+          )}
+          <p className="text-xs text-base-content/60">
+            One cache engine runs at a time. Mode and native storage changes require a restart;
+            existing cache data is retained.
+          </p>
+        </div>
+        <ManagedSetting configKeys={["cache.mode", "usenet.segment-cache.enabled"]}>
+          <label className="flex min-w-56 flex-col gap-1 text-xs font-medium">
+            Cache mode (restart required)
+            <Select
+              value={cacheMode(config)}
+              onChange={(event) =>
+                setNewConfig({
+                  ...config,
+                  "cache.mode": event.target.value,
+                  "usenet.segment-cache.enabled": String(event.target.value === "segment"),
+                })
+              }
+            >
+              <option value="off">Off</option>
+              <option value="segment">Segment — fast local storage</option>
+              <option value="native">Native — whole media on HDD/NAS</option>
+            </Select>
+          </label>
+        </ManagedSetting>
+      </div>
+      {cacheMode(config) === "native" && (
+        <div className="grid grid-cols-2 gap-3 rounded-xl border border-base-content/10 p-4 sm:grid-cols-4">
+          {[
+            [formatTb(allocated), "Allocated"],
+            [formatTb(totalQuota), "Total quota"],
+            [
+              totalQuota ? `${((allocated / totalQuota) * 100).toFixed(1)}%` : "0%",
+              "Capacity used",
+            ],
+            [
+              `${((status?.reservedBufferBytes ?? 0) / 1048576).toFixed(0)} MiB`,
+              "Buffer reservations",
+            ],
+          ].map(([value, label]) => (
+            <div key={label}>
+              <p className="text-lg font-semibold tabular-nums">{value}</p>
+              <p className="text-xs text-base-content/60">{label}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      {status?.counters && (
+        <p className="text-xs">
+          Verified block hits: {status.counters.hitBlocks}; misses: {status.counters.missBlocks};
+          committed this process: {(status.counters.committedBytes / 1e9).toFixed(2)} GB; source
+          fallbacks: {status.counters.fallbacks} ({status.counters.ioTimeouts} storage timeouts).
+        </p>
+      )}
+      {(error || validation || status?.initializationError) && (
+        <Alert variant="warning">{error ?? validation ?? status?.initializationError}</Alert>
+      )}
+      {cacheMode(config) === "native" && (
+        <>
+          <details className="rounded-xl border border-base-content/10 bg-base-200/30">
+            <summary className="cursor-pointer p-4 text-sm font-semibold">
+              Local metadata and stream buffer
+              <span className="ml-2 font-normal text-base-content/60">
+                {config["cache.native.metadata-path"] || "/config/native-cache-metadata"} ·{" "}
+                {config["cache.native.writer-mb"] || "32"} MiB
+              </span>
+            </summary>
+            <div className="grid gap-3 border-t border-base-content/10 p-4 sm:grid-cols-2">
+              <ManagedSetting configKey="cache.native.metadata-path">
+                <label className="flex flex-col gap-2 text-sm">
+                  Local metadata directory (never NAS)
+                  <Input
+                    value={config["cache.native.metadata-path"] ?? ""}
+                    placeholder="/config/native-cache-metadata"
+                    onChange={(event) =>
+                      setNewConfig({ ...config, "cache.native.metadata-path": event.target.value })
+                    }
+                  />
+                </label>
+              </ManagedSetting>
+              <ManagedSetting configKey="cache.native.writer-mb">
+                <label className="flex flex-col gap-2 text-sm">
+                  Native stream buffer budget (4–256 MiB)
+                  <Input
+                    type="number"
+                    min={4}
+                    max={256}
+                    value={config["cache.native.writer-mb"] ?? "32"}
+                    onChange={(event) =>
+                      setNewConfig({ ...config, "cache.native.writer-mb": event.target.value })
+                    }
+                  />
+                </label>
+              </ManagedSetting>
+              <ManagedSetting configKey="cache.native.min-file-mb">
+                <label className="flex flex-col gap-2 text-sm">
+                  Minimum file size to cache (MiB)
+                  <Input
+                    type="number"
+                    min={0}
+                    max={1048576}
+                    value={config["cache.native.min-file-mb"] ?? "100"}
+                    onChange={(event) =>
+                      setNewConfig({ ...config, "cache.native.min-file-mb": event.target.value })
+                    }
+                  />
+                  <span className="text-xs text-base-content/60">
+                    Files below this size stream from the source without caching. Use 0 to include
+                    every file.
+                  </span>
+                </label>
+              </ManagedSetting>
+              <ManagedSetting configKey="cache.native.chunk-mb">
+                <label className="flex flex-col gap-2 text-sm">
+                  Cache chunk size (MiB)
+                  <Input
+                    type="number"
+                    min={4}
+                    max={256}
+                    step={4}
+                    value={config["cache.native.chunk-mb"] ?? "64"}
+                    onChange={(event) =>
+                      setNewConfig({ ...config, "cache.native.chunk-mb": event.target.value })
+                    }
+                  />
+                  <span className="text-xs text-base-content/60">
+                    New cache entries store data in chunk files of this size. Existing entries keep
+                    their original layout. Background warming reserves one chunk at a time.
+                  </span>
+                </label>
+              </ManagedSetting>
+            </div>
+          </details>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="font-semibold">Cache folders</h3>
+              <p className="text-xs text-base-content/60">
+                Capacity, health, and actions for each storage location.
+              </p>
+            </div>
+          </div>
+          <ManagedSetting configKey="cache.native.folders">
+            <div className="space-y-4">
+              {folders.map((folder) => {
+                const live = status?.folders.find((item) => item.id === folder.id);
+                const usedPercent =
+                  Number.isFinite(folder.maxBytes) && folder.maxBytes > 0
+                    ? Math.min(
+                        100,
+                        Math.max(0, ((live?.committedBytes ?? 0) / folder.maxBytes) * 100),
+                      )
+                    : 0;
+                return (
+                  <div
+                    key={folder.id}
+                    className="space-y-3 rounded-xl border border-base-content/15 bg-base-200/30 p-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-semibold">{folder.name || "New cache folder"}</h3>
+                          <span
+                            className={`badge badge-sm ${live?.online ? "badge-success badge-soft" : "badge-warning badge-soft"}`}
+                          >
+                            {live?.online ? "Online" : live ? "Offline" : "Not running"}
+                          </span>
+                          <span className="badge badge-sm badge-info badge-soft uppercase">
+                            {folder.storageType}
+                          </span>
+                        </div>
+                        <p className="break-all text-xs text-base-content/60">
+                          {folder.path || "Set a folder path"}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button disabled={busy || !live} onClick={() => void browse(folder.id)}>
+                          View cached files
+                        </Button>
+                        <Button
+                          disabled={busy || !live}
+                          onClick={() => void operate(folder.id, "probe")}
+                        >
+                          Probe
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="flex items-baseline justify-between gap-3 text-sm">
+                      <span>
+                        <strong>{formatTb(live?.committedBytes ?? 0)}</strong> /{" "}
+                        {formatTb(folder.maxBytes)}
+                      </span>
+                      <span className="tabular-nums">{usedPercent.toFixed(1)}%</span>
+                    </div>
+                    <progress
+                      className="progress progress-primary w-full"
+                      value={usedPercent}
+                      max="100"
+                      aria-label={`${folder.name} cache capacity`}
+                    />
+                    <p className="text-xs text-base-content/60">
+                      {live?.entries ?? 0} cached files ·{" "}
+                      {live?.online
+                        ? live.writable
+                          ? "Online, writable"
+                          : "Online, read-only/unavailable for writes"
+                        : "Not available"}{" "}
+                      ·{" "}
+                      {folder.maxAgeDays
+                        ? `${folder.maxAgeDays} day idle limit`
+                        : "No idle-age limit"}{" "}
+                      · Priority {folder.priority}
+                    </p>
+                    {live?.error && <Alert variant="warning">{live.error}</Alert>}
+                    <details
+                      open={expandedFolderIds.has(folder.id)}
+                      onToggle={(event) => {
+                        const open = event.currentTarget.open;
+                        setExpandedFolderIds((current) => {
+                          if (current.has(folder.id) === open) return current;
+                          const next = new Set(current);
+                          if (open) next.add(folder.id);
+                          else next.delete(folder.id);
+                          return next;
+                        });
+                      }}
+                      className="rounded-lg border border-base-content/10 bg-base-100/40"
+                    >
+                      <summary className="cursor-pointer px-3 py-2 text-sm font-semibold">
+                        Edit folder settings
+                      </summary>
+                      <div className="space-y-3 border-t border-base-content/10 p-3">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label>
+                            Name
+                            <Input
+                              value={folder.name}
+                              onChange={(event) => edit(folder.id, { name: event.target.value })}
+                            />
+                          </label>
+                          <label>
+                            Absolute folder path
+                            <Input
+                              value={folder.path}
+                              onChange={(event) => edit(folder.id, { path: event.target.value })}
+                            />
+                          </label>
+                          <label>
+                            Quota (decimal TB)
+                            <Input
+                              type="number"
+                              min={0.001}
+                              step="any"
+                              value={folder.maxBytes / 1e12}
+                              onChange={(event) =>
+                                edit(folder.id, {
+                                  maxBytes: Math.round(Number(event.target.value) * 1e12),
+                                })
+                              }
+                            />
+                          </label>
+                          <label>
+                            Free-space reserve (GB)
+                            <Input
+                              type="number"
+                              min={0}
+                              step="any"
+                              value={folder.minFreeBytes / 1e9}
+                              onChange={(event) =>
+                                edit(folder.id, {
+                                  minFreeBytes: Math.round(Number(event.target.value) * 1e9),
+                                })
+                              }
+                            />
+                          </label>
+                          <label>
+                            Maximum idle age (days; 0 = unlimited)
+                            <Input
+                              type="number"
+                              min={0}
+                              value={folder.maxAgeDays}
+                              onChange={(event) =>
+                                edit(folder.id, { maxAgeDays: Number(event.target.value) })
+                              }
+                            />
+                          </label>
+                          <label>
+                            Placement priority (highest first)
+                            <Input
+                              type="number"
+                              value={folder.priority}
+                              onChange={(event) =>
+                                edit(folder.id, { priority: Number(event.target.value) })
+                              }
+                            />
+                          </label>
+                          <label>
+                            Start eviction at quota (%)
+                            <Input
+                              type="number"
+                              min={2}
+                              max={100}
+                              value={folder.highWaterPercent ?? 90}
+                              onChange={(event) =>
+                                edit(folder.id, { highWaterPercent: Number(event.target.value) })
+                              }
+                            />
+                          </label>
+                          <label>
+                            Evict down to quota (%)
+                            <Input
+                              type="number"
+                              min={1}
+                              max={99}
+                              value={folder.lowWaterPercent ?? 80}
+                              onChange={(event) =>
+                                edit(folder.id, { lowWaterPercent: Number(event.target.value) })
+                              }
+                            />
+                          </label>
+                          <label>
+                            Storage type
+                            <Select
+                              value={folder.storageType}
+                              onChange={(event) =>
+                                edit(folder.id, {
+                                  storageType: event.target.value as NativeFolder["storageType"],
+                                })
+                              }
+                            >
+                              <option value="hdd">HDD</option>
+                              <option value="nas">NAS</option>
+                              <option value="ssd">SSD</option>
+                            </Select>
+                          </label>
+                        </div>
+                        <Toggle
+                          label="Enabled"
+                          checked={folder.enabled}
+                          onChange={(event) => edit(folder.id, { enabled: event.target.checked })}
+                        />
+                        <Toggle
+                          label="Read-only (hits/import only; no writes or eviction)"
+                          checked={folder.readOnly}
+                          onChange={(event) => edit(folder.id, { readOnly: event.target.checked })}
+                        />
+                      </div>
+                    </details>
+                    <details className="rounded-lg border border-base-content/10 bg-base-100/40">
+                      <summary className="cursor-pointer px-3 py-2 text-sm font-semibold">
+                        Maintenance
+                      </summary>
+                      <div className="space-y-3 border-t border-base-content/10 p-3">
+                        <p className="text-xs text-base-content/60">
+                          Operations target the currently running folder configuration.
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            disabled={busy || !live}
+                            onClick={() => void operate(folder.id, "scan")}
+                          >
+                            Scan
+                          </Button>
+                          <Button
+                            variant="outline"
+                            disabled={busy || !live?.writable}
+                            onClick={() => void operate(folder.id, "clear")}
+                          >
+                            Clear eligible files
+                          </Button>
+                          <Button
+                            variant="danger"
+                            onClick={() => update(folders.filter((item) => item.id !== folder.id))}
+                          >
+                            Remove configuration
+                          </Button>
+                        </div>
+                        <p className="text-xs text-base-content/60">
+                          Clearing retains active and pinned files. Removing configuration does not
+                          delete files.
+                        </p>
+                      </div>
+                    </details>
+                  </div>
+                );
+              })}
+              <Button
+                disabled={!!parseError || folders.length >= 32}
+                onClick={() => {
+                  const id = crypto.randomUUID();
+                  setExpandedFolderIds((current) => new Set(current).add(id));
+                  update([
+                    ...folders,
+                    {
+                      id,
+                      name: "Native cache",
+                      path: "",
+                      maxBytes: 10e12,
+                      minFreeBytes: 100e9,
+                      maxAgeDays: 0,
+                      priority: 0,
+                      enabled: true,
+                      readOnly: false,
+                      storageType: "nas",
+                    },
+                  ]);
+                }}
+              >
+                Add cache folder
+              </Button>
+            </div>
+          </ManagedSetting>
+          {cachePage && (
+            <div className="space-y-2">
+              <h4>
+                Cached files —{" "}
+                {folders.find((folder) => folder.id === cachePage.folderId)?.name ??
+                  cachePage.folderId}
+              </h4>
+              <p className="text-xs">
+                Catalogue coverage is a snapshot; playback rechecks volume identity and block
+                integrity. Pinned files are retained during automatic eviction and folder clear;
+                unpin them before clearing.
+              </p>
+              {cachePage.entries.map((entry) => (
+                <div key={entry.key} className="flex flex-wrap items-center gap-2 text-xs">
+                  <span>{entry.name ?? entry.itemId}</span>
+                  <span>
+                    {entry.length ? ((entry.verifiedBytes / entry.length) * 100).toFixed(1) : "0"}%
+                    verified · {(entry.allocatedBytes / 1e9).toFixed(3)} GB allocated
+                  </span>
+                  <span className="break-all">
+                    Generation: {entry.generation ?? "unknown until written or scanned"}
+                  </span>
+                  <Button
+                    disabled={busy}
+                    aria-label={`Verified ranges for ${entry.name ?? entry.itemId}`}
+                    onClick={() => void inspectRanges(entry.key)}
+                  >
+                    Verified ranges
+                  </Button>
+                  <Button
+                    disabled={busy}
+                    aria-label={`${entry.pinned ? "Unpin" : "Pin"} ${entry.name ?? entry.itemId}`}
+                    onClick={() => void pin(entry)}
+                  >
+                    {entry.pinned ? "Unpin" : "Pin"}
+                  </Button>
+                  <Button
+                    disabled={
+                      busy ||
+                      entry.pinned ||
+                      folders.find((folder) => folder.id === cachePage.folderId)?.readOnly
+                    }
+                    aria-label={`Evict ${entry.name ?? entry.itemId} from Native Cache`}
+                    onClick={() => void evict(entry)}
+                  >
+                    Evict file
+                  </Button>
+                  {rangePage?.key === entry.key && (
+                    <div className="w-full">
+                      {rangePage.ranges.map((range) => (
+                        <p key={range.offset}>
+                          Bytes {range.offset.toLocaleString()}–
+                          {(range.offset + range.count - 1).toLocaleString()}
+                        </p>
+                      ))}
+                      {rangePage.ranges.length === 0 && <p>No verified ranges in this page.</p>}
+                      <Button disabled={busy} onClick={() => void inspectRanges(entry.key)}>
+                        First range page
+                      </Button>
+                      <Button
+                        disabled={busy || rangePage.nextAfter === null}
+                        onClick={() => void inspectRanges(entry.key, rangePage.nextAfter ?? -1)}
+                      >
+                        Next range page
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {cachePage.entries.length === 0 && <p>No cached files in this page.</p>}
+              <Button disabled={busy} onClick={() => void browse(cachePage.folderId)}>
+                First page / refresh
+              </Button>
+              <Button
+                disabled={busy || !cachePage.nextAfter}
+                onClick={() => void browse(cachePage.folderId, cachePage.nextAfter ?? undefined)}
+              >
+                Next page
+              </Button>
+            </div>
+          )}
+          <div className="space-y-2">
+            {status?.jobs.map((job) => (
+              <p key={job.id} className="text-xs">
+                {job.operation} / {job.folderId}: {job.state}
+                {job.result !== undefined ? ` (${job.result})` : ""} {job.error}
+                {job.probe && (
+                  <span>
+                    {" "}
+                    — {job.probe.fileSystem} / {job.probe.capability}; readable:{" "}
+                    {job.probe.readable ? "yes" : "no"}; writable:{" "}
+                    {job.probe.writable ? "yes" : "no"}; durable write verified:{" "}
+                    {job.probe.durableWriteVerified ? "yes" : "no"}; available:{" "}
+                    {(job.probe.availableBytes / 1e9).toFixed(1)} GB. {job.probe.error}
+                  </span>
+                )}
+                {["queued", "running"].includes(job.state) && (
+                  <Button
+                    disabled={busy}
+                    onClick={() => void operate(job.folderId, "cancel", job.id)}
+                  >
+                    Cancel
+                  </Button>
+                )}
+              </p>
+            ))}
+          </div>
+        </>
+      )}
+    </SettingsCard>
+  );
+}

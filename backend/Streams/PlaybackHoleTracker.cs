@@ -27,6 +27,10 @@ internal static class PlaybackHoleTracker
 
     public static void RecordHole(string? path, string segmentId, Exception exception)
     {
+        // Native block fills read beyond the player's requested range. Their
+        // unverified requested bytes are replayed by NativeCachedStream outside
+        // this context, where ordinary playback records the hole once.
+        if (NativeCacheReadContext.IsActive) return;
         if (!IsTrackablePath(path) || string.IsNullOrEmpty(segmentId))
             return;
 
@@ -49,6 +53,7 @@ internal static class PlaybackHoleTracker
 
     public static void RecordGoodSegment(string? path)
     {
+        if (NativeCacheReadContext.IsActive) return;
         if (!IsTrackablePath(path) || !Files.TryGetValue(path!, out var state))
             return;
 

@@ -3,6 +3,7 @@ using MemoryPack;
 using Microsoft.Extensions.Caching.Memory;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Services.NativeCache;
 using ZstdSharp;
 
 namespace NzbWebDAV.Database;
@@ -63,9 +64,8 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
                 await stream.CopyToAsync(fileStream, cancellationToken).ConfigureAwait(false);
             }
 
-            CommitBlobWrite(blobPath, tempPath);
+            CommitBlobWrite(id, blobPath, tempPath);
             committed = true;
-            _metadataCache.Remove(id);
         }
         finally
         {
@@ -92,9 +92,8 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
             }
             cancellationToken.ThrowIfCancellationRequested();
 
-            CommitBlobWrite(blobPath, tempPath);
+            CommitBlobWrite(id, blobPath, tempPath);
             committed = true;
-            _metadataCache.Remove(id);
         }
         finally
         {
@@ -139,6 +138,8 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
     {
         if (_metadataCache.TryGetValue(id, out T? cached)) return cached;
 
+        using var revision = ContentRevisionTracker.Watch(id);
+
         var stream = ReadBlob(id);
         if (stream == null) return default;
         var blobPath = GetBlobPath(id);
@@ -157,22 +158,27 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
             throw new CorruptedBlobPayloadException(id, blobPath, typeof(T), e);
         }
 
-        if (blob is not null)
+        lock (_lockObj)
         {
-            _metadataCache.Set(id, blob, new MemoryCacheEntryOptions()
-                .SetSize(GetCacheSize(blob))
-                .SetSlidingExpiration(TimeSpan.FromMinutes(10)));
+            // Deserialization can outlive a same-ID replacement. Check and publish
+            // under the same lock as replacement/cache invalidation.
+            if (blob is not null && revision.IsCurrent)
+                _metadataCache.Set(id, blob, new MemoryCacheEntryOptions()
+                    .SetSize(GetCacheSize(blob))
+                    .SetSlidingExpiration(TimeSpan.FromMinutes(10)));
         }
 
         return blob;
     }
 
-    private void CommitBlobWrite(string blobPath, string tempPath)
+    private void CommitBlobWrite(Guid id, string blobPath, string tempPath)
     {
         lock (_lockObj)
         {
+            using var publication = ContentRevisionTracker.BeginPublication(id);
             Directory.CreateDirectory(Path.GetDirectoryName(blobPath)!);
             File.Move(tempPath, blobPath, overwrite: true);
+            _metadataCache.Remove(id);
         }
     }
 
@@ -199,6 +205,7 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
 
     public bool Delete(Guid id)
     {
+        using var publication = ContentRevisionTracker.BeginPublication(id);
         _metadataCache.Remove(id);
         var blobPath = GetBlobPath(id);
         var deleted = false;

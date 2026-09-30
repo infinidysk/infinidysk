@@ -5,6 +5,7 @@ import type {
 import type { ManagedEnvMap } from "~/components/ui";
 
 export const SETUP_CONFIG_KEYS = [
+  "cache.mode",
   "api.import-strategy",
   "api.completed-downloads-dir",
   "api.categories",
@@ -91,7 +92,7 @@ export function applyStrategy(
   if (!("api.import-strategy" in managedEnv)) {
     next["api.import-strategy"] = strategy;
   }
-  if (!("usenet.segment-cache.enabled" in managedEnv)) {
+  if (!config["cache.mode"]?.trim() && !("usenet.segment-cache.enabled" in managedEnv)) {
     next["usenet.segment-cache.enabled"] = strategy === "strm" ? "true" : "false";
   }
   // The wizard always proposes RC notifications for symlinks; the user must opt out explicitly.
@@ -183,6 +184,7 @@ export function validateSetupStep(
       errors.push("Confirm that the rclone sidecar has VFS read-ahead enabled.");
     }
     if (
+      !draft.config["cache.mode"]?.trim() &&
       "usenet.segment-cache.enabled" in managedEnv &&
       draft.config["usenet.segment-cache.enabled"] !== "false"
     ) {

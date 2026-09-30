@@ -95,6 +95,24 @@ export const adminFrontendOperations = [
     path: "/api/watchtower-discover-catalogs",
     operationId: "post-api-watchtower-discover-catalogs",
   },
+  { method: "get", path: "/api/native-cache", operationId: "get-api-native-cache" },
+  { method: "get", path: "/api/native-cache/summary", operationId: "get-api-native-cache-summary" },
+  { method: "get", path: "/api/native-cache/files", operationId: "get-api-native-cache-files" },
+  {
+    method: "get",
+    path: "/api/native-cache/activity",
+    operationId: "get-api-native-cache-activity",
+  },
+  {
+    method: "get",
+    path: "/api/native-cache/transfers",
+    operationId: "get-api-native-cache-transfers",
+  },
+  {
+    method: "get",
+    path: "/api/native-cache/evictions",
+    operationId: "get-api-native-cache-evictions",
+  },
 ] as const satisfies readonly AdminFrontendOperation[];
 
 export const adminApi = {

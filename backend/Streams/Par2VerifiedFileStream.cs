@@ -6,13 +6,14 @@ namespace NzbWebDAV.Streams;
 internal sealed class Par2VerifiedFileStream(
     Par2FileProof proof,
     Func<long, Memory<byte>, CancellationToken, Task> readCandidate,
-    Func<long, Memory<byte>, CancellationToken, Task>? readPrefix = null) : FastReadOnlyStream
+    Func<long, Memory<byte>, CancellationToken, Task>? readPrefix = null) : FastReadOnlyStream, ICacheReadEvidence
 {
     private byte[]? _slice;
     private byte[]? _prefix;
     private int _verifiedSlice = -1;
     private long _position;
     private bool _disposed;
+    public bool LastReadCacheable { get; private set; }
 
     public override bool CanSeek => true;
     public override long Length => proof.FileLength;
@@ -21,6 +22,7 @@ internal sealed class Par2VerifiedFileStream(
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
+        LastReadCacheable = false;
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
         if (!proof.IsValidFor(Length)) throw new InvalidDataException("Invalid persisted PAR2 verification metadata.");
@@ -39,6 +41,7 @@ internal sealed class Par2VerifiedFileStream(
             var prefixCount = Math.Min(buffer.Length, prefixLength - (int)_position);
             _prefix.AsMemory((int)_position, prefixCount).CopyTo(buffer);
             _position += prefixCount;
+            LastReadCacheable = prefixCount > 0;
             return prefixCount;
         }
         var sliceIndex = checked((int)(_position / proof.SliceSize));
@@ -59,6 +62,7 @@ internal sealed class Par2VerifiedFileStream(
         var count = (int)Math.Min(Math.Min(buffer.Length, proof.SliceSize - offset), Length - _position);
         _slice!.AsMemory(offset, count).CopyTo(buffer);
         _position += count;
+        LastReadCacheable = count > 0;
         return count;
     }
 

@@ -18,7 +18,7 @@ internal enum RemainderStartPolicy
 /// or after the head is disposed at EOF (legacy lazy / empty head), and is never
 /// awaited before that first read returns.
 /// </summary>
-internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream
+internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream, ICacheReadEvidence
 {
     private Stream? _head;
     private readonly Func<CancellationToken, Stream>? _remainderFactory;
@@ -33,6 +33,7 @@ internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream
     private long _position;
     private int _remainderStarted;
     private int _disposed;
+    public bool LastReadCacheable { get; private set; }
 
     internal FirstSegmentHandoffStream(
         Stream head,
@@ -103,6 +104,7 @@ internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream
         Memory<byte> buffer,
         CancellationToken cancellationToken = default)
     {
+        LastReadCacheable = false;
         if (buffer.IsEmpty)
             return 0;
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -127,6 +129,7 @@ internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream
                     var read = await _head.ReadAsync(buffer, readToken).ConfigureAwait(false);
                     if (read > 0)
                     {
+                        LastReadCacheable = _head is ICacheReadEvidence { LastReadCacheable: true };
                         Interlocked.Add(ref _position, read);
                         if (_startPolicy == RemainderStartPolicy.AfterFirstPositiveRead)
                             StartRemainderOnce();
@@ -183,6 +186,8 @@ internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream
                     .ReadAsync(buffer, readToken)
                     .ConfigureAwait(false);
                 Interlocked.Add(ref _position, remainderRead);
+                LastReadCacheable = remainderRead > 0 &&
+                    _remainder is ICacheReadEvidence { LastReadCacheable: true };
                 return remainderRead;
             }
         }

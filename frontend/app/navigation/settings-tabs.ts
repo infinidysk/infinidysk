@@ -5,6 +5,7 @@ export type SettingsTab =
   | "queue"
   | "sabnzbd"
   | "streaming"
+  | "native-cache"
   | "webdav"
   | "watchdog"
   | "preflight"
@@ -61,6 +62,7 @@ export const SETTINGS_TAB_GROUPS: SettingsTabGroup[] = [
     title: "Playback & Files",
     items: [
       { id: "streaming", label: "Streaming", icon: "play_circle" },
+      { id: "native-cache", label: "Native Cache", icon: "storage" },
       { id: "webdav", label: "WebDAV", icon: "folder_shared" },
     ],
   },

@@ -101,10 +101,33 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
     internal Action<long>? OnRingRetainedBytes { get; set; }
     internal Action<int>? OnForceEvictions { get; set; }
 
+    private IStreamGenerationEvidence? _generationEvidence;
+    private int _generationFailed;
+    internal string? GenerationIdentity => _generationEvidence?.GenerationIdentity;
+
+    internal bool ValidateSourceGeneration()
+    {
+        if (Volatile.Read(ref _generationFailed) != 0) return false;
+        try { if (_generationEvidence?.IsSourceCurrent != false) return true; }
+        catch (Exception exception) when (exception is not OutOfMemoryException) { /* Unknown validity fails closed. */ }
+        if (Interlocked.Exchange(ref _generationFailed, 1) == 0)
+        {
+            _ring.SetFailure(new IOException("Media source changed during shared delivery. Retry the current source."));
+            lock (_lock)
+            {
+                _reapReason = SharedStreamReapReason.Failure;
+                if (_state < SharedStreamEntryState.Disposing) _state = SharedStreamEntryState.Disposing;
+            }
+            _ = Task.Run(EnsureDisposeAsync);
+        }
+        return false;
+    }
+
     internal bool IsAttachable
     {
         get
         {
+            if (!ValidateSourceGeneration()) return false;
             lock (_lock)
                 return _state is SharedStreamEntryState.Ready or SharedStreamEntryState.Draining;
         }
@@ -126,6 +149,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
                 if (_state != SharedStreamEntryState.Opening)
                     throw new InvalidOperationException($"Cannot bind shared entry in state {_state}.");
                 _upstream = lease.Stream;
+                _generationEvidence = lease.Stream as IStreamGenerationEvidence;
                 _ownership = lease.Ownership;
                 _davItem = lease.DavItem;
                 _contentIdentity = lease.ContentIdentity;
@@ -173,6 +197,11 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         out SharedStreamAttachMissReason? missReason)
     {
         ArgumentNullException.ThrowIfNull(fallbackFactory);
+        if (!ValidateSourceGeneration())
+        {
+            missReason = SharedStreamAttachMissReason.EntryUnusable;
+            return null;
+        }
         lock (_lock)
         {
             if (_state is not (SharedStreamEntryState.Ready or SharedStreamEntryState.Draining))

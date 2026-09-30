@@ -19,14 +19,12 @@ import { className } from "~/utils/styling";
 import { useWebsocketTopic } from "~/utils/shared-websocket";
 import { withUrlBase } from "~/utils/url-base";
 import { isPositiveInteger } from "../validation";
+import { cacheMode } from "./native-cache-model";
 
 export const SEGMENT_CACHE_READ_AHEAD_WARNING_KEY = "segment-cache-read-ahead-warning-dismissed";
 
 export function shouldWarnSegmentCacheReadAhead(config: Record<string, string>): boolean {
-  return (
-    config["usenet.segment-cache.enabled"] === "true" &&
-    config["api.import-strategy"] === "symlinks"
-  );
+  return cacheMode(config) === "segment" && config["api.import-strategy"] === "symlinks";
 }
 
 type StreamingSettingsProps = {
@@ -258,31 +256,13 @@ export function StreamingSettings({
           ]}
         >
           <div className="space-y-2">
-            <Tooltip
-              placement="bottom"
-              content="Cache decoded segments on disk so repeat reads and seeks avoid provider traffic. Takes effect after restart. Enable it only when the cache path is on storage that can handle the extra writes."
-            >
-              <Toggle
-                id="segment-cache-enabled-checkbox"
-                className="cursor-pointer gap-2 p-0"
-                checked={config["usenet.segment-cache.enabled"] === "true"}
-                onChange={(e) =>
-                  setNewConfig({
-                    ...config,
-                    "usenet.segment-cache.enabled": String(e.target.checked),
-                  })
-                }
-                label={
-                  <span className="text-sm text-base-content">
-                    Enable Segment Cache (fast storage)
-                  </span>
-                }
-              />
-            </Tooltip>
+            <p className="text-sm">
+              Segment cache settings apply only when Disk cache mode is Segment.
+            </p>
             <Alert className="alert-soft items-start text-xs" variant="warning">
               InfiniDysk cannot automatically determine whether the configured path is slow storage
-              or flash with limited write endurance. Segment Cache is enabled by default; disable it
-              or set Cache path to local SSD/NVMe or other storage where the additional writes are
+              or flash with limited write endurance. Set Disk cache mode to Off or Native, or set
+              Cache path to local SSD/NVMe or other storage where the additional writes are
               acceptable.
             </Alert>
             {showReadAheadWarning && (
@@ -295,7 +275,8 @@ export function StreamingSettings({
                   Your library uses Symlinks, which stream through an rclone mount. If that mount
                   runs with <code>--vfs-read-ahead</code>, rclone already buffers ahead and Segment
                   Cache duplicates that work with extra disk writes. InfiniDysk cannot always detect
-                  whether read-ahead is enabled, so disable Segment Cache if it is. The{" "}
+                  whether read-ahead is enabled, so set Disk cache mode to Off or Native if it is.
+                  The{" "}
                   <a
                     className="link font-medium"
                     href={withUrlBase(
@@ -317,7 +298,7 @@ export function StreamingSettings({
                 </Button>
               </Alert>
             )}
-            {config["usenet.segment-cache.enabled"] === "true" && (
+            {cacheMode(config) === "segment" && (
               <div className="grid gap-4 border-l border-base-content/10 pl-4 sm:grid-cols-2">
                 <label className="flex flex-col gap-2 text-sm text-base-content/80">
                   <span>Cache path</span>
@@ -1130,7 +1111,7 @@ export function isStreamingSettingsUpdated(
 
 export function isStreamingSettingsValid(config: Record<string, string>): boolean {
   const segmentCacheValid =
-    config["usenet.segment-cache.enabled"] !== "true" ||
+    cacheMode(config) !== "segment" ||
     (isValidSegmentCachePath(config["usenet.segment-cache.path"] ?? "") &&
       isPositiveInteger(config["usenet.segment-cache.max-gb"] ?? ""));
   return (

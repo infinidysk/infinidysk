@@ -7,16 +7,20 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Services.Observability;
+using NzbWebDAV.Services.NativeCache;
 using NzbWebDAV.Utils;
 using Serilog;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Services.Repair;
 
-public sealed class RepairPatchStore
+public sealed class RepairPatchStore : IDisposable
 {
     private readonly string _dir;
     private readonly long _maxBytes;
+    private readonly PersistentCacheEpoch _nativeCacheEpoch;
+    private readonly Lazy<RepairRevisionStore> _nativeRevisions;
+    private readonly string _nativeRevisionPath;
     private readonly ConcurrentDictionary<string, CacheEntry> _index = new();
     private readonly object _evictLock = new();
     private readonly object _catalogLoadSync = new();
@@ -30,8 +34,8 @@ public sealed class RepairPatchStore
 
     internal static readonly JsonSerializerOptions HeaderJsonOptions = new() { IncludeFields = true };
 
-    public RepairPatchStore(string cacheDir, long maxBytes)
-        : this(cacheDir, maxBytes, enumerateCacheFiles: null)
+    public RepairPatchStore(string cacheDir, long maxBytes, string? nativeRevisionPath = null)
+        : this(cacheDir, maxBytes, enumerateCacheFiles: null, nativeRevisionPath: nativeRevisionPath)
     {
     }
 
@@ -39,19 +43,33 @@ public sealed class RepairPatchStore
         string cacheDir,
         long maxBytes,
         Func<CancellationToken, IEnumerable<string>>? enumerateCacheFiles,
-        Action<int>? beforeFinalize = null)
+        Action<int>? beforeFinalize = null,
+        string? nativeRevisionPath = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBytes);
         _dir = cacheDir;
         _maxBytes = maxBytes;
         _beforeFinalize = beforeFinalize;
         Directory.CreateDirectory(_dir);
+        _nativeCacheEpoch = new PersistentCacheEpoch(Path.Combine(_dir, ".native-cache-generation"));
+        _nativeRevisionPath = nativeRevisionPath ?? Path.Combine(_dir, ".native-revisions.db");
+        _nativeRevisions = new Lazy<RepairRevisionStore>(() => new RepairRevisionStore(_nativeRevisionPath));
         _enumerateCacheFiles = enumerateCacheFiles
             ?? (_ => Directory.EnumerateFiles(_dir, "*", SearchOption.AllDirectories));
         Log.Information("PAR2 repair patch store path: {Path}", _dir);
     }
 
     public bool IsCatalogReady => Volatile.Read(ref _catalogReady) != 0;
+    public string NativeCacheGeneration => _nativeCacheEpoch.Value;
+    public RepairRevisionStore.Snapshot CaptureNativeRevisions(IEnumerable<string> segmentIds)
+    {
+        lock (_evictLock) return _nativeRevisions.Value.Capture(segmentIds);
+    }
+    private IDisposable? BeginNativePublication(IEnumerable<string> hashes) =>
+        _nativeRevisions.IsValueCreated || File.Exists(_nativeRevisionPath)
+            ? _nativeRevisions.Value.BeginPublication(hashes) : null;
+
+    public void Dispose() { if (_nativeRevisions.IsValueCreated) _nativeRevisions.Value.Dispose(); }
     internal long CurrentBytes => Interlocked.Read(ref _currentBytes);
     internal long MaxBytes => _maxBytes;
     internal int EntryCount => _index.Count;
@@ -213,6 +231,9 @@ public sealed class RepairPatchStore
 
             lock (_evictLock)
             {
+                // Invalidate before the first mutation, including partially failed batches.
+                _nativeCacheEpoch.Rotate();
+                using var nativePublication = BeginNativePublication(hashes);
                 var finalized = new HashSet<string>(StringComparer.Ordinal);
                 try
                 {
@@ -252,6 +273,8 @@ public sealed class RepairPatchStore
     {
         lock (_evictLock)
         {
+            _nativeCacheEpoch.Rotate();
+            using var nativePublication = BeginNativePublication([hash]);
             if (_index.TryRemove(hash, out var entry)) _currentBytes -= entry.Size;
             SafeDelete(BlobPath(hash));
             SafeDelete(BlobPath(hash) + ".h");
@@ -268,6 +291,8 @@ public sealed class RepairPatchStore
             {
                 if (_currentBytes <= _maxBytes) break;
                 if (protectedHashes?.Contains(kv.Key) == true) continue;
+                _nativeCacheEpoch.Rotate();
+                using var nativePublication = BeginNativePublication([kv.Key]);
                 if (!_index.TryRemove(kv.Key, out var entry)) continue;
                 _currentBytes -= entry.Size;
                 Interlocked.Increment(ref _evictionCount);

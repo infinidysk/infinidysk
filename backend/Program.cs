@@ -341,6 +341,12 @@ public sealed partial class Program
                 .AddSingleton(sp => new ConcurrentReadTracker(
                     configManager: sp.GetRequiredService<ConfigManager>()))
                 .AddSingleton<SharedStreamRegistry>()
+                .AddSingleton<NzbWebDAV.Services.NativeCache.NativeCacheService>()
+                .AddHostedService<NzbWebDAV.Services.NativeCache.NativeCacheBrowserMaintenance>()
+                .AddSingleton<NzbWebDAV.Services.NativeCache.NativeCacheOperations>()
+                .AddHostedService(sp => sp.GetRequiredService<NzbWebDAV.Services.NativeCache.NativeCacheOperations>())
+                .AddScoped<DavContentStreamFactory>()
+                .AddScoped<IDavContentStreamFactory>(sp => sp.GetRequiredService<DavContentStreamFactory>())
                 .AddSingleton<StreamingReadinessCheck>()
                 .AddSingleton(_ => new RuntimeUsageTracker())
                 .AddSingleton(sp => new GcDiagnosticsStore(TimeProvider.System))
@@ -388,7 +394,8 @@ public sealed partial class Program
                     var cfg = sp.GetRequiredService<ConfigManager>();
                     return new RepairPatchStore(
                         cfg.GetRepairPatchStorePath(),
-                        cfg.GetPar2MaxPatchBytes());
+                        cfg.GetPar2MaxPatchBytes(),
+                        NzbWebDAV.Services.NativeCache.NativeCacheSettings.RepairRevisionPath(cfg));
                 })
                 .AddSingleton<Par2RepairService>()
                 .AddHostedService(sp => sp.GetRequiredService<Par2RepairService>())

@@ -3,6 +3,7 @@ using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models;
 using NzbWebDAV.Services;
 using Serilog;
 using UsenetSharp.Streams;
@@ -12,7 +13,7 @@ namespace NzbWebDAV.Streams;
 // FastReadOnlyStream retains a synchronous Read fallback for out-of-repo
 // compatibility only. In-repo nested-RAR expansion and WebDAV GET/range handlers
 // use the Memory<byte> async path below.
-public class DavMultipartFileStream : FastReadOnlyStream
+public class DavMultipartFileStream : FastReadOnlyStream, ICacheReadEvidence
 {
     private readonly DavMultipartFile _mpf;
     private readonly INntpClient _usenetClient;
@@ -23,11 +24,13 @@ public class DavMultipartFileStream : FastReadOnlyStream
     private readonly string? _fileName;
     private readonly InFlightArticleBudget? _inFlightArticleBudget;
     private readonly long _length;
+    private readonly Dictionary<int, DavMultipartFile.FilePart> _nativeIndexedParts = [];
 
     private long _position;
     private CombinedStream? _innerStream;
     private long? _expectedReadEndExclusive;
     private bool _disposed;
+    public bool LastReadCacheable { get; private set; }
     // Teardown of the inner stream a Seek replaced is started non-blocking (Seek is
     // synchronous); the next ReadAsync joins it before opening a new inner stream so
     // rapid scrubbing cannot overlap generations and pin the article budget.
@@ -104,6 +107,8 @@ public class DavMultipartFileStream : FastReadOnlyStream
         Memory<byte> buffer,
         CancellationToken cancellationToken = default)
     {
+        LastReadCacheable = false;
+        if (buffer.IsEmpty) return 0;
         if (_pendingInnerDispose is { } pendingDispose)
         {
             _pendingInnerDispose = null;
@@ -124,6 +129,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
         }
 
         _position += read;
+        LastReadCacheable = read > 0 && _innerStream.LastReadCacheable;
         return read;
     }
 
@@ -148,7 +154,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
         if (absoluteOffset < 0 || absoluteOffset > Length)
             throw new ArgumentOutOfRangeException(nameof(offset), offset, "Seek position is outside stream bounds.");
 
-        if (_position == absoluteOffset) return _position;
+        if (_position == absoluteOffset && !NativeCacheReadContext.IsActive) return _position;
         _position = absoluteOffset;
         _expectedReadEndExclusive = null;
         if (_innerStream is { } replaced)
@@ -225,10 +231,10 @@ public class DavMultipartFileStream : FastReadOnlyStream
         var meta = await EnsureCoveringAsync(rangeStart, ct).ConfigureAwait(false);
         // AES maps logical response bytes to packed volume bytes non-linearly; retain
         // legacy scheduling until that mapping has a tested exact contract.
-        var finiteBudget = _mpf.Metadata.AesParams is null &&
+        var finiteBudget = NativeCacheReadContext.ReadBudget ?? (_mpf.Metadata.AesParams is null &&
                            ct.GetContext<StreamingSchedulingContext>() is not null
             ? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget()
-            : null;
+            : null);
         var budget = finiteBudget is > 0 ? new FiniteMultipartBudget(finiteBudget.Value) : null;
         _expectedReadEndExclusive = budget is null
             ? null
@@ -276,8 +282,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
 
                 var partBudget = budget?.GetPartContribution(
                     part.FilePartByteRange.Count - extraOffset);
-                yield return Task.FromResult<System.IO.Stream>(
-                    OpenPart(part, extraOffset, i, partBudget, budget));
+                yield return OpenPartWithNativeIndexAsync(part, extraOffset, i, partBudget, budget, ct);
                 i++;
                 continue;
             }
@@ -293,6 +298,73 @@ public class DavMultipartFileStream : FastReadOnlyStream
             }
 
             yield break;
+        }
+    }
+
+    private async Task<Stream> OpenPartWithNativeIndexAsync(
+        DavMultipartFile.FilePart part, long extraOffset, int partIndex,
+        long? readBudgetOverride, FiniteMultipartBudget? finiteBudget, CancellationToken ct)
+    {
+        if (NativeCacheReadContext.IsActive && part.SegmentByteRangesTrusted != true &&
+            part.VerificationProof is null)
+        {
+            if (!_nativeIndexedParts.TryGetValue(partIndex, out var indexed))
+            {
+                indexed = await TryBuildNativeIndexAsync(part, ct).ConfigureAwait(false) ?? part;
+                _nativeIndexedParts[partIndex] = indexed;
+            }
+            part = indexed;
+        }
+        return OpenPart(part, extraOffset, partIndex, readBudgetOverride, finiteBudget);
+    }
+
+    private async Task<DavMultipartFile.FilePart?> TryBuildNativeIndexAsync(
+        DavMultipartFile.FilePart part, CancellationToken ct)
+    {
+        var count = part.SegmentIds.Length;
+        var length = GetEffectivePartLength(part);
+        if (count == 0 || length <= 0) return null;
+        try
+        {
+            var first = await _usenetClient.GetYencHeadersAsync(part.SegmentIds[0], ct).ConfigureAwait(false);
+            if (first.PartOffset != 0 || first.PartSize <= 0) return null;
+            var stride = first.PartSize;
+            if (count > 2)
+            {
+                var second = await _usenetClient.GetYencHeadersAsync(part.SegmentIds[1], ct).ConfigureAwait(false);
+                if (second.PartOffset != stride || second.PartSize != stride) return null;
+            }
+            var tail = count == 1 ? first :
+                await _usenetClient.GetYencHeadersAsync(part.SegmentIds[^1], ct).ConfigureAwait(false);
+            var tailStart = checked(stride * (count - 1L));
+            if (tail.PartOffset != tailStart || tail.PartSize <= 0 ||
+                checked(tailStart + tail.PartSize) != length) return null;
+
+            // This is only a seek map. MultiSegmentStream checks each BODY's yEnc
+            // placement and CRC before Native Cache accepts any block.
+            var ranges = new LongRange[count];
+            for (var i = 0; i < count; i++)
+            {
+                var start = checked(stride * i);
+                ranges[i] = LongRange.FromStartAndSize(start, i == count - 1 ? tail.PartSize : stride);
+            }
+            return new DavMultipartFile.FilePart
+            {
+                SegmentIds = part.SegmentIds,
+                SegmentIdByteRange = part.SegmentIdByteRange,
+                FilePartByteRange = part.FilePartByteRange,
+                SegmentByteRanges = ranges,
+                SegmentByteRangesTrusted = true,
+                SegmentFallbackIds = part.SegmentFallbackIds,
+                IsSplitAfter = part.IsSplitAfter,
+                VerificationProof = part.VerificationProof,
+            };
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException and not OutOfMemoryException)
+        {
+            Log.Debug(exception, "Could not establish Native Cache segment geometry for {FileName}; using source playback without cache writes.",
+                _fileName ?? "unknown");
+            return null;
         }
     }
 
@@ -385,12 +457,12 @@ public class DavMultipartFileStream : FastReadOnlyStream
         }
 
         var part = meta.FileParts[targetIndex];
-        return OpenPart(
+        return await OpenPartWithNativeIndexAsync(
             part,
             0,
             targetIndex,
             budget?.GetPartContribution(part.FilePartByteRange.Count),
-            budget);
+            budget, ct).ConfigureAwait(false);
     }
 
     private sealed class FiniteMultipartBudget(long remaining)

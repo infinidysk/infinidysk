@@ -22,7 +22,12 @@ public sealed record MemoryComponentSnapshot(
     SegmentBufferMemorySnapshot? SegmentBuffers,
     SharedStreamMemorySnapshot SharedStreams,
     SegmentCacheWriterMemorySnapshot CacheWriter,
-    MemoryActivitySnapshot Activity);
+    MemoryActivitySnapshot Activity)
+{
+    public NativeCacheMemorySnapshot? NativeCache { get; init; }
+}
+
+public sealed record NativeCacheMemorySnapshot(long BufferBudgetBytes, long ReservedBufferBytes);
 
 public readonly record struct SharedStreamMemorySnapshot(
     long RingLogicalBytes,
@@ -61,7 +66,8 @@ public sealed class MemoryComponentSnapshotBuilder(
     ConfigManager configManager,
     ConcurrentReadTracker concurrentReadTracker,
     ActiveReadRegistry activeReads,
-    SegmentCacheStatistics segmentCacheStatistics)
+    SegmentCacheStatistics segmentCacheStatistics,
+    NativeCache.NativeCacheService? nativeCache = null)
 {
     public const int CurrentSchemaVersion = 1;
 
@@ -123,7 +129,11 @@ public sealed class MemoryComponentSnapshotBuilder(
             segmentBuffers,
             sharedStreams,
             cacheWriter,
-            new MemoryActivitySnapshot(activeReads.Count, reads.CurrentInFlightSegmentFetches));
+            new MemoryActivitySnapshot(activeReads.Count, reads.CurrentInFlightSegmentFetches))
+        {
+            NativeCache = nativeCache?.ActiveSettings is { } nativeSettings
+                ? new(nativeSettings.BufferMb * 1024L * 1024, nativeCache.ReservedBufferBytes) : null
+        };
     }
 }
 

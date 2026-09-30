@@ -93,10 +93,20 @@ public sealed class PrometheusMetrics
     private readonly Counter _segmentCacheEvictedBytes;
     private readonly Counter _segmentCacheTemporaryFilesCleaned;
     private readonly HashSet<string> _providerKeys = new(StringComparer.Ordinal);
+    private readonly Counter _nativeHits, _nativeHitBytes, _nativeMisses, _nativeCommitted, _nativeFallbacks, _nativeTimeouts;
+    private readonly Gauge _nativeReserved, _nativeReady;
 
     public PrometheusMetrics(CollectorRegistry registry)
     {
         var metrics = Prometheus.Metrics.WithCustomRegistry(registry);
+        _nativeHits = metrics.CreateCounter("nzbdav_native_cache_hits_total", "Verified native block hits.");
+        _nativeHitBytes = metrics.CreateCounter("nzbdav_native_cache_hit_bytes_total", "Verified native bytes read.");
+        _nativeMisses = metrics.CreateCounter("nzbdav_native_cache_misses_total", "Native block misses.");
+        _nativeCommitted = metrics.CreateCounter("nzbdav_native_cache_committed_bytes_total", "Native bytes committed by streams.");
+        _nativeFallbacks = metrics.CreateCounter("nzbdav_native_cache_fallbacks_total", "Native cache source fallbacks.");
+        _nativeTimeouts = metrics.CreateCounter("nzbdav_native_cache_timeouts_total", "Bounded native IO wait timeouts.");
+        _nativeReserved = metrics.CreateGauge("nzbdav_native_cache_buffer_reserved_bytes", "Native buffer admission retained, including detached IO.");
+        _nativeReady = metrics.CreateGauge("nzbdav_native_cache_ready", "Native catalogue initialized; not proof that every volume is online.");
         _activeReads = metrics.CreateGauge("nzbdav_active_reads", "Current active read sessions.");
         _bytesServed = metrics.CreateCounter("nzbdav_bytes_served_total", "Bytes served to readers.");
         _readStarts = metrics.CreateCounter("nzbdav_concurrent_read_starts_total", "Read starts.", new CounterConfiguration { LabelNames = ["region"] });
@@ -362,6 +372,18 @@ public sealed class PrometheusMetrics
         _segmentCacheEvictions.IncTo(snapshot.Evictions);
         _segmentCacheEvictedBytes.IncTo(snapshot.BytesEvicted);
         _segmentCacheTemporaryFilesCleaned.IncTo(snapshot.TemporaryFilesCleaned);
+    }
+
+    public void SetNativeCache(NativeCache.NativeCacheSnapshot snapshot, long reservedBytes, bool ready)
+    {
+        _nativeHits.IncTo(snapshot.HitBlocks);
+        _nativeHitBytes.IncTo(snapshot.HitBytes);
+        _nativeMisses.IncTo(snapshot.MissBlocks);
+        _nativeCommitted.IncTo(snapshot.CommittedBytes);
+        _nativeFallbacks.IncTo(snapshot.Fallbacks);
+        _nativeTimeouts.IncTo(snapshot.IoTimeouts);
+        _nativeReserved.Set(reservedBytes);
+        _nativeReady.Set(ready ? 1 : 0);
     }
 
     /// <summary>

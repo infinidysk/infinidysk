@@ -34,7 +34,7 @@ public class NzbFileStream(
     long? readBudgetOverride = null,
     bool readStartWarmupEnabled = false,
     Par2FileProof? verificationProof = null
-) : FastReadOnlyStream
+) : FastReadOnlyStream, ICacheReadEvidence
 {
     private const long MaximumForwardDrainBytes = 1024 * 1024;
     private const long MinimumPrewarmRangeBytes = 8L * 1024 * 1024;
@@ -47,6 +47,7 @@ public class NzbFileStream(
     private long _pendingForwardDrain;
     private bool _disposed;
     private Stream? _innerStream;
+    public bool LastReadCacheable { get; private set; }
     private Par2VerifiedFileStream? _verifiedStream;
     // Teardown of the inner stream a Seek replaced is started non-blocking (Seek is
     // synchronous), but the next ReadAsync must await it before opening a new inner
@@ -113,6 +114,11 @@ public class NzbFileStream(
     private async Task ReadPar2CandidateAsync(long start, Memory<byte> target, CancellationToken cancellationToken)
     {
         using var validation = YencFileValidationContext.BeginBufferedPar2ProofRead(fileSegmentIds, segmentFallbacks);
+        // A proof slice may exceed one native block; verification must read the entire
+        // slice (bounded by Par2FileProof), not truncate it at the caller's cache window.
+        using var nativeRead = NativeCacheReadContext.IsActive
+            ? new NativeCacheReadContext(target.Length)
+            : null;
         await using var candidate = new NzbFileStream(
             fileSegmentIds, Length, usenetClient, articleBufferSize: articleBufferSize,
             segmentByteRanges: _segmentByteRanges, usePipelinedBodyRequests: usePipelinedBodyRequests,
@@ -141,8 +147,13 @@ public class NzbFileStream(
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
+        LastReadCacheable = false;
         if (verificationProof is not null)
-            return await VerifiedStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+        {
+            var verifiedRead = await VerifiedStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            LastReadCacheable = verifiedRead > 0 && VerifiedStream.LastReadCacheable;
+            return verifiedRead;
+        }
         using var yencFileValidation = YencFileValidationContext.BeginStreaming(fileSegmentIds, segmentFallbacks);
         if (buffer.IsEmpty) return 0;
         if (_position >= fileSize) return 0;
@@ -186,6 +197,8 @@ public class NzbFileStream(
 
         var read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
         _position += read;
+        LastReadCacheable = read > 0 && _segmentByteRanges is not null &&
+            _innerStream is ICacheReadEvidence { LastReadCacheable: true };
         return read;
     }
 
@@ -211,12 +224,12 @@ public class NzbFileStream(
         if (absoluteOffset < 0 || absoluteOffset > fileSize)
             throw new ArgumentOutOfRangeException(nameof(offset), offset, "Seek position is outside stream bounds.");
 
-        if (_position == absoluteOffset)
+        if (_position == absoluteOffset && !NativeCacheReadContext.IsActive)
         {
             PrometheusMetrics.Current?.RecordSeek("noop", TimeSpan.Zero);
             return _position;
         }
-        if (_innerStream is not null &&
+        if (!NativeCacheReadContext.IsActive && _innerStream is not null &&
             absoluteOffset > _position &&
             absoluteOffset - _position <= MaximumForwardDrainBytes)
         {
@@ -551,7 +564,38 @@ public class NzbFileStream(
     private async Task<Stream> GetFileStream(long rangeStart, CancellationToken cancellationToken)
     {
         ThrowIfPlaybackFailFast();
-        var readBudget = readBudgetOverride ?? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        var readBudget = NativeCacheReadContext.ReadBudget is { } nativeBudget
+            ? Math.Min(readBudgetOverride ?? nativeBudget, nativeBudget)
+            : readBudgetOverride ?? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+
+        if (NativeCacheReadContext.IsActive && _segmentByteRanges is not null)
+        {
+            // Native admission needs complete CRC-checked segments, including the first
+            // segment; the normal direct/hybrid heads expose bytes before trailer validation.
+            var exact = await SeekSegment(rangeStart, cancellationToken).ConfigureAwait(false);
+            var prefix = rangeStart - exact.FoundByteRange.StartInclusive;
+            var remaining = Math.Min(readBudget!.Value, fileSize - rangeStart);
+            var sourceBudget = prefix > long.MaxValue - remaining ? long.MaxValue : prefix + remaining;
+            var sliced = SliceFrom(exact.FoundIndex);
+            var nativeStream = MultiSegmentStream.CreateWithInitialBatchPlan(
+                sliced.SegmentIds, usenetClient, Math.Max(1, articleBufferSize), EstimatedSegmentSize,
+                rangeStart == 0, usePipelinedBodyRequests, cancellationToken, fileName, sourceBudget,
+                sliced.Fallbacks, sliced.ExactSizes, inFlightArticleBudget, useContainerAwareFill,
+                sliced.FirstSegmentFileOffset, streamingBodyBatchWidth, knownCorruptSegmentIds,
+                sliced.KnownMissing, initialBatchPlan: null, expectedFirstSegmentRange: exact.FoundByteRange,
+                expectedFirstSegmentRangeWasClippedAtFileEnd: exact.FoundByteRangeWasClippedAtFileEnd);
+            try
+            {
+                if (prefix > 0)
+                    await nativeStream.DiscardExactBytesAsync(prefix, cancellationToken).ConfigureAwait(false);
+                return nativeStream;
+            }
+            catch
+            {
+                await nativeStream.DisposeAsync().ConfigureAwait(false);
+                throw;
+            }
+        }
 
         if (rangeStart == 0)
         {

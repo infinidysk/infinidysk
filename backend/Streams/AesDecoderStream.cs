@@ -5,7 +5,7 @@ using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams
 {
-    internal sealed class AesDecoderStream : FastReadOnlyStream
+    internal sealed class AesDecoderStream : FastReadOnlyStream, ICacheReadEvidence
     {
         private readonly Stream _mStream;
         private readonly Aes _aes; // keep Aes alive for transform lifetime
@@ -19,6 +19,8 @@ namespace NzbWebDAV.Streams
         private readonly long _mLimit;
         private bool _isDisposed;
         private long? _pendingSeekPosition;
+        private bool _cacheTainted;
+        public bool LastReadCacheable { get; private set; }
 
         // store for reinitializing on Seek
         private readonly byte[] _mKey;
@@ -96,6 +98,13 @@ namespace NzbWebDAV.Streams
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer,
             CancellationToken ct = default)
         {
+            LastReadCacheable = false;
+            // CBC seeks consume an IV block and may round an unaligned plaintext offset.
+            // Keep those ciphertext bytes inside the finite native source window.
+            using var nativeRead = NativeCacheReadContext.ReadBudget is { } nativeBudget
+                ? new NativeCacheReadContext(nativeBudget > long.MaxValue - 2 * BlockSize
+                    ? long.MaxValue : nativeBudget + 2 * BlockSize)
+                : null;
             // Perform pending seek (deferred heavy work)
             if (_pendingSeekPosition != null)
             {
@@ -128,7 +137,7 @@ namespace NzbWebDAV.Streams
                 }
 
                 if (toReturnAllowed == 0 || _mWritten == _mLimit)
-                    return totalCopied;
+                    return CompleteRead(totalCopied);
             }
 
             // Decrypt aligned runs directly into array-backed caller memory. For partial
@@ -144,7 +153,7 @@ namespace NzbWebDAV.Streams
                     int cipherRead = await ReadCiphertextAsync(directBytes, ct).ConfigureAwait(false);
                     if (cipherRead == 0)
                     {
-                        return totalCopied;
+                        return CompleteRead(totalCopied);
                     }
 
                     int processed = _mDecoder.TransformBlock(_cipherBuffer, 0, cipherRead,
@@ -162,7 +171,7 @@ namespace NzbWebDAV.Streams
                 int bufferedCipherRead = await ReadCiphertextAsync(cacheTarget, ct).ConfigureAwait(false);
                 if (bufferedCipherRead == 0)
                 {
-                    return totalCopied;
+                    return CompleteRead(totalCopied);
                 }
 
                 _plainStart = 0;
@@ -182,12 +191,26 @@ namespace NzbWebDAV.Streams
                 }
             }
 
-            return totalCopied;
+            return CompleteRead(totalCopied);
+        }
+
+        private int CompleteRead(int count)
+        {
+            LastReadCacheable = count > 0 && !_cacheTainted;
+            return count;
+        }
+
+        private async ValueTask<int> ReadSourceAsync(Memory<byte> buffer, CancellationToken ct)
+        {
+            var read = await _mStream.ReadAsync(buffer, ct).ConfigureAwait(false);
+            if (read > 0 && _mStream is not ICacheReadEvidence { LastReadCacheable: true })
+                _cacheTainted = true;
+            return read;
         }
 
         private async ValueTask<int> ReadCiphertextAsync(int maximumBytes, CancellationToken ct)
         {
-            int cipherRead = await _mStream.ReadAsync(_cipherBuffer.AsMemory(0, maximumBytes), ct)
+            int cipherRead = await ReadSourceAsync(_cipherBuffer.AsMemory(0, maximumBytes), ct)
                 .ConfigureAwait(false);
             if (cipherRead == 0)
             {
@@ -199,7 +222,7 @@ namespace NzbWebDAV.Streams
             while ((cipherRead & (BlockSize - 1)) != 0)
             {
                 int need = BlockSize - (cipherRead & (BlockSize - 1));
-                int read = await _mStream.ReadAsync(_cipherBuffer.AsMemory(cipherRead, need), ct)
+                int read = await ReadSourceAsync(_cipherBuffer.AsMemory(cipherRead, need), ct)
                     .ConfigureAwait(false);
                 if (read == 0)
                 {
@@ -268,7 +291,7 @@ namespace NzbWebDAV.Streams
                 int read = 0;
                 while (read < BlockSize)
                 {
-                    int r = await _mStream.ReadAsync(iv.AsMemory(read, BlockSize - read), ct).ConfigureAwait(false);
+                    int r = await ReadSourceAsync(iv.AsMemory(read, BlockSize - read), ct).ConfigureAwait(false);
                     if (r == 0) throw new EndOfStreamException("Unable to read previous block for IV during seek.");
                     read += r;
                 }
@@ -297,7 +320,7 @@ namespace NzbWebDAV.Streams
                 int read = 0;
                 while (read < BlockSize)
                 {
-                    int r = await _mStream.ReadAsync(block.AsMemory(read, BlockSize - read), ct).ConfigureAwait(false);
+                    int r = await ReadSourceAsync(block.AsMemory(read, BlockSize - read), ct).ConfigureAwait(false);
                     if (r == 0) throw new EndOfStreamException("Unable to read target block during seek.");
                     read += r;
                 }
