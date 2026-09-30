@@ -39,6 +39,35 @@ internal sealed record ArchiveImportPlan(
     long ProcessorsMilliseconds);
 
 /// <summary>
+/// Planning evidence available once file infos are resolved, before any archive
+/// is processed and before the missing-first-segment fail-fast.
+/// </summary>
+internal sealed record ArchiveImportFileInfoSnapshot(
+    IReadOnlyList<GetFileInfosStep.FileInfo> FileInfos,
+    IReadOnlyList<GetFileInfosStep.FileInfo> MissingFirstSegment);
+
+/// <summary>
+/// Optional planning behaviour. <see cref="Import"/> (the default) is exactly the
+/// queue-import behaviour; callers that only inspect an NZB can opt out of
+/// process-wide side effects and observe intermediate evidence.
+/// </summary>
+internal sealed record ArchiveImportPlanOptions
+{
+    public static ArchiveImportPlanOptions Import { get; } = new();
+
+    /// <summary>
+    /// Record definitive misses in the process-wide caches: missing first segments in the
+    /// step-0 cache that makes later imports of the same release fail fast, and per-provider
+    /// misses in <see cref="ArticleMissNegativeCache"/>, which later requests use to skip
+    /// that provider. Imports keep this on. When off, both caches are still read.
+    /// </summary>
+    public bool RememberMissingArticles { get; init; } = true;
+
+    /// <summary>Invoked once file infos are resolved; may throw to stop planning.</summary>
+    public Action<ArchiveImportFileInfoSnapshot>? OnFileInfosResolved { get; init; }
+}
+
+/// <summary>
 /// Plans a queue import from an NZB's files: first segments, PAR2 descriptors,
 /// file infos, lazy RAR mounting, per-file processors and nested RAR expansion.
 /// Planning reads from Usenet but never writes the database, the WebDAV tree,
@@ -52,8 +81,16 @@ internal sealed class ArchiveImportPlanner(INntpClient usenetClient, ConfigManag
         Guid queueItemId,
         IProgress<int> progress,
         IArchiveImportStageRunner stageRunner,
-        CancellationToken ct)
+        CancellationToken ct,
+        ArchiveImportPlanOptions? options = null)
     {
+        options ??= ArchiveImportPlanOptions.Import;
+        using var evidenceSuppression = options.RememberMissingArticles
+            ? null
+            : DeadNzbFailFast.SuppressMissingArticleEvidence();
+        using var missCacheSuppression = options.RememberMissingArticles
+            ? null
+            : ArticleMissNegativeCache.SuppressMarks();
         // step 1 -- get name and size of each nzb file
         var stepTimer = Stopwatch.StartNew();
         var part1Progress = progress
@@ -105,17 +142,21 @@ internal sealed class ArchiveImportPlanner(INntpClient usenetClient, ConfigManag
             .Where(x => missingNzbFiles.Contains(x.NzbFile))
             .Where(x => DeadNzbFailFast.IsImportantFileName(x.FileName))
             .ToList();
+        options.OnFileInfosResolved?.Invoke(new ArchiveImportFileInfoSnapshot(
+            fileInfos,
+            fileInfos.Where(x => missingNzbFiles.Contains(x.NzbFile)).ToList()));
         if (importantFilesMissing.Count > 0)
         {
             // Remember the missing first segments so retries of this item and re-grabs
             // of the same release fail in milliseconds via the step-0 precheck instead
             // of re-verifying every article across all providers.
-            HealthCheckService.AddMissingSegmentIds(
-                importantFilesMissing.Select(x => x.NzbFile.Segments[0].MessageId),
-                segments.Where(x => missingNzbFiles.Contains(x.NzbFile))
-                    .Select(x => x.ProviderGeneration)
-                    .FirstOrDefault(x => x.HasValue)
-                ?? configManager.GetUsenetProviderSnapshot().Generation);
+            if (options.RememberMissingArticles)
+                HealthCheckService.AddMissingSegmentIds(
+                    importantFilesMissing.Select(x => x.NzbFile.Segments[0].MessageId),
+                    segments.Where(x => missingNzbFiles.Contains(x.NzbFile))
+                        .Select(x => x.ProviderGeneration)
+                        .FirstOrDefault(x => x.HasValue)
+                    ?? configManager.GetUsenetProviderSnapshot().Generation);
 
             var fileNames = string.Join(", ", importantFilesMissing
                 .Select(x => string.IsNullOrEmpty(x.FileName) ? x.NzbFile.Subject : x.FileName)
