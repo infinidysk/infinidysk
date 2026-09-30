@@ -155,7 +155,7 @@ public class DatabaseStoreCollection(
             .ConfigureAwait(false);
         if (pruned.Count == 0) return;
 
-        await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+        await dbClient.SaveHistoryRemovalAsync(ct).ConfigureAwait(false);
         _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemRemoved, string.Join(",", pruned));
     }
 }

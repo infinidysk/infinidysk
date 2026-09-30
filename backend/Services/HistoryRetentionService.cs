@@ -64,7 +64,7 @@ public class HistoryRetentionService(
             await dbClient.RemoveHistoryItemsAsync(
                     ids, deleteFiles: false, source: "history-retention", ct: ct)
                 .ConfigureAwait(false);
-            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+            await dbClient.SaveHistoryRemovalAsync(ct).ConfigureAwait(false);
             dbClient.Ctx.ChangeTracker.Clear();
             totalRemoved += ids.Count;
 
