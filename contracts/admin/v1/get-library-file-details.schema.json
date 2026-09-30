@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/get-library-file-details.schema.json",
+  "title": "Admin get-library-file-details success",
+  "type": "object",
+  "required": ["davItemId", "name", "contentPath", "mappings"],
+  "properties": {
+    "davItemId": { "type": "string" },
+    "name": { "type": "string" },
+    "contentPath": { "type": "string" },
+    "size": { "type": ["integer", "null"] },
+    "releaseDate": { "type": ["string", "null"] },
+    "lastHealthCheck": { "type": ["string", "null"] },
+    "nextHealthCheck": { "type": ["string", "null"] },
+    "healthRepairPending": { "type": "boolean" },
+    "historyItemId": { "type": ["string", "null"] },
+    "latestHealth": {
+      "type": ["object", "null"],
+      "required": ["result", "repairStatus", "createdAt"],
+      "properties": {
+        "result": { "type": "string" },
+        "repairStatus": { "type": "string" },
+        "message": { "type": ["string", "null"] },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "mappings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["linkPath", "targetText", "mappingType", "status"],
+        "properties": {
+          "linkPath": { "type": "string" },
+          "targetText": { "type": "string" },
+          "mappingType": { "type": "string", "enum": ["internal", "external"] },
+          "status": { "type": "string", "enum": ["valid", "broken", "unchecked", "stale"] }
+        }
+      }
+    }
+  }
+}

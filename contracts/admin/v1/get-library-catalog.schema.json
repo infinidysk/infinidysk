@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/get-library-catalog.schema.json",
+  "title": "Admin get-library-catalog success",
+  "type": "object",
+  "required": ["items", "totalCount", "page", "pageSize"],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "displayName", "mappingCount", "health", "mappings"],
+        "properties": {
+          "kind": { "type": "string", "enum": ["internal", "external"] },
+          "davItemId": { "type": ["string", "null"] },
+          "displayName": { "type": "string" },
+          "contentPath": { "type": ["string", "null"] },
+          "size": { "type": ["integer", "null"] },
+          "mappingCount": { "type": "integer" },
+          "health": { "type": "string" },
+          "mappings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["linkPath", "targetText", "mappingType", "status"],
+              "properties": {
+                "linkPath": { "type": "string" },
+                "targetText": { "type": "string" },
+                "mappingType": { "type": "string", "enum": ["internal", "external"] },
+                "status": { "type": "string", "enum": ["valid", "broken", "unchecked", "stale"] }
+              }
+            }
+          }
+        }
+      }
+    },
+    "totalCount": { "type": "integer" },
+    "page": { "type": "integer" },
+    "pageSize": { "type": "integer" },
+    "indexScannedAt": { "type": ["string", "null"] },
+    "indexWarning": { "type": ["string", "null"] }
+  }
+}

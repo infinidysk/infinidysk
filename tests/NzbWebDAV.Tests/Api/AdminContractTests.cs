@@ -344,6 +344,96 @@ public sealed class AdminContractTests
             serverError.Content.Headers.ContentType?.MediaType);
     }
 
+    [Fact]
+    public async Task LibraryCatalog_ReturnsSeededItemWithMappings()
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var client = factory.CreateAuthenticatedClient();
+
+        var item = DavItem.New(
+            Guid.NewGuid(),
+            DavItem.ContentFolder,
+            "catalog-film.mkv",
+            2048,
+            DavItem.ItemType.UsenetFile,
+            DavItem.ItemSubType.NzbFile,
+            null, null, null, null);
+        await factory.AddDavItemsAsync(item);
+
+        using var response = await client.GetAsync("/api/get-library-catalog?page=1&pageSize=25");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        JsonContractValidator.AssertMatchesSchema(
+            json.RootElement, "admin/v1/get-library-catalog.schema.json");
+        Assert.True(json.RootElement.GetProperty("totalCount").GetInt32() >= 1);
+        Assert.Contains(
+            json.RootElement.GetProperty("items").EnumerateArray(),
+            row => row.GetProperty("displayName").GetString() == "catalog-film.mkv");
+    }
+
+    [Fact]
+    public async Task LibraryCatalog_RequiresApiKey()
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var anonymous = factory.CreateClient();
+
+        using var response = await anonymous.GetAsync("/api/get-library-catalog");
+        await AdminProblemAssertions.AssertProblemAsync(
+            response, HttpStatusCode.Unauthorized, "API Key Required");
+    }
+
+    [Fact]
+    public async Task LibraryFileDetails_ReturnsItemWithMappings()
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var client = factory.CreateAuthenticatedClient();
+
+        var id = Guid.NewGuid();
+        await factory.AddDavItemsAsync(
+            DavItem.New(id, DavItem.ContentFolder, "detail-film.mkv", 2048,
+                DavItem.ItemType.UsenetFile, DavItem.ItemSubType.NzbFile,
+                null, null, null, null));
+
+        using var response = await client.GetAsync($"/api/get-library-file-details?davItemId={id:D}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        JsonContractValidator.AssertMatchesSchema(
+            json.RootElement, "admin/v1/get-library-file-details.schema.json");
+        Assert.Equal(id.ToString("D"), json.RootElement.GetProperty("davItemId").GetString());
+        Assert.Equal("detail-film.mkv", json.RootElement.GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task LibraryFileDetails_MissingItem_ReturnsNotFound()
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var client = factory.CreateAuthenticatedClient();
+
+        using var response = await client.GetAsync($"/api/get-library-file-details?davItemId={Guid.NewGuid():D}");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task LibraryFileDetails_RequiresApiKey()
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var anonymous = factory.CreateClient();
+
+        using var response = await anonymous.GetAsync($"/api/get-library-file-details?davItemId={Guid.NewGuid():D}");
+        await AdminProblemAssertions.AssertProblemAsync(
+            response, HttpStatusCode.Unauthorized, "API Key Required");
+    }
+
+    [Fact]
+    public async Task LibraryFileDetails_InvalidDavItemId_ReturnsBadRequest()
+    {
+        await using var factory = new NzbDavWebApplicationFactory();
+        using var client = factory.CreateAuthenticatedClient();
+
+        using var response = await client.GetAsync("/api/get-library-file-details?davItemId=nope");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     private static async Task<HttpResponseMessage> PostConfigKeysAsync(HttpClient client, params string[] keys)
     {
         using var form = new MultipartFormDataContent();

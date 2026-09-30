@@ -21,7 +21,7 @@ describe("settings tabs", () => {
       },
       { title: "Providers & Search", tabs: ["usenet", "indexers", "profiles"] },
       { title: "Queue & Import", tabs: ["queue", "sabnzbd"] },
-      { title: "Playback & Files", tabs: ["streaming", "webdav"] },
+      { title: "Playback & Files", tabs: ["streaming", "native-cache", "library", "webdav"] },
       { title: "Automation", tabs: ["watchdog", "preflight", "watchtower", "warden"] },
       { title: "Integrations", tabs: ["arrs", "rclone"] },
     ]);
@@ -30,6 +30,7 @@ describe("settings tabs", () => {
   it("parses the new Queue and Streaming tabs", () => {
     expect(parseSettingsTab("queue")).toBe("queue");
     expect(parseSettingsTab("streaming")).toBe("streaming");
+    expect(parseSettingsTab("native-cache")).toBe("native-cache");
   });
 
   it("falls back to Usenet for missing and unknown tabs", () => {
@@ -42,6 +43,7 @@ describe("settings tabs", () => {
     expect(settingsPath()).toBe("/settings");
     expect(settingsPath("queue")).toBe("/settings?tab=queue");
     expect(settingsPath("streaming")).toBe("/settings?tab=streaming");
+    expect(settingsPath("native-cache")).toBe("/settings?tab=native-cache");
   });
 
   it("uses the discoverable Health & Repairs label without changing its id", () => {

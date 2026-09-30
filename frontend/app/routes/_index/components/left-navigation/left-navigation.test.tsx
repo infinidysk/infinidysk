@@ -7,6 +7,17 @@ import { LeftNavigation } from "./left-navigation";
 afterEach(cleanup);
 
 describe("LeftNavigation settings groups", () => {
+  it("hides the Media Library main item while keeping its settings tab available", () => {
+    const router = createMemoryRouter(
+      [{ path: "*", element: <LeftNavigation isMediaLibraryEnabled={false} /> }],
+      { initialEntries: ["/settings?tab=library"] },
+    );
+    render(<RouterProvider router={router} />);
+    const links = screen.getAllByRole("link", { name: "Media Library" });
+    expect(links).toHaveLength(1);
+    const settings = links[0]!;
+    expect(settings.getAttribute("href")).toBe("/settings?tab=library");
+  });
   it.each(["1.4.2", "dev-260919.2224"])("pins %s in a footer link to Support", (version) => {
     const router = createMemoryRouter(
       [

@@ -479,6 +479,69 @@ class BackendClient {
     }
   }
 
+  public async getLibraryCatalog(query: LibraryCatalogQuery = {}): Promise<LibraryCatalogResponse> {
+    const qs = new URLSearchParams();
+    if (query.q) qs.set("q", query.q);
+    qs.set("type", query.type ?? "all");
+    qs.set("sort", query.sort ?? "name");
+    qs.set("dir", query.dir ?? "asc");
+    qs.set("page", String(query.page ?? 1));
+    qs.set("pageSize", String(query.pageSize ?? 25));
+    return await call<LibraryCatalogResponse>(
+      `${adminApi.libraryCatalog}?${qs.toString()}`,
+      "Failed to get library catalog",
+      { method: "GET" },
+      libraryCatalogResponseSchema,
+    );
+  }
+
+  public async getLibraryBrowse(query: LibraryBrowseQuery = {}): Promise<LibraryBrowseResponse> {
+    const qs = new URLSearchParams();
+    if (query.q) qs.set("q", query.q);
+    if (query.group) qs.set("group", query.group);
+    qs.set("category", query.category ?? "shows");
+    qs.set("view", query.view ?? "groups");
+    qs.set("match", query.match ?? "all");
+    if (query.season !== undefined) qs.set("season", String(query.season));
+    qs.set("type", query.type ?? "all");
+    qs.set("quality", query.quality ?? "all");
+    qs.set("cache", query.cache ?? "all");
+    qs.set("page", String(query.page ?? 1));
+    qs.set("groupPage", String(query.groupPage ?? 1));
+    return await call<LibraryBrowseResponse>(
+      `/api/get-library-browse?${qs.toString()}`,
+      "Failed to browse media library",
+      { method: "GET" },
+      libraryBrowseResponseSchema,
+    );
+  }
+
+  public async getLibraryFileDetails(davItemId: string): Promise<LibraryFileDetails> {
+    return await call<LibraryFileDetails>(
+      `${adminApi.libraryFileDetails}?davItemId=${encodeURIComponent(davItemId)}`,
+      "Failed to get library file details",
+      { method: "GET" },
+      libraryFileDetailsResponseSchema,
+    );
+  }
+
+  public async getNativeCacheStatus(): Promise<{ activeMode: string }> {
+    const data = await call<{ activeMode?: string }>(
+      adminApi.nativeCache,
+      "Failed to get native cache status",
+      { method: "GET" },
+    );
+    return { activeMode: data.activeMode ?? "" };
+  }
+
+  public async warmPrefetch(itemIds: string[]): Promise<void> {
+    await call(adminApi.prefetchOperations, "Failed to warm prefetch items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ Operation: "warm", ItemIds: itemIds }),
+    });
+  }
+
   public async getConfig(keys: string[], signal?: AbortSignal): Promise<ConfigItem[]> {
     const data = await call<{ configItems?: ConfigItem[] }>(
       adminApi.getConfig,
@@ -527,9 +590,12 @@ class BackendClient {
     );
   }
 
-  public async requeueActionNeededHealthChecks(): Promise<{ requeuedCount: number }> {
+  public async requeueActionNeededHealthChecks(
+    davItemId?: string,
+  ): Promise<{ requeuedCount: number }> {
+    const query = davItemId ? `?davItemId=${encodeURIComponent(davItemId)}` : "";
     return await call<{ requeuedCount: number }>(
-      adminApi.requeueActionNeededHealthChecks,
+      `${adminApi.requeueActionNeededHealthChecks}${query}`,
       "Failed to requeue action-needed health checks",
       {
         method: "POST",
@@ -827,6 +893,148 @@ export type DirectoryItem = {
   isDirectory: boolean;
   size: number | null | undefined;
   nzbBlobId?: string;
+};
+
+const libraryCatalogMappingSchema = z.object({
+  linkPath: z.string(),
+  targetText: z.string(),
+  mappingType: z.enum(["internal", "external"]),
+  status: z.enum(["valid", "broken", "unchecked", "stale"]),
+});
+
+const libraryCatalogItemSchema = z.object({
+  kind: z.enum(["internal", "external"]),
+  davItemId: z.string().nullable().optional(),
+  displayName: z.string(),
+  contentPath: z.string().nullable().optional(),
+  size: z.number().nullable().optional(),
+  mappingCount: z.number().int(),
+  health: z.string(),
+  mappings: z.array(libraryCatalogMappingSchema),
+});
+
+const libraryCatalogResponseSchema = z.object({
+  items: z.array(libraryCatalogItemSchema),
+  totalCount: z.number().int(),
+  page: z.number().int(),
+  pageSize: z.number().int(),
+  indexScannedAt: z.string().nullable().optional(),
+  indexWarning: z.string().nullable().optional(),
+});
+
+export type LibraryCatalogMapping = z.infer<typeof libraryCatalogMappingSchema>;
+export type LibraryCatalogItem = z.infer<typeof libraryCatalogItemSchema>;
+export type LibraryCatalogResponse = z.infer<typeof libraryCatalogResponseSchema>;
+
+const libraryBrowseGroupSchema = z.object({
+  key: z.string(),
+  title: z.string(),
+  category: z.enum(["shows", "movies", "unmatched"]),
+  itemCount: z.number().int(),
+  healthyCount: z.number().int(),
+  attentionCount: z.number().int(),
+  quality: z.enum(["4k", "1080p", "720p", "sd", "unknown"]).nullable(),
+  cachePercentage: z.number().int().nullable(),
+});
+
+const libraryBrowseExpandedGroupSchema = z.object({
+  key: z.string(),
+  page: z.number().int(),
+  pageSize: z.number().int(),
+  totalItems: z.number().int(),
+  items: z.array(
+    z.object({
+      item: libraryCatalogItemSchema,
+      season: z.string().nullable(),
+      episode: z.string().nullable(),
+      quality: z.enum(["4k", "1080p", "720p", "sd", "unknown"]),
+      cachePercentage: z.number().int().nullable(),
+    }),
+  ),
+});
+
+const libraryBrowseResponseSchema = z.object({
+  groups: z.array(libraryBrowseGroupSchema),
+  totalGroups: z.number().int(),
+  page: z.number().int(),
+  pageSize: z.number().int(),
+  totalItems: z.number().int(),
+  healthyItems: z.number().int(),
+  attentionItems: z.number().int(),
+  unmatchedItems: z.number().int(),
+  expandedGroup: libraryBrowseExpandedGroupSchema.nullable().optional(),
+  files: z
+    .array(
+      z.object({
+        item: libraryCatalogItemSchema,
+        title: z.string().nullable(),
+        season: z.number().int().nullable(),
+        episode: z.number().int().nullable(),
+        category: z.enum(["shows", "movies", "unmatched"]),
+        quality: z.enum(["4k", "1080p", "720p", "sd", "unknown"]),
+        cachePercentage: z.number().int().nullable(),
+      }),
+    )
+    .nullable()
+    .optional(),
+  totalFiles: z.number().int().optional(),
+  indexScannedAt: z.string().nullable().optional(),
+  indexWarning: z.string().nullable().optional(),
+  plexStatus: z.object({
+    ready: z.boolean(),
+    syncedAt: z.string().nullable(),
+    entryCount: z.number().int(),
+    warning: z.string().nullable(),
+    syncing: z.boolean(),
+  }),
+});
+
+export type LibraryBrowseResponse = z.infer<typeof libraryBrowseResponseSchema>;
+
+export type LibraryBrowseQuery = {
+  q?: string;
+  category?: "all" | "shows" | "movies" | "unmatched";
+  view?: "groups" | "files";
+  match?: "all" | "matched" | "unmatched";
+  season?: number;
+  type?: "all" | "internal" | "external" | "broken";
+  quality?: "all" | "4k" | "1080p" | "720p" | "sd" | "unknown";
+  cache?: "all" | "any" | "complete" | "empty" | "unavailable";
+  page?: number;
+  group?: string;
+  groupPage?: number;
+};
+
+const libraryFileDetailsHealthSchema = z.object({
+  result: z.string(),
+  repairStatus: z.string(),
+  message: z.string().nullable().optional(),
+  createdAt: z.string(),
+});
+
+const libraryFileDetailsResponseSchema = z.object({
+  davItemId: z.string(),
+  name: z.string(),
+  contentPath: z.string(),
+  size: z.number().nullable().optional(),
+  releaseDate: z.string().nullable().optional(),
+  lastHealthCheck: z.string().nullable().optional(),
+  nextHealthCheck: z.string().nullable().optional(),
+  healthRepairPending: z.boolean().optional(),
+  historyItemId: z.string().nullable().optional(),
+  latestHealth: libraryFileDetailsHealthSchema.nullable().optional(),
+  mappings: z.array(libraryCatalogMappingSchema),
+});
+
+export type LibraryFileDetails = z.infer<typeof libraryFileDetailsResponseSchema>;
+
+export type LibraryCatalogQuery = {
+  q?: string;
+  type?: "all" | "internal" | "external" | "broken";
+  sort?: "name" | "size" | "mappings";
+  dir?: "asc" | "desc";
+  page?: number;
+  pageSize?: number;
 };
 
 export type ConfigItem = {

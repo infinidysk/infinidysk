@@ -140,6 +140,64 @@ describe("BackendClient", () => {
     expect((init?.body as FormData).get("directory")).toBe("/view");
   });
 
+  it("gets the library catalog with search, filter, and pagination", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ items: [], totalCount: 0, page: 2, pageSize: 50 }),
+    );
+
+    await backendClient.getLibraryCatalog({ q: "dune", type: "internal", page: 2, pageSize: 50 });
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe(
+      "http://backend/api/get-library-catalog?q=dune&type=internal&sort=name&dir=asc&page=2&pageSize=50",
+    );
+    expect(init?.method).toBe("GET");
+    expect(init?.headers).toEqual({ "x-api-key": "test-api-key" });
+  });
+
+  it("gets a grouped media library page and expanded group", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        groups: [
+          {
+            key: "shows/Example",
+            title: "Example",
+            category: "shows",
+            itemCount: 1,
+            healthyCount: 1,
+            attentionCount: 0,
+            quality: "1080p",
+            cachePercentage: 75,
+          },
+        ],
+        totalGroups: 1,
+        page: 1,
+        pageSize: 12,
+        totalItems: 1,
+        healthyItems: 1,
+        attentionItems: 0,
+        unmatchedItems: 0,
+        expandedGroup: { key: "shows/Example", page: 1, pageSize: 50, totalItems: 0, items: [] },
+      }),
+    );
+
+    const result = await backendClient.getLibraryBrowse({
+      q: "Example",
+      category: "shows",
+      type: "internal",
+      quality: "1080p",
+      cache: "any",
+      group: "shows/Example",
+    });
+
+    expect(result.groups[0]?.title).toBe("Example");
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe(
+      "http://backend/api/get-library-browse?q=Example&group=shows%2FExample&category=shows&type=internal&quality=1080p&cache=any&page=1&groupPage=1",
+    );
+    expect(init?.method).toBe("GET");
+  });
+
   it("adds an NZB using the configured manual category", async () => {
     fetchMock
       .mockResolvedValueOnce(
