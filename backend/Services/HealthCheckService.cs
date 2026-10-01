@@ -48,6 +48,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     // ponytail: one fixed cap for every attempt; a very large PAR2 repair could legitimately need longer.
     internal static readonly TimeSpan HealthCheckAttemptDeadline = TimeSpan.FromHours(1);
     private static readonly TimeSpan HealthCheckAttemptDeadlineDeferral = TimeSpan.FromDays(1);
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _repairRetryNotBefore = new();
 
     // Repeated remove-and-blocklist repairs for the same library path in a short window indicate
     // a replacement loop (Arr keeps re-grabbing a release repair keeps rejecting, issue #732).
@@ -502,6 +503,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             .WithCancellation(ct)
             .ConfigureAwait(false))
         {
+            if (_repairRetryNotBefore.TryGetValue(item.Id, out var notBefore))
+            {
+                if (notBefore > currentDateTime) continue;
+                _repairRetryNotBefore.TryRemove(new KeyValuePair<Guid, DateTimeOffset>(item.Id, notBefore));
+            }
             var isRepair = item.NextHealthCheck == DateTimeOffset.UnixEpoch
                 || item.HealthRepairPending;
             if ((allowRepairs && isRepair)
@@ -1212,11 +1218,16 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             CompleteHealthProgress(davItem.Id);
             var now = _timeProvider.GetUtcNow();
             var next = now + HealthCheckAttemptDeadlineDeferral;
+            // ponytail: repair deferrals are in-memory, so a restart retries timed-out repairs immediately.
+            if (davItem.NextHealthCheck == DateTimeOffset.UnixEpoch || davItem.HealthRepairPending)
+                _repairRetryNotBefore[davItem.Id] = next;
+            // Keep the urgent sentinel (including one set by streaming during this attempt) so the retry stays urgent.
             await dbClient.Ctx.Items
                 .Where(item => item.Id == davItem.Id)
                 .ExecuteUpdateAsync(setters => setters
                     .SetProperty(item => item.LastHealthCheck, now)
-                    .SetProperty(item => item.NextHealthCheck, next), ct)
+                    .SetProperty(item => item.NextHealthCheck, item =>
+                        item.NextHealthCheck == DateTimeOffset.UnixEpoch ? DateTimeOffset.UnixEpoch : (DateTimeOffset?)next), ct)
                 .ConfigureAwait(false);
             Log.Warning(
                 "Health check for {Path} did not finish within {Deadline}. Deferred next check to {NextCheck}.",
