@@ -2,6 +2,9 @@
 
 Quick-start guide for AI agents working on **InfiniDysk** (formerly NzbDAV, "The NzbDAV SuperFork").
 
+
+
+
 ## What this project is
 
 InfiniDysk is a **WebDAV server** that mounts NZB documents as a virtual filesystem and streams content directly from Usenet providers — without downloading files to disk first. It exposes a **SABnzbd-compatible API** so Sonarr, Radarr, and similar tools can use it as a drop-in download client.
@@ -332,6 +335,15 @@ Prefer this rhythm:
 3. Repeat until the task is done
 
 Do not accumulate a large uncommitted diff across unrelated areas.
+
+## Scrub media titles from public content
+
+We cannot verify which media is public domain, so **never write media titles** (movie, show, episode, album, book, or release/NZB names) in anything public or committed:
+
+- Commit messages, PR titles and bodies, issue titles and bodies, and review/issue/PR comments
+- Code comments, test names and fixtures, logs pasted into reports, docs, changelog text, and release/Discord announcements
+
+When quoting user logs, screenshots, or support packs, redact titles before posting (e.g. `<release-name>`). Describe content generically instead: "direct-posted 2160p MKV", "stored RAR4 episode", "obfuscated 7z season pack".
 
 ## Issue tracking
 
