@@ -1,4 +1,5 @@
 using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Streams;
 
@@ -203,6 +204,55 @@ public sealed class MultiSegmentStreamStripingTests
         Assert.Equal(
             new[] { new[] { 0, 4, 8, 12 }, new[] { 1, 5, 9, 13 }, new[] { 2, 6, 10, 14 }, new[] { 3, 7, 11, 15 } },
             client.ObservedBatchIndexes);
+    }
+
+    [Fact]
+    public async Task MissingArticleInAStripe_ZeroFillsOnlyThatSegment()
+    {
+        var client = new ControlledBatchNntpClient(16, SegmentSize, uniqueBytes: true);
+        client.FailSegment(4, new UsenetArticleNotFoundException("seg-4"));
+        client.ReleaseAllUpTo(15);
+        using var cts = new CancellationTokenSource();
+        using var hint = cts.Token.SetContext(new StreamingStripeContext { StripeCount = 4 });
+        await using var stream = CreateStream(client, cts.Token);
+
+        var bytes = await ReadAllAsync(stream);
+
+        var expected = client.ExpectedConcatenation.ToArray();
+        Array.Clear(expected, 4 * SegmentSize, SegmentSize);
+        Assert.Equal(expected, bytes);
+        Assert.Equal(new[] { 0, 4, 8, 12 }, client.ObservedBatchIndexes[0]);
+    }
+
+    [Fact]
+    public async Task StalledStripe_HoldsOnlyItsOwnSegmentsAndIsRescuedWhenItsConnectionDrops()
+    {
+        // Batch [0,4,8,12] stalls after segment 0. The other stripes keep delivering, so the
+        // reader is held only at segment 4; when the connection drops, 4, 8 and 12 are
+        // re-requested individually rather than waiting for the reader to reach them.
+        var client = new ControlledBatchNntpClient(16, SegmentSize, uniqueBytes: true);
+        using var cts = new CancellationTokenSource();
+        using var hint = cts.Token.SetContext(new StreamingStripeContext { StripeCount = 4 });
+        await using var stream = CreateStream(client, cts.Token);
+        foreach (var index in Enumerable.Range(0, 16).Except([4, 8, 12]))
+            client.ReleaseSegment(index);
+
+        var head = new byte[4 * SegmentSize];
+        await stream.ReadExactlyAsync(head).AsTask().WaitAsync(Timeout);
+        Assert.Equal(client.ExpectedConcatenation.AsSpan(0, head.Length).ToArray(), head);
+        var firstOfFifth = new byte[1];
+        var blocked = stream.ReadAsync(firstOfFifth).AsTask();
+        await Task.Delay(100);
+        Assert.False(blocked.IsCompleted);
+
+        foreach (var index in new[] { 4, 8, 12 })
+            client.FailSegment(index, new IOException("connection reset"));
+        Assert.Equal(1, await blocked.WaitAsync(Timeout));
+        var rest = await ReadAllAsync(stream);
+
+        Assert.Equal(client.ExpectedConcatenation[4 * SegmentSize], firstOfFifth[0]);
+        Assert.Equal(client.ExpectedConcatenation.AsSpan(4 * SegmentSize + 1).ToArray(), rest);
+        Assert.Equal(3, client.IndividualRequestCount);
     }
 
     [Theory]

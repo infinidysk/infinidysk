@@ -846,9 +846,21 @@ internal sealed class ControlledBatchNntpClient : NntpClient
         get { lock (_statsGate) return _batchAdmittedCount; }
     }
     public SemaphoreSlim? SharedPermit { get; set; }
+    public int IndividualRequestCount
+    {
+        get { lock (_statsGate) return _individualRequests; }
+    }
 
     private int _remainderAdmissionAttempts;
     private int _batchAdmittedCount;
+    private int _individualRequests;
+
+    /// <summary>Fails a batch response; individual re-requests still return the payload.</summary>
+    public void FailSegment(int index, Exception exception)
+    {
+        if (_gates.TryGetValue(index, out var gate))
+            gate.TrySetException(exception);
+    }
 
     public void ReleaseSegment(int index)
     {
@@ -908,6 +920,8 @@ internal sealed class ControlledBatchNntpClient : NntpClient
         cancellationToken.ThrowIfCancellationRequested();
         var index = IndexOf(segmentId);
         var payload = _payloads[index];
+        lock (_statsGate)
+            _individualRequests++;
         var permit = SharedPermit;
         if (permit is not null)
             await permit.WaitAsync(cancellationToken).ConfigureAwait(false);
