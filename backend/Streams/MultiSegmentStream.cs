@@ -45,6 +45,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly long _prefetchByteCeiling;
     private readonly int _taskWindowSize;
     private readonly int _stripeCount;
+    // Producer-only: stripes the next group may use, between 1 and _stripeCount.
+    private int _stripeTarget;
+    private int _activeBatches;
     private readonly InFlightArticleBudget? _budget;
     private long _inFlightPrefetchBytes;
     // Producer-only enqueue progress, read by ShouldStopPrefetch.
@@ -800,6 +803,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         _stripeCount = usePipelinedBodyRequests
             ? ResolveStripeCount(initialBatchPlan, articleBufferSize, cancellationToken)
             : 1;
+        _stripeTarget = _stripeCount;
         if (_stripeCount > 1)
         {
             Log.Debug(
@@ -959,10 +963,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         int width,
         CancellationToken cancellationToken)
     {
+        if (_stripeTarget < 2) return 0;
         var freeSlots = _taskWindowSize - _streamTasks.Reader.Count;
         var limit = (int)Math.Min(
             Math.Min(_segmentIds.Length - groupStart, freeSlots),
-            (long)_stripeCount * width);
+            (long)_stripeTarget * width);
         if (limit < 2) return 0;
 
         var ceilingRoom = _prefetchByteCeiling > 0
@@ -981,7 +986,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
         // A short group (tail, or a window that is nearly full) still spreads across every
         // stripe, so a few wide batches never serialize the last segments on few connections.
-        var stripes = Math.Min(_stripeCount, count);
+        var stripes = Math.Min(_stripeTarget, count);
         if (stripes < 2) return 0;
 
         // Waiting while holding part of a group can deadlock against another stream doing
@@ -992,16 +997,28 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         if (leases is null) return 0;
 
         var group = new PipelinedGroup(leases);
+        var issuedBatches = new List<Task>(stripes);
+        var remaining = Enumerable.Range(0, count).ToList();
         try
         {
-            for (var stripe = 0; stripe < stripes; stripe++)
+            for (var issued = 0; remaining.Count > 0; issued++)
             {
-                if (stripe > 0)
+                if (issued > 0)
                     ThrowIfPlaybackFailFast();
-                var slots = new int[(count - stripe + stripes - 1) / stripes];
-                for (int index = 0, slot = stripe; slot < count; index++, slot += stripes)
-                    slots[index] = slot;
-                await IssueBatchAsync(groupStart, slots, group, cancellationToken).ConfigureAwait(false);
+                // After a capacity loss the rest of the group takes the nearest segments
+                // instead of queueing them behind stripes that can no longer run in parallel.
+                var stride = Math.Clamp(Math.Min(stripes - issued, _stripeTarget), 1, remaining.Count);
+                var slots = TakeStride(remaining, stride, width);
+                var runningBefore = issuedBatches.Count(batch => !batch.IsCompleted);
+                var admission = IssueBatchAsync(groupStart, slots, group, cancellationToken);
+                var waited = !admission.IsCompleted;
+                var lastResponse = await admission.ConfigureAwait(false);
+                // Admitted only once one of this group's own batches finished: the stream
+                // holds fewer connections than stripes, so shrink to what it actually holds.
+                if (waited && issuedBatches.Count(batch => !batch.IsCompleted) < runningBefore)
+                    _stripeTarget = Math.Clamp(Volatile.Read(ref _activeBatches), 1, _stripeCount);
+                if (lastResponse is not null)
+                    issuedBatches.Add(lastResponse);
                 await PublishReadyAsync(groupStart, group, cancellationToken).ConfigureAwait(false);
             }
 
@@ -1014,12 +1031,26 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         }
     }
 
-    private async Task IssueBatchAsync(
+    /// <summary>Removes and returns remaining[0], remaining[stride], ... up to width slots.</summary>
+    internal static int[] TakeStride(List<int> remaining, int stride, int width)
+    {
+        var take = Math.Min(width, (remaining.Count + stride - 1) / stride);
+        var slots = new int[take];
+        for (var index = 0; index < take; index++)
+            slots[index] = remaining[index * stride];
+        for (var index = take - 1; index >= 0; index--)
+            remaining.RemoveAt(index * stride);
+        return slots;
+    }
+
+    /// <summary>Returns a task that completes as the batch nears release, or null if already done.</summary>
+    private async Task<Task?> IssueBatchAsync(
         int groupStart,
         int[] slots,
         PipelinedGroup group,
         CancellationToken cancellationToken)
     {
+        Task? running = null;
         // Known degraded holes never enter a provider batch. They still ask local
         // patch/cache layers first, and their tasks stay in file order with live
         // results so the consumer's segment-boundary contract is unchanged.
@@ -1038,6 +1069,13 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 .ConfigureAwait(false);
             liveResponses = fetched.Responses;
             EnqueueBatchCompletionObserver(fetched.Completion);
+            // Responses complete in order and the connection is released only after the last
+            // body drains, so the last response is a race-free "about to free" marker.
+            if (liveResponses.Length > 0 && !liveResponses[^1].IsCompleted)
+            {
+                running = liveResponses[^1];
+                TrackRunningBatch(running);
+            }
         }
 
         var liveResponseIndex = 0;
@@ -1058,7 +1096,25 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     lease,
                     cancellationToken);
         }
+
+        return running;
     }
+
+    // Producer-only. Holding more batches at once than the target proves the capacity is back.
+    private void TrackRunningBatch(Task lastResponse)
+    {
+        var running = Interlocked.Increment(ref _activeBatches);
+        if (running > _stripeTarget)
+            _stripeTarget = Math.Min(_stripeCount, running);
+        lastResponse.ContinueWith(
+            static (_, state) => ((MultiSegmentStream)state!).ReleaseRunningBatch(),
+            this,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private void ReleaseRunningBatch() => Interlocked.Decrement(ref _activeBatches);
 
     /// <summary>Publishes the longest file-order prefix of created tasks.</summary>
     private async Task PublishReadyAsync(
