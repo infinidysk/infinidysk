@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
+using NzbWebDAV.Config;
 using NzbWebDAV.Services.SupportPack;
 
 namespace NzbWebDAV.Api.Controllers.DownloadSupportPack;
@@ -12,7 +13,7 @@ public sealed class DownloadSupportPackController(SupportPackService supportPack
     {
         var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss");
         Response.ContentType = "application/zip";
-        Response.Headers.ContentDisposition = $"attachment; filename=\"infinidysk-support-{timestamp}.zip\"";
+        Response.Headers.ContentDisposition = $"attachment; filename=\"ifd-{ConfigManager.AppVersion}-{timestamp}.zip\"";
         Response.Headers.CacheControl = "no-store";
 
         // Quality warnings must precede the streaming body so the Support UI can show
