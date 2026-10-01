@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { SupportSettings } from "./support";
+import { downloadName, SupportSettings } from "./support";
 
 describe("SupportSettings", () => {
   it("keeps the redaction notice inside the technical support pack section", () => {
@@ -61,5 +61,42 @@ describe("SupportSettings", () => {
     );
     expect(markup).toContain("Update to v1.4.3");
     expect(markup).toContain('href="https://example.com/release"');
+  });
+});
+
+describe("support pack download name", () => {
+  it.each([
+    [
+      `attachment; filename="ifd-1.2.3___.zip"; filename*=UTF-8''ifd-1.2.3%2B%C3%A9.zip`,
+      "ifd-1.2.3+é.zip",
+    ],
+    [
+      `attachment; filename*=UTF-8''support%20%E6%97%A5%E6%9C%AC.zip; filename="fallback.zip"`,
+      "support 日本.zip",
+    ],
+    [
+      `attachment; FILENAME*=utf-8'en'support%2520%3B%22%2B.zip; filename="fallback.zip"`,
+      'support%20;"+.zip',
+    ],
+    [`attachment; filename*=UTF-8''support.zip`, "support.zip"],
+    ['attachment; filename="fallback.zip"', "fallback.zip"],
+    ["attachment; filename=fallback.zip", "fallback.zip"],
+    ...[
+      "UTF-8''bad%ZZ.zip",
+      "UTF-8''bad%.zip",
+      "UTF-8''bad%C3%28.zip",
+      "UTF-8''",
+      "ISO-8859-1''support%E9.zip",
+      "support.zip",
+    ].map((value) => [`attachment; filename="fallback.zip"; filename*=${value}`, "fallback.zip"]),
+    ["attachment", "nzbdav-support-pack.zip"],
+    [`attachment; filename*=UTF-8''bad%ZZ.zip`, "nzbdav-support-pack.zip"],
+    [null, "nzbdav-support-pack.zip"],
+  ])("extracts the download name from %s", (header, expected) => {
+    const response = new Response(null, {
+      headers: header ? { "content-disposition": header } : {},
+    });
+
+    expect(downloadName(response)).toBe(expected);
   });
 });
