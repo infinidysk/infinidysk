@@ -275,10 +275,13 @@ internal static class NntpWholePathReport
                 Math.Min(plannedBatches, articleWindow),
                 CancellationToken.None);
         }
+        // Same stream-open hint and live capacity probe WebDAV playback attaches.
         using var streamCts = new CancellationTokenSource();
-        using var stripeScope = scenario.StripeCount is { } stripes
-            ? streamCts.Token.SetContext(new StreamingStripeContext { StripeCount = stripes })
-            : null;
+        using var stripeScope = streamCts.Token.SetContext(new StreamingStripeContext
+        {
+            StripeCount = scenario.ConnectionCount,
+            AvailableConnections = provider.GetAvailableStreamingConnections,
+        });
         await using var stream = MultiSegmentStream.Create(
             ids.AsMemory(),
             provider,
