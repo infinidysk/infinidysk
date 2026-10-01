@@ -11,7 +11,8 @@ namespace NzbWebDAV.Benchmarks;
 internal sealed class HttpLikeCountingSink(
     int bufferBytes,
     long copyStartedTimestamp,
-    ArrayPool<byte>? bufferPool = null)
+    ArrayPool<byte>? bufferPool = null,
+    DeliveryTimeline? timeline = null)
 {
     private readonly int _bufferBytes = bufferBytes > 0
         ? bufferBytes
@@ -44,6 +45,7 @@ internal sealed class HttpLikeCountingSink(
                 TimeToFirstByte ??= Stopwatch.GetElapsedTime(copyStartedTimestamp);
                 hash?.AppendData(buffer, 0, read);
                 BytesWritten += read;
+                timeline?.Record(Stopwatch.GetTimestamp(), BytesWritten);
             }
         }
         finally
