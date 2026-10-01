@@ -43,7 +43,6 @@ public class DownloadingNntpClient : WrappingNntpClient
     public override int PipeliningDepth =>
         _configManager.IsQueuePipeliningEnabled() ? _configManager.GetQueuePipeliningDepth() : 0;
     public override bool ReadStartWarmupEnabled => _configManager.IsReadStartWarmupEnabled();
-    internal int AvailableStreamingPermits => _streamingSemaphore.AvailableCount;
 
     public override Task PrewarmConnectionsAsync(
         int targetConnections,

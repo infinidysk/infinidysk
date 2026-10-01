@@ -103,7 +103,6 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
                 scopedStripeContext = token.SetContext(new StreamingStripeContext
                 {
                     StripeCount = snapshot.EffectiveStreamConnectionTarget,
-                    AvailableConnections = () => capacityProvider.CaptureAvailableConnections(streamSemaphore),
                 });
                 if (finiteRangeScheduler)
                 {

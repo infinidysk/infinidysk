@@ -81,20 +81,6 @@ public sealed class PrioritizedSemaphore : IDisposable
         }
     }
 
-    /// <summary>Permits a caller could take now without queueing. A scheduling hint only.</summary>
-    internal int AvailableCount
-    {
-        get
-        {
-            lock (_lock)
-            {
-                return _highPriorityWaiters.Count != 0 || _lowPriorityWaiters.Count != 0
-                    ? 0
-                    : Math.Max(0, _maxAllowed - _enteredCount);
-            }
-        }
-    }
-
     internal bool TryWait()
     {
         lock (_lock)

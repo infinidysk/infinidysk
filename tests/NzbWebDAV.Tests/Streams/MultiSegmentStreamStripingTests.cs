@@ -135,101 +135,6 @@ public sealed class MultiSegmentStreamStripingTests
     }
 
     [Fact]
-    public async Task OneAttainableConnection_KeepsSegmentOneNextToSegmentZero()
-    {
-        // A stale hint of 4 with one usable connection would queue segment 1 behind [0,4,8,12].
-        using var permit = new SemaphoreSlim(1, 1);
-        var client = new ControlledBatchNntpClient(16, SegmentSize, uniqueBytes: true) { SharedPermit = permit };
-        using var cts = new CancellationTokenSource();
-        using var hint = cts.Token.SetContext(new StreamingStripeContext
-        {
-            StripeCount = 4,
-            AvailableConnections = () => permit.CurrentCount,
-        });
-        await using var stream = CreateStream(client, cts.Token);
-        await client.WaitUntilAsync(() => client.BatchAdmittedCount >= 1, Timeout);
-
-        Assert.Equal(new[] { 0, 1, 2, 3 }, client.ObservedBatchIndexes[0]);
-        client.ReleaseSegment(0);
-        client.ReleaseSegment(1);
-        var head = new byte[2 * SegmentSize];
-        await stream.ReadExactlyAsync(head).AsTask().WaitAsync(Timeout);
-        Assert.Equal(client.ExpectedConcatenation.AsSpan(0, head.Length).ToArray(), head);
-
-        client.ReleaseAllUpTo(15);
-        var rest = await ReadAllAsync(stream);
-        Assert.Equal(client.ExpectedConcatenation.AsSpan(head.Length).ToArray(), rest);
-        Assert.All(
-            client.ObservedBatchIndexes,
-            batch => Assert.Equal(Enumerable.Range(batch[0], batch.Length), batch));
-    }
-
-    [Fact]
-    public async Task CapacityShrinkingMidGroup_GivesTheRestOfTheGroupTheNearestSegments()
-    {
-        var client = new ControlledBatchNntpClient(16, SegmentSize, uniqueBytes: true);
-        client.ReleaseAllUpTo(15);
-        using var cts = new CancellationTokenSource();
-        using var hint = cts.Token.SetContext(new StreamingStripeContext
-        {
-            StripeCount = 4,
-            AvailableConnections = () => client.BatchAdmittedCount == 0 ? 4 : 0,
-        });
-        await using var stream = CreateStream(client, cts.Token);
-
-        var bytes = await ReadAllAsync(stream);
-
-        Assert.Equal(client.ExpectedConcatenation, bytes);
-        Assert.Equal(
-            new[] { new[] { 0, 4, 8, 12 }, new[] { 1, 2, 3, 5 }, new[] { 6, 7, 9, 10 }, new[] { 11, 13, 14, 15 } },
-            client.ObservedBatchIndexes);
-    }
-
-    [Fact]
-    public async Task FewerAttainableConnectionsThanHint_KeepsEveryGroupInterleaved()
-    {
-        // Groups sized for the hint (4 x 4) but issued on 2 connections would end in
-        // contiguous [8..11], [12..15]; sizing from live capacity keeps both groups striped.
-        var client = new ControlledBatchNntpClient(16, SegmentSize, uniqueBytes: true);
-        client.ReleaseAllUpTo(15);
-        using var cts = new CancellationTokenSource();
-        using var hint = cts.Token.SetContext(new StreamingStripeContext
-        {
-            StripeCount = 4,
-            AvailableConnections = () => 2,
-        });
-        await using var stream = CreateStream(client, cts.Token);
-
-        var bytes = await ReadAllAsync(stream);
-
-        Assert.Equal(client.ExpectedConcatenation, bytes);
-        Assert.Equal(
-            new[] { new[] { 0, 2, 4, 6 }, new[] { 1, 3, 5, 7 }, new[] { 8, 10, 12, 14 }, new[] { 9, 11, 13, 15 } },
-            client.ObservedBatchIndexes);
-    }
-
-    [Fact]
-    public async Task FullAttainableCapacity_KeepsTheStripedLayout()
-    {
-        var client = new ControlledBatchNntpClient(16, SegmentSize, uniqueBytes: true);
-        client.ReleaseAllUpTo(15);
-        using var cts = new CancellationTokenSource();
-        using var hint = cts.Token.SetContext(new StreamingStripeContext
-        {
-            StripeCount = 4,
-            AvailableConnections = () => 20,
-        });
-        await using var stream = CreateStream(client, cts.Token);
-
-        var bytes = await ReadAllAsync(stream);
-
-        Assert.Equal(client.ExpectedConcatenation, bytes);
-        Assert.Equal(
-            new[] { new[] { 0, 4, 8, 12 }, new[] { 1, 5, 9, 13 }, new[] { 2, 6, 10, 14 }, new[] { 3, 7, 11, 15 } },
-            client.ObservedBatchIndexes);
-    }
-
-    [Fact]
     public async Task MissingArticleInAStripe_ZeroFillsOnlyThatSegment()
     {
         var client = new ControlledBatchNntpClient(16, SegmentSize, uniqueBytes: true);
@@ -276,21 +181,6 @@ public sealed class MultiSegmentStreamStripingTests
         Assert.Equal(client.ExpectedConcatenation[4 * SegmentSize], firstOfFifth[0]);
         Assert.Equal(client.ExpectedConcatenation.AsSpan(4 * SegmentSize + 1).ToArray(), rest);
         Assert.Equal(3, client.IndividualRequestCount);
-    }
-
-    [Theory]
-    [InlineData(10, 4, 4, new[] { 0, 4, 8 })]
-    [InlineData(12, 1, 4, new[] { 0, 1, 2, 3 })]
-    [InlineData(3, 4, 4, new[] { 0 })]
-    [InlineData(16, 2, 4, new[] { 0, 2, 4, 6 })]
-    public void TakeStride_TakesEveryStrideSlotUpToWidth(int count, int stride, int width, int[] expected)
-    {
-        var remaining = Enumerable.Range(0, count).ToList();
-
-        var slots = MultiSegmentStream.TakeStride(remaining, stride, width);
-
-        Assert.Equal(expected, slots);
-        Assert.Equal(Enumerable.Range(0, count).Except(expected), remaining);
     }
 
     [Theory]

@@ -1,4 +1,3 @@
-using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Models;
@@ -31,9 +30,6 @@ internal sealed class StreamingCapacitySnapshotProvider(
             configManager.GetInFlightArticleBudgetBytes(),
             streamingClient.GetSchedulingProviderSnapshots());
     }
-
-    internal int CaptureAvailableConnections(PrioritizedSemaphore? streamSemaphore) =>
-        streamingClient.GetAvailableStreamingConnections(streamSemaphore);
 
     internal static StreamingCapacitySnapshot CreateSnapshot(
         bool isPerStream,

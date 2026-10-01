@@ -609,11 +609,7 @@ public class DavMultipartFileStreamTests
             Metadata = new DavMultipartFile.Meta { FileParts = [.. parts], AesParams = aes },
         };
         using var cts = new CancellationTokenSource();
-        using var hint = cts.Token.SetContext(new StreamingStripeContext
-        {
-            StripeCount = 4,
-            AvailableConnections = () => 8,
-        });
+        using var hint = cts.Token.SetContext(new StreamingStripeContext { StripeCount = 4 });
         await using var packedStream = new DavMultipartFileStream(
             multipart,
             client,

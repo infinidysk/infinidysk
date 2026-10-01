@@ -45,8 +45,6 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly long _prefetchByteCeiling;
     private readonly int _taskWindowSize;
     private readonly int _stripeCount;
-    private readonly Func<int>? _availableConnections;
-    private int _activeBatches;
     private readonly InFlightArticleBudget? _budget;
     private long _inFlightPrefetchBytes;
     // Producer-only enqueue progress, read by ShouldStopPrefetch.
@@ -804,7 +802,6 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             : 1;
         if (_stripeCount > 1)
         {
-            _availableConnections = cancellationToken.GetContext<StreamingStripeContext>()?.AvailableConnections;
             Log.Debug(
                 "Interleaving BODY batches for {FileName} across up to {StripeCount} connections.",
                 _fileName,
@@ -962,14 +959,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         int width,
         CancellationToken cancellationToken)
     {
-        // Size the group from live capacity: a group planned for the stream-open hint but
-        // issued on fewer connections would run most of its slots as contiguous batches.
-        var attainable = AttainableStripes();
-        if (attainable < 2) return 0;
         var freeSlots = _taskWindowSize - _streamTasks.Reader.Count;
         var limit = (int)Math.Min(
             Math.Min(_segmentIds.Length - groupStart, freeSlots),
-            (long)attainable * width);
+            (long)_stripeCount * width);
         if (limit < 2) return 0;
 
         var ceilingRoom = _prefetchByteCeiling > 0
@@ -988,7 +981,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
         // A short group (tail, or a window that is nearly full) still spreads across every
         // stripe, so a few wide batches never serialize the last segments on few connections.
-        var stripes = Math.Min(attainable, count);
+        var stripes = Math.Min(_stripeCount, count);
         if (stripes < 2) return 0;
 
         // Waiting while holding part of a group can deadlock against another stream doing
@@ -1001,16 +994,13 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         var group = new PipelinedGroup(leases);
         try
         {
-            var remaining = Enumerable.Range(0, count).ToList();
-            for (var issuedBatches = 0; remaining.Count > 0; issuedBatches++)
+            for (var stripe = 0; stripe < stripes; stripe++)
             {
-                if (issuedBatches > 0)
+                if (stripe > 0)
                     ThrowIfPlaybackFailFast();
-                // Re-read capacity per batch: if it shrank, the rest of the group takes the
-                // nearest segments instead of queueing them behind a full stripe.
-                var stride = Math.Clamp(
-                    Math.Min(stripes - issuedBatches, AttainableStripes()), 1, remaining.Count);
-                var slots = TakeStride(remaining, stride, width);
+                var slots = new int[(count - stripe + stripes - 1) / stripes];
+                for (int index = 0, slot = stripe; slot < count; index++, slot += stripes)
+                    slots[index] = slot;
                 await IssueBatchAsync(groupStart, slots, group, cancellationToken).ConfigureAwait(false);
                 await PublishReadyAsync(groupStart, group, cancellationToken).ConfigureAwait(false);
             }
@@ -1022,31 +1012,6 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             AbandonUnpublished(group);
             throw;
         }
-    }
-
-    /// <summary>
-    /// Connections this stream already holds plus those it could start now, capped by the
-    /// stream-open hint. Without a live probe the hint is used as is.
-    /// </summary>
-    private int AttainableStripes()
-    {
-        if (_availableConnections is null)
-            return _stripeCount;
-
-        var attainable = (long)Volatile.Read(ref _activeBatches) + Math.Max(0, _availableConnections());
-        return (int)Math.Clamp(attainable, 1, _stripeCount);
-    }
-
-    /// <summary>Removes and returns remaining[0], remaining[stride], ... up to width slots.</summary>
-    internal static int[] TakeStride(List<int> remaining, int stride, int width)
-    {
-        var take = Math.Min(width, (remaining.Count + stride - 1) / stride);
-        var slots = new int[take];
-        for (var index = 0; index < take; index++)
-            slots[index] = remaining[index * stride];
-        for (var index = take - 1; index >= 0; index--)
-            remaining.RemoveAt(index * stride);
-        return slots;
     }
 
     private async Task IssueBatchAsync(
@@ -1072,8 +1037,6 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             var fetched = await FetchAttributedBatchResponsesAsync(liveIds.ToArray(), cancellationToken)
                 .ConfigureAwait(false);
             liveResponses = fetched.Responses;
-            if (_availableConnections is not null)
-                TrackActiveBatch(fetched.Completion);
             EnqueueBatchCompletionObserver(fetched.Completion);
         }
 
@@ -1244,19 +1207,6 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
         return new FetchedBodyBatch(batch.Responses.ToArray(), batch.Completion);
     }
-
-    private void TrackActiveBatch(Task completion)
-    {
-        Interlocked.Increment(ref _activeBatches);
-        completion.ContinueWith(
-            static (_, state) => ((MultiSegmentStream)state!).ReleaseActiveBatch(),
-            this,
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-    }
-
-    private void ReleaseActiveBatch() => Interlocked.Decrement(ref _activeBatches);
 
     private void EnqueueBatchCompletionObserver(Task completion)
     {

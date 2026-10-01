@@ -2277,28 +2277,6 @@ public class MultiProviderNntpClient(
         return bytesPerMs > 0 ? inFlight / bytesPerMs : inFlight;
     }
 
-    /// <summary>
-    /// Open, unreserved connections on providers that playback selection could use now.
-    /// Connections the pool could still open are excluded: handshakes are paced, so
-    /// striping across them would queue near segments behind later handshakes.
-    /// </summary>
-    internal int GetAvailableStreamingConnections()
-    {
-        var total = 0;
-        foreach (var provider in providers)
-        {
-            if (provider.ProviderType != ProviderType.Pooled ||
-                provider.GetCircuitBreakerSnapshot().State != ProviderCircuitState.Closed ||
-                IsOverLimit(provider))
-                continue;
-
-            var available = Math.Min(provider.IdleConnections, provider.UnreservedConnections);
-            total = total > int.MaxValue - available ? int.MaxValue : total + available;
-        }
-
-        return total;
-    }
-
     internal bool IsOverLimit(MultiConnectionNntpClient client)
     {
         var limit = client.ByteLimit;
