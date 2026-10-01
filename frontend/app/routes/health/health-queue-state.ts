@@ -37,7 +37,12 @@ export function mergeActiveHealthCheckItems(
     const activeItem = activeItemsById.get(item.id);
     if (activeItem) return activeItem;
     if (item.progress === undefined) return item;
-    const { progress: _progress, ...waitingItem } = item;
+    const {
+      progress: _progress,
+      phase: _phase,
+      phaseStartedAt: _phaseStartedAt,
+      ...waitingItem
+    } = item;
     return waitingItem;
   });
 
@@ -78,7 +83,9 @@ export function updateHealthCheckProgress(
 
   return {
     ...state,
-    items: state.items.map((item) => (item.id === davItemId ? { ...item, progress } : item)),
+    items: state.items.map((item) =>
+      item.id === davItemId ? { ...item, progress, phase: "Checking" } : item,
+    ),
   };
 }
 

@@ -27,5 +27,7 @@ public class GetHealthCheckQueueResponse : BaseApiResponse
         public required DateTimeOffset? NextHealthCheck { get; init; }
         public required bool CountsTowardUncheckedCount { get; init; }
         public int? Progress { get; init; }
+        public string? Phase { get; init; }
+        public DateTimeOffset? PhaseStartedAt { get; init; }
     }
 }

@@ -72,7 +72,7 @@ export function HealthTable({ isEnabled, healthCheckItems }: HealthTableProps) {
                                 ? null
                                 : formatWhen(item.nextHealthCheck, "ASAP")
                             }
-                            {...(item.progress != null ? { progress: item.progress } : {})}
+                            {...(item.progress != null ? { item } : {})}
                           />
                         </div>
                       </div>
@@ -81,7 +81,7 @@ export function HealthTable({ isEnabled, healthCheckItems }: HealthTableProps) {
                     <td className={desktopCellClass}>{formatAge(item.lastHealthCheck, "Never")}</td>
                     <td className={`${desktopCellClass} pr-4 md:pr-6`}>
                       {item.progress != null ? (
-                        <HealthProgressBadge percentage={item.progress} />
+                        <ActiveBadge item={item} />
                       ) : (
                         formatWhen(item.nextHealthCheck, "ASAP")
                       )}
@@ -114,22 +114,41 @@ function EmptyState({ title, body }: { title: string; body: string }) {
 function MetaChip({
   label,
   value,
-  progress,
+  item,
 }: {
   label: string;
   value: string | null;
-  progress?: number;
+  item?: HealthCheckQueueItem;
 }) {
   return (
     <span className="inline-flex items-center gap-1.5 text-[11px] text-base-content/55">
       <span className="uppercase tracking-wide text-base-content/40">{label}</span>
-      {progress != null ? (
-        <HealthProgressBadge percentage={progress} compact />
+      {item ? (
+        <ActiveBadge item={item} compact />
       ) : (
         <span className="font-mono tabular-nums text-base-content/70">{value}</span>
       )}
     </span>
   );
+}
+
+function ActiveBadge({ item, compact = false }: { item: HealthCheckQueueItem; compact?: boolean }) {
+  // Only the STAT sweep reports a percentage; other phases show how long they have been running.
+  if (item.phase && item.phase !== "Checking") {
+    return (
+      <Badge className="badge-sm badge-info badge-soft justify-center font-semibold tabular-nums">
+        {item.phase} · {formatDuration(item.phaseStartedAt ?? null)}
+      </Badge>
+    );
+  }
+  return <HealthProgressBadge percentage={item.progress ?? 0} compact={compact} />;
+}
+
+function formatDuration(dateString: string | null) {
+  const elapsed = Math.floor((Date.now() - new Date(dateString ?? "").getTime()) / 1000);
+  if (Number.isNaN(elapsed) || elapsed < 60) return "<1m";
+  if (elapsed < 3600) return `${Math.floor(elapsed / 60)}m`;
+  return `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m`;
 }
 
 function formatAge(dateString: string | null, fallback: string) {

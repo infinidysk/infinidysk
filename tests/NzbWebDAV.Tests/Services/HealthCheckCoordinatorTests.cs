@@ -97,7 +97,7 @@ public sealed class HealthCheckCoordinatorTests
 
         var progress = Assert.Single(harness.Service.GetActiveHealthCheckProgress());
         Assert.Equal(id, progress.Key);
-        Assert.Equal(0, progress.Value);
+        Assert.Equal(0, progress.Value.Progress);
 
         blocker.TrySetResult();
         await ReapUntilAsync(harness.Service, () => harness.Service.InProgressHealthCheckIds.Count == 0);

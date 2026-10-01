@@ -977,6 +977,8 @@ export type HealthCheckQueueItem = {
   nextHealthCheck: string | null;
   countsTowardUncheckedCount: boolean;
   progress?: number | null;
+  phase?: string | null;
+  phaseStartedAt?: string | null;
 };
 
 export type HealthCheckHistoryResponse = {

@@ -79,16 +79,22 @@ public class GetHealthCheckQueueController(
                 PendingRepairCount = pendingRepairCount,
                 ManualRunActive = admission.ManualRunActive,
             },
-            Items = davItems.Select(x => new GetHealthCheckQueueResponse.HealthCheckQueueItem()
+            Items = davItems.Select(x =>
             {
-                Id = x.Id.ToString(),
-                Name = x.Name,
-                Path = x.Path,
-                ReleaseDate = x.ReleaseDate,
-                LastHealthCheck = x.LastHealthCheck,
-                NextHealthCheck = x.NextHealthCheck,
-                CountsTowardUncheckedCount = HealthCheckService.CountsTowardUncheckedCount(x),
-                Progress = activeProgress.TryGetValue(x.Id, out var progress) ? progress : null,
+                var active = activeProgress.GetValueOrDefault(x.Id);
+                return new GetHealthCheckQueueResponse.HealthCheckQueueItem()
+                {
+                    Id = x.Id.ToString(),
+                    Name = x.Name,
+                    Path = x.Path,
+                    ReleaseDate = x.ReleaseDate,
+                    LastHealthCheck = x.LastHealthCheck,
+                    NextHealthCheck = x.NextHealthCheck,
+                    CountsTowardUncheckedCount = HealthCheckService.CountsTowardUncheckedCount(x),
+                    Progress = active?.Progress,
+                    Phase = active?.Phase,
+                    PhaseStartedAt = active?.PhaseStartedAt,
+                };
             }).ToList(),
         };
     }

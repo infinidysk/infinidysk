@@ -106,8 +106,8 @@ describe("updateHealthCheckProgress", () => {
 
     expect(updateHealthCheckProgress(firstUpdate, "second", 25)).toEqual({
       items: [
-        { ...queueItem("first", null), progress: 75 },
-        { ...queueItem("second", null), progress: 25 },
+        { ...queueItem("first", null), progress: 75, phase: "Checking" },
+        { ...queueItem("second", null), progress: 25, phase: "Checking" },
         queueItem("waiting", null),
       ],
       uncheckedCount: 3,
@@ -183,7 +183,15 @@ describe("mergeHealthCheckQueue", () => {
 describe("mergeActiveHealthCheckItems", () => {
   it("adds active workers and clears stale progress without changing the queue count", () => {
     const current: HealthQueueState = {
-      items: [{ ...queueItem("finished", null), progress: 100 }, queueItem("waiting", null)],
+      items: [
+        {
+          ...queueItem("finished", null),
+          progress: 100,
+          phase: "Repairing",
+          phaseStartedAt: "2026-09-19T12:00:00Z",
+        },
+        queueItem("waiting", null),
+      ],
       uncheckedCount: 7,
     };
     const active = { ...queueItem("active", null), progress: 0 };

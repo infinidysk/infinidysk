@@ -197,9 +197,19 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     internal Func<Guid, Task>? BeforeHealthyFinalizationOverride { get; set; }
     internal IReadOnlyCollection<Guid> InProgressHealthCheckIds => _inProgress.Keys.ToArray();
 
-    public IReadOnlyDictionary<Guid, int> GetActiveHealthCheckProgress() => _inProgress
-        .Where(entry => entry.Value.ProcessingTask?.IsCompleted != true)
-        .ToDictionary(entry => entry.Key, entry => entry.Value.Progress);
+    public sealed record ActiveHealthCheckProgress(int Progress, string Phase, DateTimeOffset PhaseStartedAt);
+
+    public IReadOnlyDictionary<Guid, ActiveHealthCheckProgress> GetActiveHealthCheckProgress()
+    {
+        var now = _timeProvider.GetUtcNow();
+        return _inProgress
+            .Where(entry => entry.Value.ProcessingTask?.IsCompleted != true)
+            .ToDictionary(entry => entry.Key, entry =>
+            {
+                var snapshot = entry.Value.GetDiagnosticSnapshot(now);
+                return new ActiveHealthCheckProgress(entry.Value.Progress, snapshot.Phase, snapshot.PhaseStartedAtUtc);
+            });
+    }
 
     public HealthCheckDiagnosticsSnapshot CaptureHealthCheckDiagnostics()
     {
