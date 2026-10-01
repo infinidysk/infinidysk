@@ -57,7 +57,7 @@ A connection returns a batch's articles one after another, so a batch of consecu
 
 The batch width setting keeps its meaning (articles per batch), and the bytes served are unchanged. When the decoded-article budget cannot hold a whole interleaved group at once, the stream falls back to consecutive batches rather than waiting, so concurrent viewers cannot block each other on partial reservations.
 
-The number of interleaved batches follows the connections the stream can actually use: the ones it already holds plus the ones free right now, counting only providers with byte quota left. When another viewer, a quota limit, or a smaller pool leaves only one connection, batches stay consecutive so the next article is never queued behind later ones. Articles already in the segment cache or repair store are handed to playback straight away; they do not wait for the connection that fetches the rest of their batch.
+The number of interleaved batches is the stream's connection target when playback opens, counting only providers with byte quota left. It is not re-measured while connections are still opening: on real providers, interleaving across connections that are still connecting reached the next articles sooner than waiting for them to open. Articles already in the segment cache or repair store are handed to playback straight away; they do not wait for the connection that fetches the rest of their batch.
 
 ## Enabling
 
