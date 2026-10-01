@@ -63,6 +63,20 @@ internal sealed record NntpWholePathScenario(
         },
     ];
 
+    // Warm, paced connections isolate ordered-delivery stalls from connection-ramp latency.
+    public static IReadOnlyList<NntpWholePathScenario> Smoothness =>
+    [
+        Paced("paced-256mib-w1", batchWidth: 1),
+        Paced("paced-256mib-w4", batchWidth: 4),
+    ];
+
+    private static NntpWholePathScenario Paced(string name, int batchWidth) =>
+        new(name, NntpWholePathLayer.HttpLike, false, 342, 768 * 1024, 20, batchWidth, 40, 6_000_000, YencCrcValidationMode.Require)
+        {
+            ArticleBufferSize = 40,
+            PrewarmConnections = true,
+        };
+
     public static IReadOnlyList<NntpWholePathScenario> ForSet(string set) =>
         set.Equals("quick", StringComparison.OrdinalIgnoreCase)
             ? Quick
@@ -72,7 +86,9 @@ internal sealed record NntpWholePathScenario(
                     ? Profile
                     : set.Equals("cold", StringComparison.OrdinalIgnoreCase)
                         ? Cold
-                        : throw new ArgumentException(
-                            "--set must be 'quick', 'sustained', 'profile', or 'cold'.",
-                            nameof(set));
+                        : set.Equals("smoothness", StringComparison.OrdinalIgnoreCase)
+                            ? Smoothness
+                            : throw new ArgumentException(
+                                "--set must be 'quick', 'sustained', 'profile', 'cold', or 'smoothness'.",
+                                nameof(set));
 }

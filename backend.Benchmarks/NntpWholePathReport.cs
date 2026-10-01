@@ -91,14 +91,20 @@ internal static class NntpWholePathReport
                     timing.ClientAllocatedBytes,
                     timing.Gen0Collections,
                     timing.Gen1Collections,
-                    timing.Gen2Collections));
+                    timing.Gen2Collections,
+                    timing.Delivery));
 
             Console.WriteLine(
                 $"{scenario.Name} bytes={deterministic.ActualBytes} sha256_match={deterministic.Sha256Match} " +
                 $"body_commands={deterministic.BodyCommands} peak_connections={deterministic.PeakActiveConnections} " +
                 $"time_to_peak_active_ms={timing.TimeToPeakActiveMs:F3} " +
                 $"wall_s={timing.WallSeconds:F3} " +
-                $"throughput_mb_s={timing.ThroughputMbps:F3} client_cpu_s={timing.ClientCpuSeconds:F3}");
+                $"throughput_mb_s={timing.ThroughputMbps:F3} client_cpu_s={timing.ClientCpuSeconds:F3}" +
+                (timing.Delivery is { } delivery
+                    ? $" time_to_8mb_ms={delivery.TimeTo8MbMs:F1} time_to_64mb_ms={delivery.TimeTo64MbMs:F1} " +
+                      $"longest_read_gap_ms={delivery.LongestReadGapMs:F1} " +
+                      $"p05_window_mb_s={delivery.P05WindowThroughputMbps:F1} p50_window_mb_s={delivery.P50WindowThroughputMbps:F1}"
+                    : ""));
         }
 
         if (jsonPath is not null)
@@ -209,7 +215,8 @@ internal static class NntpWholePathReport
                     GC.GetTotalAllocatedBytes(precise: false) - allocatedBefore,
                     GC.CollectionCount(0) - collectionCounts[0],
                     GC.CollectionCount(1) - collectionCounts[1],
-                    GC.CollectionCount(2) - collectionCounts[2]));
+                    GC.CollectionCount(2) - collectionCounts[2],
+                    bytes.Delivery));
         }
         finally
         {
@@ -296,10 +303,14 @@ internal static class NntpWholePathReport
 
         if (httpLike)
         {
-            var sink = new HttpLikeCountingSink(responseCopyChunkBytes, copyStartedTimestamp);
+            var timeline = new DeliveryTimeline(
+                copyStartedTimestamp,
+                (int)Math.Min(int.MaxValue, corpus.ExpectedBytes / responseCopyChunkBytes + 1));
+            var sink = new HttpLikeCountingSink(
+                responseCopyChunkBytes, copyStartedTimestamp, timeline: timeline);
             var sha256 = await sink.CopyFromAsync(stream, verifyHash, CancellationToken.None)
                 .ConfigureAwait(false);
-            return new ReadResult(sink.BytesWritten, sha256, sink.TimeToFirstByte);
+            return new ReadResult(sink.BytesWritten, sha256, sink.TimeToFirstByte, timeline.Summarize());
         }
         if (verifyHash)
             return await CopyAndHashAsync(stream, CancellationToken.None).ConfigureAwait(false);
@@ -413,7 +424,8 @@ internal static class NntpWholePathReport
         left.ClientAllocatedBytes + right.ClientAllocatedBytes,
         left.Gen0Collections + right.Gen0Collections,
         left.Gen1Collections + right.Gen1Collections,
-        left.Gen2Collections + right.Gen2Collections);
+        left.Gen2Collections + right.Gen2Collections,
+        DeliverySmoothness.Add(left.Delivery, right.Delivery));
 
     private static NntpWholePathTiming Divide(NntpWholePathTiming value, int divisor) => new(
         value.WallSeconds / divisor,
@@ -426,9 +438,14 @@ internal static class NntpWholePathReport
         value.ClientAllocatedBytes / divisor,
         value.Gen0Collections / divisor,
         value.Gen1Collections / divisor,
-        value.Gen2Collections / divisor);
+        value.Gen2Collections / divisor,
+        value.Delivery is { } delivery ? DeliverySmoothness.Divide(delivery, divisor) : null);
 
-    private readonly record struct ReadResult(long Count, string? Sha256, TimeSpan? TimeToFirstByte);
+    private readonly record struct ReadResult(
+        long Count,
+        string? Sha256,
+        TimeSpan? TimeToFirstByte,
+        DeliverySmoothness? Delivery = null);
 
     private sealed class CallbackCounts
     {

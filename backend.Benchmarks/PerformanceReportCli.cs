@@ -51,7 +51,7 @@ internal static class PerformanceReportCli
             if (arg == "--set")
             {
                 if (i + 1 >= args.Length)
-                    throw new ArgumentException("--set requires 'quick', 'sustained', 'profile', or 'cold'.");
+                    throw new ArgumentException("--set requires 'quick', 'sustained', 'profile', 'cold', or 'smoothness'.");
                 scenarioSet = args[i + 1];
                 i += 2;
                 continue;

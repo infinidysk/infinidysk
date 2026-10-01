@@ -113,6 +113,7 @@ public sealed class NntpWholePathReportContractTests
     [InlineData("sustained", 4)]
     [InlineData("profile", 1)]
     [InlineData("cold", 2)]
+    [InlineData("smoothness", 2)]
     public void ScenarioSets_AreNamedAndExplicitlyPlaintext(string set, int expectedCount)
     {
         var scenarios = NntpWholePathScenario.ForSet(set);
@@ -142,6 +143,38 @@ public sealed class NntpWholePathReportContractTests
         var prewarm = NntpWholePathScenario.Cold[1];
         Assert.Equal("cold-ramp-256mib-w4-prewarm", prewarm.Name);
         Assert.True(prewarm.PrewarmConnections);
+    }
+
+    [Fact]
+    public void SmoothnessScenarios_DifferOnlyInBatchWidthAndStartWarm()
+    {
+        var scenarios = NntpWholePathScenario.Smoothness;
+
+        Assert.Equal([1, 4], scenarios.Select(scenario => scenario.BatchWidth));
+        Assert.All(scenarios, scenario =>
+        {
+            Assert.Equal(NntpWholePathLayer.HttpLike, scenario.Layer);
+            Assert.Equal(20, scenario.ConnectionCount);
+            Assert.Equal(6_000_000, scenario.BandwidthBytesPerSecond);
+            Assert.Equal(0, scenario.HandshakeDelayMs);
+            Assert.True(scenario.PrewarmConnections);
+        });
+    }
+
+    [Fact]
+    public void PerformanceReportJson_EmitsDeliveryFieldsOnlyWhenMeasured()
+    {
+        var without = PerformanceReportJson.WholePathTiming(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+        var with = PerformanceReportJson.WholePathTiming(
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, new DeliverySmoothness(11, 12, 13, 14, 15));
+
+        Assert.False(without.ContainsKey("longestReadGapMs"));
+        Assert.Equal(11, with["timeTo8MbMs"]);
+        Assert.Equal(12, with["timeTo64MbMs"]);
+        Assert.Equal(13, with["longestReadGapMs"]);
+        // Names containing "throughput" are floored (higher is better) by check-performance-baseline.py.
+        Assert.Equal(14, with["p05WindowThroughputMbps"]);
+        Assert.Equal(15, with["p50WindowThroughputMbps"]);
     }
 
     [Fact]
