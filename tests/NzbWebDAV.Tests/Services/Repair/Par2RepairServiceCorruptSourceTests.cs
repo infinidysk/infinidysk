@@ -375,6 +375,25 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DeadSourceVolume_StopsHeaderScanOnceSliceCapIsProven()
+    {
+        const int segments = 40;
+        var fileData = PatternBytes(SliceSize * segments, 0x9A);
+        await using var release = await SeedAsync(fileData, EqualSegments(segments), recoveryExponents: [0u],
+            omitFromProvider: Enumerable.Range(0, segments).ToArray(), maxMissingSlices: "1");
+
+        var ok = await release.Service.TryPar2RepairAsync(
+            release.Item, [release.ContentSegmentIds[0]], CancellationToken.None);
+
+        Assert.Equal(Par2RepairOutcome.NotRepaired, ok);
+        var job = await ReadJobAsync(release.Item.Id);
+        Assert.Equal(Par2RepairJob.RepairJobState.Infeasible, job.State);
+        Assert.Contains("exceeds cap 1", job.FailureReason, StringComparison.Ordinal);
+        var probed = release.ContentSegmentIds.Count(id => release.Fake.BodyRequestCounts.ContainsKey(id));
+        Assert.InRange(probed, 1, 4);
+    }
+
+    [Fact]
     public async Task WrongWholeFileMd5_RejectsStagedResultAndCommitsNothing()
     {
         var fileData = PatternBytes(SliceSize * 2, 0xAA);

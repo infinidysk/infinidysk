@@ -44,6 +44,8 @@ public partial class Par2RepairService
         public List<RecvSlic> RecoveryPackets { get; } = [];
         public long IdentityByteLimit { get; init; } = MaxPar2IdentityBytes;
         public int IdentityRequestLimit { get; init; } = MaxPar2IdentityRequests;
+        public int MaxMissingSlices { get; init; } = int.MaxValue;
+        private readonly Dictionary<NzbFile, (int Misses, long ArticlesPerSlice)> _sourceMisses = new(ReferenceEqualityComparer.Instance);
         public DisposableOwner<IDisposable> IdentityBodyReservation { get; } = new();
         public string? IdentityBodyId { get; set; }
         public byte[]? IdentityBody { get; set; }
@@ -79,6 +81,16 @@ public partial class Par2RepairService
             if (comparisons > MaxPar2SourceComparisons - SourceComparisons)
                 throw new RepairInfeasibleException("PAR2 source matching exceeds the 100,000-comparison limit.");
             SourceComparisons += comparisons;
+        }
+
+        // ponytail: assumes uniform yEnc part sizes; irregular posts could undercount articles per slice.
+        public void NoteSourceMiss(NzbFile file, long articlesPerSlice)
+        {
+            _sourceMisses[file] = (_sourceMisses.GetValueOrDefault(file).Misses + 1, articlesPerSlice);
+            var missingSlices = _sourceMisses.Values.Sum(entry => (entry.Misses + entry.ArticlesPerSlice - 1) / entry.ArticlesPerSlice);
+            if (missingSlices > MaxMissingSlices)
+                throw new RepairInfeasibleException(
+                    $"Source articles are missing for at least {missingSlices} PAR2 slices, which exceeds cap {MaxMissingSlices}.");
         }
 
         public void NoteUnavailable(string id, Exception exception)

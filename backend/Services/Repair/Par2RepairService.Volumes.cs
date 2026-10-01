@@ -153,8 +153,10 @@ public partial class Par2RepairService
     private async Task<SourceLayout?> TryResolveVolumeAsync(NzbFile file, FileDesc descriptor, IfscPacket checksums,
         int fileIndex, Par2SetContext set, RepairPayload payload, RepairReadContext reads, CancellationToken ct)
     {
-        var observation = await ObserveVolumeAsync(file, reads, ct).ConfigureAwait(false);
         var length = checked((long)descriptor.FileLength);
+        // A slice spans at most ceil(slice / part) + 1 parts; the mean part never exceeds the real part size.
+        var articlesPerSlice = (long)Math.Ceiling((double)set.Main.SliceSize * file.Segments.Count / Math.Max(1, length)) + 1;
+        var observation = await ObserveVolumeAsync(file, articlesPerSlice, reads, ct).ConfigureAwait(false);
         if (observation.Length != length) return null;
         var ids = file.GetSegmentIds();
         LongRange[] ranges;
@@ -163,7 +165,7 @@ public partial class Par2RepairService
             ranges = payload.PlainFile is { SegmentByteRangesTrusted: true } plain
                      && ids.SequenceEqual(plain.SegmentIds)
                 ? BuildSegmentRanges(plain, ids.Length, length)
-                : await ResolveVolumeRangesAsync(file, payload, length, reads, ct).ConfigureAwait(false);
+                : await ResolveVolumeRangesAsync(file, payload, length, articlesPerSlice, reads, ct).ConfigureAwait(false);
         }
         catch (InvalidDataException exception)
         {
@@ -193,7 +195,7 @@ public partial class Par2RepairService
         return proven > 0 ? layout : null;
     }
 
-    private async Task<NzbFileObservation> ObserveVolumeAsync(NzbFile file, RepairReadContext reads, CancellationToken ct)
+    private async Task<NzbFileObservation> ObserveVolumeAsync(NzbFile file, long articlesPerSlice, RepairReadContext reads, CancellationToken ct)
     {
         if (reads.Observations.TryGetValue(file, out var cached)) return cached;
         reads.Budget.Charge(256);
@@ -237,9 +239,12 @@ public partial class Par2RepairService
                 if (probe.Header is not null)
                     reads.Headers[probe.Id] = probe.Header;
                 else if (probe.IsUnavailable)
+                {
                     reads.NoteUnavailable(probe.Id, probe.IsMissing
                         ? new UsenetArticleNotFoundException(probe.Id)
                         : new InvalidDataException("PAR2 identity header probe failed."));
+                    reads.NoteSourceMiss(file, articlesPerSlice);
+                }
                 if (probe.Header is not { FileSize: > 0 }) continue;
                 var observation = new NzbFileObservation(probe.Header.FileSize, null);
                 reads.Observations[file] = observation;
@@ -274,7 +279,7 @@ public partial class Par2RepairService
         bool IsMissing = false);
 
     private async Task<LongRange[]> ResolveVolumeRangesAsync(NzbFile file, RepairPayload payload, long length,
-        RepairReadContext reads, CancellationToken ct)
+        long articlesPerSlice, RepairReadContext reads, CancellationToken ct)
     {
         if (reads.VolumeRanges.TryGetValue(file, out var cached)) return cached;
         reads.Budget.Charge(checked(256L + file.Segments.Count * 192L));
@@ -294,8 +299,13 @@ public partial class Par2RepairService
             {
                 var id = file.Segments[index].MessageId;
                 if (evidence[index] is not null && !reads.Headers.ContainsKey(id)) continue;
+                var known = reads.UnavailableIds.Contains(id);
                 var header = await ReadHeaderCoreAsync(id, reads, ct, identity: true).ConfigureAwait(false);
-                if (header is null) continue;
+                if (header is null)
+                {
+                    if (!known && reads.UnavailableIds.Contains(id)) reads.NoteSourceMiss(file, articlesPerSlice);
+                    continue;
+                }
                 if (header.FileSize != length || header.TotalParts != evidence.Length || header.PartNumber != index + 1
                     || header.PartOffset < 0 || header.PartSize <= 0)
                     throw new InvalidDataException("yEnc length, part count, or article order conflicts with the posted volume.");

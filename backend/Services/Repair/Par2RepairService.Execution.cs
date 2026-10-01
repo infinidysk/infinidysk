@@ -24,10 +24,12 @@ public partial class Par2RepairService
 
         var maxMemoryBytes = _configManager.GetPar2MaxMemoryMb() * 1024L * 1024;
         var concurrency = _configManager.GetPar2FetchConcurrency();
+        var maxMissing = _configManager.GetPar2MaxMissingSlices();
         using var reads = new RepairReadContext(maxMemoryBytes, concurrency, bytes => Interlocked.Add(ref _activeBytesRead, bytes))
         {
             IdentityByteLimit = IdentityByteLimitForTests ?? MaxPar2IdentityBytes,
             IdentityRequestLimit = IdentityRequestLimitForTests ?? MaxPar2IdentityRequests,
+            MaxMissingSlices = maxMissing,
         };
         RepairPayload? payload = null;
         ResolvedSliceAccessor? accessor = null;
@@ -69,7 +71,6 @@ public partial class Par2RepairService
                 }
             }
 
-            var maxMissing = _configManager.GetPar2MaxMissingSlices();
             if (unavailableSlices.Count > maxMissing) return SliceCapFailure();
             SetRepairPhase("discovery", maxMemoryBytes);
             using (reads.Budget.Reserve(2L * sliceSize + 8192))
