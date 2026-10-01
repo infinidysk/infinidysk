@@ -2278,7 +2278,9 @@ public class MultiProviderNntpClient(
     }
 
     /// <summary>
-    /// Unreserved connections on providers that playback selection could use now.
+    /// Open, unreserved connections on providers that playback selection could use now.
+    /// Connections the pool could still open are excluded: handshakes are paced, so
+    /// striping across them would queue near segments behind later handshakes.
     /// </summary>
     internal int GetAvailableStreamingConnections()
     {
@@ -2290,7 +2292,7 @@ public class MultiProviderNntpClient(
                 IsOverLimit(provider))
                 continue;
 
-            var available = provider.UnreservedConnections;
+            var available = Math.Min(provider.IdleConnections, provider.UnreservedConnections);
             total = total > int.MaxValue - available ? int.MaxValue : total + available;
         }
 

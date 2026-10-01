@@ -766,7 +766,7 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
-    public void AvailableStreamingConnections_ExcludeProvidersPastTheirByteQuota()
+    public async Task AvailableStreamingConnections_CountOnlyOpenIdleConnectionsOnEligibleProviders()
     {
         using var client = new MultiProviderNntpClient(
         [
@@ -775,7 +775,13 @@ public class MultiProviderNntpClientTests
             CreateProvider(new ScriptedNntpClient { BatchResponseCode = 222 }, host: "c.example", maxConnections: 3, providerType: ProviderType.BackupOnly),
         ], bytesTracker: new ProviderBytesTracker());
 
-        Assert.Equal(4, client.GetAvailableStreamingConnections());
+        // A cold pool still needs paced handshakes, so it offers nothing to stripe across yet.
+        Assert.Equal(0, client.GetAvailableStreamingConnections());
+
+        foreach (var (provider, count) in client.Providers.Zip([6, 3, 3]))
+            await provider.PrewarmConnectionsAsync(count, CancellationToken.None);
+
+        Assert.Equal(3, client.GetAvailableStreamingConnections());
         Assert.True(client.IsOverLimit(client.Providers[0]));
         Assert.False(client.IsOverLimit(client.Providers[1]));
     }
