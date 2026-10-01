@@ -1104,11 +1104,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         // patch/cache layers first, and their tasks stay in file order with live
         // results so the consumer's segment-boundary contract is unchanged.
         var liveIds = new List<SegmentId>(slots.Length);
-        foreach (var slot in slots)
-        {
-            if (_knownMissingSegmentIndices?.Contains(groupStart + slot) != true)
-                liveIds.Add(_segmentIds.Span[groupStart + slot]);
-        }
+        foreach (var slot in slots.Where(slot => _knownMissingSegmentIndices?.Contains(groupStart + slot) != true))
+            liveIds.Add(_segmentIds.Span[groupStart + slot]);
 
         Task<UsenetDecodedBodyResponse>[] liveResponses = [];
         if (liveIds.Count > 0)
