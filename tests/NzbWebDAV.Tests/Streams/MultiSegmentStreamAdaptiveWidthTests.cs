@@ -118,16 +118,17 @@ public class MultiSegmentStreamAdaptiveWidthTests
             client, segmentCount, articleBufferSize: 40, segmentSize: segmentSize, initialBatchPlan: plan);
 
         await client.WaitUntilAsync(
-            () => client.BatchIssueCount == expectedBatchCount,
+            () => client.StartedSegmentCount == segmentCount,
             TimeSpan.FromSeconds(5));
 
-        Assert.Equal(expectedBatchCount, client.ObservedBatchSizes.Count);
+        // The plan's target also stripes the batches, so a short tail spreads across
+        // connections instead of forming one narrow final batch.
+        Assert.True(client.ObservedBatchSizes.Count >= expectedBatchCount);
+        Assert.Equal(expectedWidth, client.ObservedBatchSizes.Max());
+        Assert.Equal(segmentCount, client.ObservedBatchSizes.Sum());
         Assert.All(
-            client.ObservedBatchSizes.Take(expectedBatchCount - 1),
+            client.ObservedBatchSizes.Take(segmentCount / expectedWidth - 1),
             size => Assert.Equal(expectedWidth, size));
-        Assert.Equal(
-            segmentCount - expectedWidth * (expectedBatchCount - 1),
-            client.ObservedBatchSizes[^1]);
         client.ReleaseAllUpTo(segmentCount - 1);
         var buffer = new byte[segmentSize];
         while (await stream.ReadAsync(buffer) > 0) { }
@@ -799,6 +800,7 @@ internal sealed class ControlledBatchNntpClient : NntpClient
     public string[] SegmentIds { get; }
     public byte[] ExpectedConcatenation { get; }
     public List<int> ObservedBatchSizes { get; } = [];
+    public List<int[]> ObservedBatchIndexes { get; } = [];
     public int ActiveBatches
     {
         get { lock (_statsGate) return _activeBatches; }
@@ -844,9 +846,21 @@ internal sealed class ControlledBatchNntpClient : NntpClient
         get { lock (_statsGate) return _batchAdmittedCount; }
     }
     public SemaphoreSlim? SharedPermit { get; set; }
+    public int IndividualRequestCount
+    {
+        get { lock (_statsGate) return _individualRequests; }
+    }
 
     private int _remainderAdmissionAttempts;
     private int _batchAdmittedCount;
+    private int _individualRequests;
+
+    /// <summary>Fails a batch response; individual re-requests still return the payload.</summary>
+    public void FailSegment(int index, Exception exception)
+    {
+        if (_gates.TryGetValue(index, out var gate))
+            gate.TrySetException(exception);
+    }
 
     public void ReleaseSegment(int index)
     {
@@ -906,6 +920,8 @@ internal sealed class ControlledBatchNntpClient : NntpClient
         cancellationToken.ThrowIfCancellationRequested();
         var index = IndexOf(segmentId);
         var payload = _payloads[index];
+        lock (_statsGate)
+            _individualRequests++;
         var permit = SharedPermit;
         if (permit is not null)
             await permit.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -932,7 +948,26 @@ internal sealed class ControlledBatchNntpClient : NntpClient
         }
     }
 
-    public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+    /// <summary>Segments served by a local-data overlay; only misses reach the gated batches.</summary>
+    public IReadOnlySet<int>? LocalSegments { get; set; }
+
+    public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+        IReadOnlyList<SegmentId> segmentIds,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
+        CancellationToken cancellationToken) =>
+        LocalSegments is not { } local
+            ? DecodedRemoteBodiesAsync(segmentIds, onConnectionReadyAgain, cancellationToken)
+            : LocalDataBatchOverlay.ExecuteAsync(
+                segmentIds,
+                onConnectionReadyAgain,
+                id => local.Contains(IndexOf(id))
+                    ? LocalLookupResult.Hit(CreateResponse(id.ToString(), _payloads[IndexOf(id)], () => { }))
+                    : LocalLookupResult.Miss,
+                DecodedRemoteBodiesAsync,
+                LocalDataBatchOverlay.PassThroughRemote,
+                cancellationToken);
+
+    private async Task<UsenetDecodedBodyBatch> DecodedRemoteBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds,
         ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
@@ -978,6 +1013,7 @@ internal sealed class ControlledBatchNntpClient : NntpClient
             {
                 _batchIssueCount++;
                 ObservedBatchSizes.Add(batchSize);
+                ObservedBatchIndexes.Add(segmentIds.Select(IndexOf).ToArray());
                 _activeBatches++;
                 activeBatchIncremented = true;
                 _maxActiveBatches = Math.Max(_maxActiveBatches, _activeBatches);

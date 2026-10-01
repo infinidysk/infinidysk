@@ -2277,7 +2277,7 @@ public class MultiProviderNntpClient(
         return bytesPerMs > 0 ? inFlight / bytesPerMs : inFlight;
     }
 
-    private bool IsOverLimit(MultiConnectionNntpClient client)
+    internal bool IsOverLimit(MultiConnectionNntpClient client)
     {
         var limit = client.ByteLimit;
         if (bytesTracker == null || !limit.HasValue || limit.Value <= 0) return false;

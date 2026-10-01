@@ -44,8 +44,15 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly long? _readBudget;
     private readonly long _prefetchByteCeiling;
     private readonly int _taskWindowSize;
+    private readonly int _stripeCount;
+    // Producer-only: stripes the next group may use, between 1 and _stripeCount.
+    private int _stripeTarget;
+    private int _activeBatches;
     private readonly InFlightArticleBudget? _budget;
     private long _inFlightPrefetchBytes;
+    // Producer-only enqueue progress, read by ShouldStopPrefetch.
+    private int _segmentsEnqueued;
+    private long _enqueuedBytes;
     private TaskCompletionSource _prefetchSpace =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Stream? _stream;
@@ -793,8 +800,32 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 BodyPipelineBatchSize);
         }
         _streamTasks = Channel.CreateBounded<Task<SegmentDownloadResult>>(_taskWindowSize);
+        _stripeCount = usePipelinedBodyRequests
+            ? ResolveStripeCount(initialBatchPlan, articleBufferSize, cancellationToken)
+            : 1;
+        _stripeTarget = _stripeCount;
+        if (_stripeCount > 1)
+        {
+            Log.Debug(
+                "Interleaving BODY batches for {FileName} across up to {StripeCount} connections.",
+                _fileName,
+                _stripeCount);
+        }
         _cts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _downloadTask = DownloadSegments(usePipelinedBodyRequests, _cts.Token);
+    }
+
+    // A finite-range plan target is itself a hint; the stream-open hint still bounds it.
+    internal static int ResolveStripeCount(
+        InitialBodyBatchPlan? initialBatchPlan,
+        int articleBufferSize,
+        CancellationToken cancellationToken)
+    {
+        var hint = cancellationToken.GetContext<StreamingStripeContext>()?.StripeCount;
+        var target = initialBatchPlan?.EffectiveConnectionTarget is { } planned
+            ? Math.Min(planned, hint ?? planned)
+            : hint ?? 1;
+        return Math.Clamp(target, 1, Math.Max(1, articleBufferSize));
     }
 
     /// <summary>
@@ -863,11 +894,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
     private async Task DownloadPipelinedSegments(CancellationToken cancellationToken)
     {
-        var segmentsEnqueued = 0;
-        var enqueuedBytes = 0L;
         for (var batchStart = 0; batchStart < _segmentIds.Length;)
         {
-            if (ShouldStopPrefetch(segmentsEnqueued, enqueuedBytes))
+            if (ShouldStopPrefetch(_segmentsEnqueued, _enqueuedBytes))
                 break;
 
             // Fail-fast must win before the batch goes on the wire: once BODY commands
@@ -879,95 +908,306 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             // Adaptive width: narrower batches → more outstanding connections at the
             // same article-buffer memory cost when the consumer is starving.
             var batchWidth = _batchSizer?.Current ?? _bodyPipelineBatchSize;
-            var batchCount = Math.Min(batchWidth, _segmentIds.Length - batchStart);
-            var segmentIds = new SegmentId[batchCount];
-            for (var index = 0; index < batchCount; index++)
-            {
-                segmentIds[index] = _segmentIds.Span[batchStart + index];
-            }
-
             await _streamTasks.Writer.WaitToWriteAsync(cancellationToken).ConfigureAwait(false);
-            var leases = new ArticleByteLease?[batchCount];
-            Task<SegmentDownloadResult>[]? streamTasks = null;
-            try
+            var issued = _stripeCount > 1 && batchWidth > 1
+                ? await TryIssueStripedGroupAsync(batchStart, batchWidth, cancellationToken).ConfigureAwait(false)
+                : 0;
+            if (issued == 0)
             {
-                // Reserve decoded-memory capacity before the request takes a streaming
-                // permit. A saturated budget must never occupy all download slots with
-                // requests that cannot yet be drained.
-                for (var index = 0; index < leases.Length; index++)
-                {
-                    leases[index] = await LeaseSegmentBytesAsync(
-                        GetPlannedSegmentBytes(batchStart + index), cancellationToken).ConfigureAwait(false);
-                }
-
-                // Known degraded holes never enter a provider batch. They still ask local
-                // patch/cache layers first, and their tasks stay in file order with live
-                // results so the consumer's segment-boundary contract is unchanged.
-                var liveIndexes = Enumerable.Range(0, batchCount)
-                    .Where(index => _knownMissingSegmentIndices?.Contains(batchStart + index) != true)
-                    .ToArray();
-                Task<UsenetDecodedBodyResponse>[] liveResponses = [];
-                if (liveIndexes.Length > 0)
-                {
-                    var liveIds = liveIndexes.Select(index => segmentIds[index]).ToArray();
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var fetched = await FetchAttributedBatchResponsesAsync(liveIds, cancellationToken)
-                        .ConfigureAwait(false);
-                    liveResponses = fetched.Responses;
-                    EnqueueBatchCompletionObserver(fetched.Completion);
-                }
-
-                streamTasks = new Task<SegmentDownloadResult>[batchCount];
-                var liveResponseIndex = 0;
-                for (var index = 0; index < batchCount; index++)
-                {
-                    var lease = leases[index]!;
-                    leases[index] = null;
-                    var segmentIndex = batchStart + index;
-                    streamTasks[index] = _knownMissingSegmentIndices?.Contains(segmentIndex) == true
-                        ? DownloadKnownMissingSegment(
-                            segmentIds[index], segmentIndex, lease, isFirstSegment: segmentIndex == 0, cancellationToken)
-                        : DownloadBatchSegment(
-                            liveResponses[liveResponseIndex++],
-                            segmentIds[index],
-                            segmentIndex,
-                            isFirstSegment: segmentIndex == 0,
-                            lease,
-                            cancellationToken);
-                }
-            }
-            catch
-            {
-                foreach (var lease in leases)
-                    lease?.Dispose();
-                throw;
+                issued = await IssueContiguousBatchAsync(
+                        batchStart, Math.Min(batchWidth, _segmentIds.Length - batchStart), cancellationToken)
+                    .ConfigureAwait(false);
             }
 
-            var responseIndex = 0;
-            try
-            {
-                for (; responseIndex < streamTasks!.Length; responseIndex++)
-                {
-                    var planned = GetPlannedSegmentBytes(batchStart + responseIndex);
-                    await _streamTasks.Writer.WriteAsync(
-                        streamTasks[responseIndex], cancellationToken).ConfigureAwait(false);
-                    segmentsEnqueued++;
-                    enqueuedBytes += planned;
-                    Interlocked.Add(ref _inFlightPrefetchBytes, planned);
-                }
-            }
-            catch
-            {
-                for (; responseIndex < streamTasks!.Length; responseIndex++)
-                {
-                    _orphanedDisposals.Enqueue(DisposeStreamAsync(streamTasks[responseIndex]));
-                }
-
-                throw;
-            }
-
-            batchStart += batchCount;
+            batchStart += issued;
         }
+    }
+
+    private async Task<int> IssueContiguousBatchAsync(
+        int batchStart,
+        int batchCount,
+        CancellationToken cancellationToken)
+    {
+        var group = new PipelinedGroup(batchCount);
+        try
+        {
+            // Reserve decoded-memory capacity before the request takes a streaming
+            // permit. A saturated budget must never occupy all download slots with
+            // requests that cannot yet be drained.
+            for (var slot = 0; slot < batchCount; slot++)
+            {
+                group.Leases[slot] = await LeaseSegmentBytesAsync(
+                    GetPlannedSegmentBytes(batchStart + slot), cancellationToken).ConfigureAwait(false);
+            }
+
+            var (running, admitted) = await IssueBatchAsync(
+                    batchStart, Enumerable.Range(0, batchCount).ToArray(), group, cancellationToken)
+                .ConfigureAwait(false);
+            await PublishReadyAsync(batchStart, group, cancellationToken).ConfigureAwait(false);
+            await admitted.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (running is { IsCompleted: false })
+                TrackRunningBatch(running);
+            return batchCount;
+        }
+        catch
+        {
+            AbandonUnpublished(group);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Issues S batches over the next S×W segments, batch j taking j, j+S, j+2S, ...
+    /// Consecutive segments then arrive in parallel on different connections instead of
+    /// one after another on a single pipelined connection. Returns 0 when the group is
+    /// not worth striping or its memory cannot be reserved without waiting.
+    /// </summary>
+    private async Task<int> TryIssueStripedGroupAsync(
+        int groupStart,
+        int width,
+        CancellationToken cancellationToken)
+    {
+        if (_stripeTarget < 2) return 0;
+        var freeSlots = _taskWindowSize - _streamTasks.Reader.Count;
+        var limit = (int)Math.Min(
+            Math.Min(_segmentIds.Length - groupStart, freeSlots),
+            (long)_stripeTarget * width);
+        if (limit < 2) return 0;
+
+        var ceilingRoom = _prefetchByteCeiling > 0
+            ? _prefetchByteCeiling - Interlocked.Read(ref _inFlightPrefetchBytes)
+            : long.MaxValue;
+        var sizes = new long[limit];
+        var count = 0;
+        var bytes = 0L;
+        while (count < limit && !ShouldStopPrefetch(_segmentsEnqueued + count, _enqueuedBytes + bytes))
+        {
+            var planned = GetPlannedSegmentBytes(groupStart + count);
+            if (count > 0 && planned > ceilingRoom - bytes) break;
+            sizes[count++] = planned;
+            bytes += planned;
+        }
+
+        // A short group (tail, or a window that is nearly full) still spreads across every
+        // stripe, so a few wide batches never serialize the last segments on few connections.
+        var stripes = Math.Min(_stripeTarget, count);
+        if (stripes < 2) return 0;
+
+        // Waiting while holding part of a group can deadlock against another stream doing
+        // the same, so the whole group is reserved at once or the contiguous path runs.
+        ArticleByteLease?[]? leases = _budget is null
+            ? Enumerable.Repeat(ArticleByteLease.Empty, count).ToArray()
+            : _budget.TryLeaseAll(sizes.AsSpan(0, count));
+        if (leases is null) return 0;
+
+        var group = new PipelinedGroup(leases);
+        var issuedBatches = new List<Task>(stripes);
+        var remaining = Enumerable.Range(0, count).ToList();
+        try
+        {
+            for (var issued = 0; remaining.Count > 0; issued++)
+            {
+                if (issued > 0)
+                    ThrowIfPlaybackFailFast();
+                // After a capacity loss the rest of the group takes the nearest segments
+                // instead of queueing them behind stripes that can no longer run in parallel.
+                var stride = Math.Clamp(Math.Min(stripes - issued, _stripeTarget), 1, remaining.Count);
+                var slots = TakeStride(remaining, stride, width);
+                var runningBefore = issuedBatches.Count(batch => !batch.IsCompleted);
+                var issue = IssueBatchAsync(groupStart, slots, group, cancellationToken);
+                var waited = !issue.IsCompleted;
+                var (lastResponse, admitted) = await issue.ConfigureAwait(false);
+                if (!admitted.IsCompleted)
+                {
+                    // Local hits returned ahead of remote admission are readable now; the
+                    // capacity decision still waits until the misses hold a connection.
+                    await PublishReadyAsync(groupStart, group, cancellationToken).ConfigureAwait(false);
+                    var probe = await IssueLocalFrontierAsync(groupStart, group, remaining, cancellationToken)
+                        .ConfigureAwait(false);
+                    await Task.WhenAll(admitted, probe.Admitted).WaitAsync(cancellationToken).ConfigureAwait(false);
+                    if (probe.Running is { IsCompleted: false })
+                        TrackRunningBatch(probe.Running);
+                    waited = true;
+                }
+
+                if (lastResponse is { IsCompleted: false })
+                    TrackRunningBatch(lastResponse);
+                // Admitted only once one of this group's own batches finished: the stream
+                // holds fewer connections than stripes, so shrink to what it actually holds.
+                if (waited && issuedBatches.Count(batch => !batch.IsCompleted) < runningBefore)
+                    _stripeTarget = Math.Clamp(Volatile.Read(ref _activeBatches), 1, _stripeCount);
+                if (lastResponse is not null)
+                    issuedBatches.Add(lastResponse);
+                await PublishReadyAsync(groupStart, group, cancellationToken).ConfigureAwait(false);
+            }
+
+            return count;
+        }
+        catch
+        {
+            AbandonUnpublished(group);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// While a stripe waits for a connection, issues the next unissued file-order slot alone
+    /// until one is not served locally, so cached segments ahead of the remote frontier never
+    /// wait on another batch's admission. A remote probe is the nearest segment, which is what
+    /// narrowing would pick anyway; the caller awaits its admission before tracking it.
+    /// </summary>
+    private async Task<(Task? Running, Task Admitted)> IssueLocalFrontierAsync(
+        int groupStart,
+        PipelinedGroup group,
+        List<int> remaining,
+        CancellationToken cancellationToken)
+    {
+        while (group.Published < group.Tasks.Length && group.Tasks[group.Published] is null)
+        {
+            var slot = group.Published;
+            remaining.Remove(slot);
+            var (running, admitted) = await IssueBatchAsync(groupStart, [slot], group, cancellationToken)
+                .ConfigureAwait(false);
+            await PublishReadyAsync(groupStart, group, cancellationToken).ConfigureAwait(false);
+            if (running is null && admitted.IsCompleted) continue;
+            return (running, admitted);
+        }
+
+        return (null, Task.CompletedTask);
+    }
+
+    /// <summary>Removes and returns remaining[0], remaining[stride], ... up to width slots.</summary>
+    internal static int[] TakeStride(List<int> remaining, int stride, int width)
+    {
+        var take = Math.Min(width, (remaining.Count + stride - 1) / stride);
+        var slots = new int[take];
+        for (var index = 0; index < take; index++)
+            slots[index] = remaining[index * stride];
+        for (var index = take - 1; index >= 0; index--)
+            remaining.RemoveAt(index * stride);
+        return slots;
+    }
+
+    /// <summary>
+    /// Issues one batch. Running completes as the batch nears release (null if already done);
+    /// Admitted completes once its remote requests hold a connection.
+    /// </summary>
+    private async Task<(Task? Running, Task Admitted)> IssueBatchAsync(
+        int groupStart,
+        int[] slots,
+        PipelinedGroup group,
+        CancellationToken cancellationToken)
+    {
+        Task? running = null;
+        var admitted = Task.CompletedTask;
+        // Known degraded holes never enter a provider batch. They still ask local
+        // patch/cache layers first, and their tasks stay in file order with live
+        // results so the consumer's segment-boundary contract is unchanged.
+        var liveIds = new List<SegmentId>(slots.Length);
+        foreach (var slot in slots.Where(slot => _knownMissingSegmentIndices?.Contains(groupStart + slot) != true))
+            liveIds.Add(_segmentIds.Span[groupStart + slot]);
+
+        Task<UsenetDecodedBodyResponse>[] liveResponses = [];
+        if (liveIds.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var fetched = await FetchAttributedBatchResponsesAsync(liveIds.ToArray(), cancellationToken)
+                .ConfigureAwait(false);
+            liveResponses = fetched.Responses;
+            admitted = fetched.Admitted;
+            EnqueueBatchCompletionObserver(fetched.Completion);
+            // Responses complete in order and the connection is released only after the last
+            // body drains, so the last response is a race-free "about to free" marker.
+            if (liveResponses.Length > 0 && !liveResponses[^1].IsCompleted)
+                running = liveResponses[^1];
+        }
+
+        var liveResponseIndex = 0;
+        foreach (var slot in slots)
+        {
+            var lease = group.Leases[slot]!;
+            group.Leases[slot] = null;
+            var segmentIndex = groupStart + slot;
+            var segmentId = _segmentIds.Span[segmentIndex];
+            group.Tasks[slot] = _knownMissingSegmentIndices?.Contains(segmentIndex) == true
+                ? DownloadKnownMissingSegment(
+                    segmentId, segmentIndex, lease, isFirstSegment: segmentIndex == 0, cancellationToken)
+                : DownloadBatchSegment(
+                    liveResponses[liveResponseIndex++],
+                    segmentId,
+                    segmentIndex,
+                    isFirstSegment: segmentIndex == 0,
+                    lease,
+                    cancellationToken);
+        }
+
+        return (running, admitted);
+    }
+
+    // Producer-only. Holding more batches at once than the target proves the capacity is back.
+    private void TrackRunningBatch(Task lastResponse)
+    {
+        var running = Interlocked.Increment(ref _activeBatches);
+        if (running > _stripeTarget)
+            _stripeTarget = Math.Min(_stripeCount, running);
+        lastResponse.ContinueWith(
+            static (_, state) => ((MultiSegmentStream)state!).ReleaseRunningBatch(),
+            this,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private void ReleaseRunningBatch() => Interlocked.Decrement(ref _activeBatches);
+
+    /// <summary>Publishes the longest file-order prefix of created tasks.</summary>
+    private async Task PublishReadyAsync(
+        int groupStart,
+        PipelinedGroup group,
+        CancellationToken cancellationToken)
+    {
+        while (group.Published < group.Tasks.Length && group.Tasks[group.Published] is { } task)
+        {
+            var planned = GetPlannedSegmentBytes(groupStart + group.Published);
+            // Counted before the write so an immediate consumer release cannot go negative.
+            Interlocked.Add(ref _inFlightPrefetchBytes, planned);
+            try
+            {
+                await _streamTasks.Writer.WriteAsync(task, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                ReleaseInFlightPrefetchBytes(planned);
+                throw;
+            }
+
+            group.Published++;
+            _segmentsEnqueued++;
+            _enqueuedBytes += planned;
+        }
+    }
+
+    private void AbandonUnpublished(PipelinedGroup group)
+    {
+        for (var slot = group.Published; slot < group.Tasks.Length; slot++)
+        {
+            if (group.Tasks[slot] is { } task)
+                _orphanedDisposals.Enqueue(DisposeStreamAsync(task));
+        }
+
+        foreach (var lease in group.Leases)
+            lease?.Dispose();
+    }
+
+    private sealed class PipelinedGroup(ArticleByteLease?[] leases)
+    {
+        public PipelinedGroup(int count) : this(new ArticleByteLease?[count])
+        {
+        }
+
+        public ArticleByteLease?[] Leases { get; } = leases;
+        public Task<SegmentDownloadResult>?[] Tasks { get; } = new Task<SegmentDownloadResult>?[leases.Length];
+        public int Published { get; set; }
     }
 
     private async Task DownloadIndividualSegments(CancellationToken cancellationToken)
@@ -1025,7 +1265,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
     private sealed record FetchedBodyBatch(
         Task<UsenetDecodedBodyResponse>[] Responses,
-        Task Completion);
+        Task Completion,
+        Task Admitted);
 
     private async Task<FetchedBodyBatch> FetchAttributedBatchResponsesAsync(
         SegmentId[] liveIds,
@@ -1065,7 +1306,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 $"Pipelined BODY returned {batch.Responses.Count} responses for {liveIds.Length} requests.");
         }
 
-        return new FetchedBodyBatch(batch.Responses.ToArray(), batch.Completion);
+        return new FetchedBodyBatch(batch.Responses.ToArray(), batch.Completion, batch.Admitted);
     }
 
     private void EnqueueBatchCompletionObserver(Task completion)

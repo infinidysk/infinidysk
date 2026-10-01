@@ -766,6 +766,19 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public void IsOverLimit_FlagsOnlyProvidersPastTheirByteQuota()
+    {
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(new ScriptedNntpClient { BatchResponseCode = 222 }, host: "a.example", byteLimit: 1_000, bytesUsedOffset: 1_000),
+            CreateProvider(new ScriptedNntpClient { BatchResponseCode = 222 }, host: "b.example"),
+        ], bytesTracker: new ProviderBytesTracker());
+
+        Assert.True(client.IsOverLimit(client.Providers[0]));
+        Assert.False(client.IsOverLimit(client.Providers[1]));
+    }
+
+    [Fact]
     public async Task DecodedBodyAsync_CorruptThenMiss_ThrowsConclusiveMiss()
     {
         // A provider that returned a damaged copy did answer; the miss elsewhere must still

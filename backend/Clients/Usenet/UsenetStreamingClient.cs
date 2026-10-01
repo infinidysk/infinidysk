@@ -195,7 +195,9 @@ public class UsenetStreamingClient : WrappingNntpClient
         if (WrappingNntpClient.Unwrap(InnerClient) is not MultiProviderNntpClient multi)
             return [];
 
+        // Selection skips providers past their byte quota, so they add no playback capacity.
         return multi.Providers
+            .Where(provider => !multi.IsOverLimit(provider))
             .Select(provider =>
             {
                 var admission = provider.GetConnectionAdmissionSnapshot();

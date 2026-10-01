@@ -567,6 +567,85 @@ public class DavMultipartFileStreamTests
             failure.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StripedPipelinedReads_StoredOrEncryptedVolumes_SeekToTheSameBytes(bool encrypted)
+    {
+        const int segmentSize = 64;
+        const int segmentsPerVolume = 12;
+        const int volumeSize = segmentSize * segmentsPerVolume;
+        var plaintext = Enumerable.Range(0, 2 * volumeSize).Select(index => (byte)(index * 7 + 3)).ToArray();
+        var (packed, aes) = encrypted ? Encrypt(plaintext) : (plaintext, null);
+        var segments = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        var ranges = new Dictionary<string, LongRange>(StringComparer.Ordinal);
+        var allIds = new List<string>();
+        var parts = new List<DavMultipartFile.FilePart>();
+        for (var volume = 0; volume < 2; volume++)
+        {
+            var ids = new string[segmentsPerVolume];
+            for (var segment = 0; segment < segmentsPerVolume; segment++)
+            {
+                var id = ids[segment] = $"v{volume}-s{segment}";
+                segments[id] = packed.AsSpan((volume * segmentsPerVolume + segment) * segmentSize, segmentSize).ToArray();
+                ranges[id] = LongRange.FromStartAndSize(segment * segmentSize, segmentSize);
+            }
+
+            allIds.AddRange(ids);
+            parts.Add(new DavMultipartFile.FilePart
+            {
+                SegmentIds = ids,
+                SegmentIdByteRange = new LongRange(0, volumeSize),
+                FilePartByteRange = new LongRange(0, volumeSize),
+                SegmentByteRanges = [.. ids.Select(id => ranges[id])],
+                SegmentByteRangesTrusted = true,
+            });
+        }
+
+        using var client = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta { FileParts = [.. parts], AesParams = aes },
+        };
+        using var cts = new CancellationTokenSource();
+        using var hint = cts.Token.SetContext(new StreamingStripeContext { StripeCount = 4 });
+        await using var packedStream = new DavMultipartFileStream(
+            multipart,
+            client,
+            articleBufferSize: 8,
+            resolver: null,
+            usePipelinedBodyRequests: true,
+            fileName: "movie.mkv");
+        // Mirrors DatabaseStoreMultipartFile, which decrypts above the multipart stream.
+        await using Stream stream = aes is null ? packedStream : new AesDecoderStream(packedStream, aes);
+
+        foreach (var position in new[] { 0, 700, 1000, 100, 1400 })
+        {
+            stream.Seek(position, SeekOrigin.Begin);
+            var expected = plaintext.AsSpan(position, Math.Min(200, plaintext.Length - position)).ToArray();
+            var actual = new byte[expected.Length];
+            await stream.ReadExactlyAsync(actual, cts.Token);
+            Assert.Equal(expected, actual);
+        }
+
+        Assert.Contains(
+            client.BatchSegmentIds,
+            batch => batch.Length > 1 && allIds.IndexOf(batch[1]) != allIds.IndexOf(batch[0]) + 1);
+    }
+
+    private static (byte[] Ciphertext, AesParams Parameters) Encrypt(byte[] plaintext)
+    {
+        var key = Enumerable.Range(0, 32).Select(index => (byte)index).ToArray();
+        var iv = Enumerable.Range(32, 16).Select(index => (byte)index).ToArray();
+        using var aes = System.Security.Cryptography.Aes.Create();
+        aes.Mode = System.Security.Cryptography.CipherMode.CBC;
+        aes.Padding = System.Security.Cryptography.PaddingMode.None;
+        using var encryptor = aes.CreateEncryptor(key, iv);
+        var ciphertext = encryptor.TransformFinalBlock(plaintext, 0, plaintext.Length);
+        return (ciphertext, new AesParams { Key = key, Iv = iv, DecodedSize = plaintext.Length });
+    }
+
     private static async Task<byte[]> ReadFullyAsync(Stream stream, int count)
     {
         var buffer = new byte[count];
