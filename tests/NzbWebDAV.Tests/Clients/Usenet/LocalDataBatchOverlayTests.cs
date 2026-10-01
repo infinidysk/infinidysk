@@ -74,9 +74,43 @@ public sealed class LocalDataBatchOverlayTests
             LocalDataBatchOverlay.PassThroughRemote,
             CancellationToken.None);
 
+        await batch.DrainAsync();
         Assert.Equal(1, inner.OrdinaryBatchCount);
         Assert.Equal(["b"], inner.RequestedIds);
+        Assert.Equal(1, recorder.Count);
+        Assert.Equal(ArticleBodyResult.Retrieved, recorder.Result);
+    }
+
+    [Fact]
+    public async Task MixedBatch_LocalPrefixIsReadableWhileRemoteAdmissionWaits()
+    {
+        var inner = new ControlledDecodedBodyBatchClient();
+        var admission = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recorder = new ArticleBodyCompletionRecorder();
+        var batch = await LocalDataBatchOverlay.ExecuteAsync(
+            Ids("a", "b"),
+            recorder.Invoke,
+            id => id.ToString() == "a"
+                ? LocalLookupResult.Hit(Local(id, "local-a"u8.ToArray()))
+                : LocalLookupResult.Miss,
+            async (misses, callback, token) =>
+            {
+                await admission.Task.WaitAsync(token);
+                return await inner.DecodedBodiesAsync(misses, callback, token);
+            },
+            LocalDataBatchOverlay.PassThroughRemote,
+            CancellationToken.None).WaitAsync(Timeout);
+
+        var first = await batch.Responses[0].WaitAsync(Timeout);
+        using var copy = new MemoryStream();
+        await first.Stream!.CopyToAsync(copy).WaitAsync(Timeout);
+        Assert.Equal("local-a"u8.ToArray(), copy.ToArray());
+        Assert.False(batch.Responses[1].IsCompleted);
+        Assert.Equal(0, inner.OrdinaryBatchCount);
+
+        admission.SetResult();
         await batch.DrainAsync();
+        Assert.Equal(["b"], inner.RequestedIds);
         Assert.Equal(1, recorder.Count);
         Assert.Equal(ArticleBodyResult.Retrieved, recorder.Result);
     }
@@ -182,23 +216,63 @@ public sealed class LocalDataBatchOverlayTests
     }
 
     [Fact]
-    public async Task InnerSetupThrow_CleansLocalStreamsAndReportsNotRetrievedOnce()
+    public async Task MixedBatchRemoteSetupThrow_KeepsLocalHitsAndFailsOnlyMisses()
     {
         var recorder = new ArticleBodyCompletionRecorder();
-        var local = Local("a");
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            LocalDataBatchOverlay.ExecuteAsync(
-                Ids("a", "b"),
-                recorder.Invoke,
-                id => id.ToString() == "a" ? LocalLookupResult.Hit(local) : LocalLookupResult.Miss,
-                (_, _, _) => throw new InvalidOperationException("batch-setup"),
-                LocalDataBatchOverlay.PassThroughRemote,
-                CancellationToken.None));
+        var batch = await LocalDataBatchOverlay.ExecuteAsync(
+            Ids("a", "b", "a"),
+            recorder.Invoke,
+            id => id.ToString() == "a"
+                ? LocalLookupResult.Hit(Local(id, "local-a"u8.ToArray()))
+                : LocalLookupResult.Miss,
+            (_, _, _) => throw new InvalidOperationException("batch-setup"),
+            LocalDataBatchOverlay.PassThroughRemote,
+            CancellationToken.None);
 
-        Assert.Equal("batch-setup", error.Message);
+        foreach (var index in new[] { 0, 2 })
+        {
+            var hit = await batch.Responses[index].WaitAsync(Timeout);
+            using var copy = new MemoryStream();
+            await hit.Stream!.CopyToAsync(copy).WaitAsync(Timeout);
+            await hit.Stream.DisposeAsync();
+            Assert.Equal("local-a"u8.ToArray(), copy.ToArray());
+            if (index == 0)
+            {
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(
+                    () => batch.Responses[1].WaitAsync(Timeout));
+                Assert.Equal("batch-setup", error.Message);
+            }
+        }
+
+        await batch.Completion.WaitAsync(Timeout);
         Assert.Equal(1, recorder.Count);
         Assert.Equal(ArticleBodyResult.NotRetrieved, recorder.Result);
-        Assert.True(IsDisposed(local.Stream!));
+        Assert.Equal("local-batch-setup", recorder.FailureReason);
+    }
+
+    [Fact]
+    public async Task MixedBatchRemoteSetupCancellation_ReportsCancelledAndKeepsLocalHit()
+    {
+        using var cts = new CancellationTokenSource();
+        var recorder = new ArticleBodyCompletionRecorder();
+        var batch = await LocalDataBatchOverlay.ExecuteAsync(
+            Ids("a", "b"),
+            recorder.Invoke,
+            id => id.ToString() == "a" ? LocalLookupResult.Hit(Local(id)) : LocalLookupResult.Miss,
+            (_, _, _) =>
+            {
+                cts.Cancel();
+                throw new OperationCanceledException(cts.Token);
+            },
+            LocalDataBatchOverlay.PassThroughRemote,
+            cts.Token);
+
+        var hit = await batch.Responses[0].WaitAsync(Timeout);
+        await hit.Stream!.DisposeAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => batch.Responses[1].WaitAsync(Timeout));
+        await batch.Completion.WaitAsync(Timeout);
+        Assert.Equal(1, recorder.Count);
+        Assert.Equal(ArticleBodyResult.Cancelled, recorder.Result);
     }
 
     [Fact]
@@ -592,12 +666,16 @@ public sealed class LocalDataBatchOverlayTests
             Ids("a", "b"),
             outerCallback: null,
             id => id.ToString() == "a" ? LocalLookupResult.Hit(Local(id)) : LocalLookupResult.Miss,
-            (misses, callback, token) => inner.DecodedBodiesAsync(misses, callback, token),
+            (misses, callback, token) =>
+            {
+                harness.AssertCopiedOnto(token);
+                return inner.DecodedBodiesAsync(misses, callback, token);
+            },
             LocalDataBatchOverlay.PassThroughRemote,
             harness.Token);
 
-        harness.AssertCopiedOnto(inner.LastCancellationToken);
         await batch.DrainAsync();
+        Assert.Equal(1, inner.OrdinaryBatchCount);
     }
 
     [Fact]
@@ -740,6 +818,8 @@ public sealed class LocalDataBatchOverlayTests
         Assert.Equal(ArticleBodyResult.NotRetrieved, recorder.Result);
     }
 
+    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
+
     private static SegmentId[] Ids(params string[] ids) => ids.Select(id => new SegmentId(id)).ToArray();
 
     private static UsenetDecodedBodyResponse Local(SegmentId id, byte[]? content = null) =>
@@ -750,19 +830,6 @@ public sealed class LocalDataBatchOverlayTests
         ArticleBodyCompletionHandler __,
         CancellationToken ___) =>
         throw new InvalidOperationException("inner batch should not run");
-
-    private static bool IsDisposed(Stream stream)
-    {
-        try
-        {
-            _ = stream.ReadByte();
-            return false;
-        }
-        catch (ObjectDisposedException)
-        {
-            return true;
-        }
-    }
 
     private sealed class ThrowingReadYencStream : YencStream
     {

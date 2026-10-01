@@ -582,9 +582,9 @@ public sealed class RepairedSegmentNntpClientTests
                 ? await client.DecodedBodiesAsync(ids, new UsenetExclusiveConnection(null), CancellationToken.None)
                 : await client.DecodedBodiesAsync(ids, onConnectionReadyAgain: null, CancellationToken.None);
 
+            await batch.DrainAsync();
             Assert.Equal(1, inner.BatchRequestCount);
             Assert.Equal(["b@test"], inner.RequestedSegmentIds.OrderBy(x => x).ToArray());
-            await batch.DrainAsync();
         }
         finally
         {
