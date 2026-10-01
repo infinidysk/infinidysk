@@ -948,7 +948,26 @@ internal sealed class ControlledBatchNntpClient : NntpClient
         }
     }
 
-    public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+    /// <summary>Segments served by a local-data overlay; only misses reach the gated batches.</summary>
+    public IReadOnlySet<int>? LocalSegments { get; set; }
+
+    public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+        IReadOnlyList<SegmentId> segmentIds,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
+        CancellationToken cancellationToken) =>
+        LocalSegments is not { } local
+            ? DecodedRemoteBodiesAsync(segmentIds, onConnectionReadyAgain, cancellationToken)
+            : LocalDataBatchOverlay.ExecuteAsync(
+                segmentIds,
+                onConnectionReadyAgain,
+                id => local.Contains(IndexOf(id))
+                    ? LocalLookupResult.Hit(CreateResponse(id.ToString(), _payloads[IndexOf(id)], () => { }))
+                    : LocalLookupResult.Miss,
+                DecodedRemoteBodiesAsync,
+                LocalDataBatchOverlay.PassThroughRemote,
+                cancellationToken);
+
+    private async Task<UsenetDecodedBodyBatch> DecodedRemoteBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds,
         ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)

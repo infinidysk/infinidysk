@@ -457,6 +457,7 @@ public class ArticleCachingNntpClient(
         {
             Responses = responses,
             Completion = uncachedBatch?.Completion ?? Task.CompletedTask,
+            Admitted = uncachedBatch?.Admitted ?? Task.CompletedTask,
         };
     }
 

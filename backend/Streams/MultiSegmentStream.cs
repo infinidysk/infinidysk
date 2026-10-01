@@ -940,9 +940,13 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     GetPlannedSegmentBytes(batchStart + slot), cancellationToken).ConfigureAwait(false);
             }
 
-            await IssueBatchAsync(batchStart, Enumerable.Range(0, batchCount).ToArray(), group, cancellationToken)
+            var (running, admitted) = await IssueBatchAsync(
+                    batchStart, Enumerable.Range(0, batchCount).ToArray(), group, cancellationToken)
                 .ConfigureAwait(false);
             await PublishReadyAsync(batchStart, group, cancellationToken).ConfigureAwait(false);
+            await admitted.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (running is { IsCompleted: false })
+                TrackRunningBatch(running);
             return batchCount;
         }
         catch
@@ -1010,9 +1014,20 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 var stride = Math.Clamp(Math.Min(stripes - issued, _stripeTarget), 1, remaining.Count);
                 var slots = TakeStride(remaining, stride, width);
                 var runningBefore = issuedBatches.Count(batch => !batch.IsCompleted);
-                var admission = IssueBatchAsync(groupStart, slots, group, cancellationToken);
-                var waited = !admission.IsCompleted;
-                var lastResponse = await admission.ConfigureAwait(false);
+                var issue = IssueBatchAsync(groupStart, slots, group, cancellationToken);
+                var waited = !issue.IsCompleted;
+                var (lastResponse, admitted) = await issue.ConfigureAwait(false);
+                if (!admitted.IsCompleted)
+                {
+                    // Local hits returned ahead of remote admission are readable now; the
+                    // capacity decision still waits until the misses hold a connection.
+                    await PublishReadyAsync(groupStart, group, cancellationToken).ConfigureAwait(false);
+                    await admitted.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    waited = true;
+                }
+
+                if (lastResponse is { IsCompleted: false })
+                    TrackRunningBatch(lastResponse);
                 // Admitted only once one of this group's own batches finished: the stream
                 // holds fewer connections than stripes, so shrink to what it actually holds.
                 if (waited && issuedBatches.Count(batch => !batch.IsCompleted) < runningBefore)
@@ -1043,14 +1058,18 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         return slots;
     }
 
-    /// <summary>Returns a task that completes as the batch nears release, or null if already done.</summary>
-    private async Task<Task?> IssueBatchAsync(
+    /// <summary>
+    /// Issues one batch. Running completes as the batch nears release (null if already done);
+    /// Admitted completes once its remote requests hold a connection.
+    /// </summary>
+    private async Task<(Task? Running, Task Admitted)> IssueBatchAsync(
         int groupStart,
         int[] slots,
         PipelinedGroup group,
         CancellationToken cancellationToken)
     {
         Task? running = null;
+        var admitted = Task.CompletedTask;
         // Known degraded holes never enter a provider batch. They still ask local
         // patch/cache layers first, and their tasks stay in file order with live
         // results so the consumer's segment-boundary contract is unchanged.
@@ -1068,14 +1087,12 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             var fetched = await FetchAttributedBatchResponsesAsync(liveIds.ToArray(), cancellationToken)
                 .ConfigureAwait(false);
             liveResponses = fetched.Responses;
+            admitted = fetched.Admitted;
             EnqueueBatchCompletionObserver(fetched.Completion);
             // Responses complete in order and the connection is released only after the last
             // body drains, so the last response is a race-free "about to free" marker.
             if (liveResponses.Length > 0 && !liveResponses[^1].IsCompleted)
-            {
                 running = liveResponses[^1];
-                TrackRunningBatch(running);
-            }
         }
 
         var liveResponseIndex = 0;
@@ -1097,7 +1114,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     cancellationToken);
         }
 
-        return running;
+        return (running, admitted);
     }
 
     // Producer-only. Holding more batches at once than the target proves the capacity is back.
@@ -1221,7 +1238,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
     private sealed record FetchedBodyBatch(
         Task<UsenetDecodedBodyResponse>[] Responses,
-        Task Completion);
+        Task Completion,
+        Task Admitted);
 
     private async Task<FetchedBodyBatch> FetchAttributedBatchResponsesAsync(
         SegmentId[] liveIds,
@@ -1261,7 +1279,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                 $"Pipelined BODY returned {batch.Responses.Count} responses for {liveIds.Length} requests.");
         }
 
-        return new FetchedBodyBatch(batch.Responses.ToArray(), batch.Completion);
+        return new FetchedBodyBatch(batch.Responses.ToArray(), batch.Completion, batch.Admitted);
     }
 
     private void EnqueueBatchCompletionObserver(Task completion)

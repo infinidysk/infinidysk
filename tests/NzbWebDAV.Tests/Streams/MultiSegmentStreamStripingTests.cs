@@ -167,6 +167,42 @@ public sealed class MultiSegmentStreamStripingTests
     }
 
     [Fact]
+    public async Task CachedPrefix_CapacityBelowStripes_NextSegmentNeedsOnlyItsOwnRelease()
+    {
+        // Same capacity loss, but each group's first stripe starts with a cached article, so
+        // every batch returns before its misses are admitted. The stream must still observe
+        // remote admission and narrow, or [20,24,28] holds segment 21 behind 24 and 28.
+        var client = new ControlledBatchNntpClient(32, SegmentSize, uniqueBytes: true)
+        {
+            SharedPermit = new SemaphoreSlim(1, 1),
+            LocalSegments = new HashSet<int> { 0, 1, 2, 3, 16, 17, 18, 19 },
+        };
+        using var cts = new CancellationTokenSource();
+        using var hint = cts.Token.SetContext(new StreamingStripeContext { StripeCount = 4 });
+        await using var stream = CreateStream(client, cts.Token);
+
+        // A batch's own cached hits do not wait for its misses to be admitted.
+        var cached = new byte[2 * SegmentSize];
+        await stream.ReadExactlyAsync(cached).AsTask().WaitAsync(Timeout);
+        Assert.Equal(client.ExpectedConcatenation.AsSpan(0, cached.Length).ToArray(), cached);
+
+        client.ReleaseAllUpTo(15);
+        var head = new byte[14 * SegmentSize];
+        await stream.ReadExactlyAsync(head).AsTask().WaitAsync(Timeout);
+
+        var next = new byte[SegmentSize];
+        for (var index = 16; index < 24; index++)
+        {
+            client.ReleaseSegment(index);
+            await stream.ReadExactlyAsync(next).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal(client.ExpectedConcatenation.AsSpan(index * SegmentSize, SegmentSize).ToArray(), next);
+        }
+
+        client.ReleaseAllUpTo(31);
+        await ReadAllAsync(stream);
+    }
+
+    [Fact]
     public async Task CapacityThatReturns_InterleavesAgain()
     {
         var permit = new SemaphoreSlim(1, 4);

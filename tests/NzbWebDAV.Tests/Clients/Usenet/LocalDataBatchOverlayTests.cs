@@ -106,9 +106,11 @@ public sealed class LocalDataBatchOverlayTests
         await first.Stream!.CopyToAsync(copy).WaitAsync(Timeout);
         Assert.Equal("local-a"u8.ToArray(), copy.ToArray());
         Assert.False(batch.Responses[1].IsCompleted);
+        Assert.False(batch.Admitted.IsCompleted);
         Assert.Equal(0, inner.OrdinaryBatchCount);
 
         admission.SetResult();
+        await batch.Admitted.WaitAsync(Timeout);
         await batch.DrainAsync();
         Assert.Equal(["b"], inner.RequestedIds);
         Assert.Equal(1, recorder.Count);
@@ -244,6 +246,7 @@ public sealed class LocalDataBatchOverlayTests
             }
         }
 
+        await batch.Admitted.WaitAsync(Timeout);
         await batch.Completion.WaitAsync(Timeout);
         Assert.Equal(1, recorder.Count);
         Assert.Equal(ArticleBodyResult.NotRetrieved, recorder.Result);

@@ -191,6 +191,7 @@ internal static class LocalDataBatchOverlay
             Completion = CompleteThenDisposeAsync(
                 overlayState.CompleteAsync(overlayPublisher, inner.Completion),
                 abandonCts),
+            Admitted = inner.Admitted,
         };
 #pragma warning restore CA2025
     }
@@ -223,6 +224,7 @@ internal static class LocalDataBatchOverlay
             Completion = CompleteThenDisposeAsync(
                 state.CompleteAsync(publisher, RemoteCompletionAsync(remote)),
                 abandonCts),
+            Admitted = RemoteAdmittedAsync(remote),
         };
 #pragma warning restore CA2025
     }
@@ -267,6 +269,19 @@ internal static class LocalDataBatchOverlay
             if (inner is not null)
                 await DecodedBodyBatchCleanup.AbandonAsync(inner, abandonCts).ConfigureAwait(false);
             throw;
+        }
+    }
+
+    private static async Task RemoteAdmittedAsync(Task<UsenetDecodedBodyBatch> remote)
+    {
+        try
+        {
+            var inner = await remote.ConfigureAwait(false);
+            await inner.Admitted.ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // Admission ended; the failure itself surfaces on every miss response.
         }
     }
 
