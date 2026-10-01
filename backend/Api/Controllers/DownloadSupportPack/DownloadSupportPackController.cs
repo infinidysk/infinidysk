@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Config;
 using NzbWebDAV.Services.SupportPack;
+using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Api.Controllers.DownloadSupportPack;
 
@@ -12,8 +13,9 @@ public sealed class DownloadSupportPackController(SupportPackService supportPack
     protected override async Task<IActionResult> HandleRequest()
     {
         var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss");
+        var fileName = $"ifd-{ConfigManager.AppVersion}-{timestamp}.zip";
         Response.ContentType = "application/zip";
-        Response.Headers.ContentDisposition = $"attachment; filename=\"ifd-{ConfigManager.AppVersion}-{timestamp}.zip\"";
+        Response.Headers.ContentDisposition = ContentHeaderUtil.GetContentDisposition(fileName, shouldDownload: true);
         Response.Headers.CacheControl = "no-store";
 
         // Quality warnings must precede the streaming body so the Support UI can show
