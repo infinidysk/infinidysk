@@ -20,6 +20,18 @@ public class WrappingNntpClient(INntpClient usenetClient) : NntpClient, INntpCon
             client = wrap.InnerClient;
         return client;
     }
+
+    internal static T? Find<T>(INntpClient client) where T : class, INntpClient
+    {
+        while (true)
+        {
+            if (client is T match)
+                return match;
+            if (client is not WrappingNntpClient wrap)
+                return null;
+            client = wrap.InnerClient;
+        }
+    }
     private readonly ConcurrentDictionary<INntpClient, byte> _retiringClients = new();
     // Weak entries preserve retirement order for the cap without retaining every
     // successfully drained client for the lifetime of the wrapper.

@@ -2277,7 +2277,27 @@ public class MultiProviderNntpClient(
         return bytesPerMs > 0 ? inFlight / bytesPerMs : inFlight;
     }
 
-    private bool IsOverLimit(MultiConnectionNntpClient client)
+    /// <summary>
+    /// Unreserved connections on providers that playback selection could use now.
+    /// </summary>
+    internal int GetAvailableStreamingConnections()
+    {
+        var total = 0;
+        foreach (var provider in providers)
+        {
+            if (provider.ProviderType != ProviderType.Pooled ||
+                provider.GetCircuitBreakerSnapshot().State != ProviderCircuitState.Closed ||
+                IsOverLimit(provider))
+                continue;
+
+            var available = provider.UnreservedConnections;
+            total = total > int.MaxValue - available ? int.MaxValue : total + available;
+        }
+
+        return total;
+    }
+
+    internal bool IsOverLimit(MultiConnectionNntpClient client)
     {
         var limit = client.ByteLimit;
         if (bytesTracker == null || !limit.HasValue || limit.Value <= 0) return false;

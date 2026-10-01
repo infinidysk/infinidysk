@@ -195,7 +195,9 @@ public class UsenetStreamingClient : WrappingNntpClient
         if (WrappingNntpClient.Unwrap(InnerClient) is not MultiProviderNntpClient multi)
             return [];
 
+        // Selection skips providers past their byte quota, so they add no playback capacity.
         return multi.Providers
+            .Where(provider => !multi.IsOverLimit(provider))
             .Select(provider =>
             {
                 var admission = provider.GetConnectionAdmissionSnapshot();
@@ -206,6 +208,22 @@ public class UsenetStreamingClient : WrappingNntpClient
                     admission?.EffectiveTransferLimit);
             })
             .ToArray();
+    }
+
+    /// <summary>
+    /// Streaming connections a new request could start now without waiting: the lesser of
+    /// free streaming permits (the stream's own semaphore in per-stream mode) and eligible
+    /// provider connections. A scheduling hint, not admission.
+    /// </summary>
+    internal int GetAvailableStreamingConnections(PrioritizedSemaphore? streamSemaphore)
+    {
+        var permits = streamSemaphore?.AvailableCount
+                      ?? Find<DownloadingNntpClient>(InnerClient)?.AvailableStreamingPermits
+                      ?? int.MaxValue;
+        var connections = Unwrap(InnerClient) is MultiProviderNntpClient multi
+            ? multi.GetAvailableStreamingConnections()
+            : int.MaxValue;
+        return Math.Min(permits, connections);
     }
 
     public Task ProbeLatchedProvidersAsync(CancellationToken cancellationToken)
