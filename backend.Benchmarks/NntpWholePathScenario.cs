@@ -68,10 +68,14 @@ internal sealed record NntpWholePathScenario(
     [
         Paced("paced-256mib-w1", batchWidth: 1),
         Paced("paced-256mib-w4", batchWidth: 4),
+        Paced("paced-256mib-w8", batchWidth: 8),
+        // Fewer connections than the default window can use: scheduling must not
+        // depend on spare capacity to stay steady.
+        Paced("paced-256mib-w4-4conn", batchWidth: 4, connections: 4),
     ];
 
-    private static NntpWholePathScenario Paced(string name, int batchWidth) =>
-        new(name, NntpWholePathLayer.HttpLike, false, 342, 768 * 1024, 20, batchWidth, 40, 6_000_000, YencCrcValidationMode.Require)
+    private static NntpWholePathScenario Paced(string name, int batchWidth, int connections = 20) =>
+        new(name, NntpWholePathLayer.HttpLike, false, 342, 768 * 1024, connections, batchWidth, 40, 6_000_000, YencCrcValidationMode.Require)
         {
             ArticleBufferSize = 40,
             PrewarmConnections = true,
