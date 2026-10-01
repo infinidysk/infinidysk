@@ -15,7 +15,7 @@ public sealed class DeliveryTimelineTests
         var timeline = new DeliveryTimeline(Start);
         // 1 MB every 25 ms for 2 s = 40 MB/s.
         for (var i = 1; i <= 80; i++)
-            timeline.Record(At(i * 25), i * 1_000_000L);
+            timeline.Record(At(i * 25d), i * 1_000_000L);
 
         var summary = timeline.Summarize(TimeSpan.FromMilliseconds(250));
 
