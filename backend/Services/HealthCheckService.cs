@@ -45,6 +45,9 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     private static readonly TimeSpan MissingPayloadInitialRecheck = TimeSpan.FromDays(1);
     private static readonly TimeSpan MissingPayloadConfirmedRecheck = TimeSpan.FromDays(7);
     private static readonly TimeSpan HealthCheckProgressTimeout = TimeSpan.FromMinutes(5);
+    // ponytail: one fixed cap for every attempt; a very large PAR2 repair could legitimately need longer.
+    internal static readonly TimeSpan HealthCheckAttemptDeadline = TimeSpan.FromHours(1);
+    private static readonly TimeSpan HealthCheckAttemptDeadlineDeferral = TimeSpan.FromDays(1);
 
     // Repeated remove-and-blocklist repairs for the same library path in a short window indicate
     // a replacement loop (Arr keeps re-grabbing a release repair keeps rejecting, issue #732).
@@ -1181,6 +1184,37 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 
     // internal for tests: the degraded-classification scenarios drive this directly.
     internal async Task PerformHealthCheck
+    (
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        int concurrency,
+        CancellationToken ct
+    )
+    {
+        using var deadline = new CancellationTokenSource(HealthCheckAttemptDeadline, _timeProvider);
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+        try
+        {
+            await PerformHealthCheckAttempt(davItem, dbClient, concurrency, attempt.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            CompleteHealthProgress(davItem.Id);
+            var now = _timeProvider.GetUtcNow();
+            var next = now + HealthCheckAttemptDeadlineDeferral;
+            await dbClient.Ctx.Items
+                .Where(item => item.Id == davItem.Id)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(item => item.LastHealthCheck, now)
+                    .SetProperty(item => item.NextHealthCheck, next), ct)
+                .ConfigureAwait(false);
+            Log.Warning(
+                "Health check for {Path} did not finish within {Deadline}. Deferred next check to {NextCheck}.",
+                davItem.Path, HealthCheckAttemptDeadline, next);
+        }
+    }
+
+    private async Task PerformHealthCheckAttempt
     (
         DavItem davItem,
         DavDatabaseClient dbClient,

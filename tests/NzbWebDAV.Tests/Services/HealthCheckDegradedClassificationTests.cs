@@ -248,6 +248,30 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AttemptDeadline_DefersWithoutVerdict()
+    {
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, [10_000, 10_000, 10_000]);
+        item.ReleaseDate = null;
+        await _context.SaveChangesAsync();
+        var now = new DateTimeOffset(2026, 9, 16, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new ControllableTimeProvider(now);
+        var headClient = new HangingHeadNntpClient(NewFakeClient(segments, missing: []));
+        var (service, _) = await NewServiceAsync(headClient, Par2RepairOutcome.NotRepaired, timeProvider);
+
+        var check = service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+        await headClient.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        timeProvider.Advance(HealthCheckService.HealthCheckAttemptDeadline);
+        await check.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Empty(GetHealthRows(item.Id));
+        var reloaded = ReloadItem(item.Id);
+        Assert.Equal(now + HealthCheckService.HealthCheckAttemptDeadline + TimeSpan.FromDays(1), reloaded.NextHealthCheck);
+        Assert.Null(reloaded.UrgentRepairFailures);
+    }
+
+    [Fact]
     public async Task MissingReleaseDate_HeadUsesSharedHealthAdmission()
     {
         var segments = NewSegmentIds(3);
@@ -1704,6 +1728,20 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
                     },
                 },
             });
+        }
+    }
+
+    private sealed class HangingHeadNntpClient(INntpClient inner) : WrappingNntpClient(inner)
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async Task<UsenetHeadResponse> HeadAsync(
+            SegmentId segmentId,
+            CancellationToken cancellationToken)
+        {
+            Started.TrySetResult();
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            throw new System.Diagnostics.UnreachableException();
         }
     }
 
