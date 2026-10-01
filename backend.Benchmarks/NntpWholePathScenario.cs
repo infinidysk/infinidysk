@@ -25,6 +25,8 @@ internal sealed record NntpWholePathScenario(
     public int HandshakeDelayMs { get; init; }
     public int? ArticleBufferSize { get; init; }
     public bool PrewarmConnections { get; init; }
+    // Mirrors the WebDAV stream-open hint; null keeps contiguous batches.
+    public int? StripeCount { get; init; }
 
     public static IReadOnlyList<NntpWholePathScenario> Quick =>
     [

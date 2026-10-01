@@ -3,6 +3,8 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Connections;
+using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
 using UsenetSharp.Clients;
@@ -273,6 +275,10 @@ internal static class NntpWholePathReport
                 Math.Min(plannedBatches, articleWindow),
                 CancellationToken.None);
         }
+        using var streamCts = new CancellationTokenSource();
+        using var stripeScope = scenario.StripeCount is { } stripes
+            ? streamCts.Token.SetContext(new StreamingStripeContext { StripeCount = stripes })
+            : null;
         await using var stream = MultiSegmentStream.Create(
             ids.AsMemory(),
             provider,
@@ -280,7 +286,7 @@ internal static class NntpWholePathReport
             estimatedSegmentSize: scenario.DecodedArticleBytes,
             failFastOnFirstSegment: true,
             usePipelinedBodyRequests: true,
-            cancellationToken: CancellationToken.None,
+            cancellationToken: streamCts.Token,
             fileName: "loopback.bin",
             exactSegmentSizes: sizes,
             inFlightArticleBudget: budget,
