@@ -45,9 +45,9 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     private static readonly TimeSpan MissingPayloadInitialRecheck = TimeSpan.FromDays(1);
     private static readonly TimeSpan MissingPayloadConfirmedRecheck = TimeSpan.FromDays(7);
     private static readonly TimeSpan HealthCheckProgressTimeout = TimeSpan.FromMinutes(5);
-    // ponytail: one fixed cap for every attempt; a very large PAR2 repair could legitimately need longer.
-    internal static readonly TimeSpan HealthCheckAttemptDeadline = TimeSpan.FromHours(1);
-    private static readonly TimeSpan HealthCheckAttemptDeadlineDeferral = TimeSpan.FromDays(1);
+    // Aborts only stalled attempts: STAT progress and PAR2 repair reads/phase changes reset it.
+    internal static readonly TimeSpan HealthCheckInactivityLimit = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan HealthCheckStallDeferral = TimeSpan.FromDays(1);
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _repairRetryNotBefore = new();
 
     // Repeated remove-and-blocklist repairs for the same library path in a short window indicate
@@ -1207,17 +1207,25 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         CancellationToken ct
     )
     {
-        using var deadline = new CancellationTokenSource(HealthCheckAttemptDeadline, _timeProvider);
-        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+        using var stalled = new CancellationTokenSource(HealthCheckInactivityLimit, _timeProvider);
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct, stalled.Token);
+        HealthCheckActivity.Current = () =>
+        {
+            try { stalled.CancelAfter(HealthCheckInactivityLimit); }
+            catch (ObjectDisposedException)
+            {
+                // Late activity from work that outlived this attempt.
+            }
+        };
         try
         {
             await PerformHealthCheckAttempt(davItem, dbClient, concurrency, attempt.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (stalled.IsCancellationRequested && !ct.IsCancellationRequested)
         {
             CompleteHealthProgress(davItem.Id);
             var now = _timeProvider.GetUtcNow();
-            var next = now + HealthCheckAttemptDeadlineDeferral;
+            var next = now + HealthCheckStallDeferral;
             // ponytail: repair deferrals are in-memory, so a restart retries timed-out repairs immediately.
             if (davItem.NextHealthCheck == DateTimeOffset.UnixEpoch || davItem.HealthRepairPending)
                 _repairRetryNotBefore[davItem.Id] = next;
@@ -1230,8 +1238,8 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                         item.NextHealthCheck == DateTimeOffset.UnixEpoch ? DateTimeOffset.UnixEpoch : (DateTimeOffset?)next), ct)
                 .ConfigureAwait(false);
             Log.Warning(
-                "Health check for {Path} did not finish within {Deadline}. Deferred next check to {NextCheck}.",
-                davItem.Path, HealthCheckAttemptDeadline, next);
+                "Health check for {Path} made no progress for {Limit}. Deferred next check to {NextCheck}.",
+                davItem.Path, HealthCheckInactivityLimit, next);
         }
     }
 
@@ -1361,8 +1369,10 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             diagnosticWorker?.SetDiagnosticPhase("Checking", _timeProvider.GetUtcNow());
             var debounce = DebounceUtil.CreateDebounce(TimeSpan.FromMilliseconds(200));
             _inProgress.TryGetValue(davItem.Id, out var progressWorker);
+            var reportActivity = HealthCheckActivity.Current;
             progressHook.ProgressChanged += (_, progress) =>
             {
+                reportActivity?.Invoke();
                 try { statCts?.CancelAfter(HealthCheckProgressTimeout); }
                 catch (ObjectDisposedException)
                 {

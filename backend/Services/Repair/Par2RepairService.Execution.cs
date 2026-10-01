@@ -25,7 +25,11 @@ public partial class Par2RepairService
         var maxMemoryBytes = _configManager.GetPar2MaxMemoryMb() * 1024L * 1024;
         var concurrency = _configManager.GetPar2FetchConcurrency();
         var maxMissing = _configManager.GetPar2MaxMissingSlices();
-        using var reads = new RepairReadContext(maxMemoryBytes, concurrency, bytes => Interlocked.Add(ref _activeBytesRead, bytes))
+        using var reads = new RepairReadContext(maxMemoryBytes, concurrency, bytes =>
+        {
+            Interlocked.Add(ref _activeBytesRead, bytes);
+            HealthCheckActivity.Report();
+        })
         {
             IdentityByteLimit = IdentityByteLimitForTests ?? MaxPar2IdentityBytes,
             IdentityRequestLimit = IdentityRequestLimitForTests ?? MaxPar2IdentityRequests,

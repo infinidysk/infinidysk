@@ -248,7 +248,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AttemptDeadline_DefersWithoutVerdict()
+    public async Task InactivityLimit_DefersWithoutVerdict()
     {
         var segments = NewSegmentIds(3);
         var (item, _) = await AddVideoFileAsync(
@@ -262,19 +262,19 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
 
         var check = service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
         await headClient.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        timeProvider.Advance(HealthCheckService.HealthCheckAttemptDeadline);
+        timeProvider.Advance(HealthCheckService.HealthCheckInactivityLimit);
         await check.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Empty(GetHealthRows(item.Id));
         var reloaded = ReloadItem(item.Id);
-        Assert.Equal(now + HealthCheckService.HealthCheckAttemptDeadline + TimeSpan.FromDays(1), reloaded.NextHealthCheck);
+        Assert.Equal(now + HealthCheckService.HealthCheckInactivityLimit + TimeSpan.FromDays(1), reloaded.NextHealthCheck);
         Assert.Null(reloaded.UrgentRepairFailures);
     }
 
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task AttemptDeadline_TimedOutRepair_KeepsMarkerAndWaitsForRetryDeadline(bool urgent)
+    public async Task InactivityLimit_StalledRepair_KeepsMarkerAndRetriesRepairAfterDeferral(bool urgent)
     {
         _configManager.UpdateValues(
         [
@@ -300,7 +300,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
 
         var check = service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
         await par2.Hang.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        timeProvider.Advance(HealthCheckService.HealthCheckAttemptDeadline);
+        timeProvider.Advance(HealthCheckService.HealthCheckInactivityLimit);
         await check.WaitAsync(TimeSpan.FromSeconds(10));
 
         var reloaded = ReloadItem(item.Id);
@@ -311,10 +311,53 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         timeProvider.Advance(TimeSpan.FromDays(1));
         Assert.Contains(item.Id, await service.SelectNextHealthCheckIdsAsync(
             [], allowChecks: true, allowRepairs: true, maximumCount: 1, CancellationToken.None));
+
+        // The retry must go back to BODY repair, never a STAT-only "healthy" verdict.
+        par2.Hang = null;
+        await _context.Entry(item).ReloadAsync();
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+        Assert.Equal(2, par2.Requests.Count);
+        Assert.DoesNotContain(GetHealthRows(item.Id), row => row.Result == HealthCheckResult.HealthResult.Healthy);
     }
 
     [Fact]
-    public async Task AttemptDeadline_KeepsUrgentSentinelSetDuringRoutineCheck()
+    public async Task InactivityLimit_DoesNotAbortRepairThatKeepsProgressingPastAnHour()
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" },
+        ]);
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, [10_000, 10_000, 10_000]);
+        item.NextHealthCheck = DateTimeOffset.UnixEpoch;
+        await _context.SaveChangesAsync();
+        _failureTracker.RecordAttributedFailure(item.Id, segments[1]);
+        var timeProvider = new ControllableTimeProvider(new DateTimeOffset(2026, 9, 16, 12, 0, 0, TimeSpan.Zero));
+        var (service, par2) = await NewServiceAsync(
+            NewFakeClient(segments, missing: []), Par2RepairOutcome.Repaired, timeProvider);
+        service.CreateDbContextOverride = () => new DavDatabaseContext(_options);
+        par2.Work = ct =>
+        {
+            for (var step = 0; step < 6; step++)
+            {
+                ct.ThrowIfCancellationRequested();
+                HealthCheckActivity.Report();
+                timeProvider.Advance(HealthCheckService.HealthCheckInactivityLimit - TimeSpan.FromMinutes(1));
+            }
+            ct.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        };
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        Assert.Single(par2.Requests);
+        Assert.NotEqual(DateTimeOffset.UnixEpoch, ReloadItem(item.Id).NextHealthCheck);
+        Assert.NotEmpty(GetHealthRows(item.Id));
+    }
+
+    [Fact]
+    public async Task InactivityLimit_KeepsUrgentSentinelSetDuringRoutineCheck()
     {
         var segments = NewSegmentIds(3);
         var (item, _) = await AddVideoFileAsync(
@@ -334,7 +377,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             streamed.NextHealthCheck = DateTimeOffset.UnixEpoch;
             await streamingContext.SaveChangesAsync();
         }
-        timeProvider.Advance(HealthCheckService.HealthCheckAttemptDeadline);
+        timeProvider.Advance(HealthCheckService.HealthCheckInactivityLimit);
         await check.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal(DateTimeOffset.UnixEpoch, ReloadItem(item.Id).NextHealthCheck);
@@ -2146,11 +2189,14 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         public List<string[]> Requests { get; } = [];
         public Par2RepairOutcome Outcome { get; set; } = repairOutcome;
         public TaskCompletionSource? Hang { get; set; }
+        public Func<CancellationToken, Task>? Work { get; set; }
 
         public override async Task<Par2RepairOutcome> TryPar2RepairAsync(
             DavItem davItem, IReadOnlyList<string>? missingSegmentIds, CancellationToken ct)
         {
             Requests.Add(missingSegmentIds?.ToArray() ?? []);
+            if (Work is not null)
+                await Work(ct);
             if (Hang is not null)
             {
                 Hang.TrySetResult();
