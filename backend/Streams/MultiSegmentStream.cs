@@ -962,10 +962,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         int width,
         CancellationToken cancellationToken)
     {
+        // Size the group from live capacity: a group planned for the stream-open hint but
+        // issued on fewer connections would run most of its slots as contiguous batches.
+        var attainable = AttainableStripes();
+        if (attainable < 2) return 0;
         var freeSlots = _taskWindowSize - _streamTasks.Reader.Count;
         var limit = (int)Math.Min(
             Math.Min(_segmentIds.Length - groupStart, freeSlots),
-            (long)_stripeCount * width);
+            (long)attainable * width);
         if (limit < 2) return 0;
 
         var ceilingRoom = _prefetchByteCeiling > 0
@@ -984,7 +988,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 
         // A short group (tail, or a window that is nearly full) still spreads across every
         // stripe, so a few wide batches never serialize the last segments on few connections.
-        var stripes = Math.Min(AttainableStripes(), count);
+        var stripes = Math.Min(attainable, count);
         if (stripes < 2) return 0;
 
         // Waiting while holding part of a group can deadlock against another stream doing

@@ -186,6 +186,29 @@ public sealed class MultiSegmentStreamStripingTests
     }
 
     [Fact]
+    public async Task FewerAttainableConnectionsThanHint_KeepsEveryGroupInterleaved()
+    {
+        // Groups sized for the hint (4 x 4) but issued on 2 connections would end in
+        // contiguous [8..11], [12..15]; sizing from live capacity keeps both groups striped.
+        var client = new ControlledBatchNntpClient(16, SegmentSize, uniqueBytes: true);
+        client.ReleaseAllUpTo(15);
+        using var cts = new CancellationTokenSource();
+        using var hint = cts.Token.SetContext(new StreamingStripeContext
+        {
+            StripeCount = 4,
+            AvailableConnections = () => 2,
+        });
+        await using var stream = CreateStream(client, cts.Token);
+
+        var bytes = await ReadAllAsync(stream);
+
+        Assert.Equal(client.ExpectedConcatenation, bytes);
+        Assert.Equal(
+            new[] { new[] { 0, 2, 4, 6 }, new[] { 1, 3, 5, 7 }, new[] { 8, 10, 12, 14 }, new[] { 9, 11, 13, 15 } },
+            client.ObservedBatchIndexes);
+    }
+
+    [Fact]
     public async Task FullAttainableCapacity_KeepsTheStripedLayout()
     {
         var client = new ControlledBatchNntpClient(16, SegmentSize, uniqueBytes: true);
