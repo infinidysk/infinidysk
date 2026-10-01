@@ -394,6 +394,30 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task UnavailableUnrelatedCandidate_DoesNotCountTowardSliceCap()
+    {
+        _config.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "true" },
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" },
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2MaxMissingSlices, ConfigValue = "1" },
+        ]);
+        var decoy = PatternBytes(SliceSize * 4, 0x5C);
+        var target = PatternBytes(SliceSize * 3, 0x6D);
+        var parity = Par2TestEncoder.EncodeSet([("target.bin", target)], SliceSize, [0u]);
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _configRoot).BuildAsync([
+            new("decoy.bin", decoy, EqualSegments(4), [0, 1, 2, 3]),
+            new("target.bin", target, EqualSegments(3), [1]),
+        ], [], parity: parity);
+
+        var ok = await release.Service.TryPar2RepairAsync(
+            release.Item, [release.ContentSegmentIds[1]], CancellationToken.None);
+
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
+        Assert.Equal(Slice(target, SliceSize, SliceSize), await ReadPatchAsync(release.Store, release.ContentSegmentIds[1]));
+    }
+
+    [Fact]
     public async Task WrongWholeFileMd5_RejectsStagedResultAndCommitsNothing()
     {
         var fileData = PatternBytes(SliceSize * 2, 0xAA);

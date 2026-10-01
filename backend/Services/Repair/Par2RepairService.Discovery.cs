@@ -45,7 +45,9 @@ public partial class Par2RepairService
         public long IdentityByteLimit { get; init; } = MaxPar2IdentityBytes;
         public int IdentityRequestLimit { get; init; } = MaxPar2IdentityRequests;
         public int MaxMissingSlices { get; init; } = int.MaxValue;
-        private readonly Dictionary<NzbFile, (int Misses, long ArticlesPerSlice)> _sourceMisses = new(ReferenceEqualityComparer.Instance);
+        public HashSet<NzbFile> RequiredSources { get; } = new(ReferenceEqualityComparer.Instance);
+        public HashSet<(NzbFile File, long Slice)> RequiredSourceMissSlices { get; } = [];
+        public bool SourceSliceCapExceeded { get; set; }
         public DisposableOwner<IDisposable> IdentityBodyReservation { get; } = new();
         public string? IdentityBodyId { get; set; }
         public byte[]? IdentityBody { get; set; }
@@ -83,14 +85,17 @@ public partial class Par2RepairService
             SourceComparisons += comparisons;
         }
 
-        // ponytail: assumes uniform yEnc part sizes; irregular posts could undercount articles per slice.
-        public void NoteSourceMiss(NzbFile file, long articlesPerSlice)
+        // Only files every successful set must cover, with exact byte ranges, can prove the cap is exceeded.
+        public void NoteSourceMiss(NzbFile file, LongRange? range, long sliceSize)
         {
-            _sourceMisses[file] = (_sourceMisses.GetValueOrDefault(file).Misses + 1, articlesPerSlice);
-            var missingSlices = _sourceMisses.Values.Sum(entry => (entry.Misses + entry.ArticlesPerSlice - 1) / entry.ArticlesPerSlice);
-            if (missingSlices > MaxMissingSlices)
+            if (range is not { Count: > 0 } exact || sliceSize <= 0 || !RequiredSources.Contains(file)) return;
+            for (var slice = exact.StartInclusive / sliceSize; slice <= (exact.EndExclusive - 1) / sliceSize; slice++)
+            {
+                if (!RequiredSourceMissSlices.Add((file, slice)) || RequiredSourceMissSlices.Count <= MaxMissingSlices) continue;
+                SourceSliceCapExceeded = true;
                 throw new RepairInfeasibleException(
-                    $"Source articles are missing for at least {missingSlices} PAR2 slices, which exceeds cap {MaxMissingSlices}.");
+                    $"Source articles are missing for at least {RequiredSourceMissSlices.Count} PAR2 slices, which exceeds cap {MaxMissingSlices}.");
+            }
         }
 
         public void NoteUnavailable(string id, Exception exception)
