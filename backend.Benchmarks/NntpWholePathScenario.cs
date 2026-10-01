@@ -25,6 +25,8 @@ internal sealed record NntpWholePathScenario(
     public int HandshakeDelayMs { get; init; }
     public int? ArticleBufferSize { get; init; }
     public bool PrewarmConnections { get; init; }
+    // Awaits prewarming before the measurement origin instead of racing it at read start.
+    public bool WarmStart { get; init; }
 
     public static IReadOnlyList<NntpWholePathScenario> Quick =>
     [
@@ -78,7 +80,7 @@ internal sealed record NntpWholePathScenario(
         new(name, NntpWholePathLayer.HttpLike, false, 342, 768 * 1024, connections, batchWidth, 40, 6_000_000, YencCrcValidationMode.Require)
         {
             ArticleBufferSize = 40,
-            PrewarmConnections = true,
+            WarmStart = true,
         };
 
     public static IReadOnlyList<NntpWholePathScenario> ForSet(string set) =>

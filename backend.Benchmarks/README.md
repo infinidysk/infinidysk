@@ -110,8 +110,9 @@ deterministic gates.
 
 `--set smoothness` isolates those stalls from connection ramp: the cold
 read shape (342 × 768 KiB, 20 connections, 40-article window, 40 ms BODY
-delay, 6 MB/s per connection) with pre-warmed connections and no handshake
-delay, at batch widths 1 and 4. It is manual only and has no baseline.
+delay, 6 MB/s per connection) with connections pre-warmed before the
+measurement starts and no handshake delay, at batch widths 1, 4, and 8, plus
+width 4 on only four connections. It is manual only and has no baseline.
 
 ```bash
 dotnet run --project backend.Benchmarks -c Release -- \

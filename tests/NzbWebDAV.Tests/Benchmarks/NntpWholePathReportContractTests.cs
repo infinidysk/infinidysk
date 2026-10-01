@@ -113,7 +113,7 @@ public sealed class NntpWholePathReportContractTests
     [InlineData("sustained", 4)]
     [InlineData("profile", 1)]
     [InlineData("cold", 2)]
-    [InlineData("smoothness", 2)]
+    [InlineData("smoothness", 4)]
     public void ScenarioSets_AreNamedAndExplicitlyPlaintext(string set, int expectedCount)
     {
         var scenarios = NntpWholePathScenario.ForSet(set);
@@ -146,18 +146,19 @@ public sealed class NntpWholePathReportContractTests
     }
 
     [Fact]
-    public void SmoothnessScenarios_DifferOnlyInBatchWidthAndStartWarm()
+    public void SmoothnessScenarios_StartWarmBeforeMeasurement()
     {
         var scenarios = NntpWholePathScenario.Smoothness;
 
-        Assert.Equal([1, 4], scenarios.Select(scenario => scenario.BatchWidth));
+        Assert.Equal([1, 4, 8, 4], scenarios.Select(scenario => scenario.BatchWidth));
+        Assert.Equal([20, 20, 20, 4], scenarios.Select(scenario => scenario.ConnectionCount));
         Assert.All(scenarios, scenario =>
         {
             Assert.Equal(NntpWholePathLayer.HttpLike, scenario.Layer);
-            Assert.Equal(20, scenario.ConnectionCount);
             Assert.Equal(6_000_000, scenario.BandwidthBytesPerSecond);
             Assert.Equal(0, scenario.HandshakeDelayMs);
-            Assert.True(scenario.PrewarmConnections);
+            Assert.True(scenario.WarmStart);
+            Assert.False(scenario.PrewarmConnections);
         });
     }
 
