@@ -181,13 +181,13 @@ public sealed class MultiSegmentStreamStripingTests
         using var hint = cts.Token.SetContext(new StreamingStripeContext { StripeCount = 4 });
         await using var stream = CreateStream(client, cts.Token);
 
-        // A batch's own cached hits do not wait for its misses to be admitted.
-        var cached = new byte[2 * SegmentSize];
+        // The whole cached prefix is readable before any remote batch drains, as on main.
+        var cached = new byte[4 * SegmentSize];
         await stream.ReadExactlyAsync(cached).AsTask().WaitAsync(Timeout);
         Assert.Equal(client.ExpectedConcatenation.AsSpan(0, cached.Length).ToArray(), cached);
 
         client.ReleaseAllUpTo(15);
-        var head = new byte[14 * SegmentSize];
+        var head = new byte[12 * SegmentSize];
         await stream.ReadExactlyAsync(head).AsTask().WaitAsync(Timeout);
 
         var next = new byte[SegmentSize];

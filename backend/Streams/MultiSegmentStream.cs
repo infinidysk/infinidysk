@@ -1022,7 +1022,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     // Local hits returned ahead of remote admission are readable now; the
                     // capacity decision still waits until the misses hold a connection.
                     await PublishReadyAsync(groupStart, group, cancellationToken).ConfigureAwait(false);
-                    await admitted.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    var probe = await IssueLocalFrontierAsync(groupStart, group, remaining, cancellationToken)
+                        .ConfigureAwait(false);
+                    await Task.WhenAll(admitted, probe.Admitted).WaitAsync(cancellationToken).ConfigureAwait(false);
+                    if (probe.Running is { IsCompleted: false })
+                        TrackRunningBatch(probe.Running);
                     waited = true;
                 }
 
@@ -1044,6 +1048,32 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             AbandonUnpublished(group);
             throw;
         }
+    }
+
+    /// <summary>
+    /// While a stripe waits for a connection, issues the next unissued file-order slot alone
+    /// until one is not served locally, so cached segments ahead of the remote frontier never
+    /// wait on another batch's admission. A remote probe is the nearest segment, which is what
+    /// narrowing would pick anyway; the caller awaits its admission before tracking it.
+    /// </summary>
+    private async Task<(Task? Running, Task Admitted)> IssueLocalFrontierAsync(
+        int groupStart,
+        PipelinedGroup group,
+        List<int> remaining,
+        CancellationToken cancellationToken)
+    {
+        while (group.Published < group.Tasks.Length && group.Tasks[group.Published] is null)
+        {
+            var slot = group.Published;
+            remaining.Remove(slot);
+            var (running, admitted) = await IssueBatchAsync(groupStart, [slot], group, cancellationToken)
+                .ConfigureAwait(false);
+            await PublishReadyAsync(groupStart, group, cancellationToken).ConfigureAwait(false);
+            if (running is null && admitted.IsCompleted) continue;
+            return (running, admitted);
+        }
+
+        return (null, Task.CompletedTask);
     }
 
     /// <summary>Removes and returns remaining[0], remaining[stride], ... up to width slots.</summary>
