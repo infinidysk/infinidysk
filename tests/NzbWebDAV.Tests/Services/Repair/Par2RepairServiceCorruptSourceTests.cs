@@ -6,6 +6,7 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Par2Recovery;
+using NzbWebDAV.Services;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Tests.Fakes;
@@ -415,6 +416,39 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
 
         Assert.Equal(Par2RepairOutcome.Repaired, ok);
         Assert.Equal(Slice(target, SliceSize, SliceSize), await ReadPatchAsync(release.Store, release.ContentSegmentIds[1]));
+    }
+
+    [Fact]
+    public async Task InlineRepair_ReportsHealthCheckActivityWhileReading()
+    {
+        var fileData = PatternBytes(SliceSize * 3, 0x7F);
+        await using var release = await SeedAsync(fileData, EqualSegments(3), recoveryExponents: [0u],
+            corruptOnRead: [0]);
+        var heartbeats = 0;
+        HealthCheckActivity.Current = () => Interlocked.Increment(ref heartbeats);
+
+        var ok = await release.Service.TryPar2RepairAsync(
+            release.Item, [release.ContentSegmentIds[0]], CancellationToken.None);
+
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
+        // Phase changes alone are a handful; reads must contribute too.
+        Assert.True(heartbeats > 10, $"heartbeats={heartbeats}");
+    }
+
+    [Fact]
+    public async Task NonuniformArticles_MissingSmallArticlesInOneSlice_StayWithinSliceCap()
+    {
+        var fileData = PatternBytes(SliceSize * 2, 0x7E);
+        int[] sizes = [.. Enumerable.Repeat(100, 8), SliceSize * 2 - 800];
+        await using var release = await SeedAsync(fileData, sizes, recoveryExponents: [0u],
+            omitFromProvider: [0, 1, 2], maxMissingSlices: "1");
+
+        var ok = await release.Service.TryPar2RepairAsync(
+            release.Item, [release.ContentSegmentIds[0]], CancellationToken.None);
+
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
+        for (var index = 0; index < 3; index++)
+            Assert.Equal(Slice(fileData, index * 100, 100), await ReadPatchAsync(release.Store, release.ContentSegmentIds[index]));
     }
 
     [Fact]
