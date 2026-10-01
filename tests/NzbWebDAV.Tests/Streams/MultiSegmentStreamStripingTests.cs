@@ -135,6 +135,76 @@ public sealed class MultiSegmentStreamStripingTests
     }
 
     [Fact]
+    public async Task CapacityBelowStripes_NextSegmentNeedsOnlyItsOwnRelease()
+    {
+        // Four stripes planned, one connection held. Once the stream sees a stripe admitted
+        // only after its own earlier stripe finished, later batches must follow file order:
+        // a striped [16,20,24,28] would hold segment 17 behind segments 20, 24 and 28.
+        var client = new ControlledBatchNntpClient(32, SegmentSize, uniqueBytes: true)
+        {
+            SharedPermit = new SemaphoreSlim(1, 1),
+        };
+        using var cts = new CancellationTokenSource();
+        using var hint = cts.Token.SetContext(new StreamingStripeContext { StripeCount = 4 });
+        await using var stream = CreateStream(client, cts.Token);
+        client.ReleaseAllUpTo(15);
+        var head = new byte[16 * SegmentSize];
+        await stream.ReadExactlyAsync(head).AsTask().WaitAsync(Timeout);
+
+        var next = new byte[SegmentSize];
+        for (var index = 16; index < 24; index++)
+        {
+            client.ReleaseSegment(index);
+            await stream.ReadExactlyAsync(next).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal(client.ExpectedConcatenation.AsSpan(index * SegmentSize, SegmentSize).ToArray(), next);
+        }
+
+        Assert.Equal(
+            new[] { new[] { 0, 4, 8, 12 }, new[] { 1, 5, 9, 13 }, new[] { 2, 3, 6, 7 }, new[] { 10, 11, 14, 15 } },
+            client.ObservedBatchIndexes.Take(4));
+        client.ReleaseAllUpTo(31);
+        await ReadAllAsync(stream);
+    }
+
+    [Fact]
+    public async Task CapacityThatReturns_InterleavesAgain()
+    {
+        var permit = new SemaphoreSlim(1, 4);
+        var client = new ControlledBatchNntpClient(32, SegmentSize, uniqueBytes: true) { SharedPermit = permit };
+        using var cts = new CancellationTokenSource();
+        using var hint = cts.Token.SetContext(new StreamingStripeContext { StripeCount = 4 });
+        await using var stream = CreateStream(client, cts.Token);
+        client.ReleaseAllUpTo(15);
+        await client.WaitUntilAsync(() => client.BatchIssueCount == 5, Timeout);
+
+        // [16..19] still holds the only connection; three more become free.
+        permit.Release(3);
+        await client.WaitUntilAsync(() => client.BatchIssueCount == 8, Timeout);
+        client.ReleaseAllUpTo(31);
+        var bytes = await ReadAllAsync(stream);
+
+        Assert.Equal(client.ExpectedConcatenation, bytes);
+        Assert.Equal(
+            new[] { new[] { 16, 17, 18, 19 }, new[] { 20, 21, 22, 23 }, new[] { 24, 26, 28, 30 }, new[] { 25, 27, 29, 31 } },
+            client.ObservedBatchIndexes.Skip(4));
+    }
+
+    [Theory]
+    [InlineData(10, 4, 4, new[] { 0, 4, 8 })]
+    [InlineData(12, 1, 4, new[] { 0, 1, 2, 3 })]
+    [InlineData(3, 4, 4, new[] { 0 })]
+    [InlineData(16, 2, 4, new[] { 0, 2, 4, 6 })]
+    public void TakeStride_TakesEveryStrideSlotUpToWidth(int count, int stride, int width, int[] expected)
+    {
+        var remaining = Enumerable.Range(0, count).ToList();
+
+        var slots = MultiSegmentStream.TakeStride(remaining, stride, width);
+
+        Assert.Equal(expected, slots);
+        Assert.Equal(Enumerable.Range(0, count).Except(expected), remaining);
+    }
+
+    [Fact]
     public async Task MissingArticleInAStripe_ZeroFillsOnlyThatSegment()
     {
         var client = new ControlledBatchNntpClient(16, SegmentSize, uniqueBytes: true);
