@@ -51,6 +51,12 @@ During WebDAV playback with batched BODY requests enabled:
 
 Provider behavior varies: some throttle per connection (wider batches can help), others per account (more connections / narrower batches). If Auto-tune reports queue pipelining is unsafe for a provider, treat wide streaming batch widths cautiously too — both use the same NNTP pipelining mechanism.
 
+### Interleaved streaming batches
+
+A connection returns a batch's articles one after another, so a batch of consecutive articles makes playback wait on that single connection for each next article while other connections sit on finished data. WebDAV playback therefore interleaves batches across the connections expected for the stream: with 4 connections and width 4, the first batch asks for articles 1, 5, 9, 13, the second for 2, 6, 10, 14, and so on, and the next articles playback needs arrive in parallel.
+
+The batch width setting keeps its meaning (articles per batch), and the bytes served are unchanged. When the decoded-article budget cannot hold a whole interleaved group at once, the stream falls back to consecutive batches rather than waiting, so concurrent viewers cannot block each other on partial reservations.
+
 ## Enabling
 
 1. Prefer **Auto-tune** on a provider before enabling queue pipelining.
