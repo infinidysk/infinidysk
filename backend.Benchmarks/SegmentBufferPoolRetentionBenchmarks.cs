@@ -23,9 +23,10 @@ public class SegmentBufferPoolRetentionBenchmarks
     {
         Legacy,
         CapacityOnly,
+        CapacityOnlyIdleTrim,
     }
 
-    [Params(BenchmarkRetentionPolicy.Legacy, BenchmarkRetentionPolicy.CapacityOnly)]
+    [Params(BenchmarkRetentionPolicy.Legacy, BenchmarkRetentionPolicy.CapacityOnly, BenchmarkRetentionPolicy.CapacityOnlyIdleTrim)]
     public BenchmarkRetentionPolicy Policy { get; set; }
 
     [Params(1, 8)]
@@ -34,7 +35,8 @@ public class SegmentBufferPoolRetentionBenchmarks
     private SegmentBufferRetentionPolicy RuntimePolicy => Policy switch
     {
         BenchmarkRetentionPolicy.Legacy => SegmentBufferRetentionPolicy.Legacy,
-        BenchmarkRetentionPolicy.CapacityOnly => SegmentBufferRetentionPolicy.CapacityOnly,
+        BenchmarkRetentionPolicy.CapacityOnly or BenchmarkRetentionPolicy.CapacityOnlyIdleTrim =>
+            SegmentBufferRetentionPolicy.CapacityOnly,
         _ => throw new ArgumentOutOfRangeException(nameof(Policy)),
     };
 
@@ -68,6 +70,9 @@ public class SegmentBufferPoolRetentionBenchmarks
         for (var round = 0; round < RepeatRounds; round++)
         {
             _clock.Advance(TimeSpan.FromMinutes(3));
+            // Production idle-trim service tick; each burst then refills from fresh allocations.
+            if (Policy == BenchmarkRetentionPolicy.CapacityOnlyIdleTrim)
+                _pool.TrimIfIdle(NzbWebDAV.Services.SegmentBufferPoolIdleTrimService.TrimAfter);
             if (ConcurrentStreams == 1)
             {
                 RunBurst(_pool, _burstSchedule);

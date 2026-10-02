@@ -74,6 +74,8 @@ internal sealed record NntpWholePathScenario(
         // Fewer connections than the default window can use: scheduling must not
         // depend on spare capacity to stay steady.
         Paced("paced-256mib-w4-4conn", batchWidth: 4, connections: 4),
+        // One stripe per buffered article: a full-batch-per-stripe start would fill the whole window.
+        Paced("paced-256mib-w4-40conn", batchWidth: 4, connections: 40),
     ];
 
     private static NntpWholePathScenario Paced(string name, int batchWidth, int connections = 20) =>

@@ -30,4 +30,5 @@ internal sealed record NntpWholePathTiming(
     int Gen0Collections,
     int Gen1Collections,
     int Gen2Collections,
-    DeliverySmoothness? Delivery = null);
+    DeliverySmoothness? Delivery = null,
+    long PeakLeasedBytes = 0);

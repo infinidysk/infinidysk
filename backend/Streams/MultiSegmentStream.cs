@@ -20,6 +20,7 @@ namespace NzbWebDAV.Streams;
 public class MultiSegmentStream : FastReadOnlyNonSeekableStream
 {
     private const int BodyPipelineBatchSize = 4;
+    private const int MinInitialPrefetchSegments = 8;
     private const int MaxBodyRetries = 2;
     private const int MaxCorruptionRetries = 3;
     internal const string InconclusiveGapFillTemplate =
@@ -43,6 +44,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly ContextualCancellationTokenSource _cts;
     private readonly long? _readBudget;
     private readonly long _prefetchByteCeiling;
+    private readonly long _initialPrefetchByteCeiling;
+    // Planned bytes of segments handed to the reader; grows the ceiling like TCP slow start.
+    private long _consumedPrefetchBytes;
     private readonly int _taskWindowSize;
     private readonly int _stripeCount;
     // Producer-only: stripes the next group may use, between 1 and _stripeCount.
@@ -804,6 +808,21 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             ? ResolveStripeCount(initialBatchPlan, articleBufferSize, cancellationToken)
             : 1;
         _stripeTarget = _stripeCount;
+        // A full striped group keeps every connection pipelined; half the window keeps a ramp when it would fill it.
+        var initialSegmentCount = Math.Min(
+            _segmentIds.Length,
+            Math.Max(
+                MinInitialPrefetchSegments,
+                Math.Min((long)_stripeCount * _bodyPipelineBatchSize, _taskWindowSize / 2)));
+        var initialPlannedBytes = 0L;
+        for (var segmentIndex = 0; segmentIndex < initialSegmentCount; segmentIndex++)
+        {
+            var plannedBytes = GetPlannedSegmentBytes(segmentIndex);
+            initialPlannedBytes = plannedBytes > long.MaxValue - initialPlannedBytes
+                ? long.MaxValue
+                : initialPlannedBytes + plannedBytes;
+        }
+        _initialPrefetchByteCeiling = Math.Min(_prefetchByteCeiling, initialPlannedBytes);
         if (_stripeCount > 1)
         {
             Log.Debug(
@@ -975,7 +994,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
         if (limit < 2) return 0;
 
         var ceilingRoom = _prefetchByteCeiling > 0
-            ? _prefetchByteCeiling - Interlocked.Read(ref _inFlightPrefetchBytes)
+            ? CurrentPrefetchByteCeiling - Interlocked.Read(ref _inFlightPrefetchBytes)
             : long.MaxValue;
         var sizes = new long[limit];
         var count = 0;
@@ -1342,15 +1361,19 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     {
         if (_prefetchByteCeiling <= 0) return;
 
-        while (Interlocked.Read(ref _inFlightPrefetchBytes) >= _prefetchByteCeiling)
+        while (Interlocked.Read(ref _inFlightPrefetchBytes) >= CurrentPrefetchByteCeiling)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var wait = Volatile.Read(ref _prefetchSpace);
-            if (Interlocked.Read(ref _inFlightPrefetchBytes) < _prefetchByteCeiling)
+            if (Interlocked.Read(ref _inFlightPrefetchBytes) < CurrentPrefetchByteCeiling)
                 return;
             await wait.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
     }
+
+    internal long CurrentPrefetchByteCeiling => Math.Min(
+        _prefetchByteCeiling,
+        _initialPrefetchByteCeiling + Interlocked.Read(ref _consumedPrefetchBytes));
 
     private void ReleaseInFlightPrefetchBytes(long plannedBytes)
     {
@@ -2416,6 +2439,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
                     traceRange,
                     StreamStallKind.ConsumerWait,
                     Stopwatch.GetElapsedTime(waitStarted));
+                Interlocked.Add(ref _consumedPrefetchBytes, result.PlannedBytes);
                 ReleaseInFlightPrefetchBytes(result.PlannedBytes);
                 // Ignore the first delivered segment (startup warm-up).
                 if (_deliveredSegments++ > 0)
