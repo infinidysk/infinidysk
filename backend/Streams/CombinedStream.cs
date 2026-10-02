@@ -60,6 +60,7 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
                     && _currentStream is PaddedLengthStream part
                     && part.Length - part.Position <= readAheadBytes
                     // Next-part leases must never take credits the current tail still needs.
+                        // Unknown inner wrappers report false, declining prefetch.
                     && ((ISegmentIssueProgress)part).AllSegmentsIssued)
                 {
                     _prefetchCts ??= ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -110,8 +111,9 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
             // Only the wait is cancelled; a shared lazy resolution keeps running for others.
             stream = await opening.WaitAsync(ct).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!opening.IsCompleted)
+        catch (OperationCanceledException)
         {
+            // The open may have completed after cancellation won; the abandoned stream is still ours.
             _ = DisposeWhenOpenedAsync(opening);
             throw;
         }

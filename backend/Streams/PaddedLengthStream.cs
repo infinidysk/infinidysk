@@ -35,7 +35,7 @@ public sealed class PaddedLengthStream(
     Action<int>? onBytesRead = null) : FastReadOnlyNonSeekableStream, ISegmentIssueProgress
 {
     bool ISegmentIssueProgress.AllSegmentsIssued =>
-        stream is not ISegmentIssueProgress { AllSegmentsIssued: false };
+        stream is ISegmentIssueProgress { AllSegmentsIssued: true };
 
     private readonly string _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
     private long _position;

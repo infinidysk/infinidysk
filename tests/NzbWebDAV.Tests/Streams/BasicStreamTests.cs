@@ -191,9 +191,12 @@ public class BasicStreamTests
     }
 
     [Theory]
-    [InlineData(0L, false)]
-    [InlineData(6L, true)]
-    public async Task CombinedStream_OpensNextPartWithinReadAheadOfBoundary(long readAheadBytes, bool expectOpened)
+    [InlineData(0L, true, false)]
+    [InlineData(6L, true, true)]
+    // An inner stream that does not report its segment progress must decline prefetch.
+    [InlineData(6L, false, false)]
+    public async Task CombinedStream_OpensNextPartWithinReadAheadOfBoundary(
+        long readAheadBytes, bool innerReportsReady, bool expectOpened)
     {
         var opened = new List<int>();
         IEnumerable<Task<Stream>> Parts()
@@ -201,8 +204,9 @@ public class BasicStreamTests
             for (var i = 0; i < 2; i++)
             {
                 opened.Add(i);
-                yield return Task.FromResult<Stream>(
-                    new PaddedLengthStream(Frozen(Encoding.ASCII.GetBytes("abcdefgh")), 8, $"part-{i}"));
+                var bytes = Encoding.ASCII.GetBytes("abcdefgh");
+                yield return Task.FromResult<Stream>(new PaddedLengthStream(
+                    innerReportsReady ? new IssuedStream(bytes) : Frozen(bytes), 8, $"part-{i}"));
             }
         }
 
@@ -224,7 +228,7 @@ public class BasicStreamTests
         IEnumerable<Task<Stream>> Parts()
         {
             yield return Task.FromResult<Stream>(
-                new PaddedLengthStream(Frozen(Encoding.ASCII.GetBytes("abcdefgh")), 8, "part-0"));
+                new PaddedLengthStream(new IssuedStream(Encoding.ASCII.GetBytes("abcdefgh")), 8, "part-0"));
             throw new SeekPositionNotFoundException("bad next part");
         }
 
@@ -244,7 +248,7 @@ public class BasicStreamTests
         var streams = new[]
         {
             Task.FromResult<Stream>(
-                new PaddedLengthStream(Frozen(Encoding.ASCII.GetBytes("abcdefgh")), 8, "part-0")),
+                new PaddedLengthStream(new IssuedStream(Encoding.ASCII.GetBytes("abcdefgh")), 8, "part-0")),
             Task.FromResult<Stream>(next),
         };
         var stream = new CombinedStream(streams, readAheadBytes: 8);
@@ -263,7 +267,7 @@ public class BasicStreamTests
         var streams = new[]
         {
             Task.FromResult<Stream>(
-                new PaddedLengthStream(Frozen(Encoding.ASCII.GetBytes("abcdefgh")), 8, "part-0")),
+                new PaddedLengthStream(new IssuedStream(Encoding.ASCII.GetBytes("abcdefgh")), 8, "part-0")),
             opening.Task,
         };
         var stream = new CombinedStream(streams, readAheadBytes: 8);
@@ -298,6 +302,11 @@ public class BasicStreamTests
     }
 
     private static Stream Frozen(byte[] bytes) => new MemoryStream(bytes, writable: false);
+
+    private sealed class IssuedStream(byte[] bytes) : MemoryStream(bytes, writable: false), ISegmentIssueProgress
+    {
+        public bool AllSegmentsIssued => true;
+    }
 
     private static Stream Empty() => new MemoryStream();
 

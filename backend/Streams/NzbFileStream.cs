@@ -38,8 +38,7 @@ public class NzbFileStream(
 {
     bool ISegmentIssueProgress.AllSegmentsIssued =>
         verificationProof is null
-        && _innerStream is { } inner
-        && inner is not ISegmentIssueProgress { AllSegmentsIssued: false };
+        && _innerStream is ISegmentIssueProgress { AllSegmentsIssued: true };
 
     private const long MaximumForwardDrainBytes = 1024 * 1024;
     private const long MinimumPrewarmRangeBytes = 8L * 1024 * 1024;

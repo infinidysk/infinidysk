@@ -254,29 +254,36 @@ public class DavMultipartFileStreamTests
         Assert.Equal(Enumerable.Range(2, 14).Select(x => (byte)x).ToArray(), rest.ToArray());
     }
 
-    [Fact]
-    public async Task ReadAsync_NextVolumePrefetchUnderTightBudgetCompletesAndReleasesLeases()
+    [Theory]
+    [InlineData(0, true)]
+    // Unindexed volume with an archive header: the inner stream opens via fast seek.
+    [InlineData(3, false)]
+    public async Task ReadAsync_NextVolumePrefetchUnderTightBudgetCompletesAndReleasesLeases(
+        int headerBytes, bool indexed)
     {
         const int segmentsPerPart = 4;
         const int segmentSize = 8;
+        const int volumeSize = segmentsPerPart * segmentSize;
         var segments = new Dictionary<string, byte[]>();
+        var segmentRanges = new Dictionary<string, LongRange>();
         DavMultipartFile.FilePart Part(string name, int partIndex)
         {
             var ids = Enumerable.Range(0, segmentsPerPart).Select(i => $"{name}-{i}").ToArray();
             for (var i = 0; i < segmentsPerPart; i++)
             {
-                var first = (partIndex * segmentsPerPart + i) * segmentSize;
+                var first = partIndex * volumeSize + i * segmentSize;
                 segments[ids[i]] = Enumerable.Range(first, segmentSize).Select(x => (byte)x).ToArray();
+                segmentRanges[ids[i]] = LongRange.FromStartAndSize(i * segmentSize, segmentSize);
             }
             return new DavMultipartFile.FilePart
             {
                 SegmentIds = ids,
-                SegmentIdByteRange = new LongRange(0, segmentsPerPart * segmentSize),
-                FilePartByteRange = new LongRange(0, segmentsPerPart * segmentSize),
-                SegmentByteRanges = Enumerable.Range(0, segmentsPerPart)
-                    .Select(i => LongRange.FromStartAndSize(i * segmentSize, segmentSize))
-                    .ToArray(),
-                SegmentByteRangesTrusted = true,
+                SegmentIdByteRange = new LongRange(0, volumeSize),
+                FilePartByteRange = new LongRange(headerBytes, volumeSize),
+                SegmentByteRanges = indexed
+                    ? ids.Select(id => segmentRanges[id]).ToArray()
+                    : null,
+                SegmentByteRangesTrusted = indexed,
             };
         }
         var multipart = new DavMultipartFile
@@ -284,7 +291,7 @@ public class DavMultipartFileStreamTests
             Id = Guid.NewGuid(),
             Metadata = new DavMultipartFile.Meta { FileParts = [Part("one", 0), Part("two", 1)] },
         };
-        using var client = new FakeNntpClient(segments, useCachedYencStreams: true);
+        using var client = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: segmentRanges);
         // One segment of credit: any lease held by the next volume would starve the current tail.
         var budget = new InFlightArticleBudget(segmentSize);
         var stream = new DavMultipartFileStream(
@@ -300,7 +307,9 @@ public class DavMultipartFileStreamTests
         await stream.DisposeAsync();
 
         Assert.Equal(
-            Enumerable.Range(0, 2 * segmentsPerPart * segmentSize).Select(x => (byte)x).ToArray(),
+            Enumerable.Range(0, 2 * volumeSize)
+                .Where(x => x % volumeSize >= headerBytes)
+                .Select(x => (byte)x).ToArray(),
             all.ToArray());
         var deadline = DateTime.UtcNow.AddSeconds(10);
         while (budget.LeasedBytes != 0 && DateTime.UtcNow < deadline)

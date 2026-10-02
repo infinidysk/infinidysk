@@ -80,7 +80,7 @@ internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream,
     bool ISegmentIssueProgress.AllSegmentsIssued =>
         _remainderFactory is null
         || (_remainderTask is { IsCompletedSuccessfully: true } remainder
-            && remainder.Result is not ISegmentIssueProgress { AllSegmentsIssued: false });
+            && remainder.Result is ISegmentIssueProgress { AllSegmentsIssued: true });
 
     private void StartRemainderOnce()
     {
