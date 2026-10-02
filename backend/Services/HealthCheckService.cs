@@ -13,7 +13,6 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
-using NzbWebDAV.Middlewares;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Queue.PostProcessors;
 using NzbWebDAV.Services.Diagnostics;
@@ -1501,7 +1500,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 : sampled.Count < totalSegments
                     ? $"File is healthy (sampled {sampled.Count}/{totalSegments} segments)."
                     : "File is healthy.";
-            ExceptionMiddleware.InvalidateRepairSchedulingDedup(davItem.Id);
+            StreamingRepairScheduler.InvalidateDedup(davItem.Id);
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Healthy,
@@ -1585,7 +1584,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 await using var mutationGate = await _failureTracker
                     .AcquireMutationGateAsync(davItem.Id, ct)
                     .ConfigureAwait(false);
-                ExceptionMiddleware.InvalidateRepairSchedulingDedup(davItem.Id);
+                StreamingRepairScheduler.InvalidateDedup(davItem.Id);
                 if (await IsDurablyUrgentAsync(dbClient, davItem.Id, ct).ConfigureAwait(false))
                 {
                     CompleteHealthProgress(davItem.Id);
@@ -1601,7 +1600,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 davItem.LastHealthCheck = utcNow;
                 davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
                 davItem.UrgentRepairFailures = null;
-                ExceptionMiddleware.InvalidateRepairSchedulingDedup(davItem.Id);
+                StreamingRepairScheduler.InvalidateDedup(davItem.Id);
                 await RecordHealthResult(
                     dbClient, davItem,
                     HealthCheckResult.HealthResult.Healthy,
@@ -1777,7 +1776,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 && (nzbFile.MissingSegmentIndices != null || nzbFile.CorruptSegmentIndices != null))
                 await SwapNzbFileBlobAsync(davItem, nzbFile, null, null, replaceCorruptRecord: true)
                     .ConfigureAwait(false);
-            ExceptionMiddleware.InvalidateRepairSchedulingDedup(davItem.Id);
+            StreamingRepairScheduler.InvalidateDedup(davItem.Id);
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Healthy,
@@ -3370,7 +3369,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
             davItem.UrgentRepairFailures = null;
-            ExceptionMiddleware.InvalidateRepairSchedulingDedup(davItem.Id);
+            StreamingRepairScheduler.InvalidateDedup(davItem.Id);
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Healthy,
@@ -3898,7 +3897,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 
         var utcNow = _timeProvider.GetUtcNow();
         var threshold = _configManager.GetAutoRemoveAfterFailures();
-        var reachedThreshold = ExceptionMiddleware.ShouldScheduleUrgentRepair(threshold, currentFailure.Count);
+        var reachedThreshold = StreamingRepairScheduler.ShouldScheduleUrgentRepair(threshold, currentFailure.Count);
         davItem.LastHealthCheck = utcNow;
         davItem.NextHealthCheck = reachedThreshold
             ? DateTimeOffset.UnixEpoch

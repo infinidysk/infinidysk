@@ -1088,7 +1088,7 @@ public class ExceptionMiddlewareTests
         int failureCount,
         bool expected)
     {
-        Assert.Equal(expected, ExceptionMiddleware.ShouldScheduleUrgentRepair(threshold, failureCount));
+        Assert.Equal(expected, StreamingRepairScheduler.ShouldScheduleUrgentRepair(threshold, failureCount));
     }
 
     [Fact]
