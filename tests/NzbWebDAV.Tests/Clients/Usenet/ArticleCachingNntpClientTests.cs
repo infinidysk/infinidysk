@@ -116,6 +116,25 @@ public class ArticleCachingNntpClientTests
         Assert.Equal(0, inner.BatchRequestCount);
     }
 
+    [Fact]
+    public async Task DecodedArticlesPipelinedAsync_CachesFirstArticlesForLaterBodyReads()
+    {
+        var inner = new FakeNntpClient(
+            new Dictionary<string, byte[]> { ["segment"] = "first article"u8.ToArray() },
+            useCachedYencStreams: true);
+        using var client = new ArticleCachingNntpClient(inner);
+
+        var pipelined = new List<string>();
+        await foreach (var article in client.DecodedArticlesPipelinedAsync(["segment"], 4, CancellationToken.None))
+            pipelined.Add(Encoding.ASCII.GetString(await ReadAllAsync(article.Stream!)));
+        var requestsAfterPipeline = inner.BodyRequestCount + inner.BatchRequestCount;
+        var body = await client.DecodedBodyAsync("segment", CancellationToken.None);
+
+        Assert.Equal(["first article"], pipelined);
+        Assert.Equal("first article", Encoding.ASCII.GetString(await ReadAllAsync(body.Stream!)));
+        Assert.Equal(requestsAfterPipeline, inner.BodyRequestCount + inner.BatchRequestCount);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(3)]

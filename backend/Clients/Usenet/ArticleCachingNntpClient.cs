@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using NzbWebDAV.Clients.Usenet.Contexts;
@@ -307,6 +308,47 @@ public class ArticleCachingNntpClient(
     {
         var onConnectionReadyAgain = exclusiveConnection.OnConnectionReadyAgain;
         return DecodedArticleAsync(segmentId, onConnectionReadyAgain, cancellationToken);
+    }
+
+    // Cache pipelined fetches so later RAR/7z/PAR2 header reads do not download them again.
+    public override async IAsyncEnumerable<PipelinedArticleResult> DecodedArticlesPipelinedAsync(
+        IReadOnlyList<string> segmentIds,
+        int depth,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var article in base.DecodedArticlesPipelinedAsync(segmentIds, depth, cancellationToken)
+                           .ConfigureAwait(false))
+        {
+            if (!article.Found || article.Stream is null
+                || _cachedSegments.ContainsKey(article.SegmentId))
+            {
+                yield return article;
+                continue;
+            }
+
+            CacheEntry? entry = null;
+            var semaphore = _pendingRequests.GetOrAdd(article.SegmentId, _ => new SemaphoreSlim(1, 1));
+            await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await using var stream = article.Stream;
+                if (!_cachedSegments.TryGetValue(article.SegmentId, out entry))
+                {
+                    var yencHeaders = await stream.GetYencHeadersAsync(cancellationToken).ConfigureAwait(false) ??
+                        throw new InvalidOperationException($"Failed to read yenc headers for segment {article.SegmentId}");
+                    await CacheDecodedStreamAsync(article.SegmentId, stream, cancellationToken).ConfigureAwait(false);
+                    entry = new CacheEntry(yencHeaders, article.ArticleHeaders is not null, article.ArticleHeaders);
+                    AddCacheEntry(article.SegmentId, entry);
+                }
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+
+            var cached = ReadCachedBodyAsync(article.SegmentId, entry!.YencHeaders);
+            yield return article with { Stream = cached.Stream };
+        }
     }
 
     public override Task<UsenetYencHeader> GetYencHeadersAsync(string segmentId, CancellationToken ct)
