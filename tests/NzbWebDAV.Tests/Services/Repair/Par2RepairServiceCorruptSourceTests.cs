@@ -10,6 +10,7 @@ using NzbWebDAV.Services;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Tests.Fakes;
+using NzbWebDAV.Tests.TestUtils;
 using SeededRelease = NzbWebDAV.Tests.Services.Repair.Par2RepairTestReleaseBuilder.SeededRelease;
 
 namespace NzbWebDAV.Tests.Services.Repair;
@@ -433,6 +434,32 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         Assert.Equal(Par2RepairOutcome.Repaired, ok);
         // Phase changes alone are a handful; reads must contribute too.
         Assert.True(heartbeats > 10, $"heartbeats={heartbeats}");
+    }
+
+    [Fact]
+    public async Task UntrustedRanges_SequentialHeaderProbesKeepInactivityWatchdogAlive()
+    {
+        const int segments = 12;
+        var fileData = PatternBytes(SliceSize * segments, 0x7D);
+        var clock = new ControllableTimeProvider();
+        var limit = HealthCheckService.HealthCheckInactivityLimit;
+        var probeLatency = limit - TimeSpan.FromMinutes(5);
+        using var stalled = new CancellationTokenSource(limit, clock);
+        HealthCheckActivity.Current = () => stalled.CancelAfter(limit);
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _configRoot).BuildAsync(
+            [new("target.bin", fileData, EqualSegments(segments), [0])], [0u], trustedRanges: false,
+            streamFactory: (_, _, bytes) =>
+            {
+                clock.Advance(probeLatency);
+                return new MemoryStream(bytes, writable: false);
+            });
+
+        var ok = await release.Service.TryPar2RepairAsync(
+            release.Item, [release.ContentSegmentIds[0]], stalled.Token);
+
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
+        Assert.False(stalled.IsCancellationRequested);
+        Assert.True(release.Fake.BodyRequestCounts.Count >= segments, "every untrusted article header must be probed");
     }
 
     [Fact]
