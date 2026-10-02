@@ -66,7 +66,8 @@ public sealed class NntpWholePathReportContractTests
                             ["expectedBytes"] = 1,
                             ["sha256Match"] = 1,
                         },
-                        PerformanceReportJson.WholePathTiming(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
+                        PerformanceReportJson.WholePathTiming(
+                            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, peakLeasedBytes: 123456789)),
                 });
 
             using var document = JsonDocument.Parse(File.ReadAllText(path));
@@ -79,6 +80,7 @@ public sealed class NntpWholePathReportContractTests
             Assert.Equal(6d, scenario.GetProperty("timing").GetProperty("timeToPeakActiveMs").GetDouble());
             Assert.Equal(7d, scenario.GetProperty("timing").GetProperty("clientAllocatedBytes").GetDouble());
             Assert.Equal(8d, scenario.GetProperty("timing").GetProperty("gen0Collections").GetDouble());
+            Assert.Equal(123456789d, scenario.GetProperty("timing").GetProperty("peakLeasedBytes").GetDouble());
         }
         finally
         {

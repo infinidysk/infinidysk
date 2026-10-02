@@ -92,7 +92,8 @@ internal static class NntpWholePathReport
                     timing.Gen0Collections,
                     timing.Gen1Collections,
                     timing.Gen2Collections,
-                    timing.Delivery));
+                    timing.Delivery,
+                    peakLeasedBytes: timing.PeakLeasedBytes));
 
             Console.WriteLine(
                 $"{scenario.Name} bytes={deterministic.ActualBytes} sha256_match={deterministic.Sha256Match} " +
@@ -180,6 +181,7 @@ internal static class NntpWholePathReport
                 }
                 catch (OperationCanceledException)
                 {
+                    return;
                 }
             });
             var startedTimestamp = Stopwatch.GetTimestamp();

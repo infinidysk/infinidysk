@@ -75,7 +75,8 @@ internal static class PerformanceReportJson
         int gen0Collections,
         int gen1Collections,
         int gen2Collections,
-        DeliverySmoothness? delivery = null)
+        DeliverySmoothness? delivery = null,
+        long peakLeasedBytes = 0)
     {
         var timing = new Dictionary<string, double>(StringComparer.Ordinal)
         {
@@ -89,6 +90,7 @@ internal static class PerformanceReportJson
             ["gen0Collections"] = Round(gen0Collections),
             ["gen1Collections"] = Round(gen1Collections),
             ["gen2Collections"] = Round(gen2Collections),
+            ["peakLeasedBytes"] = Round(peakLeasedBytes),
         };
         if (delivery is null)
             return timing;
