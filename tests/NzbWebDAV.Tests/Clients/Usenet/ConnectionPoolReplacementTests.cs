@@ -193,6 +193,33 @@ public class ConnectionPoolReplacementTests
     }
 
     [Fact]
+    public async Task DiscardedBodyReplacements_DoNotPaceNewHandshakes()
+    {
+        var clock = new SignalingTimeProvider();
+        using var pool = new ConnectionPool<DisposableProbe>(
+            maxConnections: 2,
+            _ => ValueTask.FromResult(new DisposableProbe(() => { })),
+            replacementHandshakeSpacing: TimeSpan.FromSeconds(1),
+            timeProvider: clock);
+
+        var first = await pool.GetConnectionLockAsync(SemaphorePriority.High);
+        var second = await pool.GetConnectionLockAsync(SemaphorePriority.High);
+        first.Discard("body-callback-BODY-discarded");
+        second.Discard("pipelined-body-discarded");
+        first.Dispose();
+        second.Dispose();
+
+        var acquired = await Task.WhenAll(
+                pool.GetConnectionLockAsync(SemaphorePriority.High),
+                pool.GetConnectionLockAsync(SemaphorePriority.High))
+            .WaitAsync(TimeSpan.FromSeconds(1));
+        foreach (var replacement in acquired) replacement.Dispose();
+
+        Assert.Equal(2, pool.GetChurn().ConnectionsDestroyed);
+        Assert.Equal(2, pool.LiveConnections);
+    }
+
+    [Fact]
     public async Task ReplacementReservations_ExtendPacingWindowForLargeQueue()
     {
         const int poolWidth = 15;
