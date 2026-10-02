@@ -1094,6 +1094,25 @@ public sealed partial class Program
         }
     }
 
+    private static readonly TimeSpan SegmentPoolIdleTrimAfter = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan SegmentPoolIdleCheckInterval = TimeSpan.FromSeconds(5);
+    private const long SegmentPoolIdleCollectThresholdBytes = 16L * 1024 * 1024;
+    private static Timer? _segmentPoolIdleTrimTimer;
+
+    // Once streaming stops, nothing allocates enough to trigger a gen2 collection, so
+    // released read-ahead buffers and stream garbage would otherwise stay resident.
+    private static void ReleaseIdleSegmentBuffers(SegmentBufferPool pool)
+    {
+        var released = pool.TrimIfIdle(SegmentPoolIdleTrimAfter);
+        if (released < SegmentPoolIdleCollectThresholdBytes) return;
+#pragma warning disable CA2001 // one collection per idle transition, never while buffers are in use
+        // codeql[cs/call-to-gc]
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+#pragma warning restore CA2001
+        Log.Debug("Released {ReleasedMiB} MiB of idle segment buffers after streaming stopped.",
+            released / (1024 * 1024));
+    }
+
     private static void ConfigureSegmentBufferPool(ConfigManager configManager)
     {
         var poolOverride = EnvironmentUtil.GetEnvironmentVariable(
@@ -1131,7 +1150,12 @@ public sealed partial class Program
         var retention = poolMode == SegmentBufferPoolSelector.Mode.BoundedCapacity
             ? SegmentBufferRetentionPolicy.CapacityOnly
             : SegmentBufferRetentionPolicy.Legacy;
-        PooledBufferStream.DefaultPool = new SegmentBufferPool(maxIdleBytes, retention);
+        var pool = new SegmentBufferPool(maxIdleBytes, retention);
+        PooledBufferStream.DefaultPool = pool;
+        _segmentPoolIdleTrimTimer?.Dispose();
+        _segmentPoolIdleTrimTimer = retention == SegmentBufferRetentionPolicy.CapacityOnly
+            ? new Timer(_ => ReleaseIdleSegmentBuffers(pool), null, SegmentPoolIdleCheckInterval, SegmentPoolIdleCheckInterval)
+            : null;
         Log.Information(
             "Segment buffer pool mode={Mode} maxIdleBytes={MaxIdleBytes} " +
             "sharedRingConfiguredMaxBytes={SharedRingConfiguredMaxBytes} cacheWriter={CacheWriter}",

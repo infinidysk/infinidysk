@@ -291,6 +291,31 @@ public class SegmentBufferPoolTests
     }
 
     [Fact]
+    public void TrimIfIdle_ReleasesIdleBuffersOnlyAfterQuietPeriod()
+    {
+        var clock = new ManualTimeProvider();
+        var pool = new SegmentBufferPool(
+            maxIdleBytes: 4 * 1024 * 1024,
+            retentionPolicy: SegmentBufferRetentionPolicy.CapacityOnly,
+            timeProvider: clock);
+        var idle = pool.Rent(750_000);
+        var inUse = pool.Rent(750_000);
+        pool.Return(idle);
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, pool.TrimIfIdle(TimeSpan.FromSeconds(30)));
+
+        clock.Advance(TimeSpan.FromSeconds(30));
+        Assert.Equal(idle.Length, pool.TrimIfIdle(TimeSpan.FromSeconds(30)));
+        var snapshot = pool.Snapshot();
+        Assert.Equal(0, snapshot.IdleBytes);
+        Assert.Equal(idle.Length, snapshot.StaleExpiredBytes);
+        Assert.Equal(inUse.Length, snapshot.CheckedOutBytes);
+        Assert.Equal(0, pool.TrimIfIdle(TimeSpan.FromSeconds(30)));
+        pool.Return(inUse);
+    }
+
+    [Fact]
     public void Return_AllowsOneClassToExceedLegacy64BufferLimitWithinByteCap()
     {
         const int bufferSize = 256 * 1024;
@@ -501,6 +526,8 @@ public class SegmentBufferPoolTests
     {
         private DateTimeOffset _now = DateTimeOffset.UnixEpoch;
         public override DateTimeOffset GetUtcNow() => _now;
+        public override long GetTimestamp() => _now.UtcTicks;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
         public void Advance(TimeSpan duration) => _now += duration;
     }
 }
