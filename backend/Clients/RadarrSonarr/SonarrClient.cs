@@ -267,7 +267,8 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         if (cachedSeriesPath != null)
         {
             var series = await GetSeriesOrNull(cachedSeriesId, ct).ConfigureAwait(false);
-            if (series?.Path != null && HealthCheckService.IsPathWithinRoot(symlinkOrStrmPath, series.Path))
+            if (series?.Path != null &&
+                string.Equals(ToSeriesCacheKey(series.Path), cachedSeriesPath, StringComparison.Ordinal))
                 return cachedSeriesId;
             SeriesPathToSeriesIdCache.TryRemove((Host, cachedSeriesPath), out _);
         }
@@ -277,9 +278,7 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         foreach (var series in await GetAllSeries(ct).ConfigureAwait(false))
         {
             var seriesPath = series.Path!;
-            var cachePath = seriesPath.Length > 1
-                ? seriesPath.TrimEnd('/', '\\')
-                : seriesPath;
+            var cachePath = ToSeriesCacheKey(seriesPath);
             SeriesPathToSeriesIdCache[(Host, cachePath)] = series.Id;
             if (HealthCheckService.IsPathWithinRoot(symlinkOrStrmPath, seriesPath) &&
                 cachePath.Length > resultPathLength)
@@ -291,4 +290,7 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
 
         return result;
     }
+
+    private static string ToSeriesCacheKey(string seriesPath) =>
+        seriesPath.Length > 1 ? seriesPath.TrimEnd('/', '\\') : seriesPath;
 }

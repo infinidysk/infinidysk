@@ -730,6 +730,32 @@ public class RadarrSonarrClientTests
         Assert.Equal(2, handler.Requests.Count(request => request == "GET /api/v3/series"));
     }
 
+    [Fact]
+    public async Task SonarrSeriesLookup_CachedSeriesMovedToAncestorIsRescanned()
+    {
+        const string host = "http://sonarr-stale-ancestor.test";
+        const string seriesPath = "/library/tv/Show";
+        const string firstFile = seriesPath + "/Season 01/episode-01.mkv";
+        const string secondFile = seriesPath + "/Season 01/episode-02.mkv";
+        var handler = CreateHandler(
+            ("GET /api/v3/series", JsonResponse($"[{{\"id\":101,\"path\":\"{seriesPath}\"}}]")),
+            ("GET /api/v3/episodefile?seriesId=101",
+                JsonResponse($"[{{\"id\":301,\"seriesId\":101,\"path\":\"{firstFile}\"}}]")),
+            ("GET /api/v3/episode?episodeFileId=301", JsonResponse("""[{"id":401,"seriesId":101}]""")),
+            ("GET /api/v3/series/101", JsonResponse("""{"id":101,"path":"/library/tv"}""")),
+            ("GET /api/v3/series", JsonResponse(
+                $"[{{\"id\":101,\"path\":\"/library/tv\"}},{{\"id\":202,\"path\":\"{seriesPath}\"}}]")),
+            ("GET /api/v3/episodefile?seriesId=202",
+                JsonResponse($"[{{\"id\":303,\"seriesId\":202,\"path\":\"{secondFile}\"}}]")),
+            ("GET /api/v3/episode?episodeFileId=303", JsonResponse("""[{"id":403,"seriesId":202}]""")));
+        using var httpClient = new HttpClient(handler);
+        var client = new TestSonarrClient(host, httpClient);
+
+        Assert.Equal(301, (await client.FindMediaFileAsync(firstFile))?.FileId);
+        Assert.Equal(303, (await client.FindMediaFileAsync(secondFile))?.FileId);
+        Assert.Equal(2, handler.Requests.Count(request => request == "GET /api/v3/series"));
+    }
+
     [Theory]
     [InlineData("posix-sibling", "/library/tv/Prefix Extended/sample.mkv", "/library/tv/Prefix")]
     [InlineData("windows-sibling", @"C:\TV\Prefix Extended\sample.mkv", @"C:\TV\Prefix\")]
