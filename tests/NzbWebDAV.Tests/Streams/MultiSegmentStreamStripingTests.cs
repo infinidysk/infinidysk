@@ -289,15 +289,17 @@ public sealed class MultiSegmentStreamStripingTests
         Assert.Equal(3, client.IndividualRequestCount);
     }
 
-    [Fact]
-    public async Task StripedRamp_StartsAtHalfTheWindowAndGrowsToTheFullWindow()
+    [Theory]
+    [InlineData(SegmentSize)]
+    [InlineData(SegmentSize - 1)]
+    public async Task StripedRamp_StartsAtHalfTheWindowAndGrowsToTheFullWindow(int estimatedSegmentSize)
     {
         // Eight stripes at width 4 fill a 32-segment window; the start admits half of it.
         var client = new ControlledBatchNntpClient(64, SegmentSize, uniqueBytes: true);
         using var cts = new CancellationTokenSource();
         using var hint = cts.Token.SetContext(new StreamingStripeContext { StripeCount = 8 });
         await using var stream = CreateStream(
-            client, cts.Token, articleBufferSize: 8, estimatedSegmentSize: SegmentSize);
+            client, cts.Token, articleBufferSize: 8, estimatedSegmentSize: estimatedSegmentSize);
 
         Assert.Equal(16 * SegmentSize, stream.CurrentPrefetchByteCeiling);
         await client.WaitUntilAsync(() => client.BatchIssueCount == 8, Timeout);
@@ -312,10 +314,10 @@ public sealed class MultiSegmentStreamStripingTests
         Assert.Equal(20 * SegmentSize, stream.CurrentPrefetchByteCeiling);
         var middle = new byte[12 * SegmentSize];
         await stream.ReadExactlyAsync(middle).AsTask().WaitAsync(Timeout);
-        Assert.Equal(32 * SegmentSize, stream.CurrentPrefetchByteCeiling);
+        Assert.Equal(32 * estimatedSegmentSize, stream.CurrentPrefetchByteCeiling);
         var rest = await ReadAllAsync(stream);
 
-        Assert.Equal(32 * SegmentSize, stream.CurrentPrefetchByteCeiling);
+        Assert.Equal(32 * estimatedSegmentSize, stream.CurrentPrefetchByteCeiling);
         Assert.Equal(client.ExpectedConcatenation, head.Concat(middle).Concat(rest).ToArray());
     }
 

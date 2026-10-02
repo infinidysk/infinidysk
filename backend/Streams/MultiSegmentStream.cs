@@ -809,13 +809,20 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             : 1;
         _stripeTarget = _stripeCount;
         // A full striped group keeps every connection pipelined; half the window keeps a ramp when it would fill it.
-        _initialPrefetchByteCeiling = Math.Min(
-            _prefetchByteCeiling,
-            SaturatingMultiply(
-                Math.Max(
-                    MinInitialPrefetchSegments,
-                    Math.Min((long)_stripeCount * _bodyPipelineBatchSize, _taskWindowSize / 2)),
-                estimatedSegmentSize));
+        var initialSegmentCount = Math.Min(
+            _segmentIds.Length,
+            Math.Max(
+                MinInitialPrefetchSegments,
+                Math.Min((long)_stripeCount * _bodyPipelineBatchSize, _taskWindowSize / 2)));
+        var initialPlannedBytes = 0L;
+        for (var segmentIndex = 0; segmentIndex < initialSegmentCount; segmentIndex++)
+        {
+            var plannedBytes = GetPlannedSegmentBytes(segmentIndex);
+            initialPlannedBytes = plannedBytes > long.MaxValue - initialPlannedBytes
+                ? long.MaxValue
+                : initialPlannedBytes + plannedBytes;
+        }
+        _initialPrefetchByteCeiling = Math.Min(_prefetchByteCeiling, initialPlannedBytes);
         if (_stripeCount > 1)
         {
             Log.Debug(
