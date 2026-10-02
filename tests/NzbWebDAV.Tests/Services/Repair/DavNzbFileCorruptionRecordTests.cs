@@ -3,6 +3,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Models;
+using NzbWebDAV.Services;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Tests.Database;
 
@@ -263,6 +264,48 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
         var blob = await BlobStore.ReadBlob<DavNzbFile>(item.FileBlobId!.Value);
         Assert.Equal([0], blob!.MissingSegmentIndices!);
         Assert.Equal([2], blob.CorruptSegmentIndices!);
+    }
+
+    [Theory]
+    [InlineData("false", 1)]
+    [InlineData("true", 0)]
+    public async Task ZeroFill_CountsTowardRepairOnlyWithoutDamageBudget(string tolerance, int expectedFailures)
+    {
+        var segments = NewSegmentIds(4);
+        var (item, _) = await AddFileAsync(segments);
+        _config.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "false" },
+            new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = tolerance },
+        ]);
+        var failureTracker = new StreamingFailureTracker();
+        var scheduled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scheduler = new StreamingRepairScheduler(_config, failureTracker)
+        {
+            CompletionHook = _ =>
+            {
+                scheduled.TrySetResult();
+                return Task.CompletedTask;
+            },
+        };
+        var service = new Par2RepairService(
+            _config,
+            null!,
+            new RepairPatchStore(Path.Join(_configRoot, $"patches-escalate-{tolerance}"), 1024 * 1024),
+            repairScheduler: scheduler);
+
+        await service.ProcessZeroFillEventForTestsAsync(item.Path, segments[2], CancellationToken.None);
+
+        Assert.Equal(expectedFailures, failureTracker.GetFailureCount(item.Id));
+        var blob = await ReadCurrentBlobAsync(item.Id);
+        Assert.Equal([2], blob.MissingSegmentIndices!);
+        if (expectedFailures > 0)
+        {
+            await scheduled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await using var context = new DavDatabaseContext();
+            var reloaded = await context.Items.AsNoTracking().SingleAsync(x => x.Id == item.Id);
+            Assert.Equal(DateTimeOffset.UnixEpoch, reloaded.NextHealthCheck);
+        }
     }
 
     private Par2RepairService NewService() =>

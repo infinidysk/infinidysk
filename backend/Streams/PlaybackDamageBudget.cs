@@ -40,6 +40,8 @@ internal sealed class PlaybackDamageBudget
 
     public static PlaybackDamageBudget? TryCreate(string fileName, DavNzbFile nzbFile, ConfigManager config)
     {
+        if (!config.IsDegradedToleranceEnabled())
+            return null;
         var containerClass = ResolveContainerClass(fileName, nzbFile);
         if (containerClass is not (MediaContainerClass.ResyncTolerant or MediaContainerClass.Mp4FastStart))
             return null;
@@ -61,9 +63,10 @@ internal sealed class PlaybackDamageBudget
             persisted);
     }
 
-    /// <summary>True when playback can pad over damage in this file instead of failing on it.</summary>
-    public static bool IsEligible(string fileName, DavNzbFile nzbFile) =>
-        ResolveContainerClass(fileName, nzbFile) is MediaContainerClass.ResyncTolerant or MediaContainerClass.Mp4FastStart;
+    /// <summary>True when playback pads over damage in this file instead of escalating each hole.</summary>
+    public static bool Applies(string fileName, DavNzbFile nzbFile, ConfigManager config) =>
+        config.IsDegradedToleranceEnabled()
+        && ResolveContainerClass(fileName, nzbFile) is MediaContainerClass.ResyncTolerant or MediaContainerClass.Mp4FastStart;
 
     public bool IsExceeded(IEnumerable<int> playbackMissingIndices, out string reason)
     {

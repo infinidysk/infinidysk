@@ -20,6 +20,7 @@ using NzbWebDAV.Par2Recovery.Packets;
 using NzbWebDAV.Par2Recovery.ReedSolomon;
 using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Observability;
+using NzbWebDAV.Streams;
 using Serilog;
 using UsenetSharp.Models;
 
@@ -50,6 +51,7 @@ public partial class Par2RepairService : BackgroundService
     private readonly UsenetStreamingClient _usenetClient;
     private readonly RepairPatchStore _patchStore;
     private readonly IDbContextFactory<DavDatabaseContext>? _dbContextFactory;
+    private readonly StreamingRepairScheduler? _repairScheduler;
     private readonly LogThrottle _catalogWarningThrottle = new();
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private readonly Channel<RepairWorkItem> _queue;
@@ -87,8 +89,9 @@ public partial class Par2RepairService : BackgroundService
         ConfigManager configManager,
         UsenetStreamingClient usenetClient,
         RepairPatchStore patchStore,
-        IDbContextFactory<DavDatabaseContext>? dbContextFactory = null)
-        : this(configManager, usenetClient, patchStore, dbContextFactory, static (delay, ct) => Task.Delay(delay, ct))
+        IDbContextFactory<DavDatabaseContext>? dbContextFactory = null,
+        StreamingRepairScheduler? repairScheduler = null)
+        : this(configManager, usenetClient, patchStore, dbContextFactory, static (delay, ct) => Task.Delay(delay, ct), repairScheduler)
     {
     }
 
@@ -97,12 +100,14 @@ public partial class Par2RepairService : BackgroundService
         UsenetStreamingClient usenetClient,
         RepairPatchStore patchStore,
         IDbContextFactory<DavDatabaseContext>? dbContextFactory,
-        Func<TimeSpan, CancellationToken, Task> delayAsync)
+        Func<TimeSpan, CancellationToken, Task> delayAsync,
+        StreamingRepairScheduler? repairScheduler = null)
     {
         _configManager = configManager;
         _usenetClient = usenetClient;
         _patchStore = patchStore;
         _dbContextFactory = dbContextFactory;
+        _repairScheduler = repairScheduler;
         _delayAsync = delayAsync;
         // Wait mode makes non-blocking TryWrite report full queues as false so
         // callers can undo bookkeeping; DropWrite would return true and silently
@@ -157,7 +162,7 @@ public partial class Par2RepairService : BackgroundService
     /// </summary>
     public void ReportZeroFill(string path, string segmentId)
     {
-        if (!_configManager.IsPar2RepairEnabled() && !_configManager.IsDegradedToleranceEnabled())
+        if (!_configManager.IsRepairJobEnabled())
             return;
         AccumulateAndArm(path, segmentId, isCorruption: false);
     }
@@ -586,6 +591,13 @@ public partial class Par2RepairService : BackgroundService
 
         if (davItem.SubType is DavItem.ItemSubType.RarFile or DavItem.ItemSubType.MultipartFile)
         {
+            // Archive members never get a damage budget, so every padded hole is a repair trigger.
+            foreach (var (segmentId, isCorruption) in reports)
+            {
+                if (!isCorruption)
+                    _repairScheduler?.ScheduleRepair(davItem, segmentId);
+            }
+
             if (!_configManager.IsPar2RepairEnabled()) return;
             var multipartIds = reports.Where(report => !report.Item2 || _configManager.IsCorruptionTrackingEnabled())
                 .Select(report => report.Item1).Where(id => !string.IsNullOrWhiteSpace(id))
@@ -656,6 +668,14 @@ public partial class Par2RepairService : BackgroundService
                 },
                 fallback: nzbFile).ConfigureAwait(false);
             await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+        }
+
+        // Without a playback damage budget nothing else decides whether a padded hole is
+        // acceptable, so each confirmed miss counts toward an urgent repair.
+        if (_repairScheduler is not null && !PlaybackDamageBudget.Applies(davItem.Name, nzbFile, _configManager))
+        {
+            foreach (var segmentId in missingIds)
+                _repairScheduler.ScheduleRepair(davItem, segmentId);
         }
 
         if (!_configManager.IsPar2RepairEnabled())
