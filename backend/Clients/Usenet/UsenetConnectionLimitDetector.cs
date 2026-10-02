@@ -17,6 +17,26 @@ public static partial class UsenetConnectionLimitDetector
     [GeneratedRegex(@"connection\s+limit\s*\((\d+)\)", RegexOptions.IgnoreCase)]
     private static partial Regex ConnectionLimitRegex();
 
+    [GeneratedRegex(
+        @"connection\s+limit|too\s+many\s+(?:connections|sessions|users|logins)|max(?:imum)?\s+(?:\w+\s+)?connections",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex ConnectionLimitTextRegex();
+
+    /// <summary>
+    /// Returns true when the exception chain contains a 502 response whose text reports a
+    /// connection limit, whether or not it states the number (e.g. "502 Too many connections").
+    /// </summary>
+    public static bool IsConnectionLimitRejection(Exception exception)
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (IsConnectionLimit502(current) && ConnectionLimitTextRegex().IsMatch(current.Message))
+                return true;
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// Returns true when the exception chain contains a 502 response whose message
     /// matches "connection limit (N)", and outputs the learned limit N.

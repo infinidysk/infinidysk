@@ -123,4 +123,29 @@ public class UsenetConnectionLimitDetectorTests
 
         Assert.False(UsenetConnectionLimitDetector.TryLearn(ex, out _));
     }
+
+    [Theory]
+    [InlineData("502 Too many connections.", 502, true)]
+    [InlineData("502 too many connections from your account", 502, true)]
+    [InlineData("502 Maximum connections reached", 502, true)]
+    [InlineData("502 connection limit (150) reached", 502, true)]
+    [InlineData("502 authentication failed", 502, false)]
+    [InlineData("502 Too many connections.", 481, false)]
+    public void IsConnectionLimitRejection_AuthStage(string message, int code, bool expected)
+    {
+        var ex = new CouldNotLoginToUsenetException(
+            $"Could not login to usenet host: {message}", responseCode: code);
+
+        Assert.Equal(expected, UsenetConnectionLimitDetector.IsConnectionLimitRejection(ex));
+    }
+
+    [Fact]
+    public void IsConnectionLimitRejection_GreetingStage()
+    {
+        var inner = new UsenetConnectionException("502 Too many connections.") { ResponseCode = 502 };
+        var ex = new CouldNotConnectToUsenetException("Could not connect.", inner);
+
+        Assert.True(UsenetConnectionLimitDetector.IsConnectionLimitRejection(ex));
+        Assert.False(UsenetConnectionLimitDetector.TryLearn(ex, out _));
+    }
 }

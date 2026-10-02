@@ -55,10 +55,7 @@ public class MultiConnectionNntpClient(
 {
     private readonly ProviderConnectionAdmission? _connectionAdmission =
         maxTransferConnections is { } transferLimit
-            ? new ProviderConnectionAdmission(
-                () => connectionPool.EffectiveMaxConnections,
-                transferLimit,
-                priorityOdds)
+            ? ProviderConnectionAdmission.ForPool(connectionPool, transferLimit, priorityOdds)
             : null;
     internal Action<ConnectionLock<INntpClient>, Action>? AttachDisposeCallbackForTests
     { get; set; }
@@ -1429,6 +1426,15 @@ public class MultiConnectionNntpClient(
                 $"{reason}-phase-{openTimeout.Phase}",
                 probeLease,
                 requiresFreshConnectionProbe: true);
+            return;
+        }
+
+        // The pool narrows itself on a limit rejection; a provider already serving
+        // connections is full, not unhealthy.
+        if (connectionPool.LiveConnections > 0
+            && UsenetConnectionLimitDetector.IsConnectionLimitRejection(exception))
+        {
+            circuitBreaker.ReleaseProbe(probeLease);
             return;
         }
 
