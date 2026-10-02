@@ -38,6 +38,8 @@ public class DatabaseStoreNzbFile(
 
     private NzbFileStream GetStream(DavNzbFile nzbFile)
     {
+        PlaybackHoleTracker.SetDamageBudget(
+            davNzbFile.Path, PlaybackDamageBudget.TryCreate(davNzbFile.Name, nzbFile, Config));
         return usenetClient.GetFileStream(
             nzbFile.SegmentIds,
             FileSize,

@@ -58,6 +58,82 @@ public sealed class PlaybackHoleTrackerTests : IDisposable
     }
 
     [Fact]
+    public void DamageBudget_PadsScatteredHolesUntilTotalCapIsReached()
+    {
+        var path = $"/view/budget-{Guid.NewGuid():N}.mkv";
+        var nzb = BudgetFile(segments: 1000);
+        var config = new NzbWebDAV.Config.ConfigManager();
+        config.UpdateValues([
+            new NzbWebDAV.Database.Models.ConfigItem { ConfigName = NzbWebDAV.Config.ConfigKeys.RepairDegradedMaxTotalMissing, ConfigValue = "3" },
+        ]);
+        PlaybackHoleTracker.SetDamageBudget(path, PlaybackDamageBudget.TryCreate(path, nzb, config));
+
+        for (var i = 1; i <= 3; i++)
+        {
+            RecordIsolatedHole(path, nzb.SegmentIds[i * 100]);
+            Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
+        }
+
+        RecordIsolatedHole(path, nzb.SegmentIds[400]);
+        Assert.True(PlaybackHoleTracker.ShouldFailFast(path, out var failure));
+        Assert.NotNull(failure);
+    }
+
+    [Fact]
+    public void DamageBudget_FailsOnFirstSegmentHole()
+    {
+        var path = $"/view/head-{Guid.NewGuid():N}.mkv";
+        var nzb = BudgetFile(segments: 100);
+        PlaybackHoleTracker.SetDamageBudget(path, PlaybackDamageBudget.TryCreate(path, nzb, new NzbWebDAV.Config.ConfigManager()));
+
+        RecordIsolatedHole(path, nzb.SegmentIds[0]);
+        Assert.True(PlaybackHoleTracker.ShouldFailFast(path, out _));
+    }
+
+    [Fact]
+    public void DamageBudget_AllowsLongerRunsThanTheFixedLimit()
+    {
+        var path = $"/view/run-{Guid.NewGuid():N}.mkv";
+        var nzb = BudgetFile(segments: 1000);
+        PlaybackHoleTracker.SetDamageBudget(path, PlaybackDamageBudget.TryCreate(path, nzb, new NzbWebDAV.Config.ConfigManager()));
+
+        Assert.Equal(5, PlaybackHoleTracker.ConsecutiveFillLimit(path));
+        var miss = new UsenetArticleNotFoundException("run@test");
+        for (var i = 10; i < 14; i++)
+            PlaybackHoleTracker.RecordHole(path, nzb.SegmentIds[i], miss);
+        Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
+
+        PlaybackHoleTracker.RecordHole(path, nzb.SegmentIds[14], miss);
+        Assert.True(PlaybackHoleTracker.ShouldFailFast(path, out _));
+    }
+
+    [Fact]
+    public void IneligibleFile_KeepsFixedConsecutiveLimit()
+    {
+        var path = $"/view/plain-{Guid.NewGuid():N}.avi";
+        Assert.Null(PlaybackDamageBudget.TryCreate(path, BudgetFile(segments: 10), new NzbWebDAV.Config.ConfigManager()));
+        Assert.Equal(GapFillLimits.MaxConsecutiveZeroFills, PlaybackHoleTracker.ConsecutiveFillLimit(path));
+    }
+
+    private static void RecordIsolatedHole(string path, string segmentId)
+    {
+        PlaybackHoleTracker.RecordGoodSegment(path);
+        PlaybackHoleTracker.RecordHole(path, segmentId, new UsenetArticleNotFoundException(segmentId));
+    }
+
+    private static NzbWebDAV.Database.Models.DavNzbFile BudgetFile(int segments)
+    {
+        const long size = 700_000;
+        return new NzbWebDAV.Database.Models.DavNzbFile
+        {
+            SegmentIds = Enumerable.Range(0, segments).Select(i => $"seg{i}@test").ToArray(),
+            SegmentByteRanges = Enumerable.Range(0, segments)
+                .Select(i => new NzbWebDAV.Models.LongRange(i * size, (i + 1) * size))
+                .ToArray(),
+        };
+    }
+
+    [Fact]
     public void StaleEntries_AreEvictedOnPeriodicCleanup()
     {
         var stale = $"/view/stale-{Guid.NewGuid():N}.mkv";

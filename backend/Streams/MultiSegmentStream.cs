@@ -2482,7 +2482,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             if (result.IsShortPad)
             {
                 _consecutiveZeroFills++;
-                if (_consecutiveZeroFills < GapFillLimits.MaxConsecutiveZeroFills
+                if (_consecutiveZeroFills < PlaybackHoleTracker.ConsecutiveFillLimit(_fileName)
                     && !PlaybackHoleTracker.ShouldFailFast(_fileName, out _))
                     return result.Stream;
 
@@ -2512,7 +2512,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         if (MultiProviderNntpClient.CurrentReadSessionId is { } sessionId)
             StreamTrace.TryZeroFill(sessionId, result.SegmentId!, result.Bytes);
 
-        if (_consecutiveZeroFills < GapFillLimits.MaxConsecutiveZeroFills
+        if (_consecutiveZeroFills < PlaybackHoleTracker.ConsecutiveFillLimit(_fileName)
             && !PlaybackHoleTracker.ShouldFailFast(_fileName, out _))
             return result.Stream;
 

@@ -316,7 +316,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
                     _fileName, shortId, _openSegmentIndex, remainingExact);
                 _consecutiveZeroFills++;
                 _openSegmentHole = true;
-                var cap = _consecutiveZeroFills >= GapFillLimits.MaxConsecutiveZeroFills;
+                var cap = _consecutiveZeroFills >= PlaybackHoleTracker.ConsecutiveFillLimit(_fileName);
                 var trackerFail = PlaybackHoleTracker.ShouldFailFast(_fileName, out var failFast);
                 if (cap || trackerFail)
                     ExceptionDispatchInfo.Capture(failFast ?? hole).Throw();
@@ -894,7 +894,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
             Par2RepairTriggerSink.ReportCorruption(_fileName, segmentId);
         else if (!inconclusive)
             Par2RepairTriggerSink.Current?.ReportZeroFill(_fileName, segmentId, segmentIndex, fill);
-        var cap = _consecutiveZeroFills >= GapFillLimits.MaxConsecutiveZeroFills;
+        var cap = _consecutiveZeroFills >= PlaybackHoleTracker.ConsecutiveFillLimit(_fileName);
         var trackerFail = PlaybackHoleTracker.ShouldFailFast(_fileName, out var failFast);
         if (cap || trackerFail)
         {

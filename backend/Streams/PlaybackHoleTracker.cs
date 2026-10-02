@@ -25,6 +25,50 @@ internal static class PlaybackHoleTracker
         Volatile.Write(ref _callCount, 0);
     }
 
+    public static void SetDamageBudget(string? path, PlaybackDamageBudget? budget)
+    {
+        if (!IsTrackablePath(path))
+            return;
+
+        var now = Clock.GetUtcNow();
+        if (budget is null)
+        {
+            if (Files.TryGetValue(path!, out var existing))
+                lock (existing) existing.Budget = null;
+            return;
+        }
+
+        var state = Files.GetOrAdd(path!, _ => new FileState { LastEventUtc = now });
+        lock (state)
+        {
+            state.Budget = budget;
+            state.MissingIndices.Clear();
+            foreach (var id in state.MissingSegmentIds)
+            {
+                if (Array.IndexOf(budget.SegmentIds, id) is >= 0 and var index)
+                    state.MissingIndices.Add(index);
+            }
+            state.BudgetExceeded = state.MissingIndices.Count > 0 && budget.IsExceeded(state.MissingIndices, out _);
+        }
+
+        MaybeCleanup(now);
+    }
+
+    /// <summary>Holes in a row a stream may pad before failing the read.</summary>
+    public static int ConsecutiveFillLimit(string? path)
+    {
+        if (IsTrackablePath(path) && Files.TryGetValue(path!, out var state))
+        {
+            lock (state)
+            {
+                if (state.Budget is { } budget)
+                    return budget.ConsecutiveFillLimit;
+            }
+        }
+
+        return GapFillLimits.MaxConsecutiveZeroFills;
+    }
+
     public static void RecordHole(string? path, string segmentId, Exception exception)
     {
         if (!IsTrackablePath(path) || string.IsNullOrEmpty(segmentId))
@@ -40,7 +84,16 @@ internal static class PlaybackHoleTracker
             // An inconclusive miss still counts toward consecutive-hole fail-fast, but later reads
             // must ask the providers again instead of treating the segment as known-missing.
             if (!exception.IsInconclusiveArticleMiss())
+            {
                 state.MissingSegmentIds.Add(segmentId);
+                // ponytail: linear id lookup per confirmed hole; fine while the budget caps holes in the tens.
+                if (state.Budget is { } budget
+                    && Array.IndexOf(budget.SegmentIds, segmentId) is >= 0 and var index
+                    && state.MissingIndices.Add(index))
+                {
+                    state.BudgetExceeded = budget.IsExceeded(state.MissingIndices, out _);
+                }
+            }
             state.LastException = exception;
         }
 
@@ -71,7 +124,8 @@ internal static class PlaybackHoleTracker
         lock (state)
         {
             Prune(state, now);
-            if (state.HoleTimes.Count < GapFillLimits.MaxConsecutiveZeroFills)
+            var limit = state.Budget?.ConsecutiveFillLimit ?? GapFillLimits.MaxConsecutiveZeroFills;
+            if (state.HoleTimes.Count < limit && !(state.BudgetExceeded && state.LastException is not null))
                 return false;
             exception = state.LastException;
             return true;
@@ -168,5 +222,8 @@ internal static class PlaybackHoleTracker
         public Exception? LastException { get; set; }
         public List<DateTimeOffset> HoleTimes { get; } = [];
         public HashSet<string> MissingSegmentIds { get; } = new(StringComparer.Ordinal);
+        public HashSet<int> MissingIndices { get; } = [];
+        public PlaybackDamageBudget? Budget { get; set; }
+        public bool BudgetExceeded { get; set; }
     }
 }
