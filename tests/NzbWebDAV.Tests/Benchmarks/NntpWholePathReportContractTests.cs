@@ -150,8 +150,8 @@ public sealed class NntpWholePathReportContractTests
     {
         var scenarios = NntpWholePathScenario.Smoothness;
 
-        Assert.Equal([1, 4, 8, 4], scenarios.Select(scenario => scenario.BatchWidth));
-        Assert.Equal([20, 20, 20, 4], scenarios.Select(scenario => scenario.ConnectionCount));
+        Assert.Equal([1, 4, 8, 4, 4], scenarios.Select(scenario => scenario.BatchWidth));
+        Assert.Equal([20, 20, 20, 4, 40], scenarios.Select(scenario => scenario.ConnectionCount));
         Assert.All(scenarios, scenario =>
         {
             Assert.Equal(NntpWholePathLayer.HttpLike, scenario.Layer);

@@ -289,6 +289,34 @@ public sealed class MultiSegmentStreamStripingTests
         Assert.Equal(3, client.IndividualRequestCount);
     }
 
+    [Fact]
+    public async Task StripedRamp_StartsWithOneSegmentPerStripeAndGrowsToTheFullWindow()
+    {
+        // Eight stripes at width 4 fill a 32-segment window; the start admits one per stripe.
+        var client = new ControlledBatchNntpClient(64, SegmentSize, uniqueBytes: true);
+        using var cts = new CancellationTokenSource();
+        using var hint = cts.Token.SetContext(new StreamingStripeContext { StripeCount = 8 });
+        await using var stream = CreateStream(
+            client, cts.Token, articleBufferSize: 8, estimatedSegmentSize: SegmentSize);
+
+        Assert.Equal(8 * SegmentSize, stream.CurrentPrefetchByteCeiling);
+        await client.WaitUntilAsync(() => client.BatchIssueCount == 8, Timeout);
+        await Task.Delay(100);
+        Assert.Equal(Enumerable.Range(0, 8).Select(index => new[] { index }), client.ObservedBatchIndexes);
+
+        client.ReleaseAllUpTo(63);
+        var head = new byte[4 * SegmentSize];
+        await stream.ReadExactlyAsync(head).AsTask().WaitAsync(Timeout);
+        Assert.Equal(12 * SegmentSize, stream.CurrentPrefetchByteCeiling);
+        var middle = new byte[20 * SegmentSize];
+        await stream.ReadExactlyAsync(middle).AsTask().WaitAsync(Timeout);
+        Assert.Equal(32 * SegmentSize, stream.CurrentPrefetchByteCeiling);
+        var rest = await ReadAllAsync(stream);
+
+        Assert.Equal(32 * SegmentSize, stream.CurrentPrefetchByteCeiling);
+        Assert.Equal(client.ExpectedConcatenation, head.Concat(middle).Concat(rest).ToArray());
+    }
+
     [Theory]
     [InlineData(null, null, 40, 1)]
     [InlineData(null, 20, 40, 20)]
@@ -313,12 +341,14 @@ public sealed class MultiSegmentStreamStripingTests
     private static MultiSegmentStream CreateStream(
         ControlledBatchNntpClient client,
         CancellationToken cancellationToken,
-        InFlightArticleBudget? budget = null) =>
+        InFlightArticleBudget? budget = null,
+        int articleBufferSize = 40,
+        long estimatedSegmentSize = 0) =>
         (MultiSegmentStream)MultiSegmentStream.CreateWithInitialBatchPlan(
             client.SegmentIds.AsMemory(),
             client,
-            articleBufferSize: 40,
-            estimatedSegmentSize: 0,
+            articleBufferSize: articleBufferSize,
+            estimatedSegmentSize: estimatedSegmentSize,
             failFastOnFirstSegment: false,
             usePipelinedBodyRequests: true,
             cancellationToken,

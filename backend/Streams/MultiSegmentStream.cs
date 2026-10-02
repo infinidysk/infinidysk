@@ -45,7 +45,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     private readonly long? _readBudget;
     private readonly long _prefetchByteCeiling;
     private readonly long _initialPrefetchByteCeiling;
-    // Grows the ceiling like TCP slow start, so a probe or seek never fills the whole window.
+    // Planned bytes of segments handed to the reader; grows the ceiling like TCP slow start.
     private long _consumedPrefetchBytes;
     private readonly int _taskWindowSize;
     private readonly int _stripeCount;
@@ -808,11 +808,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
             ? ResolveStripeCount(initialBatchPlan, articleBufferSize, cancellationToken)
             : 1;
         _stripeTarget = _stripeCount;
+        // One segment per stripe keeps the opening fan-out while the window ramps.
         _initialPrefetchByteCeiling = Math.Min(
             _prefetchByteCeiling,
-            SaturatingMultiply(
-                Math.Max(MinInitialPrefetchSegments, (long)_stripeCount * _bodyPipelineBatchSize),
-                estimatedSegmentSize));
+            SaturatingMultiply(Math.Max(MinInitialPrefetchSegments, _stripeCount), estimatedSegmentSize));
         if (_stripeCount > 1)
         {
             Log.Debug(
