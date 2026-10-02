@@ -28,9 +28,9 @@ describe("settings change persistence", () => {
       "repair.par2-failure-cooldown-hours": "6",
       "repair.degraded-tolerance-enabled": "true",
       "repair.corruption-tracking-enabled": "true",
-      "repair.degraded-max-consecutive-missing": "2",
-      "repair.degraded-max-total-missing": "5",
-      "repair.degraded-max-missing-byte-percent": "1.0",
+      "repair.degraded-max-consecutive-missing": "4",
+      "repair.degraded-max-total-missing": "64",
+      "repair.degraded-max-missing-byte-percent": "2.0",
     };
     const changedRepairs = {
       "repair.par2-enabled": "false",

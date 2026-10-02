@@ -631,10 +631,10 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Max consecutive missing segments
               </label>
               <Input
-                className={`w-full max-w-48 ${!isPositiveInteger(config["repair.degraded-max-consecutive-missing"] ?? "2") ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPositiveInteger(config["repair.degraded-max-consecutive-missing"] ?? "4") ? "input-error" : ""}`}
                 type="text"
                 id="degraded-max-consecutive-missing-input"
-                placeholder="2"
+                placeholder="4"
                 disabled={
                   !isRepairEnabled ||
                   (config["repair.degraded-tolerance-enabled"] ?? "true") !== "true"
@@ -648,8 +648,8 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 }
               />
               <p className="text-[11px] leading-relaxed text-base-content/45">
-                A run of adjacent missing segments longer than this fails the file. Capped by the
-                playback gap-fill limit (2).
+                A run of adjacent missing segments longer than this fails the file, during health
+                checks and playback (1–8).
               </p>
             </div>
             <div className="space-y-2">
@@ -660,10 +660,10 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Max total missing segments
               </label>
               <Input
-                className={`w-full max-w-48 ${!isPositiveInteger(config["repair.degraded-max-total-missing"] ?? "5") ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPositiveInteger(config["repair.degraded-max-total-missing"] ?? "64") ? "input-error" : ""}`}
                 type="text"
                 id="degraded-max-total-missing-input"
-                placeholder="5"
+                placeholder="64"
                 disabled={
                   !isRepairEnabled ||
                   (config["repair.degraded-tolerance-enabled"] ?? "true") !== "true"
@@ -685,10 +685,10 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Max missing data (% of file)
               </label>
               <Input
-                className={`w-full max-w-48 ${!isPositiveNumber(config["repair.degraded-max-missing-byte-percent"] ?? "1.0") ? "input-error" : ""}`}
+                className={`w-full max-w-48 ${!isPositiveNumber(config["repair.degraded-max-missing-byte-percent"] ?? "2.0") ? "input-error" : ""}`}
                 type="text"
                 id="degraded-max-missing-byte-percent-input"
-                placeholder="1.0"
+                placeholder="2.0"
                 disabled={
                   !isRepairEnabled ||
                   (config["repair.degraded-tolerance-enabled"] ?? "true") !== "true"

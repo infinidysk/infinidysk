@@ -78,20 +78,18 @@ public sealed class DegradedToleranceConfigTests
     }
 
     [Fact]
-    public void MaxConsecutiveMissing_DefaultsToTwo()
+    public void MaxConsecutiveMissing_DefaultsToFour()
     {
-        Assert.Equal(2, new ConfigManager().GetDegradedMaxConsecutiveMissing());
+        Assert.Equal(4, new ConfigManager().GetDegradedMaxConsecutiveMissing());
     }
 
     [Theory]
     [InlineData("1", 1)]
     [InlineData("2", 2)]
-    // Clamped to the playback zero-fill bound (GapFillLimits.MaxConsecutiveZeroFills - 1):
-    // a run the classifier calls degraded but playback refuses to serve is the worst of both.
     [InlineData("0", 1)]
     [InlineData("-5", 1)]
-    [InlineData("99", 2)]
-    [InlineData("abc", 2)]
+    [InlineData("99", 8)]
+    [InlineData("abc", 4)]
     public void MaxConsecutiveMissing_IsParsedAndClamped(string configured, int expected)
     {
         var config = new ConfigManager();
@@ -101,9 +99,9 @@ public sealed class DegradedToleranceConfigTests
     }
 
     [Fact]
-    public void MaxTotalMissing_DefaultsToFive()
+    public void MaxTotalMissing_DefaultsToSixtyFour()
     {
-        Assert.Equal(5, new ConfigManager().GetDegradedMaxTotalMissing());
+        Assert.Equal(64, new ConfigManager().GetDegradedMaxTotalMissing());
     }
 
     [Theory]
@@ -111,7 +109,7 @@ public sealed class DegradedToleranceConfigTests
     [InlineData("42", 42)]
     [InlineData("0", 1)]
     [InlineData("5000", 1000)]
-    [InlineData("abc", 5)]
+    [InlineData("abc", 64)]
     public void MaxTotalMissing_IsParsedAndClamped(string configured, int expected)
     {
         var config = new ConfigManager();
@@ -121,9 +119,9 @@ public sealed class DegradedToleranceConfigTests
     }
 
     [Fact]
-    public void MaxMissingBytePercent_DefaultsToOne()
+    public void MaxMissingBytePercent_DefaultsToTwo()
     {
-        Assert.Equal(1.0, new ConfigManager().GetDegradedMaxMissingBytePercent());
+        Assert.Equal(2.0, new ConfigManager().GetDegradedMaxMissingBytePercent());
     }
 
     [Theory]
@@ -131,7 +129,7 @@ public sealed class DegradedToleranceConfigTests
     [InlineData("2.5", 2.5)]
     [InlineData("0", 0.01)]
     [InlineData("99", 50.0)]
-    [InlineData("abc", 1.0)]
+    [InlineData("abc", 2.0)]
     public void MaxMissingBytePercent_IsParsedAndClamped(string configured, double expected)
     {
         var config = new ConfigManager();

@@ -795,6 +795,8 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         var sizes = new long[] { 10_000, 10_000, 50, 50, 50, 10_000 };
         var (item, oldBlobId) = await AddVideoFileAsync("movie.mkv", segments, sizes);
         var fake = NewFakeClient(segments, missing: [2, 3, 4]);
+        _configManager.UpdateValues(
+            [new ConfigItem { ConfigName = ConfigKeys.RepairDegradedMaxConsecutiveMissing, ConfigValue = "2" }]);
         var (service, _) = await NewServiceAsync(fake, par2Outcome: false);
 
         await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
