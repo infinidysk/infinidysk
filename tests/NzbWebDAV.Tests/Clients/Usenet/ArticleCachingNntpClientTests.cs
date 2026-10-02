@@ -135,6 +135,84 @@ public class ArticleCachingNntpClientTests
         Assert.Equal(requestsAfterPipeline, inner.BodyRequestCount + inner.BatchRequestCount);
     }
 
+    [Fact]
+    public async Task DecodedArticlesPipelinedAsync_PrefixOnlyConsumer_LaterBodyReadIsCompleteWithoutRefetch()
+    {
+        var payload = Enumerable.Range(0, 64 * 1024).Select(i => (byte)i).ToArray();
+        var inner = new CacheProbeNntpClient { Segments = { ["big"] = payload } };
+        inner.PipelinedArticles.Add(("big", new ProbeStream(payload)));
+        using var client = new ArticleCachingNntpClient(inner);
+
+        await foreach (var article in client.DecodedArticlesPipelinedAsync(["big"], 4, CancellationToken.None))
+        {
+            await using var stream = article.Stream!;
+            var prefix = new byte[16 * 1024];
+            await stream.ReadExactlyAsync(prefix);
+            Assert.Equal(payload.AsSpan(0, prefix.Length).ToArray(), prefix);
+        }
+
+        var body = await client.DecodedBodyAsync("big", CancellationToken.None);
+
+        Assert.Equal(payload, await ReadAllAsync(body.Stream!));
+        Assert.Equal(0, inner.BodyRequestCount);
+        Assert.True(inner.PipelinedArticles[0].Inner.Disposed);
+    }
+
+    [Fact]
+    public async Task DecodedArticlesPipelinedAsync_TailReadFailure_DefersOnlyThatArticleToRescue()
+    {
+        var bad = Enumerable.Repeat((byte)'b', 64 * 1024).ToArray();
+        var good = "good"u8.ToArray();
+        var inner = new CacheProbeNntpClient { Segments = { ["bad"] = bad, ["good"] = good } };
+        inner.PipelinedArticles.Add(("bad", new ProbeStream(bad, failAfter: 16 * 1024)));
+        inner.PipelinedArticles.Add(("good", new ProbeStream(good)));
+        using var client = new ArticleCachingNntpClient(inner);
+
+        var results = new List<(PipelinedArticleResult Article, string? Body)>();
+        await foreach (var article in client.DecodedArticlesPipelinedAsync(["bad", "good"], 4, CancellationToken.None))
+        {
+            var body = article.Stream is null ? null : Encoding.ASCII.GetString(await ReadAllAsync(article.Stream));
+            results.Add((article, body));
+        }
+
+        Assert.Equal(2, results.Count);
+        Assert.False(results[0].Article.Found);
+        Assert.False(results[0].Article.DefinitivelyMissing);
+        Assert.Null(results[0].Article.Stream);
+        Assert.True(results[1].Article.Found);
+        Assert.Equal("good", results[1].Body);
+        Assert.All(inner.PipelinedArticles, item => Assert.True(item.Inner.Disposed));
+
+        await ReadAllAsync((await client.DecodedBodyAsync("bad", CancellationToken.None)).Stream!);
+        Assert.Equal(1, inner.BodyRequestCount);
+    }
+
+    [Fact]
+    public async Task DecodedArticlesPipelinedAsync_CancelledWhileWaitingForSegmentLock_DisposesArticleStream()
+    {
+        var payload = "held"u8.ToArray();
+        var inner = new CacheProbeNntpClient { Segments = { ["held"] = payload }, GateFirstBody = true };
+        inner.PipelinedArticles.Add(("held", new ProbeStream(payload)));
+        using var client = new ArticleCachingNntpClient(inner);
+        var holder = client.DecodedBodyAsync("held", CancellationToken.None);
+        await inner.BodyEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        using var cts = new CancellationTokenSource();
+        var enumerate = Task.Run(async () =>
+        {
+            await foreach (var article in client.DecodedArticlesPipelinedAsync(["held"], 4, cts.Token))
+                await ReadAllAsync(article.Stream!);
+        });
+        await inner.PipelinedYielded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => enumerate);
+        Assert.True(inner.PipelinedArticles[0].Inner.Disposed);
+
+        inner.BodyContinue.TrySetResult();
+        await ReadAllAsync((await holder).Stream!);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(3)]
@@ -298,9 +376,52 @@ public class ArticleCachingNntpClientTests
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
+    private sealed class ProbeStream(byte[] bytes, int failAfter = -1) : Stream
+    {
+        private readonly MemoryStream _inner = new(bytes, writable: false);
+        public bool Disposed { get; private set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => _inner.Position; set => throw new NotSupportedException(); }
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            Read(buffer.AsSpan(offset, count));
+
+        public override int Read(Span<byte> buffer)
+        {
+            if (failAfter < 0)
+                return _inner.Read(buffer);
+            var remaining = failAfter - (int)_inner.Position;
+            if (remaining <= 0)
+                throw new IOException("tail-read-failure");
+            return _inner.Read(buffer[..Math.Min(buffer.Length, remaining)]);
+        }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(Read(buffer.Span));
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            Task.FromResult(Read(buffer, offset, count));
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
+        }
+    }
+
     private sealed class CacheProbeNntpClient : NntpClient
     {
         public Dictionary<string, byte[]> Segments { get; } = new(StringComparer.Ordinal);
+        public List<(string Id, ProbeStream Inner)> PipelinedArticles { get; } = [];
+        public TaskCompletionSource PipelinedYielded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int BodyRequestCount { get; private set; }
         public int ArticleRequestCount { get; private set; }
         public bool GateFirstBody { get; set; }
@@ -387,6 +508,37 @@ public class ArticleCachingNntpClientTests
                 ArticleHeaders = FixedArticleHeaders,
                 Stream = CreateStream(bytes),
             });
+        }
+
+        public override async IAsyncEnumerable<PipelinedArticleResult> DecodedArticlesPipelinedAsync(
+            IReadOnlyList<string> segmentIds,
+            int depth,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            foreach (var (id, inner) in PipelinedArticles.Where(item => segmentIds.Contains(item.Id)))
+            {
+                await Task.Yield();
+                var bytes = Segments[id];
+                PipelinedYielded.TrySetResult();
+                yield return new PipelinedArticleResult
+                {
+                    SegmentId = id,
+                    Found = true,
+                    Stream = new CachedYencStream(
+                        new UsenetYencHeader
+                        {
+                            FileName = "fake.bin",
+                            FileSize = bytes.Length,
+                            LineLength = 128,
+                            PartNumber = 1,
+                            TotalParts = 1,
+                            PartOffset = 0,
+                            PartSize = bytes.Length,
+                        },
+                        inner),
+                    ArticleHeaders = FixedArticleHeaders,
+                };
+            }
         }
 
         public override Task<UsenetDateResponse> DateAsync(CancellationToken cancellationToken) =>
