@@ -299,4 +299,89 @@ public class ConnectionPoolConnectionLimitTests : IDisposable
             .WaitAsync(WaitBudget);
         recovered.Dispose();
     }
+
+    private static CouldNotLoginToUsenetException PlainLimitRejection() =>
+        new("Could not login to usenet host: 502 Too many connections.", responseCode: 502);
+
+    private static ConnectionPool<object> CreateRejectionPool(
+        int maxConnections,
+        ControllableTimeProvider clock,
+        Func<CancellationToken, ValueTask<object>> factory,
+        Func<Exception, int?>? detector = null) =>
+        new(
+            maxConnections,
+            factory,
+            TimeSpan.FromMinutes(5),
+            connectionLimitDetector: detector,
+            timeProvider: clock,
+            connectionLimitRejectionDetector: UsenetConnectionLimitDetector.IsConnectionLimitRejection);
+
+    [Fact]
+    public async Task PlainLimitRejection_CapsAtLiveConnectionsThenWidensOneStepAtATime()
+    {
+        var clock = new ControllableTimeProvider();
+        var reject = false;
+        await using var pool = CreateRejectionPool(6, clock, _ => reject
+            ? throw PlainLimitRejection()
+            : ValueTask.FromResult(new object()));
+        var locks = new List<ConnectionLock<object>>();
+        for (var i = 0; i < 3; i++)
+            locks.Add(await pool.GetConnectionLockAsync(SemaphorePriority.High).WaitAsync(WaitBudget));
+
+        reject = true;
+        await Assert.ThrowsAsync<CouldNotLoginToUsenetException>(
+            () => pool.GetConnectionLockAsync(SemaphorePriority.High).WaitAsync(WaitBudget));
+
+        Assert.Equal(3, pool.EffectiveMaxConnections);
+        Assert.Null(pool.LearnedConnectionLimit);
+        clock.Advance(ConnectionPool<object>.ConnectionLimitRecoveryStep - TimeSpan.FromMilliseconds(1));
+        Assert.Equal(3, pool.EffectiveMaxConnections);
+        int[] widened = [4, 5, 6, 6];
+        foreach (var expected in widened)
+        {
+            clock.Advance(ConnectionPool<object>.ConnectionLimitRecoveryStep);
+            Assert.Equal(expected, pool.EffectiveMaxConnections);
+        }
+        Assert.Equal(3, pool.LiveConnections);
+        foreach (var held in locks) held.Dispose();
+    }
+
+    [Fact]
+    public async Task RepeatedPlainLimitRejections_RetryAfterFixedDelay()
+    {
+        var clock = new ControllableTimeProvider();
+        await using var pool = CreateRejectionPool(1, clock, _ => throw PlainLimitRejection());
+
+        await Assert.ThrowsAsync<CouldNotLoginToUsenetException>(
+            () => pool.GetConnectionLockAsync(SemaphorePriority.High).WaitAsync(WaitBudget));
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var retry = pool.GetConnectionLockAsync(SemaphorePriority.High);
+            Assert.True(SpinWait.SpinUntil(() => clock.HasScheduledTimer, WaitBudget));
+            // Exponential handshake backoff would still be waiting after a fixed step.
+            clock.Advance(TimeSpan.FromMilliseconds(ConnectionPool<object>.ConnectionLimitRetryDelayMs));
+            await Assert.ThrowsAsync<CouldNotLoginToUsenetException>(() => retry.WaitAsync(WaitBudget));
+        }
+        Assert.Equal(6, pool.GetChurn().HandshakeFailures);
+    }
+
+    [Fact]
+    public async Task PlainLimitRejection_RecoveryStopsAtAdvertisedLimitCeiling()
+    {
+        var clock = new ControllableTimeProvider();
+        await using var pool = CreateRejectionPool(
+            20, clock,
+            _ => throw new CouldNotLoginToUsenetException(
+                "502 connection limit (10) reached", responseCode: 502),
+            detector: ex => UsenetConnectionLimitDetector.TryLearn(ex, out var learned) ? learned : null);
+
+        await Assert.ThrowsAsync<CouldNotLoginToUsenetException>(
+            () => pool.GetConnectionLockAsync(SemaphorePriority.High).WaitAsync(WaitBudget));
+        Assert.Equal(1, pool.EffectiveMaxConnections);
+
+        for (var step = 0; step < 20; step++)
+            clock.Advance(ConnectionPool<object>.ConnectionLimitRecoveryStep);
+        Assert.Equal(8, pool.EffectiveMaxConnections);
+        Assert.Equal(10, pool.LearnedConnectionLimit);
+    }
 }

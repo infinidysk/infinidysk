@@ -101,6 +101,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private readonly Action<Exception, bool>? _onWarmConnectionFailure;
     private readonly ProviderCircuitBreaker? _circuitBreaker;
     private readonly Func<TimeSpan>? _warmFloorOpenTimeout;
+    private readonly Func<Exception, bool>? _connectionLimitRejectionDetector;
 
     /* --------------------------------- state --------------------------------------- */
 
@@ -119,6 +120,9 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private int _disposed; // 0 == false, 1 == true
     private int _retired;
     private int _effectiveMaxConnections;
+    // Upper bound for limit-rejection recovery: configured max, or the advertised-limit shrink.
+    private int _connectionLimitCeiling;
+    private ITimer? _connectionLimitRecoveryTimer;
     private int? _learnedConnectionLimit;
     private long _nextReplacementHandshakeAtMs;
     private long _replacementPacingUntilMs;
@@ -167,7 +171,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         string? connectionOpenProvider = null,
         Action<Exception, bool>? onWarmConnectionFailure = null,
         ProviderCircuitBreaker? circuitBreaker = null,
-        Func<TimeSpan>? warmFloorOpenTimeout = null)
+        Func<TimeSpan>? warmFloorOpenTimeout = null,
+        Func<Exception, bool>? connectionLimitRejectionDetector = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConnections);
 
@@ -187,6 +192,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         if (_keepAliveBorrowTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(keepAliveBorrowTimeout));
         _effectiveMaxConnections = maxConnections;
+        _connectionLimitCeiling = maxConnections;
         _connectionLimitDetector = connectionLimitDetector;
         _onConnectionLimitLearned = onConnectionLimitLearned;
         _diagnosticName = string.IsNullOrWhiteSpace(diagnosticName) ? typeof(T).Name : diagnosticName;
@@ -198,6 +204,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         _onWarmConnectionFailure = onWarmConnectionFailure;
         _circuitBreaker = circuitBreaker;
         _warmFloorOpenTimeout = warmFloorOpenTimeout;
+        _connectionLimitRejectionDetector = connectionLimitRejectionDetector;
         _gate = new PrioritizedSemaphore(maxConnections, maxConnections, priorityOdds);
         _sweeperTask = Task.Run(SweepLoop); // background idle-reaper
     }
@@ -679,10 +686,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             {
                 if (creationReserved)
                     CompleteConnectionCreation(created: false);
-                Interlocked.Increment(ref _handshakeFailures);
-                var consecutiveFailures = Interlocked.Increment(ref _consecutiveHandshakeFailures);
-                ArmReplacementPacing(GetHandshakeFailureBackoffMs(consecutiveFailures));
-                TryShrinkOnConnectionLimit(factoryError);
+                RecordFactoryFailure(factoryError);
                 ReleaseGateIfActive(); // free the permit on failure
                 throw;
             }
@@ -940,10 +944,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 catch (Exception factoryError) when (factoryError is not OutOfMemoryException)
                 {
                     CompleteConnectionCreation(created: false);
-                    Interlocked.Increment(ref _handshakeFailures);
-                    var consecutiveFailures = Interlocked.Increment(ref _consecutiveHandshakeFailures);
-                    ArmReplacementPacing(GetHandshakeFailureBackoffMs(consecutiveFailures));
-                    TryShrinkOnConnectionLimit(factoryError);
+                    RecordFactoryFailure(factoryError);
                     throw;
                 }
                 catch (OutOfMemoryException)
@@ -1342,6 +1343,23 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     }
 
     internal const long MinimumHandshakeFailureBackoffMs = 500;
+    internal const long ConnectionLimitRetryDelayMs = 1000;
+    internal static readonly TimeSpan ConnectionLimitRecoveryStep = TimeSpan.FromSeconds(5);
+
+    private void RecordFactoryFailure(Exception factoryError)
+    {
+        Interlocked.Increment(ref _handshakeFailures);
+        var consecutiveFailures = Interlocked.Increment(ref _consecutiveHandshakeFailures);
+        var limitRejection = _connectionLimitRejectionDetector?.Invoke(factoryError) == true;
+        // A limit rejection is answered by narrowing the pool, so retries stay at a fixed short
+        // delay instead of the exponential backoff that would also stall opens below the limit.
+        ArmReplacementPacing(limitRejection
+            ? Math.Max(_replacementHandshakeSpacingMs, ConnectionLimitRetryDelayMs)
+            : GetHandshakeFailureBackoffMs(consecutiveFailures));
+        TryShrinkOnConnectionLimit(factoryError);
+        if (limitRejection)
+            ThrottleOnConnectionLimitRejection();
+    }
 
     private long GetHandshakeFailureBackoffMs(int consecutiveFailures)
     {
@@ -1408,9 +1426,9 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     /// <summary>
     /// When the server rejects a login with "502 connection limit (N) reached", shrink the
     /// gate so subsequent refills stop hitting the same rejection at the same width.
-    /// Monotonic — only ever shrinks, never grows. The check-compute-write is atomic under
+    /// Monotonic — only ever lowers the ceiling. The check-compute-write is atomic under
     /// <see cref="_lifecycleLock"/> so concurrent factory failures fire the callback at most
-    /// once per distinct effective value.
+    /// once per distinct learned ceiling.
     /// </summary>
     private void TryShrinkOnConnectionLimit(Exception exception)
     {
@@ -1425,25 +1443,92 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         bool shrank;
         lock (_lifecycleLock)
         {
+            if (_disposed == 1 || candidate >= _connectionLimitCeiling)
+                return;
+            _connectionLimitCeiling = candidate;
+            _learnedConnectionLimit = learned;
             newEffective = Math.Min(candidate, _effectiveMaxConnections);
             shrank = newEffective < _effectiveMaxConnections;
             if (shrank)
-            {
-                _effectiveMaxConnections = newEffective;
-                _learnedConnectionLimit = learned;
-                SignalConnectionAvailabilityUnderLock();
-            }
+                SetEffectiveMaxConnectionsUnderLock(newEffective);
         }
 
-        if (!shrank) return;
-
-        _gate.UpdateMaxAllowed(newEffective);
-        TriggerConnectionPoolChangedEvent();
+        if (shrank)
+            TriggerConnectionPoolChangedEvent();
         SynchronousObserverInvoker.Invoke(
             _onConnectionLimitLearned,
             learned,
             newEffective,
             SynchronousObserverSource.ConnectionLimitLearned);
+    }
+
+    /// <summary>
+    /// Handles a limit rejection that may not state the number: caps the pool at the
+    /// connections the server is already carrying, then probes one wider every
+    /// <see cref="ConnectionLimitRecoveryStep"/> until another rejection or the ceiling.
+    /// Existing connections keep serving; only dials above the cap wait.
+    /// </summary>
+    private void ThrottleOnConnectionLimitRejection()
+    {
+        int newEffective;
+        bool shrank;
+        bool firstThrottle;
+        lock (_lifecycleLock)
+        {
+            if (_disposed == 1)
+                return;
+            firstThrottle = _effectiveMaxConnections >= _connectionLimitCeiling;
+            newEffective = Math.Min(
+                _effectiveMaxConnections, Math.Max(1, _live + _pendingConnectionCreations));
+            shrank = newEffective < _effectiveMaxConnections;
+            if (shrank)
+                SetEffectiveMaxConnectionsUnderLock(newEffective);
+            if (_effectiveMaxConnections < _connectionLimitCeiling)
+            {
+                _connectionLimitRecoveryTimer ??= _timeProvider.CreateTimer(
+                    static state => ((ConnectionPool<T>)state!).RecoverConnectionLimitStep(),
+                    this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                _connectionLimitRecoveryTimer.Change(ConnectionLimitRecoveryStep, ConnectionLimitRecoveryStep);
+            }
+        }
+
+        if (!shrank) return;
+
+        TriggerConnectionPoolChangedEvent();
+        Log.Write(
+            firstThrottle ? Serilog.Events.LogEventLevel.Warning : Serilog.Events.LogEventLevel.Debug,
+            "NNTP provider {Provider} refused a connection for exceeding its connection limit; capping at {Effective} of {Max} connections and widening by one every {StepSeconds}s",
+            _diagnosticName, newEffective, _maxConnections, ConnectionLimitRecoveryStep.TotalSeconds);
+    }
+
+    private void RecoverConnectionLimitStep()
+    {
+        int newEffective;
+        lock (_lifecycleLock)
+        {
+            if (_disposed == 1)
+                return;
+            newEffective = Math.Min(_connectionLimitCeiling, _effectiveMaxConnections + 1);
+            if (newEffective <= _effectiveMaxConnections)
+            {
+                _connectionLimitRecoveryTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                return;
+            }
+            SetEffectiveMaxConnectionsUnderLock(newEffective);
+        }
+
+        TriggerConnectionPoolChangedEvent();
+        Log.Debug(
+            "NNTP provider {Provider} connection cap widened to {Effective} of {Max}",
+            _diagnosticName, newEffective, _maxConnections);
+    }
+
+    // Gate update stays under the lifecycle lock so concurrent shrink/recover calls apply in order.
+    private void SetEffectiveMaxConnectionsUnderLock(int effective)
+    {
+        _effectiveMaxConnections = effective;
+        _gate.UpdateMaxAllowed(effective);
+        SignalConnectionAvailabilityUnderLock();
     }
 
     /* =================== idle sweeper (background) ================================= */
@@ -1656,6 +1741,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         {
             if (_disposed == 1) return;
             _disposed = 1;
+            _connectionLimitRecoveryTimer?.Dispose();
             SignalConnectionAvailabilityUnderLock();
 
             // Drop handlers before draining so late Return/Destroy from in-flight locks

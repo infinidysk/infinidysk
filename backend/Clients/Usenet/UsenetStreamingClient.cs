@@ -509,7 +509,8 @@ public class UsenetStreamingClient : WrappingNntpClient
             connectionOpenProvider: connectionOpenProvider,
             onWarmConnectionFailure: onWarmConnectionFailure,
             circuitBreaker: circuitBreaker,
-            warmFloorOpenTimeout: warmFloorOpenTimeout);
+            warmFloorOpenTimeout: warmFloorOpenTimeout,
+            connectionLimitRejectionDetector: UsenetConnectionLimitDetector.IsConnectionLimitRejection);
         connectionPool.OnConnectionPoolChanged += onConnectionPoolChanged;
         var args = new ConnectionPoolStats.ConnectionPoolChangedEventArgs(0, 0, maxConnections);
         SynchronousObserverInvoker.Invoke(
