@@ -1,9 +1,13 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Connections;
+using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Models;
 using NzbWebDAV.Tests.TestUtils;
+using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
 
@@ -192,31 +196,93 @@ public class ConnectionPoolReplacementTests
         Assert.Equal(2, pool.IdleConnections);
     }
 
-    [Fact]
-    public async Task DiscardedBodyReplacements_DoNotPaceNewHandshakes()
+    [Theory]
+    [InlineData(false, ArticleBodyResult.Discarded)]
+    [InlineData(true, ArticleBodyResult.Discarded)]
+    [InlineData(false, ArticleBodyResult.NotRetrieved)]
+    [InlineData(true, ArticleBodyResult.NotRetrieved)]
+    public async Task BodyCallback_PacesReplacementOnlyAfterProviderFailure(
+        bool batched, ArticleBodyResult result)
     {
         var clock = new SignalingTimeProvider();
-        using var pool = new ConnectionPool<DisposableProbe>(
-            maxConnections: 2,
-            _ => ValueTask.FromResult(new DisposableProbe(() => { })),
+        var called = new ConcurrentQueue<CallbackBodyClient>();
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ => ValueTask.FromResult<INntpClient>(new CallbackBodyClient(called)),
             replacementHandshakeSpacing: TimeSpan.FromSeconds(1),
             timeProvider: clock);
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, new ProviderCircuitBreaker("body-pacing"), "body-pacing");
 
-        var first = await pool.GetConnectionLockAsync(SemaphorePriority.High);
-        var second = await pool.GetConnectionLockAsync(SemaphorePriority.High);
-        first.Discard("body-callback-BODY-discarded");
-        second.Discard("pipelined-body-discarded");
-        first.Dispose();
-        second.Dispose();
+        await (await StartBodyAsync(client, pool, called, batched))(result);
 
-        var acquired = await Task.WhenAll(
-                pool.GetConnectionLockAsync(SemaphorePriority.High),
-                pool.GetConnectionLockAsync(SemaphorePriority.High))
-            .WaitAsync(TimeSpan.FromSeconds(1));
-        foreach (var replacement in acquired) replacement.Dispose();
+        var pacingStarted = clock.WaitForNextTimerAsync();
+        var replacement = pool.GetConnectionLockAsync(SemaphorePriority.High);
+        if (result == ArticleBodyResult.NotRetrieved)
+        {
+            await pacingStarted.WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.False(replacement.IsCompleted);
+            clock.Advance(TimeSpan.FromSeconds(1));
+        }
 
+        using (await replacement.WaitAsync(TimeSpan.FromSeconds(1))) { }
+        Assert.Equal(1, pool.GetChurn().ConnectionsDestroyed);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BodyDiscard_DuringFailurePacing_KeepsWindowWithoutExtendingIt(bool batched)
+    {
+        var clock = new SignalingTimeProvider();
+        var called = new ConcurrentQueue<CallbackBodyClient>();
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 2,
+            _ => ValueTask.FromResult<INntpClient>(new CallbackBodyClient(called)),
+            replacementHandshakeSpacing: TimeSpan.FromSeconds(1),
+            timeProvider: clock);
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, new ProviderCircuitBreaker("discard-during-pacing"), "discard-during-pacing");
+
+        var failed = await pool.GetConnectionLockAsync(SemaphorePriority.High);
+        var callback = await StartBodyAsync(client, pool, called, batched);
+        failed.Replace("read-timeout-BODY");
+        failed.Dispose();
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await callback(ArticleBodyResult.Discarded);
+
+        var pacingStarted = clock.WaitForNextTimerAsync();
+        var replacement = pool.GetConnectionLockAsync(SemaphorePriority.High);
+        await pacingStarted.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.False(replacement.IsCompleted);
+
+        // The failure armed the next handshake at 1 s; a paced discard would push it to 1.5 s.
+        // The extra 100 ms absorbs millisecond truncation of the pool's timestamps.
+        clock.Advance(TimeSpan.FromMilliseconds(600));
+        using (await replacement.WaitAsync(TimeSpan.FromSeconds(1))) { }
         Assert.Equal(2, pool.GetChurn().ConnectionsDestroyed);
-        Assert.Equal(2, pool.LiveConnections);
+    }
+
+    private static async Task<Func<ArticleBodyResult, Task>> StartBodyAsync(
+        MultiConnectionNntpClient client, ConnectionPool<INntpClient> pool,
+        ConcurrentQueue<CallbackBodyClient> called, bool batched)
+    {
+        var segment = new SegmentId("segment@example.com");
+        UsenetDecodedBodyBatch? batch = null;
+        if (batched)
+            batch = await client.DecodedBodiesAsync([segment], null, CancellationToken.None);
+        else
+            await client.DecodedBodyAsync(segment, null, CancellationToken.None);
+
+        Assert.True(called.TryDequeue(out var inner));
+        return async result =>
+        {
+            var destroyed = pool.GetChurn().ConnectionsDestroyed;
+            inner.Callback!(result, null);
+            if (batch is not null)
+                await batch.Completion.WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.Equal(destroyed + 1, pool.GetChurn().ConnectionsDestroyed);
+        };
     }
 
     [Fact]
@@ -744,6 +810,38 @@ public class ConnectionPoolReplacementTests
             var observed = Interlocked.CompareExchange(ref maximum, candidate, current);
             if (observed == current) return;
             current = observed;
+        }
+    }
+
+    private sealed class CallbackBodyClient(ConcurrentQueue<CallbackBodyClient> called) : CircuitAdmissionTests.StubNntpClient
+    {
+        public ArticleBodyCompletionHandler? Callback { get; private set; }
+
+        public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            Callback = onConnectionReadyAgain;
+            called.Enqueue(this);
+            return Task.FromResult(new UsenetDecodedBodyResponse
+            {
+                SegmentId = segmentId,
+                ResponseCode = 222,
+                ResponseMessage = "222 body follows",
+                Stream = null
+            });
+        }
+
+        public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+            IReadOnlyList<SegmentId> segmentIds, ArticleBodyCompletionHandler? onConnectionReadyAgain,
+            CancellationToken cancellationToken)
+        {
+            var response = await DecodedBodyAsync(segmentIds[0], onConnectionReadyAgain, cancellationToken);
+            return new UsenetDecodedBodyBatch
+            {
+                Responses = [Task.FromResult(response)],
+                Completion = Task.CompletedTask
+            };
         }
     }
 
