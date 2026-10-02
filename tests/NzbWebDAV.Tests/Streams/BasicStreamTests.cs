@@ -190,6 +190,34 @@ public class BasicStreamTests
         Assert.Equal(6, stream.Position);
     }
 
+    [Theory]
+    [InlineData(0L, false)]
+    [InlineData(6L, true)]
+    public async Task CombinedStream_OpensNextPartWithinReadAheadOfBoundary(long readAheadBytes, bool expectOpened)
+    {
+        var opened = new List<int>();
+        IEnumerable<Task<Stream>> Parts()
+        {
+            for (var i = 0; i < 2; i++)
+            {
+                opened.Add(i);
+                yield return Task.FromResult<Stream>(
+                    new PaddedLengthStream(Frozen(Encoding.ASCII.GetBytes("abcdefgh")), 8, $"part-{i}"));
+            }
+        }
+
+        await using var stream = new CombinedStream(Parts(), readAheadBytes);
+        var buffer = new byte[2];
+
+        Assert.Equal(2, await stream.ReadAsync(buffer));
+
+        Assert.Equal(expectOpened ? [0, 1] : [0], opened);
+        using var destination = new MemoryStream();
+        await stream.CopyToAsync(destination);
+        Assert.Equal(14, destination.Length);
+        Assert.Equal([0, 1], opened);
+    }
+
     private static Stream Frozen(byte[] bytes) => new MemoryStream(bytes, writable: false);
 
     private static Stream Empty() => new MemoryStream();
