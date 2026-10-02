@@ -1432,6 +1432,15 @@ public class MultiConnectionNntpClient(
             return;
         }
 
+        // The pool narrows itself on a limit rejection; a provider already serving
+        // connections is full, not unhealthy.
+        if (connectionPool.LiveConnections > 0
+            && UsenetConnectionLimitDetector.IsConnectionLimitRejection(exception))
+        {
+            circuitBreaker.ReleaseProbe(probeLease);
+            return;
+        }
+
         if (circuitBreaker.IsLatched || connectionPool.LiveConnections == 0)
             RecordProviderConnectionFailure(reason, probeLease);
         else
