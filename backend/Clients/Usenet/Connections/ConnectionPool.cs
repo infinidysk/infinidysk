@@ -1349,13 +1349,12 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private void RecordFactoryFailure(Exception factoryError)
     {
         Interlocked.Increment(ref _handshakeFailures);
-        var consecutiveFailures = Interlocked.Increment(ref _consecutiveHandshakeFailures);
         var limitRejection = _connectionLimitRejectionDetector?.Invoke(factoryError) == true;
         // A limit rejection is answered by narrowing the pool, so retries stay at a fixed short
-        // delay instead of the exponential backoff that would also stall opens below the limit.
+        // delay and stay out of the transport-failure streak that drives exponential backoff.
         ArmReplacementPacing(limitRejection
             ? Math.Max(_replacementHandshakeSpacingMs, ConnectionLimitRetryDelayMs)
-            : GetHandshakeFailureBackoffMs(consecutiveFailures));
+            : GetHandshakeFailureBackoffMs(Interlocked.Increment(ref _consecutiveHandshakeFailures)));
         TryShrinkOnConnectionLimit(factoryError);
         if (limitRejection)
             ThrottleOnConnectionLimitRejection();
