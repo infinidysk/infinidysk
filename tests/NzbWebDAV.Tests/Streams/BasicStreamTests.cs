@@ -218,6 +218,63 @@ public class BasicStreamTests
         Assert.Equal([0, 1], opened);
     }
 
+    [Fact]
+    public async Task CombinedStream_NextPartOpenFailureSurfacesAtBoundary()
+    {
+        IEnumerable<Task<Stream>> Parts()
+        {
+            yield return Task.FromResult<Stream>(
+                new PaddedLengthStream(Frozen(Encoding.ASCII.GetBytes("abcdefgh")), 8, "part-0"));
+            throw new SeekPositionNotFoundException("bad next part");
+        }
+
+        await using var stream = new CombinedStream(Parts(), readAheadBytes: 8);
+        var buffer = new byte[8];
+
+        Assert.Equal(2, await stream.ReadAsync(buffer.AsMemory(0, 2)));
+        Assert.Equal(6, await stream.ReadAsync(buffer.AsMemory(2)));
+        Assert.Equal("abcdefgh", Encoding.ASCII.GetString(buffer));
+        await Assert.ThrowsAsync<SeekPositionNotFoundException>(() => stream.ReadAsync(buffer).AsTask());
+    }
+
+    [Fact]
+    public async Task CombinedStream_DisposeCancelsAndDisposesInFlightPrefetch()
+    {
+        var next = new BlockingStream();
+        var streams = new[]
+        {
+            Task.FromResult<Stream>(
+                new PaddedLengthStream(Frozen(Encoding.ASCII.GetBytes("abcdefgh")), 8, "part-0")),
+            Task.FromResult<Stream>(next),
+        };
+        var stream = new CombinedStream(streams, readAheadBytes: 8);
+
+        Assert.Equal(2, await stream.ReadAsync(new byte[2]));
+        await next.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await stream.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(next.Disposed);
+    }
+
+    private sealed class BlockingStream : MemoryStream
+    {
+        public TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool Disposed { get; private set; }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            ReadStarted.TrySetResult();
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return 0;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
+        }
+    }
+
     private static Stream Frozen(byte[] bytes) => new MemoryStream(bytes, writable: false);
 
     private static Stream Empty() => new MemoryStream();

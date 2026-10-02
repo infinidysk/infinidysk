@@ -194,11 +194,64 @@ public class DavMultipartFileStreamTests
             Assert.Equal(5, await stream.ReadAsync(buffer, requestCts.Token));
             Assert.Equal([0, 1, 2, 3, 4], buffer);
             Assert.Equal(0, await stream.ReadAsync(new byte[1], requestCts.Token));
+            await stream.DisposeAsync();
+            Assert.False(client.BodyRequestCounts.ContainsKey("two"));
         }
         finally
         {
             NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(previousBudget);
         }
+    }
+
+    [Fact]
+    public async Task ReadAsync_StartsNextVolumeBodyRequestBeforeCurrentVolumeEof()
+    {
+        var nextBodyRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var client = new FakeNntpClient(
+            new Dictionary<string, byte[]>
+            {
+                ["one"] = [0, 1, 2, 3, 4, 5, 6, 7],
+                ["two"] = [8, 9, 10, 11, 12, 13, 14, 15],
+            },
+            useCachedYencStreams: true,
+            decodedStreamFactory: (id, bytes) =>
+            {
+                if (id == "two") nextBodyRequested.TrySetResult();
+                return new MemoryStream(bytes, writable: false);
+            });
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta
+            {
+                FileParts =
+                [
+                    new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = ["one"],
+                        SegmentIdByteRange = new LongRange(0, 8),
+                        FilePartByteRange = new LongRange(0, 8),
+                    },
+                    new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = ["two"],
+                        SegmentIdByteRange = new LongRange(0, 8),
+                        FilePartByteRange = new LongRange(0, 8),
+                    },
+                ],
+            },
+        };
+        await using var stream = new DavMultipartFileStream(
+            multipart, client, articleBufferSize: 4, resolver: null,
+            usePipelinedBodyRequests: false, fileName: "movie.mkv");
+
+        Assert.Equal(2, await stream.ReadAsync(new byte[2]));
+        await nextBodyRequested.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(2, stream.Position);
+
+        using var rest = new MemoryStream();
+        await stream.CopyToAsync(rest);
+        Assert.Equal(Enumerable.Range(2, 14).Select(x => (byte)x).ToArray(), rest.ToArray());
     }
 
     [Fact]
