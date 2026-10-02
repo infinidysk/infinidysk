@@ -58,7 +58,9 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
                 if (readAheadBytes > 0
                     && _nextPart is null
                     && _currentStream is PaddedLengthStream part
-                    && part.Length - part.Position <= readAheadBytes)
+                    && part.Length - part.Position <= readAheadBytes
+                    // Next-part leases must never take credits the current tail still needs.
+                    && ((ISegmentIssueProgress)part).AllSegmentsIssued)
                 {
                     _prefetchCts ??= ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     _nextPart = PrepareNextAsync(_prefetchCts.Token);
@@ -101,7 +103,19 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
     private async Task<PreparedPart?> PrepareNextAsync(CancellationToken ct)
     {
         if (!_streams.MoveNext()) return null;
-        var stream = await _streams.Current.ConfigureAwait(false);
+        var opening = _streams.Current;
+        Stream stream;
+        try
+        {
+            // Only the wait is cancelled; a shared lazy resolution keeps running for others.
+            stream = await opening.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!opening.IsCompleted)
+        {
+            _ = DisposeWhenOpenedAsync(opening);
+            throw;
+        }
+
         var primed = ArrayPool<byte>.Shared.Rent(PrimeBufferSize);
         try
         {
@@ -113,6 +127,18 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
             ArrayPool<byte>.Shared.Return(primed);
             await stream.DisposeAsync().ConfigureAwait(false);
             throw;
+        }
+    }
+
+    private static async Task DisposeWhenOpenedAsync(Task<Stream> opening)
+    {
+        try
+        {
+            await (await opening.ConfigureAwait(false)).DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception e)
+        {
+            Serilog.Log.Debug(e, "Abandoned next part failed to open or dispose after the combined stream closed");
         }
     }
 

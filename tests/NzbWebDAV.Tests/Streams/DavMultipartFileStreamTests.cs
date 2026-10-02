@@ -255,6 +255,60 @@ public class DavMultipartFileStreamTests
     }
 
     [Fact]
+    public async Task ReadAsync_NextVolumePrefetchUnderTightBudgetCompletesAndReleasesLeases()
+    {
+        const int segmentsPerPart = 4;
+        const int segmentSize = 8;
+        var segments = new Dictionary<string, byte[]>();
+        DavMultipartFile.FilePart Part(string name, int partIndex)
+        {
+            var ids = Enumerable.Range(0, segmentsPerPart).Select(i => $"{name}-{i}").ToArray();
+            for (var i = 0; i < segmentsPerPart; i++)
+            {
+                var first = (partIndex * segmentsPerPart + i) * segmentSize;
+                segments[ids[i]] = Enumerable.Range(first, segmentSize).Select(x => (byte)x).ToArray();
+            }
+            return new DavMultipartFile.FilePart
+            {
+                SegmentIds = ids,
+                SegmentIdByteRange = new LongRange(0, segmentsPerPart * segmentSize),
+                FilePartByteRange = new LongRange(0, segmentsPerPart * segmentSize),
+                SegmentByteRanges = Enumerable.Range(0, segmentsPerPart)
+                    .Select(i => LongRange.FromStartAndSize(i * segmentSize, segmentSize))
+                    .ToArray(),
+                SegmentByteRangesTrusted = true,
+            };
+        }
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta { FileParts = [Part("one", 0), Part("two", 1)] },
+        };
+        using var client = new FakeNntpClient(segments, useCachedYencStreams: true);
+        // One segment of credit: any lease held by the next volume would starve the current tail.
+        var budget = new InFlightArticleBudget(segmentSize);
+        var stream = new DavMultipartFileStream(
+            multipart, client, articleBufferSize: 4, resolver: null,
+            usePipelinedBodyRequests: false, fileName: "movie.mkv", inFlightArticleBudget: budget);
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var all = new MemoryStream();
+        var buffer = new byte[2];
+        int read;
+        while ((read = await stream.ReadAsync(buffer, timeout.Token)) > 0)
+            all.Write(buffer, 0, read);
+        await stream.DisposeAsync();
+
+        Assert.Equal(
+            Enumerable.Range(0, 2 * segmentsPerPart * segmentSize).Select(x => (byte)x).ToArray(),
+            all.ToArray());
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (budget.LeasedBytes != 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
     public async Task ReadAsync_TailOfPersistedLazyPartWithTrailingArchiveBytes_Succeeds()
     {
         var volumeBytes = Enumerable.Range(0, 16).Select(x => (byte)x).ToArray();

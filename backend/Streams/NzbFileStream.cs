@@ -34,8 +34,13 @@ public class NzbFileStream(
     long? readBudgetOverride = null,
     bool readStartWarmupEnabled = false,
     Par2FileProof? verificationProof = null
-) : FastReadOnlyStream
+) : FastReadOnlyStream, ISegmentIssueProgress
 {
+    bool ISegmentIssueProgress.AllSegmentsIssued =>
+        verificationProof is null
+        && _innerStream is { } inner
+        && inner is not ISegmentIssueProgress { AllSegmentsIssued: false };
+
     private const long MaximumForwardDrainBytes = 1024 * 1024;
     private const long MinimumPrewarmRangeBytes = 8L * 1024 * 1024;
     private const int MinimumPrewarmConnections = 2;

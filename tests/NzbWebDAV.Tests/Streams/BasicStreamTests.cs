@@ -256,10 +256,31 @@ public class BasicStreamTests
         Assert.True(next.Disposed);
     }
 
+    [Fact]
+    public async Task CombinedStream_DisposeDoesNotWaitForPendingLazyOpen()
+    {
+        var opening = new TaskCompletionSource<Stream>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var streams = new[]
+        {
+            Task.FromResult<Stream>(
+                new PaddedLengthStream(Frozen(Encoding.ASCII.GetBytes("abcdefgh")), 8, "part-0")),
+            opening.Task,
+        };
+        var stream = new CombinedStream(streams, readAheadBytes: 8);
+
+        Assert.Equal(2, await stream.ReadAsync(new byte[2]));
+        await stream.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        var late = new BlockingStream();
+        opening.SetResult(late);
+        await late.DisposedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
     private sealed class BlockingStream : MemoryStream
     {
         public TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool Disposed { get; private set; }
+        public TaskCompletionSource DisposedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -270,6 +291,7 @@ public class BasicStreamTests
 
         protected override void Dispose(bool disposing)
         {
+            DisposedSignal.TrySetResult();
             Disposed = true;
             base.Dispose(disposing);
         }
