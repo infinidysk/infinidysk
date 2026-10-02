@@ -279,10 +279,13 @@ public partial class Par2RepairService
         {
             var response = await _usenetClient.DecodedBodyAsync(id, ct).ConfigureAwait(false);
             await using var stream = response.Stream!;
-            return new HeaderProbeResult(id, await stream.GetYencHeadersAsync(ct).ConfigureAwait(false));
+            var header = await stream.GetYencHeadersAsync(ct).ConfigureAwait(false);
+            HealthCheckActivity.Report();
+            return new HeaderProbeResult(id, header);
         }
         catch (Exception exception) when (exception is UsenetArticleNotFoundException or UsenetCorruptArticleException or InvalidDataException or EndOfStreamException)
         {
+            HealthCheckActivity.Report();
             return new HeaderProbeResult(id, null, true, exception is UsenetArticleNotFoundException);
         }
         finally { reads.FetchGate.Release(); }

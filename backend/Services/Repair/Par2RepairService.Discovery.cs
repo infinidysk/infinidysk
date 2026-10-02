@@ -318,12 +318,14 @@ public partial class Par2RepairService
             await using var stream = response.Stream!;
             var header = await stream.GetYencHeadersAsync(ct).ConfigureAwait(false);
             reads.Headers[id] = header;
+            HealthCheckActivity.Report();
             return header;
         }
         catch (Exception exception) when (exception is UsenetArticleNotFoundException or UsenetCorruptArticleException or InvalidDataException or EndOfStreamException)
         {
             reads.Headers[id] = null;
             reads.NoteUnavailable(id, exception);
+            HealthCheckActivity.Report();
             return null;
         }
     }
