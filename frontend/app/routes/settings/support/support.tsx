@@ -25,7 +25,7 @@ const CAPACITY_OPTIONS = [20_000, 50_000, 100_000, 200_000] as const;
 export function downloadName(response: Response): string {
   const header = response.headers.get("content-disposition");
   const utf8Match = header?.match(/(?:^|;)\s*filename\*\s*=\s*UTF-8'[^']*'([^;]*)/i);
-  if (utf8Match) {
+  if (utf8Match?.[1] !== undefined) {
     try {
       const fileName = decodeURIComponent(utf8Match[1].trim());
       if (fileName) return fileName;

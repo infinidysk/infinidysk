@@ -65,7 +65,7 @@ describe("SupportSettings", () => {
 });
 
 describe("support pack download name", () => {
-  it.each([
+  it.each<[string | null, string]>([
     [
       `attachment; filename="ifd-1.2.3___.zip"; filename*=UTF-8''ifd-1.2.3%2B%C3%A9.zip`,
       "ifd-1.2.3+é.zip",
@@ -88,7 +88,10 @@ describe("support pack download name", () => {
       "UTF-8''",
       "ISO-8859-1''support%E9.zip",
       "support.zip",
-    ].map((value) => [`attachment; filename="fallback.zip"; filename*=${value}`, "fallback.zip"]),
+    ].map((value): [string, string] => [
+      `attachment; filename="fallback.zip"; filename*=${value}`,
+      "fallback.zip",
+    ]),
     ["attachment", "nzbdav-support-pack.zip"],
     [`attachment; filename*=UTF-8''bad%ZZ.zip`, "nzbdav-support-pack.zip"],
     [null, "nzbdav-support-pack.zip"],
