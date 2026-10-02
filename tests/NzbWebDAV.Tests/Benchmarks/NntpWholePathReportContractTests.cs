@@ -113,7 +113,7 @@ public sealed class NntpWholePathReportContractTests
     [InlineData("sustained", 4)]
     [InlineData("profile", 1)]
     [InlineData("cold", 2)]
-    [InlineData("smoothness", 4)]
+    [InlineData("smoothness", 5)]
     public void ScenarioSets_AreNamedAndExplicitlyPlaintext(string set, int expectedCount)
     {
         var scenarios = NntpWholePathScenario.ForSet(set);
