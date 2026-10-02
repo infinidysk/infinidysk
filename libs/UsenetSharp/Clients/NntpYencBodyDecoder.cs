@@ -285,7 +285,8 @@ internal sealed class NntpYencBodyDecoder(
                     {
                         reader.Advance(consume);
                     }
-
+                    if (options.PayloadAccountingCheckpoint is { } failedCheckpoint)
+                        await failedCheckpoint(cancellationToken).ConfigureAwait(false);
                     throw;
                 }
 
@@ -293,6 +294,9 @@ internal sealed class NntpYencBodyDecoder(
                 {
                     reader.Advance(consume);
                 }
+
+                if (options.PayloadAccountingCheckpoint is { } checkpoint)
+                    await checkpoint(cancellationToken).ConfigureAwait(false);
 
                 if (hitYEnd)
                 {

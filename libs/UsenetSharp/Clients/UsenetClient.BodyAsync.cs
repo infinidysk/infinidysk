@@ -246,7 +246,7 @@ public partial class UsenetClient
         catch (OperationCanceledException e) when (callerCancellationToken.IsCancellationRequested)
         {
             failure = e;
-            if (_options.CancellationPolicy == ConnectionReleasePolicy.AbandonConnection)
+            if (_options.GetCancellationPolicy() == ConnectionReleasePolicy.AbandonConnection)
             {
                 connectionReusable = false;
                 RecordConnectionFailure(e);
@@ -451,7 +451,7 @@ public partial class UsenetClient
         catch (OperationCanceledException e) when (callerCancellationToken.IsCancellationRequested)
         {
             failure = e;
-            if (_options.CancellationPolicy == ConnectionReleasePolicy.AbandonConnection)
+            if (_options.GetCancellationPolicy() == ConnectionReleasePolicy.AbandonConnection)
             {
                 RecordConnectionFailure(e);
             }

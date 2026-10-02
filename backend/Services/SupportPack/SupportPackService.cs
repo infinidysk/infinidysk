@@ -41,7 +41,9 @@ public sealed class SupportPackService(
     IQueueCoordinator? queueCoordinator = null,
     SegmentCacheStatistics? segmentCacheStatistics = null,
     MemoryComponentSnapshotBuilder? memoryComponentSnapshotBuilder = null,
-    HealthCheckService? healthCheckService = null)
+    HealthCheckService? healthCheckService = null,
+    NativeCache.NativeCacheService? nativeCache = null,
+    Prefetch.PrefetchRuntime? prefetch = null)
 {
     private const long MinuteMs = 60_000;
     private const long HourMs = 60 * MinuteMs;
@@ -189,6 +191,27 @@ public sealed class SupportPackService(
         {
             sectionStatus["segmentCache"] = "unavailable";
         }
+
+        try
+        {
+            var jobs = prefetch?.Healthy == true ? prefetch.Jobs : null;
+            await WriteJsonAsync(archive, "metrics/native-cache-prefetch.json", new
+            {
+                GeneratedAt = generatedAt,
+                ActiveMode = nativeCache?.ActiveMode.ToString().ToLowerInvariant() ?? "unavailable",
+                ReservedBufferBytes = nativeCache?.ReservedBufferBytes ?? 0,
+                Counters = (nativeCache?.Statistics ?? new NativeCache.NativeCacheStatistics()).Snapshot(),
+                WarmingPaused = jobs?.Paused ?? true,
+                WarmingHealthy = prefetch?.Healthy ?? false,
+                WarmingError = prefetch?.RuntimeError,
+                AccountingBlocked = jobs?.WireBudgetBlocked ?? false,
+                QueueStates = (jobs?.List() ?? []).GroupBy(job => job.State)
+                    .Select(group => new { State = group.Key, Count = group.Count() }).ToArray()
+            }, redactor, cancellationToken).ConfigureAwait(false);
+            sectionStatus["nativeCachePrefetch"] = "included";
+        }
+        catch (Exception e) when (e is not OutOfMemoryException and not OperationCanceledException)
+        { sectionStatus["nativeCachePrefetch"] = "unavailable"; }
 
         try
         {
@@ -1395,7 +1418,8 @@ public sealed class SupportPackService(
             }
 
             if (item.Key is not (ConfigKeys.UsenetProviders or ConfigKeys.ArrInstances
-                or ConfigKeys.IndexersInstances or ConfigKeys.ProfilesInstances))
+                or ConfigKeys.IndexersInstances or ConfigKeys.ProfilesInstances
+                or ConfigKeys.PlexAccounts or ConfigKeys.PlexServers))
                 continue;
 
             List<string>? structuredSecrets = null;

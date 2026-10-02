@@ -7,6 +7,7 @@ export const NAV_FEATURE_IDS = [
   "watchdog",
   "watchtower",
   "explore",
+  "smart-prefetch",
   "health",
   "logs",
   "search",

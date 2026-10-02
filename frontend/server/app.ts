@@ -17,6 +17,8 @@ import { logger, requestPathForLog } from "./logger";
 import { authMiddleware } from "~/auth/auth-middleware.server";
 import { getSessionUser, isAuthenticated } from "~/auth/authentication.server";
 import { setApiKeyForAuthenticatedRequests } from "./inject-api-key.server";
+import { ensurePlexOwnerSession } from "../app/auth/authentication.server";
+import { applyPlexOwnerHeaders } from "./plex-owner.server";
 import {
   BACKEND_FAILURE_LOG_THROTTLE_MS,
   isExpectedBackendConnectionError,
@@ -164,6 +166,13 @@ app.use(credentialRateLimiter);
 
 app.use(async (req, res, next) => {
   if (shouldProxyToBackend(req.method, req.path)) {
+    // Never forward a browser-supplied account-flow owner. Only verified admin
+    // sessions receive the short-lived backend proof; API keys alone cannot steal it.
+    const plexSession = req.path.startsWith("/api/plex/") ? await ensurePlexOwnerSession(req) : { owner: null };
+    if (plexSession.cookie) res.append("Set-Cookie", plexSession.cookie);
+    applyPlexOwnerHeaders(req.headers,
+      plexSession.owner,
+      getFrontendRuntimeConfig().frontendBackendApiKey);
     const decodedPath = safeDecodePath(req.path);
     return admitAndForwardBackendRequest(
       {

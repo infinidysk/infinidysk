@@ -21,6 +21,8 @@ public sealed class ConfigSecretMasker(string signingKey)
     private static readonly Dictionary<string, string> JsonSecretProperties = new(StringComparer.Ordinal)
     {
         ["arr.instances"] = "ApiKey",
+        ["plex.servers"] = "Token",
+        ["plex.accounts"] = "Token",
         ["indexers.instances"] = "ApiKey",
         ["usenet.providers"] = "Pass"
     };

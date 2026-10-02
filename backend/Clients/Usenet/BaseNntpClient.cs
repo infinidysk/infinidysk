@@ -6,6 +6,7 @@ using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using UsenetSharp.Clients;
 using UsenetSharp.Models;
+using NzbWebDAV.Services.Prefetch;
 
 namespace NzbWebDAV.Clients.Usenet;
 
@@ -49,11 +50,20 @@ public class BaseNntpClient : NntpClient
             ReadTimeout = readTimeout ?? TimeSpan.FromSeconds(30),
             DecodedBodyBufferedBytesObserver = static delta =>
                 InFlightArticleBudget.Current?.AccountBufferedPipeBytes(delta),
-            PayloadBandwidthAcquirer = applyBandwidthLimit
-            ? static (bytes, ct) =>
-                UsenetBandwidthLimiter.Current?.AcquireAsync(bytes, ct) ?? ValueTask.CompletedTask
-            : null,
-            PayloadBytesObserver = payloadBytesObserver,
+            PayloadBandwidthAcquirer = async (bytes, ct) =>
+            {
+                if (PrefetchWireBudget.Current is { } budget) await budget.SettleAsync(ct).ConfigureAwait(false);
+                if (applyBandwidthLimit && UsenetBandwidthLimiter.Current is { } limiter)
+                    await limiter.AcquireAsync(bytes, ct).ConfigureAwait(false);
+            },
+            PayloadBytesObserver = bytes =>
+            {
+                try { payloadBytesObserver?.Invoke(bytes); }
+                finally { PrefetchWireBudget.Current?.Observe(bytes); }
+            },
+            PayloadAccountingCheckpoint = static ct => PrefetchWireBudget.Current?.SettleAsync(ct) ?? ValueTask.CompletedTask,
+            CancellationPolicyResolver = static () => PrefetchWireBudget.Current is null
+                ? null : ConnectionReleasePolicy.AbandonConnection,
         }))
     {
         ReadTimeout = readTimeout ?? TimeSpan.FromSeconds(30);
@@ -211,8 +221,8 @@ public class BaseNntpClient : NntpClient
     )
     {
         segmentId = PrepareSegmentId(segmentId);
-        var bodyResponse = await _client.DecodedBodyAsync(
-            segmentId, onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
+        var bodyResponse = await WithBudgetCompletionAsync(callback => _client.DecodedBodyAsync(
+            segmentId, callback, cancellationToken), onConnectionReadyAgain).ConfigureAwait(false);
 
         if (bodyResponse.ResponseType != UsenetResponseType.ArticleRetrievedBodyFollows)
             throw CreateArticleFetchException(segmentId, bodyResponse);
@@ -233,8 +243,8 @@ public class BaseNntpClient : NntpClient
         CancellationToken cancellationToken
     )
     {
-        return _client.DecodedBodiesAsync(
-            PrepareSegmentIds(segmentIds), onConnectionReadyAgain, cancellationToken);
+        return WithBudgetCompletionAsync(callback => _client.DecodedBodiesAsync(
+            PrepareSegmentIds(segmentIds), callback, cancellationToken), onConnectionReadyAgain);
     }
 
     public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync
@@ -261,8 +271,8 @@ public class BaseNntpClient : NntpClient
         // UsenetSharp validates CRCs on decoded BODY responses. Pair HEAD + BODY
         // instead of locally decoding ARTICLE so first-segment metadata probes get
         // the same corruption detection as normal streaming.
-        var bodyResponse = await _client.DecodedBodyAsync(
-            segmentId, onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
+        var bodyResponse = await WithBudgetCompletionAsync(callback => _client.DecodedBodyAsync(
+            segmentId, callback, cancellationToken), onConnectionReadyAgain).ConfigureAwait(false);
         if (bodyResponse.ResponseType != UsenetResponseType.ArticleRetrievedBodyFollows)
             throw CreateArticleFetchException(segmentId, bodyResponse);
 
@@ -282,6 +292,21 @@ public class BaseNntpClient : NntpClient
         for (var index = 0; index < segmentIds.Count; index++)
             prepared[index] = PrepareSegmentId(segmentIds[index]);
         return prepared;
+    }
+
+    private static async Task<T> WithBudgetCompletionAsync<T>(Func<ArticleBodyCompletionHandler?, Task<T>> start,
+        ArticleBodyCompletionHandler? original)
+    {
+        var lease = PrefetchWireBudget.Current?.BeginOperation();
+        try
+        {
+            return await start(lease is null ? original : (result, exception) =>
+            {
+                try { original?.Invoke(result, exception); }
+                finally { lease.Dispose(); }
+            }).ConfigureAwait(false);
+        }
+        catch { lease?.Dispose(); throw; }
     }
 
     public override Task<UsenetDateResponse> DateAsync(CancellationToken cancellationToken)

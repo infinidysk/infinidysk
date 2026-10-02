@@ -7,6 +7,19 @@ namespace NzbWebDAV.Tests.Services.SupportPack;
 public class SupportPackRedactorTests
 {
     [Theory]
+    [InlineData(ConfigKeys.PlexAccounts)]
+    [InlineData(ConfigKeys.PlexServers)]
+    [InlineData(ConfigKeys.SmartPrefetchSettings)]
+    [InlineData(ConfigKeys.NativeCacheFolders)]
+    [InlineData(ConfigKeys.NativeCacheMetadataPath)]
+    public void CacheAndPlexConfiguration_OmitsPrivatePathsAndViewingSelections(string key)
+    {
+        var result = new SupportPackRedactor([]).RedactConfigurationValue(key,
+            "[{\"Name\":\"Private movie\",\"Path\":\"/nas/private\",\"Token\":\"secret\",\"Email\":\"user@example.test\"}]");
+        Assert.Equal("[REDACTED]", result);
+    }
+
+    [Theory]
     [InlineData("movie Bearer secret-value.mkv")]
     [InlineData("movie Basic credential-value.mkv")]
     [InlineData("movie token=\"token-value\".mkv")]
