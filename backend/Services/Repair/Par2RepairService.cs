@@ -1471,6 +1471,7 @@ public partial class Par2RepairService : BackgroundService
     {
         _activeRepairPhase = phase;
         Interlocked.Exchange(ref _activeMemoryCapBytes, memoryCapBytes);
+        HealthCheckActivity.Report();
     }
 
     private void EndRepairDiagnostics()

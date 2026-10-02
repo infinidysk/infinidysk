@@ -45,6 +45,10 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     private static readonly TimeSpan MissingPayloadInitialRecheck = TimeSpan.FromDays(1);
     private static readonly TimeSpan MissingPayloadConfirmedRecheck = TimeSpan.FromDays(7);
     private static readonly TimeSpan HealthCheckProgressTimeout = TimeSpan.FromMinutes(5);
+    // Aborts only stalled attempts: STAT progress and PAR2 repair reads/phase changes reset it.
+    internal static readonly TimeSpan HealthCheckInactivityLimit = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan HealthCheckStallDeferral = TimeSpan.FromDays(1);
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _repairRetryNotBefore = new();
 
     // Repeated remove-and-blocklist repairs for the same library path in a short window indicate
     // a replacement loop (Arr keeps re-grabbing a release repair keeps rejecting, issue #732).
@@ -194,9 +198,19 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     internal Func<Guid, Task>? BeforeHealthyFinalizationOverride { get; set; }
     internal IReadOnlyCollection<Guid> InProgressHealthCheckIds => _inProgress.Keys.ToArray();
 
-    public IReadOnlyDictionary<Guid, int> GetActiveHealthCheckProgress() => _inProgress
-        .Where(entry => entry.Value.ProcessingTask?.IsCompleted != true)
-        .ToDictionary(entry => entry.Key, entry => entry.Value.Progress);
+    public sealed record ActiveHealthCheckProgress(int Progress, string Phase, DateTimeOffset PhaseStartedAt);
+
+    public IReadOnlyDictionary<Guid, ActiveHealthCheckProgress> GetActiveHealthCheckProgress()
+    {
+        var now = _timeProvider.GetUtcNow();
+        return _inProgress
+            .Where(entry => entry.Value.ProcessingTask?.IsCompleted != true)
+            .ToDictionary(entry => entry.Key, entry =>
+            {
+                var snapshot = entry.Value.GetDiagnosticSnapshot(now);
+                return new ActiveHealthCheckProgress(entry.Value.Progress, snapshot.Phase, snapshot.PhaseStartedAtUtc);
+            });
+    }
 
     public HealthCheckDiagnosticsSnapshot CaptureHealthCheckDiagnostics()
     {
@@ -489,6 +503,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             .WithCancellation(ct)
             .ConfigureAwait(false))
         {
+            if (_repairRetryNotBefore.TryGetValue(item.Id, out var notBefore))
+            {
+                if (notBefore > currentDateTime) continue;
+                _repairRetryNotBefore.TryRemove(new KeyValuePair<Guid, DateTimeOffset>(item.Id, notBefore));
+            }
             var isRepair = item.NextHealthCheck == DateTimeOffset.UnixEpoch
                 || item.HealthRepairPending;
             if ((allowRepairs && isRepair)
@@ -1188,6 +1207,50 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         CancellationToken ct
     )
     {
+        using var stalled = new CancellationTokenSource(HealthCheckInactivityLimit, _timeProvider);
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct, stalled.Token);
+        HealthCheckActivity.Current = () =>
+        {
+            try { stalled.CancelAfter(HealthCheckInactivityLimit); }
+            catch (ObjectDisposedException)
+            {
+                // Late activity from work that outlived this attempt.
+            }
+        };
+        try
+        {
+            await PerformHealthCheckAttempt(davItem, dbClient, concurrency, attempt.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stalled.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            CompleteHealthProgress(davItem.Id);
+            var now = _timeProvider.GetUtcNow();
+            var next = now + HealthCheckStallDeferral;
+            // ponytail: repair deferrals are in-memory, so a restart retries timed-out repairs immediately.
+            if (davItem.NextHealthCheck == DateTimeOffset.UnixEpoch || davItem.HealthRepairPending)
+                _repairRetryNotBefore[davItem.Id] = next;
+            // Keep the urgent sentinel (including one set by streaming during this attempt) so the retry stays urgent.
+            await dbClient.Ctx.Items
+                .Where(item => item.Id == davItem.Id)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(item => item.LastHealthCheck, now)
+                    .SetProperty(item => item.NextHealthCheck, item =>
+                        item.NextHealthCheck == DateTimeOffset.UnixEpoch ? DateTimeOffset.UnixEpoch : (DateTimeOffset?)next), ct)
+                .ConfigureAwait(false);
+            Log.Warning(
+                "Health check for {Path} made no progress for {Limit}. Deferred next check to {NextCheck}.",
+                davItem.Path, HealthCheckInactivityLimit, next);
+        }
+    }
+
+    private async Task PerformHealthCheckAttempt
+    (
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        int concurrency,
+        CancellationToken ct
+    )
+    {
         _inProgress.TryGetValue(davItem.Id, out var diagnosticWorker);
         diagnosticWorker?.SetDiagnosticPhase("Preparing", _timeProvider.GetUtcNow());
         var providerGeneration = _configManager.GetUsenetProviderSnapshot().Generation;
@@ -1306,8 +1369,10 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             diagnosticWorker?.SetDiagnosticPhase("Checking", _timeProvider.GetUtcNow());
             var debounce = DebounceUtil.CreateDebounce(TimeSpan.FromMilliseconds(200));
             _inProgress.TryGetValue(davItem.Id, out var progressWorker);
+            var reportActivity = HealthCheckActivity.Current;
             progressHook.ProgressChanged += (_, progress) =>
             {
+                reportActivity?.Invoke();
                 try { statCts?.CancelAfter(HealthCheckProgressTimeout); }
                 catch (ObjectDisposedException)
                 {

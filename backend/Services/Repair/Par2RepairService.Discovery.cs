@@ -44,6 +44,10 @@ public partial class Par2RepairService
         public List<RecvSlic> RecoveryPackets { get; } = [];
         public long IdentityByteLimit { get; init; } = MaxPar2IdentityBytes;
         public int IdentityRequestLimit { get; init; } = MaxPar2IdentityRequests;
+        public int MaxMissingSlices { get; init; } = int.MaxValue;
+        public HashSet<NzbFile> RequiredSources { get; } = new(ReferenceEqualityComparer.Instance);
+        public HashSet<(NzbFile File, long Slice)> RequiredSourceMissSlices { get; } = [];
+        public bool SourceSliceCapExceeded { get; set; }
         public DisposableOwner<IDisposable> IdentityBodyReservation { get; } = new();
         public string? IdentityBodyId { get; set; }
         public byte[]? IdentityBody { get; set; }
@@ -79,6 +83,19 @@ public partial class Par2RepairService
             if (comparisons > MaxPar2SourceComparisons - SourceComparisons)
                 throw new RepairInfeasibleException("PAR2 source matching exceeds the 100,000-comparison limit.");
             SourceComparisons += comparisons;
+        }
+
+        // Only files every successful set must cover, with exact byte ranges, can prove the cap is exceeded.
+        public void NoteSourceMiss(NzbFile file, LongRange? range, long sliceSize)
+        {
+            if (range is not { Count: > 0 } exact || sliceSize <= 0 || !RequiredSources.Contains(file)) return;
+            for (var slice = exact.StartInclusive / sliceSize; slice <= (exact.EndExclusive - 1) / sliceSize; slice++)
+            {
+                if (!RequiredSourceMissSlices.Add((file, slice)) || RequiredSourceMissSlices.Count <= MaxMissingSlices) continue;
+                SourceSliceCapExceeded = true;
+                throw new RepairInfeasibleException(
+                    $"Source articles are missing for at least {RequiredSourceMissSlices.Count} PAR2 slices, which exceeds cap {MaxMissingSlices}.");
+            }
         }
 
         public void NoteUnavailable(string id, Exception exception)
@@ -301,12 +318,14 @@ public partial class Par2RepairService
             await using var stream = response.Stream!;
             var header = await stream.GetYencHeadersAsync(ct).ConfigureAwait(false);
             reads.Headers[id] = header;
+            HealthCheckActivity.Report();
             return header;
         }
         catch (Exception exception) when (exception is UsenetArticleNotFoundException or UsenetCorruptArticleException or InvalidDataException or EndOfStreamException)
         {
             reads.Headers[id] = null;
             reads.NoteUnavailable(id, exception);
+            HealthCheckActivity.Report();
             return null;
         }
     }

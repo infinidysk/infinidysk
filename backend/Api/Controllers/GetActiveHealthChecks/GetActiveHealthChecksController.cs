@@ -22,16 +22,22 @@ public class GetActiveHealthChecksController(
             .OrderBy(item => item.Id)
             .ToListAsync(HttpContext.RequestAborted)
             .ConfigureAwait(false);
-        var items = davItems.Select(item => new GetHealthCheckQueueResponse.HealthCheckQueueItem
+        var items = davItems.Select(item =>
         {
-            Id = item.Id.ToString(),
-            Name = item.Name,
-            Path = item.Path,
-            ReleaseDate = item.ReleaseDate,
-            LastHealthCheck = item.LastHealthCheck,
-            NextHealthCheck = item.NextHealthCheck,
-            CountsTowardUncheckedCount = HealthCheckService.CountsTowardUncheckedCount(item),
-            Progress = activeProgress.TryGetValue(item.Id, out var progress) ? progress : null,
+            var active = activeProgress.GetValueOrDefault(item.Id);
+            return new GetHealthCheckQueueResponse.HealthCheckQueueItem
+            {
+                Id = item.Id.ToString(),
+                Name = item.Name,
+                Path = item.Path,
+                ReleaseDate = item.ReleaseDate,
+                LastHealthCheck = item.LastHealthCheck,
+                NextHealthCheck = item.NextHealthCheck,
+                CountsTowardUncheckedCount = HealthCheckService.CountsTowardUncheckedCount(item),
+                Progress = active?.Progress,
+                Phase = active?.Phase,
+                PhaseStartedAt = active?.PhaseStartedAt,
+            };
         }).ToList();
 
         return Ok(new GetActiveHealthChecksResponse { Items = items });
