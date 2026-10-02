@@ -1,3 +1,4 @@
+using NzbWebDAV.Services;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.TestUtils;
 
@@ -313,6 +314,26 @@ public class SegmentBufferPoolTests
         Assert.Equal(inUse.Length, snapshot.CheckedOutBytes);
         Assert.Equal(0, pool.TrimIfIdle(TimeSpan.FromSeconds(30)));
         pool.Return(inUse);
+    }
+
+    [Fact]
+    public void IdleTrimService_DefersWhileAReadIsLive()
+    {
+        var clock = new ManualTimeProvider();
+        var pool = new SegmentBufferPool(
+            maxIdleBytes: 4 * 1024 * 1024,
+            retentionPolicy: SegmentBufferRetentionPolicy.CapacityOnly,
+            timeProvider: clock);
+        pool.Return(pool.Rent(750_000));
+        var tracker = new ConcurrentReadTracker();
+        var service = new SegmentBufferPoolIdleTrimService(tracker);
+        clock.Advance(TimeSpan.FromMinutes(5));
+
+        using (tracker.BeginRead("/content/paused.mkv", 0, ConcurrentReadRegion.StartRange))
+            Assert.Equal(0, service.ReleaseIdleBuffers(pool));
+
+        Assert.Equal(768 * 1024, service.ReleaseIdleBuffers(pool));
+        Assert.Equal(0, pool.Snapshot().IdleBytes);
     }
 
     [Fact]

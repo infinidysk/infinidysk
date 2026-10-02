@@ -104,6 +104,8 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
         _lastActivityTimestamp = _timeProvider.GetTimestamp();
     }
 
+    internal SegmentBufferRetentionPolicy RetentionPolicy => _retentionPolicy;
+
     public byte[] Rent(int minimumLength)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(minimumLength);
