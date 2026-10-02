@@ -156,6 +156,37 @@ public class SegmentFallbackTests
     }
 
     [Fact]
+    public async Task MultiSegmentStream_PrefetchCeilingGrowsWithConsumedBytes()
+    {
+        var segmentIds = Enumerable.Range(0, 100).Select(index => $"seg-{index}").ToArray();
+        var client = new RawBodyNntpClient(
+            segmentIds.ToDictionary(id => id, _ => Encoding.ASCII.GetBytes("abcde")));
+
+        await using var stream = MultiSegmentStream.Create(
+            segmentIds.AsMemory(),
+            client,
+            articleBufferSize: 20,
+            estimatedSegmentSize: 5,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            cancellationToken: CancellationToken.None,
+            fileName: "ramp.bin");
+        var multiSegmentStream = Assert.IsType<MultiSegmentStream>(stream);
+
+        // Full window is 20 x 4 segments; an unread stream holds only the 8-segment start.
+        Assert.Equal(40, multiSegmentStream.CurrentPrefetchByteCeiling);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (client.BodyRequestCount < 8 && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        await Task.Delay(200);
+        Assert.Equal(8, client.BodyRequestCount);
+
+        var buffer = new byte[25];
+        await stream.ReadExactlyAsync(buffer);
+        Assert.Equal(65, multiSegmentStream.CurrentPrefetchByteCeiling);
+    }
+
+    [Fact]
     public void DavNzbFile_MemoryPackRoundTrip_WithAndWithoutFallbacks()
     {
         var without = new DavNzbFile
