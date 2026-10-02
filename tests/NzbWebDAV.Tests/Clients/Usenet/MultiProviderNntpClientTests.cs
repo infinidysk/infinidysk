@@ -116,6 +116,82 @@ public class MultiProviderNntpClientTests
         }
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task BatchFallback_LocalConnectionOpenTimeout_RemainsInconclusive(
+        bool wrapped, bool finalSucceeds)
+    {
+        const string provider = "local-wait.example";
+        var writer = new MetricsWriter();
+        var events = await CaptureLogsAsync(async () =>
+        {
+            Exception failure = new ConnectionOpenTimeoutException(
+                provider, "HandshakeQueue", TimeSpan.FromSeconds(5), factoryStarted: false);
+            if (wrapped)
+                failure = new InvalidOperationException("connection acquisition failed", failure);
+
+            var breaker = new ProviderCircuitBreaker(provider);
+            await using var pool = new ConnectionPool<INntpClient>(
+                maxConnections: 1,
+                connectionFactory: _ => ValueTask.FromException<INntpClient>(failure));
+            var waitingProvider = new MultiConnectionNntpClient(
+                pool, ProviderType.BackupOnly, breaker, provider);
+            using var client = new MultiProviderNntpClient(
+            [
+                CreateProvider(new ScriptedNntpClient { BatchResponseCode = 430 }),
+                waitingProvider,
+                CreateProvider(new ScriptedNntpClient
+                {
+                    BatchResponseCode = 222,
+                    SingularResponseCode = finalSucceeds ? 222 : 430,
+                }, host: "final.example", providerType: ProviderType.BackupOnly),
+            ], metricsWriter: writer, retryPrimaryOnMiss: () => false);
+            using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            using var timeoutScope = caller.Token.SetContext(new StreamingTimeoutContext
+            {
+                PerSegmentTimeout = TimeSpan.FromSeconds(5),
+                MaxRetries = 0,
+            });
+            var recorder = new ArticleBodyCompletionRecorder();
+
+            var batch = await client.DecodedBodiesAsync(
+                ["synthetic-segment"], recorder.Invoke, caller.Token);
+            if (finalSucceeds)
+            {
+                var response = await batch.Responses[0];
+                Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, response.ResponseType);
+                await response.Stream!.DisposeAsync();
+                Assert.Equal(1, writer.Stats.QueuedFailoverMisses);
+            }
+            else
+            {
+                var actual = await Record.ExceptionAsync(() => batch.Responses[0]);
+                Assert.Same(failure, actual);
+            }
+
+            await batch.Completion.WaitAsync(caller.Token);
+            Assert.Equal(1, recorder.Count);
+            Assert.False(caller.IsCancellationRequested);
+            Assert.Equal(0, waitingProvider.PendingSelections);
+            Assert.Equal(0, breaker.GetSnapshot().FailureCount);
+            Assert.Equal(ProviderCircuitState.Closed, breaker.GetSnapshot().State);
+            Assert.DoesNotContain(writer.SnapshotQueuedFetches(), fetch => fetch.Provider == provider);
+        });
+
+        Assert.DoesNotContain(events, IsUnclassifiedFetchWarning);
+        Assert.DoesNotContain(events, logEvent => logEvent.Level >= LogEventLevel.Error);
+        if (!finalSucceeds)
+            Assert.Contains(events, logEvent =>
+                logEvent.Level == LogEventLevel.Warning
+                && logEvent.Exception is null
+                && logEvent.MessageTemplate.Text.StartsWith(
+                    "Connection acquisition for", StringComparison.Ordinal)
+                && PropertyText(logEvent, "Reason").Contains("HandshakeQueue", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void AdmissionPolicy_UsesStreamingTimeoutOrDefault()
     {
@@ -1134,6 +1210,123 @@ public class MultiProviderNntpClientTests
         var response = await client.StatAsync("segment", CancellationToken.None);
         Assert.True(response.ArticleExists);
         Assert.Equal(0, writer.Stats.QueuedFetches);
+    }
+
+    [Theory]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    public async Task DecodedBodyAsync_ConnectionOpenTimeout_RecordsOnlyAttemptedOpens(
+        bool factoryStarted, bool wrapped, bool streaming)
+    {
+        const string provider = "open-timeout.example";
+        var writer = new MetricsWriter();
+        var events = await CaptureLogsAsync(async () =>
+        {
+            Exception failure = new ConnectionOpenTimeoutException(
+                provider, factoryStarted ? "Factory" : "HandshakeQueue",
+                TimeSpan.FromSeconds(5), factoryStarted);
+            if (wrapped)
+                failure = new InvalidOperationException("connection acquisition failed", failure);
+
+            var breaker = new ProviderCircuitBreaker(provider) { Clock = () => 100_000L };
+            if (!factoryStarted)
+            {
+                breaker.RecordConnectionFailure("initial", requiresFreshConnectionProbe: true);
+                breaker.ExpireCooldownForTests();
+            }
+
+            var attempts = 0;
+            await using var pool = new ConnectionPool<INntpClient>(
+                maxConnections: 1,
+                connectionFactory: _ =>
+                {
+                    Interlocked.Increment(ref attempts);
+                    return ValueTask.FromException<INntpClient>(failure);
+                });
+            var primary = new MultiConnectionNntpClient(
+                pool, ProviderType.Pooled, breaker, provider);
+            var backup = new ScriptedNntpClient
+            {
+                BatchResponseCode = 222,
+                SingularResponseCode = 222,
+            };
+            using var client = new MultiProviderNntpClient(
+            [
+                primary,
+                CreateProvider(backup, host: "backup.example", providerType: ProviderType.BackupOnly),
+            ], metricsWriter: writer);
+            using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            using var timeoutScope = caller.Token.SetContext(new StreamingTimeoutContext
+            {
+                PerSegmentTimeout = TimeSpan.FromSeconds(5),
+                MaxRetries = 0,
+            });
+            var recorder = new ArticleBodyCompletionRecorder();
+            var before = breaker.GetSnapshot();
+            var cooldown = breaker.CurrentCooldown;
+
+            var response = streaming
+                ? await client.DecodedBodyAsync("synthetic-segment", recorder.Invoke, caller.Token)
+                : await client.DecodedBodyAsync("synthetic-segment", caller.Token);
+            await response.Stream!.DisposeAsync();
+
+            Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, response.ResponseType);
+            Assert.False(caller.IsCancellationRequested);
+            Assert.Equal(1, attempts);
+            Assert.Equal(1, backup.SingularRequests);
+            Assert.Equal(0, primary.PendingSelections);
+            Assert.Equal(0, pool.ActiveConnections);
+            Assert.Equal(streaming ? 1 : 0, recorder.Count);
+            var fetches = writer.SnapshotQueuedFetches()
+                .Where(fetch => fetch.Provider == provider).ToArray();
+            var after = breaker.GetSnapshot();
+
+            if (factoryStarted)
+            {
+                Assert.Equal(SegmentFetch.FetchStatus.Timeout, Assert.Single(fetches).Status);
+                Assert.Equal(ProviderCircuitState.Open, after.State);
+                Assert.Equal(before.FailureCount + 1, after.FailureCount);
+                Assert.True(breaker.RequiresFreshConnectionProbe);
+            }
+            else
+            {
+                Assert.Empty(fetches);
+                Assert.Equal(before.State, after.State);
+                Assert.Equal(before.FailureCount, after.FailureCount);
+                Assert.Equal(before.TripCount, after.TripCount);
+                Assert.Equal(before.ArticleMissCount, after.ArticleMissCount);
+                Assert.Equal(before.LastFailureReason, after.LastFailureReason);
+                Assert.Equal(cooldown, breaker.CurrentCooldown);
+                Assert.True(breaker.TryAdmit(out var nextProbe));
+                try
+                {
+                    Assert.False(nextProbe.IsNone);
+                }
+                finally
+                {
+                    breaker.ReleaseProbe(nextProbe);
+                }
+            }
+
+            Assert.Equal(factoryStarted ? 1 : 0, writer.Stats.QueuedFailoverMisses);
+        });
+
+        Assert.DoesNotContain(events, IsUnclassifiedFetchWarning);
+        Assert.DoesNotContain(events, logEvent => logEvent.Level >= LogEventLevel.Error);
+        Assert.DoesNotContain(events, logEvent =>
+            logEvent.Level >= LogEventLevel.Warning
+            && (logEvent.Exception is not null || logEvent.Properties.ContainsKey("Stack")));
+        Assert.Contains(events, logEvent =>
+            logEvent.Level == LogEventLevel.Warning
+            && PropertyText(logEvent, "Reason").Contains(
+                factoryStarted ? "during Factory" : "during HandshakeQueue",
+                StringComparison.Ordinal));
     }
 
     [Fact]
@@ -3276,6 +3469,34 @@ public class MultiProviderNntpClientTests
     {
         var status = MultiProviderNntpClient.ClassifyException(new TimeoutException());
         Assert.Equal(SegmentFetch.FetchStatus.Timeout, status);
+    }
+
+    [Theory]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    public void ClassifyException_ConnectionOpenTimeout_UsesFactoryStarted(
+        bool factoryStarted, bool wrapped, bool innerTimeout)
+    {
+        Exception exception = new ConnectionOpenTimeoutException(
+            "provider.example",
+            factoryStarted ? "Factory" : "HandshakeQueue",
+            TimeSpan.FromSeconds(5),
+            factoryStarted,
+            innerTimeout ? new TimeoutException("open budget elapsed") : null);
+        if (wrapped)
+            exception = new InvalidOperationException("connection acquisition failed", exception);
+
+        var status = MultiProviderNntpClient.ClassifyException(exception);
+
+        Assert.Equal(
+            factoryStarted ? SegmentFetch.FetchStatus.Timeout : SegmentFetch.FetchStatus.Other,
+            status);
     }
 
     [Fact]

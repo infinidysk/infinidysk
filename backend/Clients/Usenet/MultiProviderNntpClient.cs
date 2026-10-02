@@ -918,8 +918,7 @@ public class MultiProviderNntpClient(
                         coordinator.CompleteAttempt();
                         throw;
                     }
-                    catch (Exception exception) when (exception is ProviderTransferAdmissionTimeoutException
-                        or CircuitAdmissionRejectedException)
+                    catch (Exception exception) when (IsInconclusiveAdmissionFailure(exception))
                     {
                         stopwatch.Stop();
                         deferredCallback.Discard();
@@ -981,8 +980,8 @@ public class MultiProviderNntpClient(
                 : lastAttemptedProvider.Host;
             walk.LastOutcomeWasException = terminalFailure is not null
                 && ClassifyException(terminalFailure.SourceException) != SegmentFetch.FetchStatus.Missing;
-            if (terminalFailure?.SourceException is ProviderTransferAdmissionTimeoutException
-                or CircuitAdmissionRejectedException)
+            if (terminalFailure is not null
+                && IsInconclusiveAdmissionFailure(terminalFailure.SourceException))
                 LogInconclusiveAdmissionFailure(terminalProvider, terminalFailure.SourceException);
             else
                 LogProviderWalkOutcome(
@@ -1264,8 +1263,7 @@ public class MultiProviderNntpClient(
                     onConnectionReadyAgain, ArticleBodyResult.NotRetrieved);
                 throw;
             }
-            catch (Exception exception) when (exception is ProviderTransferAdmissionTimeoutException
-                or CircuitAdmissionRejectedException)
+            catch (Exception exception) when (IsInconclusiveAdmissionFailure(exception))
             {
                 stopwatch.Stop();
                 deferredCallback.Discard();
@@ -1314,8 +1312,8 @@ public class MultiProviderNntpClient(
             ? inconclusiveAdmissionProvider
             : lastAttemptedProvider?.Host;
         walk.LastOutcomeWasException = terminalFailure is not null;
-        if (terminalFailure?.SourceException is ProviderTransferAdmissionTimeoutException
-            or CircuitAdmissionRejectedException)
+        if (terminalFailure is not null
+            && IsInconclusiveAdmissionFailure(terminalFailure.SourceException))
             LogInconclusiveAdmissionFailure(terminalProvider, terminalFailure.SourceException);
         else
             LogProviderWalkOutcome(
@@ -1472,8 +1470,7 @@ public class MultiProviderNntpClient(
                 walk.Retired = true;
                 throw;
             }
-            catch (Exception exception) when (exception is ProviderTransferAdmissionTimeoutException
-                or CircuitAdmissionRejectedException)
+            catch (Exception exception) when (IsInconclusiveAdmissionFailure(exception))
             {
                 stopwatch.Stop();
                 lastException = ExceptionDispatchInfo.Capture(exception);
@@ -1522,8 +1519,8 @@ public class MultiProviderNntpClient(
             ? inconclusiveAdmissionProvider
             : lastAttemptedProvider?.Host;
         walk.LastOutcomeWasException = terminalFailure is not null;
-        if (terminalFailure?.SourceException is ProviderTransferAdmissionTimeoutException
-            or CircuitAdmissionRejectedException)
+        if (terminalFailure is not null
+            && IsInconclusiveAdmissionFailure(terminalFailure.SourceException))
             LogInconclusiveAdmissionFailure(terminalProvider, terminalFailure.SourceException);
         else
             LogProviderWalkOutcome(
@@ -2043,6 +2040,11 @@ public class MultiProviderNntpClient(
         if (ex.TryGetCausingException<UsenetArticleNotFoundException>(out _))
             return SegmentFetch.FetchStatus.Missing;
 
+        if (ex.TryGetCausingException(out ConnectionOpenTimeoutException? openTimeout))
+            return openTimeout!.FactoryStarted
+                ? SegmentFetch.FetchStatus.Timeout
+                : SegmentFetch.FetchStatus.Other;
+
         if (ex.TryGetCausingException<TimeoutException>(out _))
             return SegmentFetch.FetchStatus.Timeout;
 
@@ -2190,10 +2192,25 @@ public class MultiProviderNntpClient(
         cancellationToken.GetContext<StreamingTimeoutContext>()?.PerSegmentTimeout
         ?? TransferAdmissionFailoverContext.DefaultWaitTimeout;
 
+    private static bool IsInconclusiveAdmissionFailure(Exception exception) =>
+        exception is ProviderTransferAdmissionTimeoutException or CircuitAdmissionRejectedException
+        || (exception.TryGetCausingException(out ConnectionOpenTimeoutException? openTimeout)
+            && openTimeout is { FactoryStarted: false });
+
     private static void LogInconclusiveAdmissionFailure(
         string? providerHost,
         Exception exception)
     {
+        if (exception.TryGetCausingException(out ConnectionOpenTimeoutException? openTimeout)
+            && openTimeout is { FactoryStarted: false })
+        {
+            Log.Warning(
+                "Connection acquisition for {Provider} ended before a provider connection was attempted; " +
+                "retry when local connection capacity is available. Reason: {Reason}",
+                providerHost ?? "unknown", openTimeout.Message);
+            return;
+        }
+
         switch (exception)
         {
             case ProviderTransferAdmissionTimeoutException timeout:
