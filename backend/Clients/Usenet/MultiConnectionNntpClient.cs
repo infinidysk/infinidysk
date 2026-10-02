@@ -1412,7 +1412,8 @@ public class MultiConnectionNntpClient(
             return;
         }
 
-        if (exception is ConnectionOpenTimeoutException { FactoryStarted: false })
+        exception.TryGetCausingException(out ConnectionOpenTimeoutException? openTimeout);
+        if (openTimeout is { FactoryStarted: false })
         {
             circuitBreaker.ReleaseProbe(probeLease);
             return;
@@ -1422,7 +1423,7 @@ public class MultiConnectionNntpClient(
         if (exception.TryGetKnownErrorMessage(out var knownReason))
             reason = $"{reason}: {knownReason}";
 
-        if (exception is ConnectionOpenTimeoutException { FactoryStarted: true } openTimeout)
+        if (openTimeout is { FactoryStarted: true })
         {
             RecordProviderConnectionFailure(
                 $"{reason}-phase-{openTimeout.Phase}",
