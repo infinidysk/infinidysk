@@ -184,21 +184,28 @@ internal static class NntpWholePathReport
             });
             var startedTimestamp = Stopwatch.GetTimestamp();
             var started = Stopwatch.StartNew();
-            var bytes = scenario.Layer switch
+            ReadResult bytes;
+            try
             {
-                NntpWholePathLayer.Transport => await ReadTransportAsync(
-                    scenario, server.Port, corpus, callbackCounts, verifyHash).ConfigureAwait(false),
-                NntpWholePathLayer.Provider => await ReadProviderAsync(
-                    scenario, server.Port, corpus, callbackCounts, verifyHash).ConfigureAwait(false),
-                NntpWholePathLayer.BufferedStream or NntpWholePathLayer.HttpLike =>
-                    await ReadBufferedStreamAsync(
-                        scenario, bufferedProvider!, corpus, budget, verifyHash, httpLike,
-                        responseCopyChunkBytes, startedTimestamp)
-                    .ConfigureAwait(false),
-                _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
-            };
-            await samplerCts.CancelAsync().ConfigureAwait(false);
-            await sampler.ConfigureAwait(false);
+                bytes = scenario.Layer switch
+                {
+                    NntpWholePathLayer.Transport => await ReadTransportAsync(
+                        scenario, server.Port, corpus, callbackCounts, verifyHash).ConfigureAwait(false),
+                    NntpWholePathLayer.Provider => await ReadProviderAsync(
+                        scenario, server.Port, corpus, callbackCounts, verifyHash).ConfigureAwait(false),
+                    NntpWholePathLayer.BufferedStream or NntpWholePathLayer.HttpLike =>
+                        await ReadBufferedStreamAsync(
+                            scenario, bufferedProvider!, corpus, budget, verifyHash, httpLike,
+                            responseCopyChunkBytes, startedTimestamp)
+                        .ConfigureAwait(false),
+                    _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
+                };
+            }
+            finally
+            {
+                await samplerCts.CancelAsync().ConfigureAwait(false);
+                await sampler.ConfigureAwait(false);
+            }
             // Close connections before the server waits for idle, as the per-read provider did.
             bufferedProvider?.Dispose();
             bufferedProvider = null;
