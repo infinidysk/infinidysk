@@ -62,7 +62,7 @@ public sealed class PlaybackHoleTrackerTests : IDisposable
     {
         var path = $"/view/budget-{Guid.NewGuid():N}.mkv";
         var nzb = BudgetFile(segments: 1000);
-        var config = new NzbWebDAV.Config.ConfigManager();
+        var config = ToleranceConfig();
         config.UpdateValues([
             new NzbWebDAV.Database.Models.ConfigItem { ConfigName = NzbWebDAV.Config.ConfigKeys.RepairDegradedMaxTotalMissing, ConfigValue = "3" },
         ]);
@@ -84,7 +84,7 @@ public sealed class PlaybackHoleTrackerTests : IDisposable
     {
         var path = $"/view/head-{Guid.NewGuid():N}.mkv";
         var nzb = BudgetFile(segments: 100);
-        PlaybackHoleTracker.SetDamageBudget(path, PlaybackDamageBudget.TryCreate(path, nzb, new NzbWebDAV.Config.ConfigManager()));
+        PlaybackHoleTracker.SetDamageBudget(path, PlaybackDamageBudget.TryCreate(path, nzb, ToleranceConfig()));
 
         RecordIsolatedHole(path, nzb.SegmentIds[0]);
         Assert.True(PlaybackHoleTracker.ShouldFailFast(path, out _));
@@ -95,7 +95,7 @@ public sealed class PlaybackHoleTrackerTests : IDisposable
     {
         var path = $"/view/run-{Guid.NewGuid():N}.mkv";
         var nzb = BudgetFile(segments: 1000);
-        PlaybackHoleTracker.SetDamageBudget(path, PlaybackDamageBudget.TryCreate(path, nzb, new NzbWebDAV.Config.ConfigManager()));
+        PlaybackHoleTracker.SetDamageBudget(path, PlaybackDamageBudget.TryCreate(path, nzb, ToleranceConfig()));
 
         Assert.Equal(5, PlaybackHoleTracker.ConsecutiveFillLimit(path));
         var miss = new UsenetArticleNotFoundException("run@test");
@@ -111,8 +111,24 @@ public sealed class PlaybackHoleTrackerTests : IDisposable
     public void IneligibleFile_KeepsFixedConsecutiveLimit()
     {
         var path = $"/view/plain-{Guid.NewGuid():N}.avi";
-        Assert.Null(PlaybackDamageBudget.TryCreate(path, BudgetFile(segments: 10), new NzbWebDAV.Config.ConfigManager()));
+        Assert.Null(PlaybackDamageBudget.TryCreate(path, BudgetFile(segments: 10), ToleranceConfig()));
         Assert.Equal(GapFillLimits.MaxConsecutiveZeroFills, PlaybackHoleTracker.ConsecutiveFillLimit(path));
+    }
+
+    [Fact]
+    public void ToleranceOff_HasNoBudget()
+    {
+        var path = $"/view/off-{Guid.NewGuid():N}.mkv";
+        Assert.Null(PlaybackDamageBudget.TryCreate(path, BudgetFile(segments: 10), new NzbWebDAV.Config.ConfigManager()));
+    }
+
+    private static NzbWebDAV.Config.ConfigManager ToleranceConfig()
+    {
+        var config = new NzbWebDAV.Config.ConfigManager();
+        config.UpdateValues([
+            new NzbWebDAV.Database.Models.ConfigItem { ConfigName = NzbWebDAV.Config.ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = "true" },
+        ]);
+        return config;
     }
 
     private static void RecordIsolatedHole(string path, string segmentId)

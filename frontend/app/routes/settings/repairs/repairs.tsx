@@ -568,13 +568,13 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
             </p>
           )}
           <ManagedSetting configKey="repair.degraded-tolerance-enabled">
-            <Tooltip content="Full-coverage health checks classify missing video segments: files with a small amount of damage in a resync-tolerant container (MKV/WebM/TS, fast-start or fragmented MP4) stay mounted and play through the gaps instead of being removed and replaced through Radarr/Sonarr. Enabled by default.">
+            <Tooltip content="Full-coverage health checks classify missing video segments: files with a small amount of damage in a resync-tolerant container (MKV/WebM/TS, fast-start or fragmented MP4) stay mounted and play through the gaps instead of being removed and replaced through Radarr/Sonarr. Playback pads over holes until the caps below are exceeded, then hands the file to repair. Off by default: when off, every missing article found during playback counts toward repair.">
               <Toggle
                 id="degraded-tolerance-enabled-checkbox"
                 className="cursor-pointer gap-2 p-0"
                 checked={
                   isRepairEnabled &&
-                  (config["repair.degraded-tolerance-enabled"] ?? "true") === "true"
+                  (config["repair.degraded-tolerance-enabled"] ?? "false") === "true"
                 }
                 disabled={!isRepairEnabled}
                 onChange={(e) =>
@@ -637,7 +637,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 placeholder="4"
                 disabled={
                   !isRepairEnabled ||
-                  (config["repair.degraded-tolerance-enabled"] ?? "true") !== "true"
+                  (config["repair.degraded-tolerance-enabled"] ?? "false") !== "true"
                 }
                 value={config["repair.degraded-max-consecutive-missing"] ?? ""}
                 onChange={(e) =>
@@ -666,7 +666,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 placeholder="64"
                 disabled={
                   !isRepairEnabled ||
-                  (config["repair.degraded-tolerance-enabled"] ?? "true") !== "true"
+                  (config["repair.degraded-tolerance-enabled"] ?? "false") !== "true"
                 }
                 value={config["repair.degraded-max-total-missing"] ?? ""}
                 onChange={(e) =>
@@ -691,7 +691,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 placeholder="2.0"
                 disabled={
                   !isRepairEnabled ||
-                  (config["repair.degraded-tolerance-enabled"] ?? "true") !== "true"
+                  (config["repair.degraded-tolerance-enabled"] ?? "false") !== "true"
                 }
                 value={config["repair.degraded-max-missing-byte-percent"] ?? ""}
                 onChange={(e) =>

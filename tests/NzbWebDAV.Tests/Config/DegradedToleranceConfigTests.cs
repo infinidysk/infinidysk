@@ -15,16 +15,28 @@ public sealed class DegradedToleranceConfigTests
     }
 
     [Fact]
-    public void ToleranceEnabled_DefaultsToOnWhenRepairsAreUnset()
+    public void ToleranceEnabled_DefaultsToOffWhenRepairsAreUnset()
     {
-        Assert.True(new ConfigManager().IsDegradedToleranceEnabled());
+        Assert.False(new ConfigManager().IsDegradedToleranceEnabled());
     }
 
     [Fact]
-    public void ToleranceEnabled_DefaultsToOnWhenRepairsAreOn()
+    public void ToleranceEnabled_DefaultsToOffWhenRepairsAreOn()
     {
         var config = new ConfigManager();
         config.UpdateValues([Item(ConfigKeys.RepairEnable, "true")]);
+
+        Assert.False(config.IsDegradedToleranceEnabled());
+    }
+
+    [Fact]
+    public void ToleranceEnabled_RespectsExplicitEnable()
+    {
+        var config = new ConfigManager();
+        config.UpdateValues([
+            Item(ConfigKeys.RepairEnable, "true"),
+            Item(ConfigKeys.RepairDegradedToleranceEnabled, "true"),
+        ]);
 
         Assert.True(config.IsDegradedToleranceEnabled());
     }

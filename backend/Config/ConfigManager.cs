@@ -1565,7 +1565,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     {
         if (!IsBackgroundRepairsMasterEnabled()) return false;
         var toleranceValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairDegradedToleranceEnabled));
-        return toleranceValue == null || bool.Parse(toleranceValue);
+        return toleranceValue != null && bool.Parse(toleranceValue);
     }
 
     public bool IsCorruptionTrackingEnabled()
