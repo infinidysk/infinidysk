@@ -439,7 +439,7 @@ public class MultiConnectionNntpClient(
                         switch (result)
                         {
                             case ArticleBodyResult.Discarded:
-                                LogException(() => connectionLock.Replace("pipelined-body-discarded"));
+                                LogException(() => connectionLock.Discard("pipelined-body-discarded"));
                                 circuitBreaker.ReleaseProbe(probeLease);
                                 result = ArticleBodyResult.NotRetrieved;
                                 break;
@@ -929,7 +929,7 @@ public class MultiConnectionNntpClient(
 
                     if (articleBodyResult == ArticleBodyResult.Discarded)
                     {
-                        LogException(() => connectionLock?.Replace($"body-callback-{name}-discarded"));
+                        LogException(() => connectionLock?.Discard($"body-callback-{name}-discarded"));
                         circuitBreaker.ReleaseProbe(probeLease);
                         articleBodyResult = ArticleBodyResult.NotRetrieved;
                     }

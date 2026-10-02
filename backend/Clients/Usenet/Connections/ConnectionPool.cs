@@ -1222,7 +1222,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
             TriggerConnectionPoolChangedEvent();
     }
 
-    private void Destroy(T connection, string? reason)
+    private void Destroy(T connection, string? reason, bool paceReplacement)
     {
         // When a lock requests replacement, we dispose the connection instead of reusing.
         DisposeConnection(connection);
@@ -1231,7 +1231,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         {
             Interlocked.Decrement(ref _live);
             Interlocked.Increment(ref _connectionsDestroyed);
-            if (_replacementHandshakeSpacingMs > 0)
+            if (paceReplacement && _replacementHandshakeSpacingMs > 0)
                 ArmReplacementPacingUnderLock(_replacementHandshakeSpacingMs);
             if (_disposed == 0)
             {
