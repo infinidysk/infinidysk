@@ -45,6 +45,7 @@ internal sealed class ProviderConnectionAdmission : IDisposable
     private int _transferAccumulatedOdds;
     private int _metadataAccumulatedOdds;
     private int _consecutiveTransferGrants;
+    private int _observedProviderLimit;
     private bool _disposed;
 
     internal bool IsDisposed
@@ -67,6 +68,37 @@ internal sealed class ProviderConnectionAdmission : IDisposable
         _configuredTransferLimit = configuredTransferLimit;
         _priorityOdds = priorityOdds ?? new SemaphorePriorityOdds { HighPriorityOdds = 100 };
         _cachedBudget = CreateCachedBudget();
+        _observedProviderLimit = _cachedBudget.EffectiveProviderLimit;
+    }
+
+    internal static ProviderConnectionAdmission ForPool<T>(
+        ConnectionPool<T> pool,
+        int configuredTransferLimit,
+        SemaphorePriorityOdds? priorityOdds = null)
+    {
+        var admission = new ProviderConnectionAdmission(
+            () => pool.EffectiveMaxConnections,
+            configuredTransferLimit,
+            priorityOdds);
+        // Connection-limit recovery widens the pool without any lease being released.
+        pool.OnConnectionPoolChanged += (_, _) => admission.DispatchIfProviderLimitChanged();
+        return admission;
+    }
+
+    internal void DispatchIfProviderLimitChanged()
+    {
+        var limit = Math.Max(1, _getEffectiveProviderLimit());
+        if (Interlocked.Exchange(ref _observedProviderLimit, limit) == limit)
+            return;
+
+        List<(TaskCompletionSource<Lease> Completion, Lease Lease)> ready;
+        lock (_lock)
+        {
+            if (_disposed) return;
+            ready = DispatchWaiters();
+        }
+
+        CompleteReadyWaiters(ready);
     }
 
     public Task<Lease> AcquireAsync(

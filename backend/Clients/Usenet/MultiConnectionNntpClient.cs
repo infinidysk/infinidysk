@@ -55,10 +55,7 @@ public class MultiConnectionNntpClient(
 {
     private readonly ProviderConnectionAdmission? _connectionAdmission =
         maxTransferConnections is { } transferLimit
-            ? new ProviderConnectionAdmission(
-                () => connectionPool.EffectiveMaxConnections,
-                transferLimit,
-                priorityOdds)
+            ? ProviderConnectionAdmission.ForPool(connectionPool, transferLimit, priorityOdds)
             : null;
     internal Action<ConnectionLock<INntpClient>, Action>? AttachDisposeCallbackForTests
     { get; set; }
