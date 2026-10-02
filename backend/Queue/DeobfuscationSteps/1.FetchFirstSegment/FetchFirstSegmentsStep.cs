@@ -10,6 +10,7 @@ using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue;
 using Serilog;
+using UsenetSharp.Exceptions;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
@@ -333,6 +334,18 @@ public static class FetchFirstSegmentsStep
         catch (UsenetArticleNotFoundException e)
         {
             return BuildMissingFirstSegment(nzbFile, e.ProviderGeneration);
+        }
+        catch (Exception e) when (
+            !cancellationToken.IsCancellationRequested &&
+            !DeadNzbFailFast.IsImportantNzbFile(nzbFile) &&
+            e is not OperationCanceledException and not OutOfMemoryException &&
+            (e is InvalidDataException or UsenetProtocolException || e.IsTransientTransportException()))
+        {
+            Log.Warning(
+                "Skipping optional first-segment metadata for `{FileName}`. Reason: {Reason}",
+                nzbFile.GetSubjectFileName(),
+                e.TryGetKnownErrorMessage(out var reason) ? reason : e.Message);
+            return BuildMissingFirstSegment(nzbFile);
         }
         catch (Exception e) when (
 #pragma warning disable CA2016 // CA2016: classify cancellation regardless of the ambient token -- forwarding it would misclassify cancellations from internal timeout/child tokens

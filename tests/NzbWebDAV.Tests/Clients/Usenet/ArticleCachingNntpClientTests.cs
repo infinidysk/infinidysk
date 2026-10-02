@@ -1,9 +1,18 @@
 using System.Text;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Config;
+using NzbWebDAV.Database.Models;
+using NzbWebDAV.Exceptions;
+using NzbWebDAV.Models.Nzb;
+using NzbWebDAV.Queue.DeobfuscationSteps._1.FetchFirstSegment;
+using NzbWebDAV.Queue.DeobfuscationSteps._2.GetPar2FileDescriptors;
+using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
+using NzbWebDAV.Queue.FileProcessors;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Tests.TestUtils;
+using UsenetSharp.Exceptions;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Clients.Usenet;
@@ -353,6 +362,191 @@ public class ArticleCachingNntpClientTests
         Assert.Equal(0, inner.ArticleRequestCount);
     }
 
+    [Theory]
+    [InlineData(false, "io")]
+    [InlineData(true, "io")]
+    [InlineData(false, "crc")]
+    [InlineData(true, "crc")]
+    [InlineData(false, "protocol")]
+    [InlineData(true, "protocol")]
+    [InlineData(false, "timeout")]
+    [InlineData(true, "timeout")]
+    public async Task FetchFirstSegments_OptionalTailFailure_PreservesImportDiscovery(
+        bool pipelined, string failureKind)
+    {
+        const string optionalId = "optional@example.test";
+        const string contentId = "content@example.test";
+        var optionalBytes = Enumerable.Repeat((byte)'p', 64 * 1024).ToArray();
+        byte[] contentBytes = "healthy-content"u8.ToArray();
+        var failure = CreateDiscoveryFailure(failureKind);
+        var config = CreateDiscoveryConfig(pipelined);
+
+        using (var prefixProbe = new ProbeStream(optionalBytes, DiscoveryPrefixLength, failure))
+        {
+            var prefix = new byte[DiscoveryPrefixLength];
+            await prefixProbe.ReadExactlyAsync(prefix);
+            Assert.Equal(optionalBytes.AsSpan(0, prefix.Length).ToArray(), prefix);
+        }
+
+        ProbeStream? lastOptionalStream = null;
+        using var inner = new CacheProbeNntpClient
+        {
+            Segments = { [optionalId] = optionalBytes, [contentId] = contentBytes },
+            DecodedStreamFactory = (segmentId, bytes) =>
+            {
+                if (segmentId == optionalId)
+                    return lastOptionalStream = new ProbeStream(bytes, DiscoveryPrefixLength, failure);
+                return new MemoryStream(bytes, writable: false);
+            },
+        };
+        if (pipelined)
+        {
+            inner.PipelinedArticles.Add((optionalId,
+                new ProbeStream(optionalBytes, DiscoveryPrefixLength, failure)));
+            inner.PipelinedArticles.Add((contentId, new ProbeStream(contentBytes)));
+        }
+
+        using var client = new ArticleCachingNntpClient(inner);
+        var files = new List<NzbFile>
+        {
+            CreateDiscoveryFile(optionalId, "metadata.vol00+01.par2", optionalBytes.Length),
+            CreateDiscoveryFile(contentId, "payload.bin", contentBytes.Length),
+        };
+        client.TrackNzbFiles(files);
+
+        var results = await FetchFirstSegmentsStep.FetchFirstSegments(
+            files, client, config, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, results.Count);
+        Assert.Same(files[0], results[0].NzbFile);
+        Assert.Same(files[1], results[1].NzbFile);
+        Assert.True(results[0].MissingFirstSegment);
+        Assert.Null(results[0].First16KB);
+        Assert.Null(results[0].Header);
+        Assert.Null(results[0].MissingEvidenceGeneration);
+        Assert.Null(files[0].Segments[0].ByteRange);
+        Assert.False(results[1].MissingFirstSegment);
+        Assert.Equal(contentBytes, results[1].First16KB);
+        Assert.NotNull(results[1].Header);
+        Assert.NotNull(files[1].Segments[0].ByteRange);
+        Assert.Equal(pipelined ? 1 : 2, inner.ArticleRequestCount);
+        Assert.True(lastOptionalStream!.Disposed);
+        Assert.All(inner.PipelinedArticles, item => Assert.True(item.Inner.Disposed));
+
+        var descriptors = await GetPar2FileDescriptorsStep.GetPar2FileDescriptors(
+            results, client, cancellationToken: CancellationToken.None);
+        Assert.Empty(descriptors);
+        Assert.Equal(0, inner.BodyRequestCount);
+
+        var fileInfos = GetFileInfosStep.GetFileInfos(results, descriptors);
+        var processed = await new FileProcessor(
+            fileInfos[0], client, config, CancellationToken.None).ProcessAsync();
+        var optionalResult = Assert.IsType<FileProcessor.Result>(processed);
+        Assert.Equal((long)optionalBytes.Length, optionalResult.FileSize);
+        Assert.Equal(1, inner.BodyRequestCount);
+
+        var bodyFailure = await Record.ExceptionAsync(async () =>
+        {
+            var body = await client.DecodedBodyAsync(optionalId, CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            await ReadAllAsync(body.Stream!);
+        });
+        Assert.Same(failure, bodyFailure);
+        Assert.Equal(2, inner.BodyRequestCount);
+    }
+
+    [Theory]
+    [InlineData(false, "payload.rar", "io")]
+    [InlineData(true, "payload.rar", "io")]
+    [InlineData(false, "opaque", "crc")]
+    [InlineData(true, "opaque", "crc")]
+    [InlineData(false, "metadata.par2", "cancel")]
+    [InlineData(true, "metadata.par2", "cancel")]
+    [InlineData(false, "metadata.par2", "oom")]
+    [InlineData(true, "metadata.par2", "oom")]
+    [InlineData(false, "metadata.par2", "unexpected")]
+    [InlineData(true, "metadata.par2", "unexpected")]
+    public async Task FetchFirstSegments_TailFailure_PropagatesOutsideOptionalReadPolicy(
+        bool pipelined, string fileName, string failureKind)
+    {
+        const string segmentId = "guard@example.test";
+        var bytes = Enumerable.Repeat((byte)'g', 64 * 1024).ToArray();
+        var failure = CreateDiscoveryFailure(failureKind);
+        using var inner = new CacheProbeNntpClient
+        {
+            Segments = { [segmentId] = bytes },
+            DecodedStreamFactory = (_, payload) =>
+                new ProbeStream(payload, DiscoveryPrefixLength, failure),
+        };
+        if (pipelined)
+            inner.PipelinedArticles.Add((segmentId,
+                new ProbeStream(bytes, DiscoveryPrefixLength, failure)));
+
+        using var client = new ArticleCachingNntpClient(inner);
+        var error = await Record.ExceptionAsync(() => FetchFirstSegmentsStep.FetchFirstSegments(
+            [CreateDiscoveryFile(segmentId, fileName, bytes.Length)],
+            client, CreateDiscoveryConfig(pipelined), CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5)));
+
+        if (failureKind == "io")
+        {
+            var retryable = Assert.IsType<RetryableDownloadException>(error);
+            Assert.Same(failure, retryable.InnerException);
+        }
+        else if (failureKind == "cancel")
+        {
+            Assert.IsAssignableFrom<OperationCanceledException>(error);
+        }
+        else
+        {
+            Assert.Same(failure, error);
+        }
+    }
+
+    private const int DiscoveryPrefixLength = 16 * 1024;
+
+    private static ConfigManager CreateDiscoveryConfig(bool pipelined)
+    {
+        var config = new ConfigManager();
+        config.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.UsenetPipeliningEnabled,
+                ConfigValue = pipelined ? "true" : "false",
+            },
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.UsenetPipeliningDepth,
+                ConfigValue = "4",
+            },
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.UsenetMaxQueueConnections,
+                ConfigValue = "1",
+            },
+        ]);
+        return config;
+    }
+
+    private static NzbFile CreateDiscoveryFile(string segmentId, string fileName, int length) => new()
+    {
+        Subject = $"\"{fileName}\" yEnc",
+        Segments = { new NzbSegment { MessageId = segmentId, Bytes = length } },
+    };
+
+    private static Exception CreateDiscoveryFailure(string kind) => kind switch
+    {
+        "io" => new IOException("tail-read-failure"),
+        "crc" => new InvalidDataException("tail-crc-mismatch"),
+        "protocol" => new UsenetProtocolException("tail-missing-terminator"),
+        "timeout" => new TimeoutException("tail-read-timeout"),
+        "cancel" => new OperationCanceledException("tail-read-cancelled"),
+        "oom" => new OutOfMemoryException("tail-allocation-failure"),
+        "unexpected" => new InvalidOperationException("unexpected-tail-failure"),
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
+
     private static async Task<byte[]> ReadAllAsync(Stream stream)
     {
         await using (stream)
@@ -376,7 +570,10 @@ public class ArticleCachingNntpClientTests
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
-    private sealed class ProbeStream(byte[] bytes, int failAfter = -1) : Stream
+    private sealed class ProbeStream(
+        byte[] bytes,
+        int failAfter = -1,
+        Exception? readFailure = null) : Stream
     {
         private readonly MemoryStream _inner = new(bytes, writable: false);
         public bool Disposed { get; private set; }
@@ -395,7 +592,7 @@ public class ArticleCachingNntpClientTests
                 return _inner.Read(buffer);
             var remaining = failAfter - (int)_inner.Position;
             if (remaining <= 0)
-                throw new IOException("tail-read-failure");
+                throw readFailure ?? new IOException("tail-read-failure");
             return _inner.Read(buffer[..Math.Min(buffer.Length, remaining)]);
         }
 
@@ -426,6 +623,7 @@ public class ArticleCachingNntpClientTests
         public int ArticleRequestCount { get; private set; }
         public bool GateFirstBody { get; set; }
         public Exception? HeadException { get; set; }
+        public Func<string, byte[], Stream>? DecodedStreamFactory { get; set; }
         public TaskCompletionSource BodyEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource BodyContinue { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -506,7 +704,7 @@ public class ArticleCachingNntpClientTests
                 ResponseCode = (int)UsenetResponseType.ArticleRetrievedHeadAndBodyFollow,
                 ResponseMessage = "220",
                 ArticleHeaders = FixedArticleHeaders,
-                Stream = CreateStream(bytes),
+                Stream = CreateStream(bytes, DecodedStreamFactory?.Invoke(segmentId.ToString(), bytes)),
             });
         }
 
@@ -556,11 +754,11 @@ public class ArticleCachingNntpClientTests
                 SegmentId = segmentId.ToString(),
                 ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
                 ResponseMessage = "222",
-                Stream = CreateStream(bytes),
+                Stream = CreateStream(bytes, DecodedStreamFactory?.Invoke(segmentId.ToString(), bytes)),
             };
         }
 
-        private static CachedYencStream CreateStream(byte[] bytes) =>
+        private static CachedYencStream CreateStream(byte[] bytes, Stream? decodedStream = null) =>
             new(
                 new UsenetYencHeader
                 {
@@ -572,6 +770,6 @@ public class ArticleCachingNntpClientTests
                     PartOffset = 0,
                     PartSize = bytes.Length,
                 },
-                new MemoryStream(bytes, writable: false));
+                decodedStream ?? new MemoryStream(bytes, writable: false));
     }
 }
