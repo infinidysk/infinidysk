@@ -1455,6 +1455,29 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 return;
             }
 
+            // STAT cannot see CRC damage; without a damage budget a still-corrupt recorded article fails the file.
+            var clearRecordedCorrupt = false;
+            if (!canClassify
+                && depth != HealthCheckDepth.Quick
+                && nzbFile?.CorruptSegmentIndices is { Length: > 0 } unbudgetedCorrupt
+                && !PlaybackDamageBudget.Applies(davItem.Name, nzbFile, _configManager))
+            {
+                var stillCorrupt = await FilterRecordedCorruptIndicesAsync(nzbFile, unbudgetedCorrupt, ct)
+                    .ConfigureAwait(false);
+                if (stillCorrupt.Count > 0)
+                {
+                    diagnosticWorker?.SetDiagnosticPhase("Repairing", _timeProvider.GetUtcNow());
+                    await HandleConfirmedHolesAsync(
+                            davItem, dbClient, nzbFile, segments, segmentRanges,
+                            [], stillCorrupt, repairsAdmitted, providerGeneration,
+                            observedFailureRevision, ct, allowDegraded: false)
+                        .ConfigureAwait(false);
+                    return;
+                }
+
+                clearRecordedCorrupt = true;
+            }
+
             // update the database.
             // the next check is scheduled so the interval doubles with the item's age since release.
             // clamp to a minimum interval: a null release-date (zero-segment item) or a future-dated
@@ -1490,6 +1513,10 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             if (canClassify
                 && (nzbFile!.MissingSegmentIndices != null || nzbFile.CorruptSegmentIndices != null))
                 await SwapNzbFileBlobAsync(davItem, nzbFile, null, null, replaceCorruptRecord: true)
+                    .ConfigureAwait(false);
+            else if (clearRecordedCorrupt)
+                await SwapNzbFileBlobAsync(
+                        davItem, nzbFile!, nzbFile!.MissingSegmentIndices, null, replaceCorruptRecord: true)
                     .ConfigureAwait(false);
 
             var repairedCount = nzbFile != null
@@ -1719,13 +1746,14 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         DavDatabaseClient dbClient,
         DavNzbFile nzbFile,
         ConcatenatedSegmentView segments,
-        LongRange[] segmentRanges,
+        LongRange[]? segmentRanges,
         List<int> missingIndices,
         List<int> corruptIndices,
         bool repairsAdmitted,
         long providerGeneration,
         long observedFailureRevision,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool allowDegraded = true)
     {
         if (!repairsAdmitted)
         {
@@ -1788,6 +1816,15 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     : "PAR2 verified every file slice and found no damage.",
                 ct).ConfigureAwait(false);
             _failureTracker.TryClearFailure(davItem.Id, observedFailureRevision);
+            return;
+        }
+
+        if (!allowDegraded || segmentRanges is null)
+        {
+            Log.Information(
+                "Health check found {Count} damaged article(s) in {Path} with no damage tolerance applied. Starting repair.",
+                holeIndices.Count, davItem.Path);
+            await Repair(davItem, dbClient, ct, providerGeneration: providerGeneration).ConfigureAwait(false);
             return;
         }
 
