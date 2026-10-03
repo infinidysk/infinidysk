@@ -38,6 +38,10 @@ internal sealed class PlaybackDamageBudget
 
     public int ConsecutiveFillLimit => Caps.MaxConsecutiveMissing + 1;
 
+    // Built on the first hole, not per stream open; callers hold the tracker lock.
+    private long[]? _segmentSizes;
+    private long[]? _segmentStarts;
+
     public static PlaybackDamageBudget? TryCreate(string fileName, DavNzbFile nzbFile, ConfigManager config)
     {
         if (!IsEligible(fileName, nzbFile, config, out var containerClass, out var ranges))
@@ -90,11 +94,13 @@ internal sealed class PlaybackDamageBudget
     public bool IsExceeded(IEnumerable<int> playbackMissingIndices, out string reason)
     {
         var missing = PersistedMissingIndices.Concat(playbackMissingIndices).ToArray();
+        _segmentSizes ??= SegmentRanges.Select(range => range.Count).ToArray();
+        _segmentStarts ??= SegmentRanges.Select(range => range.StartInclusive).ToArray();
         var verdict = SegmentDamageClassifier.Classify(
             missing,
             SegmentIds.Length,
-            SegmentRanges.Select(range => range.Count).ToArray(),
-            SegmentRanges.Select(range => range.StartInclusive).ToArray(),
+            _segmentSizes,
+            _segmentStarts,
             ContainerClass,
             Caps,
             CriticalHeadEndExclusive,
