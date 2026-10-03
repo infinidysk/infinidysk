@@ -20,6 +20,7 @@ using NzbWebDAV.Par2Recovery.Packets;
 using NzbWebDAV.Par2Recovery.ReedSolomon;
 using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Observability;
+using NzbWebDAV.Streams;
 using Serilog;
 using UsenetSharp.Models;
 
@@ -50,6 +51,7 @@ public partial class Par2RepairService : BackgroundService
     private readonly UsenetStreamingClient _usenetClient;
     private readonly RepairPatchStore _patchStore;
     private readonly IDbContextFactory<DavDatabaseContext>? _dbContextFactory;
+    private readonly StreamingRepairScheduler? _repairScheduler;
     private readonly LogThrottle _catalogWarningThrottle = new();
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private readonly Channel<RepairWorkItem> _queue;
@@ -87,8 +89,9 @@ public partial class Par2RepairService : BackgroundService
         ConfigManager configManager,
         UsenetStreamingClient usenetClient,
         RepairPatchStore patchStore,
-        IDbContextFactory<DavDatabaseContext>? dbContextFactory = null)
-        : this(configManager, usenetClient, patchStore, dbContextFactory, static (delay, ct) => Task.Delay(delay, ct))
+        IDbContextFactory<DavDatabaseContext>? dbContextFactory = null,
+        StreamingRepairScheduler? repairScheduler = null)
+        : this(configManager, usenetClient, patchStore, dbContextFactory, static (delay, ct) => Task.Delay(delay, ct), repairScheduler)
     {
     }
 
@@ -97,12 +100,14 @@ public partial class Par2RepairService : BackgroundService
         UsenetStreamingClient usenetClient,
         RepairPatchStore patchStore,
         IDbContextFactory<DavDatabaseContext>? dbContextFactory,
-        Func<TimeSpan, CancellationToken, Task> delayAsync)
+        Func<TimeSpan, CancellationToken, Task> delayAsync,
+        StreamingRepairScheduler? repairScheduler = null)
     {
         _configManager = configManager;
         _usenetClient = usenetClient;
         _patchStore = patchStore;
         _dbContextFactory = dbContextFactory;
+        _repairScheduler = repairScheduler;
         _delayAsync = delayAsync;
         // Wait mode makes non-blocking TryWrite report full queues as false so
         // callers can undo bookkeeping; DropWrite would return true and silently
@@ -157,14 +162,15 @@ public partial class Par2RepairService : BackgroundService
     /// </summary>
     public void ReportZeroFill(string path, string segmentId)
     {
-        if (!_configManager.IsPar2RepairEnabled() && !_configManager.IsDegradedToleranceEnabled())
+        if (!_configManager.IsRepairJobEnabled())
             return;
         AccumulateAndArm(path, segmentId, isCorruption: false);
     }
 
     public void ReportCorruption(string path, string segmentId)
     {
-        if (!_configManager.IsCorruptionTrackingEnabled()) return;
+        // Tracking only gates persistence; padded corruption must still reach the repair scheduler.
+        if (!_configManager.IsRepairJobEnabled()) return;
         AccumulateAndArm(path, segmentId, isCorruption: true);
     }
 
@@ -179,7 +185,7 @@ public partial class Par2RepairService : BackgroundService
         ids.Enqueue((segmentId, isCorruption));
         if (!_pendingZeroFillPaths.TryAdd(path, 0))
             return;
-        if (_zeroFillQueue.Writer.TryWrite(new ZeroFillEvent(path, segmentId, isCorruption)))
+        if (_zeroFillQueue.Writer.TryWrite(new ZeroFillEvent(path)))
             return;
 
         _pendingZeroFillPaths.TryRemove(path, out _);
@@ -571,7 +577,6 @@ public partial class Par2RepairService : BackgroundService
     private async Task ProcessZeroFillEventAsync(ZeroFillEvent evt, CancellationToken ct)
     {
         var reports = DrainPendingSegmentReports(evt.Path);
-        reports.Add((evt.SegmentId, evt.IsCorruption));
 
         await using var dbContext = CreateContext();
         var dbClient = new DavDatabaseClient(dbContext);
@@ -586,8 +591,27 @@ public partial class Par2RepairService : BackgroundService
 
         if (davItem.SubType is DavItem.ItemSubType.RarFile or DavItem.ItemSubType.MultipartFile)
         {
+            // Reports raised against a since-replaced item must not trigger repair of its replacement.
+            var currentIds = new HashSet<string>(StringComparer.Ordinal);
+            if (davItem.SubType == DavItem.ItemSubType.RarFile)
+            {
+                if (await dbClient.GetDavRarFileAsync(davItem, ct).ConfigureAwait(false) is { } rar)
+                    foreach (var part in rar.RarParts)
+                        currentIds.UnionWith(part.SegmentIds);
+            }
+            else if (await dbClient.GetDavMultipartFileAsync(davItem, ct).ConfigureAwait(false) is { } multipart)
+            {
+                foreach (var part in multipart.Metadata.FileParts)
+                    currentIds.UnionWith(part.SegmentIds);
+            }
+            var archiveReports = reports.Where(report => currentIds.Contains(report.Item1)).ToArray();
+
+            // Archive members never get a damage budget, so every padded hole is a repair trigger.
+            foreach (var (segmentId, _) in archiveReports)
+                _repairScheduler?.ScheduleRepair(davItem, segmentId);
+
             if (!_configManager.IsPar2RepairEnabled()) return;
-            var multipartIds = reports.Where(report => !report.Item2 || _configManager.IsCorruptionTrackingEnabled())
+            var multipartIds = archiveReports.Where(report => !report.Item2 || _configManager.IsCorruptionTrackingEnabled())
                 .Select(report => report.Item1).Where(id => !string.IsNullOrWhiteSpace(id))
                 .Distinct(StringComparer.Ordinal).ToArray();
             if (multipartIds.Length > 0)
@@ -606,6 +630,7 @@ public partial class Par2RepairService : BackgroundService
         var corruptIds = new List<string>();
         var missingIndices = new List<int>();
         var corruptIndices = new List<int>();
+        var damagedIds = new List<string>();
         foreach (var (segmentId, isCorruption) in reports)
         {
             var index = Array.IndexOf(nzbFile.SegmentIds, segmentId);
@@ -618,6 +643,7 @@ public partial class Par2RepairService : BackgroundService
                 continue;
             }
 
+            damagedIds.Add(segmentId);
             if (isCorruption)
             {
                 if (!_configManager.IsCorruptionTrackingEnabled())
@@ -658,6 +684,14 @@ public partial class Par2RepairService : BackgroundService
             await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
         }
 
+        // Without a playback damage budget nothing else decides whether a padded hole is
+        // acceptable, so each confirmed miss or exhausted corruption counts toward an urgent repair.
+        if (_repairScheduler is not null && !PlaybackDamageBudget.Applies(davItem.Name, nzbFile, _configManager))
+        {
+            foreach (var segmentId in damagedIds)
+                _repairScheduler.ScheduleRepair(davItem, segmentId);
+        }
+
         if (!_configManager.IsPar2RepairEnabled())
             return;
 
@@ -667,10 +701,21 @@ public partial class Par2RepairService : BackgroundService
     }
 
     internal Task ProcessCorruptionEventForTestsAsync(string path, string segmentId, CancellationToken ct) =>
-        ProcessZeroFillEventAsync(new ZeroFillEvent(path, segmentId, IsCorruption: true), ct);
+        ProcessReportForTestsAsync(path, segmentId, isCorruption: true, ct);
 
     internal Task ProcessZeroFillEventForTestsAsync(string path, string segmentId, CancellationToken ct) =>
-        ProcessZeroFillEventAsync(new ZeroFillEvent(path, segmentId), ct);
+        ProcessReportForTestsAsync(path, segmentId, isCorruption: false, ct);
+
+    private Task ProcessReportForTestsAsync(string path, string segmentId, bool isCorruption, CancellationToken ct)
+    {
+        _pendingSegmentIds
+            .GetOrAdd(path, static _ => new ConcurrentQueue<(string Id, bool IsCorruption)>())
+            .Enqueue((segmentId, isCorruption));
+        return ProcessZeroFillEventAsync(new ZeroFillEvent(path), ct);
+    }
+
+    internal Task ProcessPendingReportsForTestsAsync(string path, CancellationToken ct) =>
+        ProcessZeroFillEventAsync(new ZeroFillEvent(path), ct);
 
     private async Task ProcessQueueItemAsync(RepairWorkItem item, CancellationToken ct)
     {
@@ -689,6 +734,10 @@ public partial class Par2RepairService : BackgroundService
 
         await RunFlightAsync(item.Flight, davItem, item.MissingSegmentIds, queueGuard: true, RepairAdmissionMode.QueuedWait, ct)
             .ConfigureAwait(false);
+
+        // Inline health-check callers decide replacement themselves; background failures need escalation.
+        if (item.Flight.DamageUnrepairable && !_configManager.IsDegradedToleranceEnabled())
+            _repairScheduler?.ScheduleRepairIfQualified(davItem);
     }
 
     private async Task<Par2RepairOutcome> RunFlightAsync(
@@ -931,6 +980,7 @@ public partial class Par2RepairService : BackgroundService
             job.State = result.IsInfeasible
                 ? Par2RepairJob.RepairJobState.Infeasible
                 : Par2RepairJob.RepairJobState.Failed;
+            flight.DamageUnrepairable = true;
             job.CompletedAt = DateTimeOffset.UtcNow;
             job.BytesRead = result.BytesRead;
             job.FailureReason = result.FailureReason;
@@ -1554,6 +1604,8 @@ public partial class Par2RepairService : BackgroundService
 
         public Task<Par2RepairOutcome> Task => Completion.Task;
 
+        public bool DamageUnrepairable { get; set; }
+
         public void SetCoverage(IEnumerable<string> ids, bool verifiedAll)
         {
             _coveredIds = ids.ToHashSet(StringComparer.Ordinal);
@@ -1627,18 +1679,7 @@ public partial class Par2RepairService : BackgroundService
         if (!_pendingZeroFillPaths.TryAdd(path, 0))
             return;
 
-        // Dequeue the head rather than peeking it: ProcessZeroFillEventAsync drains
-        // the queue and then appends the event payload, so a peeked head would be
-        // reported twice.
-        var segmentId = "";
-        var isCorruption = false;
-        if (queue.TryDequeue(out var head))
-        {
-            segmentId = head.Id;
-            isCorruption = head.IsCorruption;
-        }
-
-        if (_zeroFillQueue.Writer.TryWrite(new ZeroFillEvent(path, segmentId, isCorruption)))
+        if (_zeroFillQueue.Writer.TryWrite(new ZeroFillEvent(path)))
             return;
 
         _pendingZeroFillPaths.TryRemove(path, out _);
@@ -1657,7 +1698,7 @@ public partial class Par2RepairService : BackgroundService
         string[] MissingSegmentIds,
         RepairFlight Flight);
 
-    private sealed record ZeroFillEvent(string Path, string SegmentId, bool IsCorruption = false);
+    private sealed record ZeroFillEvent(string Path);
 
     private sealed record MissingSegment(string SegmentId, int Index);
 

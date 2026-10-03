@@ -82,6 +82,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
                 ConfigValue = JsonSerializer.Serialize(new UsenetProviderConfig()),
             },
             new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "true" },
+            new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = "true" },
             new ConfigItem
             {
                 ConfigName = ConfigKeys.MediaLibraryDir,
@@ -795,6 +796,8 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         var sizes = new long[] { 10_000, 10_000, 50, 50, 50, 10_000 };
         var (item, oldBlobId) = await AddVideoFileAsync("movie.mkv", segments, sizes);
         var fake = NewFakeClient(segments, missing: [2, 3, 4]);
+        _configManager.UpdateValues(
+            [new ConfigItem { ConfigName = ConfigKeys.RepairDegradedMaxConsecutiveMissing, ConfigValue = "2" }]);
         var (service, _) = await NewServiceAsync(fake, par2Outcome: false);
 
         await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
@@ -1034,6 +1037,66 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
         Assert.Equal(HealthCheckResult.RepairAction.Repaired, row.RepairStatus);
         Assert.Equal(1, arrClient.RemoveCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ToleranceDisabled_SinglePaddedPlaybackDamage_ReplacesThroughArr(bool corrupt)
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = "false" },
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "false" },
+        ]);
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync(
+            "zero-tolerance.mkv", segments, Enumerable.Repeat(10_000L, segments.Length).ToArray());
+        item.ArrDownloadId = Guid.NewGuid();
+        await _context.SaveChangesAsync();
+        var libraryPath = Path.Join(_configRoot, "library", "zero-tolerance.strm");
+        await File.WriteAllTextAsync(libraryPath, $"http://localhost:3000/view/.ids/{item.Id}.mkv");
+
+        var scheduled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var contextFactory = new PayloadRaceContextFactory(_options);
+        var scheduler = new StreamingRepairScheduler(_configManager, _failureTracker, contextFactory)
+        {
+            CompletionHook = _ =>
+            {
+                scheduled.TrySetResult();
+                return Task.CompletedTask;
+            },
+        };
+        var playback = new Par2RepairService(
+            _configManager,
+            null!,
+            new RepairPatchStore(Path.Join(_configRoot, "patches-playback"), 1024 * 1024),
+            contextFactory,
+            repairScheduler: scheduler);
+        if (corrupt)
+            await playback.ProcessCorruptionEventForTestsAsync(item.Path, segments[1], CancellationToken.None);
+        else
+            await playback.ProcessZeroFillEventForTestsAsync(item.Path, segments[1], CancellationToken.None);
+        Assert.Equal(1, _failureTracker.GetFailureCount(item.Id));
+        await scheduled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        _context.ChangeTracker.Clear();
+        item = ReloadItem(item.Id);
+        Assert.Equal(DateTimeOffset.UnixEpoch, item.NextHealthCheck);
+        Assert.NotNull(item.UrgentRepairFailures);
+
+        var (service, _) = await NewServiceAsync(NewFakeClient(segments, missing: []), par2Outcome: false);
+        using var cancellation = new CancellationTokenSource();
+        var arrClient = new PartialRepairArrClient(
+            cancellation, libraryPath, ArrRepairOutcome.RemoveAndBlocklistSucceeded);
+        service.CreateRepairArrClientsOverride = () => [arrClient];
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, cancellation.Token);
+
+        Assert.Equal(1, arrClient.RemoveCalls);
+        Assert.Equal(
+            HealthCheckResult.RepairAction.Repaired,
+            Assert.Single(GetHealthRows(item.Id)).RepairStatus);
     }
 
     [Fact]
@@ -1517,6 +1580,101 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         var blob = await BlobStore.ReadBlob<DavNzbFile>(persisted.FileBlobId!.Value);
         Assert.Null(blob!.MissingSegmentIndices);
         Assert.Null(blob.CorruptSegmentIndices);
+    }
+
+    [Fact]
+    public async Task ToleranceDisabled_RecordedCorruptStillCorrupt_TriesPar2ThenRepairs()
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = "false" },
+        ]);
+        var segments = NewSegmentIds(6);
+        var sizes = new long[] { 10_000, 10_000, 50, 10_000, 10_000, 10_000 };
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingCorrupt: [2]);
+        var fake = NewFakeClient(segments, missing: [], corrupt: [2]);
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Unhealthy, row.Result);
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+        Assert.Equal([segments[2]], Assert.Single(par2.Requests));
+    }
+
+    [Fact]
+    public async Task ToleranceDisabled_RecordedCorruptNowClean_RecordsHealthyAndClearsRecord()
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = "false" },
+        ]);
+        var segments = NewSegmentIds(4);
+        var sizes = new long[] { 10_000, 10_000, 50, 10_000 };
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingHoles: [1], preExistingCorrupt: [2]);
+        var fake = NewFakeClient(segments, missing: []);
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Healthy, row.Result);
+        Assert.Empty(par2.Requests);
+        var blob = await BlobStore.ReadBlob<DavNzbFile>(ReloadItem(item.Id).FileBlobId!.Value);
+        Assert.Null(blob!.CorruptSegmentIndices);
+        Assert.Null(blob.MissingSegmentIndices);
+    }
+
+    [Fact]
+    public async Task ToleranceDisabled_RecordedCorruptWithCleanFallback_IsNotReplaced()
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = "false" },
+        ]);
+        var segments = NewSegmentIds(4);
+        var sizes = new long[] { 10_000, 10_000, 50, 10_000 };
+        var fallbackIds = new string[segments.Length][];
+        for (var i = 0; i < fallbackIds.Length; i++) fallbackIds[i] = [];
+        fallbackIds[2] = ["alt-seg2@test"];
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingCorrupt: [2], fallbackIds: fallbackIds);
+        var fake = NewFakeClient(segments, missing: [], corrupt: [2]);
+        fake.Serve("alt-seg2@test", new byte[50]);
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Healthy, row.Result);
+        Assert.Empty(par2.Requests);
+    }
+
+    [Fact]
+    public async Task ToleranceDisabled_RecoveredCorruptBeyondCap_IsProbedNotReplaced()
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = "false" },
+            new ConfigItem { ConfigName = ConfigKeys.RepairDegradedMaxTotalMissing, ConfigValue = "1" },
+        ]);
+        var segments = NewSegmentIds(4);
+        var sizes = new long[] { 10_000, 10_000, 10_000, 10_000 };
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingCorrupt: [1, 2]);
+        var fake = NewFakeClient(segments, missing: []);
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Healthy, row.Result);
+        Assert.Empty(par2.Requests);
+        var blob = await BlobStore.ReadBlob<DavNzbFile>(ReloadItem(item.Id).FileBlobId!.Value);
+        Assert.Null(blob!.CorruptSegmentIndices);
     }
 
     [Fact]

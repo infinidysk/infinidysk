@@ -3,6 +3,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Models;
+using NzbWebDAV.Services;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Tests.Database;
 
@@ -160,7 +161,7 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
 
         service.ReportZeroFill(item.Path, segments[2]);
         service.ReportZeroFill(item.Path, segments[0]);
-        await service.ProcessZeroFillEventForTestsAsync(item.Path, segments[2], CancellationToken.None);
+        await service.ProcessPendingReportsForTestsAsync(item.Path, CancellationToken.None);
 
         var blob = await ReadCurrentBlobAsync(item.Id);
         Assert.Equal([0, 1, 2], blob.MissingSegmentIndices!);
@@ -179,7 +180,7 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
 
         service.ReportCorruption(item.Path, segments[0]);
         service.ReportCorruption(item.Path, segments[2]);
-        await service.ProcessCorruptionEventForTestsAsync(item.Path, segments[0], CancellationToken.None);
+        await service.ProcessPendingReportsForTestsAsync(item.Path, CancellationToken.None);
 
         var blob = await ReadCurrentBlobAsync(item.Id);
         Assert.Equal([0, 2], blob.CorruptSegmentIndices!);
@@ -265,6 +266,171 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
         Assert.Equal([2], blob.CorruptSegmentIndices!);
     }
 
+    [Theory]
+    [InlineData("false", true, 1, 1)]
+    [InlineData("true", true, 1, 0)]
+    // Legacy files without segment ranges get no playback budget, so tolerance cannot absorb the hole.
+    [InlineData("true", false, 1, 1)]
+    // Separate playback reports of one article count separately even when processed in one batch.
+    [InlineData("false", true, 2, 2)]
+    public async Task ZeroFill_CountsTowardRepairOnlyWithoutDamageBudget(
+        string tolerance, bool segmentRanges, int reports, int expectedFailures)
+    {
+        var segments = NewSegmentIds(4);
+        var (item, _) = await AddFileAsync(segments, segmentRanges: segmentRanges);
+        _config.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "false" },
+            new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = tolerance },
+        ]);
+        var failureTracker = new StreamingFailureTracker();
+        var scheduled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scheduler = new StreamingRepairScheduler(_config, failureTracker)
+        {
+            CompletionHook = _ =>
+            {
+                scheduled.TrySetResult();
+                return Task.CompletedTask;
+            },
+        };
+        var service = new Par2RepairService(
+            _config,
+            null!,
+            new RepairPatchStore(Path.Join(_configRoot, $"patches-escalate-{tolerance}-{segmentRanges}-{reports}"), 1024 * 1024),
+            repairScheduler: scheduler);
+
+        for (var i = 0; i < reports; i++)
+            service.ReportZeroFill(item.Path, segments[2]);
+        await service.ProcessPendingReportsForTestsAsync(item.Path, CancellationToken.None);
+
+        Assert.Equal(expectedFailures, failureTracker.GetFailureCount(item.Id));
+        var blob = await ReadCurrentBlobAsync(item.Id);
+        Assert.Equal([2], blob.MissingSegmentIndices!);
+        if (expectedFailures > 0)
+        {
+            await scheduled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await using var context = new DavDatabaseContext();
+            var reloaded = await context.Items.AsNoTracking().SingleAsync(x => x.Id == item.Id);
+            Assert.Equal(DateTimeOffset.UnixEpoch, reloaded.NextHealthCheck);
+        }
+    }
+
+    [Theory]
+    [InlineData("false", "false", 1)]
+    [InlineData("false", "true", 1)]
+    [InlineData("true", "true", 0)]
+    public async Task Corruption_CountsTowardRepairOnlyWithoutDamageBudget(
+        string tolerance, string tracking, int expectedFailures)
+    {
+        var segments = NewSegmentIds(4);
+        var (item, _) = await AddFileAsync(segments);
+        _config.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "false" },
+            new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = tolerance },
+            new ConfigItem { ConfigName = ConfigKeys.RepairCorruptionTrackingEnabled, ConfigValue = tracking },
+        ]);
+        var failureTracker = new StreamingFailureTracker();
+        var scheduled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scheduler = new StreamingRepairScheduler(_config, failureTracker)
+        {
+            CompletionHook = _ =>
+            {
+                scheduled.TrySetResult();
+                return Task.CompletedTask;
+            },
+        };
+        var service = new Par2RepairService(
+            _config,
+            null!,
+            new RepairPatchStore(Path.Join(_configRoot, $"patches-corrupt-{tolerance}-{tracking}"), 1024 * 1024),
+            repairScheduler: scheduler);
+
+        service.ReportCorruption(item.Path, segments[2]);
+        await service.ProcessPendingReportsForTestsAsync(item.Path, CancellationToken.None);
+
+        Assert.Equal(expectedFailures, failureTracker.GetFailureCount(item.Id));
+        if (expectedFailures > 0)
+        {
+            await scheduled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await using var context = new DavDatabaseContext();
+            var reloaded = await context.Items.AsNoTracking().SingleAsync(x => x.Id == item.Id);
+            Assert.Equal(DateTimeOffset.UnixEpoch, reloaded.NextHealthCheck);
+        }
+    }
+
+    [Fact]
+    public async Task QualifiedReschedule_DoesNotRecordAnotherFailure()
+    {
+        var segments = NewSegmentIds(4);
+        var (item, _) = await AddFileAsync(segments);
+        _config.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairAutoRemoveAfterFailures, ConfigValue = "2" },
+        ]);
+        var failureTracker = new StreamingFailureTracker();
+        var scheduled = false;
+        var scheduler = new StreamingRepairScheduler(_config, failureTracker)
+        {
+            CompletionHook = _ =>
+            {
+                scheduled = true;
+                return Task.CompletedTask;
+            },
+        };
+
+        scheduler.ScheduleRepair(item, segments[2]);
+        // A failed background PAR2 attempt reschedules on the same evidence instead of adding to it.
+        scheduler.ScheduleRepairIfQualified(item);
+
+        Assert.Equal(1, failureTracker.GetFailureCount(item.Id));
+        Assert.False(scheduled);
+    }
+
+    [Fact]
+    public async Task QualifiedReschedule_WithoutRecordedFailure_DoesNotSchedule()
+    {
+        var (item, _) = await AddFileAsync(NewSegmentIds(4));
+        var scheduler = new StreamingRepairScheduler(_config, new StreamingFailureTracker());
+
+        scheduler.ScheduleRepairIfQualified(item);
+        // ponytail: negative check waits a fixed interval for a scheduling task that should never start.
+        await Task.Delay(250);
+
+        await using var context = new DavDatabaseContext();
+        var reloaded = await context.Items.AsNoTracking().SingleAsync(x => x.Id == item.Id);
+        Assert.NotEqual(DateTimeOffset.UnixEpoch, reloaded.NextHealthCheck);
+    }
+
+    [Fact]
+    public async Task FailureClearedWhileWaitingForGate_DoesNotMarkUrgent()
+    {
+        var segments = NewSegmentIds(4);
+        var (item, _) = await AddFileAsync(segments);
+        var failureTracker = new StreamingFailureTracker();
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scheduler = new StreamingRepairScheduler(_config, failureTracker)
+        {
+            CompletionHook = _ =>
+            {
+                completed.TrySetResult();
+                return Task.CompletedTask;
+            },
+        };
+
+        await using (await failureTracker.AcquireMutationGateAsync(item.Id, CancellationToken.None))
+        {
+            scheduler.ScheduleRepair(item, segments[2]);
+            // A healthy health-check result clears the failure while holding the gate.
+            Assert.True(failureTracker.TryClearFailure(item.Id, failureTracker.GetSnapshot(item.Id).Revision));
+        }
+
+        await completed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await using var context = new DavDatabaseContext();
+        var reloaded = await context.Items.AsNoTracking().SingleAsync(x => x.Id == item.Id);
+        Assert.NotEqual(DateTimeOffset.UnixEpoch, reloaded.NextHealthCheck);
+    }
+
     private Par2RepairService NewService() =>
         new(_config, null!, new RepairPatchStore(Path.Join(_configRoot, "patches"), 1024 * 1024));
 
@@ -272,7 +438,8 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
         string[] segmentIds,
         int[]? missing = null,
         byte? containerClass = null,
-        long? criticalHead = null)
+        long? criticalHead = null,
+        bool segmentRanges = true)
     {
         await using var context = new DavDatabaseContext();
         await context.Database.MigrateAsync();
@@ -292,7 +459,7 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
         {
             Id = itemId,
             SegmentIds = segmentIds,
-            SegmentByteRanges = ranges,
+            SegmentByteRanges = segmentRanges ? ranges : null,
             MissingSegmentIndices = missing,
             ContainerClass = containerClass,
             CriticalHeadEndExclusive = criticalHead,

@@ -351,6 +351,7 @@ public sealed partial class Program
                     new ProviderUsageTracker(sp.GetRequiredService<ActiveReadRegistry>()))
                 .AddSingleton<QueueItemSourceTracker>()
                 .AddSingleton<StreamingFailureTracker>()
+                .AddSingleton<StreamingRepairScheduler>()
                 .AddSingleton<HealthCheckConnectionGate>()
                 .AddSingleton<SegmentCacheStatistics>()
                 .AddHostedService<SegmentCacheCleanupService>()

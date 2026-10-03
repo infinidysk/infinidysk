@@ -854,6 +854,24 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
         }
     }
 
+    [Theory]
+    [InlineData(DavItem.ItemSubType.MultipartFile)]
+    [InlineData(DavItem.ItemSubType.RarFile)]
+    public async Task StaleArchiveReport_ForReplacedPayload_IsIgnored(DavItem.ItemSubType subtype)
+    {
+        var data = Data(4096 * 6, "stale-trigger");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length), [4]),
+        ], [1], subtype);
+
+        // A report queued before the payload was replaced names a segment it no longer contains.
+        release.Service.ReportZeroFill(release.Item.Path, "replaced-payload-seg@test");
+        await release.Service.ProcessPendingReportsForTestsAsync(release.Item.Path, CancellationToken.None);
+
+        await using var context = new DavDatabaseContext();
+        Assert.Empty(await context.Par2RepairJobs.ToListAsync());
+    }
+
     private static async Task WaitForSuccessfulJobAsync(CancellationToken ct)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(10));

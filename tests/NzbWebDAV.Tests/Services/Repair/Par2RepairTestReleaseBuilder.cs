@@ -28,7 +28,8 @@ internal sealed class Par2RepairTestReleaseBuilder(ConfigManager config, string 
         (byte[] Index, byte[] Recovery)? parity = null,
         bool obfuscatedParity = false,
         IReadOnlyList<(string Name, byte[] Bytes)>? additionalParity = null,
-        long? recoveryFileSize = null)
+        long? recoveryFileSize = null,
+        NzbWebDAV.Services.StreamingRepairScheduler? repairScheduler = null)
     {
         var token = Guid.NewGuid().ToString("N")[..8];
         var hashOverrides = files.Where(file => file.FileHashOverride is not null)
@@ -135,7 +136,7 @@ internal sealed class Par2RepairTestReleaseBuilder(ConfigManager config, string 
         var store = new RepairPatchStore(patchDir, 32 * 1024 * 1024);
         await store.EnsureCatalogLoadedAsync(CancellationToken.None);
         var usenet = new UsenetStreamingClient(fake, store);
-        return new SeededRelease(item, posted, fake, store, new Par2RepairService(config, usenet, store), usenet, patchDir);
+        return new SeededRelease(item, posted, fake, store, new Par2RepairService(config, usenet, store, repairScheduler: repairScheduler), usenet, patchDir);
 
         void AddParity(string id, string name, byte[] bytes, long? declaredSize = null)
         {

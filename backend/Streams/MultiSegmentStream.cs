@@ -2482,7 +2482,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             if (result.IsShortPad)
             {
                 _consecutiveZeroFills++;
-                if (_consecutiveZeroFills < GapFillLimits.MaxConsecutiveZeroFills
+                if (_consecutiveZeroFills < PlaybackHoleTracker.ConsecutiveFillLimit(_fileName)
                     && !PlaybackHoleTracker.ShouldFailFast(_fileName, out _))
                     return result.Stream;
 
@@ -2512,12 +2512,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         if (MultiProviderNntpClient.CurrentReadSessionId is { } sessionId)
             StreamTrace.TryZeroFill(sessionId, result.SegmentId!, result.Bytes);
 
-        if (_consecutiveZeroFills < GapFillLimits.MaxConsecutiveZeroFills
+        if (_consecutiveZeroFills < PlaybackHoleTracker.ConsecutiveFillLimit(_fileName)
             && !PlaybackHoleTracker.ShouldFailFast(_fileName, out _))
             return result.Stream;
 
         result.Stream.Dispose();
         _cts.Cancel();
+        if (PlaybackHoleTracker.ShouldFailFast(_fileName, out var retained) && retained is not null)
+            ExceptionDispatchInfo.Capture(retained).Throw();
         ExceptionDispatchInfo.Capture(result.Failure!).Throw();
         throw new InvalidOperationException("Unreachable after rethrowing a gap-fill failure.");
     }

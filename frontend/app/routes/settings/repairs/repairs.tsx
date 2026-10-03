@@ -345,7 +345,9 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Wait for this many consecutive streaming playback failures before urgent repair
                 starts. Linked library items are removed and blocklisted through Radarr/Sonarr,
                 which then applies its failed-download redownload policy. Unlinked items are
-                removed. Set to 0 for immediate repair (default).
+                removed. Set to 0 for immediate repair (default). With degraded damage tolerance
+                off, each missing or corrupt article padded over during playback counts as a
+                failure.
               </p>
             </div>
           </ManagedSetting>
@@ -568,7 +570,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
             </p>
           )}
           <ManagedSetting configKey="repair.degraded-tolerance-enabled">
-            <Tooltip content="Full-coverage health checks classify missing video segments: files with a small amount of damage in a resync-tolerant container (MKV/WebM/TS, fast-start or fragmented MP4) stay mounted and play through the gaps instead of being removed and replaced through Radarr/Sonarr. Enabled by default.">
+            <Tooltip content="Full-coverage health checks classify missing video segments: files with a small amount of damage in a resync-tolerant container (MKV/WebM/TS, fast-start or fragmented MP4) stay mounted and play through the gaps instead of being removed and replaced through Radarr/Sonarr. Playback pads over holes until the caps below are exceeded, then hands the file to repair. Enabled by default: when off, every missing or corrupt article found during playback counts toward repair.">
               <Toggle
                 id="degraded-tolerance-enabled-checkbox"
                 className="cursor-pointer gap-2 p-0"
@@ -592,7 +594,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
             </Tooltip>
           </ManagedSetting>
           <ManagedSetting configKey="repair.corruption-tracking-enabled">
-            <Tooltip content="Record streaming-confirmed corrupt articles on the file, include them in health classification, and skip the retry storm on later reads. Enabled by default. Disable to stop persistence and the known-corrupt fast path. Playback-breaking corruption still escalates to repair when Background Repairs is on.">
+            <Tooltip content="Record streaming-confirmed corrupt articles on the file, include them in health classification, and skip the retry storm on later reads. Enabled by default. Disable to stop persistence and the known-corrupt fast path. This only controls persistence: corruption still counts toward repair when Background Repairs is on and degraded damage tolerance is off.">
               <Toggle
                 id="corruption-tracking-enabled-checkbox"
                 className="cursor-pointer gap-2 p-0"
