@@ -2232,7 +2232,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 HealthCheckAdmissionPriority.Background));
         var remaining = new List<int>();
         var cap = _configManager.GetDegradedMaxTotalMissing();
-        var probed = 0;
         var ranges = nzbFile.SegmentByteRanges;
         foreach (var index in recorded.Distinct().OrderBy(i => i)
                      .Where(i => (uint)i < (uint)nzbFile.SegmentIds.Length))
@@ -2242,13 +2241,14 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             if (expectedSize > 0 && _repairPatchStore.IsRepaired(segmentId, expectedSize))
                 continue;
 
-            if (probed >= cap)
+            // Confirmed failures beyond the cap already fail the file, so the rest stay recorded unprobed.
+            // ponytail: probes every recorded article when most have recovered; bound probes if records grow large.
+            if (remaining.Count > cap)
             {
                 remaining.Add(index);
                 continue;
             }
 
-            probed++;
             if (await TryConfirmSegmentCleanAsync(segmentId, ct).ConfigureAwait(false))
                 continue;
             remaining.Add(index);

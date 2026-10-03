@@ -1629,6 +1629,30 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ToleranceDisabled_RecoveredCorruptBeyondCap_IsProbedNotReplaced()
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = "false" },
+            new ConfigItem { ConfigName = ConfigKeys.RepairDegradedMaxTotalMissing, ConfigValue = "1" },
+        ]);
+        var segments = NewSegmentIds(4);
+        var sizes = new long[] { 10_000, 10_000, 10_000, 10_000 };
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingCorrupt: [1, 2]);
+        var fake = NewFakeClient(segments, missing: []);
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Healthy, row.Result);
+        Assert.Empty(par2.Requests);
+        var blob = await BlobStore.ReadBlob<DavNzbFile>(ReloadItem(item.Id).FileBlobId!.Value);
+        Assert.Null(blob!.CorruptSegmentIndices);
+    }
+
+    [Fact]
     public async Task PayloadOutOfMemory_IsDeferredWithoutStartingRepair()
     {
         var segments = NewSegmentIds(4);
