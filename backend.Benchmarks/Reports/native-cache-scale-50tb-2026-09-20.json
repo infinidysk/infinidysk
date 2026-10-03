@@ -1,0 +1,75 @@
+{
+  "shape": "50tb",
+  "entries": 5000,
+  "logicalBytes": 50000000000000,
+  "blocks": 11924999,
+  "missingBytes": 779264,
+  "payloadFiles": 0,
+  "catalogueBytes": 2544488448,
+  "catalogueAllocatedBytes": 2544488448,
+  "beforeSeedWorkingSetBytes": 45817856,
+  "afterSeedWorkingSetBytes": 63549440,
+  "finalWorkingSetBytes": 64323584,
+  "peakWorkingSetBytes": 76193792,
+  "seedMilliseconds": 160818.3701,
+  "measurements": {
+    "startup": {
+      "samples": 10,
+      "medianMilliseconds": 1.40055,
+      "maximumMilliseconds": 3.2267,
+      "managedAllocatedBytes": 1171448
+    },
+    "entries": {
+      "samples": 10,
+      "medianMilliseconds": 0.26835,
+      "maximumMilliseconds": 3.3834,
+      "managedAllocatedBytes": 423072
+    },
+    "coverage": {
+      "samples": 10,
+      "medianMilliseconds": 0.01985,
+      "maximumMilliseconds": 1.9821,
+      "managedAllocatedBytes": 17328
+    },
+    "missing-range": {
+      "samples": 10,
+      "medianMilliseconds": 0.3355,
+      "maximumMilliseconds": 1.8168,
+      "managedAllocatedBytes": 21728
+    },
+    "ranges": {
+      "samples": 10,
+      "medianMilliseconds": 0.11795,
+      "maximumMilliseconds": 3.4983,
+      "managedAllocatedBytes": 75816
+    },
+    "pressure-candidates": {
+      "samples": 10,
+      "medianMilliseconds": 0.0553,
+      "maximumMilliseconds": 0.6264,
+      "managedAllocatedBytes": 19568
+    }
+  },
+  "queryPlans": {
+    "entries": [
+      "SEARCH Entries USING COVERING INDEX EntryPage (Folder=? AND Key\u003E?)"
+    ],
+    "coverage": [
+      "SEARCH Entries USING INDEX sqlite_autoindex_Entries_1 (Key=?)"
+    ],
+    "missing-range": [
+      "SEARCH Blocks USING INDEX sqlite_autoindex_Blocks_1 (Key=? AND Offset\u003E? AND Offset\u003C?)"
+    ],
+    "ranges": [
+      "SEARCH Blocks USING INDEX sqlite_autoindex_Blocks_1 (Key=? AND Offset\u003E?)"
+    ],
+    "pressure-candidates": [
+      "SEARCH Entries USING COVERING INDEX EntryEvictionCursor (Folder=? AND Pinned=? AND Access\u003E?)"
+    ]
+  },
+  "schemaVersion": 1,
+  "report": "native-cache-metadata-scale",
+  "runtime": ".NET 10.0.12",
+  "platform": "Ubuntu 24.04.4 LTS",
+  "scope": "Synthetic metadata only; warm OS cache; no payload or NAS IO. RSS includes fixture setup; timings are not hardware throughput guarantees."
+}

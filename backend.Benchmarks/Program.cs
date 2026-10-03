@@ -9,7 +9,8 @@ using NzbWebDAV.Streams;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
-if (!await NzbWebDAV.Benchmarks.PerformanceReportCli.TryHandleAsync(args))
+if (!await NzbWebDAV.Benchmarks.NativeCacheScaleReport.TryHandleAsync(args)
+    && !await NzbWebDAV.Benchmarks.PerformanceReportCli.TryHandleAsync(args))
     BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
 
 
