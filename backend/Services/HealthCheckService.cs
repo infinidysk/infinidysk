@@ -1516,7 +1516,12 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     .ConfigureAwait(false);
             else if (clearRecordedCorrupt)
                 await SwapNzbFileBlobAsync(
-                        davItem, nzbFile!, nzbFile!.MissingSegmentIndices, null, replaceCorruptRecord: true)
+                        davItem, nzbFile!,
+                        // Only a sweep that probed every segment proves recorded holes recovered.
+                        sampled.Count == totalSegments && !excludedRecordedHoleProbe
+                            ? null
+                            : nzbFile!.MissingSegmentIndices,
+                        null, replaceCorruptRecord: true)
                     .ConfigureAwait(false);
 
             var repairedCount = nzbFile != null
@@ -2249,12 +2254,28 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 continue;
             }
 
-            if (await TryConfirmSegmentCleanAsync(segmentId, ct).ConfigureAwait(false))
+            if (await TryConfirmSegmentCleanAsync(segmentId, ct).ConfigureAwait(false)
+                || await AnyFallbackCleanAsync(nzbFile, index, ct).ConfigureAwait(false))
                 continue;
             remaining.Add(index);
         }
 
         return remaining;
+    }
+
+    // Playback serves a readable fallback, so a corrupt primary alone is not damage.
+    private async Task<bool> AnyFallbackCleanAsync(DavNzbFile nzbFile, int index, CancellationToken ct)
+    {
+        if (nzbFile.SegmentFallbackIds is not { } fallbacks || index >= fallbacks.Length)
+            return false;
+        foreach (var fallbackId in fallbacks[index] ?? [])
+        {
+            if (!string.IsNullOrEmpty(fallbackId)
+                && await TryConfirmSegmentCleanAsync(fallbackId, ct).ConfigureAwait(false))
+                return true;
+        }
+
+        return false;
     }
 
     private async Task<bool> TryConfirmSegmentCleanAsync(string segmentId, CancellationToken ct)

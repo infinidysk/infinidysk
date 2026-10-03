@@ -1625,7 +1625,32 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Empty(par2.Requests);
         var blob = await BlobStore.ReadBlob<DavNzbFile>(ReloadItem(item.Id).FileBlobId!.Value);
         Assert.Null(blob!.CorruptSegmentIndices);
-        Assert.Equal([1], blob.MissingSegmentIndices!);
+        Assert.Null(blob.MissingSegmentIndices);
+    }
+
+    [Fact]
+    public async Task ToleranceDisabled_RecordedCorruptWithCleanFallback_IsNotReplaced()
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = "false" },
+        ]);
+        var segments = NewSegmentIds(4);
+        var sizes = new long[] { 10_000, 10_000, 50, 10_000 };
+        var fallbackIds = new string[segments.Length][];
+        for (var i = 0; i < fallbackIds.Length; i++) fallbackIds[i] = [];
+        fallbackIds[2] = ["alt-seg2@test"];
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingCorrupt: [2], fallbackIds: fallbackIds);
+        var fake = NewFakeClient(segments, missing: [], corrupt: [2]);
+        fake.Serve("alt-seg2@test", new byte[50]);
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: false);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.HealthResult.Healthy, row.Result);
+        Assert.Empty(par2.Requests);
     }
 
     [Fact]
