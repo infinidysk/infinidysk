@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.6.0](https://github.com/infinidysk/infinidysk/compare/v1.5.1...v1.6.0) (2026-10-03)
+
+
+### Features
+
+* **api:** support pack filename shows the InfiniDysk version that generated it ([#1609](https://github.com/infinidysk/infinidysk/issues/1609)) ([0f1e775](https://github.com/infinidysk/infinidysk/commit/0f1e775bbffacdc3f0f805edbc67600fb13fccbf))
+
+
+### Bug Fixes
+
+* **arr:** Sonarr repairs no longer resolve to a different series whose folder name shares a prefix ([#1620](https://github.com/infinidysk/infinidysk/issues/1620)) ([c4a4229](https://github.com/infinidysk/infinidysk/commit/c4a422939288bd5d523b2886f405838ded98ae5e))
+* **db:** recheck pending history cleanup under the SQLite write lock ([#1599](https://github.com/infinidysk/infinidysk/issues/1599)) ([e3f079d](https://github.com/infinidysk/infinidysk/commit/e3f079d2ac937d4deb3eab4097ae2ec7a53fa80a))
+* **deps:** Bump brace-expansion from 2.1.4 to 2.1.7 in /frontend ([#1603](https://github.com/infinidysk/infinidysk/issues/1603)) ([de57eb3](https://github.com/infinidysk/infinidysk/commit/de57eb3f12a07fed14ff1306a3e6a434dad2ca78))
+* **deps:** Bump github/codeql-action ([#1629](https://github.com/infinidysk/infinidysk/issues/1629)) ([3544821](https://github.com/infinidysk/infinidysk/commit/3544821965cf2c5cb8d4d27cfe3c628eafc70223))
+* **deps:** Bump ip-address from 10.4.0 to 10.7.2 in /frontend ([#1596](https://github.com/infinidysk/infinidysk/issues/1596)) ([be46762](https://github.com/infinidysk/infinidysk/commit/be46762a65c69f7c4a41c52ff83b15adaa906f4b))
+* **deps:** Bump the npm-minor-and-patch group across 1 directory with 8 updates ([#1601](https://github.com/infinidysk/infinidysk/issues/1601)) ([aec5115](https://github.com/infinidysk/infinidysk/commit/aec511538fb6e3ccc4d6abc74d5f69292dfb5745))
+* **deps:** Bump the nuget-minor-and-patch group with 1 update ([#1602](https://github.com/infinidysk/infinidysk/issues/1602)) ([edb7aa4](https://github.com/infinidysk/infinidysk/commit/edb7aa475cd38c35f4f158a58bde0a5e59c82168))
+* **deps:** Bump zensical from 0.0.62 to 0.0.64 in the docs-python group ([#1600](https://github.com/infinidysk/infinidysk/issues/1600)) ([8064d1e](https://github.com/infinidysk/infinidysk/commit/8064d1e029d8bb5561e2ce6b259d3ab4026d2e47))
+* **deps:** Bump zensical from 0.0.64 to 0.0.65 in the docs-python group ([#1626](https://github.com/infinidysk/infinidysk/issues/1626)) ([0ad6d23](https://github.com/infinidysk/infinidysk/commit/0ad6d23b82c1a578da68831febf7a1f343a1a96c))
+* **health:** health checks no longer appear stuck at 0% for hours on dead releases ([#1611](https://github.com/infinidysk/infinidysk/issues/1611)) ([8927443](https://github.com/infinidysk/infinidysk/commit/89274437e7396804e7d2a3419e14927b045e02c8))
+* **health:** replace releases that break during playback instead of keeping them as damaged ([#1631](https://github.com/infinidysk/infinidysk/issues/1631)) ([e250e47](https://github.com/infinidysk/infinidysk/commit/e250e478d3876486c52dafb93127e0387b3064fc))
+* **nntp:** playback and imports no longer stall when a provider refuses extra connections ([#1623](https://github.com/infinidysk/infinidysk/issues/1623)) ([5b5260e](https://github.com/infinidysk/infinidysk/commit/5b5260eb60ca8ac3385fbed865dcc8fe433ac4b9))
+* **queue:** preserve playback for NZBs with omitted interior parts ([#1594](https://github.com/infinidysk/infinidysk/issues/1594)) ([b3396fe](https://github.com/infinidysk/infinidysk/commit/b3396fe8ca57a0023cf9275638c77b91bc0e338b))
+* **queue:** skip unavailable optional first-segment metadata ([#1625](https://github.com/infinidysk/infinidysk/issues/1625)) ([b9604a2](https://github.com/infinidysk/infinidysk/commit/b9604a2321d71266a1d641d322fc8c78dcdd325c))
+* **usenet:** distinguish connection-open failures from local admission waits ([#1619](https://github.com/infinidysk/infinidysk/issues/1619)) ([7f46bc3](https://github.com/infinidysk/infinidysk/commit/7f46bc3fc11e066676caaaa54b5e41490416b1d3))
+* **webdav:** bound view response copies and handle length overruns ([#1592](https://github.com/infinidysk/infinidysk/issues/1592)) ([d79c480](https://github.com/infinidysk/infinidysk/commit/d79c480e6f165df1a81b8ae77121c59464bc1ff4))
+
+
+### Performance Improvements
+
+* **queue:** imports with queue pipelining enabled no longer download archive headers twice ([#1622](https://github.com/infinidysk/infinidysk/issues/1622)) ([b0df768](https://github.com/infinidysk/infinidysk/commit/b0df768bc6e173d7d8e7cd953bde59dd093eb537))
+* **usenet:** multi-volume imports no longer stall on throttled reconnects ([#1621](https://github.com/infinidysk/infinidysk/issues/1621)) ([b010c99](https://github.com/infinidysk/infinidysk/commit/b010c990cffb47689823f8ab4f17f4648e946f4e))
+* **webdav:** disable thread-pool unfair semaphore spinning to cut streaming CPU ([#1614](https://github.com/infinidysk/infinidysk/issues/1614)) ([e406258](https://github.com/infinidysk/infinidysk/commit/e40625863ba81f6324f82bc36876d78e6187279d))
+* **webdav:** memory returns to idle after playback stops ([#1617](https://github.com/infinidysk/infinidysk/issues/1617)) ([37fba57](https://github.com/infinidysk/infinidysk/commit/37fba5713a13d890b655d91006ad1c8f70dd31a9))
+* **webdav:** new streams and seeks use less memory while ramping up ([#1618](https://github.com/infinidysk/infinidysk/issues/1618)) ([f399e97](https://github.com/infinidysk/infinidysk/commit/f399e9713ba9a661b15ccc09d741e83023872185))
+* **webdav:** smoother playback across RAR volume boundaries ([#1630](https://github.com/infinidysk/infinidysk/issues/1630)) ([13b1bee](https://github.com/infinidysk/infinidysk/commit/13b1bee823d8fd5e745dcf09903edf769cbb315e))
+* **webdav:** smoother playback with fewer stalls while streaming ([#1606](https://github.com/infinidysk/infinidysk/issues/1606)) ([31c837f](https://github.com/infinidysk/infinidysk/commit/31c837fa08c04495de2a2201813199b5dce0326e))
+
 ## [1.5.1](https://github.com/infinidysk/infinidysk/compare/v1.5.0...v1.5.1) (2026-09-27)
 
 
