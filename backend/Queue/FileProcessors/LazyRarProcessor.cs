@@ -292,6 +292,8 @@ public class LazyRarProcessor(
             TotalFileSize = totalFileSize,
             Password = password,
             AesParams = aesParams,
+            IsEncrypted = fileHeader.IsEncrypted,
+            PasswordVerified = aesParams is not null && fileHeader.IsPasswordVerified(password),
             FirstPart = firstPart,
             PendingParts = pending.ToArray(),
             ReleaseDate = firstInfo.ReleaseDate,
@@ -576,6 +578,8 @@ public class LazyRarProcessor(
         public required long TotalFileSize { get; init; }
         public required string? Password { get; init; }
         public required AesParams? AesParams { get; init; }
+        public bool IsEncrypted { get; init; }
+        public bool PasswordVerified { get; init; }
         public required DavMultipartFile.FilePart FirstPart { get; init; }
         public required DavMultipartFile.PendingPart[] PendingParts { get; init; }
         public required DateTimeOffset ReleaseDate { get; init; }

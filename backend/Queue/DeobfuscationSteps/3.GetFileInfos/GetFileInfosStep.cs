@@ -170,11 +170,11 @@ public static class GetFileInfosStep
         var subjectFileName = file.NzbFile.GetSubjectFileName();
         var headerFileName = file.Header?.FileName ?? "";
         var par2FileName = fileDesc?.FileName ?? "";
-        var namePick = new List<(string? FileName, int Priority, bool IsPar2Name)>
+        var namePick = new List<(string? FileName, int Priority, bool IsPar2Name, string Source)>
         {
-            (FileName: par2FileName, Priority: GetFilenamePriority(par2FileName, 3), IsPar2Name: true),
-            (FileName: subjectFileName, Priority: GetFilenamePriority(subjectFileName, 2), IsPar2Name: false),
-            (FileName: headerFileName, Priority: GetFilenamePriority(headerFileName, 1), IsPar2Name: false),
+            (FileName: par2FileName, Priority: GetFilenamePriority(par2FileName, 3), IsPar2Name: true, Source: FileNameSources.Par2),
+            (FileName: subjectFileName, Priority: GetFilenamePriority(subjectFileName, 2), IsPar2Name: false, Source: FileNameSources.Subject),
+            (FileName: headerFileName, Priority: GetFilenamePriority(headerFileName, 1), IsPar2Name: false, Source: FileNameSources.YencHeader),
         }.Where(x => x.FileName is not null).MaxBy(x => x.Priority);
         var filename = namePick.FileName ?? "";
         par2SuppliedFileName = namePick.IsPar2Name;
@@ -199,6 +199,7 @@ public static class GetFileInfosStep
             SniffedVideoExtension = sniffedVideoExtension,
             First16KB = file.First16KB,
             MissingEvidenceGeneration = file.MissingEvidenceGeneration,
+            NameSource = string.IsNullOrEmpty(filename) ? null : namePick.Source,
         };
     }
 
@@ -356,5 +357,16 @@ public static class GetFileInfosStep
         public string? SniffedVideoExtension { get; init; }
         public byte[]? First16KB { get; init; }
         public long? MissingEvidenceGeneration { get; init; }
+
+        /// <summary>Which candidate supplied <see cref="FileName"/>; see <see cref="FileNameSources"/>.</summary>
+        public string? NameSource { get; init; }
+    }
+
+    /// <summary>Candidate sources for <see cref="FileInfo.FileName"/>, in selection priority order.</summary>
+    public static class FileNameSources
+    {
+        public const string Par2 = "par2";
+        public const string Subject = "subject";
+        public const string YencHeader = "yencHeader";
     }
 }

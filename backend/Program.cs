@@ -25,6 +25,7 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Middlewares;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Queue.Inspection;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Metrics;
@@ -365,6 +366,9 @@ public sealed partial class Program
                     sp.GetRequiredService<UsenetStreamingClient>(),
                     sp.GetRequiredService<ConfigManager>()))
                 .AddSingleton<QueueManager>()
+                .AddSingleton(sp => new NzbInspector(
+                    sp.GetRequiredService<UsenetStreamingClient>(),
+                    sp.GetRequiredService<ConfigManager>()))
                 .AddSingleton<IQueueCoordinator>(sp => sp.GetRequiredService<QueueManager>())
                 .AddSingleton<QueueCoordinatorHostedService>()
                 .AddSingleton<IQueueCoordinatorLiveness>(sp =>

@@ -70,6 +70,7 @@ public class SevenZipProcessor : BaseProcessor
                     ArchiveSetId = ArchiveSetId,
                     PathWithinArchive = x.PathWithinArchive,
                     DavMultipartFileMeta = GetDavMultipartFileMeta(x, multipartFile),
+                    IsEncrypted = x.IsEncrypted,
                     ReleaseDate = _fileInfos.First().ReleaseDate,
                     SniffedVideoExtension = IsEmptyRegularFile(x)
                         ? null
@@ -282,6 +283,9 @@ public class SevenZipProcessor : BaseProcessor
         public required string ArchiveSetId { get; init; }
         public required string PathWithinArchive { get; init; }
         public required DavMultipartFile.Meta DavMultipartFileMeta { get; init; }
+
+        /// <summary>The entry is encrypted. 7z AES has no password-check value, so a password is never verified.</summary>
+        public bool IsEncrypted { get; init; }
         public required DateTimeOffset ReleaseDate { get; init; }
         public string? SniffedVideoExtension { get; init; }
     }

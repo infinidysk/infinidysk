@@ -492,6 +492,200 @@
         ],
         "type": "object"
       },
+      "InspectNzbResponse": {
+        "properties": {
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "inspection": {
+            "$ref": "#/components/schemas/NzbInspectionReport"
+          },
+          "status": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "inspection"
+        ],
+        "type": "object"
+      },
+      "InspectedArchive": {
+        "properties": {
+          "archiveSetId": {
+            "type": "string"
+          },
+          "archiveType": {
+            "type": "string"
+          },
+          "contentAccess": {
+            "type": "string"
+          },
+          "encryption": {
+            "type": "string"
+          },
+          "nestingDepth": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "streamSupported": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "archiveSetId",
+          "archiveType",
+          "contentAccess",
+          "encryption"
+        ],
+        "type": "object"
+      },
+      "InspectedFile": {
+        "properties": {
+          "archiveSetId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "mediaExtension": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "nameSource": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "nestingDepth": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "plannedName": {
+            "type": "string"
+          },
+          "rawPath": {
+            "type": "string"
+          },
+          "size": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "plannedName",
+          "rawPath"
+        ],
+        "type": "object"
+      },
+      "InspectionDiagnostics": {
+        "properties": {
+          "articleRequests": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "failure": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InspectionFailure"
+              }
+            ]
+          },
+          "missingFirstSegments": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "stages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/InspectionWarning"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "missingFirstSegments",
+          "stages",
+          "warnings"
+        ],
+        "type": "object"
+      },
+      "InspectionFailure": {
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "stage": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "message"
+        ],
+        "type": "object"
+      },
+      "InspectionWarning": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
       "MemoryActivitySnapshot": {
         "properties": {
           "activeReads": {
@@ -590,6 +784,34 @@
           "schemaVersion",
           "segmentBuffers",
           "sharedStreams"
+        ],
+        "type": "object"
+      },
+      "NzbInspectionReport": {
+        "properties": {
+          "archives": {
+            "items": {
+              "$ref": "#/components/schemas/InspectedArchive"
+            },
+            "type": "array"
+          },
+          "diagnostics": {
+            "$ref": "#/components/schemas/InspectionDiagnostics"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/InspectedFile"
+            },
+            "type": "array"
+          },
+          "manifestComplete": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "archives",
+          "diagnostics",
+          "files"
         ],
         "type": "object"
       },
@@ -4379,6 +4601,134 @@
         "summary": "Get Watchtower",
         "tags": [
           "GetWatchtower"
+        ]
+      }
+    },
+    "/api/inspect-nzb": {
+      "post": {
+        "operationId": "post-api-inspect-nzb",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "nzbFile": {
+                    "format": "binary",
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "nzbFile"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "Submit the NZB as the multipart file field nzbFile. password (archive password) and name (release name used for planned mount names) are optional; the password is read from the form body only.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectNzbResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectNzbResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectNzbResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad request."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Too many requests. One inspection runs at a time; a request made while another inspection is running is rejected immediately. Retry when it finishes."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unexpected server error. Detail is sanitized; use traceId."
+          }
+        },
+        "summary": "Inspect Nzb",
+        "tags": [
+          "InspectNzb"
         ]
       }
     },
@@ -11826,6 +12176,9 @@
     },
     {
       "name": "IsOnboarding"
+    },
+    {
+      "name": "InspectNzb"
     },
     {
       "name": "GetWatchdogEntries"

@@ -90,6 +90,7 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
             operation.Responses["200"] = new OpenApiResponse { Description = "Success." };
         ApplyMissingPayloadContractOverrides(operation, route, verb);
         ApplyGcDiagnosticsContractOverrides(operation, route, verb);
+        ApplyInspectNzbContractOverrides(operation, route, verb);
         AddProblemResponse(operation, "400", "Bad request.");
         AddProblemResponse(operation, "401", "Unauthorized.");
         AddProblemResponse(operation, "403", "Forbidden.");
@@ -226,6 +227,42 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
                     },
                 },
             },
+            Content = new Dictionary<string, OpenApiMediaType>
+            {
+                ["application/problem+json"] = new OpenApiMediaType
+                {
+                    Schema = new OpenApiSchemaReference("ProblemDetails"),
+                },
+            },
+        };
+    }
+
+    private static void ApplyInspectNzbContractOverrides(
+        OpenApiOperation operation,
+        string route,
+        string verb)
+    {
+        if (verb != "post" || route != "api/inspect-nzb")
+            return;
+
+        operation.RequestBody = FormBody(
+            "Submit the NZB as the multipart file field nzbFile. password (archive password) and name " +
+            "(release name used for planned mount names) are optional; the password is read from the form body only.",
+            new Dictionary<string, IOpenApiSchema>
+            {
+                ["nzbFile"] = new OpenApiSchema { Type = JsonSchemaType.String, Format = "binary" },
+                ["password"] = new OpenApiSchema { Type = JsonSchemaType.String },
+                ["name"] = new OpenApiSchema { Type = JsonSchemaType.String },
+            },
+            additionalProperties: false,
+            requiredProperties: ["nzbFile"]);
+
+        operation.Responses ??= [];
+        operation.Responses["429"] = new OpenApiResponse
+        {
+            Description =
+                "Too many requests. One inspection runs at a time; a request made while another " +
+                "inspection is running is rejected immediately. Retry when it finishes.",
             Content = new Dictionary<string, OpenApiMediaType>
             {
                 ["application/problem+json"] = new OpenApiMediaType
