@@ -357,6 +357,50 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         Assert.Contains("recovery slices", job.FailureReason, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("false", 1)]
+    [InlineData("true", 0)]
+    public async Task BackgroundRepairInfeasible_SchedulesUrgentRepairOnlyWithoutTolerance(
+        string tolerance, int expectedFailures)
+    {
+        var failureTracker = new NzbWebDAV.Services.StreamingFailureTracker();
+        var scheduled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scheduler = new NzbWebDAV.Services.StreamingRepairScheduler(_config, failureTracker)
+        {
+            CompletionHook = _ =>
+            {
+                scheduled.TrySetResult();
+                return Task.CompletedTask;
+            },
+        };
+        var fileData = PatternBytes(SliceSize * 3, 0x89);
+        await using var release = await SeedAsync(fileData, EqualSegments(3), recoveryExponents: [0u],
+            corruptOnRead: [0, 1], repairScheduler: scheduler);
+        _config.UpdateValues(
+            [new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = tolerance }]);
+
+        await release.Service.StartAsync(CancellationToken.None);
+        try
+        {
+            await release.Service.EnqueueAsync(
+                release.Item,
+                [release.ContentSegmentIds[0], release.ContentSegmentIds[1]],
+                CancellationToken.None);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (release.Service.GetDiagnosticSnapshot().TotalInfeasible == 0)
+                await Task.Delay(25, timeout.Token);
+
+            if (expectedFailures > 0)
+                await scheduled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(expectedFailures, failureTracker.GetFailureCount(release.Item.Id));
+        }
+        finally
+        {
+            using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await release.Service.StopAsync(stopCts.Token);
+        }
+    }
+
     [Fact]
     public async Task TargetCountCap_ExceededBeforeRecoveryAllocation()
     {
@@ -627,7 +671,8 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         IReadOnlyList<(string FileName, byte[] Data, int[] Sizes)>? extraFiles = null,
         string? maxMissingSlices = null,
         TaskCompletionSource<bool>? sourceReadStarted = null,
-        Task? allowSourceRead = null)
+        Task? allowSourceRead = null,
+        NzbWebDAV.Services.StreamingRepairScheduler? repairScheduler = null)
     {
         _config.UpdateValues(
         [
@@ -661,7 +706,7 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
                     && allowSourceRead is not null)
                     return new GateOnFirstReadStream(bytes, sourceReadStarted, allowSourceRead);
                 return new MemoryStream(bytes, writable: false);
-            });
+            }, repairScheduler: repairScheduler);
     }
 
     private static int[] EqualSegments(int count) => Enumerable.Repeat(SliceSize, count).ToArray();

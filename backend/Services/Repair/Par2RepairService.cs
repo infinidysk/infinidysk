@@ -169,7 +169,8 @@ public partial class Par2RepairService : BackgroundService
 
     public void ReportCorruption(string path, string segmentId)
     {
-        if (!_configManager.IsCorruptionTrackingEnabled()) return;
+        // Tracking only gates persistence; padded corruption must still reach the repair scheduler.
+        if (!_configManager.IsRepairJobEnabled()) return;
         AccumulateAndArm(path, segmentId, isCorruption: true);
     }
 
@@ -592,11 +593,8 @@ public partial class Par2RepairService : BackgroundService
         if (davItem.SubType is DavItem.ItemSubType.RarFile or DavItem.ItemSubType.MultipartFile)
         {
             // Archive members never get a damage budget, so every padded hole is a repair trigger.
-            foreach (var (segmentId, isCorruption) in reports)
-            {
-                if (!isCorruption)
-                    _repairScheduler?.ScheduleRepair(davItem, segmentId);
-            }
+            foreach (var (segmentId, _) in reports)
+                _repairScheduler?.ScheduleRepair(davItem, segmentId);
 
             if (!_configManager.IsPar2RepairEnabled()) return;
             var multipartIds = reports.Where(report => !report.Item2 || _configManager.IsCorruptionTrackingEnabled())
@@ -618,6 +616,7 @@ public partial class Par2RepairService : BackgroundService
         var corruptIds = new List<string>();
         var missingIndices = new List<int>();
         var corruptIndices = new List<int>();
+        var damagedIds = new List<string>();
         foreach (var (segmentId, isCorruption) in reports)
         {
             var index = Array.IndexOf(nzbFile.SegmentIds, segmentId);
@@ -630,6 +629,7 @@ public partial class Par2RepairService : BackgroundService
                 continue;
             }
 
+            damagedIds.Add(segmentId);
             if (isCorruption)
             {
                 if (!_configManager.IsCorruptionTrackingEnabled())
@@ -671,10 +671,10 @@ public partial class Par2RepairService : BackgroundService
         }
 
         // Without a playback damage budget nothing else decides whether a padded hole is
-        // acceptable, so each confirmed miss counts toward an urgent repair.
+        // acceptable, so each confirmed miss or exhausted corruption counts toward an urgent repair.
         if (_repairScheduler is not null && !PlaybackDamageBudget.Applies(davItem.Name, nzbFile, _configManager))
         {
-            foreach (var segmentId in missingIds)
+            foreach (var segmentId in damagedIds)
                 _repairScheduler.ScheduleRepair(davItem, segmentId);
         }
 
@@ -709,6 +709,10 @@ public partial class Par2RepairService : BackgroundService
 
         await RunFlightAsync(item.Flight, davItem, item.MissingSegmentIds, queueGuard: true, RepairAdmissionMode.QueuedWait, ct)
             .ConfigureAwait(false);
+
+        // Inline health-check callers decide replacement themselves; background failures need escalation.
+        if (item.Flight.DamageUnrepairable && !_configManager.IsDegradedToleranceEnabled())
+            _repairScheduler?.ScheduleRepair(davItem);
     }
 
     private async Task<Par2RepairOutcome> RunFlightAsync(
@@ -951,6 +955,7 @@ public partial class Par2RepairService : BackgroundService
             job.State = result.IsInfeasible
                 ? Par2RepairJob.RepairJobState.Infeasible
                 : Par2RepairJob.RepairJobState.Failed;
+            flight.DamageUnrepairable = true;
             job.CompletedAt = DateTimeOffset.UtcNow;
             job.BytesRead = result.BytesRead;
             job.FailureReason = result.FailureReason;
@@ -1573,6 +1578,8 @@ public partial class Par2RepairService : BackgroundService
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task<Par2RepairOutcome> Task => Completion.Task;
+
+        public bool DamageUnrepairable { get; set; }
 
         public void SetCoverage(IEnumerable<string> ids, bool verifiedAll)
         {

@@ -308,6 +308,49 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
         }
     }
 
+    [Theory]
+    [InlineData("false", "false", 1)]
+    [InlineData("false", "true", 1)]
+    [InlineData("true", "true", 0)]
+    public async Task Corruption_CountsTowardRepairOnlyWithoutDamageBudget(
+        string tolerance, string tracking, int expectedFailures)
+    {
+        var segments = NewSegmentIds(4);
+        var (item, _) = await AddFileAsync(segments);
+        _config.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "false" },
+            new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = tolerance },
+            new ConfigItem { ConfigName = ConfigKeys.RepairCorruptionTrackingEnabled, ConfigValue = tracking },
+        ]);
+        var failureTracker = new StreamingFailureTracker();
+        var scheduled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scheduler = new StreamingRepairScheduler(_config, failureTracker)
+        {
+            CompletionHook = _ =>
+            {
+                scheduled.TrySetResult();
+                return Task.CompletedTask;
+            },
+        };
+        var service = new Par2RepairService(
+            _config,
+            null!,
+            new RepairPatchStore(Path.Join(_configRoot, $"patches-corrupt-{tolerance}-{tracking}"), 1024 * 1024),
+            repairScheduler: scheduler);
+
+        await service.ProcessCorruptionEventForTestsAsync(item.Path, segments[2], CancellationToken.None);
+
+        Assert.Equal(expectedFailures, failureTracker.GetFailureCount(item.Id));
+        if (expectedFailures > 0)
+        {
+            await scheduled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await using var context = new DavDatabaseContext();
+            var reloaded = await context.Items.AsNoTracking().SingleAsync(x => x.Id == item.Id);
+            Assert.Equal(DateTimeOffset.UnixEpoch, reloaded.NextHealthCheck);
+        }
+    }
+
     private Par2RepairService NewService() =>
         new(_config, null!, new RepairPatchStore(Path.Join(_configRoot, "patches"), 1024 * 1024));
 
