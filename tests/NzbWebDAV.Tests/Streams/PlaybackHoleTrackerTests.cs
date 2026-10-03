@@ -141,6 +141,33 @@ public sealed class PlaybackHoleTrackerTests : IDisposable
 
         PlaybackHoleTracker.SetDamageBudget(path, budget);
         Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
+
+        // Reopening slices the stream, which snapshots known holes; that must not drop the new budget.
+        Assert.Null(PlaybackHoleTracker.SnapshotMissingSegmentIds(path));
+        Assert.Equal(budget!.ConsecutiveFillLimit, PlaybackHoleTracker.ConsecutiveFillLimit(path));
+        RecordIsolatedHole(path, nzb.SegmentIds[300]);
+        Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
+        RecordIsolatedHole(path, nzb.SegmentIds[400]);
+        Assert.True(PlaybackHoleTracker.ShouldFailFast(path, out _));
+    }
+
+    [Fact]
+    public void StaleBudget_SurvivesLookupsWithoutReinstall()
+    {
+        var path = $"/view/idle-{Guid.NewGuid():N}.mkv";
+        var clock = new ManualTimeProvider();
+        PlaybackHoleTracker.Clock = clock;
+        var nzb = BudgetFile(segments: 1000);
+        var budget = PlaybackDamageBudget.TryCreate(path, nzb, TotalCapConfig(1));
+        PlaybackHoleTracker.SetDamageBudget(path, budget);
+
+        clock.Advance(PlaybackHoleTracker.CleanupThreshold + TimeSpan.FromSeconds(1));
+
+        Assert.False(PlaybackHoleTracker.IsKnownMissingSegment(path, nzb.SegmentIds[100]));
+        Assert.Null(PlaybackHoleTracker.SnapshotMissingSegmentIds(path));
+        RecordIsolatedHole(path, nzb.SegmentIds[100]);
+        RecordIsolatedHole(path, nzb.SegmentIds[200]);
+        Assert.True(PlaybackHoleTracker.ShouldFailFast(path, out _));
     }
 
     [Fact]

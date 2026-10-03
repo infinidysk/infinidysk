@@ -51,6 +51,7 @@ internal static class PlaybackHoleTracker
         lock (state)
         {
             ResetIfStale(state, now);
+            state.LastEventUtc = now;
             state.Budget = budget;
             state.MissingIndices.Clear();
             string? firstMissingId = null;
@@ -172,9 +173,7 @@ internal static class PlaybackHoleTracker
                 // Missing-segment memory must not outlive provider recovery: after a
                 // PAR2 repair or backfill the same path would otherwise keep being
                 // served zero bytes until an unrelated 256th RecordHole sweeps.
-                if (IsStale(state, now))
-                    Files.TryRemove(path!, out _);
-                else
+                if (!ExpireIfStale(path!, state, now))
                     known = state.MissingSegmentIds.Contains(segmentId);
             }
         }
@@ -191,9 +190,7 @@ internal static class PlaybackHoleTracker
         {
             lock (state)
             {
-                if (IsStale(state, now))
-                    Files.TryRemove(path!, out _);
-                else if (state.MissingSegmentIds.Count > 0)
+                if (!ExpireIfStale(path!, state, now) && state.MissingSegmentIds.Count > 0)
                     snapshot = [.. state.MissingSegmentIds];
             }
         }
@@ -225,6 +222,20 @@ internal static class PlaybackHoleTracker
         state.LastException = null;
         state.BudgetExceeded = false;
         state.BudgetException = null;
+        // The caller is touching the file now; without this a later lookup would drop the active budget.
+        state.LastEventUtc = now;
+    }
+
+    // Caller must hold the state lock. Returns true when the stale entry was removed.
+    private static bool ExpireIfStale(string path, FileState state, DateTimeOffset now)
+    {
+        if (!IsStale(state, now))
+            return false;
+        if (state.Budget is null)
+            return Files.TryRemove(path, out _);
+        // An open stream's budget must keep enforcing; only its expired observations go.
+        ResetIfStale(state, now);
+        return false;
     }
 
     private static void Prune(FileState state, DateTimeOffset now)
