@@ -91,20 +91,96 @@ public sealed class PlaybackHoleTrackerTests : IDisposable
     }
 
     [Fact]
-    public void DamageBudget_AllowsLongerRunsThanTheFixedLimit()
+    public void DamageBudget_FailsRunsLongerThanTheConsecutiveCap()
     {
         var path = $"/view/run-{Guid.NewGuid():N}.mkv";
         var nzb = BudgetFile(segments: 1000);
         PlaybackHoleTracker.SetDamageBudget(path, PlaybackDamageBudget.TryCreate(path, nzb, ToleranceConfig()));
 
-        Assert.Equal(5, PlaybackHoleTracker.ConsecutiveFillLimit(path));
+        Assert.Equal(3, PlaybackHoleTracker.ConsecutiveFillLimit(path));
         var miss = new UsenetArticleNotFoundException("run@test");
-        for (var i = 10; i < 14; i++)
+        for (var i = 10; i < 12; i++)
             PlaybackHoleTracker.RecordHole(path, nzb.SegmentIds[i], miss);
         Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
 
-        PlaybackHoleTracker.RecordHole(path, nzb.SegmentIds[14], miss);
+        PlaybackHoleTracker.RecordHole(path, nzb.SegmentIds[12], miss);
         Assert.True(PlaybackHoleTracker.ShouldFailFast(path, out _));
+    }
+
+    [Fact]
+    public void ExceededBudget_SurvivesLaterHealthySegments()
+    {
+        var path = $"/view/buffered-{Guid.NewGuid():N}.mkv";
+        var nzb = BudgetFile(segments: 1000);
+        PlaybackHoleTracker.SetDamageBudget(path, PlaybackDamageBudget.TryCreate(path, nzb, TotalCapConfig(1)));
+
+        RecordIsolatedHole(path, nzb.SegmentIds[100]);
+        var tipping = new UsenetArticleNotFoundException(nzb.SegmentIds[200]);
+        PlaybackHoleTracker.RecordHole(path, nzb.SegmentIds[200], tipping);
+        // A consumer accepting an earlier prefetched healthy segment must not hide the cumulative failure.
+        PlaybackHoleTracker.RecordGoodSegment(path);
+
+        Assert.True(PlaybackHoleTracker.ShouldFailFast(path, out var failure));
+        Assert.Same(tipping, failure);
+    }
+
+    [Fact]
+    public void ExceededBudget_ExpiresWithTheObservationWindow()
+    {
+        var path = $"/view/expired-{Guid.NewGuid():N}.mkv";
+        var clock = new ManualTimeProvider();
+        PlaybackHoleTracker.Clock = clock;
+        var nzb = BudgetFile(segments: 1000);
+        var budget = PlaybackDamageBudget.TryCreate(path, nzb, TotalCapConfig(1));
+        PlaybackHoleTracker.SetDamageBudget(path, budget);
+        RecordIsolatedHole(path, nzb.SegmentIds[100]);
+        RecordIsolatedHole(path, nzb.SegmentIds[200]);
+        Assert.True(PlaybackHoleTracker.ShouldFailFast(path, out _));
+
+        clock.Advance(PlaybackHoleTracker.CleanupThreshold + TimeSpan.FromSeconds(1));
+
+        PlaybackHoleTracker.SetDamageBudget(path, budget);
+        Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
+    }
+
+    [Fact]
+    public void RemovingBudget_ClearsItsFailure()
+    {
+        var path = $"/view/removed-{Guid.NewGuid():N}.mkv";
+        var nzb = BudgetFile(segments: 1000);
+        PlaybackHoleTracker.SetDamageBudget(path, PlaybackDamageBudget.TryCreate(path, nzb, TotalCapConfig(1)));
+        RecordIsolatedHole(path, nzb.SegmentIds[100]);
+        RecordIsolatedHole(path, nzb.SegmentIds[200]);
+        Assert.True(PlaybackHoleTracker.ShouldFailFast(path, out _));
+
+        PlaybackHoleTracker.SetDamageBudget(path, null);
+        PlaybackHoleTracker.RecordGoodSegment(path);
+
+        Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
+    }
+
+    [Fact]
+    public void DamageBudget_CountsRecordedCorruption()
+    {
+        var path = $"/view/corrupt-{Guid.NewGuid():N}.mkv";
+        var nzb = BudgetFile(segments: 1000);
+        nzb.CorruptSegmentIndices = [100, 200, 300];
+        PlaybackHoleTracker.SetDamageBudget(path, PlaybackDamageBudget.TryCreate(path, nzb, TotalCapConfig(3)));
+
+        RecordIsolatedHole(path, nzb.SegmentIds[400]);
+
+        Assert.True(PlaybackHoleTracker.ShouldFailFast(path, out _));
+    }
+
+    [Fact]
+    public void LegacyFileWithoutSegmentRanges_HasNoBudget()
+    {
+        var path = $"/view/legacy-{Guid.NewGuid():N}.mkv";
+        var nzb = BudgetFile(segments: 10);
+        nzb.SegmentByteRanges = null;
+
+        Assert.Null(PlaybackDamageBudget.TryCreate(path, nzb, ToleranceConfig()));
+        Assert.False(PlaybackDamageBudget.Applies(path, nzb, ToleranceConfig()));
     }
 
     [Fact]
@@ -119,7 +195,11 @@ public sealed class PlaybackHoleTrackerTests : IDisposable
     public void ToleranceOff_HasNoBudget()
     {
         var path = $"/view/off-{Guid.NewGuid():N}.mkv";
-        Assert.Null(PlaybackDamageBudget.TryCreate(path, BudgetFile(segments: 10), new NzbWebDAV.Config.ConfigManager()));
+        var config = new NzbWebDAV.Config.ConfigManager();
+        config.UpdateValues([
+            new NzbWebDAV.Database.Models.ConfigItem { ConfigName = NzbWebDAV.Config.ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = "false" },
+        ]);
+        Assert.Null(PlaybackDamageBudget.TryCreate(path, BudgetFile(segments: 10), config));
     }
 
     private static NzbWebDAV.Config.ConfigManager ToleranceConfig()
@@ -127,6 +207,15 @@ public sealed class PlaybackHoleTrackerTests : IDisposable
         var config = new NzbWebDAV.Config.ConfigManager();
         config.UpdateValues([
             new NzbWebDAV.Database.Models.ConfigItem { ConfigName = NzbWebDAV.Config.ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = "true" },
+        ]);
+        return config;
+    }
+
+    private static NzbWebDAV.Config.ConfigManager TotalCapConfig(int maxTotalMissing)
+    {
+        var config = ToleranceConfig();
+        config.UpdateValues([
+            new NzbWebDAV.Database.Models.ConfigItem { ConfigName = NzbWebDAV.Config.ConfigKeys.RepairDegradedMaxTotalMissing, ConfigValue = maxTotalMissing.ToString() },
         ]);
         return config;
     }

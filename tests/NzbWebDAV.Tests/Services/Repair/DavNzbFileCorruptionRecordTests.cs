@@ -267,12 +267,15 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData("false", 1)]
-    [InlineData("true", 0)]
-    public async Task ZeroFill_CountsTowardRepairOnlyWithoutDamageBudget(string tolerance, int expectedFailures)
+    [InlineData("false", true, 1)]
+    [InlineData("true", true, 0)]
+    // Legacy files without segment ranges get no playback budget, so tolerance cannot absorb the hole.
+    [InlineData("true", false, 1)]
+    public async Task ZeroFill_CountsTowardRepairOnlyWithoutDamageBudget(
+        string tolerance, bool segmentRanges, int expectedFailures)
     {
         var segments = NewSegmentIds(4);
-        var (item, _) = await AddFileAsync(segments);
+        var (item, _) = await AddFileAsync(segments, segmentRanges: segmentRanges);
         _config.UpdateValues(
         [
             new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "false" },
@@ -291,9 +294,11 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
         var service = new Par2RepairService(
             _config,
             null!,
-            new RepairPatchStore(Path.Join(_configRoot, $"patches-escalate-{tolerance}"), 1024 * 1024),
+            new RepairPatchStore(Path.Join(_configRoot, $"patches-escalate-{tolerance}-{segmentRanges}"), 1024 * 1024),
             repairScheduler: scheduler);
 
+        // Real playback queues the id and arms an event carrying the same id.
+        service.ReportZeroFill(item.Path, segments[2]);
         await service.ProcessZeroFillEventForTestsAsync(item.Path, segments[2], CancellationToken.None);
 
         Assert.Equal(expectedFailures, failureTracker.GetFailureCount(item.Id));
@@ -339,6 +344,7 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
             new RepairPatchStore(Path.Join(_configRoot, $"patches-corrupt-{tolerance}-{tracking}"), 1024 * 1024),
             repairScheduler: scheduler);
 
+        service.ReportCorruption(item.Path, segments[2]);
         await service.ProcessCorruptionEventForTestsAsync(item.Path, segments[2], CancellationToken.None);
 
         Assert.Equal(expectedFailures, failureTracker.GetFailureCount(item.Id));
@@ -358,7 +364,8 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
         string[] segmentIds,
         int[]? missing = null,
         byte? containerClass = null,
-        long? criticalHead = null)
+        long? criticalHead = null,
+        bool segmentRanges = true)
     {
         await using var context = new DavDatabaseContext();
         await context.Database.MigrateAsync();
@@ -378,7 +385,7 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
         {
             Id = itemId,
             SegmentIds = segmentIds,
-            SegmentByteRanges = ranges,
+            SegmentByteRanges = segmentRanges ? ranges : null,
             MissingSegmentIndices = missing,
             ContainerClass = containerClass,
             CriticalHeadEndExclusive = criticalHead,
