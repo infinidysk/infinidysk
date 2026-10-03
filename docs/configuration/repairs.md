@@ -18,11 +18,11 @@ Background health monitoring, PAR2 reconstruction, and replacement of unhealthy 
 | Check older releases less thoroughly [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | `repair.healthcheck-aging` | off | Aging taper |
 | Repair After Streaming Failures | `repair.auto-remove-after-failures` | `0` | Consecutive streaming failures before urgent repair; `0` = immediate repair. Failures below the threshold are counted in memory and reset when InfiniDysk restarts. Once the threshold is reached and the urgent repair is scheduled, that qualification is stored with the file and survives restarts; raising the threshold afterwards defers the repair again until the new threshold is met. |
 | Auto-remove unlinked files only | `repair.auto-remove-unlinked-only` | on | At the threshold, linked items are removed and blocklisted through *Arr instead of force-deleted |
-| Degraded damage tolerance [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `repair.degraded-tolerance-enabled` | off [since 1.6.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.0){ .nzbdav-since } | Keep slightly damaged videos playable instead of replacing the release. When off, every missing or corrupt article found during playback counts toward repair. Existing installs that saved `true` stay on |
+| Degraded damage tolerance [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `repair.degraded-tolerance-enabled` | on | Keep slightly damaged videos playable instead of replacing the release. When off, every missing or corrupt article found during playback counts toward repair |
 | Track corrupt articles during playback [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `repair.corruption-tracking-enabled` | on | Record streaming-confirmed corrupt articles, include them in health classification, and skip the retry storm on later reads. Only controls persistence; corruption still counts toward repair when tolerance is off |
-| Max consecutive missing segments | `repair.degraded-max-consecutive-missing` | `4` [since 1.6.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.0){ .nzbdav-since } | Longest tolerable run of adjacent holes (1–8) |
-| Max total missing segments | `repair.degraded-max-total-missing` | `64` [since 1.6.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.0){ .nzbdav-since } | Total tolerable holes per file (1–1000) |
-| Max missing data (% of file) | `repair.degraded-max-missing-byte-percent` | `2.0` [since 1.6.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.0){ .nzbdav-since } | Tolerable hole share of file bytes (0.01–50) |
+| Max consecutive missing segments | `repair.degraded-max-consecutive-missing` | `2` | Longest tolerable run of adjacent holes (1–2) |
+| Max total missing segments | `repair.degraded-max-total-missing` | `5` | Total tolerable holes per file (1–1000) |
+| Max missing data (% of file) | `repair.degraded-max-missing-byte-percent` | `1.0` | Tolerable hole share of file bytes (0.01–50) |
 | Health-check schedule [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `repair.healthcheck-schedule` | empty (always on) | JSON weekly windows for **new** routine health checks |
 | Repair quiet hours [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `repair.action-schedule` | empty (always on) | JSON weekly windows for starting repairs |
 | Library Directory | `media.library-dir` | empty | Organized library root in the container — parent of your Arr root folders. Never the rclone mount or `/completed-symlinks` |
@@ -149,18 +149,18 @@ health checks.
 
 ## Degraded damage tolerance [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }
 
-Degraded damage tolerance is **off by default** [since 1.6.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.0){ .nzbdav-since }.
-With it off, playback still zero-fills short gaps so a stream is not cut on the first missing
-article, but every confirmed missing or corrupt article counts toward **Repair After Streaming Failures**
-(`repair.auto-remove-after-failures`) and starts an urgent repair at the threshold. Turn it on if
-you would rather keep slightly damaged files than replace them.
+Degraded damage tolerance is on by default. With it off, playback still zero-fills short gaps
+so a stream is not cut on the first missing article, but every confirmed missing or corrupt
+article counts toward **Repair After Streaming Failures** (`repair.auto-remove-after-failures`)
+and starts an urgent repair at the threshold [since 1.6.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.0){ .nzbdav-since }.
+The same applies to files without a playback damage budget even while tolerance is on.
 
 ### Zero-tolerance replacement [since 1.6.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.0){ .nzbdav-since }
 
 To replace a release as soon as one article is confirmed missing or corrupt:
 
 1. Turn on **Enable Background Repairs**.
-2. Leave **Degraded damage tolerance** off.
+2. Turn off **Degraded damage tolerance**.
 3. Leave **Repair After Streaming Failures** at `0`.
 4. Configure a Library Directory and an enabled \*Arr instance for linked replacement.
 
@@ -230,11 +230,14 @@ Degraded verdicts compose with the rest of the repair pipeline:
   itself and the file returns to healthy.
 - **Playback enforces the same caps.** [since 1.6.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.0){ .nzbdav-since }
   While tolerance is on, playback of an eligible file pads over confirmed holes only while the
-  recorded holes plus those found during the current stream stay within all three caps. A run
-  of adjacent holes may reach the consecutive cap. The first hole that breaks a cap, or any
-  hole in the first segment, stops the read and schedules an urgent repair through the normal
-  streaming-failure path (`repair.auto-remove-after-failures`). Ineligible files keep the fixed
-  limit of two padded segments in a row, and each confirmed hole counts toward repair.
+  recorded holes (including tracked corrupt articles) plus those found during the current
+  stream stay within all three caps. A run of adjacent holes may reach the consecutive cap.
+  The first hole that breaks a cap, or any hole in the first segment, stops the read and
+  schedules an urgent repair through the normal streaming-failure path
+  (`repair.auto-remove-after-failures`). Later reads keep failing until the playback
+  observations expire five minutes after the last hole. Ineligible files, and files imported
+  before segment byte ranges were recorded, keep the fixed limit of two padded segments in a
+  row, and each confirmed hole counts toward repair.
 
 Degraded files appear on the [Health page](../operations/health-repairs.md) with a warning
 badge, a dedicated history filter, and an overview stat card.
