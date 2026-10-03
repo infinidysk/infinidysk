@@ -38,23 +38,33 @@ public class DatabaseStoreNzbFile(
 
     private NzbFileStream GetStream(DavNzbFile nzbFile)
     {
-        PlaybackHoleTracker.SetDamageBudget(
+        var lease = PlaybackHoleTracker.SetDamageBudget(
             davNzbFile.Path, PlaybackDamageBudget.TryCreate(davNzbFile.Name, nzbFile, Config));
-        return usenetClient.GetFileStream(
-            nzbFile.SegmentIds,
-            FileSize,
-            Config.GetArticleBufferSize(),
-            nzbFile.SegmentByteRanges,
-            Config.IsPipelinedBodyRequestsEnabled(),
-            davNzbFile.Path,
-            nzbFile.SegmentFallbackIds,
-            inFlightArticleBudget,
-            useContainerAwareFill: Config.IsContainerAwareFillEnabled(),
-            streamingBodyBatchWidth: Config.GetStreamingBodyBatchWidth(),
-            knownCorruptSegmentIds: ResolveKnownCorruptSegmentIds(nzbFile),
-            knownMissingSegmentIndices: ResolveKnownMissingSegmentIndices(nzbFile),
-            segmentByteRangesTrusted: nzbFile.SegmentByteRangesTrusted == true,
-            verificationProof: nzbFile.VerificationProof);
+        try
+        {
+            var stream = usenetClient.GetFileStream(
+                nzbFile.SegmentIds,
+                FileSize,
+                Config.GetArticleBufferSize(),
+                nzbFile.SegmentByteRanges,
+                Config.IsPipelinedBodyRequestsEnabled(),
+                davNzbFile.Path,
+                nzbFile.SegmentFallbackIds,
+                inFlightArticleBudget,
+                useContainerAwareFill: Config.IsContainerAwareFillEnabled(),
+                streamingBodyBatchWidth: Config.GetStreamingBodyBatchWidth(),
+                knownCorruptSegmentIds: ResolveKnownCorruptSegmentIds(nzbFile),
+                knownMissingSegmentIndices: ResolveKnownMissingSegmentIndices(nzbFile),
+                segmentByteRangesTrusted: nzbFile.SegmentByteRangesTrusted == true,
+                verificationProof: nzbFile.VerificationProof);
+            stream.PlaybackLease = lease;
+            return stream;
+        }
+        catch
+        {
+            lease?.Dispose();
+            throw;
+        }
     }
 
     private HashSet<string>? ResolveKnownCorruptSegmentIds(DavNzbFile nzbFile)

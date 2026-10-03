@@ -26,10 +26,11 @@ internal static class PlaybackHoleTracker
         Volatile.Write(ref _callCount, 0);
     }
 
-    public static void SetDamageBudget(string? path, PlaybackDamageBudget? budget)
+    /// <summary>Returns a lease the opened stream must dispose; it keeps the budget alive while idle.</summary>
+    public static IDisposable? SetDamageBudget(string? path, PlaybackDamageBudget? budget)
     {
         if (!IsTrackablePath(path))
-            return;
+            return null;
 
         var now = Clock.GetUtcNow();
         if (budget is null)
@@ -44,31 +45,39 @@ internal static class PlaybackHoleTracker
                     existing.BudgetException = null;
                 }
             }
-            return;
+            return null;
         }
 
-        var state = Files.GetOrAdd(path!, _ => new FileState { LastEventUtc = now });
-        lock (state)
+        while (true)
         {
-            ResetIfStale(state, now);
-            state.Budget = budget;
-            state.MissingIndices.Clear();
-            string? firstMissingId = null;
-            foreach (var id in state.MissingSegmentIds)
+            var state = Files.GetOrAdd(path!, _ => new FileState { LastEventUtc = now });
+            lock (state)
             {
-                if (Array.IndexOf(budget.SegmentIds, id) is >= 0 and var index)
+                // A concurrent sweep may have evicted this entry before the lock was taken.
+                if (!Files.TryGetValue(path!, out var current) || !ReferenceEquals(current, state))
+                    continue;
+                state.OpenStreams++;
+                ResetIfStale(state, now);
+                state.Budget = budget;
+                state.MissingIndices.Clear();
+                string? firstMissingId = null;
+                foreach (var id in state.MissingSegmentIds)
                 {
-                    state.MissingIndices.Add(index);
-                    firstMissingId ??= id;
+                    if (Array.IndexOf(budget.SegmentIds, id) is >= 0 and var index)
+                    {
+                        state.MissingIndices.Add(index);
+                        firstMissingId ??= id;
+                    }
                 }
+                state.BudgetExceeded = state.MissingIndices.Count > 0 && budget.IsExceeded(state.MissingIndices, out _);
+                state.BudgetException = state.BudgetExceeded
+                    ? state.BudgetException ?? state.LastException ?? new UsenetArticleNotFoundException(firstMissingId!)
+                    : null;
             }
-            state.BudgetExceeded = state.MissingIndices.Count > 0 && budget.IsExceeded(state.MissingIndices, out _);
-            state.BudgetException = state.BudgetExceeded
-                ? state.BudgetException ?? state.LastException ?? new UsenetArticleNotFoundException(firstMissingId!)
-                : null;
-        }
 
-        MaybeCleanup(now);
+            MaybeCleanup(now);
+            return new StreamLease(state);
+        }
     }
 
     /// <summary>Holes in a row a stream may pad before failing the read.</summary>
@@ -230,7 +239,7 @@ internal static class PlaybackHoleTracker
     {
         if (!IsStale(state, now))
             return false;
-        if (state.Budget is null)
+        if (state.OpenStreams == 0)
             return Files.TryRemove(path, out _);
         // An open stream's budget must keep enforcing; only its expired observations go.
         ResetIfStale(state, now);
@@ -260,10 +269,20 @@ internal static class PlaybackHoleTracker
         foreach (var entry in Files)
         {
             lock (entry.Value)
-            {
-                if (now - entry.Value.LastEventUtc >= CleanupThreshold)
-                    Files.TryRemove(entry.Key, out _);
-            }
+                ExpireIfStale(entry.Key, entry.Value, now);
+        }
+    }
+
+    private sealed class StreamLease(FileState state) : IDisposable
+    {
+        private int _released;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _released, 1) != 0)
+                return;
+            lock (state)
+                state.OpenStreams--;
         }
     }
 
@@ -275,6 +294,7 @@ internal static class PlaybackHoleTracker
         public HashSet<string> MissingSegmentIds { get; } = new(StringComparer.Ordinal);
         public HashSet<int> MissingIndices { get; } = [];
         public PlaybackDamageBudget? Budget { get; set; }
+        public int OpenStreams { get; set; }
         public bool BudgetExceeded { get; set; }
         public Exception? BudgetException { get; set; }
     }

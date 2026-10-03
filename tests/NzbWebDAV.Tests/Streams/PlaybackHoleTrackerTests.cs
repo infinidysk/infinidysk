@@ -307,6 +307,32 @@ public sealed class PlaybackHoleTrackerTests : IDisposable
         Assert.False(PlaybackHoleTracker.IsKnownMissingSegment(stale, "stale@test"));
     }
 
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void PeriodicSweep_KeepsBudgetOnlyWhileAStreamIsOpen(bool closeStream, bool expectBudget)
+    {
+        var path = $"/view/sweep-{Guid.NewGuid():N}.mkv";
+        var clock = new ManualTimeProvider();
+        PlaybackHoleTracker.Clock = clock;
+        var nzb = BudgetFile(segments: 1000);
+        var lease = PlaybackHoleTracker.SetDamageBudget(
+            path, PlaybackDamageBudget.TryCreate(path, nzb, TotalCapConfig(1)));
+        Assert.NotNull(lease);
+        if (closeStream)
+            lease.Dispose();
+        clock.Advance(PlaybackHoleTracker.CleanupThreshold + TimeSpan.FromSeconds(1));
+
+        var miss = new UsenetArticleNotFoundException("other@test");
+        for (var i = 0; i < 256; i++)
+            PlaybackHoleTracker.RecordHole($"/view/other-{Guid.NewGuid():N}.mkv", "other@test", miss);
+
+        RecordIsolatedHole(path, nzb.SegmentIds[100]);
+        RecordIsolatedHole(path, nzb.SegmentIds[200]);
+        Assert.Equal(expectBudget, PlaybackHoleTracker.ShouldFailFast(path, out _));
+        lease.Dispose();
+    }
+
     [Fact]
     public void StaleEntries_ExpireOnReadWithoutFurtherHoles()
     {
