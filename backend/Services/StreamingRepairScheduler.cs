@@ -53,7 +53,8 @@ public class StreamingRepairScheduler(
                 ? failureTracker.RecordUnattributedFailure(davItemId).Count
                 : failureTracker.RecordAttributedFailure(davItemId, segmentId).Count;
         var threshold = configManager.GetAutoRemoveAfterFailures();
-        if (!ShouldScheduleUrgentRepair(threshold, failureCount))
+        // A qualified reschedule must stem from damage playback already recorded.
+        if ((!recordFailure && failureCount <= 0) || !ShouldScheduleUrgentRepair(threshold, failureCount))
         {
             Log.Information(
                 "Deferring dynamic repair for DavItem {DavItemId} until streaming failure {FailureCount}/{FailureThreshold}",
@@ -84,6 +85,15 @@ public class StreamingRepairScheduler(
                 await using var mutationGate = await failureTracker
                     .AcquireMutationGateAsync(davItemId, CancellationToken.None)
                     .ConfigureAwait(false);
+                // A health check may have cleared the failure while this task waited for the gate.
+                var currentCount = failureTracker.GetFailureCount(davItemId);
+                if (currentCount <= 0 || !ShouldScheduleUrgentRepair(threshold, currentCount))
+                {
+                    RecentRepairTriggers.TryRemove(
+                        new KeyValuePair<Guid, RepairScheduleReservation>(davItemId, reservation));
+                    return;
+                }
+                failureCount = currentCount;
                 await using var dbContext = dbContextFactory is null
                     ? new DavDatabaseContext()
                     : await dbContextFactory.CreateDbContextAsync().ConfigureAwait(false);

@@ -387,6 +387,50 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
         Assert.False(scheduled);
     }
 
+    [Fact]
+    public async Task QualifiedReschedule_WithoutRecordedFailure_DoesNotSchedule()
+    {
+        var (item, _) = await AddFileAsync(NewSegmentIds(4));
+        var scheduler = new StreamingRepairScheduler(_config, new StreamingFailureTracker());
+
+        scheduler.ScheduleRepairIfQualified(item);
+        // ponytail: negative check waits a fixed interval for a scheduling task that should never start.
+        await Task.Delay(250);
+
+        await using var context = new DavDatabaseContext();
+        var reloaded = await context.Items.AsNoTracking().SingleAsync(x => x.Id == item.Id);
+        Assert.NotEqual(DateTimeOffset.UnixEpoch, reloaded.NextHealthCheck);
+    }
+
+    [Fact]
+    public async Task FailureClearedWhileWaitingForGate_DoesNotMarkUrgent()
+    {
+        var segments = NewSegmentIds(4);
+        var (item, _) = await AddFileAsync(segments);
+        var failureTracker = new StreamingFailureTracker();
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scheduler = new StreamingRepairScheduler(_config, failureTracker)
+        {
+            CompletionHook = _ =>
+            {
+                completed.TrySetResult();
+                return Task.CompletedTask;
+            },
+        };
+
+        await using (await failureTracker.AcquireMutationGateAsync(item.Id, CancellationToken.None))
+        {
+            scheduler.ScheduleRepair(item, segments[2]);
+            // A healthy health-check result clears the failure while holding the gate.
+            Assert.True(failureTracker.TryClearFailure(item.Id, failureTracker.GetSnapshot(item.Id).Revision));
+        }
+
+        await completed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await using var context = new DavDatabaseContext();
+        var reloaded = await context.Items.AsNoTracking().SingleAsync(x => x.Id == item.Id);
+        Assert.NotEqual(DateTimeOffset.UnixEpoch, reloaded.NextHealthCheck);
+    }
+
     private Par2RepairService NewService() =>
         new(_config, null!, new RepairPatchStore(Path.Join(_configRoot, "patches"), 1024 * 1024));
 
