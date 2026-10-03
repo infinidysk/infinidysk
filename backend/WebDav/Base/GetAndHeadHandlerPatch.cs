@@ -304,11 +304,14 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                         NzbWebDAV.WebDav.DatabaseStoreIdFile idFile => idFile.FriendlyName,
                         _ => !string.IsNullOrEmpty(entry.Name) ? entry.Name : System.IO.Path.GetFileName(path)
                     };
+                    var resolvedDavItem = httpContext.Items["DavItem"] as DavItem;
                     var sessionId = _activeReadRegistry.GetOrCreate(
                         path, clientKey, fileName, stream.CanSeek ? stream.Length : null,
-                        userAgent, clientIp);
+                        userAgent, clientIp,
+                        davItemId: (entry as DatabaseStoreIdFile)?.DavItemId ?? resolvedDavItem?.Id);
                     _activeReadRegistry.UpdateInfo(sessionId, fileName, stream.CanSeek ? stream.Length : null,
-                        (httpContext.Items["DavItem"] as NzbWebDAV.Database.Models.DavItem)?.Path);
+                        davItemId: (entry as DatabaseStoreIdFile)?.DavItemId ?? resolvedDavItem?.Id,
+                        resolvedPath: resolvedDavItem?.Path);
                     var traceRange = _streamTrace.RangeOpen(
                         sessionId, path, request.Method, copyStart, copyEnd,
                         stream.CanSeek ? stream.Length : null, userAgent, clientIp, fileName);

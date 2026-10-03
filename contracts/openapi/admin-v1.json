@@ -6811,6 +6811,133 @@
         ]
       }
     },
+    "/api/playback/native": {
+      "post": {
+        "operationId": "post-api-playback-native",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "durationMs": {
+                    "format": "int64",
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "event": {
+                    "description": "Report or End. Omit to use Report.",
+                    "type": "string"
+                  },
+                  "mediaType": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "playerSession": {
+                    "type": "string"
+                  },
+                  "positionMs": {
+                    "format": "int64",
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "state": {
+                    "description": "For Report events, must be Playing, Paused, or Buffering.",
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  }
+                },
+                "required": [
+                  "playerSession"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "Report or end an InfiniDysk-native playback session. playerSession is always required. event defaults to Report when omitted; Report events require a concrete state. End events only require playerSession/event.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad request."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unexpected server error. Detail is sanitized; use traceId."
+          }
+        },
+        "summary": "Native Playback",
+        "tags": [
+          "NativePlayback"
+        ]
+      }
+    },
     "/api/prowlarr-sync": {
       "get": {
         "operationId": "get-api-prowlarr-sync",
@@ -9666,6 +9793,108 @@
         ]
       }
     },
+    "/api/test-media-server-connection": {
+      "post": {
+        "operationId": "post-api-test-media-server-connection",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "baseUrl": {
+                    "type": "string"
+                  },
+                  "token": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "baseUrl",
+                  "token",
+                  "type"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "Submit the fields as multipart form data.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad request."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unexpected server error. Detail is sanitized; use traceId."
+          }
+        },
+        "summary": "Test Media Server Connection",
+        "tags": [
+          "TestMediaServerConnection"
+        ]
+      }
+    },
     "/api/test-prowlarr-connection": {
       "get": {
         "operationId": "get-api-test-prowlarr-connection",
@@ -11762,6 +11991,9 @@
       "name": "TestProwlarrConnection"
     },
     {
+      "name": "TestMediaServerConnection"
+    },
+    {
       "name": "TestIndexerConnection"
     },
     {
@@ -11820,6 +12052,9 @@
     },
     {
       "name": "ProwlarrSync"
+    },
+    {
+      "name": "NativePlayback"
     },
     {
       "name": "ListWebdavDirectory"

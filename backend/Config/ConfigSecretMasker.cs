@@ -22,6 +22,7 @@ public sealed class ConfigSecretMasker(string signingKey)
     {
         ["arr.instances"] = "ApiKey",
         ["indexers.instances"] = "ApiKey",
+        ["media-servers.instances"] = "Token",
         ["usenet.providers"] = "Pass"
     };
 

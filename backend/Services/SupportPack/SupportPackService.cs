@@ -113,7 +113,7 @@ public sealed class SupportPackService(
     {
         var generatedAt = DateTimeOffset.UtcNow;
         var config = configManager.GetDiagnosticSnapshot();
-        var redactor = new SupportPackRedactor(CollectSecrets(config));
+        var redactor = new SupportPackRedactor([], CollectSecrets(config));
         var logSnapshot = logBuffer.Snapshot(logBuffer.Capacity, null, null, null, null);
         var warningSink = warningLogBuffer.Sink;
         var warningSnapshot = warningSink.Snapshot(warningSink.Capacity, null, null, null, null);
@@ -1395,7 +1395,8 @@ public sealed class SupportPackService(
             }
 
             if (item.Key is not (ConfigKeys.UsenetProviders or ConfigKeys.ArrInstances
-                or ConfigKeys.IndexersInstances or ConfigKeys.ProfilesInstances))
+                or ConfigKeys.IndexersInstances or ConfigKeys.ProfilesInstances
+                or ConfigKeys.MediaServersInstances))
                 continue;
 
             List<string>? structuredSecrets = null;

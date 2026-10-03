@@ -6,6 +6,7 @@ import { isVideoFile } from "../file-kind/file-kind";
 import { MediaDiagnostics } from "./media-diagnostics";
 import { appendQueryParam, buildMediaSrc, formatClock } from "./media-utils";
 import { useMediaPlayer } from "./use-media-player";
+import { useNativePlaybackReporter } from "./use-native-playback-reporter";
 
 export type MediaPreviewProps = {
   fileName: string;
@@ -29,11 +30,18 @@ export function MediaPreview(props: MediaPreviewProps) {
   // so all range requests map to one backend read session.
   const [playerSession] = useState(() => generateUuid());
   const src = useMemo(() => buildMediaSrc(previewUrl, playerSession), [previewUrl, playerSession]);
-
-  const player = useMediaPlayer({ src });
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
-
   const kind = isVideoFile({ name: fileName, mimeType }) ? "video" : "audio";
+  const nativePlayback = useNativePlaybackReporter({
+    playerSession,
+    title: fileName,
+    mediaType: kind,
+  });
+  const player = useMediaPlayer({
+    src,
+    onPlaybackActivity: nativePlayback.report,
+    onPlaybackEnd: nativePlayback.end,
+  });
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const downloadUrl = appendQueryParam(previewUrl, "download", "true");
 
   // src is applied by the player hook's effect (see useMediaPlayer); a JSX
