@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 
 namespace NzbWebDAV.Streams;
@@ -34,21 +35,37 @@ internal static class PlaybackHoleTracker
         if (budget is null)
         {
             if (Files.TryGetValue(path!, out var existing))
-                lock (existing) existing.Budget = null;
+            {
+                lock (existing)
+                {
+                    existing.Budget = null;
+                    existing.MissingIndices.Clear();
+                    existing.BudgetExceeded = false;
+                    existing.BudgetException = null;
+                }
+            }
             return;
         }
 
         var state = Files.GetOrAdd(path!, _ => new FileState { LastEventUtc = now });
         lock (state)
         {
+            ResetIfStale(state, now);
             state.Budget = budget;
             state.MissingIndices.Clear();
+            string? firstMissingId = null;
             foreach (var id in state.MissingSegmentIds)
             {
                 if (Array.IndexOf(budget.SegmentIds, id) is >= 0 and var index)
+                {
                     state.MissingIndices.Add(index);
+                    firstMissingId ??= id;
+                }
             }
             state.BudgetExceeded = state.MissingIndices.Count > 0 && budget.IsExceeded(state.MissingIndices, out _);
+            state.BudgetException = state.BudgetExceeded
+                ? state.BudgetException ?? state.LastException ?? new UsenetArticleNotFoundException(firstMissingId!)
+                : null;
         }
 
         MaybeCleanup(now);
@@ -78,6 +95,7 @@ internal static class PlaybackHoleTracker
         var state = Files.GetOrAdd(path!, static _ => new FileState());
         lock (state)
         {
+            ResetIfStale(state, now);
             Prune(state, now);
             state.LastEventUtc = now;
             state.HoleTimes.Add(now);
@@ -92,6 +110,8 @@ internal static class PlaybackHoleTracker
                     && state.MissingIndices.Add(index))
                 {
                     state.BudgetExceeded = budget.IsExceeded(state.MissingIndices, out _);
+                    if (state.BudgetExceeded)
+                        state.BudgetException ??= exception;
                 }
             }
             state.LastException = exception;
@@ -123,9 +143,17 @@ internal static class PlaybackHoleTracker
         var now = Clock.GetUtcNow();
         lock (state)
         {
+            ResetIfStale(state, now);
             Prune(state, now);
+            // Cumulative budget failure outlives the healthy-segment reset that only ends a consecutive run.
+            if (state.BudgetExceeded)
+            {
+                exception = state.BudgetException;
+                return true;
+            }
+
             var limit = state.Budget?.ConsecutiveFillLimit ?? GapFillLimits.MaxConsecutiveZeroFills;
-            if (state.HoleTimes.Count < limit && !(state.BudgetExceeded && state.LastException is not null))
+            if (state.HoleTimes.Count < limit)
                 return false;
             exception = state.LastException;
             return true;
@@ -186,6 +214,19 @@ internal static class PlaybackHoleTracker
     private static bool IsStale(FileState state, DateTimeOffset now) =>
         now - state.LastEventUtc >= CleanupThreshold;
 
+    // Caller must hold the state lock. Expired observations must not keep failing a since-repaired file.
+    private static void ResetIfStale(FileState state, DateTimeOffset now)
+    {
+        if (!IsStale(state, now))
+            return;
+        state.HoleTimes.Clear();
+        state.MissingSegmentIds.Clear();
+        state.MissingIndices.Clear();
+        state.LastException = null;
+        state.BudgetExceeded = false;
+        state.BudgetException = null;
+    }
+
     private static void Prune(FileState state, DateTimeOffset now)
     {
         var cutoff = now - ConsecutiveWindow;
@@ -225,5 +266,6 @@ internal static class PlaybackHoleTracker
         public HashSet<int> MissingIndices { get; } = [];
         public PlaybackDamageBudget? Budget { get; set; }
         public bool BudgetExceeded { get; set; }
+        public Exception? BudgetException { get; set; }
     }
 }

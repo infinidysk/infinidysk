@@ -40,21 +40,19 @@ internal sealed class PlaybackDamageBudget
 
     public static PlaybackDamageBudget? TryCreate(string fileName, DavNzbFile nzbFile, ConfigManager config)
     {
-        if (!config.IsDegradedToleranceEnabled())
-            return null;
-        var containerClass = ResolveContainerClass(fileName, nzbFile);
-        if (containerClass is not (MediaContainerClass.ResyncTolerant or MediaContainerClass.Mp4FastStart))
-            return null;
-        if (nzbFile.SegmentByteRanges is not { } ranges || ranges.Length != nzbFile.SegmentIds.Length)
+        if (!IsEligible(fileName, nzbFile, config, out var containerClass, out var ranges))
             return null;
 
-        var persisted = nzbFile.MissingSegmentIndices?
+        // Match health classification: tracked corruption counts as damage alongside missing articles.
+        var recordedCorrupt = config.IsCorruptionTrackingEnabled() ? nzbFile.CorruptSegmentIndices : null;
+        var persisted = (nzbFile.MissingSegmentIndices ?? [])
+            .Concat(recordedCorrupt ?? [])
             .Where(index => (uint)index < (uint)nzbFile.SegmentIds.Length)
-            .ToArray() ?? [];
+            .ToArray();
         return new PlaybackDamageBudget(
             nzbFile.SegmentIds,
             ranges,
-            containerClass.Value,
+            containerClass,
             nzbFile.CriticalHeadEndExclusive ?? 0,
             new SegmentDamageCaps(
                 config.GetDegradedMaxConsecutiveMissing(),
@@ -65,8 +63,29 @@ internal sealed class PlaybackDamageBudget
 
     /// <summary>True when playback pads over damage in this file instead of escalating each hole.</summary>
     public static bool Applies(string fileName, DavNzbFile nzbFile, ConfigManager config) =>
-        config.IsDegradedToleranceEnabled()
-        && ResolveContainerClass(fileName, nzbFile) is MediaContainerClass.ResyncTolerant or MediaContainerClass.Mp4FastStart;
+        IsEligible(fileName, nzbFile, config, out _, out _);
+
+    private static bool IsEligible(
+        string fileName,
+        DavNzbFile nzbFile,
+        ConfigManager config,
+        out MediaContainerClass containerClass,
+        out LongRange[] ranges)
+    {
+        containerClass = default;
+        ranges = [];
+        if (!config.IsDegradedToleranceEnabled())
+            return false;
+        if (ResolveContainerClass(fileName, nzbFile) is not ({ } resolved
+                and (MediaContainerClass.ResyncTolerant or MediaContainerClass.Mp4FastStart)))
+            return false;
+        if (nzbFile.SegmentByteRanges is not { } segmentRanges || segmentRanges.Length != nzbFile.SegmentIds.Length)
+            return false;
+
+        containerClass = resolved;
+        ranges = segmentRanges;
+        return true;
+    }
 
     public bool IsExceeded(IEnumerable<int> playbackMissingIndices, out string reason)
     {
