@@ -578,6 +578,8 @@ public partial class Par2RepairService : BackgroundService
     {
         var reports = DrainPendingSegmentReports(evt.Path);
         reports.Add((evt.SegmentId, evt.IsCorruption));
+        // The arming report is both queued and carried by the event; count each hole once.
+        reports = reports.Distinct().ToList();
 
         await using var dbContext = CreateContext();
         var dbClient = new DavDatabaseClient(dbContext);
