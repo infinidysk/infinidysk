@@ -22,7 +22,8 @@ public class ExceptionMiddleware(
     RequestDelegate next,
     ConfigManager configManager,
     StreamingFailureTracker failureTracker,
-    IDbContextFactory<DavDatabaseContext>? dbContextFactory = null)
+    IDbContextFactory<DavDatabaseContext>? dbContextFactory = null,
+    StreamingRepairScheduler? repairScheduler = null)
 {
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentMissingArticles = new();
     private static readonly ConcurrentDictionary<string, (DateTime LastLogged, int SuppressedCount)> RecentInconclusiveMissingArticles = new();
@@ -36,7 +37,8 @@ public class ExceptionMiddleware(
     private static int _callCount;
     internal static readonly object CircuitAdmissionRejectedKey = new();
 
-    private readonly StreamingRepairScheduler _repairScheduler = new(configManager, failureTracker, dbContextFactory);
+    private readonly StreamingRepairScheduler _repairScheduler =
+        repairScheduler ?? new(configManager, failureTracker, dbContextFactory);
 
     internal Func<Guid, Task>? RepairScheduleCompletionHook
     {
