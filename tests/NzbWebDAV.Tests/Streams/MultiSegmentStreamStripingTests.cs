@@ -155,7 +155,7 @@ public sealed class MultiSegmentStreamStripingTests
         for (var index = 16; index < 24; index++)
         {
             client.ReleaseSegment(index);
-            await stream.ReadExactlyAsync(next).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            await stream.ReadExactlyAsync(next).AsTask().WaitAsync(Timeout);
             Assert.Equal(client.ExpectedConcatenation.AsSpan(index * SegmentSize, SegmentSize).ToArray(), next);
         }
 
@@ -194,7 +194,7 @@ public sealed class MultiSegmentStreamStripingTests
         for (var index = 16; index < 24; index++)
         {
             client.ReleaseSegment(index);
-            await stream.ReadExactlyAsync(next).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            await stream.ReadExactlyAsync(next).AsTask().WaitAsync(Timeout);
             Assert.Equal(client.ExpectedConcatenation.AsSpan(index * SegmentSize, SegmentSize).ToArray(), next);
         }
 
@@ -358,7 +358,9 @@ public sealed class MultiSegmentStreamStripingTests
             cancellationToken,
             fileName: "striping.bin",
             exactSegmentSizes: Enumerable.Repeat((long)SegmentSize, client.SegmentIds.Length).ToArray(),
-            inFlightArticleBudget: budget,
+            // A private budget: the process-wide one is shared with parallel test classes,
+            // and a failed group lease silently switches the stream to contiguous batches.
+            inFlightArticleBudget: budget ?? new InFlightArticleBudget(1024 * SegmentSize),
             bodyPipelineBatchWidth: 4);
 
     private static async Task<byte[]> ReadAllAsync(Stream stream)

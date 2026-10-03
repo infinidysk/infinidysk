@@ -242,6 +242,17 @@ public class DavMultipartFileStream : FastReadOnlyStream
             filePartIndex, rangeStart - filePartOffset, budget, ct));
     }
 
+    // One part's read-ahead window, so prefetch continues into the next volume instead of
+    // draining at every boundary (AltMount and AIOStreams keep one window across volumes).
+    private long GetReadAheadBytes(DavMultipartFile.FilePart part)
+    {
+        if (part.SegmentIds.Length == 0) return 0;
+        var windowSegments = MultiSegmentStream.CalculateTaskWindowSize(
+            _articleBufferSize, _usePipelinedBodyRequests, _streamingBodyBatchWidth);
+        return MultiSegmentStream.SaturatingMultiply(
+            windowSegments, part.SegmentIdByteRange.Count / part.SegmentIds.Length);
+    }
+
     // Resolve trailing volumes up to (and including) the one that contains
     // `byteOffset` so SeekFilePart can map the offset to an exact slot.
     // No-op for non-lazy archives.
@@ -277,7 +288,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
                 var partBudget = budget?.GetPartContribution(
                     part.FilePartByteRange.Count - extraOffset);
                 yield return Task.FromResult<System.IO.Stream>(
-                    OpenPart(part, extraOffset, i, partBudget, budget));
+                    OpenPart(part, extraOffset, i, partBudget));
                 i++;
                 continue;
             }
@@ -300,8 +311,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
         DavMultipartFile.FilePart part,
         long extraOffset,
         int partIndex,
-        long? readBudgetOverride = null,
-        FiniteMultipartBudget? finiteBudget = null)
+        long? readBudgetOverride = null)
     {
         if (part.SegmentIdByteRange.StartInclusive != 0 ||
             part.SegmentIdByteRange.Count < 0 ||
@@ -358,8 +368,10 @@ public class DavMultipartFileStream : FastReadOnlyStream
                 SeekOffsetWithinPart = extraOffset,
                 DeclaredVolumeLength = effectivePartLength,
                 IsEncrypted = _mpf.Metadata.AesParams is not null,
-            },
-            finiteBudget is null ? null : bytes => finiteBudget.Consume(bytes));
+            })
+        {
+            ReadAheadBytes = GetReadAheadBytes(part),
+        };
     }
 
     internal static long GetEffectivePartLength(DavMultipartFile.FilePart part) =>
@@ -389,10 +401,11 @@ public class DavMultipartFileStream : FastReadOnlyStream
             part,
             0,
             targetIndex,
-            budget?.GetPartContribution(part.FilePartByteRange.Count),
-            budget);
+            budget?.GetPartContribution(part.FilePartByteRange.Count));
     }
 
+    // Reserved when a part opens (it always delivers its full contribution), so a part
+    // opened ahead of the reader cannot overstate what is left of the range.
     private sealed class FiniteMultipartBudget(long remaining)
     {
         public bool IsSatisfied => remaining <= 0;
@@ -402,10 +415,10 @@ public class DavMultipartFileStream : FastReadOnlyStream
             if (availableBytes <= 0 || remaining <= 0)
                 return 0;
 
-            return Math.Min(remaining, availableBytes);
+            var contribution = Math.Min(remaining, availableBytes);
+            remaining -= contribution;
+            return contribution;
         }
-
-        public void Consume(long bytes) => remaining = Math.Max(0, remaining - bytes);
     }
 
     protected override void Dispose(bool disposing)

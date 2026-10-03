@@ -13,8 +13,11 @@ using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
 
-public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream
+public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssueProgress
 {
+    // Holds no article-budget leases.
+    bool ISegmentIssueProgress.AllSegmentsIssued => true;
+
     private const int MaxCorruptionRetries = 3;
     private const int MaxTransportRetries = 2;
 

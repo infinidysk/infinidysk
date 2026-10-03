@@ -17,9 +17,15 @@ public sealed class ContextualCancellationTokenSource : IDisposable
         _contexts = [];
     }
 
-    public static ContextualCancellationTokenSource CreateLinkedTokenSource(CancellationToken linkedToken)
+    public static ContextualCancellationTokenSource CreateLinkedTokenSource(CancellationToken linkedToken) =>
+        CopyContexts(CancellationTokenSource.CreateLinkedTokenSource(linkedToken), linkedToken);
+
+    // Carries the token's contexts without inheriting its cancellation.
+    public static ContextualCancellationTokenSource CreateWithContextsOf(CancellationToken contextToken) =>
+        CopyContexts(new CancellationTokenSource(), contextToken);
+
+    private static ContextualCancellationTokenSource CopyContexts(CancellationTokenSource cts, CancellationToken linkedToken)
     {
-        var cts = CancellationTokenSource.CreateLinkedTokenSource(linkedToken);
         var contextualCts = new ContextualCancellationTokenSource(cts);
         contextualCts.SetContext(linkedToken.GetContext<DownloadPriorityContext>());
         contextualCts.SetContext(linkedToken.GetContext<StreamingSchedulingContext>());

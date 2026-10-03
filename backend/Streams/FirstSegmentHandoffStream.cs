@@ -18,7 +18,7 @@ internal enum RemainderStartPolicy
 /// or after the head is disposed at EOF (legacy lazy / empty head), and is never
 /// awaited before that first read returns.
 /// </summary>
-internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream
+internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream, ISegmentIssueProgress
 {
     private Stream? _head;
     private readonly Func<CancellationToken, Stream>? _remainderFactory;
@@ -76,6 +76,11 @@ internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream
     }
 
     internal bool RemainderScheduledForTests => Volatile.Read(ref _remainderStarted) != 0;
+
+    bool ISegmentIssueProgress.AllSegmentsIssued =>
+        _remainderFactory is null
+        || (_remainderTask is { IsCompletedSuccessfully: true } remainder
+            && remainder.Result is ISegmentIssueProgress { AllSegmentsIssued: true });
 
     private void StartRemainderOnce()
     {

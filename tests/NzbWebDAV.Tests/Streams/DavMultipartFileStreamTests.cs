@@ -194,11 +194,127 @@ public class DavMultipartFileStreamTests
             Assert.Equal(5, await stream.ReadAsync(buffer, requestCts.Token));
             Assert.Equal([0, 1, 2, 3, 4], buffer);
             Assert.Equal(0, await stream.ReadAsync(new byte[1], requestCts.Token));
+            await stream.DisposeAsync();
+            Assert.False(client.BodyRequestCounts.ContainsKey("two"));
         }
         finally
         {
             NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(previousBudget);
         }
+    }
+
+    [Fact]
+    public async Task ReadAsync_StartsNextVolumeBodyRequestBeforeCurrentVolumeEof()
+    {
+        var nextBodyRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var client = new FakeNntpClient(
+            new Dictionary<string, byte[]>
+            {
+                ["one"] = [0, 1, 2, 3, 4, 5, 6, 7],
+                ["two"] = [8, 9, 10, 11, 12, 13, 14, 15],
+            },
+            useCachedYencStreams: true,
+            decodedStreamFactory: (id, bytes) =>
+            {
+                if (id == "two") nextBodyRequested.TrySetResult();
+                return new MemoryStream(bytes, writable: false);
+            });
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta
+            {
+                FileParts =
+                [
+                    new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = ["one"],
+                        SegmentIdByteRange = new LongRange(0, 8),
+                        FilePartByteRange = new LongRange(0, 8),
+                    },
+                    new DavMultipartFile.FilePart
+                    {
+                        SegmentIds = ["two"],
+                        SegmentIdByteRange = new LongRange(0, 8),
+                        FilePartByteRange = new LongRange(0, 8),
+                    },
+                ],
+            },
+        };
+        await using var stream = new DavMultipartFileStream(
+            multipart, client, articleBufferSize: 4, resolver: null,
+            usePipelinedBodyRequests: false, fileName: "movie.mkv");
+
+        Assert.Equal(2, await stream.ReadAsync(new byte[2]));
+        await nextBodyRequested.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(2, stream.Position);
+
+        using var rest = new MemoryStream();
+        await stream.CopyToAsync(rest);
+        Assert.Equal(Enumerable.Range(2, 14).Select(x => (byte)x).ToArray(), rest.ToArray());
+    }
+
+    [Theory]
+    [InlineData(0, true)]
+    // Unindexed volume with an archive header: the inner stream opens via fast seek.
+    [InlineData(3, false)]
+    public async Task ReadAsync_NextVolumePrefetchUnderTightBudgetCompletesAndReleasesLeases(
+        int headerBytes, bool indexed)
+    {
+        const int segmentsPerPart = 4;
+        const int segmentSize = 8;
+        const int volumeSize = segmentsPerPart * segmentSize;
+        var segments = new Dictionary<string, byte[]>();
+        var segmentRanges = new Dictionary<string, LongRange>();
+        DavMultipartFile.FilePart Part(string name, int partIndex)
+        {
+            var ids = Enumerable.Range(0, segmentsPerPart).Select(i => $"{name}-{i}").ToArray();
+            for (var i = 0; i < segmentsPerPart; i++)
+            {
+                var first = partIndex * volumeSize + i * segmentSize;
+                segments[ids[i]] = Enumerable.Range(first, segmentSize).Select(x => (byte)x).ToArray();
+                segmentRanges[ids[i]] = LongRange.FromStartAndSize(i * segmentSize, segmentSize);
+            }
+            return new DavMultipartFile.FilePart
+            {
+                SegmentIds = ids,
+                SegmentIdByteRange = new LongRange(0, volumeSize),
+                FilePartByteRange = new LongRange(headerBytes, volumeSize),
+                SegmentByteRanges = indexed
+                    ? ids.Select(id => segmentRanges[id]).ToArray()
+                    : null,
+                SegmentByteRangesTrusted = indexed,
+            };
+        }
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta { FileParts = [Part("one", 0), Part("two", 1)] },
+        };
+        using var client = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: segmentRanges);
+        // One segment of credit: any lease held by the next volume would starve the current tail.
+        var budget = new InFlightArticleBudget(segmentSize);
+        var stream = new DavMultipartFileStream(
+            multipart, client, articleBufferSize: 4, resolver: null,
+            usePipelinedBodyRequests: false, fileName: "movie.mkv", inFlightArticleBudget: budget);
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var all = new MemoryStream();
+        var buffer = new byte[2];
+        int read;
+        while ((read = await stream.ReadAsync(buffer, timeout.Token)) > 0)
+            all.Write(buffer, 0, read);
+        await stream.DisposeAsync();
+
+        Assert.Equal(
+            Enumerable.Range(0, 2 * volumeSize)
+                .Where(x => x % volumeSize >= headerBytes)
+                .Select(x => (byte)x).ToArray(),
+            all.ToArray());
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (budget.LeasedBytes != 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.Equal(0, budget.LeasedBytes);
     }
 
     [Fact]

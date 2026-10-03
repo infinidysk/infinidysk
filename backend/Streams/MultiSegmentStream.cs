@@ -17,7 +17,7 @@ using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
 
-public class MultiSegmentStream : FastReadOnlyNonSeekableStream
+public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssueProgress
 {
     private const int BodyPipelineBatchSize = 4;
     private const int MinInitialPrefetchSegments = 8;
@@ -109,6 +109,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream
     /// request count without racing the prefetch top-up.
     /// </summary>
     internal Task DownloadTaskForTests => _downloadTask;
+
+    // The producer exits only after leasing every segment it will enqueue.
+    bool ISegmentIssueProgress.AllSegmentsIssued => _downloadTask.IsCompleted;
 
     public static Stream Create(
         Memory<string> segmentIds,

@@ -32,8 +32,14 @@ public sealed class PaddedLengthStream(
     string partId,
     string? fileName = null,
     MultipartPartContext? context = null,
-    Action<int>? onBytesRead = null) : FastReadOnlyNonSeekableStream
+    Action<int>? onBytesRead = null) : FastReadOnlyNonSeekableStream, ISegmentIssueProgress
 {
+    bool ISegmentIssueProgress.AllSegmentsIssued =>
+        stream is ISegmentIssueProgress { AllSegmentsIssued: true };
+
+    // When positive, overrides the combined stream's read-ahead window for this part.
+    internal long ReadAheadBytes { get; init; }
+
     private readonly string _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
     private long _position;
     private bool _underlyingEnded;
