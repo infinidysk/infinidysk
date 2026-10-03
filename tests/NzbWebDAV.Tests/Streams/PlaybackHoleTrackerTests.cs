@@ -152,6 +152,27 @@ public sealed class PlaybackHoleTrackerTests : IDisposable
     }
 
     [Fact]
+    public void RepeatedReopens_DoNotExtendTheFailureWindow()
+    {
+        var path = $"/view/retry-{Guid.NewGuid():N}.mkv";
+        var clock = new ManualTimeProvider();
+        PlaybackHoleTracker.Clock = clock;
+        var nzb = BudgetFile(segments: 1000);
+        var budget = PlaybackDamageBudget.TryCreate(path, nzb, TotalCapConfig(1));
+        PlaybackHoleTracker.SetDamageBudget(path, budget);
+        RecordIsolatedHole(path, nzb.SegmentIds[100]);
+        RecordIsolatedHole(path, nzb.SegmentIds[200]);
+
+        for (var minute = 0; minute < 6; minute++)
+        {
+            clock.Advance(TimeSpan.FromMinutes(1));
+            PlaybackHoleTracker.SetDamageBudget(path, budget);
+        }
+
+        Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
+    }
+
+    [Fact]
     public void StaleBudget_SurvivesLookupsWithoutReinstall()
     {
         var path = $"/view/idle-{Guid.NewGuid():N}.mkv";

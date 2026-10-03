@@ -51,7 +51,6 @@ internal static class PlaybackHoleTracker
         lock (state)
         {
             ResetIfStale(state, now);
-            state.LastEventUtc = now;
             state.Budget = budget;
             state.MissingIndices.Clear();
             string? firstMissingId = null;
