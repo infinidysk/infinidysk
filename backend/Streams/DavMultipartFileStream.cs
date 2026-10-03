@@ -235,20 +235,17 @@ public class DavMultipartFileStream : FastReadOnlyStream
             : rangeStart + Math.Min(finiteBudget!.Value, _length - rangeStart);
 
         if (rangeStart == 0)
-            return new CombinedStream(EnumerateFromPart(0, 0, budget, ct), GetReadAheadBytes(meta, 0));
+            return new CombinedStream(EnumerateFromPart(0, 0, budget, ct));
 
         var (filePartIndex, filePartOffset) = SeekFilePart(meta, rangeStart);
         return new CombinedStream(EnumerateFromPart(
-            filePartIndex, rangeStart - filePartOffset, budget, ct), GetReadAheadBytes(meta, filePartIndex));
+            filePartIndex, rangeStart - filePartOffset, budget, ct));
     }
 
     // One part's read-ahead window, so prefetch continues into the next volume instead of
     // draining at every boundary (AltMount and AIOStreams keep one window across volumes).
-    private long GetReadAheadBytes(DavMultipartFile.Meta meta, int partIndex)
+    private long GetReadAheadBytes(DavMultipartFile.FilePart part)
     {
-        var fileParts = meta.FileParts ?? [];
-        if (partIndex >= fileParts.Length) return 0;
-        var part = fileParts[partIndex];
         if (part.SegmentIds.Length == 0) return 0;
         var windowSegments = MultiSegmentStream.CalculateTaskWindowSize(
             _articleBufferSize, _usePipelinedBodyRequests, _streamingBodyBatchWidth);
@@ -371,7 +368,10 @@ public class DavMultipartFileStream : FastReadOnlyStream
                 SeekOffsetWithinPart = extraOffset,
                 DeclaredVolumeLength = effectivePartLength,
                 IsEncrypted = _mpf.Metadata.AesParams is not null,
-            });
+            })
+        {
+            ReadAheadBytes = GetReadAheadBytes(part),
+        };
     }
 
     internal static long GetEffectivePartLength(DavMultipartFile.FilePart part) =>

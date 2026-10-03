@@ -37,6 +37,9 @@ public sealed class PaddedLengthStream(
     bool ISegmentIssueProgress.AllSegmentsIssued =>
         stream is ISegmentIssueProgress { AllSegmentsIssued: true };
 
+    // When positive, overrides the combined stream's read-ahead window for this part.
+    internal long ReadAheadBytes { get; init; }
+
     private readonly string _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
     private long _position;
     private bool _underlyingEnded;

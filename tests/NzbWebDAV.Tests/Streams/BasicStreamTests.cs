@@ -261,6 +261,29 @@ public class BasicStreamTests
     }
 
     [Fact]
+    public async Task CombinedStream_PrefetchSurvivesCancellationOfTriggeringRead()
+    {
+        var opening = new TaskCompletionSource<Stream>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var streams = new[]
+        {
+            Task.FromResult<Stream>(
+                new PaddedLengthStream(new IssuedStream(Encoding.ASCII.GetBytes("abcdefgh")), 8, "part-0")),
+            opening.Task,
+        };
+        await using var stream = new CombinedStream(streams, readAheadBytes: 8);
+        using (var trigger = new CancellationTokenSource())
+        {
+            Assert.Equal(2, await stream.ReadAsync(new byte[2], trigger.Token));
+            await trigger.CancelAsync();
+        }
+
+        opening.SetResult(Frozen(Encoding.ASCII.GetBytes("ij")));
+        using var destination = new MemoryStream();
+        await stream.CopyToAsync(destination);
+        Assert.Equal("cdefghij", Encoding.ASCII.GetString(destination.ToArray()));
+    }
+
+    [Fact]
     public async Task CombinedStream_DisposeDoesNotWaitForPendingLazyOpen()
     {
         var opening = new TaskCompletionSource<Stream>(TaskCreationOptions.RunContinuationsAsynchronously);

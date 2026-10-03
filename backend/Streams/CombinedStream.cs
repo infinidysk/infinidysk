@@ -55,15 +55,16 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
             _position += readCount;
             if (readCount > 0)
             {
-                if (readAheadBytes > 0
-                    && _nextPart is null
+                if (_nextPart is null
                     && _currentStream is PaddedLengthStream part
-                    && part.Length - part.Position <= readAheadBytes
+                    && (part.ReadAheadBytes > 0 ? part.ReadAheadBytes : readAheadBytes) is > 0 and var window
+                    && part.Length - part.Position <= window
                     // Next-part leases must never take credits the current tail still needs.
                         // Unknown inner wrappers report false, declining prefetch.
                     && ((ISegmentIssueProgress)part).AllSegmentsIssued)
                 {
-                    _prefetchCts ??= ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    // Owned by the stream, not the triggering read: only disposal cancels prefetch.
+                    _prefetchCts ??= ContextualCancellationTokenSource.CreateWithContextsOf(cancellationToken);
                     _nextPart = PrepareNextAsync(_prefetchCts.Token);
                 }
 
@@ -138,7 +139,7 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
         {
             await (await opening.ConfigureAwait(false)).DisposeAsync().ConfigureAwait(false);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Serilog.Log.Debug(e, "Abandoned next part failed to open or dispose after the combined stream closed");
         }
@@ -201,7 +202,7 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
                 await next.Stream.DisposeAsync().ConfigureAwait(false);
             }
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Serilog.Log.Debug(e, "Prefetched part failed to open or dispose after the combined stream closed");
         }
