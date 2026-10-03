@@ -61,13 +61,12 @@ internal static class PlaybackHoleTracker
                 state.Budget = budget;
                 state.MissingIndices.Clear();
                 string? firstMissingId = null;
-                foreach (var id in state.MissingSegmentIds)
+                foreach (var (id, index) in state.MissingSegmentIds
+                             .Select(id => (id, Array.IndexOf(budget.SegmentIds, id)))
+                             .Where(entry => entry.Item2 >= 0))
                 {
-                    if (Array.IndexOf(budget.SegmentIds, id) is >= 0 and var index)
-                    {
-                        state.MissingIndices.Add(index);
-                        firstMissingId ??= id;
-                    }
+                    state.MissingIndices.Add(index);
+                    firstMissingId ??= id;
                 }
                 state.BudgetExceeded = state.MissingIndices.Count > 0 && budget.IsExceeded(state.MissingIndices, out _);
                 state.BudgetException = state.BudgetExceeded

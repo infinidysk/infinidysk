@@ -2518,6 +2518,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
         result.Stream.Dispose();
         _cts.Cancel();
+        if (PlaybackHoleTracker.ShouldFailFast(_fileName, out var retained) && retained is not null)
+            ExceptionDispatchInfo.Capture(retained).Throw();
         ExceptionDispatchInfo.Capture(result.Failure!).Throw();
         throw new InvalidOperationException("Unreachable after rethrowing a gap-fill failure.");
     }
