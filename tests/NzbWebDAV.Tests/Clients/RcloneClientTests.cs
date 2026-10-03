@@ -3,9 +3,11 @@ using System.Text;
 using NzbWebDAV.Clients.Rclone;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Tests.TestUtils;
 
 namespace NzbWebDAV.Tests.Clients;
 
+[Collection(nameof(RcloneClientCollection))]
 public class RcloneClientTests : IDisposable
 {
     public RcloneClientTests()
@@ -31,6 +33,18 @@ public class RcloneClientTests : IDisposable
 
         Assert.True(result.Success);
         Assert.Null(RcloneClient.Current.LastForgetError);
+    }
+
+    [Fact]
+    public async Task ForgetVfsPaths_StillAcceptsTheTokenPositionally()
+    {
+        // The single-VFS call took (paths, cancellationToken) before fs existed.
+        RcloneClient.TestHandler = CreateHandler(("POST /vfs/forget", SuccessResponse()));
+        using var cancellation = new CancellationTokenSource();
+
+        var result = await RcloneClient.Current!.ForgetVfsPaths(["/content/test"], cancellation.Token);
+
+        Assert.True(result.Success);
     }
 
     [Fact]

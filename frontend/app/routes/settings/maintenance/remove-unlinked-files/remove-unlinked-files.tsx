@@ -177,7 +177,7 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
           <p className="mt-3 border-t border-base-content/10 pt-2.5 text-xs text-base-content/50">
             Dry Run previews the files that would be removed without changing anything. Library
             Directory must be the parent of your Radarr/Sonarr root folders containing imported
-            links, not the rclone mount or a folder containing regular media files instead of links.
+            links, not an rclone mount or a folder containing regular media files instead of links.
           </p>
         </div>
 

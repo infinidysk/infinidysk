@@ -1,19 +1,116 @@
 # Mounting WebDAV
 
-Symlink imports need the InfiniDysk WebDAV tree on the host filesystem. Use rclone (sidecar or host mount).
+Symlink imports need the InfiniDysk WebDAV tree on the host filesystem. Either let
+InfiniDysk run rclone itself, or run rclone yourself as a sidecar or on the host.
+
+- **[Built-in mount](#built-in-mount)** [since 1.4.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.0){ .nzbdav-since } — one container, settings in the admin UI.
+- **[Sidecar](#sidecar-rclone)** — your own rclone container, tuned by you.
+- **[Moving from a sidecar](#moving-from-a-sidecar-to-the-built-in-mount)** — import an existing setup.
+
+## Built-in mount
+
+Enable it under **Settings → Rclone**. InfiniDysk starts its own rclone daemon and
+mounts through it, so there is no second container and no `rclone.conf` to write.
+
+The container needs FUSE access and shared bind propagation:
+
+```yaml
+  nzbdav:
+    image: ghcr.io/infinidysk/infinidysk:latest
+    container_name: nzbdav
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    devices:
+      - /dev/fuse:/dev/fuse:rwm
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    volumes:
+      - ./config:/config
+      - /mnt:/mnt:rshared
+```
+
+!!! important "`rshared` decides whether anything else can see the mount"
+
+    A mount made inside a container does not appear in other containers unless the
+    parent bind is `rshared`. Without it Plex, Sonarr, and Radarr see an empty
+    folder while InfiniDysk reports the mount as healthy — because from inside the
+    container, it is.
+
+Then add a mount in **Settings → Rclone**, set the folder on the host, and choose
+**Apply now**. If the container is missing a FUSE flag, the page says which one
+instead of failing quietly.
+
+## Moving from a sidecar to the built-in mount
+
+The mount path must not change. Your library's symlinks resolve through it, and
+`rclone.mount-dir` is derived from it, so a different path breaks every imported
+file. The import keeps the path for you; do not edit it during the move.
+
+1. **Preview.** In **Settings → Rclone**, turn on *Run rclone inside InfiniDysk*,
+   then choose **Read my rclone server**. InfiniDysk reads the mounts and the VFS
+   settings your rclone is actually running with. Nothing is written yet, and the
+   sidecar is not modified.
+
+    If your sidecar has no `--rc` flags, expand *My rclone has no remote control
+    enabled* and paste the `rclone mount ...` command instead. Flags InfiniDysk
+    does not manage are listed back to you as not carried across. A command where
+    an unrecognised flag's value cannot be told apart from the mount point is
+    rejected rather than guessed at — rewrite those flags as `--flag=value`.
+
+2. **Review.** Check the folder path, cache mode, and any warnings. Do not save
+   yet.
+
+3. **Stop the sidecar.** Two rclone instances cannot serve the same mount point,
+   and saving in the next step makes InfiniDysk mount straight away.
+
+    ```bash
+    docker compose stop nzbdav_rclone
+    ```
+
+4. **Save.** Choose **Use these settings**, then save. InfiniDysk applies the
+   mount list as soon as it is saved.
+
+5. **Enter the WebDAV password.** The import does not copy it. Under *Connect to
+   your library*, enter the password from **Settings → WebDAV** once. It is
+   stored only in rclone's own config, obscured.
+
+6. **Confirm.** The mount should report *Mounted*. **Apply now** re-runs the
+   reconcile if it does not.
+
+7. **Verify** before deleting anything:
+
+    ```bash
+    ls -la /mnt/remote/nzbdav
+    # Expect: .ids, completed-symlinks, content, nzbs
+    ```
+
+    Check that a few existing items still play in your media server, since those
+    are the files whose symlinks point through this path.
+
+8. **Clean up.** Once verified, remove the `nzbdav_rclone` service from your
+   compose file.
+
+**To roll back at any point:** turn off *Run rclone inside InfiniDysk*, then start
+the sidecar again. The import never modified it, and your external Rclone Server
+settings were never overwritten.
+
+## Sidecar rclone
 
 The guided [Setup Guide](../getting-started/setup-guide.md) shows these sidecar
 flags, configures RC notifications, tests the connection, and disables InfiniDysk
 Segment Cache for Symlink/Plex libraries.
 
-## Prepare the mount point
+### Prepare the mount point
 
 ```bash
 sudo mkdir -p /mnt/remote/nzbdav
 sudo chown -R $(id -u):$(id -g) /mnt/remote/nzbdav
 ```
 
-## Rclone config
+### Rclone config
 
 Obscure the WebDAV password:
 
@@ -50,7 +147,7 @@ chmod 600 rclone.conf
 
     Rclone's obscured password is not strong encryption — protect the file.
 
-### Frontend proxy warning [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
+#### Frontend proxy warning [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
 
 If the frontend detects an rclone client on port `3000`, it emits an operator warning
 at most once every 30 minutes and shows a non-dismissible warning in the admin UI.
@@ -58,7 +155,7 @@ Continued proxied traffic keeps the warning active. After rclone is moved to por
 the warning clears once the 30-minute observation window expires. An open admin tab
 refreshes this status once per minute.
 
-## Sidecar Compose service
+### Sidecar Compose service
 
 ```yaml
   nzbdav_rclone:
@@ -103,7 +200,7 @@ ls -la /mnt/remote/nzbdav
 # Expect: .ids, completed-symlinks, content, nzbs
 ```
 
-## Flag cheat sheet
+### Flag cheat sheet
 
 | Flag | Why |
 |------|-----|
@@ -114,7 +211,7 @@ ls -la /mnt/remote/nzbdav
 | `--vfs-read-ahead=512M` | Buffer ahead for high-bitrate spikes |
 | `--dir-cache-time=20s` | Fresh listings without RC; raise if using RC notifications |
 
-## Optional RC notifications
+### Optional RC notifications
 
 Append to the mount command:
 
