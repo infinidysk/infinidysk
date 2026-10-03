@@ -591,12 +591,27 @@ public partial class Par2RepairService : BackgroundService
 
         if (davItem.SubType is DavItem.ItemSubType.RarFile or DavItem.ItemSubType.MultipartFile)
         {
+            // Reports raised against a since-replaced item must not trigger repair of its replacement.
+            var currentIds = new HashSet<string>(StringComparer.Ordinal);
+            if (davItem.SubType == DavItem.ItemSubType.RarFile)
+            {
+                if (await dbClient.GetDavRarFileAsync(davItem, ct).ConfigureAwait(false) is { } rar)
+                    foreach (var part in rar.RarParts)
+                        currentIds.UnionWith(part.SegmentIds);
+            }
+            else if (await dbClient.GetDavMultipartFileAsync(davItem, ct).ConfigureAwait(false) is { } multipart)
+            {
+                foreach (var part in multipart.Metadata.FileParts)
+                    currentIds.UnionWith(part.SegmentIds);
+            }
+            var archiveReports = reports.Where(report => currentIds.Contains(report.Item1)).ToArray();
+
             // Archive members never get a damage budget, so every padded hole is a repair trigger.
-            foreach (var (segmentId, _) in reports)
+            foreach (var (segmentId, _) in archiveReports)
                 _repairScheduler?.ScheduleRepair(davItem, segmentId);
 
             if (!_configManager.IsPar2RepairEnabled()) return;
-            var multipartIds = reports.Where(report => !report.Item2 || _configManager.IsCorruptionTrackingEnabled())
+            var multipartIds = archiveReports.Where(report => !report.Item2 || _configManager.IsCorruptionTrackingEnabled())
                 .Select(report => report.Item1).Where(id => !string.IsNullOrWhiteSpace(id))
                 .Distinct(StringComparer.Ordinal).ToArray();
             if (multipartIds.Length > 0)
