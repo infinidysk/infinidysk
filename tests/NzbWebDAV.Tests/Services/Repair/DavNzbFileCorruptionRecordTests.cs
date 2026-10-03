@@ -161,7 +161,7 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
 
         service.ReportZeroFill(item.Path, segments[2]);
         service.ReportZeroFill(item.Path, segments[0]);
-        await service.ProcessZeroFillEventForTestsAsync(item.Path, segments[2], CancellationToken.None);
+        await service.ProcessPendingReportsForTestsAsync(item.Path, CancellationToken.None);
 
         var blob = await ReadCurrentBlobAsync(item.Id);
         Assert.Equal([0, 1, 2], blob.MissingSegmentIndices!);
@@ -180,7 +180,7 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
 
         service.ReportCorruption(item.Path, segments[0]);
         service.ReportCorruption(item.Path, segments[2]);
-        await service.ProcessCorruptionEventForTestsAsync(item.Path, segments[0], CancellationToken.None);
+        await service.ProcessPendingReportsForTestsAsync(item.Path, CancellationToken.None);
 
         var blob = await ReadCurrentBlobAsync(item.Id);
         Assert.Equal([0, 2], blob.CorruptSegmentIndices!);
@@ -267,12 +267,14 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData("false", true, 1)]
-    [InlineData("true", true, 0)]
+    [InlineData("false", true, 1, 1)]
+    [InlineData("true", true, 1, 0)]
     // Legacy files without segment ranges get no playback budget, so tolerance cannot absorb the hole.
-    [InlineData("true", false, 1)]
+    [InlineData("true", false, 1, 1)]
+    // Separate playback reports of one article count separately even when processed in one batch.
+    [InlineData("false", true, 2, 2)]
     public async Task ZeroFill_CountsTowardRepairOnlyWithoutDamageBudget(
-        string tolerance, bool segmentRanges, int expectedFailures)
+        string tolerance, bool segmentRanges, int reports, int expectedFailures)
     {
         var segments = NewSegmentIds(4);
         var (item, _) = await AddFileAsync(segments, segmentRanges: segmentRanges);
@@ -294,12 +296,12 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
         var service = new Par2RepairService(
             _config,
             null!,
-            new RepairPatchStore(Path.Join(_configRoot, $"patches-escalate-{tolerance}-{segmentRanges}"), 1024 * 1024),
+            new RepairPatchStore(Path.Join(_configRoot, $"patches-escalate-{tolerance}-{segmentRanges}-{reports}"), 1024 * 1024),
             repairScheduler: scheduler);
 
-        // Real playback queues the id and arms an event carrying the same id.
-        service.ReportZeroFill(item.Path, segments[2]);
-        await service.ProcessZeroFillEventForTestsAsync(item.Path, segments[2], CancellationToken.None);
+        for (var i = 0; i < reports; i++)
+            service.ReportZeroFill(item.Path, segments[2]);
+        await service.ProcessPendingReportsForTestsAsync(item.Path, CancellationToken.None);
 
         Assert.Equal(expectedFailures, failureTracker.GetFailureCount(item.Id));
         var blob = await ReadCurrentBlobAsync(item.Id);
@@ -345,7 +347,7 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
             repairScheduler: scheduler);
 
         service.ReportCorruption(item.Path, segments[2]);
-        await service.ProcessCorruptionEventForTestsAsync(item.Path, segments[2], CancellationToken.None);
+        await service.ProcessPendingReportsForTestsAsync(item.Path, CancellationToken.None);
 
         Assert.Equal(expectedFailures, failureTracker.GetFailureCount(item.Id));
         if (expectedFailures > 0)
@@ -355,6 +357,34 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
             var reloaded = await context.Items.AsNoTracking().SingleAsync(x => x.Id == item.Id);
             Assert.Equal(DateTimeOffset.UnixEpoch, reloaded.NextHealthCheck);
         }
+    }
+
+    [Fact]
+    public async Task QualifiedReschedule_DoesNotRecordAnotherFailure()
+    {
+        var segments = NewSegmentIds(4);
+        var (item, _) = await AddFileAsync(segments);
+        _config.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairAutoRemoveAfterFailures, ConfigValue = "2" },
+        ]);
+        var failureTracker = new StreamingFailureTracker();
+        var scheduled = false;
+        var scheduler = new StreamingRepairScheduler(_config, failureTracker)
+        {
+            CompletionHook = _ =>
+            {
+                scheduled = true;
+                return Task.CompletedTask;
+            },
+        };
+
+        scheduler.ScheduleRepair(item, segments[2]);
+        // A failed background PAR2 attempt reschedules on the same evidence instead of adding to it.
+        scheduler.ScheduleRepairIfQualified(item);
+
+        Assert.Equal(1, failureTracker.GetFailureCount(item.Id));
+        Assert.False(scheduled);
     }
 
     private Par2RepairService NewService() =>

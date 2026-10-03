@@ -185,7 +185,7 @@ public partial class Par2RepairService : BackgroundService
         ids.Enqueue((segmentId, isCorruption));
         if (!_pendingZeroFillPaths.TryAdd(path, 0))
             return;
-        if (_zeroFillQueue.Writer.TryWrite(new ZeroFillEvent(path, segmentId, isCorruption)))
+        if (_zeroFillQueue.Writer.TryWrite(new ZeroFillEvent(path)))
             return;
 
         _pendingZeroFillPaths.TryRemove(path, out _);
@@ -577,9 +577,6 @@ public partial class Par2RepairService : BackgroundService
     private async Task ProcessZeroFillEventAsync(ZeroFillEvent evt, CancellationToken ct)
     {
         var reports = DrainPendingSegmentReports(evt.Path);
-        reports.Add((evt.SegmentId, evt.IsCorruption));
-        // The arming report is both queued and carried by the event; count each hole once.
-        reports = reports.Distinct().ToList();
 
         await using var dbContext = CreateContext();
         var dbClient = new DavDatabaseClient(dbContext);
@@ -689,10 +686,21 @@ public partial class Par2RepairService : BackgroundService
     }
 
     internal Task ProcessCorruptionEventForTestsAsync(string path, string segmentId, CancellationToken ct) =>
-        ProcessZeroFillEventAsync(new ZeroFillEvent(path, segmentId, IsCorruption: true), ct);
+        ProcessReportForTestsAsync(path, segmentId, isCorruption: true, ct);
 
     internal Task ProcessZeroFillEventForTestsAsync(string path, string segmentId, CancellationToken ct) =>
-        ProcessZeroFillEventAsync(new ZeroFillEvent(path, segmentId), ct);
+        ProcessReportForTestsAsync(path, segmentId, isCorruption: false, ct);
+
+    private Task ProcessReportForTestsAsync(string path, string segmentId, bool isCorruption, CancellationToken ct)
+    {
+        _pendingSegmentIds
+            .GetOrAdd(path, static _ => new ConcurrentQueue<(string Id, bool IsCorruption)>())
+            .Enqueue((segmentId, isCorruption));
+        return ProcessZeroFillEventAsync(new ZeroFillEvent(path), ct);
+    }
+
+    internal Task ProcessPendingReportsForTestsAsync(string path, CancellationToken ct) =>
+        ProcessZeroFillEventAsync(new ZeroFillEvent(path), ct);
 
     private async Task ProcessQueueItemAsync(RepairWorkItem item, CancellationToken ct)
     {
@@ -714,7 +722,7 @@ public partial class Par2RepairService : BackgroundService
 
         // Inline health-check callers decide replacement themselves; background failures need escalation.
         if (item.Flight.DamageUnrepairable && !_configManager.IsDegradedToleranceEnabled())
-            _repairScheduler?.ScheduleRepair(davItem);
+            _repairScheduler?.ScheduleRepairIfQualified(davItem);
     }
 
     private async Task<Par2RepairOutcome> RunFlightAsync(
@@ -1656,18 +1664,7 @@ public partial class Par2RepairService : BackgroundService
         if (!_pendingZeroFillPaths.TryAdd(path, 0))
             return;
 
-        // Dequeue the head rather than peeking it: ProcessZeroFillEventAsync drains
-        // the queue and then appends the event payload, so a peeked head would be
-        // reported twice.
-        var segmentId = "";
-        var isCorruption = false;
-        if (queue.TryDequeue(out var head))
-        {
-            segmentId = head.Id;
-            isCorruption = head.IsCorruption;
-        }
-
-        if (_zeroFillQueue.Writer.TryWrite(new ZeroFillEvent(path, segmentId, isCorruption)))
+        if (_zeroFillQueue.Writer.TryWrite(new ZeroFillEvent(path)))
             return;
 
         _pendingZeroFillPaths.TryRemove(path, out _);
@@ -1686,7 +1683,7 @@ public partial class Par2RepairService : BackgroundService
         string[] MissingSegmentIds,
         RepairFlight Flight);
 
-    private sealed record ZeroFillEvent(string Path, string SegmentId, bool IsCorruption = false);
+    private sealed record ZeroFillEvent(string Path);
 
     private sealed record MissingSegment(string SegmentId, int Index);
 
