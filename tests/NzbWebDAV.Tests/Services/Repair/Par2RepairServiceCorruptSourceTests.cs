@@ -358,10 +358,10 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData("false", 1)]
-    [InlineData("true", 0)]
+    [InlineData("false", true)]
+    [InlineData("true", false)]
     public async Task BackgroundRepairInfeasible_SchedulesUrgentRepairOnlyWithoutTolerance(
-        string tolerance, int expectedFailures)
+        string tolerance, bool expectScheduled)
     {
         var failureTracker = new NzbWebDAV.Services.StreamingFailureTracker();
         var scheduled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -378,6 +378,8 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
             corruptOnRead: [0, 1], repairScheduler: scheduler);
         _config.UpdateValues(
             [new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = tolerance }]);
+        // Playback already counted this damage; the failed repair must not count it again.
+        failureTracker.RecordAttributedFailure(release.Item.Id, release.ContentSegmentIds[0]);
 
         await release.Service.StartAsync(CancellationToken.None);
         try
@@ -390,9 +392,10 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
             while (release.Service.GetDiagnosticSnapshot().TotalInfeasible == 0)
                 await Task.Delay(25, timeout.Token);
 
-            if (expectedFailures > 0)
+            if (expectScheduled)
                 await scheduled.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            Assert.Equal(expectedFailures, failureTracker.GetFailureCount(release.Item.Id));
+            Assert.Equal(1, failureTracker.GetFailureCount(release.Item.Id));
+            Assert.Equal(expectScheduled, scheduled.Task.IsCompleted);
         }
         finally
         {

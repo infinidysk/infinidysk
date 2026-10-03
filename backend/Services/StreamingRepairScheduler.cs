@@ -26,7 +26,14 @@ public class StreamingRepairScheduler(
 
     internal Func<Guid, Task>? CompletionHook { get; set; }
 
-    public void ScheduleRepair(DavItem davItem, string? segmentId = null)
+    public void ScheduleRepair(DavItem davItem, string? segmentId = null) =>
+        Schedule(davItem, segmentId, recordFailure: true);
+
+    /// <summary>Schedules only if failures already recorded meet the threshold; records no new failure.</summary>
+    public void ScheduleRepairIfQualified(DavItem davItem) =>
+        Schedule(davItem, segmentId: null, recordFailure: false);
+
+    private void Schedule(DavItem davItem, string? segmentId, bool recordFailure)
     {
         CleanupStaleEntries();
         var davItemId = davItem.Id;
@@ -40,9 +47,11 @@ public class StreamingRepairScheduler(
         // Count every distinct streaming failure before applying either threshold or deduplication.
         // Repeated failures must still advance the repair threshold while duplicate DB scheduling
         // writes remain suppressed below.
-        var failureCount = string.IsNullOrEmpty(segmentId)
-            ? failureTracker.RecordUnattributedFailure(davItemId).Count
-            : failureTracker.RecordAttributedFailure(davItemId, segmentId).Count;
+        var failureCount = !recordFailure
+            ? failureTracker.GetFailureCount(davItemId)
+            : string.IsNullOrEmpty(segmentId)
+                ? failureTracker.RecordUnattributedFailure(davItemId).Count
+                : failureTracker.RecordAttributedFailure(davItemId, segmentId).Count;
         var threshold = configManager.GetAutoRemoveAfterFailures();
         if (!ShouldScheduleUrgentRepair(threshold, failureCount))
         {
