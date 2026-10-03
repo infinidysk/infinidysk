@@ -18,8 +18,8 @@ Background health monitoring, PAR2 reconstruction, and replacement of unhealthy 
 | Check older releases less thoroughly [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | `repair.healthcheck-aging` | off | Aging taper |
 | Repair After Streaming Failures | `repair.auto-remove-after-failures` | `0` | Consecutive streaming failures before urgent repair; `0` = immediate repair. Failures below the threshold are counted in memory and reset when InfiniDysk restarts. Once the threshold is reached and the urgent repair is scheduled, that qualification is stored with the file and survives restarts; raising the threshold afterwards defers the repair again until the new threshold is met. |
 | Auto-remove unlinked files only | `repair.auto-remove-unlinked-only` | on | At the threshold, linked items are removed and blocklisted through *Arr instead of force-deleted |
-| Degraded damage tolerance [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `repair.degraded-tolerance-enabled` | off [since 1.6.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.0){ .nzbdav-since } | Keep slightly damaged videos playable instead of replacing the release. When off, every missing article found during playback counts toward repair. Existing installs that saved `true` stay on |
-| Track corrupt articles during playback [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `repair.corruption-tracking-enabled` | on | Record streaming-confirmed corrupt articles, include them in health classification, and skip the retry storm on later reads |
+| Degraded damage tolerance [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `repair.degraded-tolerance-enabled` | off [since 1.6.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.0){ .nzbdav-since } | Keep slightly damaged videos playable instead of replacing the release. When off, every missing or corrupt article found during playback counts toward repair. Existing installs that saved `true` stay on |
+| Track corrupt articles during playback [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `repair.corruption-tracking-enabled` | on | Record streaming-confirmed corrupt articles, include them in health classification, and skip the retry storm on later reads. Only controls persistence; corruption still counts toward repair when tolerance is off |
 | Max consecutive missing segments | `repair.degraded-max-consecutive-missing` | `4` [since 1.6.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.0){ .nzbdav-since } | Longest tolerable run of adjacent holes (1–8) |
 | Max total missing segments | `repair.degraded-max-total-missing` | `64` [since 1.6.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.0){ .nzbdav-since } | Total tolerable holes per file (1–1000) |
 | Max missing data (% of file) | `repair.degraded-max-missing-byte-percent` | `2.0` [since 1.6.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.0){ .nzbdav-since } | Tolerable hole share of file bytes (0.01–50) |
@@ -151,9 +151,33 @@ health checks.
 
 Degraded damage tolerance is **off by default** [since 1.6.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.0){ .nzbdav-since }.
 With it off, playback still zero-fills short gaps so a stream is not cut on the first missing
-article, but every confirmed missing article counts toward **Repair After Streaming Failures**
+article, but every confirmed missing or corrupt article counts toward **Repair After Streaming Failures**
 (`repair.auto-remove-after-failures`) and starts an urgent repair at the threshold. Turn it on if
 you would rather keep slightly damaged files than replace them.
+
+### Zero-tolerance replacement [since 1.6.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.0){ .nzbdav-since }
+
+To replace a release as soon as one article is confirmed missing or corrupt:
+
+1. Turn on **Enable Background Repairs**.
+2. Leave **Degraded damage tolerance** off.
+3. Leave **Repair After Streaming Failures** at `0`.
+4. Configure a Library Directory and an enabled \*Arr instance for linked replacement.
+
+PAR2 reconstruction runs first when **PAR2 gap repair** is enabled and preferred; disable the
+preference to go straight to \*Arr. A background PAR2 repair that cannot rebuild the damage also
+queues an urgent replacement. "Immediately" means the next urgent health-queue slot, not the
+current read.
+
+Limits:
+
+- Corruption is detected only when article bodies are read: playback, PAR2 verification, or a
+  health check re-reading articles already recorded as corrupt. Routine STAT health checks do
+  not download bodies, so a corrupt file that is never read is not detected.
+- Damage with a valid yEnc CRC (a bad encode posted intact) cannot be detected.
+- \*Arr replacement still requires a library link, the original download in \*Arr history,
+  an allowed repair window, and room under replacement-loop protection and search budgets.
+  Otherwise the file is surfaced as **Action needed**.
 
 When numbered NZB entries omit an interior part and the articles' yEnc metadata
 corroborates that posted layout, import preserves a missing slot. Playback uses
@@ -229,14 +253,17 @@ silent garbage. InfiniDysk now detects that on the playback path:
    `repair.corruption-tracking-enabled` is on (the default whenever Background Repairs is
    on). Later reads of those IDs probe once instead of repeating the retry storm.
 4. **Classify** — full-coverage health sweeps union remaining recorded corruption with
-   STAT holes, so a present-but-corrupt file is no longer reported Healthy.
-5. **Escalate** — when playback actually breaks, the same streaming-failure path used for
-   missing articles runs: PAR2-first when enabled, then *Arr remove-and-blocklist for linked
-   library items with an enabled Arr instance.
+   STAT holes, so a present-but-corrupt file is no longer reported Healthy. With degraded
+   tolerance off, non-Quick checks re-read recorded corrupt articles; still-corrupt articles
+   fail the file and clean ones clear the record.
+5. **Escalate** — when playback actually breaks, or when tolerance is off and corruption is
+   padded over, the same streaming-failure path used for missing articles runs: PAR2-first
+   when enabled, then *Arr remove-and-blocklist for linked library items with an enabled Arr
+   instance.
 
 Disable **Track corrupt articles during playback** if you need the previous retry-only
-behavior. Playback-breaking corruption still schedules repair whenever Background Repairs
-is on.
+behavior. Corruption still counts toward repair whenever Background Repairs is on and no
+damage budget applies.
 
 [Health and repairs](../operations/health-repairs.md)
 
