@@ -15,28 +15,16 @@ public sealed class DegradedToleranceConfigTests
     }
 
     [Fact]
-    public void ToleranceEnabled_DefaultsToOffWhenRepairsAreUnset()
+    public void ToleranceEnabled_DefaultsToOnWhenRepairsAreUnset()
     {
-        Assert.False(new ConfigManager().IsDegradedToleranceEnabled());
+        Assert.True(new ConfigManager().IsDegradedToleranceEnabled());
     }
 
     [Fact]
-    public void ToleranceEnabled_DefaultsToOffWhenRepairsAreOn()
+    public void ToleranceEnabled_DefaultsToOnWhenRepairsAreOn()
     {
         var config = new ConfigManager();
         config.UpdateValues([Item(ConfigKeys.RepairEnable, "true")]);
-
-        Assert.False(config.IsDegradedToleranceEnabled());
-    }
-
-    [Fact]
-    public void ToleranceEnabled_RespectsExplicitEnable()
-    {
-        var config = new ConfigManager();
-        config.UpdateValues([
-            Item(ConfigKeys.RepairEnable, "true"),
-            Item(ConfigKeys.RepairDegradedToleranceEnabled, "true"),
-        ]);
 
         Assert.True(config.IsDegradedToleranceEnabled());
     }
@@ -90,18 +78,20 @@ public sealed class DegradedToleranceConfigTests
     }
 
     [Fact]
-    public void MaxConsecutiveMissing_DefaultsToFour()
+    public void MaxConsecutiveMissing_DefaultsToTwo()
     {
-        Assert.Equal(4, new ConfigManager().GetDegradedMaxConsecutiveMissing());
+        Assert.Equal(2, new ConfigManager().GetDegradedMaxConsecutiveMissing());
     }
 
     [Theory]
     [InlineData("1", 1)]
     [InlineData("2", 2)]
+    // Clamped to the playback zero-fill bound (GapFillLimits.MaxConsecutiveZeroFills - 1):
+    // a run the classifier calls degraded but playback refuses to serve is the worst of both.
     [InlineData("0", 1)]
     [InlineData("-5", 1)]
-    [InlineData("99", 8)]
-    [InlineData("abc", 4)]
+    [InlineData("99", 2)]
+    [InlineData("abc", 2)]
     public void MaxConsecutiveMissing_IsParsedAndClamped(string configured, int expected)
     {
         var config = new ConfigManager();
@@ -111,9 +101,9 @@ public sealed class DegradedToleranceConfigTests
     }
 
     [Fact]
-    public void MaxTotalMissing_DefaultsToSixtyFour()
+    public void MaxTotalMissing_DefaultsToFive()
     {
-        Assert.Equal(64, new ConfigManager().GetDegradedMaxTotalMissing());
+        Assert.Equal(5, new ConfigManager().GetDegradedMaxTotalMissing());
     }
 
     [Theory]
@@ -121,7 +111,7 @@ public sealed class DegradedToleranceConfigTests
     [InlineData("42", 42)]
     [InlineData("0", 1)]
     [InlineData("5000", 1000)]
-    [InlineData("abc", 64)]
+    [InlineData("abc", 5)]
     public void MaxTotalMissing_IsParsedAndClamped(string configured, int expected)
     {
         var config = new ConfigManager();
@@ -131,9 +121,9 @@ public sealed class DegradedToleranceConfigTests
     }
 
     [Fact]
-    public void MaxMissingBytePercent_DefaultsToTwo()
+    public void MaxMissingBytePercent_DefaultsToOne()
     {
-        Assert.Equal(2.0, new ConfigManager().GetDegradedMaxMissingBytePercent());
+        Assert.Equal(1.0, new ConfigManager().GetDegradedMaxMissingBytePercent());
     }
 
     [Theory]
@@ -141,7 +131,7 @@ public sealed class DegradedToleranceConfigTests
     [InlineData("2.5", 2.5)]
     [InlineData("0", 0.01)]
     [InlineData("99", 50.0)]
-    [InlineData("abc", 2.0)]
+    [InlineData("abc", 1.0)]
     public void MaxMissingBytePercent_IsParsedAndClamped(string configured, double expected)
     {
         var config = new ConfigManager();

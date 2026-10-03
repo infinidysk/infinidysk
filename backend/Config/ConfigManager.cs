@@ -1565,7 +1565,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     {
         if (!IsBackgroundRepairsMasterEnabled()) return false;
         var toleranceValue = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairDegradedToleranceEnabled));
-        return toleranceValue != null && bool.Parse(toleranceValue);
+        return toleranceValue == null || bool.Parse(toleranceValue);
     }
 
     public bool IsCorruptionTrackingEnabled()
@@ -1579,14 +1579,14 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     {
         var value = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairDegradedMaxConsecutiveMissing));
         return int.TryParse(value, out var number)
-            ? Math.Clamp(number, 1, 8)
-            : 4;
+            ? Math.Clamp(number, 1, GapFillLimits.MaxConsecutiveZeroFills - 1)
+            : 2;
     }
 
     public int GetDegradedMaxTotalMissing()
     {
         var value = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairDegradedMaxTotalMissing));
-        return int.TryParse(value, out var number) ? Math.Clamp(number, 1, 1000) : 64;
+        return int.TryParse(value, out var number) ? Math.Clamp(number, 1, 1000) : 5;
     }
 
     public double GetDegradedMaxMissingBytePercent()
@@ -1594,7 +1594,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         var value = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairDegradedMaxMissingBytePercent));
         return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
             ? Math.Clamp(number, 0.01, 50)
-            : 2;
+            : 1;
     }
 
     public bool IsPar2PreferredOverArr()
