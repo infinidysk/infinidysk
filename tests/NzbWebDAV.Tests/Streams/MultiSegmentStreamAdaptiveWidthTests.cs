@@ -683,6 +683,33 @@ public class MultiSegmentStreamAdaptiveWidthTests
         }
     }
 
+    [Fact]
+    public async Task LargeArticles_UseIndividualBodyRequestsEvenWhenPipeliningIsEnabled()
+    {
+        const int segmentCount = 6;
+        const int segmentSize = 8;
+        var client = new ControlledBatchNntpClient(segmentCount, segmentSize);
+        client.ReleaseAllUpTo(segmentCount - 1);
+
+        await using var stream = MultiSegmentStream.Create(
+            client.SegmentIds.AsMemory(),
+            client,
+            articleBufferSize: 8,
+            estimatedSegmentSize: MultiSegmentStream.PipelinedArticleSizeLimit,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            CancellationToken.None,
+            fileName: "large-articles.bin");
+
+        var buffer = new byte[segmentSize];
+        while (await stream.ReadAsync(buffer) > 0)
+        {
+            // Drain to completion.
+        }
+
+        Assert.Equal(0, client.BatchIssueCount);
+    }
+
     private static MultiSegmentStream CreatePipelinedStream(
         ControlledBatchNntpClient client,
         int segmentCount,

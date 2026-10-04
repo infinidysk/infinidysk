@@ -20,6 +20,9 @@ namespace NzbWebDAV.Streams;
 public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssueProgress
 {
     private const int BodyPipelineBatchSize = 4;
+    // Pipelining hides per-command RTT; at multi-MB articles transfer time dominates and
+    // batched articles only wait behind each other (4.3 MB articles: 42 -> 86 MB/s unpipelined).
+    internal const long PipelinedArticleSizeLimit = 2L * 1024 * 1024;
     private const int MinInitialPrefetchSegments = 8;
     private const int MaxBodyRetries = 2;
     private const int MaxCorruptionRetries = 3;
@@ -767,6 +770,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         _usenetClient = usenetClient;
         _estimatedSegmentSize = estimatedSegmentSize;
         _segmentSizes = new SegmentSizes(exactSegmentSizes, segmentIds.Length);
+        if (GetPlannedSegmentBytes(0) >= PipelinedArticleSizeLimit)
+            usePipelinedBodyRequests = false;
         _failFastOnFirstSegment = failFastOnFirstSegment;
         _useContainerAwareFill = useContainerAwareFill;
         _firstSegmentFileOffset = firstSegmentFileOffset;
