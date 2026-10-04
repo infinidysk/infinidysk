@@ -385,11 +385,66 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         var pathInArchive = meta.PathInArchive
             ?? throw new InvalidOperationException("Lazy RAR meta missing PathInArchive.");
 
+        // Runs beside the header parse so exact geometry costs no extra latency.
+        var geometryTask = TryProbeSegmentByteRangesAsync(pending.SegmentIds, ct);
+        var resolution = await ParseOrMeasureVolumeHeaderAsync(mpf, pending, pathInArchive, meta.ArchivePassword, ct)
+            .ConfigureAwait(false);
+        var ranges = await geometryTask.ConfigureAwait(false);
+        if (resolution.Part is not { } part || ranges is null) return resolution;
+
+        var volumeSize = ranges[^1].EndExclusive;
+        if (volumeSize < part.FilePartByteRange.EndExclusive) return resolution;
+        part.SegmentIdByteRange = LongRange.FromStartAndSize(0, volumeSize);
+        part.SegmentByteRanges = ranges;
+        part.SegmentByteRangesTrusted = true;
+        return resolution;
+    }
+
+    // Same first/second/last validation as NzbFile's uniform inference. Without trusted
+    // ranges every volume open falls back to serial yEnc probes on the read path.
+    private async Task<LongRange[]?> TryProbeSegmentByteRangesAsync(string[] segmentIds, CancellationToken ct)
+    {
+        var n = segmentIds.Length;
+        if (n == 0) return null;
+        try
+        {
+            var firstTask = usenetClient.GetYencHeadersAsync(segmentIds[0], ct);
+            var secondTask = n >= 3 ? usenetClient.GetYencHeadersAsync(segmentIds[1], ct) : null;
+            var lastTask = n >= 2 ? usenetClient.GetYencHeadersAsync(segmentIds[^1], ct) : null;
+            var first = await firstTask.ConfigureAwait(false);
+            var second = secondTask is null ? null : await secondTask.ConfigureAwait(false);
+            var last = lastTask is null ? first : await lastTask.ConfigureAwait(false);
+
+            var size = first.PartSize;
+            if (first.PartOffset != 0 || size <= 0 || last.PartSize <= 0) return null;
+            if (second is not null && (second.PartOffset != size || second.PartSize != size)) return null;
+            if (n >= 2 && (last.PartOffset != checked(size * (n - 1)) || last.PartSize > size)) return null;
+
+            var ranges = new LongRange[n];
+            for (var i = 0; i < n - 1; i++)
+                ranges[i] = LongRange.FromStartAndSize(checked(size * i), size);
+            ranges[^1] = LongRange.FromStartAndSize(last.PartOffset, last.PartSize);
+            return ranges;
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            Log.Debug(e, "Lazy RAR segment geometry probe failed; volume will seek via header probes.");
+            return null;
+        }
+    }
+
+    private async Task<Resolution> ParseOrMeasureVolumeHeaderAsync(
+        DavMultipartFile mpf,
+        DavMultipartFile.PendingPart pending,
+        string pathInArchive,
+        string? password,
+        CancellationToken ct)
+    {
         var estimatedSize = pending.SegmentIdByteRange.Count;
         try
         {
             return await ParseVolumeHeaderAsync(
-                    pending, pathInArchive, meta.ArchivePassword, estimatedSize, ct)
+                    pending, pathInArchive, password, estimatedSize, ct)
                 .ConfigureAwait(false);
         }
         catch (RarSeekPastEndException)
@@ -407,7 +462,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
                 "retrying header parse with measured size {Measured}.",
                 estimatedSize, mpf.Id, measuredSize);
             return await ParseVolumeHeaderAsync(
-                    pending, pathInArchive, meta.ArchivePassword, measuredSize, ct)
+                    pending, pathInArchive, password, measuredSize, ct)
                 .ConfigureAwait(false);
         }
     }

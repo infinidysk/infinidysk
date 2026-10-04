@@ -89,7 +89,49 @@ public class LazyRarResolverTests
         Assert.Equal(packedSize, resolved.FilePartByteRange.Count);
         Assert.Equal(resolved.FilePartByteRange.StartInclusive + packedSize,
             resolved.SegmentIdByteRange.Count);
-        Assert.Equal(0, client.MeasuredSizeRequests);
+        // One geometry probe of the single segment; the measure-and-retry path never ran.
+        Assert.Equal(1, client.MeasuredSizeRequests);
+        Assert.True(resolved.SegmentByteRangesTrusted);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task EnsureResolvedThroughAsync_RecordsTrustedSegmentRangesOnlyForUniformGeometry(bool uniform)
+    {
+        const string pathInArchive = "movie.mkv";
+        var volumeBytes = BuildRar4ContinuationVolume(pathInArchive, packedSize: 1000);
+        long length = volumeBytes.Length;
+        var segment = (length + 2) / 3;
+        var headers = new Dictionary<string, (long Offset, long Size)>
+        {
+            ["s0"] = (0, segment),
+            ["s1"] = (uniform ? segment : segment + 1, segment),
+            ["s2"] = (2 * segment, length - 2 * segment),
+        };
+        using var client = new MeasuringNntpClient("unused", 0, headers);
+        var resolver = new LazyRarResolver(client, new ConfigManager())
+        {
+            VolumeStreamFactory = (_, size) => new BoundedLengthStream(volumeBytes, size),
+        };
+        var mpf = MultipartFile(pathInArchive, Pending("unused", length, 1000));
+        mpf.Metadata.PendingParts[0].SegmentIds = ["s0", "s1", "s2"];
+
+        var meta = await resolver.EnsureResolvedThroughAsync(mpf, long.MaxValue, CancellationToken.None);
+
+        var resolved = meta.FileParts[1];
+        if (uniform)
+        {
+            Assert.True(resolved.SegmentByteRangesTrusted);
+            Assert.Equal(3, resolved.SegmentByteRanges!.Length);
+            Assert.Equal(length, resolved.SegmentByteRanges[^1].EndExclusive);
+            Assert.Equal(length, resolved.SegmentIdByteRange.Count);
+        }
+        else
+        {
+            Assert.Null(resolved.SegmentByteRanges);
+            Assert.NotEqual(true, resolved.SegmentByteRangesTrusted);
+        }
     }
 
     [Fact]
@@ -388,7 +430,10 @@ public class LazyRarResolverTests
         };
 
     // Only GetYencHeadersAsync is used by the measured-size retry path.
-    private sealed class MeasuringNntpClient(string segmentId, long measuredSize) : NntpClient
+    private sealed class MeasuringNntpClient(
+        string segmentId,
+        long measuredSize,
+        IReadOnlyDictionary<string, (long Offset, long Size)>? headers = null) : NntpClient
     {
         public int MeasuredSizeRequests { get; private set; }
 
@@ -467,6 +512,21 @@ public class LazyRarResolverTests
             string id, CancellationToken ct)
         {
             MeasuredSizeRequests++;
+            if (headers is not null)
+            {
+                var (offset, size) = headers[id];
+                return Task.FromResult(new UsenetYencHeader
+                {
+                    FileName = "volume.rar",
+                    FileSize = headers.Values.Sum(h => h.Size),
+                    LineLength = 128,
+                    PartNumber = 1,
+                    TotalParts = headers.Count,
+                    PartOffset = offset,
+                    PartSize = size,
+                });
+            }
+
             Assert.Equal(segmentId, id);
             return Task.FromResult(new UsenetYencHeader
             {
