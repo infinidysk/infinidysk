@@ -385,40 +385,99 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         var pathInArchive = meta.PathInArchive
             ?? throw new InvalidOperationException("Lazy RAR meta missing PathInArchive.");
 
-        // Runs beside the header parse so exact geometry costs no extra latency.
         var geometryTask = TryProbeSegmentByteRangesAsync(pending.SegmentIds, ct);
         var resolution = await ParseOrMeasureVolumeHeaderAsync(mpf, pending, pathInArchive, meta.ArchivePassword, ct)
             .ConfigureAwait(false);
-        var ranges = await geometryTask.ConfigureAwait(false);
-        if (resolution.Part is not { } part || ranges is null) return resolution;
+        if (resolution.Part is not { } part) return resolution;
 
-        var volumeSize = ranges[^1].EndExclusive;
-        if (volumeSize < part.FilePartByteRange.EndExclusive) return resolution;
-        part.SegmentIdByteRange = LongRange.FromStartAndSize(0, volumeSize);
-        part.SegmentByteRanges = ranges;
-        part.SegmentByteRangesTrusted = true;
+        // Seeks wait on resolution, so geometry that is still in flight attaches after commit.
+        if (geometryTask.IsCompleted)
+            TryApplySegmentByteRanges(part, await geometryTask.ConfigureAwait(false));
+        else
+            _ = AttachSegmentByteRangesAsync(mpf, part, geometryTask);
         return resolution;
     }
 
-    // Same first/second/last validation as NzbFile's uniform inference. Without trusted
-    // ranges every volume open falls back to serial yEnc probes on the read path.
+    private static bool TryApplySegmentByteRanges(DavMultipartFile.FilePart part, LongRange[]? ranges)
+    {
+        if (ranges is null || ranges[^1].EndExclusive < part.FilePartByteRange.EndExclusive) return false;
+        part.SegmentIdByteRange = LongRange.FromStartAndSize(0, ranges[^1].EndExclusive);
+        part.SegmentByteRanges = ranges;
+        part.SegmentByteRangesTrusted = true;
+        return true;
+    }
+
+    private async Task AttachSegmentByteRangesAsync(
+        DavMultipartFile mpf,
+        DavMultipartFile.FilePart part,
+        Task<LongRange[]?> geometryTask)
+    {
+        var ranges = await geometryTask.ConfigureAwait(false);
+        if (ranges is null) return;
+
+        lock (mpf)
+        {
+            var meta = mpf.Metadata;
+            var index = Array.IndexOf(meta.FileParts, part);
+            if (index < 0)
+            {
+                // Not committed yet; CommitResolvedBatch publishes it under this same lock.
+                TryApplySegmentByteRanges(part, ranges);
+                return;
+            }
+
+            var updated = new DavMultipartFile.FilePart
+            {
+                SegmentIds = part.SegmentIds,
+                SegmentIdByteRange = part.SegmentIdByteRange,
+                FilePartByteRange = part.FilePartByteRange,
+                SegmentFallbackIds = part.SegmentFallbackIds,
+                VerificationProof = part.VerificationProof,
+                IsSplitAfter = part.IsSplitAfter,
+            };
+            if (!TryApplySegmentByteRanges(updated, ranges)) return;
+
+            var parts = (DavMultipartFile.FilePart[])meta.FileParts.Clone();
+            parts[index] = updated;
+            mpf.Metadata = new DavMultipartFile.Meta
+            {
+                AesParams = meta.AesParams,
+                FileParts = parts,
+                IsLazy = meta.IsLazy,
+                PathInArchive = meta.PathInArchive,
+                ArchivePassword = meta.ArchivePassword,
+                PendingParts = meta.PendingParts,
+                ExpectedFileSize = meta.ExpectedFileSize,
+            };
+            // A newer persist supersedes older ones, so keep the completion reconcile.
+            _ = SchedulePersistAsync(mpf, reconcileFileSize: !meta.IsLazy);
+        }
+    }
+
+    // Same second/last validation as NzbFile's uniform inference; segment 1's offset is
+    // segment 0's size, so the volume parse's own first-segment fetch is not repeated.
     private async Task<LongRange[]?> TryProbeSegmentByteRangesAsync(string[] segmentIds, CancellationToken ct)
     {
         var n = segmentIds.Length;
         if (n == 0) return null;
         try
         {
-            var firstTask = usenetClient.GetYencHeadersAsync(segmentIds[0], ct);
-            var secondTask = n >= 3 ? usenetClient.GetYencHeadersAsync(segmentIds[1], ct) : null;
-            var lastTask = n >= 2 ? usenetClient.GetYencHeadersAsync(segmentIds[^1], ct) : null;
-            var first = await firstTask.ConfigureAwait(false);
-            var second = secondTask is null ? null : await secondTask.ConfigureAwait(false);
-            var last = lastTask is null ? first : await lastTask.ConfigureAwait(false);
+            if (n == 1)
+            {
+                var only = await usenetClient.GetYencHeadersAsync(segmentIds[0], ct).ConfigureAwait(false);
+                return only.PartOffset == 0 && only.PartSize > 0
+                    ? [LongRange.FromStartAndSize(0, only.PartSize)]
+                    : null;
+            }
 
-            var size = first.PartSize;
-            if (first.PartOffset != 0 || size <= 0 || last.PartSize <= 0) return null;
-            if (second is not null && (second.PartOffset != size || second.PartSize != size)) return null;
-            if (n >= 2 && (last.PartOffset != checked(size * (n - 1)) || last.PartSize > size)) return null;
+            var secondTask = n >= 3 ? usenetClient.GetYencHeadersAsync(segmentIds[1], ct) : null;
+            var last = await usenetClient.GetYencHeadersAsync(segmentIds[^1], ct).ConfigureAwait(false);
+            var second = secondTask is null ? null : await secondTask.ConfigureAwait(false);
+
+            var size = second?.PartOffset ?? last.PartOffset;
+            if (size <= 0 || last.PartSize <= 0 || last.PartSize > size) return null;
+            if (second is not null && second.PartSize != size) return null;
+            if (last.PartOffset != checked(size * (n - 1))) return null;
 
             var ranges = new LongRange[n];
             for (var i = 0; i < n - 1; i++)
