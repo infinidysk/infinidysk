@@ -244,7 +244,7 @@ public static class FetchFirstSegmentsStep
         First16KB = null,
         Header = null,
         MissingFirstSegment = true,
-        ReleaseDate = DateTimeOffset.UtcNow,
+        ReleaseDate = nzbFile.PostedDate ?? DateTimeOffset.UtcNow,
         ProviderGeneration = providerGeneration,
     };
 
@@ -279,7 +279,8 @@ public static class FetchFirstSegmentsStep
             First16KB = first16KB,
             Header = yencHeaders,
             MissingFirstSegment = false,
-            ReleaseDate = articleHeaders?.Date ?? DateTimeOffset.UtcNow,
+            // Pipelined BODY fetches carry no headers; the NZB post date is the next-best source.
+            ReleaseDate = articleHeaders?.Date ?? nzbFile.PostedDate ?? DateTimeOffset.UtcNow,
         };
     }
 

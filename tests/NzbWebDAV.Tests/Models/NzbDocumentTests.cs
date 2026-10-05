@@ -297,6 +297,25 @@ public class NzbDocumentTests
         Assert.True(budget.ReservedBytes < 100_000);
     }
 
+    [Theory]
+    [InlineData(" date='1071674882'", 1071674882L)]
+    [InlineData("", null)]
+    [InlineData(" date='0'", null)]
+    [InlineData(" date='-5'", null)]
+    [InlineData(" date='soon'", null)]
+    [InlineData(" date='99999999999999999'", null)]
+    public async Task LoadAsync_FileDateAttribute_SetsPostedDate(string attribute, long? expectedSeconds)
+    {
+        var xml = $"<nzb><file subject='file'{attribute}/></nzb>";
+        await using var stream = new MemoryStream(Encoding.UTF8.GetBytes(xml));
+
+        var file = Assert.Single((await NzbDocument.LoadAsync(stream)).Files);
+
+        Assert.Equal(
+            expectedSeconds is { } seconds ? DateTimeOffset.FromUnixTimeSeconds(seconds) : null,
+            file.PostedDate);
+    }
+
     [Fact]
     public async Task LoadAsync_OptInLimitsPreserveMetadataAndFallbacks()
     {

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Xml;
 
 namespace NzbWebDAV.Models.Nzb;
@@ -99,7 +100,8 @@ public class NzbDocument
         options?.AddFile(count, subject);
         var file = new NzbFile
         {
-            Subject = subject
+            Subject = subject,
+            PostedDate = ParsePostedDate(reader.GetAttribute("date"))
         };
 
         if (reader.IsEmptyElement)
@@ -119,6 +121,15 @@ public class NzbDocument
 
         file.CanonicalizeSegments();
         return file;
+    }
+
+    internal static DateTimeOffset? ParsePostedDate(string? value)
+    {
+        if (!long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)
+            || seconds <= 0
+            || seconds > DateTimeOffset.MaxValue.ToUnixTimeSeconds())
+            return null;
+        return DateTimeOffset.FromUnixTimeSeconds(seconds);
     }
 
     private static async Task ReadSegmentsAsync(XmlReader reader, NzbFile file, NzbReadOptions? options, CancellationToken ct)

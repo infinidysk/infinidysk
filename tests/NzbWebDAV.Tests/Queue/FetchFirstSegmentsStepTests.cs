@@ -325,6 +325,29 @@ public class FetchFirstSegmentsStepTests
         Assert.Equal(0, client.ArticleFetches);
     }
 
+    [Fact]
+    public async Task FetchFirstSegments_PipelinedWithoutArticleHeaders_UsesNzbPostedDate()
+    {
+        var config = CreatePipeliningConfig(enabled: true, depth: 2);
+        var postedDate = DateTimeOffset.FromUnixTimeSeconds(1_600_000_000);
+        using var client = new MatchingPipelinedNntpClient(new Dictionary<string, byte[]>
+        {
+            ["seg@example.com"] = Encoding.ASCII.GetBytes(new string('x', 64)),
+        });
+        var file = new NzbFile
+        {
+            Subject = "\"movie.rar\" yEnc",
+            PostedDate = postedDate,
+            Segments = { new NzbSegment { MessageId = "seg@example.com", Bytes = 100 } },
+        };
+
+        var result = Assert.Single(await FetchFirstSegmentsStep.FetchFirstSegments(
+            [file], client, config, CancellationToken.None));
+
+        Assert.False(result.MissingFirstSegment);
+        Assert.Equal(postedDate, result.ReleaseDate);
+    }
+
     private static ConfigManager CreatePipeliningConfig(bool enabled, int depth)
     {
         var config = new ConfigManager();
