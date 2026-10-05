@@ -110,15 +110,22 @@ public class LazyRarResolverTests
             ["s2"] = (2 * segment, length - 2 * segment),
         };
         using var client = new MeasuringNntpClient("unused", 0, headers);
+        var probesBeforeParse = -1;
         var resolver = new LazyRarResolver(client, new ConfigManager())
         {
-            VolumeStreamFactory = (_, size) => new BoundedLengthStream(volumeBytes, size),
+            VolumeStreamFactory = (_, size) =>
+            {
+                probesBeforeParse = client.MeasuredSizeRequests;
+                return new BoundedLengthStream(volumeBytes, size);
+            },
         };
         var mpf = MultipartFile(pathInArchive, Pending("unused", length, 1000));
         mpf.Metadata.PendingParts[0].SegmentIds = ["s0", "s1", "s2"];
 
         var meta = await resolver.EnsureResolvedThroughAsync(mpf, long.MaxValue, CancellationToken.None);
 
+        // Geometry probes are full BODY fetches; they must not compete with the parse a seek waits on.
+        Assert.Equal(0, probesBeforeParse);
         var resolved = meta.FileParts[1];
         if (uniform)
         {

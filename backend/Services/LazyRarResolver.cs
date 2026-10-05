@@ -28,6 +28,9 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
 
     private readonly ConcurrentDictionary<Guid, Persistor> _persistors = new();
 
+    // Process-wide cap so background geometry probes trickle behind playback instead of competing with it.
+    private static readonly SemaphoreSlim GeometryProbeGate = new(2, 2);
+
     // Test seam: when set, volume opens skip NzbFileStream/yEnc so unit tests
     // can feed a crafted RAR with an understated Length without rapidyenc.
     internal Func<string[], long, Stream>? VolumeStreamFactory { get; set; }
@@ -385,12 +388,14 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         var pathInArchive = meta.PathInArchive
             ?? throw new InvalidOperationException("Lazy RAR meta missing PathInArchive.");
 
-        var geometryTask = TryProbeSegmentByteRangesAsync(pending.SegmentIds, ct);
         var resolution = await ParseOrMeasureVolumeHeaderAsync(mpf, pending, pathInArchive, meta.ArchivePassword, ct)
             .ConfigureAwait(false);
         if (resolution.Part is not { } part) return resolution;
 
+        // Probes are full BODY fetches. A seek into a far volume resolves every volume before it,
+        // so starting them alongside the parse floods connections the seek is waiting on.
         // Seeks wait on resolution, so geometry that is still in flight attaches after commit.
+        var geometryTask = ProbeSegmentByteRangesThrottledAsync(pending.SegmentIds, ct);
         if (geometryTask.IsCompleted)
             TryApplySegmentByteRanges(part, await geometryTask.ConfigureAwait(false));
         else
@@ -451,6 +456,19 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
             };
             // A newer persist supersedes older ones, so keep the completion reconcile.
             _ = SchedulePersistAsync(mpf, reconcileFileSize: !meta.IsLazy);
+        }
+    }
+
+    private async Task<LongRange[]?> ProbeSegmentByteRangesThrottledAsync(string[] segmentIds, CancellationToken ct)
+    {
+        await GeometryProbeGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            return await TryProbeSegmentByteRangesAsync(segmentIds, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            GeometryProbeGate.Release();
         }
     }
 
