@@ -80,6 +80,9 @@ internal static class NntpWholePathReport
                     ["notFoundCallbacks"] = deterministic.NotFoundCallbacks,
                     ["notRetrievedCallbacks"] = deterministic.NotRetrievedCallbacks,
                     ["finalArticleBudgetBytes"] = deterministic.FinalArticleBudgetBytes,
+                    ["effectiveBatchWidth"] = deterministic.EffectiveBatchWidth,
+                    ["taskWindowArticles"] = deterministic.TaskWindowArticles,
+                    ["initialPrefetchBytes"] = deterministic.InitialPrefetchBytes,
                 },
                 PerformanceReportJson.WholePathTiming(
                     timing.WallSeconds,
@@ -98,6 +101,9 @@ internal static class NntpWholePathReport
             Console.WriteLine(
                 $"{scenario.Name} bytes={deterministic.ActualBytes} sha256_match={deterministic.Sha256Match} " +
                 $"body_commands={deterministic.BodyCommands} peak_connections={deterministic.PeakActiveConnections} " +
+                $"effective_batch_width={deterministic.EffectiveBatchWidth} " +
+                $"task_window_articles={deterministic.TaskWindowArticles} " +
+                $"initial_prefetch_mib={deterministic.InitialPrefetchBytes / 1048576d:F1} " +
                 $"time_to_peak_active_ms={timing.TimeToPeakActiveMs:F3} " +
                 $"wall_s={timing.WallSeconds:F3} " +
                 $"throughput_mb_s={timing.ThroughputMbps:F3} client_cpu_s={timing.ClientCpuSeconds:F3} " +
@@ -243,7 +249,10 @@ internal static class NntpWholePathReport
                     callbackCounts.NotFound,
                     callbackCounts.NotRetrieved,
                     budget.LeasedBytes,
-                    serverSnapshot.PeakActiveConnections),
+                    serverSnapshot.PeakActiveConnections,
+                    bytes.Window?.BatchWidth ?? scenario.BatchWidth,
+                    bytes.Window?.TaskWindowArticles ?? 0,
+                    bytes.Window?.InitialPrefetchBytes ?? 0),
                 new NntpWholePathTiming(
                     started.Elapsed.TotalSeconds,
                     clientCpu,
@@ -333,6 +342,9 @@ internal static class NntpWholePathReport
             exactSegmentSizes: sizes,
             inFlightArticleBudget: budget,
             bodyPipelineBatchWidth: scenario.BatchWidth);
+        var buffered = (MultiSegmentStream)stream;
+        var window = new PrefetchWindow(
+            buffered.MaxPrefetchBatchWidth, buffered.TaskWindowSize, buffered.InitialPrefetchByteCeiling);
 
         if (httpLike)
         {
@@ -343,13 +355,14 @@ internal static class NntpWholePathReport
                 responseCopyChunkBytes, copyStartedTimestamp, timeline: timeline);
             var sha256 = await sink.CopyFromAsync(stream, verifyHash, CancellationToken.None)
                 .ConfigureAwait(false);
-            return new ReadResult(sink.BytesWritten, sha256, sink.TimeToFirstByte, timeline);
+            return new ReadResult(sink.BytesWritten, sha256, sink.TimeToFirstByte, timeline, window);
         }
         if (verifyHash)
-            return await CopyAndHashAsync(stream, CancellationToken.None).ConfigureAwait(false);
+            return await CopyAndHashAsync(stream, CancellationToken.None).ConfigureAwait(false)
+                with { Window = window };
 
         await stream.CopyToAsync(Stream.Null, CancellationToken.None).ConfigureAwait(false);
-        return new ReadResult(corpus.ExpectedBytes, null, null);
+        return new ReadResult(corpus.ExpectedBytes, null, null, Window: window);
     }
 
     private static int PrewarmTarget(NntpWholePathScenario scenario)
@@ -488,7 +501,11 @@ internal static class NntpWholePathReport
         long Count,
         string? Sha256,
         TimeSpan? TimeToFirstByte,
-        DeliveryTimeline? Timeline = null);
+        DeliveryTimeline? Timeline = null,
+        PrefetchWindow? Window = null);
+
+    private readonly record struct PrefetchWindow(
+        int BatchWidth, int TaskWindowArticles, long InitialPrefetchBytes);
 
     private sealed class CallbackCounts
     {

@@ -20,6 +20,9 @@ namespace NzbWebDAV.Streams;
 public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssueProgress
 {
     private const int BodyPipelineBatchSize = 4;
+    // Pipelining hides per-command RTT; at multi-MB articles transfer time dominates and
+    // batched articles only wait behind each other, so these batches carry one article.
+    internal const long PipelinedArticleSizeLimit = 2L * 1024 * 1024;
     private const int MinInitialPrefetchSegments = 8;
     private const int MaxBodyRetries = 2;
     private const int MaxCorruptionRetries = 3;
@@ -103,6 +106,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
     /// <summary>Current adaptive BODY batch width (or the fixed pipeline size when not adaptive).</summary>
     internal int PrefetchBatchWidth => _batchSizer?.Current ?? _bodyPipelineBatchSize;
+    // 0 when BODY requests are issued individually.
+    internal int MaxPrefetchBatchWidth => _batchSizer?.Maximum ?? 0;
+    internal int TaskWindowSize => _taskWindowSize;
+    internal long InitialPrefetchByteCeiling => _initialPrefetchByteCeiling;
 
     /// <summary>
     /// Test hook: completes when the producer loop has exited (e.g. after observing
@@ -811,10 +818,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 Math.Max(1, _bodyPipelineBatchSize), estimatedSegmentSize);
             _prefetchByteCeiling = Math.Min(_prefetchByteCeiling, Math.Max(batchWindow, rangeWindow));
         }
+        // One-article batches keep the primary re-probe; the configured prefetch window is kept for throughput.
+        var maxBatchWidth = GetPlannedSegmentBytes(0) >= PipelinedArticleSizeLimit
+            ? Math.Min(_bodyPipelineBatchSize, 1)
+            : _bodyPipelineBatchSize;
         _batchSizer = usePipelinedBodyRequests
             ? new AdaptiveBodyBatchSizer(
-                _bodyPipelineBatchSize,
-                initialBatchPlan?.InitialBatchWidth ?? _bodyPipelineBatchSize,
+                maxBatchWidth,
+                Math.Min(initialBatchPlan?.InitialBatchWidth ?? maxBatchWidth, maxBatchWidth),
                 initialBatchPlan?.WideningNotBeforeDeliveredSegment ?? 0)
             : null;
         if (_batchSizer is not null && _bodyPipelineBatchSize != BodyPipelineBatchSize)
