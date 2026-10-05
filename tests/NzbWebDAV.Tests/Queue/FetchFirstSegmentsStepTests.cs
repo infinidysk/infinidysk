@@ -334,18 +334,65 @@ public class FetchFirstSegmentsStepTests
         {
             ["seg@example.com"] = Encoding.ASCII.GetBytes(new string('x', 64)),
         });
-        var file = new NzbFile
-        {
-            Subject = "\"movie.rar\" yEnc",
-            PostedDate = postedDate,
-            Segments = { new NzbSegment { MessageId = "seg@example.com", Bytes = 100 } },
-        };
+        var file = CreateFile("seg@example.com", "\"movie.rar\" yEnc", postedDate);
 
         var result = Assert.Single(await FetchFirstSegmentsStep.FetchFirstSegments(
             [file], client, config, CancellationToken.None));
 
         Assert.False(result.MissingFirstSegment);
         Assert.Equal(postedDate, result.ReleaseDate);
+    }
+
+    [Fact]
+    public async Task FetchFirstSegments_ArticleDateHeader_TakesPrecedenceOverNzbPostedDate()
+    {
+        var config = CreatePipeliningConfig(enabled: false, depth: 4);
+        var articleDate = DateTimeOffset.FromUnixTimeSeconds(1_700_000_000);
+        using var client = new TrackingArticleNntpClient(missingIds: [], articleDate: articleDate);
+        var file = CreateFile("seg@example.com", "\"movie.rar\" yEnc",
+            DateTimeOffset.FromUnixTimeSeconds(1_600_000_000));
+
+        var result = Assert.Single(await FetchFirstSegmentsStep.FetchFirstSegments(
+            [file], client, config, CancellationToken.None));
+
+        Assert.False(result.MissingFirstSegment);
+        Assert.Equal(articleDate, result.ReleaseDate);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task FetchFirstSegments_MissingOptionalSegment_KeepsNzbPostedDate(bool pipelined)
+    {
+        var config = CreatePipeliningConfig(enabled: pipelined, depth: 4);
+        var postedDate = DateTimeOffset.FromUnixTimeSeconds(1_600_000_000);
+        using NntpClient client = pipelined
+            ? new MissingPipelinedNntpClient(definitivelyMissing: true)
+            : new TrackingArticleNntpClient(missingIds: ["par@example.com"]);
+        var file = CreateFile("par@example.com", "\"release.par2\" yEnc", postedDate);
+
+        var result = Assert.Single(await FetchFirstSegmentsStep.FetchFirstSegments(
+            [file], client, config, CancellationToken.None));
+
+        Assert.True(result.MissingFirstSegment);
+        Assert.Equal(postedDate, result.ReleaseDate);
+    }
+
+    [Fact]
+    public async Task FetchFirstSegments_PipelinedWithoutAnyDate_FallsBackToNow()
+    {
+        var config = CreatePipeliningConfig(enabled: true, depth: 2);
+        using var client = new MatchingPipelinedNntpClient(new Dictionary<string, byte[]>
+        {
+            ["seg@example.com"] = Encoding.ASCII.GetBytes(new string('x', 64)),
+        });
+        var file = CreateFile("seg@example.com", "\"movie.rar\" yEnc");
+        var before = DateTimeOffset.UtcNow;
+
+        var result = Assert.Single(await FetchFirstSegmentsStep.FetchFirstSegments(
+            [file], client, config, CancellationToken.None));
+
+        Assert.InRange(result.ReleaseDate, before, DateTimeOffset.UtcNow);
     }
 
     private static ConfigManager CreatePipeliningConfig(bool enabled, int depth)
@@ -372,9 +419,10 @@ public class FetchFirstSegmentsStepTests
         return config;
     }
 
-    private static NzbFile CreateFile(string messageId, string subject) => new()
+    private static NzbFile CreateFile(string messageId, string subject, DateTimeOffset? postedDate = null) => new()
     {
         Subject = subject,
+        PostedDate = postedDate,
         Segments =
         {
             new NzbSegment { MessageId = messageId, Bytes = 100 },
@@ -489,7 +537,8 @@ public class FetchFirstSegmentsStepTests
     private sealed class TrackingArticleNntpClient(
         IReadOnlyCollection<string> missingIds,
         byte[]? presentPayload = null,
-        IReadOnlyDictionary<string, TaskCompletionSource>? completionGates = null) : NntpClient
+        IReadOnlyDictionary<string, TaskCompletionSource>? completionGates = null,
+        DateTimeOffset? articleDate = null) : NntpClient
     {
         private int _gatedRequestsStarted;
 
@@ -535,7 +584,7 @@ public class FetchFirstSegmentsStepTests
                 {
                     Headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                     {
-                        ["Date"] = DateTimeOffset.UtcNow.ToString("R"),
+                        ["Date"] = (articleDate ?? DateTimeOffset.UtcNow).ToString("R"),
                     },
                 },
             };
