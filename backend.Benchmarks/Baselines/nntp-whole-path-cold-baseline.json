@@ -19,7 +19,9 @@
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
         "finalArticleBudgetBytes": 0,
-        "effectiveBatchWidth": 4
+        "effectiveBatchWidth": 4,
+        "taskWindowArticles": 160,
+        "initialPrefetchBytes": 62914560
       },
       "timing": {
         "wallSeconds": {
@@ -86,7 +88,9 @@
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
         "finalArticleBudgetBytes": 0,
-        "effectiveBatchWidth": 4
+        "effectiveBatchWidth": 4,
+        "taskWindowArticles": 160,
+        "initialPrefetchBytes": 62914560
       },
       "timing": {
         "wallSeconds": {

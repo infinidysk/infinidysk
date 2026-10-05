@@ -37,8 +37,8 @@ internal sealed record NntpWholePathScenario(
         new("plain-http-like-w4", NntpWholePathLayer.HttpLike, false, 8, 256 * 1024, 4, 4, 0, null, YencCrcValidationMode.Require),
     ];
 
-    // Constant article buffer so width variants differ only in batching; effectiveBatchWidth
-    // records when large articles cap batches at one.
+    // 4 MiB articles cap batches at one, so every width variant must report the same window;
+    // the deterministic baseline pins effectiveBatchWidth, taskWindowArticles and initialPrefetchBytes.
     public static IReadOnlyList<NntpWholePathScenario> Sustained =>
     [
         new("plain-buffered-w1", NntpWholePathLayer.BufferedStream, false, 256, 4 * 1024 * 1024, 20, 1, 0, null, YencCrcValidationMode.Require) { ArticleBufferSize = 16 },

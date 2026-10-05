@@ -19,7 +19,9 @@
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
         "finalArticleBudgetBytes": 0,
-        "effectiveBatchWidth": 1
+        "effectiveBatchWidth": 1,
+        "taskWindowArticles": 16,
+        "initialPrefetchBytes": 33554432
       },
       "timing": {
         "wallSeconds": { "baseline": 10.0, "envelope": 30.0, "policy": "fail" },
@@ -45,7 +47,9 @@
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
         "finalArticleBudgetBytes": 0,
-        "effectiveBatchWidth": 1
+        "effectiveBatchWidth": 1,
+        "taskWindowArticles": 16,
+        "initialPrefetchBytes": 33554432
       },
       "timing": {
         "wallSeconds": { "baseline": 10.0, "envelope": 30.0, "policy": "fail" },
@@ -71,7 +75,9 @@
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
         "finalArticleBudgetBytes": 0,
-        "effectiveBatchWidth": 1
+        "effectiveBatchWidth": 1,
+        "taskWindowArticles": 16,
+        "initialPrefetchBytes": 33554432
       },
       "timing": {
         "wallSeconds": { "baseline": 10.0, "envelope": 30.0, "policy": "fail" },
@@ -97,7 +103,9 @@
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
         "finalArticleBudgetBytes": 0,
-        "effectiveBatchWidth": 1
+        "effectiveBatchWidth": 1,
+        "taskWindowArticles": 16,
+        "initialPrefetchBytes": 33554432
       },
       "timing": {
         "wallSeconds": { "baseline": 10.0, "envelope": 30.0, "policy": "fail" },
