@@ -923,13 +923,22 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
             var other = useTheirs ? mine : theirs;
             var parts = (DavMultipartFile.FilePart[])baseMeta.FileParts.Clone();
             var changed = useTheirs;
-            for (var i = 0; i < common; i++)
+            for (var i = 0; i < parts.Length; i++)
             {
+                if (parts[i].SegmentIds.Length == 0) continue;
+                if (_geometryRejected.ContainsKey((mpf.Id, parts[i].SegmentIds[0])))
+                {
+                    if (parts[i].SegmentByteRangesTrusted != true) continue;
+                    var stripped = ClonePartWithoutRanges(parts[i]);
+                    stripped.SegmentByteRangesTrusted = false;
+                    parts[i] = stripped;
+                    changed = true;
+                    continue;
+                }
+
+                if (i >= common) continue;
                 var candidate = other.FileParts[i];
-                if (parts[i].SegmentByteRangesTrusted == true
-                    || candidate.SegmentByteRangesTrusted != true
-                    || candidate.SegmentIds.Length == 0
-                    || _geometryRejected.ContainsKey((mpf.Id, candidate.SegmentIds[0])))
+                if (parts[i].SegmentByteRangesTrusted == true || candidate.SegmentByteRangesTrusted != true)
                     continue;
                 var updated = ClonePartWithoutRanges(parts[i]);
                 updated.SegmentIdByteRange = candidate.SegmentIdByteRange;

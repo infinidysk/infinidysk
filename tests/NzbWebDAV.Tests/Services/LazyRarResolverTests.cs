@@ -475,6 +475,79 @@ public class LazyRarResolverTests
         }
     }
 
+    [Fact]
+    public async Task RejectSegmentGeometry_StaleInstanceDropsRejectedRangesFromMoreCompleteSnapshot()
+    {
+        var previous = Environment.GetEnvironmentVariable("CONFIG_PATH");
+        var configRoot = Path.Join(Path.GetTempPath(), $"nzbdav-lazy-reject-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(configRoot);
+        Environment.SetEnvironmentVariable("CONFIG_PATH", configRoot);
+        try
+        {
+            var id = Guid.NewGuid();
+            DavMultipartFile.FilePart Part(string name, bool splitAfter) => new()
+            {
+                SegmentIds = [$"{name}-s0", $"{name}-s1", $"{name}-s2"],
+                SegmentIdByteRange = LongRange.FromStartAndSize(0, 300),
+                FilePartByteRange = LongRange.FromStartAndSize(10, 290),
+                SegmentByteRanges =
+                [
+                    LongRange.FromStartAndSize(0, 100),
+                    LongRange.FromStartAndSize(100, 100),
+                    LongRange.FromStartAndSize(200, 100),
+                ],
+                SegmentByteRangesTrusted = true,
+                IsSplitAfter = splitAfter,
+            };
+            var stale = new DavMultipartFile
+            {
+                Id = id,
+                Metadata = new DavMultipartFile.Meta
+                {
+                    IsLazy = true,
+                    PathInArchive = "movie.mkv",
+                    FileParts = [Part("v1", true), Part("v2", true)],
+                    PendingParts = [Pending("v3-s0", 300, 290)],
+                },
+            };
+            // Storage already holds a more complete snapshot carrying the same inferred volume-2 ranges.
+            await BlobStore.WriteBlob(id, new DavMultipartFile
+            {
+                Id = id,
+                Metadata = new DavMultipartFile.Meta
+                {
+                    PathInArchive = "movie.mkv",
+                    FileParts = [Part("v1", true), Part("v2", true), Part("v3", false)],
+                },
+            });
+
+            using var client = new MeasuringNntpClient("unused", 0, new Dictionary<string, (long, long)>());
+            var resolver = new LazyRarResolver(client, new ConfigManager());
+            Assert.True(resolver.RejectSegmentGeometry(stale, 1));
+
+            DavMultipartFile? stored = null;
+            for (var i = 0; i < 100; i++)
+            {
+                stored = await BlobStore.ReadBlob<DavMultipartFile>(id);
+                if (stored?.Metadata.FileParts[1].SegmentByteRangesTrusted != true) break;
+                await Task.Delay(20);
+            }
+
+            Assert.NotNull(stored);
+            Assert.Equal(3, stored.Metadata.FileParts.Length);
+            Assert.NotEqual(true, stored.Metadata.FileParts[1].SegmentByteRangesTrusted);
+            Assert.Null(stored.Metadata.FileParts[1].SegmentByteRanges);
+            Assert.True(stored.Metadata.FileParts[0].SegmentByteRangesTrusted);
+            Assert.Equal(3, stale.Metadata.FileParts.Length);
+            Assert.NotEqual(true, stale.Metadata.FileParts[1].SegmentByteRangesTrusted);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CONFIG_PATH", previous);
+            try { Directory.Delete(configRoot, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
     private static DavMultipartFile MultipartFile(
         string pathInArchive,
         params DavMultipartFile.PendingPart[] pending) =>

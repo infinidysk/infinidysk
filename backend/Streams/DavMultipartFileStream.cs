@@ -121,13 +121,16 @@ public class DavMultipartFileStream : FastReadOnlyStream
         {
             read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
         }
-        catch (SegmentGeometryMismatchException) when (
+        // Positioning failures included: a seek's expected range came from the same recorded geometry.
+        catch (SeekPositionNotFoundException) when (
             _resolver is not null &&
             _resolver.RejectSegmentGeometry(_mpf, SeekFilePart(_mpf.Metadata, _position).filePartIndex))
         {
             // Reopen at the same offset; the part now seeks via authoritative header probes.
+            var responseEnd = _expectedReadEndExclusive;
             await ReplaceInnerStreamAsync().ConfigureAwait(false);
-            _innerStream = await GetFileStreamAsync(_position, cancellationToken).ConfigureAwait(false);
+            _innerStream = await GetFileStreamAsync(_position, cancellationToken, responseEnd)
+                .ConfigureAwait(false);
             read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
         }
 
@@ -247,7 +250,8 @@ public class DavMultipartFileStream : FastReadOnlyStream
         throw new SeekPositionNotFoundException($"Corrupt file. Cannot seek to byte position {byteOffset}.");
     }
 
-    private async Task<CombinedStream> GetFileStreamAsync(long rangeStart, CancellationToken ct)
+    private async Task<CombinedStream> GetFileStreamAsync(
+        long rangeStart, CancellationToken ct, long? responseEndExclusive = null)
     {
         // Resolve only enough trailing volumes to cover the requested offset —
         // no waiting on the background pre-warm. For byte 0 that's nothing (the
@@ -259,10 +263,12 @@ public class DavMultipartFileStream : FastReadOnlyStream
         var meta = await EnsureCoveringAsync(rangeStart, ct).ConfigureAwait(false);
         // AES maps logical response bytes to packed volume bytes non-linearly; retain
         // legacy scheduling until that mapping has a tested exact contract.
-        var finiteBudget = _mpf.Metadata.AesParams is null &&
-                           ct.GetContext<StreamingSchedulingContext>() is not null
-            ? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget()
-            : null;
+        // A reopen mid-response owes only what the original range has left.
+        var finiteBudget = responseEndExclusive - rangeStart
+                           ?? (_mpf.Metadata.AesParams is null &&
+                               ct.GetContext<StreamingSchedulingContext>() is not null
+                               ? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget()
+                               : null);
         var budget = finiteBudget is > 0 ? new FiniteMultipartBudget(finiteBudget.Value) : null;
         _expectedReadEndExclusive = budget is null
             ? null
