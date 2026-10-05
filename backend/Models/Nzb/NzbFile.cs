@@ -16,6 +16,7 @@ public readonly record struct SegmentByteRangeIndex(
 public class NzbFile
 {
     public required string Subject { get; init; }
+    public DateTimeOffset? PostedDate { get; init; }
     public List<NzbSegment> Segments { get; } = [];
     public Par2FileProof? VerificationProof { get; set; }
     private bool _rejectInferredSegmentByteRanges;
