@@ -18,7 +18,8 @@
         "cancelledCallbacks": 0,
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
-        "finalArticleBudgetBytes": 0
+        "finalArticleBudgetBytes": 0,
+        "effectiveBatchWidth": 4
       },
       "timing": {
         "wallSeconds": {
@@ -79,7 +80,8 @@
         "cancelledCallbacks": 0,
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
-        "finalArticleBudgetBytes": 0
+        "finalArticleBudgetBytes": 0,
+        "effectiveBatchWidth": 4
       },
       "timing": {
         "wallSeconds": {
@@ -140,7 +142,8 @@
         "cancelledCallbacks": 0,
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
-        "finalArticleBudgetBytes": 0
+        "finalArticleBudgetBytes": 0,
+        "effectiveBatchWidth": 1
       },
       "timing": {
         "wallSeconds": {
@@ -201,7 +204,8 @@
         "cancelledCallbacks": 0,
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
-        "finalArticleBudgetBytes": 0
+        "finalArticleBudgetBytes": 0,
+        "effectiveBatchWidth": 4
       },
       "timing": {
         "wallSeconds": {
@@ -262,7 +266,8 @@
         "cancelledCallbacks": 0,
         "notFoundCallbacks": 0,
         "notRetrievedCallbacks": 0,
-        "finalArticleBudgetBytes": 0
+        "finalArticleBudgetBytes": 0,
+        "effectiveBatchWidth": 4
       },
       "timing": {
         "wallSeconds": {

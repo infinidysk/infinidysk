@@ -16,7 +16,8 @@ internal sealed record NntpWholePathDeterministic(
     long NotFoundCallbacks,
     long NotRetrievedCallbacks,
     long FinalArticleBudgetBytes,
-    long PeakActiveConnections);
+    long PeakActiveConnections,
+    long EffectiveBatchWidth);
 
 internal sealed record NntpWholePathTiming(
     double WallSeconds,
