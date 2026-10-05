@@ -432,7 +432,8 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
     }
 
     // Drops recorded ranges a BODY header contradicted so the part reopens through the
-    // authoritative header-probe path. Returns false when there was nothing to drop.
+    // authoritative header-probe path. Returns whether a reopen can avoid recorded ranges,
+    // including when another reader already dropped them from the shared metadata.
     public bool RejectSegmentGeometry(DavMultipartFile mpf, int partIndex)
     {
         lock (mpf)
@@ -440,7 +441,8 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
             var meta = mpf.Metadata;
             if ((uint)partIndex >= (uint)meta.FileParts.Length) return false;
             var part = meta.FileParts[partIndex];
-            if (part.SegmentByteRangesTrusted != true) return false;
+            if (part.SegmentByteRangesTrusted != true)
+                return part.SegmentIds.Length > 0 && _geometryRejected.ContainsKey((mpf.Id, part.SegmentIds[0]));
             if (part.SegmentIds.Length > 0) _geometryRejected.TryAdd((mpf.Id, part.SegmentIds[0]), 0);
 
             Log.Warning(

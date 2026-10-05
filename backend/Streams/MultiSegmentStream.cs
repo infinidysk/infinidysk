@@ -34,6 +34,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     private readonly SegmentSizes _segmentSizes;
     private readonly bool _failFastOnFirstSegment;
     private readonly bool _useContainerAwareFill;
+    private readonly bool _recordedSizesInferred;
     private readonly long? _firstSegmentFileOffset;
     private readonly LongRange? _expectedFirstSegmentRange;
     private readonly bool _expectedFirstSegmentRangeWasClippedAtFileEnd;
@@ -158,6 +159,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     /// order. Supplied when the import recorded per-segment byte ranges, and required
     /// before a failed segment may be replaced with same-length gap bytes.
     /// </param>
+    /// <param name="recordedSizesInferred">
+    /// The exact sizes may be inferred and a caller can re-derive them, so a fallback that
+    /// contradicts them is evidence to recover geometry rather than a bad donor.
+    /// </param>
     internal static Stream CreateWithInitialBatchPlan
     (
         Memory<string> segmentIds,
@@ -179,7 +184,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         IReadOnlySet<int>? knownMissingSegmentIndices = null,
         InitialBodyBatchPlan? initialBatchPlan = null,
         LongRange? expectedFirstSegmentRange = null,
-        bool expectedFirstSegmentRangeWasClippedAtFileEnd = false
+        bool expectedFirstSegmentRangeWasClippedAtFileEnd = false,
+        bool recordedSizesInferred = false
     )
     {
         return articleBufferSize == 0
@@ -188,7 +194,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 exactSegmentSizes, useContainerAwareFill, firstSegmentFileOffset,
                 failFastOnFirstSegment, knownCorruptSegmentIds, knownMissingSegmentIndices,
                 expectedFirstSegmentRange,
-                expectedFirstSegmentRangeWasClippedAtFileEnd)
+                expectedFirstSegmentRangeWasClippedAtFileEnd,
+                recordedSizesInferred)
             : new MultiSegmentStream(
                 segmentIds,
                 usenetClient,
@@ -209,6 +216,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 initialBatchPlan,
                 expectedFirstSegmentRange,
                 expectedFirstSegmentRangeWasClippedAtFileEnd,
+                recordedSizesInferred,
                 cancellationToken);
     }
 
@@ -232,7 +240,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         HashSet<string>? knownCorruptSegmentIds = null,
         IReadOnlySet<int>? knownMissingSegmentIndices = null,
         LongRange? expectedFirstSegmentRange = null,
-        bool expectedFirstSegmentRangeWasClippedAtFileEnd = false
+        bool expectedFirstSegmentRangeWasClippedAtFileEnd = false,
+        bool recordedSizesInferred = false
     )
     {
         return CreateWithInitialBatchPlan(
@@ -255,7 +264,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             knownMissingSegmentIndices,
             initialBatchPlan: null,
             expectedFirstSegmentRange,
-            expectedFirstSegmentRangeWasClippedAtFileEnd);
+            expectedFirstSegmentRangeWasClippedAtFileEnd,
+            recordedSizesInferred);
     }
 
     internal sealed record FirstSegmentHybridOptions(
@@ -280,6 +290,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         internal InitialBodyBatchPlan? InitialBatchPlan { get; init; }
         internal LongRange? ExpectedFirstSegmentRange { get; init; }
         internal bool ExpectedFirstSegmentRangeWasClippedAtFileEnd { get; init; }
+        internal bool RecordedSizesInferred { get; init; }
     }
 
     /// <summary>
@@ -306,7 +317,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         int bodyPipelineBatchWidth = BodyPipelineBatchSize,
         HashSet<string>? knownCorruptSegmentIds = null,
         IReadOnlySet<int>? knownMissingSegmentIndices = null,
-        InitialBodyBatchPlan? initialBatchPlan = null)
+        InitialBodyBatchPlan? initialBatchPlan = null,
+        bool recordedSizesInferred = false)
     {
         return CreateFirstSegmentHybridCore(
             new FirstSegmentHybridOptions(
@@ -329,6 +341,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 cancellationToken)
             {
                 InitialBatchPlan = initialBatchPlan,
+                RecordedSizesInferred = recordedSizesInferred,
             },
             firstSegmentPrefixBytes: 0);
     }
@@ -409,7 +422,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 options.KnownCorruptSegmentIds,
                 options.KnownMissingSegmentIndices,
                 options.ExpectedFirstSegmentRange,
-                options.ExpectedFirstSegmentRangeWasClippedAtFileEnd);
+                options.ExpectedFirstSegmentRangeWasClippedAtFileEnd,
+                options.RecordedSizesInferred);
 #pragma warning restore CA2000
             return await DiscardPrefixOrDisposeAsync(
                     stream, firstSegmentPrefixBytes, options.CancellationToken)
@@ -511,7 +525,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 options.FirstSegmentFileOffset,
                 options.BodyPipelineBatchWidth,
                 options.KnownCorruptSegmentIds,
-                options.KnownMissingSegmentIndices);
+                options.KnownMissingSegmentIndices,
+                recordedSizesInferred: options.RecordedSizesInferred);
         }
 
         var plan = BuildFirstSegmentHybridPlan(options, firstSegmentPrefixBytes);
@@ -607,7 +622,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             options.KnownCorruptSegmentIds,
             firstKnownMissing,
             options.ExpectedFirstSegmentRange,
-            options.ExpectedFirstSegmentRangeWasClippedAtFileEnd);
+            options.ExpectedFirstSegmentRangeWasClippedAtFileEnd,
+            options.RecordedSizesInferred);
 #pragma warning restore CA2000
 
         if (!remainderPlan.NeedsRemainder)
@@ -639,7 +655,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             options.BodyPipelineBatchWidth,
             options.KnownCorruptSegmentIds,
             remainingKnownMissing,
-            options.InitialBatchPlan);
+            options.InitialBatchPlan,
+            recordedSizesInferred: options.RecordedSizesInferred);
 
         return new FirstSegmentHybridPlan(
             head,
@@ -746,6 +763,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         InitialBodyBatchPlan? initialBatchPlan,
         LongRange? expectedFirstSegmentRange,
         bool expectedFirstSegmentRangeWasClippedAtFileEnd,
+        bool recordedSizesInferred,
         CancellationToken cancellationToken
     )
     {
@@ -769,6 +787,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         _segmentSizes = new SegmentSizes(exactSegmentSizes, segmentIds.Length);
         _failFastOnFirstSegment = failFastOnFirstSegment;
         _useContainerAwareFill = useContainerAwareFill;
+        _recordedSizesInferred = recordedSizesInferred;
         _firstSegmentFileOffset = firstSegmentFileOffset;
         _expectedFirstSegmentRange = expectedFirstSegmentRange;
         _expectedFirstSegmentRangeWasClippedAtFileEnd =
@@ -1979,6 +1998,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
         var lease = existingLease;
         var ownsLease = existingLease is null;
+        SegmentGeometryMismatchException? contradiction = null;
         try
         {
             foreach (var fallbackId in fallbacks)
@@ -2004,6 +2024,12 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                         Log.Debug(
                             "Fallback MessageId {FallbackId} for segment {PrimaryIndex} of {FileName} has a mismatched yEnc part size; skipping.",
                             fallbackId, segmentIndex, _fileName);
+                        if (_recordedSizesInferred)
+                        {
+                            contradiction ??= await SegmentResponseValidator.GetRecordedSizeContradictionAsync(
+                                    bodyResponse.Stream!, _segmentSizes, segmentIndex, _fileName, cancellationToken)
+                                .ConfigureAwait(false);
+                        }
                         await bodyResponse.Stream!.DisposeAsync().ConfigureAwait(false);
                         continue;
                     }
@@ -2038,6 +2064,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 }
             }
 
+            // Zero-filling at the recorded size would emit bytes later recovery cannot retract.
+            if (contradiction is not null) throw contradiction;
             return null;
         }
         finally

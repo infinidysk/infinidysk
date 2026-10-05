@@ -44,8 +44,17 @@ internal static class SegmentResponseValidator
     public static async ValueTask ThrowOnRecordedSizeMismatchAsync(
         Stream bodyStream, SegmentSizes segmentSizes, int segmentIndex, string? fileName, CancellationToken ct)
     {
+        if (await GetRecordedSizeContradictionAsync(bodyStream, segmentSizes, segmentIndex, fileName, ct)
+                .ConfigureAwait(false) is { } contradiction)
+            throw contradiction;
+    }
+
+    // Alternates are the same yEnc part, so one rejected for size contradicts the recorded geometry too.
+    public static async ValueTask<SegmentGeometryMismatchException?> GetRecordedSizeContradictionAsync(
+        Stream bodyStream, SegmentSizes segmentSizes, int segmentIndex, string? fileName, CancellationToken ct)
+    {
         if (!segmentSizes.TryGetRecordedSize(segmentIndex, out var recorded) || bodyStream is not YencStream yenc)
-            return;
+            return null;
 
         UsenetYencHeader? header;
         try
@@ -54,11 +63,11 @@ internal static class SegmentResponseValidator
         }
         catch (Exception e) when (e is InvalidDataException or IOException)
         {
-            return;
+            return null;
         }
 
-        if (header is null || header.PartSize <= 0 || header.PartSize == recorded) return;
-        throw new SegmentGeometryMismatchException(
+        if (header is null || header.PartSize <= 0 || header.PartSize == recorded) return null;
+        return new SegmentGeometryMismatchException(
             $"BODY for segment {segmentIndex} of {fileName ?? "unknown"} declares {header.PartSize} bytes " +
             $"but its recorded range holds {recorded}.");
     }

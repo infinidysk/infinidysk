@@ -407,6 +407,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
             segmentByteRangesTrusted: part.SegmentByteRangesTrusted == true,
             readBudgetOverride: readBudgetOverride,
             verificationProof: part.VerificationProof);
+        stream.RecordedSizesInferred = _resolver is not null;
         stream.Seek(part.FilePartByteRange.StartInclusive + extraOffset, SeekOrigin.Begin);
         var expectedLength = part.FilePartByteRange.Count - extraOffset;
         var responseLength = readBudgetOverride is { } cap

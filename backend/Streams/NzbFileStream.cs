@@ -60,6 +60,8 @@ public class NzbFileStream(
     private Stopwatch? _pendingSeekStopwatch;
     private string? _pendingSeekKind;
     internal IDisposable? PlaybackLease { get; set; }
+    // Set when recorded ranges may be inferred and the reader re-derives them on contradiction.
+    internal bool RecordedSizesInferred { get; set; }
     internal Task? PrewarmObservationForTests { get; private set; }
     private readonly LongRange[]? _segmentByteRanges = ValidateAndCloneSegmentByteRanges(
         segmentByteRanges,
@@ -693,6 +695,7 @@ public class NzbFileStream(
                         InitialBatchPlan = initialBatchPlan,
                         ExpectedFirstSegmentRange = expectedFirstSegmentRange,
                         ExpectedFirstSegmentRangeWasClippedAtFileEnd = expectedFirstSegmentRangeWasClippedAtFileEnd,
+                        RecordedSizesInferred = RecordedSizesInferred,
                     },
                     prefixBytes)
                 .ConfigureAwait(false);
@@ -1089,7 +1092,8 @@ public class NzbFileStream(
             streamingBodyBatchWidth,
             knownCorruptSegmentIds,
             sliced.KnownMissing,
-            initialBatchPlan);
+            initialBatchPlan,
+            RecordedSizesInferred);
     }
 
     private void StartConnectionPrewarm(

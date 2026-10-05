@@ -493,6 +493,77 @@ public class DavMultipartFileStreamTests
         Assert.NotEqual(true, multipart.Metadata.FileParts[1].SegmentByteRangesTrusted);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(4)]
+    public async Task ReadAsync_HealthyFallbackContradictingInferredSize_RecoversWithoutHoles(int articleBufferSize)
+    {
+        var segments = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        var ranges = new Dictionary<string, LongRange>(StringComparer.Ordinal);
+        var next = 0;
+        var first = AddVolume(segments, ranges, "a", [8], ref next);
+        var second = AddVolume(segments, ranges, "b", [100, 100, 60, 140, 80], ref next);
+        // The b-2 primary is gone; its healthy alternate declares the real 60 bytes.
+        segments["b-2-alt"] = segments["b-2"];
+        ranges["b-2-alt"] = ranges["b-2"];
+        segments.Remove("b-2");
+        second.SegmentFallbackIds = [[], [], ["b-2-alt"], [], []];
+        using var client = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta { PathInArchive = "movie.mkv", FileParts = [first, second] },
+        };
+        var resolver = new LazyRarResolver(client, new ConfigManager());
+        await resolver.PrepareSegmentGeometryAsync(multipart, 1, CancellationToken.None);
+        Assert.True(multipart.Metadata.FileParts[1].SegmentByteRangesTrusted);
+        var path = $"/view/{Guid.NewGuid():N}.mkv";
+        await using var stream = new DavMultipartFileStream(
+            multipart, client, articleBufferSize, resolver,
+            usePipelinedBodyRequests: articleBufferSize > 0, fileName: path);
+
+        var bytes = await ReadFullyAsync(stream, next);
+
+        Assert.Equal(Enumerable.Range(0, next).Select(x => (byte)x).ToArray(), bytes);
+        Assert.Null(PlaybackHoleTracker.SnapshotMissingSegmentIds(path));
+        Assert.NotEqual(true, multipart.Metadata.FileParts[1].SegmentByteRangesTrusted);
+    }
+
+    [Fact]
+    public async Task ReadAsync_SecondReaderAfterSharedGeometryRejection_StillRecovers()
+    {
+        var segments = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        var ranges = new Dictionary<string, LongRange>(StringComparer.Ordinal);
+        var next = 0;
+        var first = AddVolume(segments, ranges, "a", [8], ref next);
+        var second = AddVolume(segments, ranges, "b", [100, 100, 60, 140, 80], ref next);
+        using var client = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta { PathInArchive = "movie.mkv", FileParts = [first, second] },
+        };
+        var resolver = new LazyRarResolver(client, new ConfigManager());
+        await resolver.PrepareSegmentGeometryAsync(multipart, 1, CancellationToken.None);
+        await using var readerA = new DavMultipartFileStream(
+            multipart, client, articleBufferSize: 0, resolver, usePipelinedBodyRequests: false, fileName: "movie.mkv");
+        await using var readerB = new DavMultipartFileStream(
+            multipart, client, articleBufferSize: 0, resolver, usePipelinedBodyRequests: false, fileName: "movie.mkv");
+
+        // Gate: both readers open volume b on the inferred ranges before either sees b-2.
+        const int gate = 8 + 150;
+        var headA = await ReadFullyAsync(readerA, gate);
+        var headB = await ReadFullyAsync(readerB, gate);
+        Assert.True(multipart.Metadata.FileParts[1].SegmentByteRangesTrusted);
+        var tailA = await ReadFullyAsync(readerA, next - gate);
+        Assert.NotEqual(true, multipart.Metadata.FileParts[1].SegmentByteRangesTrusted);
+        var tailB = await ReadFullyAsync(readerB, next - gate);
+
+        var expected = Enumerable.Range(0, next).Select(x => (byte)x).ToArray();
+        Assert.Equal(expected, headA.Concat(tailA).ToArray());
+        Assert.Equal(expected, headB.Concat(tailB).ToArray());
+    }
+
     private static DavMultipartFile.FilePart AddVolume(
         Dictionary<string, byte[]> segments,
         Dictionary<string, LongRange> ranges,
