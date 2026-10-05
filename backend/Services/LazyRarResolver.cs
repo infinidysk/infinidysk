@@ -28,7 +28,11 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
 
     private readonly ConcurrentDictionary<Guid, Persistor> _persistors = new();
 
-    private readonly ConcurrentDictionary<(Guid, string), byte> _geometryInFlight = new();
+    private readonly ConcurrentDictionary<(Guid, string), Task> _geometryInFlight = new();
+
+    // Volumes whose inferred geometry a BODY header contradicted. Never re-inferred in this
+    // process; ponytail: not persisted, so a restart may infer (and reject) them once more.
+    private readonly ConcurrentDictionary<(Guid, string), byte> _geometryRejected = new();
 
     // Test seam: when set, volume opens skip NzbFileStream/yEnc so unit tests
     // can feed a crafted RAR with an understated Length without rapidyenc.
@@ -391,43 +395,97 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
             .ConfigureAwait(false);
     }
 
-    // Geometry probes are full BODY fetches. Running them for every resolved volume floods
-    // connections when a seek resolves a long prefix, so readers request them only for the
-    // volumes just ahead of where they are streaming.
-    public async Task PrefetchSegmentGeometryAsync(DavMultipartFile mpf, int partIndex)
+    // Geometry probes are BODY fetches. Running them for every resolved volume floods
+    // connections when a seek resolves a long prefix, so a reader asks only for the volume it
+    // is about to stream, during the previous volume's read-ahead window. Returns the part to
+    // open: with exact ranges when the probe succeeded, otherwise unchanged.
+    public async Task<DavMultipartFile.FilePart> PrepareSegmentGeometryAsync(
+        DavMultipartFile mpf, int partIndex, CancellationToken ct)
     {
+        var part = mpf.Metadata.FileParts[partIndex];
+        if (part.SegmentByteRangesTrusted == true
+            || part.SegmentIds.Length == 0
+            || mpf.Metadata.PathInArchive is null)
+            return part;
+
+        var key = (mpf.Id, part.SegmentIds[0]);
+        if (_geometryRejected.ContainsKey(key)) return part;
+        // The first reader's token owns the shared probe; a cancelled probe only costs later
+        // waiters their exact ranges, never correctness.
+        var shared = _geometryInFlight.GetOrAdd(key, _ => AttachSegmentByteRangesAsync(
+            mpf, part, TryProbeSegmentByteRangesAsync(part.SegmentIds, ct)));
+
         try
         {
-            var meta = mpf.Metadata;
-            if (meta.PathInArchive is null) return;
-            while (partIndex >= meta.FileParts.Length)
-            {
-                if (!meta.IsLazy || (meta.PendingParts?.Length ?? 0) == 0) return;
-                var resolvedCount = meta.FileParts.Length;
-                meta = await ResolveNextAsync(mpf, CancellationToken.None).ConfigureAwait(false);
-                if (meta.FileParts.Length <= resolvedCount) return;
-            }
-
-            var part = meta.FileParts[partIndex];
-            if (part.SegmentByteRangesTrusted == true || part.SegmentIds.Length == 0) return;
-            var key = (mpf.Id, part.SegmentIds[0]);
-            if (!_geometryInFlight.TryAdd(key, 0)) return;
-            try
-            {
-                await AttachSegmentByteRangesAsync(
-                        mpf, part, TryProbeSegmentByteRangesAsync(part.SegmentIds, CancellationToken.None))
-                    .ConfigureAwait(false);
-            }
-            finally
-            {
-                _geometryInFlight.TryRemove(key, out _);
-            }
+            await shared.WaitAsync(ct).ConfigureAwait(false);
         }
-        catch (Exception e) when (e is not OutOfMemoryException)
+        catch (Exception e) when (e is not OutOfMemoryException && !ct.IsCancellationRequested)
         {
-            Log.Debug(e, "Lazy RAR geometry prefetch failed for multipart {Id}", mpf.Id);
+            Log.Debug(e, "Lazy RAR geometry probe failed for multipart {Id}", mpf.Id);
+        }
+        finally
+        {
+            _geometryInFlight.TryRemove(KeyValuePair.Create(key, shared));
+        }
+
+        return mpf.Metadata.FileParts[partIndex];
+    }
+
+    // Drops recorded ranges a BODY header contradicted so the part reopens through the
+    // authoritative header-probe path. Returns false when there was nothing to drop.
+    public bool RejectSegmentGeometry(DavMultipartFile mpf, int partIndex)
+    {
+        lock (mpf)
+        {
+            var meta = mpf.Metadata;
+            if ((uint)partIndex >= (uint)meta.FileParts.Length) return false;
+            var part = meta.FileParts[partIndex];
+            if (part.SegmentByteRangesTrusted != true) return false;
+            if (part.SegmentIds.Length > 0) _geometryRejected.TryAdd((mpf.Id, part.SegmentIds[0]), 0);
+
+            Log.Warning(
+                "Recorded segment geometry for volume {Volume} of multipart {Id} disagrees with its articles; " +
+                "seeking that volume via header probes instead",
+                partIndex + 1, mpf.Id);
+            var updated = ClonePartWithoutRanges(part);
+            updated.SegmentByteRangesTrusted = false;
+            ReplacePart(mpf, meta, partIndex, updated);
+            return true;
         }
     }
+
+    private static DavMultipartFile.FilePart ClonePartWithoutRanges(DavMultipartFile.FilePart part) => new()
+    {
+        SegmentIds = part.SegmentIds,
+        SegmentIdByteRange = part.SegmentIdByteRange,
+        FilePartByteRange = part.FilePartByteRange,
+        SegmentFallbackIds = part.SegmentFallbackIds,
+        VerificationProof = part.VerificationProof,
+        IsSplitAfter = part.IsSplitAfter,
+    };
+
+    // Caller holds lock(mpf).
+    private void ReplacePart(
+        DavMultipartFile mpf, DavMultipartFile.Meta meta, int index, DavMultipartFile.FilePart updated)
+    {
+        var parts = (DavMultipartFile.FilePart[])meta.FileParts.Clone();
+        parts[index] = updated;
+        mpf.Metadata = WithFileParts(meta, parts);
+        // A newer persist supersedes older ones, so keep the completion reconcile.
+        _ = SchedulePersistAsync(mpf, reconcileFileSize: !meta.IsLazy);
+    }
+
+    private static DavMultipartFile.Meta WithFileParts(
+        DavMultipartFile.Meta meta, DavMultipartFile.FilePart[] parts) => new()
+    {
+        AesParams = meta.AesParams,
+        FileParts = parts,
+        IsLazy = meta.IsLazy,
+        PathInArchive = meta.PathInArchive,
+        ArchivePassword = meta.ArchivePassword,
+        PendingParts = meta.PendingParts,
+        ExpectedFileSize = meta.ExpectedFileSize,
+    };
 
     private static bool TryApplySegmentByteRanges(DavMultipartFile.FilePart part, LongRange[]? ranges)
     {
@@ -450,38 +508,11 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         {
             var meta = mpf.Metadata;
             var index = Array.IndexOf(meta.FileParts, part);
-            if (index < 0)
-            {
-                // Not committed yet; CommitResolvedBatch publishes it under this same lock.
-                TryApplySegmentByteRanges(part, ranges);
-                return;
-            }
+            if (index < 0 || _geometryRejected.ContainsKey((mpf.Id, part.SegmentIds[0]))) return;
 
-            var updated = new DavMultipartFile.FilePart
-            {
-                SegmentIds = part.SegmentIds,
-                SegmentIdByteRange = part.SegmentIdByteRange,
-                FilePartByteRange = part.FilePartByteRange,
-                SegmentFallbackIds = part.SegmentFallbackIds,
-                VerificationProof = part.VerificationProof,
-                IsSplitAfter = part.IsSplitAfter,
-            };
+            var updated = ClonePartWithoutRanges(part);
             if (!TryApplySegmentByteRanges(updated, ranges)) return;
-
-            var parts = (DavMultipartFile.FilePart[])meta.FileParts.Clone();
-            parts[index] = updated;
-            mpf.Metadata = new DavMultipartFile.Meta
-            {
-                AesParams = meta.AesParams,
-                FileParts = parts,
-                IsLazy = meta.IsLazy,
-                PathInArchive = meta.PathInArchive,
-                ArchivePassword = meta.ArchivePassword,
-                PendingParts = meta.PendingParts,
-                ExpectedFileSize = meta.ExpectedFileSize,
-            };
-            // A newer persist supersedes older ones, so keep the completion reconcile.
-            _ = SchedulePersistAsync(mpf, reconcileFileSize: !meta.IsLazy);
+            ReplacePart(mpf, meta, index, updated);
         }
     }
 
@@ -837,6 +868,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         try
         {
             if (Volatile.Read(ref p.LatestStamp) != myStamp) return;
+            await MergeStoredProgressAsync(mpf).ConfigureAwait(false);
             await BlobStore.WriteBlob(mpf.Id, mpf).ConfigureAwait(false);
 
             if (reconcileFileSize)
@@ -854,6 +886,60 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         finally
         {
             p.Sem.Release();
+        }
+    }
+
+    // Concurrent readers can hold different DavMultipartFile instances for one blob, so a
+    // write from a reader that is behind would discard another reader's resolved volumes or
+    // geometry. Fold the stored progress in first; the per-Id persistor serializes this.
+    private async Task MergeStoredProgressAsync(DavMultipartFile mpf)
+    {
+        DavMultipartFile? stored;
+        try
+        {
+            stored = await BlobStore.ReadBlob<DavMultipartFile>(mpf.Id).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            Log.Debug(e, "Could not read stored multipart {Id} before persisting; overwriting it", mpf.Id);
+            return;
+        }
+
+        if (stored is null || ReferenceEquals(stored, mpf)) return;
+        var theirs = stored.Metadata;
+        lock (mpf)
+        {
+            var mine = mpf.Metadata;
+            var common = Math.Min(mine.FileParts.Length, theirs.FileParts.Length);
+            for (var i = 0; i < common; i++)
+            {
+                if (!mine.FileParts[i].SegmentIds.SequenceEqual(theirs.FileParts[i].SegmentIds))
+                    return;
+            }
+
+            var useTheirs = theirs.FileParts.Length > mine.FileParts.Length
+                            || (theirs.FileParts.Length == mine.FileParts.Length && mine.IsLazy && !theirs.IsLazy);
+            var baseMeta = useTheirs ? theirs : mine;
+            var other = useTheirs ? mine : theirs;
+            var parts = (DavMultipartFile.FilePart[])baseMeta.FileParts.Clone();
+            var changed = useTheirs;
+            for (var i = 0; i < common; i++)
+            {
+                var candidate = other.FileParts[i];
+                if (parts[i].SegmentByteRangesTrusted == true
+                    || candidate.SegmentByteRangesTrusted != true
+                    || candidate.SegmentIds.Length == 0
+                    || _geometryRejected.ContainsKey((mpf.Id, candidate.SegmentIds[0])))
+                    continue;
+                var updated = ClonePartWithoutRanges(parts[i]);
+                updated.SegmentIdByteRange = candidate.SegmentIdByteRange;
+                updated.SegmentByteRanges = candidate.SegmentByteRanges;
+                updated.SegmentByteRangesTrusted = true;
+                parts[i] = updated;
+                changed = true;
+            }
+
+            if (changed) mpf.Metadata = WithFileParts(baseMeta, parts);
         }
     }
 

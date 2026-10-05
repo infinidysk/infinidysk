@@ -1026,6 +1026,9 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
                         $"the expected positioning range {_expectedFirstSegmentRange}.");
                 }
 
+                await SegmentResponseValidator.ThrowOnRecordedSizeMismatchAsync(
+                        response.Stream!, _segmentSizes, _openSegmentIndex, _fileName, cancellationToken)
+                    .ConfigureAwait(false);
                 return response;
             }
             catch

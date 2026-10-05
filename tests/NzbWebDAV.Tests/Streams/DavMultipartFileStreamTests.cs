@@ -317,6 +317,124 @@ public class DavMultipartFileStreamTests
         Assert.Equal(0, budget.LeasedBytes);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(4)]
+    public async Task ReadAsync_InferredGeometryContradictedByArticles_StreamsExactBytes(int articleBufferSize)
+    {
+        var segments = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        var ranges = new Dictionary<string, LongRange>(StringComparer.Ordinal);
+        var next = 0;
+        var first = AddVolume(segments, ranges, "a", [8], ref next);
+        // Second and last headers fit 100-byte uniform segments; the middle ones do not.
+        var second = AddVolume(segments, ranges, "b", [100, 100, 60, 140, 80], ref next);
+        using var client = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta { PathInArchive = "movie.mkv", FileParts = [first, second] },
+        };
+        await using var stream = new DavMultipartFileStream(
+            multipart, client, articleBufferSize, new LazyRarResolver(client, new ConfigManager()),
+            usePipelinedBodyRequests: articleBufferSize > 0, fileName: "movie.mkv");
+
+        var bytes = await ReadFullyAsync(stream, next);
+
+        Assert.Equal(Enumerable.Range(0, next).Select(x => (byte)x).ToArray(), bytes);
+        Assert.True(client.HeaderProbeCount > 0);
+        Assert.NotEqual(true, multipart.Metadata.FileParts[1].SegmentByteRangesTrusted);
+    }
+
+    [Fact]
+    public async Task ReadAsync_FiniteRange_ProbesGeometryOnlyForVolumesItStreams()
+    {
+        var segments = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        var ranges = new Dictionary<string, LongRange>(StringComparer.Ordinal);
+        var next = 0;
+        var parts = new[] { "a", "b", "c", "d" }
+            .Select(name => AddVolume(segments, ranges, name, [8, 8, 8, 8], ref next))
+            .ToArray();
+        var probed = new List<string>();
+        using var client = new FakeNntpClient(
+            segments, useCachedYencStreams: true, segmentRanges: ranges,
+            headerProbeFailure: (id, _) =>
+            {
+                lock (probed) probed.Add(id);
+                return null;
+            });
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta { PathInArchive = "movie.mkv", FileParts = parts },
+        };
+        using var requestCts = new CancellationTokenSource();
+        using var schedulingScope = requestCts.Token.SetContext(new StreamingSchedulingContext
+        {
+            Snapshot = new StreamingCapacitySnapshot(
+                IsPerStreamMode: false,
+                ConfiguredDownloadBudget: 20,
+                ConfiguredPerStreamBudget: 15,
+                ActiveReaderShareCount: 1,
+                EffectivePrimaryTransferCapacity: 20,
+                EffectiveStreamConnectionTarget: 20,
+                ArticleBufferSize: 4,
+                InFlightArticleBudgetBytes: 1024,
+                Reason: StreamingCapacityReason.Ok),
+        });
+        var previousBudget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        // Volumes a and b, plus one byte of c.
+        NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(65);
+        try
+        {
+            await using var stream = new DavMultipartFileStream(
+                multipart, client, articleBufferSize: 4, new LazyRarResolver(client, new ConfigManager()),
+                usePipelinedBodyRequests: true, fileName: "movie.mkv");
+            using var all = new MemoryStream();
+            var buffer = new byte[16];
+            int read;
+            while ((read = await stream.ReadAsync(buffer, requestCts.Token)) > 0)
+                all.Write(buffer, 0, read);
+
+            Assert.Equal(Enumerable.Range(0, 65).Select(x => (byte)x).ToArray(), all.ToArray());
+        }
+        finally
+        {
+            NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(previousBudget);
+        }
+
+        // The first volume boundary is prepared; the one-byte tail and unread volumes are not.
+        Assert.NotEmpty(probed);
+        Assert.All(probed, id => Assert.StartsWith("b-", id, StringComparison.Ordinal));
+        Assert.True(multipart.Metadata.FileParts[1].SegmentByteRangesTrusted);
+        Assert.DoesNotContain(client.BodyRequestCounts.Keys, id => id.StartsWith("d-", StringComparison.Ordinal));
+    }
+
+    private static DavMultipartFile.FilePart AddVolume(
+        Dictionary<string, byte[]> segments,
+        Dictionary<string, LongRange> ranges,
+        string name,
+        int[] sizes,
+        ref int next)
+    {
+        var ids = new string[sizes.Length];
+        var offset = 0;
+        for (var i = 0; i < sizes.Length; i++)
+        {
+            ids[i] = $"{name}-{i}";
+            segments[ids[i]] = Enumerable.Range(next + offset, sizes[i]).Select(x => (byte)x).ToArray();
+            ranges[ids[i]] = LongRange.FromStartAndSize(offset, sizes[i]);
+            offset += sizes[i];
+        }
+
+        next += offset;
+        return new DavMultipartFile.FilePart
+        {
+            SegmentIds = ids,
+            SegmentIdByteRange = new LongRange(0, offset),
+            FilePartByteRange = new LongRange(0, offset),
+        };
+    }
+
     [Fact]
     public async Task ReadAsync_TailOfPersistedLazyPartWithTrailingArchiveBytes_Succeeds()
     {

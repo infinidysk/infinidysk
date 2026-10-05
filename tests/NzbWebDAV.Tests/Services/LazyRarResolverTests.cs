@@ -92,7 +92,7 @@ public class LazyRarResolverTests
         // The measure-and-retry path never ran.
         Assert.Equal(0, client.MeasuredSizeRequests);
 
-        await resolver.PrefetchSegmentGeometryAsync(mpf, 1);
+        await resolver.PrepareSegmentGeometryAsync(mpf, 1, CancellationToken.None);
 
         Assert.Equal(1, client.MeasuredSizeRequests);
         Assert.True(mpf.Metadata.FileParts[1].SegmentByteRangesTrusted);
@@ -101,7 +101,7 @@ public class LazyRarResolverTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task PrefetchSegmentGeometryAsync_RecordsTrustedSegmentRangesOnlyForUniformGeometry(bool uniform)
+    public async Task PrepareSegmentGeometryAsync_RecordsTrustedSegmentRangesOnlyForUniformGeometry(bool uniform)
     {
         const string pathInArchive = "movie.mkv";
         var volumeBytes = BuildRar4ContinuationVolume(pathInArchive, packedSize: 1000);
@@ -126,7 +126,7 @@ public class LazyRarResolverTests
         // Geometry probes are full BODY fetches; resolving for a seek must not issue them.
         Assert.Equal(0, client.MeasuredSizeRequests);
 
-        await resolver.PrefetchSegmentGeometryAsync(mpf, 1);
+        await resolver.PrepareSegmentGeometryAsync(mpf, 1, CancellationToken.None);
 
         var resolved = mpf.Metadata.FileParts[1];
         if (uniform)
@@ -402,6 +402,77 @@ public class LazyRarResolverTests
         Assert.Contains("volume 2 of 2", failure.Message);
         Assert.Contains("'extra.srt'", failure.Message);
         Assert.Contains("split-before: True", failure.Message);
+    }
+
+    [Fact]
+    public async Task PrepareSegmentGeometryAsync_StaleInstanceKeepsAnotherReadersPersistedVolumes()
+    {
+        var previous = Environment.GetEnvironmentVariable("CONFIG_PATH");
+        var configRoot = Path.Join(Path.GetTempPath(), $"nzbdav-lazy-merge-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(configRoot);
+        Environment.SetEnvironmentVariable("CONFIG_PATH", configRoot);
+        try
+        {
+            var id = Guid.NewGuid();
+            DavMultipartFile.FilePart Part(string name, bool splitAfter) => new()
+            {
+                SegmentIds = [$"{name}-s0", $"{name}-s1", $"{name}-s2"],
+                SegmentIdByteRange = LongRange.FromStartAndSize(0, 300),
+                FilePartByteRange = LongRange.FromStartAndSize(10, 290),
+                IsSplitAfter = splitAfter,
+            };
+            // The stale reader loaded the blob while volume 3 was still pending.
+            var stale = new DavMultipartFile
+            {
+                Id = id,
+                Metadata = new DavMultipartFile.Meta
+                {
+                    IsLazy = true,
+                    PathInArchive = "movie.mkv",
+                    FileParts = [Part("v1", true), Part("v2", true)],
+                    PendingParts = [Pending("v3-s0", 300, 290)],
+                },
+            };
+            // Another reader then resolved the rest and persisted it.
+            var newer = new DavMultipartFile
+            {
+                Id = id,
+                Metadata = new DavMultipartFile.Meta
+                {
+                    PathInArchive = "movie.mkv",
+                    FileParts = [Part("v1", true), Part("v2", true), Part("v3", false)],
+                },
+            };
+            await BlobStore.WriteBlob(id, newer);
+
+            using var client = new MeasuringNntpClient("unused", 0, new Dictionary<string, (long, long)>
+            {
+                ["v2-s1"] = (100, 100),
+                ["v2-s2"] = (200, 100),
+            });
+            var resolver = new LazyRarResolver(client, new ConfigManager());
+            await resolver.PrepareSegmentGeometryAsync(stale, 1, CancellationToken.None);
+
+            DavMultipartFile? stored = null;
+            for (var i = 0; i < 100; i++)
+            {
+                stored = await BlobStore.ReadBlob<DavMultipartFile>(id);
+                if (stored?.Metadata.FileParts.Length == 3
+                    && stored.Metadata.FileParts[1].SegmentByteRangesTrusted == true)
+                    break;
+                await Task.Delay(20);
+            }
+
+            Assert.NotNull(stored);
+            Assert.False(stored.Metadata.IsLazy);
+            Assert.Equal(3, stored.Metadata.FileParts.Length);
+            Assert.True(stored.Metadata.FileParts[1].SegmentByteRangesTrusted);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CONFIG_PATH", previous);
+            try { Directory.Delete(configRoot, recursive: true); } catch (IOException) { /* best effort */ }
+        }
     }
 
     private static DavMultipartFile MultipartFile(

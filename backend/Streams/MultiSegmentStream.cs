@@ -2188,6 +2188,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                     $"BODY geometry for segment {segmentIndex} of {_fileName} does not match " +
                     $"the expected positioning range {_expectedFirstSegmentRange}.");
             }
+
+            await SegmentResponseValidator.ThrowOnRecordedSizeMismatchAsync(
+                source, _segmentSizes, segmentIndex, _fileName, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
