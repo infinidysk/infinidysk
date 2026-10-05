@@ -1,5 +1,6 @@
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
@@ -302,6 +303,15 @@ public class LazyRarProcessorTests
         Assert.Equal(member, result.PathInArchive);
         Assert.Equal(2, result.PendingParts.Length);
         Assert.Equal(true, result.FirstPart.IsSplitAfter);
+
+        // Validation parsed every continuation header, so import keeps their ranges.
+        var resolved = Assert.IsType<DavMultipartFile.FilePart[]>(result.ResolvedTrailingParts);
+        Assert.Equal(2, resolved.Length);
+        Assert.All(resolved, part => Assert.Equal(600, part.FilePartByteRange.Count));
+        Assert.True(resolved[0].IsSplitAfter);
+        Assert.False(resolved[1].IsSplitAfter);
+        Assert.Equal(result.PendingParts[1].SegmentIds, resolved[1].SegmentIds);
+        Assert.Equal(1_800, result.FirstPart.FilePartByteRange.Count + resolved.Sum(p => p.FilePartByteRange.Count));
     }
 
     [Fact]

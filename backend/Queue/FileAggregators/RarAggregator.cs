@@ -44,11 +44,13 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
             Metadata = new DavMultipartFile.Meta
             {
                 AesParams = result.AesParams,
-                FileParts = [result.FirstPart],
-                IsLazy = true,
+                FileParts = result.ResolvedTrailingParts is { } resolved
+                    ? [result.FirstPart, .. resolved]
+                    : [result.FirstPart],
+                IsLazy = result.ResolvedTrailingParts is null,
                 PathInArchive = pathInArchive,
                 ArchivePassword = result.Password,
-                PendingParts = result.PendingParts,
+                PendingParts = result.ResolvedTrailingParts is null ? result.PendingParts : [],
                 ExpectedFileSize = result.TotalFileSize,
             }
         };
