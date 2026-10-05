@@ -1,11 +1,15 @@
+using MemoryPack;
+using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
+using NzbWebDAV.Queue.FileAggregators;
 using NzbWebDAV.Queue.FileProcessors;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
@@ -312,6 +316,130 @@ public class LazyRarProcessorTests
         Assert.False(resolved[1].IsSplitAfter);
         Assert.Equal(result.PendingParts[1].SegmentIds, resolved[1].SegmentIds);
         Assert.Equal(1_800, result.FirstPart.FilePartByteRange.Count + resolved.Sum(p => p.FilePartByteRange.Count));
+    }
+
+    [Fact]
+    public async Task ResolvedContinuations_PersistNonLazyAndPlayWithoutResolver()
+    {
+        const string member = "movie.mkv";
+        var volumes = new[]
+        {
+            BuildRar4SplitFirstVolume(member, packedSize: 600, uncompressedSize: 1_800),
+            BuildRar4ContinuationVolume(member, packedSize: 600, splitAfter: true),
+            BuildRar4ContinuationVolume(member, packedSize: 600),
+        };
+        var expected = new byte[1_800];
+        for (var v = 0; v < volumes.Length; v++)
+        {
+            var payload = volumes[v].AsSpan(volumes[v].Length - 600);
+            for (var i = 0; i < payload.Length; i++) payload[i] = (byte)(v * 600 + i);
+            payload.CopyTo(expected.AsSpan(v * 600));
+        }
+
+        var infos = new List<GetFileInfosStep.FileInfo>
+        {
+            FileInfoFor("opaque.part01.rar", "part1@example.com", volumes[0].Length, volumes[0].Length),
+            FileInfoFor("opaque.part02.rar", "part2@example.com", volumes[1].Length, volumes[1].Length, volumes[1]),
+            FileInfoFor("opaque.part03.rar", "part3@example.com", volumes[2].Length, volumes[2].Length, volumes[2]),
+        };
+        // A trusted index known at import (e.g. from a yEnc header) must survive; an absent one stays absent.
+        infos[1].NzbFile.Segments[0].ByteRange = LongRange.FromStartAndSize(0, volumes[1].Length);
+
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["part1@example.com"] = volumes[0],
+            ["part2@example.com"] = volumes[1],
+            ["part3@example.com"] = volumes[2],
+        });
+        var result = Assert.IsType<LazyRarProcessor.Result>(
+            await new LazyRarProcessor(infos, client, password: null, CancellationToken.None).ProcessAsync());
+
+        var meta = AggregateAndRoundTrip(result);
+
+        Assert.False(meta.IsLazy);
+        Assert.Empty(meta.PendingParts);
+        Assert.Equal(3, meta.FileParts.Length);
+        Assert.Equal(1_800, meta.ExpectedFileSize);
+        Assert.True(meta.FileParts[1].SegmentByteRangesTrusted);
+        Assert.Equal(
+            [LongRange.FromStartAndSize(0, volumes[1].Length)],
+            Assert.IsType<LongRange[]>(meta.FileParts[1].SegmentByteRanges));
+
+        // No resolver: a lazy layout would fail here, so playback proves the persisted ranges.
+        await using var stream = new DavMultipartFileStream(
+            new DavMultipartFile { Id = Guid.NewGuid(), Metadata = meta },
+            client,
+            articleBufferSize: 0,
+            resolver: null,
+            usePipelinedBodyRequests: false,
+            fileName: member);
+        Assert.Equal(1_800, stream.Length);
+        var all = new byte[1_800];
+        await stream.ReadExactlyAsync(all);
+        Assert.Equal(expected, all);
+
+        stream.Seek(1_500, SeekOrigin.Begin);
+        var tail = new byte[300];
+        await stream.ReadExactlyAsync(tail);
+        Assert.Equal(expected[1_500..], tail);
+    }
+
+    [Fact]
+    public async Task ContinuationSizesWithinTolerance_PersistLazyLayout()
+    {
+        const string member = "movie.mkv";
+        var firstBytes = BuildRar4SplitFirstVolume(member, packedSize: 600, uncompressedSize: 1_800);
+        var middleBytes = BuildRar4ContinuationVolume(member, packedSize: 600, splitAfter: true);
+        // 8 bytes short: passes chain validation tolerance but cannot publish the exact size.
+        var finalBytes = BuildRar4ContinuationVolume(member, packedSize: 592);
+        var infos = new List<GetFileInfosStep.FileInfo>
+        {
+            FileInfoFor("opaque.part01.rar", "part1@example.com", firstBytes.Length, firstBytes.Length),
+            FileInfoFor("opaque.part02.rar", "part2@example.com", middleBytes.Length, middleBytes.Length, middleBytes),
+            FileInfoFor("opaque.part03.rar", "part3@example.com", finalBytes.Length, finalBytes.Length, finalBytes),
+        };
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["part1@example.com"] = firstBytes,
+            ["part3@example.com"] = finalBytes,
+        });
+
+        var result = Assert.IsType<LazyRarProcessor.Result>(
+            await new LazyRarProcessor(infos, client, password: null, CancellationToken.None).ProcessAsync());
+        Assert.Null(result.ResolvedTrailingParts);
+
+        var meta = AggregateAndRoundTrip(result);
+        Assert.True(meta.IsLazy);
+        Assert.Single(meta.FileParts);
+        Assert.Equal(2, meta.PendingParts.Length);
+    }
+
+    private static DavMultipartFile.Meta AggregateAndRoundTrip(LazyRarProcessor.Result result)
+    {
+        var dbPath = Path.Join(Path.GetTempPath(), $"lazy-rar-agg-{Guid.NewGuid():N}.sqlite");
+        try
+        {
+            using var context = new DavDatabaseContext(new DbContextOptionsBuilder<DavDatabaseContext>()
+                .UseSqlite($"Data Source={dbPath}")
+                .Options);
+            context.Database.EnsureCreated();
+            var mount = DavItem.New(
+                Guid.NewGuid(), DavItem.ContentFolder, "release", null,
+                DavItem.ItemType.Directory, DavItem.ItemSubType.Directory,
+                null, null, Guid.NewGuid(), null, nzbBlobId: null, arrDownloadId: null);
+            context.Items.Add(mount);
+
+            new RarAggregator(new DavDatabaseClient(context), mount, checkedFullHealth: false)
+                .UpdateDatabase([result]);
+
+            var blob = Assert.Single(context.BlobMultipartFiles);
+            return MemoryPackSerializer.Deserialize<DavMultipartFile>(MemoryPackSerializer.Serialize(blob))!.Metadata;
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { File.Delete(dbPath); } catch (IOException) { /* ignore */ }
+        }
     }
 
     [Fact]
