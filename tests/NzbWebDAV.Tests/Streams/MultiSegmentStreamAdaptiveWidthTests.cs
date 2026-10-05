@@ -708,7 +708,7 @@ public class MultiSegmentStreamAdaptiveWidthTests
         await stream.CopyToAsync(destination);
 
         Assert.Equal(1, stream.MaxPrefetchBatchWidth);
-        Assert.Equal(8, stream.TaskWindowSize);
+        Assert.Equal(MultiSegmentStream.CalculateTaskWindowSize(8, true), stream.TaskWindowSize);
         Assert.Equal(segmentCount, client.BatchIssueCount);
         Assert.All(client.ObservedBatchSizes, size => Assert.Equal(1, size));
         Assert.Equal(client.ExpectedConcatenation, destination.ToArray());
