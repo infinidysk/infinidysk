@@ -288,7 +288,8 @@ public class DavMultipartFileStream : FastReadOnlyStream
                 var partBudget = budget?.GetPartContribution(
                     part.FilePartByteRange.Count - extraOffset);
                 yield return Task.FromResult<System.IO.Stream>(
-                    OpenPart(part, extraOffset, i, partBudget));
+                    OpenPart(part, extraOffset, i, partBudget,
+                        prefetchAhead: i != firstFilePartIndex && budget?.IsSatisfied != true));
                 i++;
                 continue;
             }
@@ -311,7 +312,8 @@ public class DavMultipartFileStream : FastReadOnlyStream
         DavMultipartFile.FilePart part,
         long extraOffset,
         int partIndex,
-        long? readBudgetOverride = null)
+        long? readBudgetOverride = null,
+        bool prefetchAhead = false)
     {
         if (part.SegmentIdByteRange.StartInclusive != 0 ||
             part.SegmentIdByteRange.Count < 0 ||
@@ -348,6 +350,13 @@ public class DavMultipartFileStream : FastReadOnlyStream
             readBudgetOverride: readBudgetOverride,
             verificationProof: part.VerificationProof);
         stream.Seek(part.FilePartByteRange.StartInclusive + extraOffset, SeekOrigin.Begin);
+        if (prefetchAhead && _resolver is not null)
+        {
+            // Crossing a volume boundary means a sequential reader: probe the next volumes'
+            // geometry while this one streams so they open with exact ranges. Seeks skip this.
+            _ = _resolver.PrefetchSegmentGeometryAsync(_mpf, partIndex + 1);
+            _ = _resolver.PrefetchSegmentGeometryAsync(_mpf, partIndex + 2);
+        }
         var expectedLength = part.FilePartByteRange.Count - extraOffset;
         var responseLength = readBudgetOverride is { } cap
             ? Math.Min(expectedLength, cap)
@@ -397,11 +406,13 @@ public class DavMultipartFileStream : FastReadOnlyStream
         }
 
         var part = meta.FileParts[targetIndex];
+        var partBudget = budget?.GetPartContribution(part.FilePartByteRange.Count);
         return OpenPart(
             part,
             0,
             targetIndex,
-            budget?.GetPartContribution(part.FilePartByteRange.Count));
+            partBudget,
+            prefetchAhead: budget?.IsSatisfied != true);
     }
 
     // Reserved when a part opens (it always delivers its full contribution), so a part

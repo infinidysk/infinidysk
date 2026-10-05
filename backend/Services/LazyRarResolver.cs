@@ -28,8 +28,7 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
 
     private readonly ConcurrentDictionary<Guid, Persistor> _persistors = new();
 
-    // Process-wide cap so background geometry probes trickle behind playback instead of competing with it.
-    private static readonly SemaphoreSlim GeometryProbeGate = new(2, 2);
+    private readonly ConcurrentDictionary<(Guid, string), byte> _geometryInFlight = new();
 
     // Test seam: when set, volume opens skip NzbFileStream/yEnc so unit tests
     // can feed a crafted RAR with an understated Length without rapidyenc.
@@ -388,19 +387,46 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         var pathInArchive = meta.PathInArchive
             ?? throw new InvalidOperationException("Lazy RAR meta missing PathInArchive.");
 
-        var resolution = await ParseOrMeasureVolumeHeaderAsync(mpf, pending, pathInArchive, meta.ArchivePassword, ct)
+        return await ParseOrMeasureVolumeHeaderAsync(mpf, pending, pathInArchive, meta.ArchivePassword, ct)
             .ConfigureAwait(false);
-        if (resolution.Part is not { } part) return resolution;
+    }
 
-        // Probes are full BODY fetches. A seek into a far volume resolves every volume before it,
-        // so starting them alongside the parse floods connections the seek is waiting on.
-        // Seeks wait on resolution, so geometry that is still in flight attaches after commit.
-        var geometryTask = ProbeSegmentByteRangesThrottledAsync(pending.SegmentIds, ct);
-        if (geometryTask.IsCompleted)
-            TryApplySegmentByteRanges(part, await geometryTask.ConfigureAwait(false));
-        else
-            _ = AttachSegmentByteRangesAsync(mpf, part, geometryTask);
-        return resolution;
+    // Geometry probes are full BODY fetches. Running them for every resolved volume floods
+    // connections when a seek resolves a long prefix, so readers request them only for the
+    // volumes just ahead of where they are streaming.
+    public async Task PrefetchSegmentGeometryAsync(DavMultipartFile mpf, int partIndex)
+    {
+        try
+        {
+            var meta = mpf.Metadata;
+            if (meta.PathInArchive is null) return;
+            while (partIndex >= meta.FileParts.Length)
+            {
+                if (!meta.IsLazy || (meta.PendingParts?.Length ?? 0) == 0) return;
+                var resolvedCount = meta.FileParts.Length;
+                meta = await ResolveNextAsync(mpf, CancellationToken.None).ConfigureAwait(false);
+                if (meta.FileParts.Length <= resolvedCount) return;
+            }
+
+            var part = meta.FileParts[partIndex];
+            if (part.SegmentByteRangesTrusted == true || part.SegmentIds.Length == 0) return;
+            var key = (mpf.Id, part.SegmentIds[0]);
+            if (!_geometryInFlight.TryAdd(key, 0)) return;
+            try
+            {
+                await AttachSegmentByteRangesAsync(
+                        mpf, part, TryProbeSegmentByteRangesAsync(part.SegmentIds, CancellationToken.None))
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                _geometryInFlight.TryRemove(key, out _);
+            }
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            Log.Debug(e, "Lazy RAR geometry prefetch failed for multipart {Id}", mpf.Id);
+        }
     }
 
     private static bool TryApplySegmentByteRanges(DavMultipartFile.FilePart part, LongRange[]? ranges)
@@ -459,19 +485,6 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
         }
     }
 
-    private async Task<LongRange[]?> ProbeSegmentByteRangesThrottledAsync(string[] segmentIds, CancellationToken ct)
-    {
-        await GeometryProbeGate.WaitAsync(ct).ConfigureAwait(false);
-        try
-        {
-            return await TryProbeSegmentByteRangesAsync(segmentIds, ct).ConfigureAwait(false);
-        }
-        finally
-        {
-            GeometryProbeGate.Release();
-        }
-    }
-
     // Same second/last validation as NzbFile's uniform inference; segment 1's offset is
     // segment 0's size, so the volume parse's own first-segment fetch is not repeated.
     private async Task<LongRange[]?> TryProbeSegmentByteRangesAsync(string[] segmentIds, CancellationToken ct)
@@ -489,7 +502,9 @@ public class LazyRarResolver(INntpClient usenetClient, ConfigManager configManag
             }
 
             var secondTask = n >= 3 ? usenetClient.GetYencHeadersAsync(segmentIds[1], ct) : null;
-            var last = await usenetClient.GetYencHeadersAsync(segmentIds[^1], ct).ConfigureAwait(false);
+            var lastTask = usenetClient.GetYencHeadersAsync(segmentIds[^1], ct);
+            await Task.WhenAll(secondTask is null ? [lastTask] : [secondTask, lastTask]).ConfigureAwait(false);
+            var last = await lastTask.ConfigureAwait(false);
             var second = secondTask is null ? null : await secondTask.ConfigureAwait(false);
 
             var size = second?.PartOffset ?? last.PartOffset;

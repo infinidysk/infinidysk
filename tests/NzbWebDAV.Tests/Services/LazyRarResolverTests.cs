@@ -89,15 +89,19 @@ public class LazyRarResolverTests
         Assert.Equal(packedSize, resolved.FilePartByteRange.Count);
         Assert.Equal(resolved.FilePartByteRange.StartInclusive + packedSize,
             resolved.SegmentIdByteRange.Count);
-        // One geometry probe of the single segment; the measure-and-retry path never ran.
+        // The measure-and-retry path never ran.
+        Assert.Equal(0, client.MeasuredSizeRequests);
+
+        await resolver.PrefetchSegmentGeometryAsync(mpf, 1);
+
         Assert.Equal(1, client.MeasuredSizeRequests);
-        Assert.True(resolved.SegmentByteRangesTrusted);
+        Assert.True(mpf.Metadata.FileParts[1].SegmentByteRangesTrusted);
     }
 
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task EnsureResolvedThroughAsync_RecordsTrustedSegmentRangesOnlyForUniformGeometry(bool uniform)
+    public async Task PrefetchSegmentGeometryAsync_RecordsTrustedSegmentRangesOnlyForUniformGeometry(bool uniform)
     {
         const string pathInArchive = "movie.mkv";
         var volumeBytes = BuildRar4ContinuationVolume(pathInArchive, packedSize: 1000);
@@ -110,23 +114,21 @@ public class LazyRarResolverTests
             ["s2"] = (2 * segment, length - 2 * segment),
         };
         using var client = new MeasuringNntpClient("unused", 0, headers);
-        var probesBeforeParse = -1;
         var resolver = new LazyRarResolver(client, new ConfigManager())
         {
-            VolumeStreamFactory = (_, size) =>
-            {
-                probesBeforeParse = client.MeasuredSizeRequests;
-                return new BoundedLengthStream(volumeBytes, size);
-            },
+            VolumeStreamFactory = (_, size) => new BoundedLengthStream(volumeBytes, size),
         };
         var mpf = MultipartFile(pathInArchive, Pending("unused", length, 1000));
         mpf.Metadata.PendingParts[0].SegmentIds = ["s0", "s1", "s2"];
 
-        var meta = await resolver.EnsureResolvedThroughAsync(mpf, long.MaxValue, CancellationToken.None);
+        await resolver.EnsureResolvedThroughAsync(mpf, long.MaxValue, CancellationToken.None);
 
-        // Geometry probes are full BODY fetches; they must not compete with the parse a seek waits on.
-        Assert.Equal(0, probesBeforeParse);
-        var resolved = meta.FileParts[1];
+        // Geometry probes are full BODY fetches; resolving for a seek must not issue them.
+        Assert.Equal(0, client.MeasuredSizeRequests);
+
+        await resolver.PrefetchSegmentGeometryAsync(mpf, 1);
+
+        var resolved = mpf.Metadata.FileParts[1];
         if (uniform)
         {
             Assert.True(resolved.SegmentByteRangesTrusted);
