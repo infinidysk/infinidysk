@@ -318,9 +318,12 @@ public class DavMultipartFileStreamTests
     }
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(4)]
-    public async Task ReadAsync_InferredGeometryContradictedByArticles_StreamsExactBytes(int articleBufferSize)
+    [InlineData(0, false)]
+    [InlineData(4, false)]
+    [InlineData(0, true)]
+    [InlineData(4, true)]
+    public async Task ReadAsync_InferredGeometryContradictedByArticles_StreamsExactBytes(
+        int articleBufferSize, bool withProof)
     {
         var segments = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         var ranges = new Dictionary<string, LongRange>(StringComparer.Ordinal);
@@ -328,6 +331,7 @@ public class DavMultipartFileStreamTests
         var first = AddVolume(segments, ranges, "a", [8], ref next);
         // Second and last headers fit 100-byte uniform segments; the middle ones do not.
         var second = AddVolume(segments, ranges, "b", [100, 100, 60, 140, 80], ref next);
+        if (withProof) second.VerificationProof = VolumeProof(segments, second);
         using var client = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
         var multipart = new DavMultipartFile
         {
@@ -494,15 +498,19 @@ public class DavMultipartFileStreamTests
     }
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(4)]
-    public async Task ReadAsync_HealthyFallbackContradictingInferredSize_RecoversWithoutHoles(int articleBufferSize)
+    [InlineData(0, false)]
+    [InlineData(4, false)]
+    [InlineData(0, true)]
+    [InlineData(4, true)]
+    public async Task ReadAsync_HealthyFallbackContradictingInferredSize_RecoversWithoutHoles(
+        int articleBufferSize, bool withProof)
     {
         var segments = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         var ranges = new Dictionary<string, LongRange>(StringComparer.Ordinal);
         var next = 0;
         var first = AddVolume(segments, ranges, "a", [8], ref next);
         var second = AddVolume(segments, ranges, "b", [100, 100, 60, 140, 80], ref next);
+        if (withProof) second.VerificationProof = VolumeProof(segments, second);
         // The b-2 primary is gone; its healthy alternate declares the real 60 bytes.
         segments["b-2-alt"] = segments["b-2"];
         ranges["b-2-alt"] = ranges["b-2"];
@@ -563,6 +571,9 @@ public class DavMultipartFileStreamTests
         Assert.Equal(expected, headA.Concat(tailA).ToArray());
         Assert.Equal(expected, headB.Concat(tailB).ToArray());
     }
+
+    private static Par2FileProof VolumeProof(Dictionary<string, byte[]> segments, DavMultipartFile.FilePart part) =>
+        Par2VerifiedFileStreamTests.CreateProof(part.SegmentIds.SelectMany(id => segments[id]).ToArray(), 64);
 
     private static DavMultipartFile.FilePart AddVolume(
         Dictionary<string, byte[]> segments,

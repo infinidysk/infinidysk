@@ -110,7 +110,8 @@ public class NzbFileStream(
             if (verificationProof is null || !verificationProof.IsValidFor(Length))
                 throw new InvalidDataException("Invalid persisted PAR2 verification metadata.");
             if (_verifiedStream is not null) return _verifiedStream;
-            var reader = new Par2CandidateReader(verificationProof, usenetClient, ReadPar2CandidateAsync);
+            var reader = new Par2CandidateReader(
+                verificationProof, usenetClient, ReadPar2CandidateAsync, () => RecordedSizesInferred);
             _verifiedStream = new Par2VerifiedFileStream(verificationProof,
                 reader.ReadAsync, reader.ReadPrefixAsync);
             return _verifiedStream;
@@ -126,6 +127,7 @@ public class NzbFileStream(
             fileName: fileName, segmentFallbacks: segmentFallbacks,
             inFlightArticleBudget: inFlightArticleBudget, readBudgetOverride: target.Length,
             streamingBodyBatchWidth: streamingBodyBatchWidth);
+        candidate.RecordedSizesInferred = RecordedSizesInferred;
         candidate.Position = start;
         await candidate.ReadExactlyAsync(target, cancellationToken).ConfigureAwait(false);
     }

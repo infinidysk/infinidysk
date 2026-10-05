@@ -319,7 +319,7 @@ public class Par2VerifiedFileStreamTests
     }
 
 #pragma warning disable CA5351
-    private static Par2FileProof CreateProof(byte[] data, int sliceSize)
+    internal static Par2FileProof CreateProof(byte[] data, int sliceSize)
     {
         var count = (data.Length - 1) / sliceSize + 1;
         var proof = new Par2FileProof
