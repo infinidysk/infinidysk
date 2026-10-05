@@ -38,6 +38,40 @@ internal static class SegmentResponseValidator
             $"Response carried segment {actualId} instead of {segmentId}.");
     }
 
+    // Recorded sizes decide how many bytes each body contributes, so a body whose own yEnc
+    // header disagrees means the recorded geometry is wrong, not the article: padding or
+    // truncating it would silently shift every later byte.
+    public static async ValueTask ThrowOnRecordedSizeMismatchAsync(
+        Stream bodyStream, SegmentSizes segmentSizes, int segmentIndex, string? fileName, CancellationToken ct)
+    {
+        if (await GetRecordedSizeContradictionAsync(bodyStream, segmentSizes, segmentIndex, fileName, ct)
+                .ConfigureAwait(false) is { } contradiction)
+            throw contradiction;
+    }
+
+    // Alternates are the same yEnc part, so one rejected for size contradicts the recorded geometry too.
+    public static async ValueTask<SegmentGeometryMismatchException?> GetRecordedSizeContradictionAsync(
+        Stream bodyStream, SegmentSizes segmentSizes, int segmentIndex, string? fileName, CancellationToken ct)
+    {
+        if (!segmentSizes.TryGetRecordedSize(segmentIndex, out var recorded) || bodyStream is not YencStream yenc)
+            return null;
+
+        UsenetYencHeader? header;
+        try
+        {
+            header = await yenc.GetYencHeadersAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is InvalidDataException or IOException)
+        {
+            return null;
+        }
+
+        if (header is null || header.PartSize <= 0 || header.PartSize == recorded) return null;
+        return new SegmentGeometryMismatchException(
+            $"BODY for segment {segmentIndex} of {fileName ?? "unknown"} declares {header.PartSize} bytes " +
+            $"but its recorded range holds {recorded}.");
+    }
+
     public static async ValueTask<bool> IsFallbackPartSizeCompatibleAsync(
         Stream bodyStream, SegmentSizes segmentSizes, int segmentIndex, CancellationToken ct)
     {

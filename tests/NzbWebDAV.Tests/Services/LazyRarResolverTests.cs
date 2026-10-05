@@ -89,7 +89,58 @@ public class LazyRarResolverTests
         Assert.Equal(packedSize, resolved.FilePartByteRange.Count);
         Assert.Equal(resolved.FilePartByteRange.StartInclusive + packedSize,
             resolved.SegmentIdByteRange.Count);
+        // The measure-and-retry path never ran.
         Assert.Equal(0, client.MeasuredSizeRequests);
+
+        await resolver.PrepareSegmentGeometryAsync(mpf, 1, CancellationToken.None);
+
+        Assert.Equal(1, client.MeasuredSizeRequests);
+        Assert.True(mpf.Metadata.FileParts[1].SegmentByteRangesTrusted);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PrepareSegmentGeometryAsync_RecordsTrustedSegmentRangesOnlyForUniformGeometry(bool uniform)
+    {
+        const string pathInArchive = "movie.mkv";
+        var volumeBytes = BuildRar4ContinuationVolume(pathInArchive, packedSize: 1000);
+        long length = volumeBytes.Length;
+        var segment = (length + 2) / 3;
+        var headers = new Dictionary<string, (long Offset, long Size)>
+        {
+            ["s0"] = (0, segment),
+            ["s1"] = (uniform ? segment : segment + 1, segment),
+            ["s2"] = (2 * segment, length - 2 * segment),
+        };
+        using var client = new MeasuringNntpClient("unused", 0, headers);
+        var resolver = new LazyRarResolver(client, new ConfigManager())
+        {
+            VolumeStreamFactory = (_, size) => new BoundedLengthStream(volumeBytes, size),
+        };
+        var mpf = MultipartFile(pathInArchive, Pending("unused", length, 1000));
+        mpf.Metadata.PendingParts[0].SegmentIds = ["s0", "s1", "s2"];
+
+        await resolver.EnsureResolvedThroughAsync(mpf, long.MaxValue, CancellationToken.None);
+
+        // Geometry probes are full BODY fetches; resolving for a seek must not issue them.
+        Assert.Equal(0, client.MeasuredSizeRequests);
+
+        await resolver.PrepareSegmentGeometryAsync(mpf, 1, CancellationToken.None);
+
+        var resolved = mpf.Metadata.FileParts[1];
+        if (uniform)
+        {
+            Assert.True(resolved.SegmentByteRangesTrusted);
+            Assert.Equal(3, resolved.SegmentByteRanges!.Length);
+            Assert.Equal(length, resolved.SegmentByteRanges[^1].EndExclusive);
+            Assert.Equal(length, resolved.SegmentIdByteRange.Count);
+        }
+        else
+        {
+            Assert.Null(resolved.SegmentByteRanges);
+            Assert.NotEqual(true, resolved.SegmentByteRangesTrusted);
+        }
     }
 
     [Fact]
@@ -353,6 +404,150 @@ public class LazyRarResolverTests
         Assert.Contains("split-before: True", failure.Message);
     }
 
+    [Fact]
+    public async Task PrepareSegmentGeometryAsync_StaleInstanceKeepsAnotherReadersPersistedVolumes()
+    {
+        var previous = Environment.GetEnvironmentVariable("CONFIG_PATH");
+        var configRoot = Path.Join(Path.GetTempPath(), $"nzbdav-lazy-merge-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(configRoot);
+        Environment.SetEnvironmentVariable("CONFIG_PATH", configRoot);
+        try
+        {
+            var id = Guid.NewGuid();
+            DavMultipartFile.FilePart Part(string name, bool splitAfter) => new()
+            {
+                SegmentIds = [$"{name}-s0", $"{name}-s1", $"{name}-s2"],
+                SegmentIdByteRange = LongRange.FromStartAndSize(0, 300),
+                FilePartByteRange = LongRange.FromStartAndSize(10, 290),
+                IsSplitAfter = splitAfter,
+            };
+            // The stale reader loaded the blob while volume 3 was still pending.
+            var stale = new DavMultipartFile
+            {
+                Id = id,
+                Metadata = new DavMultipartFile.Meta
+                {
+                    IsLazy = true,
+                    PathInArchive = "movie.mkv",
+                    FileParts = [Part("v1", true), Part("v2", true)],
+                    PendingParts = [Pending("v3-s0", 300, 290)],
+                },
+            };
+            // Another reader then resolved the rest and persisted it.
+            var newer = new DavMultipartFile
+            {
+                Id = id,
+                Metadata = new DavMultipartFile.Meta
+                {
+                    PathInArchive = "movie.mkv",
+                    FileParts = [Part("v1", true), Part("v2", true), Part("v3", false)],
+                },
+            };
+            await BlobStore.WriteBlob(id, newer);
+
+            using var client = new MeasuringNntpClient("unused", 0, new Dictionary<string, (long, long)>
+            {
+                ["v2-s1"] = (100, 100),
+                ["v2-s2"] = (200, 100),
+            });
+            var resolver = new LazyRarResolver(client, new ConfigManager());
+            await resolver.PrepareSegmentGeometryAsync(stale, 1, CancellationToken.None);
+
+            DavMultipartFile? stored = null;
+            for (var i = 0; i < 100; i++)
+            {
+                stored = await BlobStore.ReadBlob<DavMultipartFile>(id);
+                if (stored?.Metadata.FileParts.Length == 3
+                    && stored.Metadata.FileParts[1].SegmentByteRangesTrusted == true)
+                    break;
+                await Task.Delay(20);
+            }
+
+            Assert.NotNull(stored);
+            Assert.False(stored.Metadata.IsLazy);
+            Assert.Equal(3, stored.Metadata.FileParts.Length);
+            Assert.True(stored.Metadata.FileParts[1].SegmentByteRangesTrusted);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CONFIG_PATH", previous);
+            try { Directory.Delete(configRoot, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task RejectSegmentGeometry_StaleInstanceDropsRejectedRangesFromMoreCompleteSnapshot()
+    {
+        var previous = Environment.GetEnvironmentVariable("CONFIG_PATH");
+        var configRoot = Path.Join(Path.GetTempPath(), $"nzbdav-lazy-reject-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(configRoot);
+        Environment.SetEnvironmentVariable("CONFIG_PATH", configRoot);
+        try
+        {
+            var id = Guid.NewGuid();
+            DavMultipartFile.FilePart Part(string name, bool splitAfter) => new()
+            {
+                SegmentIds = [$"{name}-s0", $"{name}-s1", $"{name}-s2"],
+                SegmentIdByteRange = LongRange.FromStartAndSize(0, 300),
+                FilePartByteRange = LongRange.FromStartAndSize(10, 290),
+                SegmentByteRanges =
+                [
+                    LongRange.FromStartAndSize(0, 100),
+                    LongRange.FromStartAndSize(100, 100),
+                    LongRange.FromStartAndSize(200, 100),
+                ],
+                SegmentByteRangesTrusted = true,
+                IsSplitAfter = splitAfter,
+            };
+            var stale = new DavMultipartFile
+            {
+                Id = id,
+                Metadata = new DavMultipartFile.Meta
+                {
+                    IsLazy = true,
+                    PathInArchive = "movie.mkv",
+                    FileParts = [Part("v1", true), Part("v2", true)],
+                    PendingParts = [Pending("v3-s0", 300, 290)],
+                },
+            };
+            // Storage already holds a more complete snapshot carrying the same inferred volume-2 ranges.
+            await BlobStore.WriteBlob(id, new DavMultipartFile
+            {
+                Id = id,
+                Metadata = new DavMultipartFile.Meta
+                {
+                    PathInArchive = "movie.mkv",
+                    FileParts = [Part("v1", true), Part("v2", true), Part("v3", false)],
+                },
+            });
+
+            using var client = new MeasuringNntpClient("unused", 0, new Dictionary<string, (long, long)>());
+            var resolver = new LazyRarResolver(client, new ConfigManager());
+            Assert.True(resolver.RejectSegmentGeometry(stale, 1));
+
+            DavMultipartFile? stored = null;
+            for (var i = 0; i < 100; i++)
+            {
+                stored = await BlobStore.ReadBlob<DavMultipartFile>(id);
+                if (stored?.Metadata.FileParts[1].SegmentByteRangesTrusted != true) break;
+                await Task.Delay(20);
+            }
+
+            Assert.NotNull(stored);
+            Assert.Equal(3, stored.Metadata.FileParts.Length);
+            Assert.NotEqual(true, stored.Metadata.FileParts[1].SegmentByteRangesTrusted);
+            Assert.Null(stored.Metadata.FileParts[1].SegmentByteRanges);
+            Assert.True(stored.Metadata.FileParts[0].SegmentByteRangesTrusted);
+            Assert.Equal(3, stale.Metadata.FileParts.Length);
+            Assert.NotEqual(true, stale.Metadata.FileParts[1].SegmentByteRangesTrusted);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CONFIG_PATH", previous);
+            try { Directory.Delete(configRoot, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
     private static DavMultipartFile MultipartFile(
         string pathInArchive,
         params DavMultipartFile.PendingPart[] pending) =>
@@ -388,7 +583,10 @@ public class LazyRarResolverTests
         };
 
     // Only GetYencHeadersAsync is used by the measured-size retry path.
-    private sealed class MeasuringNntpClient(string segmentId, long measuredSize) : NntpClient
+    private sealed class MeasuringNntpClient(
+        string segmentId,
+        long measuredSize,
+        IReadOnlyDictionary<string, (long Offset, long Size)>? headers = null) : NntpClient
     {
         public int MeasuredSizeRequests { get; private set; }
 
@@ -467,6 +665,21 @@ public class LazyRarResolverTests
             string id, CancellationToken ct)
         {
             MeasuredSizeRequests++;
+            if (headers is not null)
+            {
+                var (offset, size) = headers[id];
+                return Task.FromResult(new UsenetYencHeader
+                {
+                    FileName = "volume.rar",
+                    FileSize = headers.Values.Sum(h => h.Size),
+                    LineLength = 128,
+                    PartNumber = 1,
+                    TotalParts = headers.Count,
+                    PartOffset = offset,
+                    PartSize = size,
+                });
+            }
+
             Assert.Equal(segmentId, id);
             return Task.FromResult(new UsenetYencHeader
             {

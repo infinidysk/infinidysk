@@ -9,7 +9,8 @@ namespace NzbWebDAV.Streams;
 internal sealed class Par2CandidateReader(
     Par2FileProof proof,
     INntpClient client,
-    Func<long, Memory<byte>, CancellationToken, Task> readCandidate)
+    Func<long, Memory<byte>, CancellationToken, Task> readCandidate,
+    Func<bool>? geometryRecoverable = null)
 {
     internal Task ReadAsync(long start, Memory<byte> target, CancellationToken cancellationToken) =>
         ReadVerifiedAsync(start, target, false, cancellationToken);
@@ -40,7 +41,9 @@ internal sealed class Par2CandidateReader(
                 }
                 lastFailure = new InvalidDataException("PAR2 candidate slice checksum mismatch.");
             }
+            // Retrying providers reuses the same recorded ranges; let the owner re-derive them.
             catch (Exception exception) when (!exception.IsCancellationException(cancellationToken)
+                && !(exception is SeekPositionNotFoundException && geometryRecoverable?.Invoke() == true)
                 && (exception is IOException or InvalidOperationException or NonRetryableDownloadException
                     || exception.TryGetKnownErrorMessage(out _)))
             {
