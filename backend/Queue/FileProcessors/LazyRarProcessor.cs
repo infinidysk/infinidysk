@@ -297,7 +297,7 @@ public class LazyRarProcessor(
             FirstPart = firstPart,
             PendingParts = pending.ToArray(),
             ResolvedTrailingParts = BuildResolvedTrailingParts(
-                firstPart, pending, continuations, totalFileSize, aesParams),
+                firstPart, trailingInfos, pending, continuations, totalFileSize, aesParams),
             ReleaseDate = firstInfo.ReleaseDate,
             ArchiveName = GetArchiveName(firstInfo.FileName),
             SniffedVideoExtension = sniffedVideoExtension,
@@ -494,6 +494,7 @@ public class LazyRarProcessor(
     // the packed ranges would not publish exactly TotalFileSize.
     private static DavMultipartFile.FilePart[]? BuildResolvedTrailingParts(
         DavMultipartFile.FilePart firstPart,
+        List<GetFileInfosStep.FileInfo> trailingInfos,
         List<DavMultipartFile.PendingPart> pending,
         List<IRarFileHeader> continuations,
         long totalFileSize,
@@ -507,12 +508,16 @@ public class LazyRarProcessor(
         {
             var header = continuations[i];
             var streamLength = pending[i].SegmentIdByteRange.Count;
+            // Keep only indexes already proven during import; never probe or trust inference here.
+            var rangeIndex = trailingInfos[i].NzbFile.GetSegmentByteRangeIndex();
             parts[i] = new DavMultipartFile.FilePart
             {
                 SegmentIds = pending[i].SegmentIds,
                 SegmentIdByteRange = LongRange.FromStartAndSize(
                     0, Math.Max(streamLength, header.DataStartPosition + header.AdditionalDataSize)),
                 FilePartByteRange = LongRange.FromStartAndSize(header.DataStartPosition, header.AdditionalDataSize),
+                SegmentByteRanges = rangeIndex.IsTrusted ? rangeIndex.Ranges : null,
+                SegmentByteRangesTrusted = rangeIndex.IsTrusted ? true : null,
                 SegmentFallbackIds = pending[i].SegmentFallbackIds,
                 VerificationProof = pending[i].VerificationProof,
                 IsSplitAfter = header.IsSplitAfter,
