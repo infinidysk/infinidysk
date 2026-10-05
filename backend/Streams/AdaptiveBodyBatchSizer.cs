@@ -49,6 +49,8 @@ internal sealed class AdaptiveBodyBatchSizer
 
     public int Current => Volatile.Read(ref _current);
 
+    public int Maximum => _maximum;
+
     public BatchSizeChange? Observe(bool readyWhenNeeded)
     {
         var current = Current;
