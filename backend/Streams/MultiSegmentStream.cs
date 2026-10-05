@@ -1428,10 +1428,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         int segmentIndex,
         ArticleByteLease initialLease,
         bool isFirstSegment,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool incremental = true,
+        Exception? priorFailure = null
     )
     {
         var estimate = GetPlannedSegmentBytes(segmentIndex);
+        // Known-corrupt articles zero-fill after one fetch; never stream their prefix.
+        incremental &= GetCorruptionRetryLimit(segmentId) > 0;
         var lease = initialLease;
         try
         {
@@ -1449,6 +1453,15 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             {
                 try
                 {
+                    // An incremental body that failed mid-drain counts as this loop's
+                    // first attempt so retry limits and corruption tracking continue.
+                    if (priorFailure is not null)
+                    {
+                        var failure = priorFailure;
+                        priorFailure = null;
+                        ExceptionDispatchInfo.Capture(failure).Throw();
+                    }
+
                     UsenetDecodedBodyResponse bodyResponse;
                     using (FetchAttributionContext.Begin(_fileName))
                     {
@@ -1461,7 +1474,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
                     var drained = await ValidateAndDrainSegmentAsync(
 #pragma warning restore CA2000
-                            bodyResponse.Stream!, segmentIndex, cancellationToken, lease, estimate)
+                            bodyResponse.Stream!, segmentIndex, cancellationToken, lease, estimate,
+                            incremental ? CreateSegmentRecovery(segmentId, segmentIndex, isFirstSegment) : null)
                         .ConfigureAwait(false);
                     lease = null;
                     return ToDownloadResult(drained, estimate, segmentId);
@@ -1577,6 +1591,25 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             lease?.Dispose();
         }
     }
+
+    /// <summary>
+    /// Refetches a segment whose incremental body failed after delivery began, through the
+    /// buffered path so the usual retry, fallback, and zero-fill handling decides the rest.
+    /// The original lease still covers the segment, so the replacement is not leased again.
+    /// </summary>
+    private Func<Exception, CancellationToken, Task<Stream>> CreateSegmentRecovery(
+        string segmentId, int segmentIndex, bool isFirstSegment) =>
+        async (failure, cancellationToken) =>
+        {
+            var result = await DownloadSegment(
+                    segmentId, segmentIndex, ArticleByteLease.Empty, isFirstSegment, cancellationToken,
+                    incremental: false, priorFailure: failure)
+                .ConfigureAwait(false);
+            if (result.IsZeroFill)
+                ZeroFillLogLimiter.Write(
+                    result.MessageTemplate!, result.SegmentId!, _fileName, result.Bytes, result.Failure);
+            return result.Stream;
+        };
 
     private async Task<SegmentDownloadResult> DownloadKnownMissingSegment(
         string segmentId,
@@ -1716,7 +1749,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
             var drained = await ValidateAndDrainSegmentAsync(
 #pragma warning restore CA2000
-                    response.Stream!, segmentIndex, cancellationToken, lease, estimate)
+                    response.Stream!, segmentIndex, cancellationToken, lease, estimate,
+                    GetCorruptionRetryLimit(segmentId) > 0 ? CreateSegmentRecovery(segmentId, segmentIndex, isFirstSegment) : null)
                 .ConfigureAwait(false);
             lease = null; // owned by BudgetedStream / buffer
             return ToDownloadResult(drained, estimate, segmentId);
@@ -2216,7 +2250,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         int segmentIndex,
         CancellationToken cancellationToken,
         ArticleByteLease? existingLease = null,
-        long? leasedEstimate = null)
+        long? leasedEstimate = null,
+        Func<Exception, CancellationToken, Task<Stream>>? recover = null)
     {
         try
         {
@@ -2245,7 +2280,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         }
 
         return await DrainSegmentAsync(
-                source, segmentIndex, cancellationToken, existingLease, leasedEstimate)
+                source, segmentIndex, cancellationToken, existingLease, leasedEstimate, recover)
             .ConfigureAwait(false);
     }
 
@@ -2272,7 +2307,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         int segmentIndex,
         CancellationToken cancellationToken,
         ArticleByteLease? existingLease = null,
-        long? leasedEstimate = null)
+        long? leasedEstimate = null,
+        Func<Exception, CancellationToken, Task<Stream>>? recover = null)
     {
         ArticleByteLease? lease = existingLease;
         var ownsLease = existingLease is null;
@@ -2295,6 +2331,44 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
             var capacity = await ResolveDrainCapacityHintAsync(
                 source, segmentIndex, estimate, cancellationToken).ConfigureAwait(false);
+            // A clipped first segment is realigned against its positioning range after the
+            // drain, so it keeps the buffered path.
+            if (recover is not null
+                && !(segmentIndex == 0 && _expectedFirstSegmentRangeWasClippedAtFileEnd))
+            {
+                var incrementalLease = lease;
+                var incrementalTrace = MultiProviderNntpClient.CurrentStreamTraceRange;
+                var incrementalStarted = Stopwatch.GetTimestamp();
+                var incrementalSegmentId = _segmentIds.Span[segmentIndex];
+                var incremental = new IncrementalSegmentStream(
+                    source,
+                    capacity,
+                    hasExactSize ? exactSize : -1,
+                    recover,
+                    (drainedBytes, length) =>
+                    {
+                        StreamTrace.TryStall(
+                            incrementalTrace,
+                            StreamStallKind.BodyDrain,
+                            Stopwatch.GetElapsedTime(incrementalStarted));
+                        if (!hasExactSize)
+                            _segmentSizes.RecordObservedSize(segmentIndex, drainedBytes);
+                        else if (drainedBytes < exactSize)
+                            SegmentHoleReporter.ReportShortDecode(
+                                _fileName, incrementalSegmentId, segmentIndex, exactSize - drainedBytes);
+                        if (length != estimate)
+                            incrementalLease.Adjust(length - estimate);
+                    },
+                    cancellationToken);
+                sourceDisposeAttempted = true;
+                ownsLease = false;
+                return new DrainedSegment(
+                    ReferenceEquals(lease, ArticleByteLease.Empty)
+                        ? incremental
+                        : new BudgetedStream(incremental, lease),
+                    false);
+            }
+
             buffer = new PooledBufferStream(capacity);
             var traceRange = MultiProviderNntpClient.CurrentStreamTraceRange;
             var drainStarted = Stopwatch.GetTimestamp();
