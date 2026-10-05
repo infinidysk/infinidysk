@@ -340,7 +340,8 @@ public class LazyRarProcessorTests
         {
             FileInfoFor("opaque.part01.rar", "part1@example.com", volumes[0].Length, volumes[0].Length),
             FileInfoFor("opaque.part02.rar", "part2@example.com", volumes[1].Length, volumes[1].Length, volumes[1]),
-            FileInfoFor("opaque.part03.rar", "part3@example.com", volumes[2].Length, volumes[2].Length, volumes[2]),
+            // No PAR2 size: the saved length is the encoded estimate, larger than the decoded volume.
+            FileInfoFor("opaque.part03.rar", "part3@example.com", volumes[2].Length + 64, fileSize: null, volumes[2]),
         };
         // A trusted index known at import (e.g. from a yEnc header) must survive; an absent one stays absent.
         infos[1].NzbFile.Segments[0].ByteRange = LongRange.FromStartAndSize(0, volumes[1].Length);
@@ -364,6 +365,11 @@ public class LazyRarProcessorTests
         Assert.Equal(
             [LongRange.FromStartAndSize(0, volumes[1].Length)],
             Assert.IsType<LongRange[]>(meta.FileParts[1].SegmentByteRanges));
+        // Import measured the terminal volume, but its index cannot end at the saved length.
+        Assert.NotNull(infos[2].NzbFile.Segments[0].ByteRange);
+        Assert.Equal(volumes[2].Length + 64, meta.FileParts[2].SegmentIdByteRange.Count);
+        Assert.Null(meta.FileParts[2].SegmentByteRanges);
+        Assert.Null(meta.FileParts[2].SegmentByteRangesTrusted);
 
         // No resolver: a lazy layout would fail here, so playback proves the persisted ranges.
         await using var stream = new DavMultipartFileStream(

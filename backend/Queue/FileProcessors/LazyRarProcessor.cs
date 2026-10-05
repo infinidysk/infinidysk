@@ -508,16 +508,19 @@ public class LazyRarProcessor(
         {
             var header = continuations[i];
             var streamLength = pending[i].SegmentIdByteRange.Count;
-            // Keep only indexes already proven during import; never probe or trust inference here.
+            var partLength = Math.Max(streamLength, header.DataStartPosition + header.AdditionalDataSize);
+            // Keep only indexes already proven during import whose end matches the reader's
+            // part length; NzbFileStream discards any other index. Never probe or trust inference here.
             var rangeIndex = trailingInfos[i].NzbFile.GetSegmentByteRangeIndex();
+            var keepIndex = rangeIndex is { IsTrusted: true, Ranges: [.., var lastRange] }
+                            && lastRange.EndExclusive == partLength;
             parts[i] = new DavMultipartFile.FilePart
             {
                 SegmentIds = pending[i].SegmentIds,
-                SegmentIdByteRange = LongRange.FromStartAndSize(
-                    0, Math.Max(streamLength, header.DataStartPosition + header.AdditionalDataSize)),
+                SegmentIdByteRange = LongRange.FromStartAndSize(0, partLength),
                 FilePartByteRange = LongRange.FromStartAndSize(header.DataStartPosition, header.AdditionalDataSize),
-                SegmentByteRanges = rangeIndex.IsTrusted ? rangeIndex.Ranges : null,
-                SegmentByteRangesTrusted = rangeIndex.IsTrusted ? true : null,
+                SegmentByteRanges = keepIndex ? rangeIndex.Ranges : null,
+                SegmentByteRangesTrusted = keepIndex ? true : null,
                 SegmentFallbackIds = pending[i].SegmentFallbackIds,
                 VerificationProof = pending[i].VerificationProof,
                 IsSplitAfter = header.IsSplitAfter,
