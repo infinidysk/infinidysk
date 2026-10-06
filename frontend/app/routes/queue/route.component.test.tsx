@@ -65,7 +65,13 @@ vi.mock("./controllers/dropzone-controller", () => ({
 
 vi.mock("~/components/ui", () => ({
   Alert: ({ children }: { children: ReactNode }) => <>{children}</>,
-  PageHeader: ({ title }: { title: string }) => <h1>{title}</h1>,
+  PageHeader: ({ title, actions }: { title: string; actions?: ReactNode }) => (
+    <header>
+      <h1>{title}</h1>
+      {actions}
+    </header>
+  ),
+  Icon: () => null,
   Button: ({ children, onClick }: { children: ReactNode; onClick: () => void }) => (
     <button type="button" onClick={onClick}>
       {children}

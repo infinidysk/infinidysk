@@ -1,15 +1,14 @@
-import { ActionButton } from "../action-button/action-button";
+import { ActionButton, ActionSpacer, actionIconClass } from "../action-button/action-button";
 import { useCallback, useState } from "react";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { Link } from "react-router";
 import { type TriCheckboxState } from "../tri-checkbox/tri-checkbox";
 import type { PresentationHistorySlot } from "../../route";
 import { getExploreContentLink } from "~/utils/path";
+import { withUrlBase } from "~/utils/url-base";
 import { PageRow, PageTable } from "../page-table/page-table";
 import { PageSection } from "../page-section/page-section";
 import { Pagination } from "~/components/pagination/pagination";
-import { DropdownOptions } from "~/components/dropdown-options/dropdown-options";
-import { ExportNzb, Remove } from "~/components/item-action-labels";
 import {
   canRetryHistorySlot,
   retryHistoryItem,
@@ -17,7 +16,7 @@ import {
   shouldAcceptRetryClick,
 } from "./history-retry";
 import { useIsReadOnly } from "~/auth/authorization";
-import { Button, Icon, Tooltip } from "~/components/ui";
+import { Button, Icon, PortalTooltip, Tooltip } from "~/components/ui";
 import type { HistoryListParams } from "../../list-params";
 import { sortValue } from "../../list-params";
 import { ListToolbar } from "../list-toolbar/list-toolbar";
@@ -375,21 +374,22 @@ export function HistoryRow({
         completed={slot.completed}
         showCompleted
         actions={
-          <div className="flex flex-col items-end gap-1">
-            <div className="flex flex-col items-end justify-center gap-2.5 min-[410px]:flex-row min-[410px]:items-center">
-              <Actions
-                slot={slot}
-                isRetrying={isRetrying}
-                onRemove={onRemove}
-                onRetry={() => void onRetry()}
-              />
-            </div>
+          <>
+            <Actions
+              slot={slot}
+              isRetrying={isRetrying}
+              onRemove={onRemove}
+              onRetry={() => void onRetry()}
+            />
             {retryError && (
-              <span role="alert" className="max-w-[180px] text-left text-xs text-error">
+              <span
+                role="alert"
+                className="basis-full text-right text-xs text-error max-[899px]:text-left"
+              >
                 {retryError}
               </span>
             )}
-          </div>
+          </>
         }
         onRowSelectionChanged={(isSelected) => onIsSelectedChanged(slot.nzo_id, isSelected)}
         selectable={!isReadOnly}
@@ -421,82 +421,60 @@ export function Actions({
   onRetry?: () => void;
 }) {
   const isReadOnly = useIsReadOnly();
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-
   const folderLink = getExploreContentLink(slot.storage, slot.category);
-
-  // determine nzb download URL
   const nzbDownloadUrl = slot.nzb_blob_id
-    ? `/api/download-nzb?nzbBlobId=${slot.nzb_blob_id}`
+    ? withUrlBase(`/api/download-nzb?${new URLSearchParams({ nzbBlobId: slot.nzb_blob_id })}`)
     : null;
-
-  // determine whether explore action should be disabled
-  const isFolderDisabled = !folderLink || !!slot.isRemoving || !!slot.fail_message;
-  const showRetry = canRetryHistorySlot(slot);
-
-  const onMenuClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setIsMenuOpen((x) => !x);
-  }, []);
-
-  const onRemoveSelected = useCallback(() => {
-    setIsMenuOpen(false);
-    onRemove?.();
-  }, [onRemove]);
-
-  const onRetryClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      onRetry?.();
-    },
-    [onRetry],
-  );
+  const canExplore = !!folderLink && !slot.isRemoving && !slot.fail_message;
+  const showRetry = !isReadOnly && canRetryHistorySlot(slot);
 
   return (
     <>
-      {!isReadOnly && showRetry && (
+      {showRetry && (
         <ActionButton
           type="retry"
-          ariaLabel={`Retry ${slot.name}`}
+          subject={slot.name}
           disabled={!!slot.isRemoving || isRetrying}
-          onClick={onRetryClick}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRetry?.();
+          }}
         />
       )}
-      {!isFolderDisabled && folderLink && (
-        <Link
-          to={folderLink}
-          discover="none"
-          className="btn btn-ghost btn-sm max-sm:min-h-11"
-          aria-label={`Explore files for ${slot.name}`}
-          title={`Explore files for ${slot.name}`}
-        >
-          <Icon name="folder" className="!text-[16px]" />
-        </Link>
+      {canExplore && folderLink ? (
+        <PortalTooltip content="Explore files">
+          <Link
+            to={folderLink}
+            discover="none"
+            className={actionIconClass}
+            aria-label={`Explore files for ${slot.name}`}
+          >
+            <Icon name="folder" className="!text-[18px]" />
+          </Link>
+        </PortalTooltip>
+      ) : (
+        <ActionSpacer />
       )}
-      {(isFolderDisabled || !folderLink) && (
-        <ActionButton type="explore" ariaLabel={`Files unavailable for ${slot.name}`} disabled />
+      {nzbDownloadUrl ? (
+        <PortalTooltip content="Export NZB">
+          <a
+            href={nzbDownloadUrl}
+            className={actionIconClass}
+            aria-label={`Export NZB for ${slot.name}`}
+          >
+            <Icon name="file_export" className="!text-[18px]" />
+          </a>
+        </PortalTooltip>
+      ) : (
+        <ActionSpacer />
       )}
-      {(!isReadOnly || !!nzbDownloadUrl) && (
-        <div className={`dropdown dropdown-end ${isMenuOpen ? "dropdown-open" : ""}`}>
-          <ActionButton
-            type="menu"
-            ariaLabel={`Actions for ${slot.name}`}
-            disabled={!!slot.isRemoving || isRetrying}
-            selected={isMenuOpen}
-            onClick={onMenuClick}
-          />
-          <DropdownOptions
-            style={{ marginTop: "5px" }}
-            isOpen={isMenuOpen}
-            onClose={() => setIsMenuOpen(false)}
-            options={[
-              nzbDownloadUrl ? { option: <ExportNzb />, linkTo: nzbDownloadUrl } : undefined,
-              !isReadOnly
-                ? { option: <Remove />, onSelect: onRemoveSelected, variant: "danger" }
-                : undefined,
-            ]}
-          />
-        </div>
+      {!isReadOnly && (
+        <ActionButton
+          type="delete"
+          subject={slot.name}
+          disabled={!!slot.isRemoving || isRetrying}
+          onClick={onRemove}
+        />
       )}
     </>
   );

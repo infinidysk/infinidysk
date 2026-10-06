@@ -2,8 +2,6 @@ import {
   Fragment,
   useEffect,
   useEffectEvent,
-  useId,
-  useLayoutEffect,
   useReducer,
   useRef,
   useState,
@@ -11,10 +9,9 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router";
 import { z } from "zod";
-import { Alert, Badge, Button, Checkbox, Icon, PageHeader } from "~/components/ui";
+import { Alert, Badge, Button, Checkbox, Icon, PageHeader, PortalTooltip } from "~/components/ui";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { useIsReadOnly } from "~/auth/authorization";
 import { withUrlBase } from "~/utils/url-base";
@@ -1116,7 +1113,7 @@ function FileActionStrip({
         row.isDirectory && (item.label === "Play" || item.label === "Download") ? (
           <span key={item.label} className={styles.action} aria-hidden="true" />
         ) : (
-          <ActionTooltip key={item.label} content={item.reason ?? item.label}>
+          <PortalTooltip key={item.label} content={item.reason ?? item.label}>
             <span
               tabIndex={item.reason ? 0 : undefined}
               aria-label={item.reason ? `${item.label} ${row.name}: ${item.reason}` : undefined}
@@ -1132,66 +1129,10 @@ function FileActionStrip({
                 <Icon name={item.icon} />
               </Button>
             </span>
-          </ActionTooltip>
+          </PortalTooltip>
         ),
       )}
     </div>
-  );
-}
-// Portaled so the scrolling table viewport cannot clip it.
-function ActionTooltip({ content, children }: { content: string; children: ReactNode }) {
-  const id = useId();
-  const anchor = useRef<HTMLSpanElement>(null);
-  const bubble = useRef<HTMLSpanElement>(null);
-  const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState<CSSProperties>({ visibility: "hidden" });
-  useLayoutEffect(() => {
-    if (!open || !anchor.current || !bubble.current) return;
-    const target = anchor.current.getBoundingClientRect();
-    const { width, height } = bubble.current.getBoundingClientRect();
-    const gap = 6;
-    const top = target.top - height - gap >= 0 ? target.top - height - gap : target.bottom + gap;
-    const left = Math.min(
-      Math.max(gap, target.left + target.width / 2 - width / 2),
-      window.innerWidth - width - gap,
-    );
-    setPosition({ top, left });
-  }, [open, content]);
-  useEffect(() => {
-    if (!open) return;
-    const close = () => setOpen(false);
-    window.addEventListener("scroll", close, true);
-    return () => window.removeEventListener("scroll", close, true);
-  }, [open]);
-  const show = () => {
-    setPosition({ visibility: "hidden" });
-    setOpen(true);
-  };
-  return (
-    <span
-      ref={anchor}
-      className="inline-flex"
-      aria-describedby={open ? id : undefined}
-      onPointerEnter={show}
-      onPointerLeave={() => setOpen(false)}
-      onFocusCapture={show}
-      onBlurCapture={() => setOpen(false)}
-    >
-      {children}
-      {open &&
-        createPortal(
-          <span
-            ref={bubble}
-            id={id}
-            role="tooltip"
-            style={position}
-            className="pointer-events-none fixed z-[1000] w-max max-w-[min(18rem,calc(100vw-1rem))] rounded-field bg-neutral px-2 py-1 text-xs leading-snug text-neutral-content shadow-lg"
-          >
-            {content}
-          </span>,
-          document.body,
-        )}
-    </span>
   );
 }
 function FilesDetails({

@@ -1,4 +1,4 @@
-import { ActionButton } from "../action-button/action-button";
+import { ActionButton, ActionSpacer } from "../action-button/action-button";
 import { memo, useCallback, useMemo, useState } from "react";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import type { PresentationHistorySlot, PresentationQueueSlot } from "../../route";
@@ -7,8 +7,7 @@ import { PageGroupRow, PageRow, PageTable } from "../page-table/page-table";
 import { PageSection } from "../page-section/page-section";
 import { Pagination } from "~/components/pagination/pagination";
 import { EmptyQueue } from "../empty-queue/empty-queue";
-import { SimpleDropdown } from "~/components/simple-dropdown/simple-dropdown";
-import { Badge, Button, Icon, Tooltip } from "~/components/ui";
+import { Button, Icon, Select } from "~/components/ui";
 import { useIsReadOnly } from "~/auth/authorization";
 import type { JobsListParams } from "../../list-params";
 import { sortValue } from "../../list-params";
@@ -358,137 +357,176 @@ export function QueueTable({
   }, [selectedMovableIds, onMovedToTop, isLive, onPageSelected]);
 
   // view
+  const closeMenu = (e: React.MouseEvent<HTMLElement>) =>
+    e.currentTarget.closest("details")?.removeAttribute("open");
   const sectionTitle = (
-    <div className="flex flex-wrap items-center gap-2.5">
-      <h2 className="text-xl font-semibold text-base-content">Queue</h2>
-      {totalQueueCount > 0 && (
-        <Badge className="badge-ghost badge-sm font-mono tabular-nums">
-          {totalQueueCount} active
-        </Badge>
-      )}
-      {totalHistoryCount > 0 && (
-        <Badge className="badge-ghost badge-sm font-mono tabular-nums">
-          {totalHistoryCount} history
-        </Badge>
-      )}
-      {!isReadOnly && (totalQueueCount > 0 || totalHistoryCount > 0) && (
-        <details className="dropdown dropdown-end ml-auto">
-          <summary
-            className="btn btn-ghost btn-sm list-none"
-            aria-label="Queue maintenance"
-            title="Queue maintenance"
-          >
-            <Icon name="more_horiz" />
-          </summary>
-          <div className="dropdown-content z-20 mt-2 flex w-56 flex-col gap-2 rounded-box border border-base-content/10 bg-base-200 p-3 shadow-lg">
-            {totalQueueCount > 0 && (
-              <>
-                <Button
-                  variant="secondary"
-                  size="xsmall"
-                  onClick={() => setIsConfirmingClearAll(true)}
-                >
-                  Clear queue
-                </Button>
-                {categories.length > 0 && (
-                  <>
-                    <SimpleDropdown
-                      options={categories}
-                      value={clearCategory}
-                      onChange={setClearCategory}
-                    />
-                    <Button
-                      variant="secondary"
-                      size="xsmall"
-                      onClick={() => setIsConfirmingClearCategory(true)}
+    <div className="flex w-full flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-base-content/60 tabular-nums">
+          {totalQueueCount} active · {totalHistoryCount} in history
+        </span>
+        {!isReadOnly && (totalQueueCount > 0 || totalHistoryCount > 0) && (
+          <details className="dropdown dropdown-end ml-auto">
+            <summary className="btn btn-ghost btn-sm list-none max-sm:min-h-11">
+              <Icon name="cleaning_services" className="!text-[18px]" />
+              Clean up
+              <Icon name="expand_more" className="!text-[18px]" />
+            </summary>
+            <ul className="menu dropdown-content z-20 mt-2 max-h-80 w-60 flex-nowrap overflow-y-auto rounded-box border border-base-content/10 bg-base-200 p-2 shadow-lg">
+              {totalQueueCount > 0 && (
+                <>
+                  <li className="menu-title">Queue</li>
+                  <li>
+                    <button
+                      type="button"
+                      className="text-error"
+                      onClick={(e) => {
+                        closeMenu(e);
+                        setIsConfirmingClearAll(true);
+                      }}
                     >
-                      Clear category
-                    </Button>
-                  </>
-                )}
-              </>
+                      <Icon name="delete_sweep" className="!text-[18px]" />
+                      Clear entire queue
+                    </button>
+                  </li>
+                  {categories.map((category) => (
+                    <li key={category}>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          closeMenu(e);
+                          setClearCategory(category);
+                          setIsConfirmingClearCategory(true);
+                        }}
+                      >
+                        <Icon name="label_off" className="!text-[18px]" />
+                        <span className="truncate">Clear “{category}” jobs</span>
+                      </button>
+                    </li>
+                  ))}
+                </>
+              )}
+              {totalHistoryCount > 0 && (
+                <>
+                  <li className="menu-title">History</li>
+                  <li>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        closeMenu(e);
+                        setIsConfirmingClearFailed(true);
+                      }}
+                    >
+                      <Icon name="error" className="!text-[18px]" />
+                      Clear failed jobs
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      type="button"
+                      className="text-error"
+                      onClick={(e) => {
+                        closeMenu(e);
+                        setIsConfirmingClearAllHistory(true);
+                      }}
+                    >
+                      <Icon name="delete_sweep" className="!text-[18px]" />
+                      Clear all history
+                    </button>
+                  </li>
+                </>
+              )}
+            </ul>
+          </details>
+        )}
+      </div>
+      {!isReadOnly && selectedCount > 0 && (
+        <div
+          role="toolbar"
+          aria-label="Selected jobs"
+          className="flex flex-wrap items-center gap-2 rounded-box border border-primary/30 bg-primary/5 px-3 py-2"
+        >
+          <span className="text-sm font-medium tabular-nums">{selectedCount} selected</span>
+          <Button variant="ghost" onClick={() => onSelectAll(false)}>
+            Clear selection
+          </Button>
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+            {selectedPausableIds.length > 0 && (
+              <Button onClick={() => void onPauseSelected()}>
+                <Icon name="pause" className="!text-[18px]" />
+                Pause
+              </Button>
             )}
-            {totalHistoryCount > 0 && (
-              <>
-                <Button
-                  variant="secondary"
-                  size="xsmall"
-                  onClick={() => setIsConfirmingClearFailed(true)}
-                >
-                  Clear failed
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="xsmall"
-                  onClick={() => setIsConfirmingClearAllHistory(true)}
-                >
-                  Clear history
-                </Button>
-              </>
+            {selectedResumableIds.length > 0 && (
+              <Button onClick={() => void onResumeSelected()}>
+                <Icon name="play_arrow" className="!text-[18px]" />
+                Resume
+              </Button>
             )}
+            {selectedMovableIds.length > 0 && (
+              <Button onClick={() => void onMoveSelectedToTop()}>
+                <Icon name="vertical_align_top" className="!text-[18px]" />
+                Move to top
+              </Button>
+            )}
+            {selectedRetryableIds.length > 0 && (
+              <Button onClick={() => void onBulkRetry()}>
+                <Icon name="refresh" className="!text-[18px]" />
+                Retry
+              </Button>
+            )}
+            {selectedMovableIds.length > 0 && categories.length > 0 && (
+              <div className="join">
+                <Select
+                  className="select-sm join-item w-auto max-sm:min-h-11"
+                  aria-label="Category for selected jobs"
+                  value={bulkSetCategory}
+                  onChange={(e) => setBulkSetCategory(e.target.value)}
+                >
+                  {categories.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </Select>
+                <Button className="join-item" onClick={() => void onSetCategorySelected()}>
+                  Set category
+                </Button>
+              </div>
+            )}
+            {selectedMovableIds.length > 0 && (
+              <div className="join">
+                <Select
+                  className="select-sm join-item w-auto max-sm:min-h-11"
+                  aria-label="Priority for selected jobs"
+                  value={bulkPriority}
+                  onChange={(e) => setBulkPriority(e.target.value)}
+                >
+                  <option value="-1">Low</option>
+                  <option value="0">Normal</option>
+                  <option value="1">High</option>
+                  <option value="2">Force</option>
+                </Select>
+                <Button
+                  className="join-item"
+                  onClick={() => void onSetPrioritySelected(bulkPriority)}
+                >
+                  Set priority
+                </Button>
+              </div>
+            )}
+            <Button className="btn-error btn-soft" onClick={onRemove}>
+              <Icon name="delete" className="!text-[18px]" />
+              Remove
+            </Button>
           </div>
-        </details>
+          {bulkRetryError && (
+            <span role="alert" className="basis-full text-xs text-error">
+              {bulkRetryError}
+            </span>
+          )}
+        </div>
       )}
-      {!isReadOnly && headerCheckboxState !== "none" && (
-        <>
-          {selectedPausableIds.length > 0 && (
-            <Tooltip content="Pause selected">
-              <ActionButton type="pause" onClick={() => void onPauseSelected()} />
-            </Tooltip>
-          )}
-          {selectedResumableIds.length > 0 && (
-            <Tooltip content="Resume selected">
-              <ActionButton type="resume" onClick={() => void onResumeSelected()} />
-            </Tooltip>
-          )}
-          {selectedMovableIds.length > 0 && (
-            <Tooltip content="Move selected to top of queue">
-              <ActionButton type="move-top" onClick={() => void onMoveSelectedToTop()} />
-            </Tooltip>
-          )}
-          {selectedRetryableIds.length > 0 && (
-            <Tooltip content="Retry selected failed items">
-              <ActionButton type="retry" onClick={() => void onBulkRetry()} />
-            </Tooltip>
-          )}
-          {selectedMovableIds.length > 0 && categories.length > 0 && (
-            <>
-              <SimpleDropdown
-                options={categories}
-                value={bulkSetCategory}
-                onChange={setBulkSetCategory}
-              />
-              <Button
-                variant="secondary"
-                size="xsmall"
-                onClick={() => void onSetCategorySelected()}
-              >
-                Set category
-              </Button>
-            </>
-          )}
-          {selectedMovableIds.length > 0 && (
-            <>
-              <SimpleDropdown
-                options={["-1", "0", "1", "2"]}
-                optionLabels={{ "-1": "Low", "0": "Normal", "1": "High", "2": "Force" }}
-                value={bulkPriority}
-                onChange={setBulkPriority}
-                ariaLabel="Queue priority"
-              />
-              <Button
-                variant="secondary"
-                size="xsmall"
-                onClick={() => void onSetPrioritySelected(bulkPriority)}
-              >
-                Set priority
-              </Button>
-            </>
-          )}
-          <ActionButton type="delete" onClick={onRemove} />
-        </>
-      )}
-      {bulkRetryError && <span className="text-xs text-error">{bulkRetryError}</span>}
     </div>
   );
 
@@ -547,7 +585,13 @@ export function QueueTable({
         onClear={onClearFilters}
       />
       {isEmpty ? (
-        <EmptyQueue />
+        <EmptyQueue
+          onClearFilters={
+            listParams.query || listParams.category || listParams.status
+              ? onClearFilters
+              : undefined
+          }
+        />
       ) : (
         <PageTable
           headerCheckboxState={headerCheckboxState}
@@ -634,8 +678,9 @@ export function QueueTable({
 
 function removalMessage(queueCount: number, historyCount: number) {
   const parts: string[] = [];
-  if (queueCount > 0) parts.push(`${queueCount} queued item(s)`);
-  if (historyCount > 0) parts.push(`${historyCount} history item(s)`);
+  const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+  if (queueCount > 0) parts.push(plural(queueCount, "queued job"));
+  if (historyCount > 0) parts.push(plural(historyCount, "history job"));
   if (parts.length === 0) return "Selected items will be removed.";
   return `${parts.join(" and ")} will be removed.`;
 }
@@ -665,6 +710,10 @@ export const QueueRow = memo(
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
     const [isMoving, setIsMoving] = useState(false);
     const isActivelyUploading = !!(slot.isUploading && slot.status == "uploading");
+    const canSwapWith = (target?: PresentationQueueSlot) =>
+      !slot.isUploading && !!target && !target.isUploading && target.status !== "Downloading";
+    const canMoveUp = canSwapWith(previousSlot);
+    const canMoveDown = canSwapWith(nextSlot);
 
     // events
     const onRemove = useCallback(() => {
@@ -747,52 +796,44 @@ export const QueueRow = memo(
           fileSizeBytes={Number(slot.mb) * 1024 * 1024}
           actions={
             isReadOnly ? null : (
-              <div className="flex items-center justify-center gap-1">
-                {!slot.isUploading && (
-                  <>
-                    <Tooltip content="Move up">
-                      <ActionButton
-                        type="move-up"
-                        disabled={
-                          !!slot.isRemoving ||
-                          isMoving ||
-                          !previousSlot ||
-                          previousSlot.isUploading ||
-                          previousSlot.status === "Downloading"
-                        }
-                        onClick={() => void moveRelative(previousSlot)}
-                      />
-                    </Tooltip>
-                    <Tooltip content="Move down">
-                      <ActionButton
-                        type="move-down"
-                        disabled={
-                          !!slot.isRemoving ||
-                          isMoving ||
-                          !nextSlot ||
-                          nextSlot.isUploading ||
-                          nextSlot.status === "Downloading"
-                        }
-                        onClick={() => void moveRelative(nextSlot)}
-                      />
-                    </Tooltip>
-                  </>
+              <>
+                {canMoveUp ? (
+                  <ActionButton
+                    type="move-up"
+                    subject={slot.filename}
+                    disabled={!!slot.isRemoving || isMoving}
+                    onClick={() => void moveRelative(previousSlot)}
+                  />
+                ) : (
+                  <ActionSpacer />
                 )}
-                {!slot.isUploading && (
-                  <Tooltip content="Move to top">
-                    <ActionButton
-                      type="move-top"
-                      disabled={!!slot.isRemoving || isMoving}
-                      onClick={() => void onMoveToTop()}
-                    />
-                  </Tooltip>
+                {canMoveDown ? (
+                  <ActionButton
+                    type="move-down"
+                    subject={slot.filename}
+                    disabled={!!slot.isRemoving || isMoving}
+                    onClick={() => void moveRelative(nextSlot)}
+                  />
+                ) : (
+                  <ActionSpacer />
+                )}
+                {!slot.isUploading && previousSlot ? (
+                  <ActionButton
+                    type="move-top"
+                    subject={slot.filename}
+                    disabled={!!slot.isRemoving || isMoving}
+                    onClick={() => void onMoveToTop()}
+                  />
+                ) : (
+                  <ActionSpacer />
                 )}
                 <ActionButton
                   type="delete"
+                  subject={slot.filename}
                   disabled={!!slot.isRemoving || isActivelyUploading}
                   onClick={onRemove}
                 />
-              </div>
+              </>
             )
           }
           onRowSelectionChanged={(isSelected) => onIsSelectedChanged(slot.nzo_id, isSelected)}
@@ -804,7 +845,7 @@ export const QueueRow = memo(
         />
         <ConfirmModal
           show={isConfirmingRemoval}
-          title="Remove From Queue?"
+          title="Remove from queue?"
           message={slot.filename}
           onConfirm={() => void onConfirmRemoval()}
           onCancel={onCancelRemoval}

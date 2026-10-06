@@ -1,4 +1,4 @@
-import { Input, Select, Button, Icon } from "~/components/ui";
+import { Select, Button, Icon } from "~/components/ui";
 
 export type SortOption = { value: string; label: string };
 
@@ -34,12 +34,12 @@ export function ListToolbar({
   onClear: () => void;
 }) {
   return (
-    <div className="grid grid-cols-2 items-center gap-2 border-t border-base-content/10 pt-3 lg:grid-cols-[minmax(12rem,1fr)_repeat(3,minmax(0,10rem))_auto]">
-      <label className="input input-sm col-span-2 flex w-full min-w-0 items-center gap-2 lg:col-span-1">
-        <Icon name="search" className="!text-[18px] text-base-content/50" />
-        <Input
+    <div className="grid grid-cols-2 items-center gap-2 lg:grid-cols-[minmax(12rem,1fr)_repeat(3,minmax(0,10rem))_auto]">
+      <label className="input input-sm col-span-2 w-full min-w-0 lg:col-span-1">
+        <Icon name="search" className="!text-[18px] opacity-60" />
+        <input
           type="search"
-          className="h-auto min-w-0 flex-1 border-0 bg-transparent p-0 focus:outline-none"
+          className="min-w-0 grow"
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           aria-label={`Search ${label.toLowerCase()}`}
@@ -86,8 +86,13 @@ export function ListToolbar({
         ))}
       </Select>
       {isFiltered && (
-        <Button variant="ghost" size="xsmall" onClick={onClear}>
-          Clear
+        <Button
+          variant="ghost"
+          className="col-span-2 justify-self-start lg:col-span-1"
+          onClick={onClear}
+        >
+          <Icon name="filter_alt_off" className="!text-[18px]" />
+          Clear filters
         </Button>
       )}
     </div>

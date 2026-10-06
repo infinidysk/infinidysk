@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Badge, Icon, Tooltip } from "~/components/ui";
+import { Badge, Icon, PortalTooltip } from "~/components/ui";
 
 export type StatusBadgeProps = {
   className?: string | undefined;
@@ -12,19 +12,28 @@ export function StatusBadge({ className, status, percentage, error }: StatusBadg
   const statusLower = status?.toLowerCase();
 
   if (statusLower === "completed") {
-    return <StatusShell className="badge-success badge-xs">{statusLower}</StatusShell>;
+    return <StatusShell className="badge-success badge-soft">Completed</StatusShell>;
   }
 
   if (statusLower === "failed" || statusLower == "upload failed") {
     if (error?.startsWith("Article with message-id")) error = "Missing articles";
 
     return (
-      <Tooltip content={error || "Upload failed"} className="z-50">
-        <StatusShell className="badge-error badge-xs cursor-help">
-          {statusLower === "upload failed" && <Icon name="upload" className="!text-[12px]" />}
-          failed
-        </StatusShell>
-      </Tooltip>
+      <PortalTooltip content={error || "Upload failed"}>
+        <span
+          tabIndex={0}
+          aria-label={`Failed: ${error || "Upload failed"}`}
+          className="inline-flex"
+        >
+          <StatusShell className="badge-error badge-soft cursor-help">
+            <Icon
+              name={statusLower === "upload failed" ? "upload" : "error"}
+              className="!text-[12px]"
+            />
+            Failed
+          </StatusShell>
+        </span>
+      </PortalTooltip>
     );
   }
 
@@ -75,9 +84,9 @@ export function StatusBadge({ className, status, percentage, error }: StatusBadg
 
   if (statusLower === "pending") {
     return (
-      <StatusShell>
+      <StatusShell className="badge-ghost">
         <Icon name="upload" className="!text-[12px]" />
-        pending
+        Pending
       </StatusShell>
     );
   }
@@ -98,13 +107,22 @@ export function StatusBadge({ className, status, percentage, error }: StatusBadg
     );
   }
 
-  return <StatusShell>{statusLower}</StatusShell>;
+  if (statusLower === "paused") {
+    return (
+      <StatusShell className="badge-warning badge-soft">
+        <Icon name="pause" className="!text-[12px]" />
+        Paused
+      </StatusShell>
+    );
+  }
+
+  return <StatusShell className="badge-ghost capitalize">{statusLower || "Unknown"}</StatusShell>;
 }
 
 function StatusShell({ className = "", children }: { className?: string; children: ReactNode }) {
   return (
     <Badge
-      className={`inline-flex w-[85px] items-center justify-center gap-0.5 font-semibold ${className}`}
+      className={`badge-sm inline-flex w-[85px] items-center justify-center gap-0.5 font-semibold ${className}`}
     >
       {children}
     </Badge>
