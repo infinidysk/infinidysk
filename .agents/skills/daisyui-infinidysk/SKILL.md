@@ -80,6 +80,13 @@ Every top-level route uses the same shell so spacing matches its siblings:
 - **Grouped controls.** Use `join` / `join-item` for button groups, pagination, and
   input + button pairs. Mark toggle groups with `role="group"`, `aria-pressed`, and
   `btn-active`.
+- **Selected and active states must be obvious.** On `night`, `btn-active` is almost
+  invisible against `base-200`, so don't rely on it. Use these instead:
+  - The selected segment of a `join` gets `btn-primary`.
+  - An on/off toggle (filter panel open, filter applied) gets
+    `border-primary/60 bg-primary/15 text-primary`.
+  - Add `filled` to the toggle's `Icon` while it is active.
+  - Selection checkboxes use `checkbox-primary`; the default checkmark is too faint.
 - **Breadcrumbs.** Use `nav.breadcrumbs > ul > li`. Make the current crumb a `span`
   with `aria-current="page"`, not a link.
 - **Size consistency.** Toolbars use one size throughout (`btn-sm`, `input-sm`,
