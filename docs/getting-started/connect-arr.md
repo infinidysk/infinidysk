@@ -32,9 +32,10 @@ keep working, and Health repair and PAR2 recovery still work.
 Keeping the history entry prevents **Remove Orphaned Files** from deleting a
 file, even after the \*Arr replaces it with an upgrade or re-grab. Without the
 setting, superseded grabs build up until
-[SAB history retention](../configuration/maintenance.md) removes them, and
-Health can report them as **Not library linked** in the meantime. The \*Arr only
-removes downloads it grabbed, so releases grabbed by
+[SAB history retention](../configuration/maintenance.md) prunes their history
+entries while keeping the mounts. Unlinked mounts may then become eligible for
+**Remove Orphaned Files**. Health can report them as **Not library linked** in the
+meantime. The \*Arr only removes downloads it grabbed, so releases grabbed by
 [Profiles](../configuration/profiles.md) are not affected.
 
 ## Register \*Arr in InfiniDysk
