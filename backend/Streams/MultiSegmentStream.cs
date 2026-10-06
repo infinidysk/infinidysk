@@ -1409,9 +1409,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         }
     }
 
-    internal long CurrentPrefetchByteCeiling => Math.Min(
-        _prefetchByteCeiling,
-        _initialPrefetchByteCeiling + Interlocked.Read(ref _consumedPrefetchBytes));
+    // Like AltMount, only the opening burst is capped: once the reader takes its first segment
+    // the full window opens, so low-bitrate playback is not starved by a consumption-paced ramp.
+    internal long CurrentPrefetchByteCeiling => Interlocked.Read(ref _consumedPrefetchBytes) > 0
+        ? _prefetchByteCeiling
+        : _initialPrefetchByteCeiling;
 
     private void ReleaseInFlightPrefetchBytes(long plannedBytes)
     {
