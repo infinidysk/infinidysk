@@ -1,6 +1,6 @@
 # WebDAV filesystem
 
-InfiniDysk exposes NZB contents as a browsable tree over WebDAV and the **Files** UI.
+InfiniDysk exposes NZB contents as a browsable tree over WebDAV and the **Explorer** UI.
 
 Typical top-level paths:
 
@@ -18,9 +18,9 @@ Configure credentials and filesystem behavior under [WebDAV settings](../configu
 and playback behavior under [Streaming settings](../configuration/streaming.md).
 Mount with [rclone](../guides/mounting-webdav.md) for filesystem clients.
 
-## Files administration [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }
+## Explorer administration [since 1.5.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.5.0){ .nzbdav-since }
 
-**Files** opens the canonical `/content` hierarchy. **Tree** expands folders in place;
+**Explorer** opens the canonical `/content` hierarchy. **Tree** expands folders in place;
 **List** shows matching files throughout the current scope. Expansion does not change the
 URL or clear other branches, filters, selection, or an open player. Use the breadcrumb or
 **Use as scope** to change scope explicitly. Existing `/explore/content/...` links still
@@ -91,7 +91,7 @@ migration, data conversion, or feature-specific backup requirement.
 
 ## Deleting from Files [since 1.1.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.1.0){ .nzbdav-since }
 
-From **Files**, you can delete individual files or entire release folders under `/content/{category}/{release}/…`. Removal requires successful impact previews before confirmation. The dialog shows file, folder, byte, and linked-history totals.
+From **Explorer**, you can delete individual files or entire release folders under `/content/{category}/{release}/…`. Removal requires successful impact previews before confirmation. The dialog shows file, folder, byte, and linked-history totals.
 
 Selecting a directory includes its current collapsed, hidden, and filtered-out descendants.
 Overlapping parent/child selections are reduced to their top-level targets. Counts are advisory

@@ -150,7 +150,7 @@ export default function Explore({ loaderData }: Route.ComponentProps) {
   if (loaderData.kind === "not-found")
     return (
       <section>
-        <h1 className="text-xl font-semibold">Files</h1>
+        <h1 className="text-xl font-semibold">Explorer</h1>
         <p role="alert">Directory not found: {loaderData.scopePath}</p>
         <Link to="/explore">Content root</Link>
       </section>
@@ -434,7 +434,7 @@ function LegacyBody(props: ExplorePageData) {
 
   return (
     <div className="absolute flex min-h-full min-w-full flex-col px-4 py-4 text-base text-base-content/70 md:px-8">
-      <PageHeader title="Files" subtitle="Browse the WebDAV tree served by InfiniDysk." />
+      <PageHeader title="Explorer" subtitle="Browse the WebDAV tree served by InfiniDysk." />
       <Breadcrumbs parentDirectories={parentDirectories} />
       {!showSkeleton && props.error === "not-found" && (
         <div className="card bg-base-200 border-base-content/10 my-4 min-h-[320px] shadow-md">
