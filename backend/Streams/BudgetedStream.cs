@@ -4,7 +4,7 @@ namespace NzbWebDAV.Streams;
 /// Wraps a drained segment buffer and releases its <see cref="ArticleByteLease"/>
 /// exactly once when disposed.
 /// </summary>
-public sealed class BudgetedStream : Stream
+public sealed class BudgetedStream : Stream, IDeliveredBytesValidation
 {
     private readonly Stream _inner;
 #pragma warning disable CA2213 // the lease is disposed race-safely via ReleaseLease()'s Interlocked.Exchange + Dispose; the analyzer cannot follow the exchange-and-dispose-local pattern
@@ -29,6 +29,9 @@ public sealed class BudgetedStream : Stream
     }
 
     public ArticleByteLease? Lease => _lease;
+
+    ValueTask IDeliveredBytesValidation.ValidateDeliveredAsync(CancellationToken cancellationToken) =>
+        _inner.ValidateDeliveredAsync(cancellationToken);
 
     public override void Flush() => _inner.Flush();
 

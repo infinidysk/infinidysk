@@ -34,11 +34,17 @@ public class NzbFileStream(
     long? readBudgetOverride = null,
     bool readStartWarmupEnabled = false,
     Par2FileProof? verificationProof = null
-) : FastReadOnlyStream, ISegmentIssueProgress
+) : FastReadOnlyStream, ISegmentIssueProgress, IDeliveredBytesValidation
 {
     bool ISegmentIssueProgress.AllSegmentsIssued =>
         verificationProof is null
         && _innerStream is ISegmentIssueProgress { AllSegmentsIssued: true };
+
+    // PAR2-verified reads are validated before they are returned.
+    ValueTask IDeliveredBytesValidation.ValidateDeliveredAsync(CancellationToken cancellationToken) =>
+        verificationProof is null
+            ? _innerStream.ValidateDeliveredAsync(cancellationToken)
+            : ValueTask.CompletedTask;
 
     private const long MaximumForwardDrainBytes = 1024 * 1024;
     private const long MinimumPrewarmRangeBytes = 8L * 1024 * 1024;
@@ -195,6 +201,9 @@ public class NzbFileStream(
 
         var read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
         _position += read;
+        // Later reads stop at the file size without reaching the inner stream's end.
+        if (read > 0 && _position >= fileSize)
+            await _innerStream.ValidateDeliveredAsync(cancellationToken).ConfigureAwait(false);
         return read;
     }
 

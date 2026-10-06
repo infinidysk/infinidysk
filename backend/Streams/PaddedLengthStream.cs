@@ -32,10 +32,13 @@ public sealed class PaddedLengthStream(
     string partId,
     string? fileName = null,
     MultipartPartContext? context = null,
-    Action<int>? onBytesRead = null) : FastReadOnlyNonSeekableStream, ISegmentIssueProgress
+    Action<int>? onBytesRead = null) : FastReadOnlyNonSeekableStream, ISegmentIssueProgress, IDeliveredBytesValidation
 {
     bool ISegmentIssueProgress.AllSegmentsIssued =>
         stream is ISegmentIssueProgress { AllSegmentsIssued: true };
+
+    ValueTask IDeliveredBytesValidation.ValidateDeliveredAsync(CancellationToken cancellationToken) =>
+        stream.ValidateDeliveredAsync(cancellationToken);
 
     // When positive, overrides the combined stream's read-ahead window for this part.
     internal long ReadAheadBytes { get; init; }
@@ -77,6 +80,9 @@ public sealed class PaddedLengthStream(
             if (bytesRead > 0)
             {
                 _position += bytesRead;
+                // The part ends inside the underlying stream, which is never read to its end.
+                if (_position >= length)
+                    await stream.ValidateDeliveredAsync(cancellationToken).ConfigureAwait(false);
                 onBytesRead?.Invoke(bytesRead);
                 return bytesRead;
             }

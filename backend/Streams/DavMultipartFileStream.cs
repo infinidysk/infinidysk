@@ -12,7 +12,7 @@ namespace NzbWebDAV.Streams;
 // FastReadOnlyStream retains a synchronous Read fallback for out-of-repo
 // compatibility only. In-repo nested-RAR expansion and WebDAV GET/range handlers
 // use the Memory<byte> async path below.
-public class DavMultipartFileStream : FastReadOnlyStream
+public class DavMultipartFileStream : FastReadOnlyStream, IDeliveredBytesValidation
 {
     private readonly DavMultipartFile _mpf;
     private readonly INntpClient _usenetClient;
@@ -101,6 +101,9 @@ public class DavMultipartFileStream : FastReadOnlyStream
     {
         _innerStream?.Flush();
     }
+
+    ValueTask IDeliveredBytesValidation.ValidateDeliveredAsync(CancellationToken cancellationToken) =>
+        _innerStream.ValidateDeliveredAsync(cancellationToken);
 
     public override async ValueTask<int> ReadAsync(
         Memory<byte> buffer,

@@ -36,7 +36,7 @@ internal interface IIncrementalSegmentHandler
 /// validated replacement; bytes it already took must match that replacement, otherwise the
 /// read fails rather than splicing two different bodies.
 /// </summary>
-internal sealed class IncrementalSegmentStream : FastReadOnlyNonSeekableStream
+internal sealed class IncrementalSegmentStream : FastReadOnlyNonSeekableStream, IDeliveredBytesValidation
 {
     private const int MinimumCapacity = 64 * 1024;
 
@@ -169,11 +169,24 @@ internal sealed class IncrementalSegmentStream : FastReadOnlyNonSeekableStream
     private async Task<bool> CopyAsync(Stream source, int verify, CancellationToken cancellationToken)
     {
         var verified = 0;
+        byte[]? probe = null;
         while (true)
         {
-            if (_written == _buffer.Length)
-                Grow(_buffer.Length + 1);
-            var read = await source.ReadAsync(_buffer.AsMemory(_written), cancellationToken).ConfigureAwait(false);
+            int read;
+            if (_written < _buffer.Length)
+                read = await source.ReadAsync(_buffer.AsMemory(_written), cancellationToken).ConfigureAwait(false);
+            else
+            {
+                // An exactly sized body is full here; look for one more byte before growing.
+                probe ??= new byte[1];
+                read = await source.ReadAsync(probe, cancellationToken).ConfigureAwait(false);
+                if (read > 0)
+                {
+                    Grow(_buffer.Length + 1);
+                    _buffer[_written] = probe[0];
+                }
+            }
+
             if (read == 0) return verified == verify;
             if (verified < verify)
             {
@@ -278,6 +291,15 @@ internal sealed class IncrementalSegmentStream : FastReadOnlyNonSeekableStream
             await progress.WaitAsync(cancellationToken).ConfigureAwait(false);
             _handler.OnReaderWaited(Stopwatch.GetElapsedTime(waitStarted));
         }
+    }
+
+    public async ValueTask ValidateDeliveredAsync(CancellationToken cancellationToken)
+    {
+        lock (_gate)
+            if (_position == 0) return;
+        // The fill ends only after the trailer is checked or the delivered bytes are verified.
+        await _fill.WaitAsync(cancellationToken).ConfigureAwait(false);
+        lock (_gate) _fault?.Throw();
     }
 
     private void ReportOutcome(bool degraded)

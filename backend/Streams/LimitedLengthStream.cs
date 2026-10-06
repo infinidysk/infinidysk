@@ -2,7 +2,7 @@
 
 namespace NzbWebDAV.Streams;
 
-public class LimitedLengthStream(Stream stream, long length) : FastReadOnlyNonSeekableStream
+public class LimitedLengthStream(Stream stream, long length) : FastReadOnlyNonSeekableStream, IDeliveredBytesValidation
 {
     private long _position;
     private bool _disposed;
@@ -32,9 +32,16 @@ public class LimitedLengthStream(Stream stream, long length) : FastReadOnlyNonSe
         // Update the position by the number of bytes read
         _position += bytesRead;
 
+        // The limit ends inside the underlying stream, which is never read to its end.
+        if (bytesRead > 0 && _position >= length)
+            await stream.ValidateDeliveredAsync(cancellationToken).ConfigureAwait(false);
+
         // Return the number of bytes read
         return bytesRead;
     }
+
+    ValueTask IDeliveredBytesValidation.ValidateDeliveredAsync(CancellationToken cancellationToken) =>
+        stream.ValidateDeliveredAsync(cancellationToken);
 
     protected override void Dispose(bool disposing)
     {

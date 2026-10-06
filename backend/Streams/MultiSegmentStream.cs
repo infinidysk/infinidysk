@@ -17,7 +17,7 @@ using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
 
-public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssueProgress
+public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssueProgress, IDeliveredBytesValidation
 {
     private const int BodyPipelineBatchSize = 4;
     // Pipelining hides per-command RTT; at multi-MB articles transfer time dominates and
@@ -121,6 +121,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
     // The producer exits only after leasing every segment it will enqueue.
     bool ISegmentIssueProgress.AllSegmentsIssued => _downloadTask.IsCompleted;
+
+    // Earlier segments were read to their end, which waits for their validation.
+    ValueTask IDeliveredBytesValidation.ValidateDeliveredAsync(CancellationToken cancellationToken) =>
+        _stream.ValidateDeliveredAsync(cancellationToken);
 
     public static Stream Create(
         Memory<string> segmentIds,
@@ -1431,7 +1435,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         bool isFirstSegment,
         CancellationToken cancellationToken,
         bool incremental = true,
-        Exception? priorFailure = null
+        SegmentRetryResume? resume = null
     )
     {
         var estimate = GetPlannedSegmentBytes(segmentIndex);
@@ -1449,13 +1453,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 return result;
             }
 
-            var persistent = new PersistentCorruptionTracker();
-            for (var attempt = 0; ; attempt++)
+            var persistent = resume?.Persistent ?? new PersistentCorruptionTracker();
+            var priorFailure = resume?.Failure;
+            for (var attempt = resume?.Attempt ?? 0; ; attempt++)
             {
                 try
                 {
-                    // An incremental body that failed mid-drain counts as this loop's
-                    // first attempt so retry limits and corruption tracking continue.
+                    // An incremental body that failed mid-drain resumes at its own attempt so
+                    // retry limits and corruption evidence carry across the handoff.
                     if (priorFailure is not null)
                     {
                         var failure = priorFailure;
@@ -1476,7 +1481,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                     var drained = await ValidateAndDrainSegmentAsync(
 #pragma warning restore CA2000
                             bodyResponse.Stream!, segmentIndex, cancellationToken, lease, estimate,
-                            incremental ? new IncrementalSegmentHandler(this, segmentId, segmentIndex, isFirstSegment) : null)
+                            incremental
+                                ? new IncrementalSegmentHandler(
+                                    this, segmentId, segmentIndex, isFirstSegment, attempt, persistent)
+                                : null)
                         .ConfigureAwait(false);
                     lease = null;
                     return ToDownloadResult(drained, estimate, segmentId);
@@ -1602,7 +1610,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         MultiSegmentStream owner,
         string segmentId,
         int segmentIndex,
-        bool isFirstSegment) : IIncrementalSegmentHandler
+        bool isFirstSegment,
+        int attempt,
+        PersistentCorruptionTracker persistent) : IIncrementalSegmentHandler
     {
         private SegmentDownloadResult? _replacement;
 
@@ -1611,7 +1621,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             // The original lease still covers the segment, so the replacement is not leased again.
             var result = await owner.DownloadSegment(
                     segmentId, segmentIndex, ArticleByteLease.Empty, isFirstSegment, cancellationToken,
-                    incremental: false, priorFailure: failure)
+                    incremental: false, new SegmentRetryResume(failure, attempt, persistent))
                 .ConfigureAwait(false);
             _replacement = result;
             return new SegmentReplacement(result.Stream, result.IsZeroFill || result.IsShortPad, result.Failure);
@@ -1635,6 +1645,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 MultiProviderNntpClient.CurrentStreamTraceRange, StreamStallKind.ConsumerWait, elapsed);
         }
     }
+
+    private sealed record SegmentRetryResume(
+        Exception Failure, int Attempt, PersistentCorruptionTracker Persistent);
 
     private TransientSegmentExhaustionException CreatePostDeliveryFailure(
         string segmentId, int segmentIndex, Exception failure, int deliveredBytes) =>
@@ -1784,7 +1797,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 #pragma warning restore CA2000
                     response.Stream!, segmentIndex, cancellationToken, lease, estimate,
                     GetCorruptionRetryLimit(segmentId) > 0
-                        ? new IncrementalSegmentHandler(this, segmentId, segmentIndex, isFirstSegment)
+                        ? new IncrementalSegmentHandler(
+                            this, segmentId, segmentIndex, isFirstSegment, 0, new PersistentCorruptionTracker())
                         : null)
                 .ConfigureAwait(false);
             lease = null; // owned by BudgetedStream / buffer
