@@ -87,6 +87,7 @@ const sortLabels: Record<string, string> = {
   type: "Type",
   health: "Health",
 };
+const activeToggle = "border-primary/60 bg-primary/15 text-primary";
 const advancedFilterKeys = [
   "addedAfter",
   "addedBefore",
@@ -616,7 +617,7 @@ export function FilesBrowser(props: Props) {
               >
                 {label === "Name" && selectableKeys.length > 0 && (
                   <Checkbox
-                    className="checkbox-sm"
+                    className="checkbox-sm checkbox-primary"
                     aria-label="Select all visible items"
                     checked={selectedVisible === selectableKeys.length}
                     ref={(element) => {
@@ -951,7 +952,7 @@ function FilesRow(props: {
           <span className="w-5 shrink-0" aria-hidden="true" />
         ) : (
           <Checkbox
-            className="checkbox-sm"
+            className="checkbox-sm checkbox-primary"
             aria-label={`Select ${row.name}`}
             checked={props.selected}
             onChange={(event) =>
@@ -1328,7 +1329,7 @@ function FilesToolbar({
           </label>
         </form>
         <details className="dropdown">
-          <summary className={`btn btn-sm ${filters.health.length ? "btn-active" : ""}`}>
+          <summary className={`btn btn-sm ${filters.health.length ? activeToggle : ""}`}>
             Health{filters.health.length ? ` (${filters.health.length})` : ""}
             <Icon name="expand_more" className="!text-[18px]" />
           </summary>
@@ -1339,7 +1340,7 @@ function FilesToolbar({
                 className="flex cursor-pointer items-center gap-2 rounded-field px-2 py-1.5 hover:bg-base-content/5"
               >
                 <Checkbox
-                  className="checkbox-sm"
+                  className="checkbox-sm checkbox-primary"
                   checked={filters.health.includes(health)}
                   onChange={(event) =>
                     change({
@@ -1380,10 +1381,10 @@ function FilesToolbar({
         )}
         <Button
           aria-expanded={expanded}
-          className={expanded ? "btn-active" : ""}
+          className={expanded ? activeToggle : ""}
           onClick={() => setExpanded((value) => !value)}
         >
-          <Icon name="tune" className="!text-[18px]" />
+          <Icon name="tune" filled={expanded} className="!text-[18px]" />
           Filters
           {advancedCount > 0 && (
             <span className="badge badge-primary badge-xs">{advancedCount}</span>
@@ -1395,11 +1396,12 @@ function FilesToolbar({
               <Button
                 key={value}
                 aria-pressed={mode === value}
-                className={`join-item ${mode === value ? "btn-active" : ""}`}
+                className={`join-item ${mode === value ? "btn-primary" : ""}`}
                 onClick={() => update(filters, value)}
               >
                 <Icon
                   name={value === "tree" ? "account_tree" : "view_list"}
+                  filled={mode === value}
                   className="!text-[18px]"
                 />
                 {value === "tree" ? "Tree" : "List"}
