@@ -41,6 +41,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
     private Task? _disposeTask;
     private long _nextReaderId;
     private long _bytesPumped;
+    private long _validatedThrough;
     private SharedStreamReapReason _reapReason = SharedStreamReapReason.Grace;
 
     internal SharedStreamEntry(
@@ -61,6 +62,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         ArgumentOutOfRangeException.ThrowIfNegative(fileSize);
         Path = path;
         Anchor = anchor;
+        _validatedThrough = anchor;
         FileSize = fileSize;
         EntryId = Guid.NewGuid();
         _reservedContentIdentity = contentIdentity;
@@ -244,6 +246,33 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
             _ = EnsureDisposeAsync();
     }
 
+    /// <summary>
+    /// Completes once upstream bytes before the position are validated. The pump validated
+    /// every article it read past, so only the in-flight article can still be pending.
+    /// </summary>
+    internal async ValueTask ValidateThroughAsync(long position, CancellationToken cancellationToken)
+    {
+        if (position <= Interlocked.Read(ref _validatedThrough)) return;
+        Stream upstream;
+        lock (_lock)
+        {
+            if (_state >= SharedStreamEntryState.Disposing || _upstream is null)
+                throw new IOException("Shared stream closed before its delivered bytes were validated.");
+            upstream = _upstream;
+        }
+
+        // Published bytes never exceed what upstream had returned when validation starts.
+        var published = _ring.Frontier;
+        await upstream.ValidateDeliveredAsync(cancellationToken).ConfigureAwait(false);
+        var current = Interlocked.Read(ref _validatedThrough);
+        while (current < published)
+        {
+            var seen = Interlocked.CompareExchange(ref _validatedThrough, published, current);
+            if (seen == current) break;
+            current = seen;
+        }
+    }
+
     internal void NotifyCursorAdvanced(long readerId, long cursor)
     {
         _ring.AdvanceCursor(readerId, cursor);
@@ -303,6 +332,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
                     .ConfigureAwait(false);
                 if (read == 0)
                 {
+                    Interlocked.Exchange(ref _validatedThrough, long.MaxValue);
                     _ring.SetComplete();
                     return;
                 }
