@@ -92,6 +92,15 @@ function mount(strict = false, initialPage = page) {
   return render(strict ? <StrictMode>{browser}</StrictMode> : browser);
 }
 describe("Files browser", () => {
+  it("backgroundRefreshKeepsRowsWithoutLoadingRow", async () => {
+    mount();
+    await screen.findByRole("button", { name: "Play Synthetic.mkv" });
+    mocks.fetch.mockImplementation(() => new Promise<Response>(() => {}));
+    await userEvent.click(screen.getByRole("button", { name: "Refresh Files" }));
+    await waitFor(() => expect(mocks.fetch).toHaveBeenCalled());
+    expect(screen.queryByText("Loading...")).toBeNull();
+    expect(screen.getByRole("button", { name: "Play Synthetic.mkv" })).toBeTruthy();
+  });
   it("filtersUnloadedBranchesViaResourceQuery", async () => {
     const directory = makeFileRow({
       key: "10000000-0000-0000-0000-000000000002",

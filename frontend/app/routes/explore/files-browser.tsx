@@ -2,6 +2,8 @@ import {
   Fragment,
   useEffect,
   useEffectEvent,
+  useId,
+  useLayoutEffect,
   useReducer,
   useRef,
   useState,
@@ -9,6 +11,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router";
 import { z } from "zod";
 import { Alert, Badge, Button, Checkbox, Icon, PageHeader } from "~/components/ui";
@@ -852,11 +855,14 @@ function BranchControls({
   page: (offset: number) => void;
 }) {
   const paged = branch.offset > 0 || branch.hasMore;
-  const empty = branch.status === "ready" && branch.totalRows === 0;
-  if (branch.status === "ready" && !paged && !empty) return null;
+  // Background refreshes keep the current rows instead of flashing a loading row.
+  const initialLoad =
+    branch.status === "loading" && branch.loadedAt === 0 && branch.keys.length === 0;
+  const empty = branch.status !== "error" && !initialLoad && branch.totalRows === 0;
+  if (branch.status !== "error" && !initialLoad && !paged && !empty) return null;
   return (
     <div className={styles.branch} style={{ "--depth": depth } as CSSProperties}>
-      {branch.status === "loading" && (
+      {initialLoad && (
         <span role="status" className="flex items-center gap-2 text-base-content/60">
           <span className="loading loading-spinner loading-xs" />
           Loading...
@@ -1110,26 +1116,82 @@ function FileActionStrip({
         row.isDirectory && (item.label === "Play" || item.label === "Download") ? (
           <span key={item.label} className={styles.action} aria-hidden="true" />
         ) : (
-          <span
-            key={item.label}
-            title={item.reason ?? item.label}
-            tabIndex={item.reason ? 0 : undefined}
-            aria-label={item.reason ? `${item.label} ${row.name}: ${item.reason}` : undefined}
-          >
-            <Button
-              size="medium"
-              variant="ghost"
-              className={`${styles.action} ${item.label === "Remove" ? "hover:text-error" : ""}`}
-              aria-label={`${item.label} ${row.name}`}
-              disabled={Boolean(item.reason)}
-              onClick={item.run}
+          <ActionTooltip key={item.label} content={item.reason ?? item.label}>
+            <span
+              tabIndex={item.reason ? 0 : undefined}
+              aria-label={item.reason ? `${item.label} ${row.name}: ${item.reason}` : undefined}
             >
-              <Icon name={item.icon} />
-            </Button>
-          </span>
+              <Button
+                size="medium"
+                variant="ghost"
+                className={`${styles.action} ${item.label === "Remove" ? "hover:text-error" : ""}`}
+                aria-label={`${item.label} ${row.name}`}
+                disabled={Boolean(item.reason)}
+                onClick={item.run}
+              >
+                <Icon name={item.icon} />
+              </Button>
+            </span>
+          </ActionTooltip>
         ),
       )}
     </div>
+  );
+}
+// Portaled so the scrolling table viewport cannot clip it.
+function ActionTooltip({ content, children }: { content: string; children: ReactNode }) {
+  const id = useId();
+  const anchor = useRef<HTMLSpanElement>(null);
+  const bubble = useRef<HTMLSpanElement>(null);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<CSSProperties>({ visibility: "hidden" });
+  useLayoutEffect(() => {
+    if (!open || !anchor.current || !bubble.current) return;
+    const target = anchor.current.getBoundingClientRect();
+    const { width, height } = bubble.current.getBoundingClientRect();
+    const gap = 6;
+    const top = target.top - height - gap >= 0 ? target.top - height - gap : target.bottom + gap;
+    const left = Math.min(
+      Math.max(gap, target.left + target.width / 2 - width / 2),
+      window.innerWidth - width - gap,
+    );
+    setPosition({ top, left });
+  }, [open, content]);
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener("scroll", close, true);
+    return () => window.removeEventListener("scroll", close, true);
+  }, [open]);
+  const show = () => {
+    setPosition({ visibility: "hidden" });
+    setOpen(true);
+  };
+  return (
+    <span
+      ref={anchor}
+      className="inline-flex"
+      aria-describedby={open ? id : undefined}
+      onPointerEnter={show}
+      onPointerLeave={() => setOpen(false)}
+      onFocusCapture={show}
+      onBlurCapture={() => setOpen(false)}
+    >
+      {children}
+      {open &&
+        createPortal(
+          <span
+            ref={bubble}
+            id={id}
+            role="tooltip"
+            style={position}
+            className="pointer-events-none fixed z-[1000] w-max max-w-[min(18rem,calc(100vw-1rem))] rounded-field bg-neutral px-2 py-1 text-xs leading-snug text-neutral-content shadow-lg"
+          >
+            {content}
+          </span>,
+          document.body,
+        )}
+    </span>
   );
 }
 function FilesDetails({
