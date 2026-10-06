@@ -51,4 +51,19 @@ describe("Watchdog attempt timeline", () => {
     expect(screen.getAllByText("Missing volumes. Try another release.")).toHaveLength(2);
     expect(screen.getAllByText("5.8s").length).toBeGreaterThan(0);
   });
+
+  it("hides empty filters and offers recovery when the log is empty", () => {
+    render(
+      <Watchdog {...({ loaderData: { entries: [entry()] } } as ComponentProps<typeof Watchdog>)} />,
+    );
+    const filters = screen.getByRole("radiogroup", { name: "Watchdog status filter" });
+    expect(filters.textContent).toBe("All 1Failed 1");
+    cleanup();
+
+    const empty: WatchdogEntry[] = [];
+    render(
+      <Watchdog {...({ loaderData: { entries: empty } } as ComponentProps<typeof Watchdog>)} />,
+    );
+    expect(screen.getByRole("heading", { name: "No play requests yet" })).toBeTruthy();
+  });
 });
