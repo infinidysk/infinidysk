@@ -12,8 +12,8 @@ import {
   ManagedSetting,
   RadioJoinFilter,
   Spinner,
+  PortalTooltip,
   Toggle,
-  Tooltip,
 } from "~/components/ui";
 import type {
   SetupWizardIngestionMethod,
@@ -51,8 +51,9 @@ export function SetupProgress({ step }: { step: number }) {
         {SETUP_STEPS.map((label, index) => (
           <li
             key={label}
-            className={`step text-xs ${index <= step ? "step-primary" : ""}`}
-            data-content={String(index + 1)}
+            // Default step markers use base-300, which matches the page background on night.
+            className={`step text-xs ${index <= step ? "step-primary" : "before:!bg-base-content/15 after:!bg-base-content/15"}`}
+            data-content={index < step ? "✓" : String(index + 1)}
             aria-current={index === step ? "step" : undefined}
           >
             {label}
@@ -104,7 +105,7 @@ export function LibraryTypeStep({
               [
                 {
                   id: "symlinks",
-                  label: "Symlinks · Plex",
+                  label: "Symlinks · Plex/Silo",
                   description: "Use an rclone mount and filesystem entries.",
                   icon: "link",
                 },
@@ -126,7 +127,7 @@ export function LibraryTypeStep({
           />
         </Field>
       </ManagedSetting>
-      <Alert variant="info" className="alert-soft items-start text-sm">
+      <Alert variant="info" role="status" className="alert-soft items-start text-sm">
         <Icon name={strategy === "symlinks" ? "link" : "play_circle"} className="!text-[20px]" />
         <div>
           <p className="font-semibold">
@@ -134,7 +135,7 @@ export function LibraryTypeStep({
           </p>
           <p className="mt-1 text-xs leading-relaxed opacity-80">
             {strategy === "symlinks"
-              ? "Plex follows symlinks through an rclone WebDAV mount. Rclone VFS caching handles read-ahead, so Segment Cache will be disabled."
+              ? "Plex or Silo follows symlinks through an rclone WebDAV mount. Rclone VFS caching handles read-ahead, so Segment Cache will be disabled."
               : "Emby or Jellyfin opens generated .strm URLs directly. Segment Cache will be enabled for repeated WebDAV reads and seeks."}
           </p>
         </div>
@@ -246,9 +247,9 @@ function SymlinkPlaybackStep({
   return (
     <StepSection
       title="Prepare the rclone playback path"
-      description="InfiniDysk will use rclone's bounded VFS cache for Plex playback and keep its own Segment Cache off."
+      description="InfiniDysk will use rclone's bounded VFS cache for Plex/Silo playback and keep its own Segment Cache off."
     >
-      <Alert variant="success" className="alert-soft items-start text-sm">
+      <Alert variant="success" role="status" className="alert-soft items-start text-sm">
         <Icon name="check_circle" className="!text-[20px]" />
         <span>Segment Cache will be disabled when you apply this Symlinks setup.</span>
       </Alert>
@@ -264,7 +265,9 @@ function SymlinkPlaybackStep({
             value={config["rclone.mount-dir"] ?? ""}
             onChange={(event) => updateConfig(updateDraft, "rclone.mount-dir", event.target.value)}
           />
-          <p className="validator-hint">The mounted WebDAV root is required for symlink imports.</p>
+          <p className="validator-hint hidden">
+            The mounted WebDAV root is required for symlink imports.
+          </p>
           <HelpText>Use the same absolute path inside InfiniDysk, Radarr, and Sonarr.</HelpText>
         </Field>
       </ManagedSetting>
@@ -277,30 +280,27 @@ function SymlinkPlaybackStep({
           Rclone sidecar configuration
         </summary>
         <div className="collapse-content space-y-3">
-          <p className="text-xs leading-relaxed text-base-content/65">
+          <p className="text-xs leading-relaxed text-base-content/60">
             Add these flags to the mount command. Adjust the 50 GiB limit to fit the storage
             available to the sidecar.
           </p>
-          <div className="mockup-code text-xs">
+          <pre className="overflow-x-auto rounded-box border border-base-content/10 bg-base-100 p-4 text-xs leading-relaxed">
             {sidecarFlags.split("\n").map((line) => (
-              <pre key={line} data-prefix="">
-                <code>{line}</code>
-              </pre>
+              <code key={line} className="block">
+                {line}
+              </code>
             ))}
-          </div>
-          <Tooltip content={copied ? "Copied" : "Copy rclone flags"}>
-            <Button
-              variant="ghost"
-              size="small"
-              onClick={() => {
-                void navigator.clipboard.writeText(sidecarFlags).then(() => setCopied(true));
-              }}
-            >
-              <Icon name="content_copy" className="!text-[18px]" />
-              Copy flags
-            </Button>
-          </Tooltip>
-          <Alert variant="warning" className="alert-soft items-start text-xs">
+          </pre>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              void navigator.clipboard.writeText(sidecarFlags).then(() => setCopied(true));
+            }}
+          >
+            <Icon name={copied ? "check" : "content_copy"} className="!text-[18px]" />
+            {copied ? "Copied" : "Copy flags"}
+          </Button>
+          <Alert variant="warning" role="note" className="alert-soft items-start text-xs">
             <Icon name="security" className="!text-[18px]" />
             <span>
               <code>--rc-no-auth</code> is suitable only on an isolated trusted container network.
@@ -352,10 +352,10 @@ function SymlinkPlaybackStep({
                 Test
               </Button>
             </div>
-            <p className="validator-hint">
+            <HelpText>
               Enter an absolute URL using the rclone service name. Loopback only works in a shared
               network namespace.
-            </p>
+            </HelpText>
           </Field>
         </ManagedSetting>
         <ManagedSetting configKey="rclone.user">
@@ -388,6 +388,7 @@ function SymlinkPlaybackStep({
       {testState !== "idle" && testState !== "testing" && (
         <Alert
           variant={testState === "error" ? "danger" : testWarning ? "warning" : "success"}
+          role={testState === "error" ? "alert" : "status"}
           className="alert-soft text-sm"
         >
           <span
@@ -416,7 +417,7 @@ function StrmPlaybackStep({ draft, updateDraft }: { draft: SetupDraft; updateDra
       title="Configure direct STRM playback"
       description="Generated .strm files point Emby or Jellyfin back to InfiniDysk over HTTP."
     >
-      <Alert variant="success" className="alert-soft items-start text-sm">
+      <Alert variant="success" role="status" className="alert-soft items-start text-sm">
         <Icon name="cached" className="!text-[20px]" />
         <div>
           <p className="font-semibold">Segment Cache will be enabled</p>
@@ -439,7 +440,9 @@ function StrmPlaybackStep({ draft, updateDraft }: { draft: SetupDraft; updateDra
               updateConfig(updateDraft, "api.completed-downloads-dir", event.target.value)
             }
           />
-          <p className="validator-hint">A shared directory is required for generated STRM files.</p>
+          <p className="validator-hint hidden">
+            A shared directory is required for generated STRM files.
+          </p>
           <HelpText>Map this exact path into Radarr or Sonarr.</HelpText>
         </Field>
       </ManagedSetting>
@@ -455,7 +458,9 @@ function StrmPlaybackStep({ draft, updateDraft }: { draft: SetupDraft; updateDra
             value={draft.config["general.base-url"] ?? ""}
             onChange={(event) => updateConfig(updateDraft, "general.base-url", event.target.value)}
           />
-          <p className="validator-hint">Enter an absolute URL reachable by Emby or Jellyfin.</p>
+          <p className="validator-hint hidden">
+            Enter an absolute URL reachable by Emby or Jellyfin.
+          </p>
           <HelpText>Generated STRM files use this address for playback.</HelpText>
         </Field>
       </ManagedSetting>
@@ -539,13 +544,13 @@ export function IngestionStep({
       )}
 
       {draft.ingestionMethods.includes("search") && (
-        <Alert variant="info" className="alert-soft text-sm">
+        <Alert variant="info" role="status" className="alert-soft text-sm">
           <Icon name="travel_explore" className="!text-[20px]" />
           <span>After setup, add Newznab indexers and Search Profiles under Settings.</span>
         </Alert>
       )}
       {draft.ingestionMethods.includes("manual") && (
-        <Alert variant="info" className="alert-soft text-sm">
+        <Alert variant="info" role="status" className="alert-soft text-sm">
           <Icon name="list_alt" className="!text-[20px]" />
           <span>After setup, use Queue to upload a small NZB and verify playback.</span>
         </Alert>
@@ -572,21 +577,27 @@ function MethodChoice({
   return (
     <label
       htmlFor={id}
-      className={`flex min-w-0 cursor-pointer items-start gap-3 rounded-box border p-4 ${
-        checked ? "border-primary/60 bg-primary/10" : "border-base-content/10 bg-base-200/30"
+      className={`flex min-w-0 cursor-pointer items-start gap-3 rounded-box border p-4 transition-colors focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-primary ${
+        checked
+          ? "border-primary/60 bg-primary/10"
+          : "border-base-content/10 bg-base-200/30 hover:border-base-content/25"
       }`}
     >
       <input
         id={id}
         type="checkbox"
-        className="checkbox checkbox-primary mt-0.5"
+        className="checkbox checkbox-sm checkbox-primary mt-0.5"
         checked={checked}
         onChange={(event) => onChange(event.target.checked)}
       />
-      <Icon name={icon} className="!text-[20px] shrink-0 text-base-content/70" />
+      <Icon
+        name={icon}
+        filled={checked}
+        className={`!text-[20px] shrink-0 ${checked ? "text-primary" : "text-base-content/70"}`}
+      />
       <span className="min-w-0">
         <span className="block text-sm font-semibold">{title}</span>
-        <span className="mt-1 block text-xs leading-relaxed text-base-content/55">{detail}</span>
+        <span className="mt-1 block text-xs leading-relaxed text-base-content/60">{detail}</span>
       </span>
     </label>
   );
@@ -602,7 +613,7 @@ function ArrInstancesEditor({
   return (
     <section className="space-y-4 border-t border-base-content/10 pt-5">
       <div>
-        <h3 className="text-lg font-semibold">Register Radarr and Sonarr</h3>
+        <h3 className="text-base font-semibold">Register Radarr and Sonarr</h3>
         <p className="mt-1 text-sm text-base-content/60">
           These connections enable import monitoring, queue actions, and linked-library repairs.
         </p>
@@ -636,13 +647,16 @@ function ArrKindEditor({
     <section className="space-y-3">
       <div className="flex items-center justify-between gap-3">
         <h4 className="font-semibold">{kind}</h4>
-        <Button onClick={() => onChange([...instances, { Host: "", ApiKey: "", Enabled: true }])}>
+        <Button
+          aria-label={`Add ${kind} instance`}
+          onClick={() => onChange([...instances, { Host: "", ApiKey: "", Enabled: true }])}
+        >
           <Icon name="add" className="!text-[18px]" />
           Add
         </Button>
       </div>
       {instances.length === 0 ? (
-        <p className="rounded-box border border-dashed border-base-content/20 p-4 text-sm text-base-content/55">
+        <p className="rounded-box border border-dashed border-base-content/20 p-4 text-sm text-base-content/60">
           No {kind} instances configured.
         </p>
       ) : (
@@ -710,21 +724,24 @@ function ArrInstanceEditor({
 
   return (
     <fieldset className="fieldset rounded-box border border-base-content/10 bg-base-200/30 p-4">
-      <legend className="fieldset-legend flex w-full items-center justify-between gap-3">
-        <span>
-          {kind} {index + 1}
+      <legend className="sr-only">
+        {kind} {index + 1}
+      </legend>
+      <div className="flex items-center justify-between gap-3">
+        <span className="truncate text-sm font-semibold">
+          {instance.Name?.trim() || `${kind} ${index + 1}`}
         </span>
-        <Tooltip content={`Remove ${kind} instance`}>
+        <PortalTooltip content={`Remove ${kind} instance`}>
           <Button
-            size="rounded"
             variant="ghost"
+            className="btn-square hover:text-error max-sm:size-11"
             aria-label={`Remove ${kind} instance`}
             onClick={onRemove}
           >
-            <Icon name="close" className="!text-[18px]" />
+            <Icon name="delete" className="!text-[18px]" />
           </Button>
-        </Tooltip>
-      </legend>
+        </PortalTooltip>
+      </div>
       <Toggle
         id={`${prefix}-enabled`}
         checked={instance.Enabled !== false}
@@ -771,6 +788,7 @@ function ArrInstanceEditor({
       />
       {testState !== "idle" && testState !== "testing" && (
         <p
+          role={testState === "success" ? "status" : "alert"}
           className={`flex items-center gap-2 text-xs ${testState === "success" ? "text-success" : "text-error"}`}
         >
           <span
@@ -802,7 +820,7 @@ function ArrDownloadClientInstructions({
         Add InfiniDysk to each Arr app
       </summary>
       <div className="collapse-content space-y-4 text-sm">
-        <ol className="list-decimal space-y-2 pl-5 text-base-content/70">
+        <ol className="list-decimal space-y-2 pl-5 text-base-content/80">
           <li>Open Settings → Download Clients → Add → SABnzbd.</li>
           <li>Use a hostname and port 3000 that the Arr container can reach.</li>
           <li>Paste the API key below and use matching categories.</li>
@@ -810,14 +828,16 @@ function ArrDownloadClientInstructions({
         </ol>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
-            <p className="text-xs font-medium text-base-content/55">Categories</p>
-            <code className="mt-1 block break-all rounded-field bg-base-300 p-2 text-xs">
+            <p className="text-xs font-medium text-base-content/60">Categories</p>
+            <code className="mt-1 block break-all rounded-field border border-base-content/10 bg-base-100 p-2 text-xs">
               {categories}
             </code>
           </div>
           <div>
-            <p className="text-xs font-medium text-base-content/55">Completed path</p>
-            <code className="mt-1 block break-all rounded-field bg-base-300 p-2 text-xs">
+            <p className="text-xs font-medium text-base-content/60">
+              Completed path ({strategy === "symlinks" ? "rclone mount" : "STRM"})
+            </p>
+            <code className="mt-1 block break-all rounded-field border border-base-content/10 bg-base-100 p-2 text-xs">
               {completedPath}
             </code>
           </div>
@@ -831,22 +851,19 @@ function ArrDownloadClientInstructions({
               readOnly
               value={apiKey}
             />
-            <Tooltip content={copied ? "Copied" : "Copy API key"}>
+            <PortalTooltip content={copied ? "Copied" : "Copy API key"}>
               <Button
-                className="join-item"
+                className="join-item btn-square max-sm:size-11"
                 aria-label="Copy API key"
                 onClick={() =>
                   void navigator.clipboard.writeText(apiKey).then(() => setCopied(true))
                 }
               >
-                <Icon name="content_copy" className="!text-[18px]" />
+                <Icon name={copied ? "check" : "content_copy"} className="!text-[18px]" />
               </Button>
-            </Tooltip>
+            </PortalTooltip>
           </div>
         </div>
-        <Badge className="badge-soft badge-info">
-          {strategy === "symlinks" ? "Symlink path" : "STRM path"}
-        </Badge>
       </div>
     </details>
   );
@@ -868,7 +885,7 @@ export function BackupStep({
       description="InfiniDysk can create a logical backup once per day and retain a bounded number of snapshots."
     >
       {mainDatabaseProvider === "postgres" && (
-        <Alert variant="warning" className="alert-soft items-start text-sm">
+        <Alert variant="warning" role="note" className="alert-soft items-start text-sm">
           <Icon name="info" className="!text-[20px]" />
           <span>
             This schedule protects local auxiliary SQLite stores only. Back up the main PostgreSQL
@@ -920,7 +937,7 @@ export function BackupStep({
                 updateConfig(updateDraft, "backup.retention-count", event.target.value)
               }
             />
-            <p className="validator-hint">Retain at least one backup.</p>
+            <p className="validator-hint hidden">Retain at least one backup.</p>
           </Field>
         </ManagedSetting>
       </fieldset>
@@ -957,10 +974,10 @@ export function LibraryDirectoryStep({
         </Field>
       </ManagedSetting>
       {!draft.config["media.library-dir"]?.trim() && (
-        <Alert variant="warning" className="alert-soft text-sm">
+        <Alert variant="info" role="status" className="alert-soft text-sm">
           <Icon name="schedule" className="!text-[20px]" />
           <span>
-            Set up later is allowed. Core health checks and PAR2 repair still work, but
+            You can set this up later. Core health checks and PAR2 repair still work, but
             linked-library replacement will be limited.
           </span>
         </Alert>
@@ -987,48 +1004,59 @@ export function ReviewStep({
   const strategy = normalizeStrategy(draft.config["api.import-strategy"]);
   const baselineStrategy = normalizeStrategy(baseline["api.import-strategy"]);
   const rows = Object.entries(changes);
+  const restartRequired =
+    baseline["usenet.segment-cache.enabled"] !== draft.config["usenet.segment-cache.enabled"];
+  const envManaged = Object.keys(managedEnv).length > 0;
   return (
     <StepSection
       title="Review and apply"
       description="Configuration changes are applied together. Secrets remain hidden and existing imported files are not rewritten."
     >
-      <div className="flex flex-wrap gap-2">
-        <Badge className="badge-soft badge-primary">
-          {strategy === "symlinks" ? "Symlinks · Plex" : "STRM · Emby/Jellyfin"}
-        </Badge>
-        {baseline["usenet.segment-cache.enabled"] !==
-          draft.config["usenet.segment-cache.enabled"] && (
-          <Badge className="badge-soft badge-warning">Restart required</Badge>
-        )}
-        {Object.keys(managedEnv).length > 0 && (
-          <Badge className="badge-soft">Environment-managed settings preserved</Badge>
-        )}
-      </div>
-
-      <section className="space-y-2">
-        <h3 className="text-sm font-semibold text-base-content">Content ingestion</h3>
-        <div className="flex flex-wrap gap-2">
-          {draft.ingestionMethods.map((method) => (
-            <Badge key={method} className="badge-outline">
-              {method === "arrs"
-                ? "Arr apps"
-                : method === "search"
-                  ? "Built-in Search"
-                  : "Manual NZB"}
-            </Badge>
-          ))}
+      <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div>
+          <dt className="text-xs font-medium text-base-content/60">Library type</dt>
+          <dd className="mt-1 font-medium">
+            {strategy === "symlinks" ? "Symlinks · Plex/Silo" : "STRM · Emby/Jellyfin"}
+          </dd>
         </div>
-      </section>
+        <div>
+          <dt className="text-xs font-medium text-base-content/60">Content ingestion</dt>
+          <dd className="mt-1 font-medium">
+            {draft.ingestionMethods
+              .map((method) =>
+                method === "arrs"
+                  ? "Arr apps"
+                  : method === "search"
+                    ? "Built-in Search"
+                    : "Manual NZB",
+              )
+              .join(" · ")}
+          </dd>
+        </div>
+      </dl>
+
+      {(restartRequired || envManaged) && (
+        <div className="flex flex-wrap gap-2">
+          {restartRequired && <Badge className="badge-soft badge-warning">Restart required</Badge>}
+          {envManaged && (
+            <Badge className="badge-soft">Environment-managed settings preserved</Badge>
+          )}
+        </div>
+      )}
 
       {rows.length === 0 ? (
-        <Alert variant="info" className="alert-soft text-sm">
-          No persisted settings will change. Completing still records this setup guide as reviewed.
+        <Alert variant="info" role="status" className="alert-soft text-sm">
+          <Icon name="info" className="!text-[20px]" />
+          <span>
+            No persisted settings will change. Completing still records this setup guide as
+            reviewed.
+          </span>
         </Alert>
       ) : (
         <div className="overflow-x-auto rounded-box border border-base-content/10">
           <table className="table table-sm">
             <thead>
-              <tr>
+              <tr className="text-xs text-base-content/60">
                 <th>Setting</th>
                 <th>Current</th>
                 <th>New</th>
@@ -1038,8 +1066,12 @@ export function ReviewStep({
               {rows.map(([key, value]) => (
                 <tr key={key}>
                   <th className="whitespace-nowrap font-medium">{settingLabel(key)}</th>
-                  <td>{displayConfigValue(key, baseline[key] ?? "")}</td>
-                  <td>{displayConfigValue(key, value)}</td>
+                  <td className="text-base-content/60">
+                    {displayConfigValue(key, baseline[key] ?? "")}
+                  </td>
+                  <td className="font-medium text-base-content">
+                    {displayConfigValue(key, value)}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1048,7 +1080,7 @@ export function ReviewStep({
       )}
 
       {baselineStrategy !== strategy && (
-        <Alert variant="warning" className="alert-soft items-start text-sm">
+        <Alert variant="warning" role="note" className="alert-soft items-start text-sm">
           <Icon name="warning" className="!text-[20px]" />
           <div className="space-y-3">
             <p>
@@ -1066,8 +1098,9 @@ export function ReviewStep({
       )}
 
       {!draft.config["media.library-dir"]?.trim() && (
-        <Alert variant="warning" className="alert-soft text-sm">
-          Library Directory will remain unset.
+        <Alert variant="info" role="status" className="alert-soft text-sm">
+          <Icon name="schedule" className="!text-[20px]" />
+          <span>Library Directory will remain unset.</span>
         </Alert>
       )}
     </StepSection>
@@ -1084,12 +1117,12 @@ export function StepSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-6">
+    <section className="space-y-5">
       <div className="max-w-3xl">
-        <h2 className="text-2xl font-bold text-base-content" tabIndex={-1} data-setup-heading>
+        <h2 className="text-xl font-semibold text-base-content" tabIndex={-1} data-setup-heading>
           {title}
         </h2>
-        <p className="mt-2 max-w-[70ch] text-sm leading-relaxed text-base-content/60">
+        <p className="mt-1 max-w-[70ch] text-sm leading-relaxed text-base-content/60">
           {description}
         </p>
       </div>

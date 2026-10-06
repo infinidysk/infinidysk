@@ -25,11 +25,7 @@ export function RadioJoinFilter<T extends string>({
 }) {
   return (
     <div
-      className={
-        prominent
-          ? "join join-vertical w-full rounded-box border border-base-content/15 bg-base-200 p-1 sm:join-horizontal"
-          : "join flex-wrap"
-      }
+      className={prominent ? "grid w-full grid-cols-1 gap-3 sm:grid-cols-2" : "join flex-wrap"}
       role="radiogroup"
       aria-label={ariaLabel ?? name}
     >
@@ -41,10 +37,10 @@ export function RadioJoinFilter<T extends string>({
             key={option.id}
             className={
               prominent
-                ? `btn join-item h-auto min-h-24 flex-1 justify-start gap-3 whitespace-normal p-4 text-left focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-primary ${
+                ? `flex min-w-0 cursor-pointer items-start gap-3 rounded-box border p-4 text-left transition-colors focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-primary ${
                     selected
-                      ? "btn-primary shadow-md"
-                      : "border border-transparent bg-base-100 text-base-content hover:border-base-content/20 hover:bg-base-100"
+                      ? "border-primary/60 bg-primary/10"
+                      : "border-base-content/10 bg-base-200/30 hover:border-base-content/25"
                   }`
                 : `btn btn-sm join-item max-sm:min-h-11 max-sm:px-2.5 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-primary ${
                     selected ? "btn-primary" : "btn-ghost"
@@ -56,19 +52,25 @@ export function RadioJoinFilter<T extends string>({
               name={name}
               aria-label={option.label}
               aria-describedby={prominent && option.description ? descriptionId : undefined}
-              className={prominent ? "radio radio-sm shrink-0" : "sr-only"}
+              className={prominent ? "radio radio-sm radio-primary mt-0.5 shrink-0" : "sr-only"}
               checked={selected}
               onChange={() => onChange(option.id)}
             />
             {prominent ? (
               <>
-                {option.icon && <Icon name={option.icon} className="!text-[24px] shrink-0" />}
+                {option.icon && (
+                  <Icon
+                    name={option.icon}
+                    filled={selected}
+                    className={`!text-[20px] shrink-0 ${selected ? "text-primary" : "text-base-content/70"}`}
+                  />
+                )}
                 <span className="min-w-0">
-                  <span className="block text-base font-semibold">{option.label}</span>
+                  <span className="block text-sm font-semibold">{option.label}</span>
                   {option.description && (
                     <span
                       id={descriptionId}
-                      className="mt-1 block text-xs font-normal leading-relaxed opacity-75"
+                      className="mt-1 block text-xs leading-relaxed text-base-content/60"
                     >
                       {option.description}
                     </span>
