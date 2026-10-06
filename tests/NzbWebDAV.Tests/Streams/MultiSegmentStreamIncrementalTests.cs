@@ -1,4 +1,5 @@
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
 
@@ -18,7 +19,7 @@ public class MultiSegmentStreamIncrementalTests
             useCachedYencStreams: true,
             decodedStreamFactory: (id, bytes) =>
                 id == "seg-1" && Interlocked.Exchange(ref corruptServed, 1) == 0
-                    ? new CorruptAfterPrefixStream(id, SegmentSize / 2)
+                    ? new FailingBodyStream(SegmentSize / 2, () => Corrupt(id))
                     : new MemoryStream(bytes, writable: false));
 
         await using var stream = Create(client, segments, $"late-crc-{Guid.NewGuid():N}.bin");
@@ -51,10 +52,77 @@ public class MultiSegmentStreamIncrementalTests
         Assert.Equal(2 * SegmentSize + SegmentSize / 2, delivered);
     }
 
-    private static Dictionary<string, byte[]> CreateSegments(int count) =>
+    [Fact]
+    public async Task RecoveryAfterSetupFailures_KeepsTheRemainingRetryBudget()
+    {
+        var segments = CreateSegments(3);
+        var fetches = 0;
+        var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            decodedStreamFactory: (id, bytes) =>
+            {
+                if (id != "seg-1")
+                    return new MemoryStream(bytes, writable: false);
+                return Interlocked.Increment(ref fetches) switch
+                {
+                    <= 2 => throw new IOException("connect failed"),
+                    3 => new FailingBodyStream(SegmentSize / 2, () => new IOException("connection reset")),
+                    _ => new MemoryStream(bytes, writable: false),
+                };
+            });
+
+        await using var stream = Create(client, segments, $"budget-{Guid.NewGuid():N}.bin");
+        using var output = new MemoryStream();
+        await Record.ExceptionAsync(() => stream.CopyToAsync(output).WaitAsync(TimeSpan.FromSeconds(10)));
+
+        // MaxBodyRetries = 2: the mid-body failure is the third and last fetch.
+        Assert.Equal(3, client.BodyRequestCounts["seg-1"]);
+    }
+
+    [Fact]
+    public async Task FullRead_DoesNotEndBeforeTheLastArticleTrailerValidates()
+    {
+        var segments = CreateSegments(3);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var corruptServed = 0;
+        var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            segmentRanges: Ranges(segments.Count, SegmentSize),
+            decodedStreamFactory: (id, bytes) =>
+                id == "seg-2" && Interlocked.Exchange(ref corruptServed, 1) == 0
+                    ? new FailingBodyStream(SegmentSize, () => Corrupt(id), gate.Task)
+                    : new MemoryStream(bytes, writable: false));
+        await using var stream = new NzbFileStream(
+            Ids(segments.Count), 3L * SegmentSize, client, articleBufferSize: 2,
+            segmentByteRanges: Ranges(segments.Count, SegmentSize).Values.ToArray(),
+            usePipelinedBodyRequests: false, fileName: $"trailer-{Guid.NewGuid():N}.bin");
+
+        using var output = new MemoryStream();
+        var copy = stream.CopyToAsync(output);
+        await Task.WhenAny(copy, Task.Delay(500));
+        Assert.False(copy.IsCompleted, "the copy must wait for the last article's trailer");
+
+        gate.SetResult();
+        await Assert.ThrowsAnyAsync<Exception>(() => copy.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(2, client.BodyRequestCounts["seg-2"]);
+    }
+
+    internal static string[] Ids(int count) =>
+        Enumerable.Range(0, count).Select(i => $"seg-{i}").ToArray();
+
+    internal static Dictionary<string, LongRange> Ranges(int count, int size) =>
+        Enumerable.Range(0, count).ToDictionary(
+            i => $"seg-{i}", i => new LongRange((long)i * size, (long)(i + 1) * size), StringComparer.Ordinal);
+
+    internal static Exception Corrupt(string segmentId) =>
+        new UsenetCorruptArticleException(segmentId, "provider", new InvalidDataException("bad crc"));
+
+    internal static Dictionary<string, byte[]> CreateSegments(int count, int size = SegmentSize) =>
         Enumerable.Range(0, count).ToDictionary(
             i => $"seg-{i}",
-            i => Enumerable.Range(0, SegmentSize).Select(b => (byte)(b + i)).ToArray(),
+            i => Enumerable.Range(0, size).Select(b => (byte)(b + i)).ToArray(),
             StringComparer.Ordinal);
 
     private static Stream Create(
@@ -69,32 +137,37 @@ public class MultiSegmentStreamIncrementalTests
             CancellationToken.None,
             fileName: fileName,
             exactSegmentSizes: Enumerable.Repeat((long)SegmentSize, segments.Count).ToArray());
+}
 
-    /// <summary>Decodes a wrong prefix, then fails the trailer CRC.</summary>
-    private sealed class CorruptAfterPrefixStream(string segmentId, int prefix) : Stream
+/// <summary>Decodes a wrong prefix, optionally waits on a gate, then fails (e.g. the trailer CRC).</summary>
+internal sealed class FailingBodyStream(int prefix, Func<Exception> failure, Task? gate = null) : Stream
+{
+    private int _remaining = prefix;
+
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
-        private bool _prefixRead;
-
-        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        if (_remaining == 0)
         {
-            if (_prefixRead)
-                throw new UsenetCorruptArticleException(segmentId, "provider", new InvalidDataException("bad crc"));
-            _prefixRead = true;
-            var count = Math.Min(prefix, buffer.Length);
-            buffer.Span[..count].Fill(0xEE);
-            return ValueTask.FromResult(count);
+            if (gate is not null)
+                await gate.WaitAsync(cancellationToken);
+            throw failure();
         }
 
-        public override int Read(byte[] buffer, int offset, int count) =>
-            ReadAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
-        public override bool CanRead => true;
-        public override bool CanSeek => false;
-        public override bool CanWrite => false;
-        public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
-        public override void Flush() { }
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        var count = Math.Min(_remaining, buffer.Length);
+        buffer.Span[..count].Fill(0xEE);
+        _remaining -= count;
+        return count;
     }
+
+    public override int Read(byte[] buffer, int offset, int count) =>
+        ReadAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+    public override void Flush() { }
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 }

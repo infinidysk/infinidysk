@@ -179,6 +179,41 @@ public class IncrementalSegmentStreamTests
         Assert.Equal(0, diagnostics.Snapshot().CheckedOutBytes);
     }
 
+    [Fact]
+    public async Task ExactCapacityBody_DoesNotGrowAtEndOfBody()
+    {
+        var pool = new CountingPool();
+        var diagnostics = new BufferPoolDiagnostics();
+        var body = Enumerable.Range(0, 100_000).Select(i => (byte)i).ToArray();
+        var stream = new IncrementalSegmentStream(
+            new MemoryStream(body), body.Length, body.Length, new Handler(), (_, _) => { },
+            CancellationToken.None, pool, diagnostics);
+
+        Assert.Equal(body, await ReadToEndAsync(stream));
+        await stream.DisposeAsync();
+
+        Assert.Equal(0, diagnostics.Snapshot().Growths);
+        Assert.Equal(1, pool.Rented);
+    }
+
+    [Fact]
+    public async Task ValidateDelivered_WaitsForTheTrailer_AndSurfacesALateFailure()
+    {
+        var source = new GatedStream([1, 2, 3], fail: true);
+        var handler = new Handler((_, _) => new SegmentReplacement(new MemoryStream([9, 9, 9]), false));
+        await using var stream = new IncrementalSegmentStream(
+            source, 0, 3, handler, (_, _) => { }, CancellationToken.None);
+
+        var buffer = new byte[3];
+        Assert.Equal(3, await stream.ReadAsync(buffer).AsTask().WaitAsync(Timeout));
+        var validation = stream.ValidateDeliveredAsync(CancellationToken.None).AsTask();
+        await Task.Delay(50);
+        Assert.False(validation.IsCompleted);
+
+        source.Release();
+        await Assert.ThrowsAsync<PostDeliveryException>(() => validation.WaitAsync(Timeout));
+    }
+
     private static async Task<byte[]> ReadToEndAsync(Stream stream)
     {
         using var output = new MemoryStream();
