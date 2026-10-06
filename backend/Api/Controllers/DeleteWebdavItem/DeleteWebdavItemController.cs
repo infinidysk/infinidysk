@@ -34,10 +34,13 @@ public class DeleteWebdavItemController(
         var path = HttpContext.Request.Form["path"].FirstOrDefault()
                    ?? throw new BadHttpRequestException("path is required");
         var ct = HttpContext.RequestAborted;
+        var expectedId = DeleteWebdavItemSupport.ParseExpectedItemId(HttpContext.Request.Form["expectedDavItemId"]);
 
         var item = await DeleteWebdavItemSupport.ResolvePathAsync(dbClient, path, ct)
             .ConfigureAwait(false);
         if (item is null) return NotFound(new BaseApiResponse { Status = false, Error = "Item not found." });
+        if (expectedId is not null && item.Id != expectedId)
+            return Conflict(new BaseApiResponse { Status = false, Error = "The item changed since it was selected. Refresh Files before removing it." });
 
         var rootError = DeleteWebdavItemSupport.ValidateDeletableRoot(item.Path);
         if (rootError is not null)

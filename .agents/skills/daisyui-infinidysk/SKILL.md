@@ -78,8 +78,7 @@ Every top-level route uses the same shell so spacing matches its siblings:
 - **Dropdowns.** Use `details.dropdown > summary.btn + .dropdown-content` (with
   `menu` for link lists). Do not toggle dropdowns with React state.
 - **Grouped controls.** Use `join` / `join-item` for button groups, pagination, and
-  input + button pairs. Mark toggle groups with `role="group"`, `aria-pressed`, and
-  `btn-active`.
+  input + button pairs. Mark toggle groups with `role="group"` and `aria-pressed`.
 - **Selected and active states must be obvious.** On `night`, `btn-active` is almost
   invisible against `base-200`, so don't rely on it. Use these instead:
   - The selected segment of a `join` gets `btn-primary`.
@@ -98,6 +97,12 @@ Every top-level route uses the same shell so spacing matches its siblings:
   surface.
 - **Loading.** Use `Spinner` (`loading loading-spinner`) with a short label. Never use
   plain "Loading…" text alone.
+- **Tooltips.** Never rely on the native `title` attribute for action hints; it is
+  delayed, inconsistent, and absent on touch. daisyUI `tooltip` is CSS-positioned, so
+  it gets clipped inside any `overflow: auto/hidden` ancestor (table viewports, cards,
+  scroll panels). Inside such containers, render the tooltip through a portal to
+  `document.body` with `position: fixed`, flip it below when there is no room above,
+  clamp it to the window edges, and close it on scroll. Show it on hover **and** focus.
 
 ## 5. Behaviour and UX rules
 
@@ -111,8 +116,12 @@ Every top-level route uses the same shell so spacing matches its siblings:
 - **Destructive actions.** Use a `Modal` that summarises the impact (counts, sizes,
   linked records). Give errors a retry action, and keep any preview error separate
   from the confirm button.
-- **Filters.** Show how many filters are active (a `badge` on the trigger, plus
-  `btn-active`) and always offer a "Clear filters" action.
+- **Filters.** Show how many filters are active (a `badge` on the trigger, plus the
+  active toggle style above) and always offer a "Clear filters" action.
+- **Background refreshes must not flicker.** Show loading rows or spinners only on a
+  view's first load. Websocket- or poll-triggered refreshes keep the current rows on
+  screen and swap data in place; never clear a list or insert a "Loading" row that
+  makes the layout bounce.
 - **Responsive.** Toolbars wrap with `flex flex-wrap gap-2`. Advanced panels use a
   responsive grid (`grid-cols-1 sm:grid-cols-2 xl:grid-cols-4`). Wide tables scroll
   inside a `min-w-0` viewport, not the page.
@@ -138,6 +147,9 @@ Before finishing UI work:
 - [ ] Toolbars use one control size, and grouped controls use `join`.
 - [ ] No disabled-forever controls, raw enum text, or blank cells.
 - [ ] Sticky and overlay surfaces are opaque.
+- [ ] Selected/active toggles are clearly visible on `night` (no bare `btn-active`).
+- [ ] Tooltips are not clipped by scroll containers and never use native `title`.
+- [ ] Live/background refreshes do not flash loading states or shift the layout.
 - [ ] Empty, loading, error, and not-found states are designed.
 - [ ] Accessible names exist for icon-only controls. Tests use role queries.
 - [ ] `npm run typecheck`, `eslint`, `prettier --check`, and the colocated Vitest suite pass.

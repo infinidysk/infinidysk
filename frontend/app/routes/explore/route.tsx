@@ -13,7 +13,7 @@ import { getFrontendRuntimeConfig } from "../../../server/runtime-config";
 import { Loading } from "~/components/loading/loading";
 import { formatFileSize } from "~/utils/file-size";
 import { parseExploreWebdavPath } from "~/utils/path";
-import { fileKindRank, getExtension, getIcon, isPlayableMedia } from "./file-kind/file-kind";
+import { fileKindRank, getExtension, getIcon, isPlayableMedia } from "~/utils/file-kind";
 import { ItemMenu } from "./item-menu/item-menu";
 import { MediaPreview } from "./media-preview/media-preview";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
@@ -21,6 +21,12 @@ import { classNames } from "~/utils/styling";
 import { Icon, Checkbox, Button, PageHeader } from "~/components/ui";
 import { useIsReadOnly } from "~/auth/authorization";
 import { withUrlBase } from "~/utils/url-base";
+import { data, type ShouldRevalidateFunctionArgs } from "react-router";
+import { BackendApiError } from "~/clients/backend-client.server";
+import { loadFilesPage } from "~/clients/files-page.server";
+import { parseFilesFilters, parseFilesParameters } from "~/clients/files-contract";
+import { isAuthenticated } from "~/auth/authentication.server";
+import { FilesBrowser } from "./files-browser";
 
 const ITEM_MENU_CLASS = "flex select-none items-center self-stretch rounded-r-lg px-5 py-[15px]";
 const ITEM_MENU_OPEN_CLASS = "bg-base-content/10";
@@ -39,6 +45,66 @@ export type ExploreFile = DirectoryItem & {
 type SortKey = "name" | "size" | "type";
 type SortDir = "asc" | "desc";
 export async function loader({ request, params }: Route.LoaderArgs) {
+  const parsed = parseExploreWebdavPath(params["*"] ?? "", { decode: false });
+  if (
+    parsed.ok &&
+    (parsed.path === "" || parsed.path === "content" || parsed.path.startsWith("content/"))
+  ) {
+    if (!(await isAuthenticated(request)))
+      throw data(
+        { error: "Authentication required." },
+        { status: 401, headers: { "Cache-Control": "private, no-store" } },
+      );
+    const scopePath = parsed.path ? "/" + parsed.path : "/content";
+    const parameters = new URL(request.url).searchParams;
+    parameters.set("scopePath", scopePath);
+    parameters.delete("parentPath");
+    parameters.delete("offset");
+    let validated: URLSearchParams;
+    try {
+      validated = parseFilesParameters(parameters);
+    } catch {
+      throw data(
+        { error: "Invalid Files filters." },
+        { status: 400, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+    try {
+      return {
+        kind: "files" as const,
+        scopePath,
+        initialPage: await loadFilesPage(validated, request.signal),
+        initialFilters: parseFilesFilters(validated),
+        initialMode: validated.get("mode")!,
+        initialSort: validated.get("sort")!,
+        initialDirection: validated.get("direction")!,
+      };
+    } catch (error) {
+      request.signal.throwIfAborted();
+      if (error instanceof BackendApiError && error.status === 404)
+        return { kind: "not-found" as const, scopePath };
+      throw error;
+    }
+  }
+  const result = await legacyLoader({ request, params } as Route.LoaderArgs);
+  if (result instanceof Response) return result;
+  return { kind: "legacy" as const, data: result };
+}
+
+export function shouldRevalidate(args: ShouldRevalidateFunctionArgs) {
+  const path = args.currentUrl.pathname;
+  const canonical = /\/explore(?:\/content(?:\/|$)|\/?$)/.test(path);
+  if (
+    canonical &&
+    path === args.nextUrl.pathname &&
+    args.currentUrl.search !== args.nextUrl.search &&
+    !args.formMethod
+  )
+    return false;
+  return args.defaultShouldRevalidate;
+}
+
+async function legacyLoader({ request, params }: Route.LoaderArgs) {
   // if path ends in trailing slash, remove it
   if (request.url.endsWith("/")) return redirect(request.url.slice(0, -1));
 
@@ -80,10 +146,31 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 }
 
 export default function Explore({ loaderData }: Route.ComponentProps) {
-  return <Body {...loaderData} />;
+  if (loaderData.kind === "files") return <FilesBrowser {...loaderData} />;
+  if (loaderData.kind === "not-found")
+    return (
+      <section className="flex min-h-full flex-col gap-4 px-4 py-4 text-sm md:px-8">
+        <PageHeader title="Explorer" />
+        <div className="card min-h-[320px] border border-base-content/10 bg-base-200">
+          <div className="card-body items-center justify-center text-center">
+            <Icon name="folder_off" className="!text-[48px] text-warning" />
+            <h2 className="card-title text-xl">Directory not found</h2>
+            <p role="alert" className="max-w-md break-all text-sm text-base-content/60">
+              Directory not found: {loaderData.scopePath}
+            </p>
+            <div className="card-actions justify-center">
+              <Link to="/explore" className="btn btn-sm">
+                Content root
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  return <LegacyBody {...loaderData.data} />;
 }
 
-function Body(props: ExplorePageData) {
+function LegacyBody(props: ExplorePageData) {
   const isReadOnly = useIsReadOnly();
   const location = useLocation();
   const navigation = useNavigation();
@@ -359,7 +446,7 @@ function Body(props: ExplorePageData) {
 
   return (
     <div className="absolute flex min-h-full min-w-full flex-col px-4 py-4 text-base text-base-content/70 md:px-8">
-      <PageHeader title="Files" subtitle="Browse the WebDAV tree served by InfiniDysk." />
+      <PageHeader title="Explorer" subtitle="Browse the WebDAV tree served by InfiniDysk." />
       <Breadcrumbs parentDirectories={parentDirectories} />
       {!showSkeleton && props.error === "not-found" && (
         <div className="card bg-base-200 border-base-content/10 my-4 min-h-[320px] shadow-md">

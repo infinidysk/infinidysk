@@ -109,6 +109,16 @@ function colorStatus(status: number): string {
 export function requestPathForLog(rawUrl: string | undefined): string {
   if (!rawUrl) return "[unknown path]";
 
+  if (rawUrl.startsWith("/")) {
+    const path = rawUrl.split(/[?#]/, 1)[0] ?? "";
+    return Array.from(path)
+      .filter((character) => {
+        const code = character.charCodeAt(0);
+        return code > 0x1f && code !== 0x7f;
+      })
+      .join("");
+  }
+
   try {
     const parsed = new URL(rawUrl, "http://localhost");
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {

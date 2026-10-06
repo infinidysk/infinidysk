@@ -82,7 +82,7 @@ export function LeftNavigation({
         ]
       : []),
     { target: "/watchtower", icon: "cell_tower", label: "Watchtower", featureId: "watchtower" },
-    { target: "/explore", icon: "folder_open", label: "Files", featureId: "explore" },
+    { target: "/explore", icon: "folder_open", label: "Explorer", featureId: "explore" },
     { target: "/health", icon: "health_and_safety", label: "Health", featureId: "health" },
     { target: "/logs", icon: "description", label: "Logs", featureId: "logs" },
     { target: "/search", icon: "search", label: "Search", featureId: "search" },

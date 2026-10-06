@@ -1,0 +1,137 @@
+.viewport {
+  min-width: 0;
+  max-height: 68vh;
+  overflow: auto;
+  scrollbar-color: var(--color-base-300) transparent;
+  overflow-anchor: auto;
+}
+.grid {
+  min-width: 1060px;
+  color: var(--color-base-content);
+}
+.row {
+  display: grid;
+  grid-template-columns: minmax(300px, 1fr) 120px 176px 72px 88px 116px 176px;
+  min-height: 36px;
+  align-items: center;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-base-content) 8%, transparent);
+  background: var(--color-base-100);
+  font-size: 0.8125rem;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.row > [role] {
+  padding-inline: 8px;
+}
+.row > [role="gridcell"],
+.row > [role="cell"] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Opaque mixes so the sticky name cell can inherit the row colour. */
+.row:hover,
+.row:focus-within {
+  background: color-mix(in srgb, var(--color-base-content) 6%, var(--color-base-100));
+}
+.row[aria-selected="true"] {
+  background: color-mix(in srgb, var(--color-primary) 14%, var(--color-base-100));
+}
+.listRow {
+  min-height: 44px;
+}
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-height: 36px;
+  background: var(--color-base-200);
+  color: color-mix(in srgb, var(--color-base-content) 70%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+}
+.header:hover,
+.header:focus-within {
+  background: var(--color-base-200);
+}
+.name {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+  padding-inline-start: calc(8px + min(160px, calc(var(--depth, 0) * 18px))) !important;
+}
+.nameText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: start;
+  border-radius: var(--radius-field);
+  padding: 2px 4px;
+}
+.nameText:hover {
+  text-decoration: underline;
+}
+.nameText:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 0;
+}
+.path {
+  display: block;
+  font-size: 10px;
+  line-height: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: color-mix(in srgb, var(--color-base-content) 60%, transparent);
+}
+.actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+.grid .action {
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  flex: 0 0 26px;
+}
+.action span {
+  font-size: 18px;
+}
+.branch,
+.message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding-inline-start: calc(40px + min(160px, calc(var(--depth, 0) * 18px)));
+  border-bottom: 1px solid color-mix(in srgb, var(--color-base-content) 8%, transparent);
+  font-size: 12px;
+}
+.message {
+  background: color-mix(in srgb, var(--color-info) 8%, var(--color-base-100));
+  color: color-mix(in srgb, var(--color-base-content) 75%, transparent);
+}
+@media (min-width: 1200px) {
+  .name {
+    position: sticky;
+    left: 0;
+    background: inherit;
+    z-index: 1;
+  }
+}
+@media (pointer: coarse) {
+  .row {
+    min-height: 44px;
+    grid-template-columns: minmax(300px, 1fr) 120px 176px 72px 88px 116px 228px;
+  }
+  .grid .action {
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+    flex-basis: 36px;
+  }
+}

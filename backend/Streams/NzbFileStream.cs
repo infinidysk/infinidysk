@@ -46,6 +46,8 @@ public class NzbFileStream(
             ? _innerStream.ValidateDeliveredAsync(cancellationToken)
             : ValueTask.CompletedTask;
 
+    private readonly Lazy<Dictionary<string, int>> _segmentPositionIndex =
+        YencFileValidationContext.CreatePositionIndex(fileSegmentIds, segmentFallbacks);
     private const long MaximumForwardDrainBytes = 1024 * 1024;
     private const long MinimumPrewarmRangeBytes = 8L * 1024 * 1024;
     private const int MinimumPrewarmConnections = 2;
@@ -126,7 +128,8 @@ public class NzbFileStream(
 
     private async Task ReadPar2CandidateAsync(long start, Memory<byte> target, CancellationToken cancellationToken)
     {
-        using var validation = YencFileValidationContext.BeginBufferedPar2ProofRead(fileSegmentIds, segmentFallbacks);
+        using var validation = YencFileValidationContext.BeginBufferedPar2ProofRead(
+            fileSegmentIds, segmentFallbacks, _segmentPositionIndex);
         await using var candidate = new NzbFileStream(
             fileSegmentIds, Length, usenetClient, articleBufferSize: articleBufferSize,
             segmentByteRanges: _segmentByteRanges, usePipelinedBodyRequests: usePipelinedBodyRequests,
@@ -158,7 +161,8 @@ public class NzbFileStream(
     {
         if (verificationProof is not null)
             return await VerifiedStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-        using var yencFileValidation = YencFileValidationContext.BeginStreaming(fileSegmentIds, segmentFallbacks);
+        using var yencFileValidation = YencFileValidationContext.BeginStreaming(
+            fileSegmentIds, segmentFallbacks, _segmentPositionIndex);
         if (buffer.IsEmpty) return 0;
         if (_position >= fileSize) return 0;
         // A prior Seek started the old inner stream's teardown non-blocking; join it
