@@ -105,7 +105,7 @@ export function LibraryTypeStep({
               [
                 {
                   id: "symlinks",
-                  label: "Symlinks · Plex",
+                  label: "Symlinks · Plex/Silo",
                   description: "Use an rclone mount and filesystem entries.",
                   icon: "link",
                 },
@@ -135,7 +135,7 @@ export function LibraryTypeStep({
           </p>
           <p className="mt-1 text-xs leading-relaxed opacity-80">
             {strategy === "symlinks"
-              ? "Plex follows symlinks through an rclone WebDAV mount. Rclone VFS caching handles read-ahead, so Segment Cache will be disabled."
+              ? "Plex or Silo follows symlinks through an rclone WebDAV mount. Rclone VFS caching handles read-ahead, so Segment Cache will be disabled."
               : "Emby or Jellyfin opens generated .strm URLs directly. Segment Cache will be enabled for repeated WebDAV reads and seeks."}
           </p>
         </div>
@@ -247,7 +247,7 @@ function SymlinkPlaybackStep({
   return (
     <StepSection
       title="Prepare the rclone playback path"
-      description="InfiniDysk will use rclone's bounded VFS cache for Plex playback and keep its own Segment Cache off."
+      description="InfiniDysk will use rclone's bounded VFS cache for Plex/Silo playback and keep its own Segment Cache off."
     >
       <Alert variant="success" role="status" className="alert-soft items-start text-sm">
         <Icon name="check_circle" className="!text-[20px]" />
@@ -1016,7 +1016,7 @@ export function ReviewStep({
         <div>
           <dt className="text-xs font-medium text-base-content/60">Library type</dt>
           <dd className="mt-1 font-medium">
-            {strategy === "symlinks" ? "Symlinks · Plex" : "STRM · Emby/Jellyfin"}
+            {strategy === "symlinks" ? "Symlinks · Plex/Silo" : "STRM · Emby/Jellyfin"}
           </dd>
         </div>
         <div>
