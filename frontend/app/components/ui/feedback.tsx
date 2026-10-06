@@ -61,8 +61,15 @@ export function PortalTooltip({ content, children }: { content: string; children
   useEffect(() => {
     if (!open) return;
     const close = () => setOpen(false);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
     window.addEventListener("scroll", close, true);
-    return () => window.removeEventListener("scroll", close, true);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", onKeyDown);
+    };
   }, [open]);
   const show = () => {
     setPosition({ visibility: "hidden" });
