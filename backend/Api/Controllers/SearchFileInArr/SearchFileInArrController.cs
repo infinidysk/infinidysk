@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -68,6 +69,10 @@ public sealed class SearchFileInArrController(DavDatabaseClient dbClient, Config
     private static bool Known(Exception exception) => exception is HttpRequestException or OperationCanceledException or JsonException
         or InvalidDataException or IOException or UnauthorizedAccessException or InvalidOperationException;
 
+    // Only a 4xx proves Arr refused the command; gateways can return 5xx after Arr accepted it.
+    internal static bool IsDefiniteRejection(Exception exception) => exception is HttpRequestException { StatusCode: { } status }
+        && (int)status is >= 400 and < 500 && status is not HttpStatusCode.RequestTimeout;
+
     private static async Task<ArrCommand> RequestWithTimeoutAsync(SearchTarget target, CancellationToken token)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -133,7 +138,7 @@ public sealed class SearchFileInArrController(DavDatabaseClient dbClient, Config
                 }
                 catch (Exception exception) when (Known(exception) && !token.IsCancellationRequested)
                 {
-                    state = exception is HttpRequestException { StatusCode: not null } ? "failed" : "unconfirmed";
+                    state = IsDefiniteRejection(exception) ? "failed" : "unconfirmed";
                     error = state == "failed" ? "Arr rejected the search request." : "Command receipt is unknown. Check Arr before trying again.";
                     Log.Warning("Files Arr search for {DavItemId} was {State}. Reason: {Reason}", id, state, error);
                 }

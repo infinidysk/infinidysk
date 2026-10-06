@@ -203,6 +203,28 @@ public sealed class SearchFileInArrControllerTests : IAsyncLifetime
         Assert.Equal(2, _requests.Count);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.BadGateway, "unconfirmed")]
+    [InlineData(HttpStatusCode.GatewayTimeout, "unconfirmed")]
+    [InlineData(HttpStatusCode.InternalServerError, "unconfirmed")]
+    [InlineData(HttpStatusCode.RequestTimeout, "unconfirmed")]
+    [InlineData(HttpStatusCode.BadRequest, "failed")]
+    public async Task Search_OnlyClientErrorsAreDefiniteRejections(HttpStatusCode status, string expected)
+    {
+        _roots = host => Task.FromResult(new List<ArrRootFolder>
+            { new() { Path = host.Contains("second", StringComparison.Ordinal) ? Path.Join(_root, "elsewhere") : _root } });
+        _send = _ =>
+        {
+            var response = new HttpResponseMessage(status);
+            _responses.Add(response);
+            return Task.FromResult(response);
+        };
+        var result = Assert.IsType<SearchFileInArrResponse>(Assert.IsType<OkObjectResult>(await Controller().HandlePostApiRequest()).Value);
+        Assert.Equal(expected, result.Outcome);
+        Assert.Equal(expected, Assert.Single(result.Results).State);
+        Assert.Single(_requests);
+    }
+
     private sealed class Handler(Func<HttpRequestMessage, Task<HttpResponseMessage>> send) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => send(request);

@@ -8,9 +8,24 @@ import {
   BackendUnavailableError,
 } from "~/clients/backend-client.server";
 import { loadFilesPage } from "~/clients/files-page.server";
-import { normalizeContentPath, parseFilesParameters } from "~/clients/files-contract";
+import {
+  ARR_SEARCH_UNCONFIRMED_MESSAGE,
+  normalizeContentPath,
+  parseFilesParameters,
+} from "~/clients/files-contract";
 
 const headers = { "Cache-Control": "private, no-store" };
+const DEFINITELY_NOT_SENT = new Set(["MIGRATING", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]);
+// The backend's own 502 states that no command was sent; other 5xx or a lost response may follow one.
+function arrSearchMayHaveBeenSent(error: unknown): boolean {
+  if (error instanceof BackendContractError) return true;
+  if (error instanceof BackendUnavailableError) return !DEFINITELY_NOT_SENT.has(error.code ?? "");
+  return (
+    error instanceof BackendApiError &&
+    error.status >= 500 &&
+    !(error.status === 502 && error.detail.includes("No search was requested"))
+  );
+}
 async function requireFilesAccess(request: Request, mutation: boolean): Promise<void> {
   const user = await getSessionUser(request);
   if (!IS_FRONTEND_AUTH_DISABLED && !user)
@@ -99,6 +114,13 @@ export async function action({ request }: { request: Request }) {
           : await backendClient.searchFileInArr(id, request.signal);
     return data({ ok: true, intent, davItemId: id, result }, { headers });
   } catch (error) {
+    if (intent === "arr-search" && arrSearchMayHaveBeenSent(error)) {
+      request.signal.throwIfAborted();
+      return data(
+        { ok: false, outcome: "unconfirmed", error: ARR_SEARCH_UNCONFIRMED_MESSAGE },
+        { status: 502, headers },
+      );
+    }
     return failure(request, error);
   }
 }

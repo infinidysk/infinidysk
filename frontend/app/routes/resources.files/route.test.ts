@@ -150,4 +150,39 @@ describe("Files resource", () => {
     expect(result.data).toMatchObject({ ok: true, result: { outcome: "partial" } });
     expect(mocks.remove).not.toHaveBeenCalled();
   });
+  it("ambiguousArrFailuresStayUnconfirmed", async () => {
+    for (const error of [
+      new BackendApiError("x", 504, "Request failed", "HTTP 504"),
+      new BackendApiError("x", 502, "Request failed", "Bad gateway"),
+      new BackendApiError("x", 500, "Request failed", "Unexpected."),
+      new BackendUnavailableError("x", "ECONNRESET"),
+      new BackendUnavailableError("x", "UND_ERR_HEADERS_TIMEOUT"),
+      new BackendContractError("x"),
+    ]) {
+      mocks.search.mockReset().mockRejectedValue(error);
+      const result = await action({ request: request("arr-search", { confirmed: "true" }) });
+      expect(mocks.search).toHaveBeenCalledOnce();
+      expect(result).toMatchObject({
+        data: { ok: false, outcome: "unconfirmed" },
+        init: { status: 502 },
+      });
+    }
+  });
+  it("definiteArrFailuresAreNotUnconfirmed", async () => {
+    for (const error of [
+      new BackendApiError(
+        "x",
+        502,
+        "Request failed",
+        "Could not verify all Arr search targets. No search was requested.",
+      ),
+      new BackendApiError("x", 409, "Conflict", "Configure an enabled Arr instance."),
+      new BackendUnavailableError("x", "ECONNREFUSED"),
+      new BackendUnavailableError("x", "MIGRATING"),
+    ]) {
+      mocks.search.mockReset().mockRejectedValue(error);
+      const result = await action({ request: request("arr-search", { confirmed: "true" }) });
+      expect(result.data).not.toHaveProperty("outcome");
+    }
+  });
 });

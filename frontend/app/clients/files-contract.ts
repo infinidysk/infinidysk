@@ -121,6 +121,8 @@ export const searchFileInArrResponseSchema = z.object({
     .max(32),
 });
 export type SearchFileInArrResponse = z.infer<typeof searchFileInArrResponseSchema>;
+export const ARR_SEARCH_UNCONFIRMED_MESSAGE =
+  "Arr search status is unknown; it may have been requested. Check Arr before trying again.";
 export const deletePreviewResponseSchema = z.object({
   status: z.literal(true),
   fileCount: count,
