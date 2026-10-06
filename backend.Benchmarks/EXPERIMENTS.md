@@ -30,13 +30,13 @@ Verdicts: **Shipped** (merged), **Win** (PR open), **Rejected**,
 
 | Idea | Verdict | Evidence | Revisit if |
 |------|---------|----------|------------|
-| Incremental article delivery at every demand article (E1) | Win (#1638) | Max stall 4-25× lower; throughput neutral or better | — |
-| Expand read-ahead early after useful delivery (E2) | Rejected | Viren ABBA showed no repeatable win | — |
+| Incremental article delivery at every demand article (E1) | Win (#1638) | Viren ABBA, 2 rounds, 4 GB reads: max stall 4-25× lower on every entry (stored RAR4 820/2063 → 80/66 ms; direct large-article 718/636 → 70/69 ms); throughput neutral or better (stored RAR4 47/37 → 66/89 MB/s) | — |
+| Expand read-ahead early after useful delivery (E2) | Rejected | Diag run: throughput fell on every entry (stored RAR4 114 → 65, stored RAR5 102 → 85 MB/s) | — |
 | Demand-first assignment of unissued work to ready capacity (E3) | Rejected | Producer/admission wait already ~0; waits are body-drain dominated | Diagnostics show admission wait |
 | Resolve near-EOF RAR reads from the exact end (E4) | Inapplicable | RAR fixtures open eagerly; near-EOF suffix resolution never fires | Lazy RAR open path changes |
-| Hedge demand requests receiving no bytes (E5) | Rejected | Viren ABBA showed no repeatable win | — |
-| Archive background work yields to live reads (E6) | Rejected | Viren ABBA showed no repeatable win | — |
-| Non-pipelined BODY for demand reads | Rejected | Helps only the direct large-article entry | — |
+| Hedge demand requests receiving no bytes (E5) | Rejected | Diagnostics: no-byte wait is far smaller than body-drain wait, so hedging has little to recover | No-byte wait dominates diagnostics |
+| Archive background work yields to live reads (E6) | Rejected | Viren ABBA, 2 rounds: no gain; stored RAR4 worse (47/37 → 33/27 MB/s) and max stall up on most entries | — |
+| Non-pipelined BODY for demand reads | Rejected | Diag run: direct large-article 44 → 84 MB/s, but direct small-article 92 → 69, stored RAR4 114 → 31, stored RAR5 102 → 56 MB/s | Made per-entry (large articles only) |
 | Read-ahead ramp starting at 1 segment per stripe | Rejected | Starved RTT at 20 connections (64 MiB 927 → 1053-1679 ms) | — |
 | Read-ahead ramp `max(8, min(stripes*width, window/2))` | Shipped (#1618) | Kept speed; still ramps at 40 connections | — |
 
