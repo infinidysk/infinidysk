@@ -577,6 +577,7 @@ else
 - **Breaking upgrades:** irreversible schema changes ship as ordinary EF migrations that auto-apply on startup and surface through the migration-progress splash; there is no `UPGRADE` env-var interlock. Advise a `/config` backup before upgrading across such a migration. Only **irreversible/destructive** migrations use a breaking conventional-commit marker (`!` or `BREAKING CHANGE`); routine additive migrations ship as plain `feat(db)` / `fix(db)` with a backup note in the PR description and release announcement.
 - **Test fixtures:** prefer deterministic generated data and `FakeNntpClient`; do not require live Usenet providers in the automated suite.
 - **Streaming changes:** retain manual range, rclone scrubbing, and encrypted-archive playback checks for behavior not covered by automation; PR CI runs the automated backend tests.
+- **Performance ideas:** check [`backend.Benchmarks/EXPERIMENTS.md`](backend.Benchmarks/EXPERIMENTS.md) before proposing or benchmarking an optimization, and record every finished experiment there (wins, rejections, and inconclusive results).
 - **Stack dumps for known failures:** do not dismiss an attached exception trace as “expected” without a remediation that catches it and logs a human-friendly event (see [Stack dumps and human-friendly log events](#stack-dumps-and-human-friendly-log-events)).
 
 ## Docs version pills
