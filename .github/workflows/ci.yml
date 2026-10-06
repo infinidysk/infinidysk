@@ -257,6 +257,9 @@ jobs:
       - name: Verify CONFIG_PATH preflight fixtures
         run: sh scripts/test-entrypoint-config-preflight.sh
 
+      - name: Verify rclone install fixtures
+        run: sh scripts/test-rclone-install.sh
+
       - name: Verify NuGet vulnerability gate fixtures
         run: bash scripts/test-nuget-vulnerability-gate.sh
 

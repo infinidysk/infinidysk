@@ -722,6 +722,34 @@ public class RemoveUnlinkedFilesTaskTests
     }
 
     [Fact]
+    public void IsLibraryDirInsideRcloneMount_ChecksEveryConfiguredMountPoint()
+    {
+        // The symlink root is no longer the only mount. Built-in mode can mount
+        // anywhere, and a library directory inside one of those paths produces
+        // the same circular orphan report this guard exists to stop.
+        var inside = RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(
+            "/data/nzbdav/completed-symlinks",
+            ["/mnt/nzbdav", "/data/nzbdav"],
+            out _,
+            out var matchedMount);
+
+        Assert.True(inside);
+        Assert.Equal("/data/nzbdav", matchedMount);
+    }
+
+    [Fact]
+    public void IsLibraryDirInsideRcloneMount_AllowsALibraryOutsideEveryMountPoint()
+    {
+        var inside = RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(
+            "/mnt/media/library",
+            ["/mnt/nzbdav", "/data/nzbdav"],
+            out _,
+            out _);
+
+        Assert.False(inside);
+    }
+
+    [Fact]
     public void IsLibraryDirInsideRcloneMount_UsesOsAwareCasing()
     {
         var inside = RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(
@@ -731,6 +759,104 @@ public class RemoveUnlinkedFilesTaskTests
             out _);
 
         Assert.Equal(OperatingSystem.IsWindows(), inside);
+    }
+
+    [Fact]
+    public void IsLibraryDirInsideRcloneMount_ComparesTheDirectoriesLinksLeadTo()
+    {
+        // Configured paths can look unrelated while one leads into the other. A
+        // library reached through a link into the mount, or a mount configured
+        // through a link, is still the mount.
+        if (!OperatingSystem.IsLinux()) return;
+
+        var root = Path.Join(Path.GetTempPath(), $"nzbdav-links-{Guid.NewGuid():N}");
+        var mountDir = Path.Join(root, "mount");
+        var libraryInMount = Path.Join(mountDir, "completed-symlinks");
+        Directory.CreateDirectory(libraryInMount);
+        var absoluteLink = Path.Join(root, "media");
+        var relativeLink = Path.Join(root, "relative");
+        Directory.CreateSymbolicLink(absoluteLink, mountDir);
+        File.CreateSymbolicLink(relativeLink, "mount");
+        try
+        {
+            Assert.True(RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(
+                Path.Join(absoluteLink, "completed-symlinks"), mountDir, out _, out _));
+            Assert.True(RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(
+                Path.Join(relativeLink, "completed-symlinks"), mountDir, out _, out _));
+            Assert.True(RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(
+                libraryInMount, absoluteLink, out _, out _));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void IsLibraryDirInsideRcloneMount_Throws_WhenTheLinksLoop()
+    {
+        // A path that cannot be resolved cannot be shown to be outside the mount.
+        if (!OperatingSystem.IsLinux()) return;
+
+        var root = Path.Join(Path.GetTempPath(), $"nzbdav-loop-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var first = Path.Join(root, "first");
+        var second = Path.Join(root, "second");
+        File.CreateSymbolicLink(first, second);
+        File.CreateSymbolicLink(second, first);
+        try
+        {
+            Assert.Throws<IOException>(() => RemoveUnlinkedFilesTask.IsLibraryDirInsideRcloneMount(
+                Path.Join(first, "library"), "/mnt/remote", out _, out _));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task DryRun_Aborts_WhenLibraryDirCannotBeResolved()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        var root = Path.Join(Path.GetTempPath(), $"nzbdav-loop-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var first = Path.Join(root, "first");
+        var second = Path.Join(root, "second");
+        File.CreateSymbolicLink(first, second);
+        File.CreateSymbolicLink(second, first);
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = Path.Join(first, "library") },
+                new ConfigItem { ConfigName = ConfigKeys.RcloneMountDir, ConfigValue = Path.Join(root, "mount") },
+            ]);
+
+            var websocket = new WebsocketManager();
+            var task = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: true,
+                createContext: () => harness.CreateContext());
+
+            Assert.True(await task.Execute());
+
+            var progress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
+            Assert.NotNull(progress);
+            Assert.Contains("Aborted:", progress, StringComparison.Ordinal);
+            Assert.Contains("symbolic links", progress, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await BaseTask.ResetRunningTaskForTestsAsync();
+            RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { /* best effort */ }
+        }
     }
 
     [Fact]
