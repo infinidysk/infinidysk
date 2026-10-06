@@ -20,6 +20,23 @@ In Radarr or Sonarr → **Settings** → **Download Clients** → **Add** → **
 
 Test the connection. Prefer `addfile` when clients can upload NZB bytes; `addurl` to private indexers needs [Trusted local hosts](../configuration/sabnzbd.md) [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since }.
 
+### Remove Completed
+
+Enable **Remove Completed** under **Completed Download Handling** on the
+download client's edit dialog. Enable **Show Advanced** to see it. The global
+**Completed Download Handling → Enable** must also be on. After the \*Arr imports
+a release, it removes that release's SABnzbd history entry. InfiniDysk never
+deletes mounted content in response: imported library links and `.strm` files
+keep working, and Health repair and PAR2 recovery still work.
+
+Keeping the history entry prevents **Remove Orphaned Files** from deleting a
+file, even after the \*Arr replaces it with an upgrade or re-grab. Without the
+setting, superseded grabs build up until
+[SAB history retention](../configuration/maintenance.md) removes them, and
+Health can report them as **Not library linked** in the meantime. The \*Arr only
+removes downloads it grabbed, so releases grabbed by
+[Profiles](../configuration/profiles.md) are not affected.
+
 ## Register \*Arr in InfiniDysk
 
 **Settings → Radarr/Sonarr**:
