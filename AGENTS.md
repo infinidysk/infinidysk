@@ -497,7 +497,7 @@ Docker image builds are shared via the reusable workflow. Branch and dependabot 
 2. **Match existing patterns** — one controller per action folder under `Api/`, CSS modules + `.module.css.d.ts` in frontend, `NzbWebDAV` root namespace in backend.
 3. **Backend** — nullable enabled, async/await, Serilog for logging, `ConfigureAwait(false)` in library-style code.
 4. **Frontend** — React Router file-based routes under `app/routes/`, server loaders/actions, Tailwind + Bootstrap, typed CSS modules.
-5. **Frontend styling** — match existing daisyUI `night` patterns in `frontend/app` (semantic colors, UI kit wrappers, typography, buttons, theming) for any UI styling or refactoring work.
+5. **Frontend styling** — match existing daisyUI `night` patterns in `frontend/app` (semantic colors, UI kit wrappers, typography, buttons, theming) for any UI styling or refactoring work. Follow [`.agents/skills/daisyui-infinidysk/SKILL.md`](.agents/skills/daisyui-infinidysk/SKILL.md) for component rules and the UI review checklist.
 6. **Security** — never commit secrets; WebDAV and admin APIs require auth; frontend injects API key only for authenticated sessions.
 7. **Comments** — only for non-obvious logic; prefer clear naming.
 8. **Exception logging** — see [Stack dumps and human-friendly log events](#stack-dumps-and-human-friendly-log-events) below.
