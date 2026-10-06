@@ -442,7 +442,7 @@ export function Actions({
         />
       )}
       {canExplore && folderLink ? (
-        <PortalTooltip content="Explore files">
+        <PortalTooltip content="Explore files" describe={false}>
           <Link
             to={folderLink}
             discover="none"
@@ -456,7 +456,7 @@ export function Actions({
         <ActionSpacer />
       )}
       {nzbDownloadUrl ? (
-        <PortalTooltip content="Export NZB">
+        <PortalTooltip content="Export NZB" describe={false}>
           <a
             href={nzbDownloadUrl}
             className={actionIconClass}
