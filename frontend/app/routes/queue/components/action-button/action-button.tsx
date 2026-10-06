@@ -30,7 +30,7 @@ export function ActionButton({
   const action = ACTIONS[type];
   const text = label ?? action.label;
   return (
-    <PortalTooltip content={text}>
+    <PortalTooltip content={text} describe={false}>
       <Button
         variant="ghost"
         disabled={disabled}

@@ -23,7 +23,7 @@ describe("setup wizard controls", () => {
       </ManagedEnvProvider>,
     );
 
-    const symlinks = screen.getByRole<HTMLInputElement>("radio", { name: "Symlinks · Plex" });
+    const symlinks = screen.getByRole<HTMLInputElement>("radio", { name: "Symlinks · Plex/Silo" });
     const strm = screen.getByRole<HTMLInputElement>("radio", { name: "STRM · Emby/Jellyfin" });
     expect(symlinks.name).toBe("setup-library-strategy");
     expect(strm.name).toBe("setup-library-strategy");

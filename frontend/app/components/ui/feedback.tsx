@@ -40,11 +40,22 @@ export function Spinner({ className = "", size }: { className?: string; size?: s
 }
 
 // Portaled so scrolling table viewports and cards cannot clip it.
-export function PortalTooltip({ content, children }: { content: string; children: ReactNode }) {
+export function PortalTooltip({
+  content,
+  children,
+  describe = true,
+}: {
+  content: string;
+  children: ReactNode;
+  describe?: boolean;
+}) {
   const id = useId();
   const anchor = useRef<HTMLSpanElement>(null);
   const bubble = useRef<HTMLSpanElement>(null);
-  const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const open = (hovered || focused) && !dismissed;
   const [position, setPosition] = useState<CSSProperties>({ visibility: "hidden" });
   useLayoutEffect(() => {
     if (!open || !anchor.current || !bubble.current) return;
@@ -60,7 +71,7 @@ export function PortalTooltip({ content, children }: { content: string; children
   }, [open, content]);
   useEffect(() => {
     if (!open) return;
-    const close = () => setOpen(false);
+    const close = () => setDismissed(true);
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
     };
@@ -72,20 +83,36 @@ export function PortalTooltip({ content, children }: { content: string; children
     };
   }, [open]);
   const show = () => {
-    setPosition({ visibility: "hidden" });
-    setOpen(true);
+    if (!open) setPosition({ visibility: "hidden" });
+    setDismissed(false);
   };
+  const trigger =
+    describe && open && isValidElement<{ "aria-describedby"?: string }>(children)
+      ? cloneElement(children, {
+          "aria-describedby": [children.props["aria-describedby"], id].filter(Boolean).join(" "),
+        })
+      : children;
   return (
     <span
       ref={anchor}
       className="inline-flex"
-      aria-describedby={open ? id : undefined}
-      onPointerEnter={show}
-      onPointerLeave={() => setOpen(false)}
-      onFocusCapture={show}
-      onBlurCapture={() => setOpen(false)}
+      onPointerEnter={() => {
+        setHovered(true);
+        show();
+      }}
+      onPointerLeave={() => setHovered(false)}
+      onFocusCapture={() => {
+        setFocused(true);
+        show();
+      }}
+      onBlurCapture={(event) => {
+        const next = event.relatedTarget;
+        if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
+          setFocused(false);
+        }
+      }}
     >
-      {children}
+      {trigger}
       {open &&
         createPortal(
           <span

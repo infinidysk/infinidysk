@@ -331,8 +331,9 @@ export function ProvidersBadge({
     )
     .join("\n");
   return (
-    <PortalTooltip content={tooltip}>
+    <PortalTooltip content={tooltip} describe={false}>
       <span
+        role="group"
         tabIndex={0}
         aria-label={`Providers: ${tooltip}`}
         className={`inline-flex max-w-full min-w-0 cursor-help gap-x-2 gap-y-0.5 text-left text-xs ${inline ? "flex-row flex-wrap" : "flex-col items-stretch"}`}

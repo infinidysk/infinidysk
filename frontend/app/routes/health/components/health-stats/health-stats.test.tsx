@@ -22,6 +22,7 @@ describe("HealthStats", () => {
     const markup = render([{ result: 0, repairStatus: 0, count: 4 }]);
 
     expect(markup).toContain("Degraded (0%)");
+    expect(markup).not.toContain("text-warning");
   });
 
   it("distinguishes recent check results from library configuration validation", () => {
