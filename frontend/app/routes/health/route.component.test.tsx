@@ -109,6 +109,7 @@ vi.mock("~/components/ui", () => ({
     </button>
   ),
   Icon: () => null,
+  Spinner: () => null,
   PageHeader: ({ title, actions }: { title: string; actions: ReactNode }) => (
     <header>
       <h1>{title}</h1>

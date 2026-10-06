@@ -46,8 +46,8 @@ export function RadioJoinFilter<T extends string>({
                       ? "btn-primary shadow-md"
                       : "border border-transparent bg-base-100 text-base-content hover:border-base-content/20 hover:bg-base-100"
                   }`
-                : `btn btn-sm join-item max-sm:min-h-11 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-primary ${
-                    selected ? "btn-active" : "btn-ghost"
+                : `btn btn-sm join-item max-sm:min-h-11 max-sm:px-2.5 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-primary ${
+                    selected ? "btn-primary" : "btn-ghost"
                   }`
             }
           >
