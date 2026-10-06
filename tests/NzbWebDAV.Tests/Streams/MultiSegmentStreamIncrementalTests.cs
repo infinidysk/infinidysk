@@ -109,6 +109,34 @@ public class MultiSegmentStreamIncrementalTests
         Assert.Equal(2, client.BodyRequestCounts["seg-2"]);
     }
 
+    [Fact]
+    public async Task LegacySeek_RangePastBufferedHeadWaitsForItsEndingArticleTrailer()
+    {
+        var segments = CreateSegments(3);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var corruptServed = 0;
+        var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            segmentRanges: Ranges(segments.Count, SegmentSize),
+            decodedStreamFactory: (id, bytes) =>
+                id == "seg-2" && Interlocked.Exchange(ref corruptServed, 1) == 0
+                    ? new FailingBodyStream(SegmentSize / 2, () => Corrupt(id), gate.Task)
+                    : new MemoryStream(bytes, writable: false));
+        // No trusted ranges: a buffered head, a direct next article, then the incremental rest.
+        await using var stream = new NzbFileStream(
+            Ids(segments.Count), 3L * SegmentSize, client, articleBufferSize: 2,
+            usePipelinedBodyRequests: false, fileName: $"legacy-seek-{Guid.NewGuid():N}.bin");
+        stream.Seek(SegmentSize / 4, SeekOrigin.Begin);
+
+        var copy = new LimitedLengthStream(stream, 2 * SegmentSize).CopyToAsync(Stream.Null);
+        await Task.WhenAny(copy, Task.Delay(500));
+        Assert.False(copy.IsCompleted, $"the range must wait for its ending article's trailer: {copy.Exception}");
+
+        gate.SetResult();
+        await Assert.ThrowsAnyAsync<Exception>(() => copy.WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
     internal static string[] Ids(int count) =>
         Enumerable.Range(0, count).Select(i => $"seg-{i}").ToArray();
 

@@ -515,6 +515,67 @@ public class SharedStreamEntryTests : IDisposable
         await AssertRangeEndWaitsThenFailsAsync(new LimitedLengthStream(reader, 50 * 1024), gate);
     }
 
+    [Fact]
+    public async Task AttachedReader_CleanRangeDoesNotWaitForALaterArticle()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var entry = StartEntry(
+            GatedTrailerUpstream(gate.Task), 3L * TrailerSegmentSize, ringSize: 4L * TrailerSegmentSize,
+            chunkSize: 64 * 1024, leadBytes: 2 * TrailerSegmentSize);
+        await using var reader = Attach(entry, 0);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (entry.BytesPumped <= TrailerSegmentSize && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.True(entry.BytesPumped > TrailerSegmentSize, "the pump must be reading the gated article");
+
+        await new LimitedLengthStream(reader, 400 * 1024).CopyToAsync(Stream.Null)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(gate.Task.IsCompleted);
+    }
+
+    [Fact]
+    public async Task PendingValidation_FailsOnTeardownWithoutConsultingTheTornDownUpstream()
+    {
+        var upstream = new TornDownValidationStream(new byte[64], new TaskCompletionSource().Task);
+        var entry = StartEntry(upstream, 64, ringSize: 32, chunkSize: 8, leadBytes: 16);
+        await using var reader = Attach(entry, 0);
+        await reader.ReadExactlyAsync(new byte[8]);
+
+        var validation = reader.ValidateDeliveredAsync(CancellationToken.None).AsTask();
+        await Task.WhenAny(validation, Task.Delay(100));
+        Assert.False(validation.IsCompleted, "validation must wait for the pending trailer");
+
+        await entry.DisposeAsync();
+        await Assert.ThrowsAsync<IOException>(() => validation.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(0, upstream.CallsAfterDispose);
+    }
+
+    // Once torn down there is nothing left to check, so validation trivially succeeds.
+    private sealed class TornDownValidationStream(byte[] payload, Task gate)
+        : MemoryStream(payload, writable: false), IDeliveredBytesValidation
+    {
+        private int _disposed;
+        public int CallsAfterDispose;
+
+        public async ValueTask ValidateDeliveredAsync(CancellationToken cancellationToken)
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                Interlocked.Increment(ref CallsAfterDispose);
+                return;
+            }
+
+            await gate.WaitAsync(cancellationToken);
+            throw new InvalidDataException("trailer failed");
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            Volatile.Write(ref _disposed, 1);
+            base.Dispose(disposing);
+        }
+    }
+
     private static async Task AssertRangeEndWaitsThenFailsAsync(Stream range, TaskCompletionSource gate)
     {
         var copy = range.CopyToAsync(Stream.Null, 64 * 1024);
