@@ -83,7 +83,7 @@ internal static class BrowseFilesQuery
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Globalization", "CA1311", Justification = "EF translates parameterless ToLower to database lower; culture overloads are not provider-neutral SQL.")]
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1862", Justification = "EF translates lower and Contains; StringComparison overloads are not provider-neutral SQL.")]
     internal static IQueryable<FileProjection> ApplyFilters(IQueryable<FileProjection> files, BrowseFilesRequest request,
-        FilesLibrarySnapshot library, IReadOnlyDictionary<Guid, int> active, DateTimeOffset now)
+        FilesLibrarySnapshot library, IReadOnlyDictionary<Guid, HealthCheckService.ActiveHealthCheckProgress> active, DateTimeOffset now)
     {
         if (request.Q is { } text)
         {
@@ -179,7 +179,7 @@ internal static class BrowseFilesQuery
     }
 
     internal static async Task<BrowseFilesResponse> ReadAsync(DavDatabaseClient dbClient, ConfigManager configManager,
-        BrowseFilesRequest request, FilesLibrarySnapshot library, IReadOnlyDictionary<Guid, int> active,
+        BrowseFilesRequest request, FilesLibrarySnapshot library, IReadOnlyDictionary<Guid, HealthCheckService.ActiveHealthCheckProgress> active,
         IReadOnlyList<QueueManager.InProgressQueueItemSnapshot> queue, HealthWorkSchedulePolicy healthWorkSchedule,
         DateTimeOffset now, CancellationToken cancellationToken)
     {
@@ -300,7 +300,7 @@ internal static class BrowseFilesQuery
     }
 
     private static BrowseFilesResponse.FileRow MapFile(FileProjection file, ConfigManager config, FilesLibrarySnapshot library,
-        IReadOnlyDictionary<Guid, int> active, IReadOnlyList<QueueManager.InProgressQueueItemSnapshot> queue, DateTimeOffset now)
+        IReadOnlyDictionary<Guid, HealthCheckService.ActiveHealthCheckProgress> active, IReadOnlyList<QueueManager.InProgressQueueItemSnapshot> queue, DateTimeOffset now)
     {
         var candidate = FilenameUtil.IsHealthCheckCandidate(file.Name);
         var enabled = config.IsRepairJobEnabled();
@@ -321,7 +321,7 @@ internal static class BrowseFilesQuery
             IsDirectory = false, HasChildren = false, Size = file.Size, SubType = (int)file.SubType,
             AddedAt = new DateTimeOffset(DateTime.SpecifyKind(file.CreatedAt, DateTimeKind.Unspecified)), ReleaseDate = file.ReleaseDate,
             LastHealthCheck = file.LastHealthCheck, NextCheckAt = next, Health = file.Health, ScanState = scan,
-            Progress = checking ? progress : null, HealthResultId = file.HealthResultId, HealthResultAt = file.HealthResultAt,
+            Progress = checking ? progress!.Progress : null, HealthResultId = file.HealthResultId, HealthResultAt = file.HealthResultAt,
             RepairAction = (int?)file.RepairAction, HealthMessage = file.HealthMessage, HistoryItemId = file.HistoryItemId,
             JobName = file.JobName, NzbFileName = file.NzbFileName, Category = file.Category, IndexerName = file.IndexerName,
             LastPlayedAt = file.LastPlayedAt, NzbBlobId = file.NzbBlobId, LibraryState = libraryState, LibraryLinkCount = paths.Length,

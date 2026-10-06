@@ -61,7 +61,7 @@ public sealed class PostgresMigrationTests
                 http.Request.QueryString = new QueryString($"?mode={mode}&scopePath={Uri.EscapeDataString(directory.Path)}&health=degraded&library=in-library&limit=1&postedBefore={now.ToUnixTimeSeconds()}&sort=size");
                 var result = await NzbWebDAV.Api.Controllers.BrowseFiles.BrowseFilesQuery.ReadAsync(
                     new DavDatabaseClient(context), config, new NzbWebDAV.Api.Controllers.BrowseFiles.BrowseFilesRequest(http), library,
-                    new Dictionary<Guid, int>(), [], new NzbWebDAV.Config.Scheduling.HealthWorkSchedulePolicy(config), now, CancellationToken.None);
+                    new Dictionary<Guid, NzbWebDAV.Services.HealthCheckService.ActiveHealthCheckProgress>(), [], new NzbWebDAV.Config.Scheduling.HealthWorkSchedulePolicy(config), now, CancellationToken.None);
                 Assert.Equal(file.Id, Assert.Single(result.Rows).Id);
                 Assert.Equal(1, result.MatchingFileCount);
                 Assert.Null(result.Rows[0].JobName);

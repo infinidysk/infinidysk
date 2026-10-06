@@ -65,7 +65,7 @@ public sealed class BrowseFilesQueryTests : IAsyncLifetime
     {
         await _context.SaveChangesAsync();
         return await BrowseFilesQuery.ReadAsync(new DavDatabaseClient(_context), _config, Request(query), _library,
-            new Dictionary<Guid, int>(), [], new HealthWorkSchedulePolicy(_config), _now, CancellationToken.None);
+            new Dictionary<Guid, HealthCheckService.ActiveHealthCheckProgress>(), [], new HealthWorkSchedulePolicy(_config), _now, CancellationToken.None);
     }
 
     [Fact]
