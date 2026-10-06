@@ -292,7 +292,7 @@ public sealed class MultiSegmentStreamStripingTests
     [Theory]
     [InlineData(SegmentSize)]
     [InlineData(SegmentSize - 1)]
-    public async Task StripedRamp_StartsAtHalfTheWindowAndGrowsToTheFullWindow(int estimatedSegmentSize)
+    public async Task StripedRamp_StartsAtHalfTheWindowAndOpensTheFullWindowOnFirstRead(int estimatedSegmentSize)
     {
         // Eight stripes at width 4 fill a 32-segment window; the start admits half of it.
         var client = new ControlledBatchNntpClient(64, SegmentSize, uniqueBytes: true);
@@ -311,7 +311,7 @@ public sealed class MultiSegmentStreamStripingTests
         client.ReleaseAllUpTo(63);
         var head = new byte[4 * SegmentSize];
         await stream.ReadExactlyAsync(head).AsTask().WaitAsync(Timeout);
-        Assert.Equal(20 * SegmentSize, stream.CurrentPrefetchByteCeiling);
+        Assert.Equal(32 * estimatedSegmentSize, stream.CurrentPrefetchByteCeiling);
         var middle = new byte[12 * SegmentSize];
         await stream.ReadExactlyAsync(middle).AsTask().WaitAsync(Timeout);
         Assert.Equal(32 * estimatedSegmentSize, stream.CurrentPrefetchByteCeiling);

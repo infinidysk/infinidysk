@@ -156,7 +156,7 @@ public class SegmentFallbackTests
     }
 
     [Fact]
-    public async Task MultiSegmentStream_PrefetchCeilingGrowsWithConsumedBytes()
+    public async Task MultiSegmentStream_PrefetchCeilingOpensFullWindowAfterFirstRead()
     {
         var segmentIds = Enumerable.Range(0, 100).Select(index => $"seg-{index}").ToArray();
         var client = new RawBodyNntpClient(
@@ -181,9 +181,14 @@ public class SegmentFallbackTests
         await Task.Delay(200);
         Assert.Equal(8, client.BodyRequestCount);
 
-        var buffer = new byte[25];
+        // Low-bitrate playback must not wait for consumption to grow the window.
+        var buffer = new byte[1];
         await stream.ReadExactlyAsync(buffer);
-        Assert.Equal(65, multiSegmentStream.CurrentPrefetchByteCeiling);
+        Assert.Equal(400, multiSegmentStream.CurrentPrefetchByteCeiling);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (client.BodyRequestCount < 80 && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.True(client.BodyRequestCount >= 80, $"Only {client.BodyRequestCount} bodies requested.");
     }
 
     [Fact]
