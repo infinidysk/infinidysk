@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Extensions;
@@ -42,6 +43,11 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
     private long _nextReaderId;
     private long _bytesPumped;
     private long _validatedThrough;
+    private Exception? _validationFailure;
+    private bool _validationClosed;
+    private Task _validationTail = Task.CompletedTask;
+    private TaskCompletionSource _validationProgress =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private SharedStreamReapReason _reapReason = SharedStreamReapReason.Grace;
 
     internal SharedStreamEntry(
@@ -246,32 +252,73 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
             _ = EnsureDisposeAsync();
     }
 
-    /// <summary>
-    /// Completes once upstream bytes before the position are validated. The pump validated
-    /// every article it read past, so only the in-flight article can still be pending.
-    /// </summary>
+    /// <summary>Completes once the pump has validated every byte before the position.</summary>
     internal async ValueTask ValidateThroughAsync(long position, CancellationToken cancellationToken)
     {
-        if (position <= Interlocked.Read(ref _validatedThrough)) return;
-        Stream upstream;
-        lock (_lock)
+        while (true)
         {
-            if (_state >= SharedStreamEntryState.Disposing || _upstream is null)
+            var progress = Volatile.Read(ref _validationProgress).Task;
+            if (position <= Interlocked.Read(ref _validatedThrough)) return;
+            if (Volatile.Read(ref _validationFailure) is { } failure)
+            {
+                if (failure is OperationCanceledException)
+                    throw new IOException("Shared stream closed before its delivered bytes were validated.", failure);
+                ExceptionDispatchInfo.Throw(failure);
+            }
+
+            if (Volatile.Read(ref _validationClosed))
                 throw new IOException("Shared stream closed before its delivered bytes were validated.");
-            upstream = _upstream;
+            await progress.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    // Called by the pump right after a read, so the chain still references the article it read.
+    private void TrackValidation(ValueTask validation, long through)
+    {
+        if (validation.IsCompletedSuccessfully)
+        {
+            validation.GetAwaiter().GetResult();
+            AdvanceValidated(through);
+            return;
         }
 
-        // Published bytes never exceed what upstream had returned when validation starts.
-        var published = _ring.Frontier;
-        await upstream.ValidateDeliveredAsync(cancellationToken).ConfigureAwait(false);
-        var current = Interlocked.Read(ref _validatedThrough);
-        while (current < published)
+        _validationTail = ObserveValidationAsync(_validationTail, validation.AsTask(), through);
+    }
+
+    // Chained so a failure is recorded only after every earlier read's validation settled.
+    private async Task ObserveValidationAsync(Task previous, Task validation, long through)
+    {
+        await previous.ConfigureAwait(false);
+        try
         {
-            var seen = Interlocked.CompareExchange(ref _validatedThrough, published, current);
+            await validation.ConfigureAwait(false);
+            AdvanceValidated(through);
+        }
+        catch (Exception ex)
+        {
+            Interlocked.CompareExchange(ref _validationFailure, ex, null);
+            SignalValidation();
+        }
+    }
+
+    private void AdvanceValidated(long through)
+    {
+        var current = Interlocked.Read(ref _validatedThrough);
+        while (current < through)
+        {
+            var seen = Interlocked.CompareExchange(ref _validatedThrough, through, current);
             if (seen == current) break;
             current = seen;
         }
+
+        SignalValidation();
     }
+
+    private void SignalValidation() =>
+        Interlocked.Exchange(
+                ref _validationProgress,
+                new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+            .TrySetResult();
 
     internal void NotifyCursorAdvanced(long readerId, long cursor)
     {
@@ -332,13 +379,14 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
                     .ConfigureAwait(false);
                 if (read == 0)
                 {
-                    Interlocked.Exchange(ref _validatedThrough, long.MaxValue);
+                    AdvanceValidated(long.MaxValue);
                     _ring.SetComplete();
                     return;
                 }
 
                 _ring.Append(scratch.AsSpan(0, read));
-                Interlocked.Add(ref _bytesPumped, read);
+                var pumped = Interlocked.Add(ref _bytesPumped, read);
+                TrackValidation(upstream.ValidateDeliveredAsync(ct), Anchor + pumped);
                 SynchronousObserverInvoker.Invoke(
                     OnRingRetainedBytes,
                     _ring.RetainedBytes,
@@ -525,6 +573,11 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
                 Log.Debug(ex, "Shared stream upstream dispose failed. EntryId: {EntryId}", EntryId);
             }
         }
+
+        // Pending validations observe the cancelled entry token; let them settle before closing.
+        await _validationTail.ConfigureAwait(false);
+        Volatile.Write(ref _validationClosed, true);
+        SignalValidation();
 
         // 5. Ownership handle AFTER the upstream (semaphore still valid for in-flight fetches).
         if (_ownership is { } ownership)

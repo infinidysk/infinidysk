@@ -6,7 +6,7 @@
 ///
 /// Use this class to hook into the disposal lifecycle of a stream without modifying its implementation.
 /// </summary>
-public class DisposableCallbackStream : Stream
+public class DisposableCallbackStream : Stream, IDeliveredBytesValidation
 {
     private readonly Stream _inner;
     private readonly Action? _onDispose;
@@ -62,6 +62,9 @@ public class DisposableCallbackStream : Stream
         get => _inner.Position;
         set => _inner.Position = value;
     }
+
+    ValueTask IDeliveredBytesValidation.ValidateDeliveredAsync(CancellationToken cancellationToken) =>
+        _inner.ValidateDeliveredAsync(cancellationToken);
 
     public override void Flush() => _inner.Flush();
     public override Task FlushAsync(CancellationToken cancellationToken) => _inner.FlushAsync(cancellationToken);
