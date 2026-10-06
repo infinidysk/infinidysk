@@ -1,81 +1,50 @@
 import type { ReactNode } from "react";
-import { Button, Icon } from "~/components/ui";
+import { Button, Icon, PortalTooltip } from "~/components/ui";
+
+const ACTIONS = {
+  delete: { icon: "delete", label: "Remove" },
+  "move-top": { icon: "vertical_align_top", label: "Move to top" },
+  "move-up": { icon: "keyboard_arrow_up", label: "Move up" },
+  "move-down": { icon: "keyboard_arrow_down", label: "Move down" },
+  retry: { icon: "refresh", label: "Retry" },
+} as const;
+
+export const actionIconClass = "btn btn-ghost btn-sm btn-square max-sm:size-11";
 
 export type ActionButtonProps = {
-  type:
-    | "delete"
-    | "explore"
-    | "menu"
-    | "move-top"
-    | "move-up"
-    | "move-down"
-    | "retry"
-    | "pause"
-    | "resume";
-  text?: string;
-  ariaLabel?: string;
+  type: keyof typeof ACTIONS;
+  /** Tooltip text; the accessible name appends `subject` when given. */
+  label?: string;
+  subject?: string;
   disabled?: boolean;
-  selected?: boolean;
   onClick?: (e: React.MouseEvent) => void;
 };
 
 export function ActionButton({
   type,
-  text,
-  ariaLabel,
+  label,
+  subject,
   disabled,
-  selected,
   onClick,
 }: ActionButtonProps): ReactNode {
-  const variant = type === "delete" ? "danger" : "secondary";
-  const icon =
-    type === "delete"
-      ? "delete"
-      : type === "explore"
-        ? "folder"
-        : type === "move-top"
-          ? "vertical_align_top"
-          : type === "move-up"
-            ? "keyboard_arrow_up"
-            : type === "move-down"
-              ? "keyboard_arrow_down"
-              : type === "retry"
-                ? "refresh"
-                : type === "pause"
-                  ? "pause"
-                  : type === "resume"
-                    ? "play_arrow"
-                    : "more_horiz";
-
+  const action = ACTIONS[type];
+  const text = label ?? action.label;
   return (
-    <Button
-      variant={variant}
-      size="small"
-      disabled={disabled}
-      aria-pressed={type === "menu" ? selected : undefined}
-      aria-label={
-        ariaLabel ??
-        (!text
-          ? type === "move-top"
-            ? "Move to top"
-            : type === "move-up"
-              ? "Move up"
-              : type === "move-down"
-                ? "Move down"
-                : type === "retry"
-                  ? "Retry"
-                  : type === "pause"
-                    ? "Pause"
-                    : type === "resume"
-                      ? "Resume"
-                      : type
-          : undefined)
-      }
-      className={`${type === "menu" ? "w-[30px] px-1" : ""} ${selected ? "bg-base-content/20 text-base-content" : ""}`}
-      onClick={onClick}
-    >
-      <Icon name={icon} filled={type !== "menu"} className="!text-[16px]" />
-      {text && <span>{text}</span>}
-    </Button>
+    <PortalTooltip content={text}>
+      <Button
+        variant="ghost"
+        disabled={disabled}
+        aria-label={subject ? `${text} ${subject}` : text}
+        className={`btn-square max-sm:size-11 ${type === "delete" ? "hover:text-error" : ""}`}
+        onClick={onClick}
+      >
+        <Icon name={action.icon} className="!text-[18px]" />
+      </Button>
+    </PortalTooltip>
   );
+}
+
+/** Keeps row action columns aligned when an action does not apply. */
+export function ActionSpacer() {
+  return <span aria-hidden="true" className="inline-block size-8 shrink-0 max-[899px]:hidden" />;
 }

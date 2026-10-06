@@ -5,11 +5,10 @@ import { Truncate } from "~/components/truncate/truncate";
 import { StatusBadge } from "../status-badge/status-badge";
 import { formatFileSize } from "~/utils/file-size";
 import type { ProviderUsage } from "~/clients/backend-client.server";
-import { Badge } from "~/components/ui";
-import { Icon } from "~/components/ui";
+import { Badge, Icon, PortalTooltip } from "~/components/ui";
 
 const desktopHeaderClass =
-  "hidden min-[900px]:table-cell w-[120px] text-center text-xs font-semibold uppercase tracking-wide";
+  "hidden min-[900px]:table-cell w-[120px] text-center text-xs font-semibold";
 const desktopCellClass =
   "hidden min-[900px]:table-cell max-w-[200px] min-w-0 overflow-hidden whitespace-nowrap px-1 py-3 text-center align-middle";
 const statusCellClass =
@@ -67,9 +66,13 @@ export function PageTable({
       <table className="table table-zebra table-sm mb-0 w-full min-w-0 text-base-content min-[900px]:min-w-[880px]">
         <thead>
           <tr className="border-base-content/10 [&_th]:bg-base-200 [&_th]:text-base-content/70">
-            <th className="min-[900px]:w-1/2 w-auto py-4 pl-0 text-left text-xs font-semibold uppercase tracking-wide">
+            <th className="min-[900px]:w-1/2 w-auto py-4 pl-0 text-left text-xs font-semibold">
               {selectable ? (
-                <TriCheckbox state={headerCheckboxState} onChange={onHeaderCheckboxChange}>
+                <TriCheckbox
+                  state={headerCheckboxState}
+                  onChange={onHeaderCheckboxChange}
+                  ariaLabel="Select all jobs on this page"
+                >
                   {onSort ? (
                     <button
                       type="button"
@@ -95,7 +98,7 @@ export function PageTable({
                 sortableHeader(
                   "Name",
                   "name",
-                  "min-[900px]:w-1/2 w-auto py-4 pl-0 text-left text-xs font-semibold uppercase tracking-wide",
+                  "min-[900px]:w-1/2 w-auto py-4 pl-0 text-left text-xs font-semibold",
                 )
               )}
             </th>
@@ -105,7 +108,9 @@ export function PageTable({
             {sortableHeader("Status", "status")}
             {sortableHeader("Size", "size")}
             {showCompleted && sortableHeader("Completed", "completed")}
-            <th className="w-[100px] py-4 text-center text-xs font-semibold">Actions</th>
+            <th className="hidden w-[148px] py-4 pr-3 text-right text-xs font-semibold min-[900px]:table-cell">
+              Actions
+            </th>
           </tr>
         </thead>
         <tbody>{children}</tbody>
@@ -183,7 +188,11 @@ export function PageRow(props: PageRowProps) {
             <MobileRowDetails {...props} completedLabel={completedLabel} />
           </>
         ) : (
-          <TriCheckbox state={props.isSelected} onChange={props.onRowSelectionChanged}>
+          <TriCheckbox
+            state={props.isSelected}
+            onChange={props.onRowSelectionChanged}
+            ariaLabel={`Select ${props.name}`}
+          >
             <Truncate>{nameContent}</Truncate>
             <MobileRowDetails {...props} completedLabel={completedLabel} />
           </TriCheckbox>
@@ -220,10 +229,8 @@ export function PageRow(props: PageRowProps) {
           {completedLabel?.short ?? "—"}
         </td>
       )}
-      <td className="max-w-[200px] whitespace-nowrap px-1 py-3 text-center align-middle max-[899px]:max-w-none max-[899px]:whitespace-normal">
-        <div className="flex flex-col items-end justify-center gap-2.5 pr-5 min-[410px]:flex-row min-[410px]:items-center min-[410px]:pr-0">
-          {props.actions}
-        </div>
+      <td className="hidden whitespace-nowrap py-3 pl-1 pr-3 align-middle min-[900px]:table-cell">
+        <div className="flex items-center justify-end gap-1">{props.actions}</div>
       </td>
     </tr>
   );
@@ -234,21 +241,20 @@ function MobileRowDetails(
 ) {
   return (
     <div className="block min-[900px]:hidden">
-      <div className="mb-1 mt-1 flex flex-wrap gap-2.5">
+      <div className="mb-1 mt-1.5 flex flex-wrap items-center gap-1.5">
         <StatusBadge status={props.status} percentage={props.percentage} error={props.error} />
         <CategoryBadge category={props.category} />
         {props.indexer && <IndexerBadge indexer={props.indexer} />}
-        {props.providers && props.providers.length > 0 && (
-          <ProvidersBadge providers={props.providers} />
-        )}
       </div>
+      {props.providers && props.providers.length > 0 && (
+        <ProvidersBadge providers={props.providers} inline />
+      )}
       <div className="font-mono text-xs text-base-content/60">
         {formatFileSize(props.fileSizeBytes)}
+        {props.showCompleted && props.completedLabel && <> · {props.completedLabel.full}</>}
       </div>
-      {props.showCompleted && props.completedLabel && (
-        <div className="font-mono text-xs text-base-content/60" title={props.completedLabel.full}>
-          {props.completedLabel.short}
-        </div>
+      {props.actions && (
+        <div className="mt-1 flex flex-wrap items-center gap-1">{props.actions}</div>
       )}
     </div>
   );
@@ -281,13 +287,16 @@ function isSameDate(a: Date, b: Date): boolean {
 
 export function CategoryBadge({ category }: { category: string }) {
   const categoryLower = category?.toLowerCase();
-  return (
-    <Badge
-      className="badge-outline badge-sm min-w-[88px] max-w-[120px] shrink-0 justify-center whitespace-nowrap lowercase"
-      title={`Category: ${categoryLower}`}
-    >
-      <span className="min-w-0 truncate">{categoryLower}</span>
-    </Badge>
+  if (!categoryLower) return <span className="text-xs text-base-content/30">—</span>;
+  const text = (
+    <span className="block max-w-[140px] truncate text-xs text-base-content/70">
+      {categoryLower}
+    </span>
+  );
+  return categoryLower.length > 18 ? (
+    <PortalTooltip content={`Category: ${categoryLower}`}>{text}</PortalTooltip>
+  ) : (
+    text
   );
 }
 
@@ -302,7 +311,13 @@ export function IndexerBadge({ indexer }: { indexer: string }) {
   );
 }
 
-export function ProvidersBadge({ providers }: { providers: ProviderUsage[] }) {
+export function ProvidersBadge({
+  providers,
+  inline = false,
+}: {
+  providers: ProviderUsage[];
+  inline?: boolean;
+}) {
   if (providers.length === 0) return null;
   const total = providers.reduce((acc, p) => acc + p.segments, 0);
   // When usage exists, hide idle (0%) hosts from the badge; keep them in the tooltip.
@@ -316,21 +331,27 @@ export function ProvidersBadge({ providers }: { providers: ProviderUsage[] }) {
     )
     .join("\n");
   return (
-    <span
-      className="inline-flex max-w-full min-w-0 cursor-help flex-col items-stretch gap-0.5 text-left text-xs"
-      title={tooltip}
-    >
-      {visible.map((p, i) => (
-        <span key={`${p.host}-${i}`} className="flex min-w-0 items-baseline gap-1 overflow-hidden">
-          <span className="min-w-0 truncate">{labelOf(p)}</span>
-          {total > 0 && (
-            <span className="shrink-0 tabular-nums text-base-content/50">
-              {Math.round((p.segments / total) * 100)}%
-            </span>
-          )}
-        </span>
-      ))}
-    </span>
+    <PortalTooltip content={tooltip}>
+      <span
+        tabIndex={0}
+        aria-label={`Providers: ${tooltip}`}
+        className={`inline-flex max-w-full min-w-0 cursor-help gap-x-2 gap-y-0.5 text-left text-xs ${inline ? "flex-row flex-wrap" : "flex-col items-stretch"}`}
+      >
+        {visible.map((p, i) => (
+          <span
+            key={`${p.host}-${i}`}
+            className="flex min-w-0 items-baseline gap-1 overflow-hidden"
+          >
+            <span className="min-w-0 truncate">{labelOf(p)}</span>
+            {total > 0 && (
+              <span className="shrink-0 tabular-nums text-base-content/50">
+                {Math.round((p.segments / total) * 100)}%
+              </span>
+            )}
+          </span>
+        ))}
+      </span>
+    </PortalTooltip>
   );
 }
 
