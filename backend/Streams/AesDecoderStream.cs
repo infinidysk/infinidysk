@@ -100,6 +100,15 @@ namespace NzbWebDAV.Streams
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer,
             CancellationToken ct = default)
         {
+            var read = await ReadDecodedAsync(buffer, ct).ConfigureAwait(false);
+            // The decoded length can end before the ciphertext, so its last article may still be validating.
+            if (read > 0 && _mWritten == _mLimit)
+                await _mStream.ValidateDeliveredAsync(ct).ConfigureAwait(false);
+            return read;
+        }
+
+        private async ValueTask<int> ReadDecodedAsync(Memory<byte> buffer, CancellationToken ct)
+        {
             // Perform pending seek (deferred heavy work)
             if (_pendingSeekPosition != null)
             {

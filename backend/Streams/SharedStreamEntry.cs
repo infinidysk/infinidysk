@@ -275,7 +275,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
     // Called by the pump right after a read, so the chain still references the article it read.
     private void TrackValidation(ValueTask validation, long through)
     {
-        if (validation.IsCompletedSuccessfully)
+        if (validation.IsCompletedSuccessfully && _validationTail.IsCompleted)
         {
             validation.GetAwaiter().GetResult();
             AdvanceValidated(through);
@@ -303,6 +303,8 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
 
     private void AdvanceValidated(long through)
     {
+        // Bytes past a failed validation are never vouched for.
+        if (Volatile.Read(ref _validationFailure) is not null) return;
         var current = Interlocked.Read(ref _validatedThrough);
         while (current < through)
         {
@@ -379,7 +381,8 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
                     .ConfigureAwait(false);
                 if (read == 0)
                 {
-                    AdvanceValidated(long.MaxValue);
+                    // Logical EOF can precede a pending trailer, e.g. AES plaintext ending before its ciphertext.
+                    TrackValidation(upstream.ValidateDeliveredAsync(ct), long.MaxValue);
                     _ring.SetComplete();
                     return;
                 }
