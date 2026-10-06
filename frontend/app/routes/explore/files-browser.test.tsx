@@ -432,7 +432,7 @@ describe("Files browser", () => {
   it("keyboardTreeNavigationDoesNotStealInputOrPlayerKeys", async () => {
     mount();
     await screen.findByRole("button", { name: "Play Synthetic.mkv" });
-    const search = screen.getByRole("textbox", { name: "Search name or path" });
+    const search = screen.getByRole("searchbox", { name: "Search name or path" });
     search.focus();
     fireEvent.keyDown(search, { key: " " });
     expect(document.activeElement).toBe(search);

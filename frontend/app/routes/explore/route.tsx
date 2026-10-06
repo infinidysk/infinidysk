@@ -149,10 +149,22 @@ export default function Explore({ loaderData }: Route.ComponentProps) {
   if (loaderData.kind === "files") return <FilesBrowser {...loaderData} />;
   if (loaderData.kind === "not-found")
     return (
-      <section>
-        <h1 className="text-xl font-semibold">Explorer</h1>
-        <p role="alert">Directory not found: {loaderData.scopePath}</p>
-        <Link to="/explore">Content root</Link>
+      <section className="flex min-h-full flex-col gap-4 px-4 py-4 text-sm md:px-8">
+        <PageHeader title="Explorer" />
+        <div className="card min-h-[320px] border border-base-content/10 bg-base-200">
+          <div className="card-body items-center justify-center text-center">
+            <Icon name="folder_off" className="!text-[48px] text-warning" />
+            <h2 className="card-title text-xl">Directory not found</h2>
+            <p role="alert" className="max-w-md break-all text-sm text-base-content/60">
+              Directory not found: {loaderData.scopePath}
+            </p>
+            <div className="card-actions justify-center">
+              <Link to="/explore" className="btn btn-sm">
+                Content root
+              </Link>
+            </div>
+          </div>
+        </div>
       </section>
     );
   return <LegacyBody {...loaderData.data} />;

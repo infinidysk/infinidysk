@@ -1,7 +1,4 @@
 declare const classes: {
-  readonly browser: string;
-  readonly toolbar: string;
-  readonly filters: string;
   readonly viewport: string;
   readonly grid: string;
   readonly row: string;
@@ -13,8 +10,6 @@ declare const classes: {
   readonly actions: string;
   readonly action: string;
   readonly branch: string;
-  readonly details: string;
-  readonly healthMenu: string;
-  readonly healthOptions: string;
+  readonly message: string;
 };
 export default classes;

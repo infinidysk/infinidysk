@@ -7,10 +7,11 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import { Link, useSearchParams } from "react-router";
 import { z } from "zod";
-import { Button, Checkbox, Icon } from "~/components/ui";
+import { Alert, Badge, Button, Checkbox, Icon, PageHeader } from "~/components/ui";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
 import { useIsReadOnly } from "~/auth/authorization";
 import { withUrlBase } from "~/utils/url-base";
@@ -47,7 +48,7 @@ import {
   topLevelRemovalTargets,
   type BranchPage,
 } from "./files-state";
-import { isPlayableMedia } from "~/utils/file-kind";
+import { getIcon, isPlayableMedia } from "~/utils/file-kind";
 import { MediaPreview } from "./media-preview/media-preview";
 import { appendQueryParam } from "./media-preview/media-utils";
 import styles from "./files-browser.module.css";
@@ -76,6 +77,33 @@ const labels: Record<string, string> = {
   due: "Due",
   scheduled: "Scheduled",
 };
+const sortLabels: Record<string, string> = {
+  name: "Name",
+  size: "Size",
+  added: "Added",
+  posted: "Posted",
+  "last-check": "Last check",
+  "next-check": "Next check",
+  type: "Type",
+  health: "Health",
+};
+const advancedFilterKeys = [
+  "addedAfter",
+  "addedBefore",
+  "postedAfter",
+  "postedBefore",
+  "checkedAfter",
+  "checkedBefore",
+  "playedAfter",
+  "playedBefore",
+  "minSize",
+  "maxSize",
+  "category",
+  "indexer",
+  "subType",
+  "repairAction",
+  "hasNzb",
+] as const satisfies ReadonlyArray<keyof FilesFilters>;
 async function readJson(response: Response): Promise<unknown> {
   if (response.redirected || !response.headers.get("content-type")?.includes("json"))
     throw new Error("Session expired. Sign in again.");
@@ -453,32 +481,54 @@ export function FilesBrowser(props: Props) {
       />
     );
   }
+  const scopeParts = props.scopePath.split("/").filter(Boolean);
   return (
-    <section className={styles.browser}>
-      <header className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold">Explorer</h1>
-        <nav aria-label="File scope" className="flex min-w-0 flex-wrap gap-2 text-xs">
-          {props.scopePath
-            .split("/")
-            .filter(Boolean)
-            .map((part, index, parts) => (
-              <Fragment key={index}>
-                <span aria-hidden="true">/</span>
-                <Link to={scopeHref("/" + parts.slice(0, index + 1).join("/"))}>{part}</Link>
-              </Fragment>
-            ))}
-        </nav>
-        <details className="ml-auto text-xs">
-          <summary>WebDAV system views</summary>
-          <nav className="flex flex-wrap gap-3 py-2">
-            {["nzbs", "completed-symlinks", ".ids"].map((path) => (
-              <Link key={path} to={`/explore/${path}`}>
-                {path}
-              </Link>
-            ))}
-          </nav>
-        </details>
-      </header>
+    <section className="flex min-h-full min-w-0 flex-col gap-4 px-4 py-4 text-sm text-base-content md:px-8">
+      <PageHeader
+        title="Explorer"
+        subtitle="Browse, health-check, and manage the files InfiniDysk serves over WebDAV."
+        actions={
+          <details className="dropdown dropdown-end">
+            <summary className="btn btn-ghost btn-sm">
+              <Icon name="dns" className="!text-[18px]" />
+              System views
+            </summary>
+            <ul className="dropdown-content menu z-20 mt-1 w-56 rounded-box border border-base-content/10 bg-base-200 p-2 shadow-lg">
+              {["nzbs", "completed-symlinks", ".ids"].map((path) => (
+                <li key={path}>
+                  <Link to={`/explore/${path}`} className="font-mono text-xs">
+                    /{path}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </details>
+        }
+      />
+      <nav aria-label="File scope" className="breadcrumbs -my-2 text-sm">
+        <ul>
+          {scopeParts.map((part, index) =>
+            index === scopeParts.length - 1 ? (
+              <li key={index}>
+                <span aria-current="page" className="inline-flex items-center gap-1 font-medium">
+                  {index === 0 && <Icon name="folder_open" className="!text-[18px]" />}
+                  {part}
+                </span>
+              </li>
+            ) : (
+              <li key={index}>
+                <Link
+                  to={scopeHref("/" + scopeParts.slice(0, index + 1).join("/"))}
+                  className="inline-flex items-center gap-1"
+                >
+                  {index === 0 && <Icon name="folder_open" className="!text-[18px]" />}
+                  {part}
+                </Link>
+              </li>
+            ),
+          )}
+        </ul>
+      </nav>
       <FilesToolbar
         filters={filters}
         mode={mode}
@@ -487,60 +537,70 @@ export function FilesBrowser(props: Props) {
         update={update}
         refresh={() => refresh()}
       />
-      {focused?.isDirectory && (
-        <Link className="text-xs underline" to={scopeHref(focused.path)}>
-          Use {focused.name} as scope
-        </Link>
-      )}
       {filterError && (
-        <p role="alert" className="text-error">
-          {filterError}
-          <Button onClick={() => update(defaultFilesFilters)}>Clear filters</Button>
-        </p>
+        <Alert variant="warning" className="alert-soft">
+          <span>{filterError}</span>
+          <Button size="xsmall" onClick={() => update(defaultFilesFilters)}>
+            Clear filters
+          </Button>
+        </Alert>
       )}
-      <div className="flex flex-wrap items-center gap-3 py-2 text-xs" aria-live="polite">
-        <span>{state.matchingFileCount} matching files</span>
-        <span>{visible.length} visible</span>
-        <span>{state.selected.size} selected</span>
-        {!readonly && (
-          <Button
-            size="xsmall"
-            disabled={!state.selected.size}
-            onClick={() =>
-              setRemovals(
-                topLevelRemovalTargets(
-                  [...state.selected]
-                    .map((key) => state.rows[key])
-                    .filter((row): row is FileResourceRow => Boolean(row)),
-                ),
-              )
-            }
-          >
-            <Icon name="delete" />
-            Remove selected
-          </Button>
-        )}
-        {!readonly && (
-          <Button
-            size="xsmall"
-            disabled={!state.selected.size}
-            onClick={() => dispatch({ type: "clear-selection" })}
-          >
-            Clear selection
-          </Button>
-        )}
+      <div
+        className="flex min-h-8 flex-wrap items-center gap-x-4 gap-y-2 text-xs text-base-content/70"
+        aria-live="polite"
+      >
         <span>
-          Library:{" "}
-          {summary.libraryScanState === "ready"
-            ? date(summary.libraryScannedAt)
-            : labels[summary.libraryScanState]}
+          <strong className="font-semibold text-base-content">{state.matchingFileCount}</strong>{" "}
+          matching files
         </span>
-        {summary.libraryError && <span className="text-warning">{summary.libraryError}</span>}
-        {(!summary.schedule.checksOpen || !summary.schedule.repairsOpen) && (
-          <span>Health work window closed ({summary.schedule.timeZoneId})</span>
+        <span>{visible.length} visible</span>
+        <span className={state.selected.size ? "font-semibold text-primary" : undefined}>
+          {state.selected.size} selected
+        </span>
+        {!readonly && state.selected.size > 0 && (
+          <div className="flex items-center gap-2">
+            <Button
+              size="xsmall"
+              variant="danger"
+              className="btn-soft"
+              onClick={() =>
+                setRemovals(
+                  topLevelRemovalTargets(
+                    [...state.selected]
+                      .map((key) => state.rows[key])
+                      .filter((row): row is FileResourceRow => Boolean(row)),
+                  ),
+                )
+              }
+            >
+              <Icon name="delete" className="!text-[16px]" />
+              Remove selected
+            </Button>
+            <Button
+              size="xsmall"
+              variant="ghost"
+              onClick={() => dispatch({ type: "clear-selection" })}
+            >
+              Clear selection
+            </Button>
+          </div>
         )}
+        <div className="ms-auto flex flex-wrap items-center gap-2">
+          {(!summary.schedule.checksOpen || !summary.schedule.repairsOpen) && (
+            <Badge className="badge-soft badge-warning badge-sm">
+              Health work window closed ({summary.schedule.timeZoneId})
+            </Badge>
+          )}
+          {summary.libraryError && <span className="text-warning">{summary.libraryError}</span>}
+          <Badge className="badge-ghost badge-sm">
+            Library:{" "}
+            {summary.libraryScanState === "ready"
+              ? date(summary.libraryScannedAt)
+              : labels[summary.libraryScanState]}
+          </Badge>
+        </div>
       </div>
-      <div className={styles.viewport}>
+      <div className={`${styles.viewport} rounded-box border border-base-content/10 bg-base-100`}>
         <div
           className={styles.grid}
           role={mode === "tree" ? "treegrid" : "table"}
@@ -548,31 +608,34 @@ export function FilesBrowser(props: Props) {
           aria-multiselectable={mode === "tree" ? true : undefined}
         >
           <div role="row" className={`${styles.row} ${styles.header}`}>
-            {["Name", "Health", "Next scan", "Added age", "Size", "Library", "Actions"].map(
-              (label) => (
-                <div role="columnheader" key={label}>
-                  {label === "Name" && selectableKeys.length > 0 && (
-                    <Checkbox
-                      aria-label="Select all visible items"
-                      checked={selectedVisible === selectableKeys.length}
-                      ref={(element) => {
-                        if (element)
-                          element.indeterminate =
-                            selectedVisible > 0 && selectedVisible < selectableKeys.length;
-                      }}
-                      onChange={() =>
-                        dispatch({
-                          type: "set-selection",
-                          keys: selectableKeys,
-                          selected: selectedVisible < selectableKeys.length,
-                        })
-                      }
-                    />
-                  )}
-                  {label}
-                </div>
-              ),
-            )}
+            {["Name", "Health", "Next scan", "Added", "Size", "Library", "Actions"].map((label) => (
+              <div
+                role="columnheader"
+                key={label}
+                className={label === "Name" ? styles.name : undefined}
+              >
+                {label === "Name" && selectableKeys.length > 0 && (
+                  <Checkbox
+                    className="checkbox-sm"
+                    aria-label="Select all visible items"
+                    checked={selectedVisible === selectableKeys.length}
+                    ref={(element) => {
+                      if (element)
+                        element.indeterminate =
+                          selectedVisible > 0 && selectedVisible < selectableKeys.length;
+                    }}
+                    onChange={() =>
+                      dispatch({
+                        type: "set-selection",
+                        keys: selectableKeys,
+                        selected: selectedVisible < selectableKeys.length,
+                      })
+                    }
+                  />
+                )}
+                {label}
+              </div>
+            ))}
           </div>
           {visible.map((entry, index) => {
             const row = state.rows[entry.key];
@@ -639,8 +702,16 @@ export function FilesBrowser(props: Props) {
                   }}
                 />
                 {messages[row.key] && (
-                  <div role="status" className="py-1 text-xs">
-                    {row.name}: {messages[row.key]}
+                  <div
+                    role="status"
+                    className={styles.message}
+                    style={{ "--depth": entry.depth } as CSSProperties}
+                  >
+                    <Icon name="info" className="!text-[16px] text-info" />
+                    <span className="min-w-0 truncate" title={messages[row.key]}>
+                      <span className="font-medium text-base-content">{row.name}:</span>{" "}
+                      {messages[row.key]}
+                    </span>
                   </div>
                 )}
                 {endings.map((ending) => branchControls(ending.key, ending.depth))}
@@ -650,7 +721,13 @@ export function FilesBrowser(props: Props) {
           {branchControls(rootKey, 0)}
         </div>
       </div>
-      {focused && <FilesDetails row={focused} now={state.observedAt} />}
+      {focused && (
+        <FilesDetails
+          row={focused}
+          now={state.observedAt}
+          close={() => dispatch({ type: "focus", key: null })}
+        />
+      )}
       {player?.previewUrl && (
         <MediaPreview
           fileName={player.name}
@@ -669,14 +746,16 @@ export function FilesBrowser(props: Props) {
           confirmVariant={false}
           isConfirmDisabled={pending.has(searchTarget.key)}
           message={
-            <>
-              <p>{searchTarget.path}</p>
-              <p>
+            <div className="space-y-3">
+              <p className="rounded-box bg-base-200 px-3 py-2 font-mono text-xs break-all">
+                {searchTarget.path}
+              </p>
+              <p className="text-sm text-base-content/70">
                 Enabled Arr instances owning this file will be searched. InfiniDysk will not remove
                 or blocklist the current file. Arr quality, cutoff, and monitoring rules still
                 apply; a replacement download is not guaranteed.
               </p>
-            </>
+            </div>
           }
           onCancel={() => {
             if (!pending.has(searchTarget.key)) setSearchTarget(null);
@@ -689,54 +768,64 @@ export function FilesBrowser(props: Props) {
       {removals && (
         <ConfirmModal
           show
-          title="Remove selected items"
+          title={removals.length === 1 ? "Remove item" : `Remove ${removals.length} items`}
           confirmText="Remove"
           isConfirmDisabled={
             pending.size > 0 || Boolean(previewError) || removals.some((row) => !previews[row.key])
           }
           message={
-            <>
-              <ul>
+            <div className="space-y-3">
+              <ul className="max-h-40 space-y-1 overflow-y-auto rounded-box bg-base-200 px-3 py-2 font-mono text-xs">
                 {removals.map((row) => (
-                  <li key={row.key}>
+                  <li key={row.key} className="break-all">
                     {row.path}
-                    {messages[row.key] && <p>{messages[row.key]}</p>}
+                    {messages[row.key] && (
+                      <p className="font-sans text-error">{messages[row.key]}</p>
+                    )}
                   </li>
                 ))}
               </ul>
-              <p>
-                Directory removal includes collapsed, hidden, and filtered-out descendants. Counts
-                are a preview; the current subtree is removed at execution. Separate removals are
-                not atomic.
-              </p>
               {Object.keys(previews).length === removals.length ? (
-                <p>
-                  {Object.values(previews).reduce((sum, preview) => sum + preview.fileCount, 0)}{" "}
-                  files,{" "}
-                  {Object.values(previews).reduce((sum, preview) => sum + preview.dirCount, 0)}{" "}
-                  directories,{" "}
+                <p className="text-sm">
+                  Removes{" "}
+                  <strong>
+                    {Object.values(previews).reduce((sum, preview) => sum + preview.fileCount, 0)}{" "}
+                    files
+                  </strong>{" "}
+                  in {Object.values(previews).reduce((sum, preview) => sum + preview.dirCount, 0)}{" "}
+                  directories (
                   {formatFileSize(
                     Object.values(previews).reduce((sum, preview) => sum + preview.totalBytes, 0),
                   )}
-                  ,{" "}
+                  ) and{" "}
                   {Object.values(previews).reduce(
                     (sum, preview) => sum + preview.linkedHistoryCount,
                     0,
                   )}{" "}
-                  linked history entries
+                  linked history entries.
                 </p>
               ) : (
-                <p>Loading removal preview...</p>
+                !previewError && (
+                  <p className="flex items-center gap-2 text-sm text-base-content/70">
+                    <span className="loading loading-spinner loading-xs" />
+                    Loading removal preview...
+                  </p>
+                )
               )}
+              <p className="text-xs text-base-content/60">
+                Directory removal includes collapsed, hidden, and filtered-out descendants. Counts
+                are a preview; the current subtree is removed at execution. Separate removals are
+                not atomic.
+              </p>
               {previewError && (
-                <p role="alert">
-                  {previewError}
-                  <Button onClick={() => setPreviewAttempt((value) => value + 1)}>
+                <Alert variant="danger" className="alert-soft py-2 text-sm">
+                  <span>{previewError}</span>
+                  <Button size="xsmall" onClick={() => setPreviewAttempt((value) => value + 1)}>
                     Retry preview
                   </Button>
-                </p>
+                </Alert>
               )}
-            </>
+            </div>
           }
           onCancel={() => {
             if (!pending.size) setRemovals(null);
@@ -761,14 +850,26 @@ function BranchControls({
   retry: () => void;
   page: (offset: number) => void;
 }) {
+  const paged = branch.offset > 0 || branch.hasMore;
+  const empty = branch.status === "ready" && branch.totalRows === 0;
+  if (branch.status === "ready" && !paged && !empty) return null;
   return (
     <div className={styles.branch} style={{ "--depth": depth } as CSSProperties}>
-      {branch.status === "loading" && <span role="status">Loading...</span>}
+      {branch.status === "loading" && (
+        <span role="status" className="flex items-center gap-2 text-base-content/60">
+          <span className="loading loading-spinner loading-xs" />
+          Loading...
+        </span>
+      )}
       {branch.status === "error" && (
         <>
-          <span role="alert">{branch.error}</span>
+          <span role="alert" className="text-error">
+            {branch.error}
+          </span>
           {branch.error?.includes("Sign in") ? (
-            <Link to="/login">Sign in</Link>
+            <Link to="/login" className="link link-primary">
+              Sign in
+            </Link>
           ) : (
             <Button size="xsmall" onClick={retry}>
               Retry
@@ -776,30 +877,32 @@ function BranchControls({
           )}
         </>
       )}
-      {branch.status === "ready" && branch.totalRows === 0 && <span>No matching items</span>}
-      {(branch.offset > 0 || branch.hasMore) && (
-        <>
+      {empty && <span className="italic text-base-content/50">No matching items</span>}
+      {paged && (
+        <div className="join">
           <Button
             aria-label={`Previous page in ${branch.parentPath}`}
             size="xsmall"
+            className="join-item"
             disabled={branch.offset === 0 || branch.status === "loading"}
             onClick={() => page(Math.max(0, branch.offset - FILES_PAGE_SIZE))}
           >
             <Icon name="chevron_left" />
           </Button>
-          <span>
+          <span className="join-item btn btn-xs pointer-events-none tabular-nums">
             {branch.offset + 1}-{Math.min(branch.offset + branch.keys.length, branch.totalRows)} of{" "}
             {branch.totalRows}
           </span>
           <Button
             aria-label={`Next page in ${branch.parentPath}`}
             size="xsmall"
+            className="join-item"
             disabled={!branch.hasMore || branch.status === "loading"}
             onClick={() => page(branch.offset + FILES_PAGE_SIZE)}
           >
             <Icon name="chevron_right" />
           </Button>
-        </>
+        </div>
       )}
     </div>
   );
@@ -844,14 +947,18 @@ function FilesRow(props: {
         className={styles.name}
         style={{ "--depth": props.depth - 1 } as CSSProperties}
       >
-        <Checkbox
-          aria-label={`Select ${row.name}`}
-          checked={props.selected}
-          disabled={props.readonly || !row.canDelete}
-          onChange={(event) =>
-            props.select(event.nativeEvent instanceof MouseEvent && event.nativeEvent.shiftKey)
-          }
-        />
+        {props.readonly || !row.canDelete ? (
+          <span className="w-5 shrink-0" aria-hidden="true" />
+        ) : (
+          <Checkbox
+            className="checkbox-sm"
+            aria-label={`Select ${row.name}`}
+            checked={props.selected}
+            onChange={(event) =>
+              props.select(event.nativeEvent instanceof MouseEvent && event.nativeEvent.shiftKey)
+            }
+          />
+        )}
         {row.isDirectory ? (
           <Button
             variant="ghost"
@@ -864,8 +971,13 @@ function FilesRow(props: {
             <Icon name={props.expanded ? "expand_more" : "chevron_right"} />
           </Button>
         ) : (
-          <Icon name="draft" className="!text-[18px]" />
+          <span className={styles.action} aria-hidden="true" />
         )}
+        <Icon
+          name={row.isDirectory ? (props.expanded ? "folder_open" : "folder") : getIcon(row)}
+          filled={row.isDirectory}
+          className={`!text-[18px] shrink-0 ${row.isDirectory ? "text-primary/80" : "text-base-content/50"}`}
+        />
         <button
           ref={props.setRef}
           type="button"
@@ -905,7 +1017,11 @@ function FilesRow(props: {
         {row.scanState === "checking" && row.progress !== null ? ` ${row.progress}%` : ""}
       </div>
       <div role={cellRole} title={date(row.addedAt)}>
-        {age(row.addedAt, props.now)}
+        {row.addedAt ? (
+          age(row.addedAt, props.now)
+        ) : (
+          <span className="text-base-content/40">—</span>
+        )}
       </div>
       <div role={cellRole}>
         {row.isDirectory ? "" : row.size === null ? "Unknown" : formatFileSize(row.size)}
@@ -989,31 +1105,42 @@ function FileActionStrip({
   ];
   return (
     <div className={styles.actions}>
-      {actions.map((item) => (
-        <span
-          key={item.label}
-          title={item.reason ?? item.label}
-          tabIndex={item.reason ? 0 : undefined}
-          aria-label={item.reason ? `${item.label} ${row.name}: ${item.reason}` : undefined}
-        >
-          <Button
-            size="medium"
-            variant="ghost"
-            className={styles.action}
-            aria-label={`${item.label} ${row.name}`}
-            disabled={Boolean(item.reason)}
-            onClick={item.run}
+      {actions.map((item) =>
+        row.isDirectory && (item.label === "Play" || item.label === "Download") ? (
+          <span key={item.label} className={styles.action} aria-hidden="true" />
+        ) : (
+          <span
+            key={item.label}
+            title={item.reason ?? item.label}
+            tabIndex={item.reason ? 0 : undefined}
+            aria-label={item.reason ? `${item.label} ${row.name}: ${item.reason}` : undefined}
           >
-            <Icon name={item.icon} />
-          </Button>
-        </span>
-      ))}
+            <Button
+              size="medium"
+              variant="ghost"
+              className={`${styles.action} ${item.label === "Remove" ? "hover:text-error" : ""}`}
+              aria-label={`${item.label} ${row.name}`}
+              disabled={Boolean(item.reason)}
+              onClick={item.run}
+            >
+              <Icon name={item.icon} />
+            </Button>
+          </span>
+        ),
+      )}
     </div>
   );
 }
-function FilesDetails({ row, now }: { row: FileResourceRow; now: number }) {
+function FilesDetails({
+  row,
+  now,
+  close,
+}: {
+  row: FileResourceRow;
+  now: number;
+  close: () => void;
+}) {
   const values: Array<[string, string]> = [
-    ["Path", row.path],
     ["ID", row.id ?? "Synthetic category"],
     [
       "Storage kind",
@@ -1021,7 +1148,10 @@ function FilesDetails({ row, now }: { row: FileResourceRow; now: number }) {
         "Directory",
     ],
     ["Added", date(row.addedAt)],
-    ["Posted", `${date(row.releaseDate)} (${age(row.releaseDate, now)})`],
+    [
+      "Posted",
+      row.releaseDate ? `${date(row.releaseDate)} (${age(row.releaseDate, now)})` : "Unknown",
+    ],
     ["Last health check", date(row.lastHealthCheck)],
     ["Next due", date(row.nextCheckAt)],
     ["Observed health", row.health ? labels[row.health]! : "Not applicable"],
@@ -1041,15 +1171,41 @@ function FilesDetails({ row, now }: { row: FileResourceRow; now: number }) {
     ["Library links", row.libraryPaths.join("; ") || labels[row.libraryState ?? "unknown"]!],
   ];
   return (
-    <section className={styles.details} aria-label={`Details for ${row.name}`}>
-      <dl>
-        {values.map(([label, value]) => (
-          <div key={label}>
-            <dt>{label}</dt>
-            <dd>{value}</dd>
+    <section
+      className="card card-sm border border-base-content/10 bg-base-200"
+      aria-label={`Details for ${row.name}`}
+    >
+      <div className="card-body gap-3">
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 className="card-title break-all text-base">{row.name}</h2>
+            <p className="font-mono text-xs break-all text-base-content/60">{row.path}</p>
           </div>
-        ))}
-      </dl>
+          {row.isDirectory && (
+            <Link className="btn btn-sm" to={scopeHref(row.path)}>
+              <Icon name="folder_open" className="!text-[18px]" />
+              Open as scope
+            </Link>
+          )}
+          <Button
+            size="small"
+            variant="ghost"
+            className="btn-square"
+            aria-label="Close details"
+            onClick={close}
+          >
+            <Icon name="close" />
+          </Button>
+        </div>
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-xs sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+          {values.map(([label, value]) => (
+            <div key={label} className="min-w-0">
+              <dt className="text-base-content/60">{label}</dt>
+              <dd className="break-words text-base-content">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
     </section>
   );
 }
@@ -1103,22 +1259,26 @@ function FilesToolbar({
     value: string,
     options: Array<[string, string]>,
     changed: (value: string) => void,
+    className = "",
   ) {
     return (
-      <label>
-        {label}
-        <select
-          aria-label={label}
-          className="select select-xs"
-          value={value}
-          onChange={(event) => changed(event.target.value)}
-        >
+      <label className={`select select-sm w-auto ${className}`}>
+        <span className="label">{label}</span>
+        <select aria-label={label} value={value} onChange={(event) => changed(event.target.value)}>
           {options.map(([key, text]) => (
             <option key={key} value={key}>
               {text}
             </option>
           ))}
         </select>
+      </label>
+    );
+  }
+  function field(label: string, control: ReactNode) {
+    return (
+      <label className="flex min-w-0 flex-col gap-1 text-xs text-base-content/70">
+        {label}
+        {control}
       </label>
     );
   }
@@ -1131,35 +1291,55 @@ function FilesToolbar({
     "never-scheduled",
     "checking",
   ];
+  const advancedCount = advancedFilterKeys.filter(
+    (key) => filters[key] !== defaultFilesFilters[key],
+  ).length;
   return (
-    <>
-      <div className={styles.toolbar}>
+    <div className="rounded-box border border-base-content/10 bg-base-200 p-3">
+      <div className="flex flex-wrap items-center gap-2">
         <form
+          className="min-w-56 flex-1 basis-64"
           onSubmit={(event) => {
             event.preventDefault();
             search(draft, true);
           }}
         >
-          <label>
-            Search name or path
+          <label className="input input-sm w-full">
+            <Icon name="search" className="!text-[18px] text-base-content/50" />
             <input
+              type="search"
               aria-label="Search name or path"
-              className="input input-xs"
+              placeholder="Search name or path"
+              className="grow"
               value={draft}
               maxLength={256}
               onChange={(event) => search(event.target.value)}
             />
+            {draft && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-xs btn-circle"
+                aria-label="Clear search"
+                onClick={() => search("", true)}
+              >
+                <Icon name="close" className="!text-[16px]" />
+              </button>
+            )}
           </label>
         </form>
-        <Button size="xsmall" aria-label="Clear search" onClick={() => search("", true)}>
-          <Icon name="close" />
-        </Button>
-        <details className={styles.healthMenu}>
-          <summary>Health{filters.health.length ? ` (${filters.health.length})` : ""}</summary>
-          <div className={styles.healthOptions}>
+        <details className="dropdown">
+          <summary className={`btn btn-sm ${filters.health.length ? "btn-active" : ""}`}>
+            Health{filters.health.length ? ` (${filters.health.length})` : ""}
+            <Icon name="expand_more" className="!text-[18px]" />
+          </summary>
+          <div className="dropdown-content z-20 mt-1 flex w-52 flex-col gap-1 rounded-box border border-base-content/10 bg-base-200 p-2 shadow-lg">
             {(["healthy", "degraded", "needs-attention", "unknown"] as const).map((health) => (
-              <label key={health}>
+              <label
+                key={health}
+                className="flex cursor-pointer items-center gap-2 rounded-field px-2 py-1.5 hover:bg-base-content/5"
+              >
                 <Checkbox
+                  className="checkbox-sm"
                   checked={filters.health.includes(health)}
                   onChange={(event) =>
                     change({
@@ -1175,7 +1355,7 @@ function FilesToolbar({
           </div>
         </details>
         {select(
-          "Scan state",
+          "Scan",
           filters.schedule,
           schedules.map((value) => [
             value,
@@ -1198,48 +1378,67 @@ function FilesToolbar({
           ]),
           (value) => change({ library: value as FilesFilters["library"] }),
         )}
-        <div role="group" aria-label="View mode" className="flex gap-1">
-          {["tree", "list"].map((value) => (
-            <Button
-              key={value}
-              size="xsmall"
-              aria-pressed={mode === value}
-              onClick={() => update(filters, value)}
-            >
-              <Icon name={value === "tree" ? "account_tree" : "view_list"} />
-              {value === "tree" ? "Tree" : "List"}
-            </Button>
-          ))}
-        </div>
-        {select(
-          "Sort",
-          sort,
-          ["name", "size", "added", "posted", "last-check", "next-check", "type", "health"].map(
-            (value) => [value, value],
-          ),
-          (value) => update(filters, mode, value, direction),
-        )}
         <Button
-          size="xsmall"
-          aria-label="Reverse sort direction"
-          onClick={() => update(filters, mode, sort, direction === "asc" ? "desc" : "asc")}
-        >
-          <Icon name={direction === "asc" ? "arrow_upward" : "arrow_downward"} />
-        </Button>
-        <Button
-          size="xsmall"
           aria-expanded={expanded}
+          className={expanded ? "btn-active" : ""}
           onClick={() => setExpanded((value) => !value)}
         >
-          <Icon name="filter_list" />
+          <Icon name="tune" className="!text-[18px]" />
           Filters
+          {advancedCount > 0 && (
+            <span className="badge badge-primary badge-xs">{advancedCount}</span>
+          )}
         </Button>
-        <Button size="xsmall" aria-label="Refresh Files" title="Refresh Files" onClick={refresh}>
-          <Icon name="refresh" />
-        </Button>
+        <div className="ms-auto flex flex-wrap items-center gap-2">
+          <div role="group" aria-label="View mode" className="join">
+            {["tree", "list"].map((value) => (
+              <Button
+                key={value}
+                aria-pressed={mode === value}
+                className={`join-item ${mode === value ? "btn-active" : ""}`}
+                onClick={() => update(filters, value)}
+              >
+                <Icon
+                  name={value === "tree" ? "account_tree" : "view_list"}
+                  className="!text-[18px]"
+                />
+                {value === "tree" ? "Tree" : "List"}
+              </Button>
+            ))}
+          </div>
+          <div className="join">
+            {select(
+              "Sort",
+              sort,
+              Object.entries(sortLabels),
+              (value) => update(filters, mode, value, direction),
+              "join-item",
+            )}
+            <Button
+              className="join-item btn-square"
+              aria-label="Reverse sort direction"
+              title={direction === "asc" ? "Ascending" : "Descending"}
+              onClick={() => update(filters, mode, sort, direction === "asc" ? "desc" : "asc")}
+            >
+              <Icon
+                name={direction === "asc" ? "arrow_upward" : "arrow_downward"}
+                className="!text-[18px]"
+              />
+            </Button>
+          </div>
+          <Button
+            variant="ghost"
+            className="btn-square"
+            aria-label="Refresh Files"
+            title="Refresh"
+            onClick={refresh}
+          >
+            <Icon name="refresh" className="!text-[18px]" />
+          </Button>
+        </div>
       </div>
       {expanded && (
-        <div className={styles.filters}>
+        <div className="mt-3 grid grid-cols-1 items-end gap-3 border-t border-base-content/10 pt-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-6">
           {(
             [
               ["addedAfter", "Added from"],
@@ -1252,48 +1451,55 @@ function FilesToolbar({
               ["playedBefore", "Release played before"],
             ] as const
           ).map(([key, label]) => (
-            <label key={key}>
-              {label}
-              <input
-                className="input input-xs"
-                aria-label={label}
-                type="datetime-local"
-                value={filters[key] === null ? "" : localInput(filters[key])}
-                onChange={(event) =>
-                  change({
-                    [key]: event.target.value
-                      ? Math.floor(new Date(event.target.value).getTime() / 1000)
-                      : null,
-                  })
-                }
-              />
-            </label>
+            <Fragment key={key}>
+              {field(
+                label,
+                <input
+                  className="input input-sm w-full"
+                  aria-label={label}
+                  type="datetime-local"
+                  value={filters[key] === null ? "" : localInput(filters[key])}
+                  onChange={(event) =>
+                    change({
+                      [key]: event.target.value
+                        ? Math.floor(new Date(event.target.value).getTime() / 1000)
+                        : null,
+                    })
+                  }
+                />,
+              )}
+            </Fragment>
           ))}
           {(
             [
-              ["minSize", "Min MiB"],
-              ["maxSize", "Max MiB"],
+              ["minSize", "Min size"],
+              ["maxSize", "Max size"],
             ] as const
           ).map(([key, label]) => (
-            <label key={key}>
-              {label}
-              <input
-                className="input input-xs"
-                aria-label={label}
-                type="number"
-                min="0"
-                step="any"
-                value={filters[key] === null ? "" : filters[key] / 1048576}
-                onChange={(event) =>
-                  change({
-                    [key]:
-                      event.target.value === ""
-                        ? null
-                        : Math.round(Number(event.target.value) * 1048576),
-                  })
-                }
-              />
-            </label>
+            <Fragment key={key}>
+              {field(
+                label,
+                <div className="input input-sm w-full">
+                  <input
+                    aria-label={`${label} (MiB)`}
+                    type="number"
+                    min="0"
+                    step="any"
+                    className="grow"
+                    value={filters[key] === null ? "" : filters[key] / 1048576}
+                    onChange={(event) =>
+                      change({
+                        [key]:
+                          event.target.value === ""
+                            ? null
+                            : Math.round(Number(event.target.value) * 1048576),
+                      })
+                    }
+                  />
+                  <span className="label">MiB</span>
+                </div>,
+              )}
+            </Fragment>
           ))}
           {(
             [
@@ -1301,69 +1507,97 @@ function FilesToolbar({
               ["indexer", "Indexer"],
             ] as const
           ).map(([key, label]) => (
-            <label key={key}>
-              {label}
-              <input
-                className="input input-xs"
-                aria-label={label}
-                value={filters[key]}
-                maxLength={255}
-                onChange={(event) => change({ [key]: event.target.value })}
-              />
-            </label>
+            <Fragment key={key}>
+              {field(
+                label,
+                <input
+                  className="input input-sm w-full"
+                  aria-label={label}
+                  value={filters[key]}
+                  maxLength={255}
+                  onChange={(event) => change({ [key]: event.target.value })}
+                />,
+              )}
+            </Fragment>
           ))}
-          {select(
-            "Storage kind",
-            String(filters.subType ?? ""),
+          {(
             [
-              ["", "All"],
-              ["201", "NZB"],
-              ["202", "RAR"],
-              ["203", "Multipart"],
-            ],
-            (value) =>
-              change({ subType: value === "" ? null : (Number(value) as FilesFilters["subType"]) }),
-          )}
-          {select(
-            "Repair outcome",
-            String(filters.repairAction ?? ""),
-            [
-              ["", "All"],
-              ["0", "None"],
-              ["1", "Repaired"],
-              ["2", "Deleted"],
-              ["3", "Action needed"],
-              ["4", "PAR2 repaired"],
-            ],
-            (value) => change({ repairAction: value === "" ? null : Number(value) }),
-          )}
-          {select(
-            "Original NZB",
-            String(filters.hasNzb ?? ""),
-            [
-              ["", "All"],
-              ["true", "Available"],
-              ["false", "Unavailable"],
-            ],
-            (value) => change({ hasNzb: value === "" ? null : value === "true" }),
-          )}
+              [
+                "Storage kind",
+                String(filters.subType ?? ""),
+                [
+                  ["", "All"],
+                  ["201", "NZB"],
+                  ["202", "RAR"],
+                  ["203", "Multipart"],
+                ],
+                (value: string) =>
+                  change({
+                    subType: value === "" ? null : (Number(value) as FilesFilters["subType"]),
+                  }),
+              ],
+              [
+                "Repair outcome",
+                String(filters.repairAction ?? ""),
+                [
+                  ["", "All"],
+                  ["0", "None"],
+                  ["1", "Repaired"],
+                  ["2", "Deleted"],
+                  ["3", "Action needed"],
+                  ["4", "PAR2 repaired"],
+                ],
+                (value: string) => change({ repairAction: value === "" ? null : Number(value) }),
+              ],
+              [
+                "Original NZB",
+                String(filters.hasNzb ?? ""),
+                [
+                  ["", "All"],
+                  ["true", "Available"],
+                  ["false", "Unavailable"],
+                ],
+                (value: string) => change({ hasNzb: value === "" ? null : value === "true" }),
+              ],
+            ] as Array<[string, string, Array<[string, string]>, (value: string) => void]>
+          ).map(([label, value, options, changed]) => (
+            <Fragment key={label}>
+              {field(
+                label,
+                <select
+                  aria-label={label}
+                  className="select select-sm w-full"
+                  value={value}
+                  onChange={(event) => changed(event.target.value)}
+                >
+                  {options.map(([key, text]) => (
+                    <option key={key} value={key}>
+                      {text}
+                    </option>
+                  ))}
+                </select>,
+              )}
+            </Fragment>
+          ))}
           <Button
-            size="xsmall"
+            variant="ghost"
+            className="justify-self-start"
             onClick={() => {
               search("", true);
               update(defaultFilesFilters);
             }}
           >
+            <Icon name="filter_alt_off" className="!text-[18px]" />
             Clear filters
           </Button>
         </div>
       )}
       {error && (
-        <p role="alert" className="text-error text-xs">
+        <p role="alert" className="mt-2 text-xs text-error">
           {error}
         </p>
       )}
-    </>
+    </div>
   );
 }
 function localInput(seconds: number): string {
