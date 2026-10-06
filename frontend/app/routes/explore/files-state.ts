@@ -117,10 +117,18 @@ export type FilesAction =
   | { type: "failure"; job: FilesReadJob; error: string }
   | { type: "toggle"; key: string }
   | { type: "select"; key: string }
+  | { type: "set-selection"; keys: string[]; selected: boolean }
+  | { type: "clear-selection" }
   | { type: "focus"; key: string | null }
   | { type: "removed"; targets: FileResourceRow[] }
   | { type: "invalidate"; keys?: string[] }
   | { type: "progress"; id: string; progress: number };
+// Reads issued before a mutation may predate it: drop their responses and refetch.
+function invalidateBranch(branch: BranchPage): BranchPage {
+  return branch.status === "loading"
+    ? { ...branch, requestId: 0, status: "ready", error: null, loadedAt: 0 }
+    : { ...branch, loadedAt: 0 };
+}
 function prune(state: FilesState): FilesState {
   const referenced = new Set([
     ...Object.values(state.branches).flatMap((branch) => branch.keys),
@@ -249,6 +257,16 @@ export function filesReducer(state: FilesState, action: FilesAction): FilesState
       else if (state.rows[action.key]?.canDelete) selected.add(action.key);
       return { ...state, selected };
     }
+    case "set-selection": {
+      const selected = new Set(state.selected);
+      for (const key of action.keys) {
+        if (!action.selected) selected.delete(key);
+        else if (state.rows[key]?.canDelete) selected.add(key);
+      }
+      return { ...state, selected };
+    }
+    case "clear-selection":
+      return { ...state, selected: new Set() };
     case "focus":
       return { ...state, focusedKey: action.key };
     case "removed": {
@@ -271,7 +289,10 @@ export function filesReducer(state: FilesState, action: FilesAction): FilesState
             )
             .map(([key, branch]) => [
               key,
-              { ...branch, keys: branch.keys.filter((rowKey) => !keys.has(rowKey)), loadedAt: 0 },
+              invalidateBranch({
+                ...branch,
+                keys: branch.keys.filter((rowKey) => !keys.has(rowKey)),
+              }),
             ]),
         ),
         expanded: new Set([...state.expanded].filter((key) => !keys.has(key))),
@@ -284,7 +305,7 @@ export function filesReducer(state: FilesState, action: FilesAction): FilesState
         branches: Object.fromEntries(
           Object.entries(state.branches).map(([key, branch]) => [
             key,
-            !action.keys || action.keys.includes(key) ? { ...branch, loadedAt: 0 } : branch,
+            !action.keys || action.keys.includes(key) ? invalidateBranch(branch) : branch,
           ]),
         ),
       };

@@ -167,6 +167,97 @@ describe("Files browser", () => {
     await screen.findByText(/Arr: unconfirmed/);
     expect(intents).toEqual(["arr-search"]);
   });
+  it("lateBrowseResponseDoesNotRestoreARemovedRow", async () => {
+    let deleted = false;
+    let deliverOld: ((response: Response) => void) | undefined;
+    mocks.fetch.mockImplementation((input: string, options?: RequestInit) => {
+      if (options?.method === "POST") {
+        deleted = true;
+        return Promise.resolve(Response.json({ ok: true, result: { status: true } }));
+      }
+      if (String(input).includes("delete-preview"))
+        return Promise.resolve(
+          Response.json({
+            status: true,
+            fileCount: 1,
+            dirCount: 0,
+            totalBytes: 1024,
+            linkedHistoryCount: 0,
+          }),
+        );
+      if (!deleted && !deliverOld)
+        return new Promise<Response>((resolve) => {
+          deliverOld = resolve;
+        });
+      return Promise.resolve(Response.json(makeFilesPage(deleted ? [] : [row])));
+    });
+    mount();
+    await userEvent.click(await screen.findByRole("button", { name: "Refresh Files" }));
+    await waitFor(() => expect(deliverOld).toBeDefined());
+    await userEvent.click(screen.getByRole("button", { name: "Remove Synthetic.mkv" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Remove" }).hasAttribute("disabled")).toBe(false),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Remove" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Play Synthetic.mkv" })).toBeNull(),
+    );
+    await act(async () => {
+      deliverOld!(Response.json(makeFilesPage([row])));
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("button", { name: "Play Synthetic.mkv" })).toBeNull();
+  });
+  it("arrSearchLostResponseIsUnconfirmed", async () => {
+    const read = mocks.fetch.getMockImplementation()!;
+    let posts = 0;
+    mocks.fetch.mockImplementation((input: string, options?: RequestInit) => {
+      if (options?.method !== "POST") return read(input, options);
+      posts++;
+      return posts === 1
+        ? Promise.reject(new TypeError("Failed to fetch"))
+        : Promise.resolve(new Response("Bad gateway", { status: 504 }));
+    });
+    mount();
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Search in Arr Synthetic.mkv" }),
+      );
+      await userEvent.click(screen.getByRole("button", { name: "Search in Arr" }));
+      await screen.findByText(/Arr search status is unknown/);
+      expect(posts).toBe(attempt);
+      expect(screen.queryByText(/Session expired/)).toBeNull();
+    }
+  });
+  it("bulkSelectsVisibleRowsWithShiftRangeAndClears", async () => {
+    const rows = ["First.mkv", "Second.mkv", "Third.mkv"].map((name, index) =>
+      makeFileRow({
+        key: `10000000-0000-0000-0000-00000000000${index + 1}`,
+        id: `10000000-0000-0000-0000-00000000000${index + 1}`,
+        name,
+        path: `/content/${name}`,
+      }),
+    );
+    const read = mocks.fetch.getMockImplementation()!;
+    mocks.fetch.mockImplementation((input: string, options?: RequestInit) =>
+      options?.method === "POST" || String(input).includes("delete-preview")
+        ? read(input, options)
+        : Promise.resolve(Response.json(makeFilesPage(rows))),
+    );
+    mount(false, makeFilesPage(rows));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("checkbox", { name: "Select First.mkv" }));
+    await user.keyboard("{Shift>}");
+    await user.click(screen.getByRole("checkbox", { name: "Select Third.mkv" }));
+    await user.keyboard("{/Shift}");
+    expect(screen.getByText("3 selected")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Clear selection" }));
+    expect(screen.getByText("0 selected")).toBeTruthy();
+    await user.click(screen.getByRole("checkbox", { name: "Select all visible items" }));
+    expect(screen.getByText("3 selected")).toBeTruthy();
+    await user.click(screen.getByRole("checkbox", { name: "Select all visible items" }));
+    expect(screen.getByText("0 selected")).toBeTruthy();
+  });
   it("partialDeleteRetainsOnlyFailedSelections", async () => {
     const second = makeFileRow({
       key: "10000000-0000-0000-0000-000000000002",

@@ -27,6 +27,7 @@ import {
   deletePreviewResponseSchema,
   recheckFileResponseSchema,
   searchFileInArrResponseSchema,
+  ARR_SEARCH_UNCONFIRMED_MESSAGE,
   parseFilesFilters,
   getFilesQueryKey,
   serializeFilesFilters,
@@ -141,6 +142,7 @@ export function FilesBrowser(props: Props) {
   const scopeRef = useRef(props.scopePath);
   const queryKeyRef = useRef(queryKey);
   const rowsRef = useRef(new Map<string, HTMLButtonElement>());
+  const selectionAnchor = useRef<string | null>(null);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function enqueue(key: string, parentPath: string, offset = 0) {
@@ -187,6 +189,23 @@ export function FilesBrowser(props: Props) {
     mode === "tree"
       ? flattenFilesTree(state)
       : (state.branches["list"]?.keys ?? []).map((key) => ({ key, depth: 0 }));
+  const selectableKeys = readonly
+    ? []
+    : visible.map((entry) => entry.key).filter((key) => state.rows[key]?.canDelete);
+  const selectedVisible = selectableKeys.filter((key) => state.selected.has(key)).length;
+  function toggleSelection(key: string, shiftKey: boolean) {
+    const anchor = selectionAnchor.current;
+    selectionAnchor.current = key;
+    const from = anchor ? selectableKeys.indexOf(anchor) : -1;
+    const to = selectableKeys.indexOf(key);
+    if (!shiftKey || from === -1 || to === -1 || from === to)
+      return dispatch({ type: "select", key });
+    dispatch({
+      type: "set-selection",
+      keys: selectableKeys.slice(Math.min(from, to), Math.max(from, to) + 1),
+      selected: !state.selected.has(key),
+    });
+  }
   const ensurePages = useEffectEvent(() => {
     if (state.queryKey !== queryKey || filterError || document.visibilityState === "hidden") return;
     const key = mode === "tree" ? "root" : "list";
@@ -298,9 +317,19 @@ export function FilesBrowser(props: Props) {
         body.set("expectedDavItemId", row.id);
       } else body.set("davItemId", row.id);
       if (intent !== "recheck") body.set("confirmed", "true");
-      const json = await readJson(
-        await fetch(withUrlBase("/resources/files"), { method: "POST", body }),
-      );
+      let response: Response;
+      try {
+        response = await fetch(withUrlBase("/resources/files"), { method: "POST", body });
+      } catch (error) {
+        throw intent === "arr-search" ? new Error(ARR_SEARCH_UNCONFIRMED_MESSAGE) : error;
+      }
+      if (
+        intent === "arr-search" &&
+        response.status >= 500 &&
+        !response.headers.get("content-type")?.includes("json")
+      )
+        throw new Error(ARR_SEARCH_UNCONFIRMED_MESSAGE);
+      const json = await readJson(response);
       const envelope = z.object({ ok: z.literal(true), result: z.unknown() }).parse(json);
       let message: string;
       if (intent === "arr-search") {
@@ -333,7 +362,7 @@ export function FilesBrowser(props: Props) {
     } finally {
       pendingRef.current.delete(row.key);
       setPending(new Set(pendingRef.current));
-      coalescedRefresh.current();
+      dispatch({ type: "invalidate" });
     }
   }
   useEffect(() => {
@@ -402,7 +431,7 @@ export function FilesBrowser(props: Props) {
         else if (row.parentId && state.rows[row.parentId]) focus(row.parentId);
         break;
       case " ":
-        if (!readonly && row.canDelete) dispatch({ type: "select", key: row.key });
+        if (!readonly && row.canDelete) toggleSelection(row.key, event.shiftKey);
         break;
       default:
         return;
@@ -427,7 +456,7 @@ export function FilesBrowser(props: Props) {
   return (
     <section className={styles.browser}>
       <header className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold">Files</h1>
+        <h1 className="text-xl font-semibold">Explorer</h1>
         <nav aria-label="File scope" className="flex min-w-0 flex-wrap gap-2 text-xs">
           {props.scopePath
             .split("/")
@@ -491,6 +520,15 @@ export function FilesBrowser(props: Props) {
             Remove selected
           </Button>
         )}
+        {!readonly && (
+          <Button
+            size="xsmall"
+            disabled={!state.selected.size}
+            onClick={() => dispatch({ type: "clear-selection" })}
+          >
+            Clear selection
+          </Button>
+        )}
         <span>
           Library:{" "}
           {summary.libraryScanState === "ready"
@@ -513,6 +551,24 @@ export function FilesBrowser(props: Props) {
             {["Name", "Health", "Next scan", "Added age", "Size", "Library", "Actions"].map(
               (label) => (
                 <div role="columnheader" key={label}>
+                  {label === "Name" && selectableKeys.length > 0 && (
+                    <Checkbox
+                      aria-label="Select all visible items"
+                      checked={selectedVisible === selectableKeys.length}
+                      ref={(element) => {
+                        if (element)
+                          element.indeterminate =
+                            selectedVisible > 0 && selectedVisible < selectableKeys.length;
+                      }}
+                      onChange={() =>
+                        dispatch({
+                          type: "set-selection",
+                          keys: selectableKeys,
+                          selected: selectedVisible < selectableKeys.length,
+                        })
+                      }
+                    />
+                  )}
                   {label}
                 </div>
               ),
@@ -571,7 +627,7 @@ export function FilesBrowser(props: Props) {
                     if (row.isDirectory && mode === "tree")
                       dispatch({ type: "toggle", key: row.key });
                   }}
-                  select={() => dispatch({ type: "select", key: row.key })}
+                  select={(shiftKey) => toggleSelection(row.key, shiftKey)}
                   readonly={readonly}
                   pending={pending.has(row.key)}
                   now={state.observedAt}
@@ -763,7 +819,7 @@ function FilesRow(props: {
   onFocus: () => void;
   onKeyDown: (event: KeyboardEvent) => void;
   activate: () => void;
-  select: () => void;
+  select: (shiftKey: boolean) => void;
   readonly: boolean;
   pending: boolean;
   now: number;
@@ -792,7 +848,9 @@ function FilesRow(props: {
           aria-label={`Select ${row.name}`}
           checked={props.selected}
           disabled={props.readonly || !row.canDelete}
-          onChange={props.select}
+          onChange={(event) =>
+            props.select(event.nativeEvent instanceof MouseEvent && event.nativeEvent.shiftKey)
+          }
         />
         {row.isDirectory ? (
           <Button

@@ -6,9 +6,51 @@ import {
   flattenFilesTree,
   topLevelRemovalTargets,
   FilesReadCoordinator,
+  type FilesAction,
 } from "./files-state";
 import { makeFileRow, makeFilesPage } from "~/clients/files-fixtures";
 describe("Files state", () => {
+  it("dropsBrowseResponsesIssuedBeforeAMutation", () => {
+    const file = makeFileRow();
+    const rootJob = {
+      branchKey: "root",
+      parentPath: "/content",
+      offset: 0,
+      generation: 0,
+      requestId: 1,
+      parameters: new URLSearchParams(),
+    };
+    const mutations: FilesAction[] = [{ type: "removed", targets: [file] }, { type: "invalidate" }];
+    for (const mutation of mutations) {
+      let state = initialFilesState("query", makeFilesPage([file]));
+      state = filesReducer(state, { type: "request", job: rootJob });
+      state = filesReducer(state, mutation);
+      const late = filesReducer(state, {
+        type: "success",
+        job: rootJob,
+        page: makeFilesPage([{ ...file, scanState: "scheduled" }]),
+        loadedAt: 1,
+      });
+      expect(late).toBe(state);
+      expect(state.branches["root"]).toMatchObject({ status: "ready", loadedAt: 0 });
+    }
+  });
+  it("selectsRangesOfEligibleRowsAndClears", () => {
+    const rows = ["a", "b", "c"].map((key, index) =>
+      makeFileRow({
+        key,
+        id: `10000000-0000-0000-0000-00000000000${index}`,
+        canDelete: key !== "b",
+      }),
+    );
+    let state = initialFilesState("query", makeFilesPage(rows));
+    state = filesReducer(state, { type: "set-selection", keys: ["a", "b", "c"], selected: true });
+    expect([...state.selected]).toEqual(["a", "c"]);
+    state = filesReducer(state, { type: "set-selection", keys: ["c"], selected: false });
+    expect([...state.selected]).toEqual(["a"]);
+    state = filesReducer(state, { type: "clear-selection" });
+    expect(state.selected.size).toBe(0);
+  });
   it("clearsOrphanFocusWhenASelectedDescendantRemainsCached", () => {
     const parent = makeFileRow({ key: "parent", isDirectory: true, path: "/content/tv" });
     const child = makeFileRow({ key: "child", path: "/content/tv/video.mkv" });
