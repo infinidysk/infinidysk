@@ -105,7 +105,7 @@ public class MultiSegmentStreamIncrementalTests
         Assert.False(copy.IsCompleted, "the copy must wait for the last article's trailer");
 
         gate.SetResult();
-        await Assert.ThrowsAnyAsync<Exception>(() => copy.WaitAsync(TimeSpan.FromSeconds(10)));
+        await AssertTrailerFailureAsync(copy);
         Assert.Equal(2, client.BodyRequestCounts["seg-2"]);
     }
 
@@ -134,7 +134,18 @@ public class MultiSegmentStreamIncrementalTests
         Assert.False(copy.IsCompleted, $"the range must wait for its ending article's trailer: {copy.Exception}");
 
         gate.SetResult();
-        await Assert.ThrowsAnyAsync<Exception>(() => copy.WaitAsync(TimeSpan.FromSeconds(10)));
+        await AssertTrailerFailureAsync(copy);
+    }
+
+    // A timeout is a hang, not a rejection: require the trailer's own failure.
+    internal static async Task AssertTrailerFailureAsync(Task copy)
+    {
+        var completed = await Task.WhenAny(copy, Task.Delay(TimeSpan.FromSeconds(10)));
+        Assert.True(completed == copy, "the read hung after its trailer failed");
+        var failure = await Record.ExceptionAsync(() => copy);
+        for (var e = failure; e is not null; e = e.InnerException)
+            if (e is InvalidDataException) return;
+        Assert.Fail($"expected the trailer failure, got {failure?.ToString() ?? "success"}");
     }
 
     internal static string[] Ids(int count) =>

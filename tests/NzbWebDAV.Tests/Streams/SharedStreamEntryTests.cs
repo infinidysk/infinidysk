@@ -534,9 +534,20 @@ public class SharedStreamEntryTests : IDisposable
     }
 
     [Fact]
+    public async Task AttachedReader_RangeEndingAtLogicalEofWaitsForPendingValidation()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var entry = StartEntry(
+            new GatedValidationStream(new byte[64], gate.Task), 64, ringSize: 128, chunkSize: 128, leadBytes: 128);
+        await using var reader = Attach(entry, 0);
+
+        await AssertRangeEndWaitsThenFailsAsync(new LimitedLengthStream(reader, 64), gate);
+    }
+
+    [Fact]
     public async Task PendingValidation_FailsOnTeardownWithoutConsultingTheTornDownUpstream()
     {
-        var upstream = new TornDownValidationStream(new byte[64], new TaskCompletionSource().Task);
+        var upstream = new GatedValidationStream(new byte[64], new TaskCompletionSource().Task);
         var entry = StartEntry(upstream, 64, ringSize: 32, chunkSize: 8, leadBytes: 16);
         await using var reader = Attach(entry, 0);
         await reader.ReadExactlyAsync(new byte[8]);
@@ -550,8 +561,8 @@ public class SharedStreamEntryTests : IDisposable
         Assert.Equal(0, upstream.CallsAfterDispose);
     }
 
-    // Once torn down there is nothing left to check, so validation trivially succeeds.
-    private sealed class TornDownValidationStream(byte[] payload, Task gate)
+    // Fails after the gate opens; once torn down it trivially succeeds, as cleared state would.
+    private sealed class GatedValidationStream(byte[] payload, Task gate)
         : MemoryStream(payload, writable: false), IDeliveredBytesValidation
     {
         private int _disposed;
@@ -583,7 +594,7 @@ public class SharedStreamEntryTests : IDisposable
         Assert.False(copy.IsCompleted, copy.Exception?.ToString() ?? "the range must wait for its ending article's trailer");
 
         gate.SetResult();
-        Assert.NotNull(await Record.ExceptionAsync(() => copy.WaitAsync(TimeSpan.FromSeconds(10))));
+        await MultiSegmentStreamIncrementalTests.AssertTrailerFailureAsync(copy);
     }
 
     // The second article serves 512 KiB, waits on the gate, then fails its trailer.

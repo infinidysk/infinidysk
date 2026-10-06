@@ -108,6 +108,24 @@ public class AesDecoderStreamTests
         await Assert.ThrowsAsync<InvalidDataException>(() => copy);
     }
 
+    [Fact]
+    public async Task FullRead_EndingBeforeTheCiphertextWaitsForValidation()
+    {
+        var plaintext = Enumerable.Range(0, 1000).Select(index => (byte)index).ToArray();
+        var (ciphertext, parameters) = Encrypt(plaintext);
+        // Size tolerance allows packed bytes past the decoded length.
+        var packed = ciphertext.Concat(new byte[64]).ToArray();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var stream = new AesDecoderStream(new GatedValidationStream(packed, gate.Task), parameters);
+
+        var copy = stream.CopyToAsync(Stream.Null);
+        await Task.WhenAny(copy, Task.Delay(200));
+        Assert.False(copy.IsCompleted, "the logical end must wait for ciphertext validation");
+
+        gate.SetResult();
+        await MultiSegmentStreamIncrementalTests.AssertTrailerFailureAsync(copy);
+    }
+
     private sealed class GatedValidationStream(byte[] content, Task gate) : MemoryStream(content, writable: false),
         IDeliveredBytesValidation
     {

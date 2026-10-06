@@ -372,7 +372,7 @@ public class GetAndHeadHandlerRangeTests
         Assert.False(request.IsCompleted, "the range must wait for its ending article's trailer");
 
         gate.SetResult();
-        await Record.ExceptionAsync(() => request.WaitAsync(TimeSpan.FromSeconds(10)));
+        await MultiSegmentStreamIncrementalTests.AssertTrailerFailureAsync(request);
         Assert.True(body.Length < rangeLength, "the final range bytes must not be written");
         Assert.Equal(2, client.BodyRequestCounts["seg-1"]);
     }
