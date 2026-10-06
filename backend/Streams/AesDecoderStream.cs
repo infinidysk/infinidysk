@@ -5,7 +5,7 @@ using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams
 {
-    internal sealed class AesDecoderStream : FastReadOnlyStream
+    internal sealed class AesDecoderStream : FastReadOnlyStream, IDeliveredBytesValidation
     {
         private readonly Stream _mStream;
         private readonly Aes _aes; // keep Aes alive for transform lifetime
@@ -55,6 +55,10 @@ namespace NzbWebDAV.Streams
             _mWritten = 0;
         }
 
+        // Buffered plaintext came from ciphertext already read, so inner validation covers it.
+        ValueTask IDeliveredBytesValidation.ValidateDeliveredAsync(CancellationToken cancellationToken) =>
+            _mStream.ValidateDeliveredAsync(cancellationToken);
+
         protected override void Dispose(bool disposing)
         {
             try
@@ -95,6 +99,15 @@ namespace NzbWebDAV.Streams
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer,
             CancellationToken ct = default)
+        {
+            var read = await ReadDecodedAsync(buffer, ct).ConfigureAwait(false);
+            // The decoded length can end before the ciphertext, so its last article may still be validating.
+            if (read > 0 && _mWritten == _mLimit)
+                await _mStream.ValidateDeliveredAsync(ct).ConfigureAwait(false);
+            return read;
+        }
+
+        private async ValueTask<int> ReadDecodedAsync(Memory<byte> buffer, CancellationToken ct)
         {
             // Perform pending seek (deferred heavy work)
             if (_pendingSeekPosition != null)

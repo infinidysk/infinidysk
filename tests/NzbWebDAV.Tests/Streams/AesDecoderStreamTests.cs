@@ -90,6 +90,52 @@ public class AesDecoderStreamTests
         Assert.Contains("partial block of 15 bytes", exception.Message);
     }
 
+    [Theory]
+    [InlineData(1024)] // range end is served from buffered plaintext
+    [InlineData(400 * 1024)]
+    public async Task FiniteRange_WaitsForCiphertextValidation(int readSize)
+    {
+        var plaintext = Enumerable.Range(0, 512 * 1024).Select(index => (byte)index).ToArray();
+        var (ciphertext, parameters) = Encrypt(plaintext);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var stream = new AesDecoderStream(new GatedValidationStream(ciphertext, gate.Task), parameters);
+
+        var copy = new LimitedLengthStream(stream, 300 * 1024).CopyToAsync(Stream.Null, readSize);
+        await Task.WhenAny(copy, Task.Delay(200));
+        Assert.False(copy.IsCompleted, "the range must wait for ciphertext validation");
+
+        gate.SetResult();
+        await Assert.ThrowsAsync<InvalidDataException>(() => copy);
+    }
+
+    [Fact]
+    public async Task FullRead_EndingBeforeTheCiphertextWaitsForValidation()
+    {
+        var plaintext = Enumerable.Range(0, 1000).Select(index => (byte)index).ToArray();
+        var (ciphertext, parameters) = Encrypt(plaintext);
+        // Size tolerance allows packed bytes past the decoded length.
+        var packed = ciphertext.Concat(new byte[64]).ToArray();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var stream = new AesDecoderStream(new GatedValidationStream(packed, gate.Task), parameters);
+
+        var copy = stream.CopyToAsync(Stream.Null);
+        await Task.WhenAny(copy, Task.Delay(200));
+        Assert.False(copy.IsCompleted, "the logical end must wait for ciphertext validation");
+
+        gate.SetResult();
+        await MultiSegmentStreamIncrementalTests.AssertTrailerFailureAsync(copy);
+    }
+
+    private sealed class GatedValidationStream(byte[] content, Task gate) : MemoryStream(content, writable: false),
+        IDeliveredBytesValidation
+    {
+        public async ValueTask ValidateDeliveredAsync(CancellationToken cancellationToken)
+        {
+            await gate.WaitAsync(cancellationToken);
+            throw new InvalidDataException("trailer failed");
+        }
+    }
+
     private static (byte[] Ciphertext, AesParams Parameters) Encrypt(byte[] plaintext)
     {
         var key = Enumerable.Range(0, 32).Select(index => (byte)index).ToArray();

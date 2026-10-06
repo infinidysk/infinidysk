@@ -17,7 +17,7 @@ using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
 
-public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssueProgress
+public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssueProgress, IDeliveredBytesValidation
 {
     private const int BodyPipelineBatchSize = 4;
     // Pipelining hides per-command RTT; at multi-MB articles transfer time dominates and
@@ -65,6 +65,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Stream? _stream;
     private int _consecutiveZeroFills;
+    private bool _incrementalReadinessPending;
     private int _deliveredSegments;
     private bool _disposed;
     private readonly Task _downloadTask;
@@ -95,7 +96,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         DrainedSegment drained,
         long estimate,
         string segmentId) =>
-        SegmentDownloadResult.Success(drained.Stream, estimate, drained.ShortPadded, segmentId);
+        SegmentDownloadResult.Success(drained.Stream, estimate, drained.ShortPadded, segmentId, drained.Incremental);
 
     /// <summary>
     /// Optional per-instance test hook invoked with the segment-boundary readiness sample,
@@ -120,6 +121,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
     // The producer exits only after leasing every segment it will enqueue.
     bool ISegmentIssueProgress.AllSegmentsIssued => _downloadTask.IsCompleted;
+
+    // Earlier segments were read to their end, which waits for their validation.
+    ValueTask IDeliveredBytesValidation.ValidateDeliveredAsync(CancellationToken cancellationToken) =>
+        _stream.ValidateDeliveredAsync(cancellationToken);
 
     public static Stream Create(
         Memory<string> segmentIds,
@@ -1428,10 +1433,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         int segmentIndex,
         ArticleByteLease initialLease,
         bool isFirstSegment,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool incremental = true,
+        SegmentRetryResume? resume = null
     )
     {
         var estimate = GetPlannedSegmentBytes(segmentIndex);
+        // Known-corrupt articles zero-fill after one fetch; never stream their prefix.
+        incremental &= GetCorruptionRetryLimit(segmentId) > 0;
         var lease = initialLease;
         try
         {
@@ -1444,11 +1453,21 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 return result;
             }
 
-            var persistent = new PersistentCorruptionTracker();
-            for (var attempt = 0; ; attempt++)
+            var persistent = resume?.Persistent ?? new PersistentCorruptionTracker();
+            var priorFailure = resume?.Failure;
+            for (var attempt = resume?.Attempt ?? 0; ; attempt++)
             {
                 try
                 {
+                    // An incremental body that failed mid-drain resumes at its own attempt so
+                    // retry limits and corruption evidence carry across the handoff.
+                    if (priorFailure is not null)
+                    {
+                        var failure = priorFailure;
+                        priorFailure = null;
+                        ExceptionDispatchInfo.Capture(failure).Throw();
+                    }
+
                     UsenetDecodedBodyResponse bodyResponse;
                     using (FetchAttributionContext.Begin(_fileName))
                     {
@@ -1461,7 +1480,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
                     var drained = await ValidateAndDrainSegmentAsync(
 #pragma warning restore CA2000
-                            bodyResponse.Stream!, segmentIndex, cancellationToken, lease, estimate)
+                            bodyResponse.Stream!, segmentIndex, cancellationToken, lease, estimate,
+                            incremental
+                                ? new IncrementalSegmentHandler(
+                                    this, segmentId, segmentIndex, isFirstSegment, attempt, persistent)
+                                : null)
                         .ConfigureAwait(false);
                     lease = null;
                     return ToDownloadResult(drained, estimate, segmentId);
@@ -1577,6 +1600,62 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             lease?.Dispose();
         }
     }
+
+    /// <summary>
+    /// Routes an incremental body through this stream's retry, gap-fill, and readiness
+    /// accounting. Recovery uses the buffered path, so the usual retry, fallback, and
+    /// zero-fill handling decides the replacement.
+    /// </summary>
+    private sealed class IncrementalSegmentHandler(
+        MultiSegmentStream owner,
+        string segmentId,
+        int segmentIndex,
+        bool isFirstSegment,
+        int attempt,
+        PersistentCorruptionTracker persistent) : IIncrementalSegmentHandler
+    {
+        private SegmentDownloadResult? _replacement;
+
+        public async Task<SegmentReplacement> RecoverAsync(Exception failure, CancellationToken cancellationToken)
+        {
+            // The original lease still covers the segment, so the replacement is not leased again.
+            var result = await owner.DownloadSegment(
+                    segmentId, segmentIndex, ArticleByteLease.Empty, isFirstSegment, cancellationToken,
+                    incremental: false, new SegmentRetryResume(failure, attempt, persistent))
+                .ConfigureAwait(false);
+            _replacement = result;
+            return new SegmentReplacement(result.Stream, result.IsZeroFill || result.IsShortPad, result.Failure);
+        }
+
+        public Exception CreatePostDeliveryFailure(Exception failure, int deliveredBytes) =>
+            owner.CreatePostDeliveryFailure(segmentId, segmentIndex, failure, deliveredBytes);
+
+        public void OnConsumed(bool degraded)
+        {
+            owner.ResolveIncrementalReadiness(ready: true);
+            owner.AccountSegment(_replacement is { IsZeroFill: true } gapFill
+                ? gapFill
+                : SegmentDownloadResult.Success(Stream.Null, isShortPad: degraded, segmentId: segmentId));
+        }
+
+        public void OnReaderWaited(TimeSpan elapsed)
+        {
+            owner.ResolveIncrementalReadiness(ready: false);
+            StreamTrace.TryStall(
+                MultiProviderNntpClient.CurrentStreamTraceRange, StreamStallKind.ConsumerWait, elapsed);
+        }
+    }
+
+    private sealed record SegmentRetryResume(
+        Exception Failure, int Attempt, PersistentCorruptionTracker Persistent);
+
+    private TransientSegmentExhaustionException CreatePostDeliveryFailure(
+        string segmentId, int segmentIndex, Exception failure, int deliveredBytes) =>
+        new(
+            $"Segment {segmentIndex + 1} of {_segmentIds.Length} ({segmentId}) of \"{_fileName}\" " +
+            $"failed after {deliveredBytes} bytes were delivered, and its replacement differs from them. " +
+            "The client should retry this range request.",
+            failure);
 
     private async Task<SegmentDownloadResult> DownloadKnownMissingSegment(
         string segmentId,
@@ -1716,7 +1795,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
             var drained = await ValidateAndDrainSegmentAsync(
 #pragma warning restore CA2000
-                    response.Stream!, segmentIndex, cancellationToken, lease, estimate)
+                    response.Stream!, segmentIndex, cancellationToken, lease, estimate,
+                    GetCorruptionRetryLimit(segmentId) > 0
+                        ? new IncrementalSegmentHandler(
+                            this, segmentId, segmentIndex, isFirstSegment, 0, new PersistentCorruptionTracker())
+                        : null)
                 .ConfigureAwait(false);
             lease = null; // owned by BudgetedStream / buffer
             return ToDownloadResult(drained, estimate, segmentId);
@@ -2216,7 +2299,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         int segmentIndex,
         CancellationToken cancellationToken,
         ArticleByteLease? existingLease = null,
-        long? leasedEstimate = null)
+        long? leasedEstimate = null,
+        IIncrementalSegmentHandler? incremental = null)
     {
         try
         {
@@ -2245,7 +2329,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         }
 
         return await DrainSegmentAsync(
-                source, segmentIndex, cancellationToken, existingLease, leasedEstimate)
+                source, segmentIndex, cancellationToken, existingLease, leasedEstimate, incremental)
             .ConfigureAwait(false);
     }
 
@@ -2272,7 +2356,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         int segmentIndex,
         CancellationToken cancellationToken,
         ArticleByteLease? existingLease = null,
-        long? leasedEstimate = null)
+        long? leasedEstimate = null,
+        IIncrementalSegmentHandler? incremental = null)
     {
         ArticleByteLease? lease = existingLease;
         var ownsLease = existingLease is null;
@@ -2295,6 +2380,45 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
             var capacity = await ResolveDrainCapacityHintAsync(
                 source, segmentIndex, estimate, cancellationToken).ConfigureAwait(false);
+            // A clipped first segment is realigned against its positioning range after the
+            // drain, so it keeps the buffered path.
+            if (incremental is not null
+                && !(segmentIndex == 0 && _expectedFirstSegmentRangeWasClippedAtFileEnd))
+            {
+                var incrementalLease = lease;
+                var incrementalTrace = MultiProviderNntpClient.CurrentStreamTraceRange;
+                var incrementalStarted = Stopwatch.GetTimestamp();
+                var incrementalSegmentId = _segmentIds.Span[segmentIndex];
+                var incrementalStream = new IncrementalSegmentStream(
+                    source,
+                    capacity,
+                    hasExactSize ? exactSize : -1,
+                    incremental,
+                    (drainedBytes, length) =>
+                    {
+                        StreamTrace.TryStall(
+                            incrementalTrace,
+                            StreamStallKind.BodyDrain,
+                            Stopwatch.GetElapsedTime(incrementalStarted));
+                        if (!hasExactSize)
+                            _segmentSizes.RecordObservedSize(segmentIndex, drainedBytes);
+                        else if (drainedBytes < exactSize)
+                            SegmentHoleReporter.ReportShortDecode(
+                                _fileName, incrementalSegmentId, segmentIndex, exactSize - drainedBytes);
+                        if (length != estimate)
+                            incrementalLease.Adjust(length - estimate);
+                    },
+                    cancellationToken);
+                sourceDisposeAttempted = true;
+                ownsLease = false;
+                return new DrainedSegment(
+                    ReferenceEquals(lease, ArticleByteLease.Empty)
+                        ? incrementalStream
+                        : new BudgetedStream(incrementalStream, lease),
+                    false,
+                    Incremental: true);
+            }
+
             buffer = new PooledBufferStream(capacity);
             var traceRange = MultiProviderNntpClient.CurrentStreamTraceRange;
             var drainStarted = Stopwatch.GetTimestamp();
@@ -2487,7 +2611,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 Interlocked.Add(ref _consumedPrefetchBytes, result.PlannedBytes);
                 ReleaseInFlightPrefetchBytes(result.PlannedBytes);
                 // Ignore the first delivered segment (startup warm-up).
-                if (_deliveredSegments++ > 0)
+                var observeReadiness = _deliveredSegments++ > 0;
+                // An incremental segment is only ready if its body bytes also arrive before
+                // they are read; body-read waits or the segment's end resolve it.
+                _incrementalReadinessPending = observeReadiness && readyWhenNeeded && result.IsIncremental;
+                if (observeReadiness && !_incrementalReadinessPending)
                     ObserveBatchReadiness(readyWhenNeeded);
                 _stream = AcceptSegment(result);
             }
@@ -2517,7 +2645,31 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             StreamTrace.TryPrefetchWidth(sessionId, change.Value.Previous, change.Value.Current);
     }
 
+    private void ResolveIncrementalReadiness(bool ready)
+    {
+        if (!_incrementalReadinessPending) return;
+        _incrementalReadinessPending = false;
+        ObserveBatchReadiness(ready);
+    }
+
     private Stream AcceptSegment(SegmentDownloadResult result)
+    {
+        // Incremental segments are accounted when the reader reaches their outcome.
+        if (result.IsIncremental) return result.Stream;
+        try
+        {
+            AccountSegment(result);
+        }
+        catch
+        {
+            result.Stream.Dispose();
+            throw;
+        }
+
+        return result.Stream;
+    }
+
+    private void AccountSegment(SegmentDownloadResult result)
     {
         if (!result.IsZeroFill)
         {
@@ -2526,9 +2678,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 _consecutiveZeroFills++;
                 if (_consecutiveZeroFills < PlaybackHoleTracker.ConsecutiveFillLimit(_fileName)
                     && !PlaybackHoleTracker.ShouldFailFast(_fileName, out _))
-                    return result.Stream;
+                    return;
 
-                result.Stream.Dispose();
                 _cts.Cancel();
                 if (PlaybackHoleTracker.ShouldFailFast(_fileName, out var failFast)
                     && failFast is not null)
@@ -2541,7 +2692,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
             _consecutiveZeroFills = 0;
             PlaybackHoleTracker.RecordGoodSegment(_fileName);
-            return result.Stream;
+            return;
         }
 
         _consecutiveZeroFills++;
@@ -2556,14 +2707,12 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
         if (_consecutiveZeroFills < PlaybackHoleTracker.ConsecutiveFillLimit(_fileName)
             && !PlaybackHoleTracker.ShouldFailFast(_fileName, out _))
-            return result.Stream;
+            return;
 
-        result.Stream.Dispose();
         _cts.Cancel();
         if (PlaybackHoleTracker.ShouldFailFast(_fileName, out var retained) && retained is not null)
             ExceptionDispatchInfo.Capture(retained).Throw();
         ExceptionDispatchInfo.Capture(result.Failure!).Throw();
-        throw new InvalidOperationException("Unreachable after rethrowing a gap-fill failure.");
     }
 
     private void ThrowIfDisposed()
@@ -2661,7 +2810,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         }
     }
 
-    private readonly record struct DrainedSegment(Stream Stream, bool ShortPadded);
+    private readonly record struct DrainedSegment(Stream Stream, bool ShortPadded, bool Incremental = false);
 
     private sealed record SegmentDownloadResult(
         Stream Stream,
@@ -2670,7 +2819,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         string? SegmentId = null,
         long Bytes = 0,
         Exception? Failure = null,
-        bool IsShortPad = false)
+        bool IsShortPad = false,
+        bool IsIncremental = false)
     {
         public bool IsZeroFill => Failure is not null;
 
@@ -2678,8 +2828,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             Stream stream,
             long plannedBytes = 0,
             bool isShortPad = false,
-            string? segmentId = null) =>
-            new(stream, plannedBytes, SegmentId: segmentId, IsShortPad: isShortPad);
+            string? segmentId = null,
+            bool isIncremental = false) =>
+            new(stream, plannedBytes, SegmentId: segmentId, IsShortPad: isShortPad, IsIncremental: isIncremental);
 
         public static SegmentDownloadResult ZeroFill(
             Stream stream,

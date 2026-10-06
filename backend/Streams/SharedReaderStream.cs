@@ -10,7 +10,7 @@ namespace NzbWebDAV.Streams;
 /// Per-reader seekable view of a <see cref="SharedStreamEntry"/> ring. Out-of-window
 /// seeks and tail-pinning evictions detach to a private fallback at the exact cursor.
 /// </summary>
-internal sealed class SharedReaderStream : FastReadOnlyStream
+internal sealed class SharedReaderStream : FastReadOnlyStream, IDeliveredBytesValidation
 {
     private readonly SharedStreamEntry _entry;
     private readonly SharedStreamRingBuffer _ring;
@@ -21,6 +21,7 @@ internal sealed class SharedReaderStream : FastReadOnlyStream
     private long _cursor;
     private Stream? _fallback;
     private bool _detached;
+    private long _ringDeliveredThrough = -1;
     private Exception? _deliveredFailure;
     private int _disposed;
 
@@ -80,7 +81,11 @@ internal sealed class SharedReaderStream : FastReadOnlyStream
                 case RingReadKind.Copied:
                     _cursor += result.Count;
                     if (result.Count > 0)
+                    {
+                        _ringDeliveredThrough = _cursor;
                         _entry.NotifyCursorAdvanced(_readerId, _cursor);
+                    }
+
                     return result.Count;
 
                 case RingReadKind.NeedWait:
@@ -193,8 +198,23 @@ internal sealed class SharedReaderStream : FastReadOnlyStream
         _entry.Detach(_readerId);
     }
 
+    async ValueTask IDeliveredBytesValidation.ValidateDeliveredAsync(CancellationToken cancellationToken)
+    {
+        await ValidateRingDeliveredAsync(cancellationToken).ConfigureAwait(false);
+        await _fallback.ValidateDeliveredAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask ValidateRingDeliveredAsync(CancellationToken cancellationToken)
+    {
+        if (_ringDeliveredThrough < 0) return;
+        await _entry.ValidateThroughAsync(_ringDeliveredThrough, cancellationToken).ConfigureAwait(false);
+        _ringDeliveredThrough = -1;
+    }
+
     private async Task DetachToPrivateAsync(CancellationToken cancellationToken)
     {
+        // The private fallback refetches from the cursor, so validate the shared fetch's bytes first.
+        await ValidateRingDeliveredAsync(cancellationToken).ConfigureAwait(false);
         DetachQuiet();
         _fallback ??= await _fallbackFactory(_cursor, cancellationToken).ConfigureAwait(false);
     }

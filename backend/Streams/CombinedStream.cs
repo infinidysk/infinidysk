@@ -9,7 +9,7 @@ namespace NzbWebDAV.Streams;
 /// <see cref="PaddedLengthStream"/> part has this many bytes or fewer left, so the next
 /// part's download pipeline is running before the boundary.
 /// </param>
-public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadBytes = 0) : FastReadOnlyNonSeekableStream
+public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadBytes = 0) : FastReadOnlyNonSeekableStream, IDeliveredBytesValidation
 {
     private const int PrimeBufferSize = 64 * 1024;
 
@@ -156,6 +156,9 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
     {
         _currentStream?.Flush();
     }
+
+    ValueTask IDeliveredBytesValidation.ValidateDeliveredAsync(CancellationToken cancellationToken) =>
+        _currentStream.ValidateDeliveredAsync(cancellationToken);
 
     public override Task FlushAsync(CancellationToken cancellationToken)
     {
