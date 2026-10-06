@@ -459,6 +459,92 @@ public class SharedStreamEntryTests : IDisposable
         entry.AbandonOpening();
     }
 
+    private const int TrailerSegmentSize = 768 * 1024;
+
+    [Fact]
+    public async Task AttachedReader_FiniteRangeWaitsForTheInFlightArticleTrailer()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var entry = StartEntry(
+            GatedTrailerUpstream(gate.Task), 3L * TrailerSegmentSize, ringSize: 4L * TrailerSegmentSize,
+            chunkSize: 64 * 1024, leadBytes: 2 * TrailerSegmentSize);
+        await using var reader = Attach(entry, 0);
+
+        await AssertRangeEndWaitsThenFailsAsync(
+            new LimitedLengthStream(reader, TrailerSegmentSize + 400 * 1024), gate);
+    }
+
+    [Fact]
+    public async Task DetachedReader_FiniteRangeWaitsForTheFallbackArticleTrailer()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        const long fileSize = 3L * TrailerSegmentSize;
+        await using var entry = StartEntry(
+            new MemoryStream(new byte[fileSize]), fileSize, ringSize: 64 * 1024,
+            chunkSize: 16 * 1024, leadBytes: 16 * 1024);
+        await using var reader = Attach(entry, 0, (offset, _) =>
+        {
+            var fallback = GatedTrailerUpstream(gate.Task);
+            fallback.Seek(offset, SeekOrigin.Begin);
+            return Task.FromResult<Stream>(fallback);
+        });
+        reader.Seek(512 * 1024, SeekOrigin.Begin);
+        Assert.True(reader.IsDetached);
+
+        await AssertRangeEndWaitsThenFailsAsync(new LimitedLengthStream(reader, 656 * 1024), gate);
+    }
+
+    [Fact]
+    public async Task DetachedReader_StillValidatesBytesItReadFromTheRing()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        const long fileSize = 3L * TrailerSegmentSize;
+        await using var entry = StartEntry(
+            GatedTrailerUpstream(gate.Task), fileSize, ringSize: 256 * 1024,
+            chunkSize: 16 * 1024, leadBytes: 128 * 1024);
+        await using var reader = Attach(entry, 0, (offset, _) =>
+        {
+            var fallback = new MemoryStream(new byte[fileSize]);
+            fallback.Seek(offset, SeekOrigin.Begin);
+            return Task.FromResult<Stream>(fallback);
+        });
+        await reader.ReadExactlyAsync(new byte[TrailerSegmentSize + 100 * 1024]);
+        reader.Seek(fileSize - 100 * 1024, SeekOrigin.Begin);
+        Assert.True(reader.IsDetached);
+
+        await AssertRangeEndWaitsThenFailsAsync(new LimitedLengthStream(reader, 50 * 1024), gate);
+    }
+
+    private static async Task AssertRangeEndWaitsThenFailsAsync(Stream range, TaskCompletionSource gate)
+    {
+        var copy = range.CopyToAsync(Stream.Null, 64 * 1024);
+        await Task.WhenAny(copy, Task.Delay(500));
+        Assert.False(copy.IsCompleted, copy.Exception?.ToString() ?? "the range must wait for its ending article's trailer");
+
+        gate.SetResult();
+        Assert.NotNull(await Record.ExceptionAsync(() => copy.WaitAsync(TimeSpan.FromSeconds(10))));
+    }
+
+    // The second article serves 512 KiB, waits on the gate, then fails its trailer.
+    private static NzbFileStream GatedTrailerUpstream(Task gate)
+    {
+        var segments = MultiSegmentStreamIncrementalTests.CreateSegments(3, TrailerSegmentSize);
+        var ranges = MultiSegmentStreamIncrementalTests.Ranges(3, TrailerSegmentSize);
+        var corruptServed = 0;
+        var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            segmentRanges: ranges,
+            decodedStreamFactory: (id, bytes) =>
+                id == "seg-1" && Interlocked.Exchange(ref corruptServed, 1) == 0
+                    ? new FailingBodyStream(512 * 1024, () => MultiSegmentStreamIncrementalTests.Corrupt(id), gate)
+                    : new MemoryStream(bytes, writable: false));
+        return new NzbFileStream(
+            MultiSegmentStreamIncrementalTests.Ids(3), 3L * TrailerSegmentSize, client, articleBufferSize: 2,
+            segmentByteRanges: ranges.Values.ToArray(), usePipelinedBodyRequests: false,
+            fileName: $"shared-trailer-{Guid.NewGuid():N}.bin");
+    }
+
     private static SharedReaderStream Attach(
         SharedStreamEntry entry,
         long start,
