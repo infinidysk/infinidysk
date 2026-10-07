@@ -232,6 +232,31 @@ public class ConnectionPoolReplacementTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task BodyNotRetrieved_AfterCallerCancellation_DoesNotPaceReplacement(bool batched)
+    {
+        var clock = new SignalingTimeProvider();
+        var called = new ConcurrentQueue<CallbackBodyClient>();
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 1,
+            _ => ValueTask.FromResult<INntpClient>(new CallbackBodyClient(called)),
+            replacementHandshakeSpacing: TimeSpan.FromSeconds(1),
+            timeProvider: clock);
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, new ProviderCircuitBreaker("cancel-no-pacing"), "cancel-no-pacing");
+        using var cts = new CancellationTokenSource();
+
+        var callback = await StartBodyAsync(client, pool, called, batched, cts.Token);
+        await cts.CancelAsync();
+        await callback(ArticleBodyResult.NotRetrieved);
+
+        // No clock advance: a paced replacement would never complete.
+        using (await pool.GetConnectionLockAsync(SemaphorePriority.High).WaitAsync(TimeSpan.FromSeconds(1))) { }
+        Assert.Equal(1, pool.GetChurn().ConnectionsDestroyed);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task BodyDiscard_DuringFailurePacing_KeepsWindowWithoutExtendingIt(bool batched)
     {
         var clock = new SignalingTimeProvider();
@@ -265,14 +290,15 @@ public class ConnectionPoolReplacementTests
 
     private static async Task<Func<ArticleBodyResult, Task>> StartBodyAsync(
         MultiConnectionNntpClient client, ConnectionPool<INntpClient> pool,
-        ConcurrentQueue<CallbackBodyClient> called, bool batched)
+        ConcurrentQueue<CallbackBodyClient> called, bool batched,
+        CancellationToken cancellationToken = default)
     {
         var segment = new SegmentId("segment@example.com");
         UsenetDecodedBodyBatch? batch = null;
         if (batched)
-            batch = await client.DecodedBodiesAsync([segment], null, CancellationToken.None);
+            batch = await client.DecodedBodiesAsync([segment], null, cancellationToken);
         else
-            await client.DecodedBodyAsync(segment, null, CancellationToken.None);
+            await client.DecodedBodyAsync(segment, null, cancellationToken);
 
         Assert.True(called.TryDequeue(out var inner));
         return async result =>
