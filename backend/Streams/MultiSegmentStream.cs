@@ -2314,8 +2314,12 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                     $"the expected positioning range {_expectedFirstSegmentRange}.");
             }
 
-            await SegmentResponseValidator.ThrowOnRecordedSizeMismatchAsync(
-                source, _segmentSizes, segmentIndex, _fileName, cancellationToken).ConfigureAwait(false);
+            // A clipped final segment's size is its in-file length, so its full yEnc part cannot match.
+            if (!(segmentIndex == 0 && _expectedFirstSegmentRangeWasClippedAtFileEnd))
+            {
+                await SegmentResponseValidator.ThrowOnRecordedSizeMismatchAsync(
+                    source, _segmentSizes, segmentIndex, _fileName, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch
         {

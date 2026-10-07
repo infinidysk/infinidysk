@@ -203,6 +203,8 @@ public class NzbFileStream(
             _pendingSeekKind = null;
         }
 
+        // A final article may extend past the logical file end; never emit those bytes.
+        if (buffer.Length > fileSize - _position) buffer = buffer[..(int)(fileSize - _position)];
         var read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
         _position += read;
         // Later reads stop at the file size without reaching the inner stream's end.

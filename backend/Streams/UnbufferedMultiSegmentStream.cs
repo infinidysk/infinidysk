@@ -1033,9 +1033,13 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
                         $"the expected positioning range {_expectedFirstSegmentRange}.");
                 }
 
-                await SegmentResponseValidator.ThrowOnRecordedSizeMismatchAsync(
-                        response.Stream!, _segmentSizes, _openSegmentIndex, _fileName, cancellationToken)
-                    .ConfigureAwait(false);
+                // A clipped final segment's size is its in-file length, so its full yEnc part cannot match.
+                if (!(_openSegmentIndex == 0 && _expectedFirstSegmentRangeWasClippedAtFileEnd))
+                {
+                    await SegmentResponseValidator.ThrowOnRecordedSizeMismatchAsync(
+                            response.Stream!, _segmentSizes, _openSegmentIndex, _fileName, cancellationToken)
+                        .ConfigureAwait(false);
+                }
                 return response;
             }
             catch

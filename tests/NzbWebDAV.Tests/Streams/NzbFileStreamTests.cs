@@ -341,6 +341,51 @@ public class NzbFileStreamTests
         }
     }
 
+    [Theory]
+    [InlineData(0, null)]
+    [InlineData(4, null)]
+    [InlineData(0, 3L)]
+    [InlineData(4, 3L)]
+    public async Task Seek_IntoFinalSegmentExtendingPastFileSize_ReadsOnlyTailBytes(
+        int articleBufferSize, long? readBudget)
+    {
+        var previousBudget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
+        NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(readBudget);
+        try
+        {
+            await AssertTailReadAsync(articleBufferSize);
+        }
+        finally
+        {
+            NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(previousBudget);
+        }
+    }
+
+    private static async Task AssertTailReadAsync(int articleBufferSize)
+    {
+        var segmentIds = new[] { "one", "two", "three" };
+        var segments = segmentIds.ToDictionary(
+            id => id,
+            id => Enumerable.Range(id == "three" ? 20 : id == "two" ? 10 : 0, 10).Select(value => (byte)value).ToArray());
+        var ranges = new[] { new LongRange(0, 10), new LongRange(10, 20), new LongRange(20, 30) };
+        var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            segmentRanges: segmentIds.Zip(ranges).ToDictionary(pair => pair.First, pair => pair.Second));
+        await using var stream = new NzbFileStream(
+            segmentIds,
+            fileSize: 24,
+            client,
+            articleBufferSize,
+            segmentByteRanges: null);
+        stream.Seek(21, SeekOrigin.Begin);
+
+        using var output = new MemoryStream();
+        await stream.CopyToAsync(output);
+
+        Assert.Equal(new byte[] { 21, 22, 23 }, output.ToArray());
+    }
+
     [Fact]
     public async Task Seek_WhenHeaderRangeDoesNotCoverLogicalFile_StillThrows()
     {
