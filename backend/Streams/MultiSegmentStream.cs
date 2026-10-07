@@ -2746,7 +2746,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
         // Time the reader's own wait: read-ahead segments are issued long before a paced reader needs them.
         var waitStarted = Stopwatch.GetTimestamp();
-        var hedgeDelay = GetHedgeDelay();
+        // Pipelined responses arrive in request order, so an article queued behind a stalled
+        // original that a duplicate already replaced is stalled too: race it without waiting again.
+        var hedgeDelay = IsSuperseded(headIndex - 1) ? TimeSpan.Zero : GetHedgeDelay();
         while (!head.IsCompleted)
         {
             var issuedAt = Volatile.Read(ref _segmentIssuedAt[headIndex % _segmentIssuedAt.Length]);
