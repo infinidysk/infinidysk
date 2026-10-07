@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
@@ -207,6 +208,18 @@ public class MultiProviderNntpClient(
 
     private static readonly AsyncLocal<StreamTraceRangeContext?> StreamTraceRangeScope = new();
     internal static StreamTraceRangeContext? CurrentStreamTraceRange => StreamTraceRangeScope.Value;
+
+    private static readonly AsyncLocal<bool> HedgeFetchScope = new();
+    // Provider each article's first in-flight BODY waits on, so a hedge can try another first.
+    private readonly ConcurrentDictionary<SegmentId, MultiConnectionNntpClient> _awaitingBody = new();
+
+    /// <summary>Marks fetches in this flow as duplicates racing a stalled original.</summary>
+    public static IDisposable BeginHedgeFetchScope()
+    {
+        var previous = HedgeFetchScope.Value;
+        HedgeFetchScope.Value = true;
+        return new ScopeReleaser(() => HedgeFetchScope.Value = previous);
+    }
 
     /// <summary>
     /// Tag the current async flow with a read-session id so SegmentFetch rows
@@ -680,7 +693,16 @@ public class MultiProviderNntpClient(
             string? inconclusiveAdmissionProvider = null;
             try
             {
-                response = await primaryResponse.ConfigureAwait(false);
+                var awaiting = _awaitingBody.TryAdd(segmentId, primaryProvider);
+                try
+                {
+                    response = await primaryResponse.ConfigureAwait(false);
+                }
+                finally
+                {
+                    if (awaiting) _awaitingBody.TryRemove(KeyValuePair.Create(segmentId, primaryProvider));
+                }
+
                 await RejectMismatchedYencFileAsync(
                     segmentId, primaryProvider.MetricsKey, response, cancellationToken).ConfigureAwait(false);
             }
@@ -1172,6 +1194,14 @@ public class MultiProviderNntpClient(
         var missingGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var orderedProviders = SelectOrderedProviders(
             operation, out var attemptReserved, out var skippedOpenCircuit);
+        var hedging = HedgeFetchScope.Value;
+        if (hedging && orderedProviders.Count > 1 &&
+            _awaitingBody.TryGetValue(segmentId, out var stalled) &&
+            orderedProviders.Remove(stalled))
+        {
+            orderedProviders.Add(stalled);
+        }
+
         using var releasePending = new ScopeReleaser(
             () => ReleasePendingSelection(ref attemptReserved, operation));
         var walk = new ProviderWalkSummary(orderedProviders.Count);
@@ -1221,8 +1251,18 @@ public class MultiProviderNntpClient(
                 cancellationToken.ThrowIfCancellationRequested();
                 MovePendingSelection(ref attemptReserved, provider, operation);
                 walk.Attempts++;
-                var result = await task(provider, deferredCallback.Invoke, admissionFailoverContext, cancellationToken)
-                    .ConfigureAwait(false);
+                var awaiting = !hedging && _awaitingBody.TryAdd(segmentId, provider);
+                T result;
+                try
+                {
+                    result = await task(provider, deferredCallback.Invoke, admissionFailoverContext, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                finally
+                {
+                    if (awaiting) _awaitingBody.TryRemove(KeyValuePair.Create(segmentId, provider));
+                }
+
                 await RejectMismatchedYencFileAsync(
                     segmentId, provider.MetricsKey, result, cancellationToken).ConfigureAwait(false);
                 stopwatch.Stop();

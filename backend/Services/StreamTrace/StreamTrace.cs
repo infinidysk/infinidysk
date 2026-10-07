@@ -22,6 +22,12 @@ public static class StreamTrace
     public static void TryRetry(Guid sessionId, string segmentId, int attempt, string? message = null)
         => _buffer?.Retry(sessionId, segmentId, attempt, message);
 
+    internal static void TryHedgeIssued(Guid sessionId, string segmentId, int segmentIndex, int waitMs, int hedgeDelayMs)
+        => _buffer?.HedgeIssued(sessionId, segmentId, segmentIndex, waitMs, hedgeDelayMs);
+
+    internal static void TryHedgeResolved(Guid sessionId, string segmentId, int segmentIndex, string outcome, int decisionMs)
+        => _buffer?.HedgeResolved(sessionId, segmentId, segmentIndex, outcome, decisionMs);
+
     public static void TryPrefetchWidth(Guid sessionId, int previousBatchSize, int batchSize)
         => _buffer?.PrefetchWidth(sessionId, previousBatchSize, batchSize);
 

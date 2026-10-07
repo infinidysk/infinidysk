@@ -26,6 +26,8 @@ public sealed record StreamTraceEvent
     [JsonPropertyName("durationMs")] public int? DurationMs { get; init; }
     [JsonPropertyName("retries")] public int? Retries { get; init; }
     [JsonPropertyName("segmentId")] public string? SegmentId { get; init; }
+    [JsonPropertyName("segmentIndex")] public int? SegmentIndex { get; init; }
+    [JsonPropertyName("hedgeDelayMs")] public int? HedgeDelayMs { get; init; }
 
     [JsonPropertyName("bytes")] public long? Bytes { get; init; }
     [JsonPropertyName("endReason")] public string? EndReason { get; init; }

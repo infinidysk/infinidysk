@@ -424,6 +424,39 @@ public sealed class StreamTraceBuffer
         });
     }
 
+    /// <param name="waitMs">How long the reader had waited on the segment when the duplicate was issued.</param>
+    public void HedgeIssued(Guid sessionId, string segmentId, int segmentIndex, int waitMs, int hedgeDelayMs)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = sessionId,
+            Kind = StreamTraceKind.HedgeIssued.ToString(),
+            SegmentId = StreamTraceEvent.TruncateSegmentId(segmentId),
+            SegmentIndex = segmentIndex,
+            DurationMs = waitMs,
+            HedgeDelayMs = hedgeDelayMs,
+        });
+    }
+
+    /// <param name="outcome">Which fetch the reader received, from <see cref="HedgeOutcome"/>.</param>
+    /// <param name="decisionMs">Time from issuing the duplicate to choosing a result.</param>
+    public void HedgeResolved(Guid sessionId, string segmentId, int segmentIndex, string outcome, int decisionMs)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = sessionId,
+            Kind = StreamTraceKind.HedgeResolved.ToString(),
+            SegmentId = StreamTraceEvent.TruncateSegmentId(segmentId),
+            SegmentIndex = segmentIndex,
+            Status = outcome,
+            DurationMs = decisionMs,
+        });
+    }
+
     public void PrefetchWidth(Guid sessionId, int previousBatchSize, int batchSize)
     {
         Record(new StreamTraceEvent
