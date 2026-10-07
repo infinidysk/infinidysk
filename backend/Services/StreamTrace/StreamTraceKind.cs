@@ -13,4 +13,6 @@ public enum StreamTraceKind
     StreamStartup = 8,
     BatchPlan = 9,
     RequestEnd = 10,
+    HedgeIssued = 11,
+    HedgeResolved = 12,
 }

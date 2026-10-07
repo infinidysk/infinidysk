@@ -2760,6 +2760,15 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
         if (head.IsCompleted) return await head.ConfigureAwait(false);
 
+        var traceSession = MultiProviderNntpClient.CurrentReadSessionId;
+        var waitMs = (int)Stopwatch.GetElapsedTime(waitStarted).TotalMilliseconds;
+        if (traceSession is { } issuedSession)
+        {
+            StreamTrace.TryHedgeIssued(
+                issuedSession, _segmentIds.Span[headIndex], headIndex, waitMs, (int)hedgeDelay.TotalMilliseconds);
+        }
+
+        var raceStarted = Stopwatch.GetTimestamp();
 #pragma warning disable CA2000 // disposed by the continuation once the hedge settles
         var hedgeCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
 #pragma warning restore CA2000
@@ -2772,7 +2781,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             TaskScheduler.Default);
         Log.Debug(
             "Segment {SegmentIndex} of {FileName} unanswered after a {ElapsedMs} ms read wait; racing a duplicate fetch.",
-            headIndex, _fileName, (long)Stopwatch.GetElapsedTime(waitStarted).TotalMilliseconds);
+            headIndex, _fileName, waitMs);
 
         var first = await Task.WhenAny(head, hedge).ConfigureAwait(false);
         var originalExhausted = first == head && !_cts.IsCancellationRequested &&
@@ -2789,6 +2798,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             // cancelled; its body is drained or discarded on arrival without a provider failure.
             _orphanedDisposals.Enqueue(DisposeStreamAsync(head));
             Log.Debug("Duplicate fetch won segment {SegmentIndex} of {FileName}.", headIndex, _fileName);
+            TraceHedgeResolved(
+                traceSession, headIndex,
+                originalExhausted ? HedgeOutcome.DuplicateAfterOriginalExhausted : HedgeOutcome.Duplicate,
+                raceStarted);
             return await hedge.ConfigureAwait(false);
         }
 
@@ -2806,7 +2819,27 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         }
 
         _orphanedDisposals.Enqueue(DisposeStreamAsync(hedge));
+        TraceHedgeResolved(
+            traceSession, headIndex,
+            _cts.IsCancellationRequested ? HedgeOutcome.Cancelled
+            : first == hedge
+                ? hedge.IsCompletedSuccessfully
+                    ? HedgeOutcome.OriginalAfterDuplicateShort
+                    : HedgeOutcome.OriginalAfterDuplicateFailed
+            : head.IsCompletedSuccessfully ? HedgeOutcome.Original
+            : HedgeOutcome.OriginalFailed,
+            raceStarted);
         return await head.ConfigureAwait(false);
+    }
+
+    private void TraceHedgeResolved(Guid? traceSession, int segmentIndex, string outcome, long raceStarted)
+    {
+        if (traceSession is { } sessionId)
+        {
+            StreamTrace.TryHedgeResolved(
+                sessionId, _segmentIds.Span[segmentIndex], segmentIndex, outcome,
+                (int)Stopwatch.GetElapsedTime(raceStarted).TotalMilliseconds);
+        }
     }
 
     private async Task<SegmentDownloadResult> HedgeSegmentAsync(int segmentIndex, CancellationToken cancellationToken)
