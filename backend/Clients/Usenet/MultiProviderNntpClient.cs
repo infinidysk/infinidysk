@@ -49,10 +49,11 @@ public class MultiProviderNntpClient(
     /// <summary>
     /// Max concurrent batch-failover BODY starts. Admission stays strictly ordered;
     /// this only bounds how many fallback walks may be in flight at once so sequential
-    /// consumers cannot deadlock on an unbounded fan-out (see AGENTS.md).
+    /// consumers cannot deadlock on an unbounded fan-out (see AGENTS.md). The gate is
+    /// per batch: a client-wide gate let read-ahead batches hold every permit until their
+    /// bodies drained, timing out the batch the reader was actually waiting on.
     /// </summary>
     private const int MaxConcurrentFallbackStarts = 4;
-    private readonly SemaphoreSlim _batchFallbackStartGate = new(MaxConcurrentFallbackStarts);
     public int InFlightConnections => providers.Sum(p => p.InFlightConnections);
 
     internal IReadOnlyList<MultiConnectionNntpClient> Providers => providers;
@@ -542,7 +543,11 @@ public class MultiProviderNntpClient(
                     // Admission (start-order) is separate from transfer completion so segment
                     // N+1 can begin its fallback walk after N has admitted/started, without
                     // waiting for N's body stream to finish. Concurrent starts are bounded by
-                    // _batchFallbackStartGate until each transfer's body callback fires.
+                    // fallbackStartGate until each transfer's body callback fires. Late callbacks
+                    // may release after this scope, so the (handle-less) semaphore is not disposed.
+#pragma warning disable CA2000 // released by transfer callbacks that outlive this scope; no wait handle to free
+                    var fallbackStartGate = new SemaphoreSlim(MaxConcurrentFallbackStarts);
+#pragma warning restore CA2000
                     Task previousFallbackAdmission = Task.CompletedTask;
                     for (var index = 0; index < rawResponses.Length; index++)
                     {
@@ -557,6 +562,7 @@ public class MultiProviderNntpClient(
                             unaskedProviders,
                             previousFallbackAdmission,
                             fallbackAdmission,
+                            fallbackStartGate,
                             coordinator,
                             cancellationToken);
 #pragma warning restore CA2025
@@ -640,6 +646,7 @@ public class MultiProviderNntpClient(
         MultiConnectionNntpClient[]? unaskedProviders,
         Task previousFallbackAdmission,
         TaskCompletionSource fallbackAdmission,
+        SemaphoreSlim fallbackStartGate,
         BatchCallbackCoordinator coordinator,
         CancellationToken cancellationToken)
     {
@@ -782,7 +789,7 @@ public class MultiProviderNntpClient(
             await previousFallbackAdmission.WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
             var fallbackAdmissionBudget = GetBatchFallbackAdmissionBudget(cancellationToken);
-            if (!await _batchFallbackStartGate
+            if (!await fallbackStartGate
                     .WaitAsync(fallbackAdmissionBudget, cancellationToken)
                     .ConfigureAwait(false))
             {
@@ -882,7 +889,7 @@ public class MultiProviderNntpClient(
                                 }
                                 finally
                                 {
-                                    _batchFallbackStartGate.Release();
+                                    fallbackStartGate.Release();
                                 }
                             });
                         }
@@ -966,7 +973,7 @@ public class MultiProviderNntpClient(
             finally
             {
                 if (gateHeld && !gateOwnedByTransfer)
-                    _batchFallbackStartGate.Release();
+                    fallbackStartGate.Release();
             }
 
             walk.UnaskedProviders = CountUnaskedProviders(
@@ -2370,7 +2377,6 @@ public class MultiProviderNntpClient(
         connectionPoolStats?.Deactivate();
         foreach (var provider in providers)
             provider.Dispose();
-        _batchFallbackStartGate.Dispose();
         GC.SuppressFinalize(this);
     }
 

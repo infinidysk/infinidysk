@@ -3250,6 +3250,55 @@ public class MultiProviderNntpClientTests
         }
     }
 
+    [Fact]
+    public async Task BatchFailover_InFlightReadAheadTransfers_DoNotStarveAnotherBatch()
+    {
+        var primary = new ScriptedNntpClient
+        {
+            BatchResponseCode = 430,
+            SingularResponseCode = 430,
+        };
+        var backup = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+            DeferSingularCompletion = true,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(primary, host: "primary.example", maxConnections: 8),
+            CreateProvider(backup, host: "backup.example", maxConnections: 8),
+        ]);
+
+        var readAhead = await client.DecodedBodiesAsync(
+            ["ahead-0", "ahead-1", "ahead-2", "ahead-3"], onConnectionReadyAgain: null, CancellationToken.None);
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            while (backup.SingularRequests < 4)
+                await Task.Delay(10, timeout.Token);
+
+            // Read-ahead bodies are still streaming; the next batch must not wait on their permits.
+            var demand = await client.DecodedBodiesAsync(
+                ["demand-0"], onConnectionReadyAgain: null, CancellationToken.None);
+            while (backup.SingularRequests < 5)
+                await Task.Delay(10, timeout.Token);
+
+            var response = await demand.Responses[0].WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, response.ResponseType);
+            await response.Stream!.DisposeAsync();
+        }
+        finally
+        {
+            backup.CompletePendingSingularRequests();
+            foreach (var task in readAhead.Responses)
+            {
+                var response = await task.WaitAsync(TimeSpan.FromSeconds(3));
+                if (response.Stream != null) await response.Stream.DisposeAsync();
+            }
+        }
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(3)]
