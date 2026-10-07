@@ -43,6 +43,9 @@ public sealed class PaddedLengthStream(
     // When positive, overrides the combined stream's read-ahead window for this part.
     internal long ReadAheadBytes { get; init; }
 
+    // Bound by the combined stream when this part is opened ahead of its reader.
+    internal SpeculativeReadAhead? SpeculativeReadAhead { get; init; }
+
     private readonly string _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
     private long _position;
     private bool _underlyingEnded;
