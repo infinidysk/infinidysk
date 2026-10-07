@@ -203,6 +203,8 @@ public class NzbFileStream(
             _pendingSeekKind = null;
         }
 
+        // A final article may extend past the logical file end; never emit those bytes.
+        if (buffer.Length > fileSize - _position) buffer = buffer[..(int)(fileSize - _position)];
         var read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
         _position += read;
         // Later reads stop at the file size without reaching the inner stream's end.
@@ -324,8 +326,7 @@ public class NzbFileStream(
             }
             catch (Exception e) when (!ct.IsCancellationRequested)
             {
-                e.LogWarningKnownOrStack(
-                    "Seek probe transient failure on segment index {Index}. Using estimated range.", guess);
+                LogSeekProbeFailure(e, "Seek probe failed on segment index {Index}. Using estimated range.", guess);
             }
 
             estimated.Add(guess);
@@ -393,6 +394,19 @@ public class NzbFileStream(
         }
     }
 
+    // Invalid yEnc geometry is an article fact, not a code fault: report it without a stack.
+    private static void LogSeekProbeFailure(Exception e, string messageTemplate, int index)
+    {
+        if (e is not InvalidDataException)
+        {
+            e.LogWarningKnownOrStack(messageTemplate, index);
+            return;
+        }
+
+        Log.Warning(messageTemplate + " Reason: {Reason}", index, e.Message);
+        Log.Debug(e, "Seek probe invalid geometry stack");
+    }
+
     private async Task<(LongRange Range, bool WasClippedAtFileEnd)> ProbeAuthoritativeRangeAsync(
         string segmentId,
         int index,
@@ -455,9 +469,8 @@ public class NzbFileStream(
         catch (Exception e) when (IsFallbackEligibleProbeFailure(e, ct))
         {
             transientProbeFailure = e;
-            e.LogWarningKnownOrStack(
-                "Authoritative seek probe transient failure on primary segment index {Index}; trying fallbacks.",
-                index);
+            LogSeekProbeFailure(
+                e, "Authoritative seek probe failed on primary segment index {Index}; trying fallbacks.", index);
         }
 
         if (segmentFallbacks is { } fallbacks && index < fallbacks.Length && fallbacks[index] is { } fallbackIds)
@@ -476,9 +489,8 @@ public class NzbFileStream(
                 catch (Exception e) when (IsFallbackEligibleProbeFailure(e, ct))
                 {
                     transientProbeFailure = e;
-                    e.LogWarningKnownOrStack(
-                        "Authoritative seek probe transient failure on fallback segment index {Index}; trying next fallback.",
-                        index);
+                    LogSeekProbeFailure(
+                        e, "Authoritative seek probe failed on fallback segment index {Index}; trying next fallback.", index);
                 }
             }
         }
