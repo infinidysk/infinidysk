@@ -49,6 +49,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     private readonly long? _readBudget;
     private readonly long _prefetchByteCeiling;
     private readonly long _initialPrefetchByteCeiling;
+    private readonly SpeculativeReadAhead? _speculativeReadAhead;
     // Planned bytes of segments handed to the reader; grows the ceiling like TCP slow start.
     private long _consumedPrefetchBytes;
     private readonly int _taskWindowSize;
@@ -175,9 +176,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     /// The exact sizes may be inferred and a caller can re-derive them, so a fallback that
     /// contradicts them is evidence to recover geometry rather than a bad donor.
     /// </param>
-    /// <param name="startAtFullPrefetch">
-    /// The stream continues a sequential read (the next volume of a multipart file), so
-    /// it skips the first-byte ramp and prefetches its whole window from the start.
+    /// <param name="speculativeReadAhead">
+    /// Set for the next volume of a multipart file: until the reader reaches it, the stream
+    /// prefetches only what the shared read-ahead window has left instead of ramping.
     /// </param>
     internal static Stream CreateWithInitialBatchPlan
     (
@@ -202,7 +203,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         LongRange? expectedFirstSegmentRange = null,
         bool expectedFirstSegmentRangeWasClippedAtFileEnd = false,
         bool recordedSizesInferred = false,
-        bool startAtFullPrefetch = false
+        SpeculativeReadAhead? speculativeReadAhead = null
     )
     {
         return articleBufferSize == 0
@@ -234,7 +235,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 expectedFirstSegmentRange,
                 expectedFirstSegmentRangeWasClippedAtFileEnd,
                 recordedSizesInferred,
-                startAtFullPrefetch,
+                speculativeReadAhead,
                 cancellationToken);
     }
 
@@ -309,7 +310,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         internal LongRange? ExpectedFirstSegmentRange { get; init; }
         internal bool ExpectedFirstSegmentRangeWasClippedAtFileEnd { get; init; }
         internal bool RecordedSizesInferred { get; init; }
-        internal bool StartAtFullPrefetch { get; init; }
+        internal SpeculativeReadAhead? SpeculativeReadAhead { get; init; }
     }
 
     /// <summary>
@@ -338,7 +339,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         IReadOnlySet<int>? knownMissingSegmentIndices = null,
         InitialBodyBatchPlan? initialBatchPlan = null,
         bool recordedSizesInferred = false,
-        bool startAtFullPrefetch = false)
+        SpeculativeReadAhead? speculativeReadAhead = null)
     {
         return CreateFirstSegmentHybridCore(
             new FirstSegmentHybridOptions(
@@ -362,7 +363,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             {
                 InitialBatchPlan = initialBatchPlan,
                 RecordedSizesInferred = recordedSizesInferred,
-                StartAtFullPrefetch = startAtFullPrefetch,
+                SpeculativeReadAhead = speculativeReadAhead,
             },
             firstSegmentPrefixBytes: 0);
     }
@@ -678,7 +679,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             remainingKnownMissing,
             options.InitialBatchPlan,
             recordedSizesInferred: options.RecordedSizesInferred,
-            startAtFullPrefetch: options.StartAtFullPrefetch);
+            speculativeReadAhead: options.SpeculativeReadAhead);
 
         return new FirstSegmentHybridPlan(
             head,
@@ -786,7 +787,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         LongRange? expectedFirstSegmentRange,
         bool expectedFirstSegmentRangeWasClippedAtFileEnd,
         bool recordedSizesInferred,
-        bool startAtFullPrefetch,
+        SpeculativeReadAhead? speculativeReadAhead,
         CancellationToken cancellationToken
     )
     {
@@ -871,9 +872,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 ? long.MaxValue
                 : initialPlannedBytes + plannedBytes;
         }
-        _initialPrefetchByteCeiling = startAtFullPrefetch
-            ? _prefetchByteCeiling
-            : Math.Min(_prefetchByteCeiling, initialPlannedBytes);
+        _initialPrefetchByteCeiling = Math.Min(_prefetchByteCeiling, initialPlannedBytes);
+        _speculativeReadAhead = speculativeReadAhead;
         if (_stripeCount > 1)
         {
             Log.Debug(
@@ -1415,18 +1415,24 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         while (Interlocked.Read(ref _inFlightPrefetchBytes) >= CurrentPrefetchByteCeiling)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var wait = Volatile.Read(ref _prefetchSpace);
+            var wait = Volatile.Read(ref _prefetchSpace).Task;
+            // A speculative allowance also grows when the reader advances in an earlier part.
+            var readerAdvanced = _speculativeReadAhead?.WhenReaderAdvances();
             if (Interlocked.Read(ref _inFlightPrefetchBytes) < CurrentPrefetchByteCeiling)
                 return;
-            await wait.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await (readerAdvanced is null ? wait : Task.WhenAny(wait, readerAdvanced))
+                .WaitAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
     // Like AltMount, only the opening burst is capped: once the reader takes its first segment
     // the full window opens, so low-bitrate playback is not starved by a consumption-paced ramp.
+    // A volume opened ahead of the reader skips the ramp but stays within the shared window.
     internal long CurrentPrefetchByteCeiling => Interlocked.Read(ref _consumedPrefetchBytes) > 0
         ? _prefetchByteCeiling
-        : _initialPrefetchByteCeiling;
+        : _speculativeReadAhead is { } speculative
+            ? Math.Min(_prefetchByteCeiling, speculative.AvailableBytes)
+            : _initialPrefetchByteCeiling;
 
     private void ReleaseInFlightPrefetchBytes(long plannedBytes)
     {

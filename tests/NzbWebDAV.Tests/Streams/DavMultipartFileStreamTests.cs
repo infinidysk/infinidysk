@@ -255,20 +255,41 @@ public class DavMultipartFileStreamTests
     }
 
     [Fact]
-    public async Task ReadAsync_ReadAheadWindowSpansMoreThanOneUpcomingVolume()
+    public async Task ReadAsync_SuccessorVolumesPrefetchPastTheirRampWithinTheSharedWindow()
     {
-        // Four 8-byte volumes against a 32-byte read-ahead window: while the reader is
-        // still in the first volume, the window covers the third one too.
-        var thirdBodyRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var names = new[] { "one", "two", "three", "four" };
+        // Four volumes of one unbuffered head plus nine buffered 8-byte segments, against a
+        // 16-segment (128-byte) window: the successor's ninth remainder segment lies beyond
+        // the 8-segment first-byte ramp, so it starts early only without that ramp.
+        const int segmentSize = 8;
+        const int segmentsPerVolume = 10;
+        const int volumeSize = segmentSize * segmentsPerVolume;
+        const int window = 16 * segmentSize;
+        var lastOfSecondRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstOfThirdRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        long readerPosition = 0;
+        long maxRequestedAhead = 0;
+        var segments = new Dictionary<string, byte[]>();
+        var segmentEnds = new Dictionary<string, long>();
+        for (var volume = 0; volume < 4; volume++)
+        for (var segment = 0; segment < segmentsPerVolume; segment++)
+        {
+            var start = volume * volumeSize + segment * segmentSize;
+            segments[$"v{volume}-{segment}"] =
+                Enumerable.Range(start, segmentSize).Select(x => (byte)x).ToArray();
+            segmentEnds[$"v{volume}-{segment}"] = start + segmentSize;
+        }
+
         using var client = new FakeNntpClient(
-            names.Select((name, part) => (name, part)).ToDictionary(
-                x => x.name,
-                x => Enumerable.Range(x.part * 8, 8).Select(b => (byte)b).ToArray()),
+            segments,
             useCachedYencStreams: true,
             decodedStreamFactory: (id, bytes) =>
             {
-                if (id == "three") thirdBodyRequested.TrySetResult();
+                var ahead = segmentEnds[id] - Volatile.Read(ref readerPosition);
+                for (var max = Interlocked.Read(ref maxRequestedAhead); ahead > max;
+                     max = Interlocked.Read(ref maxRequestedAhead))
+                    Interlocked.CompareExchange(ref maxRequestedAhead, ahead, max);
+                if (id == $"v1-{segmentsPerVolume - 1}") lastOfSecondRequested.TrySetResult();
+                if (id == "v2-0") firstOfThirdRequested.TrySetResult();
                 return new MemoryStream(bytes, writable: false);
             });
         var multipart = new DavMultipartFile
@@ -276,33 +297,116 @@ public class DavMultipartFileStreamTests
             Id = Guid.NewGuid(),
             Metadata = new DavMultipartFile.Meta
             {
-                FileParts = names.Select(name => new DavMultipartFile.FilePart
+                FileParts = Enumerable.Range(0, 4).Select(volume => new DavMultipartFile.FilePart
                 {
-                    SegmentIds = [name],
-                    SegmentIdByteRange = new LongRange(0, 8),
-                    FilePartByteRange = new LongRange(0, 8),
+                    SegmentIds = Enumerable.Range(0, segmentsPerVolume)
+                        .Select(segment => $"v{volume}-{segment}").ToArray(),
+                    SegmentIdByteRange = new LongRange(0, volumeSize),
+                    FilePartByteRange = new LongRange(0, volumeSize),
                 }).ToArray(),
             },
         };
         await using var stream = new DavMultipartFileStream(
+            multipart, client, articleBufferSize: 16, resolver: null,
+            usePipelinedBodyRequests: false, fileName: "movie.mkv");
+
+        var both = Task.WhenAll(lastOfSecondRequested.Task, firstOfThirdRequested.Task);
+        using var output = new MemoryStream();
+        var buffer = new byte[1];
+        while (stream.Position < volumeSize - 1 && !both.IsCompleted)
+        {
+            Assert.Equal(1, await stream.ReadAsync(buffer));
+            output.Write(buffer);
+            Volatile.Write(ref readerPosition, stream.Position);
+            await Task.WhenAny(both, Task.Delay(100));
+        }
+
+        Assert.True(lastOfSecondRequested.Task.IsCompleted, "Second volume stayed on its first-byte ramp.");
+        Assert.True(firstOfThirdRequested.Task.IsCompleted, "Read-ahead stopped at the next volume.");
+        Assert.True(stream.Position < volumeSize);
+        while (await stream.ReadAsync(buffer) == 1)
+        {
+            output.Write(buffer);
+            Volatile.Write(ref readerPosition, stream.Position);
+        }
+
+        Assert.Equal(
+            Enumerable.Range(0, 4 * volumeSize).Select(x => (byte)x).ToArray(),
+            output.ToArray());
+        // Speculative volumes share the window: nothing runs past it by more than the
+        // unbuffered head and one overshooting segment (plus the byte the reader just took).
+        Assert.True(
+            Interlocked.Read(ref maxRequestedAhead) <= window + 2 * segmentSize + 1,
+            $"Requested {Interlocked.Read(ref maxRequestedAhead)} bytes ahead of the reader.");
+    }
+
+    [Fact]
+    public async Task ReadAsync_FullyPrimedVolumesKeepReadAheadRunning()
+    {
+        // Single-segment volumes fit the prime buffer, so a large read takes each one from
+        // primed bytes; read-ahead must still reach volumes past the one being primed.
+        const int volumes = 8;
+        const int volumeSize = 8;
+        var requested = Enumerable.Range(0, volumes)
+            .Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+            .ToArray();
+        using var client = new FakeNntpClient(
+            Enumerable.Range(0, volumes).ToDictionary(
+                volume => $"v{volume}",
+                volume => Enumerable.Range(volume * volumeSize, volumeSize).Select(b => (byte)b).ToArray()),
+            useCachedYencStreams: true,
+            decodedStreamFactory: (id, bytes) =>
+            {
+                requested[int.Parse(id[1..])].TrySetResult();
+                return new MemoryStream(bytes, writable: false);
+            });
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta
+            {
+                FileParts = Enumerable.Range(0, volumes).Select(volume => new DavMultipartFile.FilePart
+                {
+                    SegmentIds = [$"v{volume}"],
+                    SegmentIdByteRange = new LongRange(0, volumeSize),
+                    FilePartByteRange = new LongRange(0, volumeSize),
+                }).ToArray(),
+            },
+        };
+        // A four-segment window covers four upcoming volumes.
+        await using var stream = new DavMultipartFileStream(
             multipart, client, articleBufferSize: 4, resolver: null,
             usePipelinedBodyRequests: false, fileName: "movie.mkv");
 
-        var buffer = new byte[1];
-        while (stream.Position < 7 && !thirdBodyRequested.Task.IsCompleted)
+        using var output = new MemoryStream();
+        var buffer = new byte[1024];
+        Assert.Equal(volumeSize, await stream.ReadAsync(buffer));
+        output.Write(buffer, 0, volumeSize);
+        // With no further reads, each finished preparation opens the next volume until the
+        // 32 unread bytes in front of the sixth reach the window.
+        await Task.WhenAny(Task.WhenAll(requested[1..6].Select(t => t.Task)), Task.Delay(2000));
+        Assert.All(requested[1..6], t => Assert.True(t.Task.IsCompleted));
+        await Task.Delay(100);
+        Assert.False(requested[6].Task.IsCompleted, "Read-ahead ran past the window.");
+
+        for (var volume = 1; volume < volumes; volume++)
         {
-            Assert.Equal(1, await stream.ReadAsync(buffer));
-            await Task.WhenAny(thirdBodyRequested.Task, Task.Delay(500));
+            // Every volume past the first two is opened ahead of the reader, not at its boundary.
+            if (volume >= 2)
+            {
+                await Task.WhenAny(requested[volume].Task, Task.Delay(2000));
+                Assert.True(requested[volume].Task.IsCompleted, $"Volume {volume} opened at its boundary.");
+            }
+
+            var read = await stream.ReadAsync(buffer);
+            Assert.Equal(volumeSize, read);
+            output.Write(buffer, 0, read);
         }
 
-        Assert.True(thirdBodyRequested.Task.IsCompleted);
-        Assert.True(stream.Position < 8);
-        using var rest = new MemoryStream();
-        await stream.CopyToAsync(rest);
+        Assert.Equal(0, await stream.ReadAsync(buffer));
         Assert.Equal(
-            Enumerable.Range((int)(32 - rest.Length), (int)rest.Length).Select(x => (byte)x).ToArray(),
-            rest.ToArray());
-        Assert.Equal(32, stream.Position);
+            Enumerable.Range(0, volumes * volumeSize).Select(x => (byte)x).ToArray(),
+            output.ToArray());
     }
 
     [Theory]

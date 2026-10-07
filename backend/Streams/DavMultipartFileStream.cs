@@ -412,8 +412,9 @@ public class DavMultipartFileStream : FastReadOnlyStream, IDeliveredBytesValidat
             readBudgetOverride: readBudgetOverride,
             verificationProof: part.VerificationProof);
         stream.RecordedSizesInferred = _resolver is not null;
-        // A successor volume is opened ahead of the reader, so it needs no first-byte ramp.
-        stream.StartAtFullPrefetch = continuation;
+        // A successor volume skips the first-byte ramp but shares the combined read-ahead window.
+        var speculativeReadAhead = continuation ? new SpeculativeReadAhead() : null;
+        stream.SpeculativeReadAhead = speculativeReadAhead;
         stream.Seek(part.FilePartByteRange.StartInclusive + extraOffset, SeekOrigin.Begin);
         var expectedLength = part.FilePartByteRange.Count - extraOffset;
         var responseLength = readBudgetOverride is { } cap
@@ -438,6 +439,7 @@ public class DavMultipartFileStream : FastReadOnlyStream, IDeliveredBytesValidat
             })
         {
             ReadAheadBytes = GetReadAheadBytes(part),
+            SpeculativeReadAhead = speculativeReadAhead,
         };
     }
 
