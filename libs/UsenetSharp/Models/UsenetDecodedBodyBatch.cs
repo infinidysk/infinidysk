@@ -39,4 +39,11 @@ public sealed record UsenetDecodedBodyBatch
     /// </para>
     /// </remarks>
     public Task Completion { get; init; } = Task.CompletedTask;
+
+    /// <summary>
+    /// Gets a task that completes once the batch's remote requests hold a connection or have
+    /// failed to get one. It never faults. Wrappers that return before remote admission (for
+    /// example to hand out local hits early) must expose it; otherwise it is already complete.
+    /// </summary>
+    public Task Admitted { get; init; } = Task.CompletedTask;
 }

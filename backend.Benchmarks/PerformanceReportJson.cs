@@ -74,8 +74,11 @@ internal static class PerformanceReportJson
         long clientAllocatedBytes,
         int gen0Collections,
         int gen1Collections,
-        int gen2Collections) =>
-        new(StringComparer.Ordinal)
+        int gen2Collections,
+        DeliverySmoothness? delivery = null,
+        long peakLeasedBytes = 0)
+    {
+        var timing = new Dictionary<string, double>(StringComparer.Ordinal)
         {
             ["wallSeconds"] = Round(wallSeconds),
             ["clientCpuSeconds"] = Round(clientCpuSeconds),
@@ -87,7 +90,19 @@ internal static class PerformanceReportJson
             ["gen0Collections"] = Round(gen0Collections),
             ["gen1Collections"] = Round(gen1Collections),
             ["gen2Collections"] = Round(gen2Collections),
+            ["peakLeasedBytes"] = Round(peakLeasedBytes),
         };
+        if (delivery is null)
+            return timing;
+
+        // Field names drive the baseline comparator: "throughput" is floored, *Ms is enveloped.
+        timing["timeTo8MbMs"] = Round(delivery.TimeTo8MbMs);
+        timing["timeTo64MbMs"] = Round(delivery.TimeTo64MbMs);
+        timing["longestReadGapMs"] = Round(delivery.LongestReadGapMs);
+        timing["p05WindowThroughputMbps"] = Round(delivery.P05WindowThroughputMbps);
+        timing["p50WindowThroughputMbps"] = Round(delivery.P50WindowThroughputMbps);
+        return timing;
+    }
 
     public static double Round(double value) =>
         Math.Round(value, 3, MidpointRounding.AwayFromZero);

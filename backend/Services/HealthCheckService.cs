@@ -13,7 +13,6 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
-using NzbWebDAV.Middlewares;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Queue.PostProcessors;
 using NzbWebDAV.Services.Diagnostics;
@@ -45,6 +44,10 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     private static readonly TimeSpan MissingPayloadInitialRecheck = TimeSpan.FromDays(1);
     private static readonly TimeSpan MissingPayloadConfirmedRecheck = TimeSpan.FromDays(7);
     private static readonly TimeSpan HealthCheckProgressTimeout = TimeSpan.FromMinutes(5);
+    // Aborts only stalled attempts: STAT progress and PAR2 repair reads/phase changes reset it.
+    internal static readonly TimeSpan HealthCheckInactivityLimit = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan HealthCheckStallDeferral = TimeSpan.FromDays(1);
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _repairRetryNotBefore = new();
 
     // Repeated remove-and-blocklist repairs for the same library path in a short window indicate
     // a replacement loop (Arr keeps re-grabbing a release repair keeps rejecting, issue #732).
@@ -194,9 +197,50 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     internal Func<Guid, Task>? BeforeHealthyFinalizationOverride { get; set; }
     internal IReadOnlyCollection<Guid> InProgressHealthCheckIds => _inProgress.Keys.ToArray();
 
-    public IReadOnlyDictionary<Guid, int> GetActiveHealthCheckProgress() => _inProgress
-        .Where(entry => entry.Value.ProcessingTask?.IsCompleted != true)
-        .ToDictionary(entry => entry.Key, entry => entry.Value.Progress);
+    public sealed record ActiveHealthCheckProgress(int Progress, string Phase, DateTimeOffset PhaseStartedAt);
+
+    public IReadOnlyDictionary<Guid, ActiveHealthCheckProgress> GetActiveHealthCheckProgress()
+    {
+        var now = _timeProvider.GetUtcNow();
+        return _inProgress
+            .Where(entry => entry.Value.ProcessingTask?.IsCompleted != true)
+            .ToDictionary(entry => entry.Key, entry =>
+            {
+                var snapshot = entry.Value.GetDiagnosticSnapshot(now);
+                return new ActiveHealthCheckProgress(entry.Value.Progress, snapshot.Phase, snapshot.PhaseStartedAtUtc);
+            });
+    }
+
+    public enum FileRecheckOutcome { Queued, AlreadyQueued, AlreadyRunning, NotFound, Unsupported, Disabled }
+
+    public async Task<FileRecheckOutcome> QueueFileRecheckAsync(Guid davItemId, CancellationToken cancellationToken)
+    {
+        await _workerAdmissionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!_configManager.IsRepairJobEnabled()) return FileRecheckOutcome.Disabled;
+            await using var context = CreateContext();
+            var item = await context.Items.AsNoTracking().SingleOrDefaultAsync(file => file.Id == davItemId, cancellationToken).ConfigureAwait(false);
+            if (item is null || !item.Path.StartsWith("/content/", StringComparison.Ordinal)) return FileRecheckOutcome.NotFound;
+            if (item.Type != DavItem.ItemType.UsenetFile || !FilenameUtil.IsHealthCheckCandidate(item.Name)) return FileRecheckOutcome.Unsupported;
+            if (_inProgress.ContainsKey(davItemId)) return FileRecheckOutcome.AlreadyRunning;
+            if (item.HealthRepairPending || item.NextHealthCheck == null || item.NextHealthCheck == DateTimeOffset.UnixEpoch || item.NextHealthCheck == ForcedRecheckSentinel)
+                return FileRecheckOutcome.AlreadyQueued;
+            var updated = await context.Items.Where(file => file.Id == davItemId && file.Type == DavItem.ItemType.UsenetFile)
+                .Where(file => !file.HealthRepairPending)
+                .Where(file => file.NextHealthCheck != null)
+                .Where(file => file.NextHealthCheck != DateTimeOffset.UnixEpoch)
+                .Where(file => file.NextHealthCheck != ForcedRecheckSentinel)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(file => file.NextHealthCheck, ForcedRecheckSentinel), cancellationToken)
+                .ConfigureAwait(false);
+            if (updated == 0)
+                return await context.Items.AnyAsync(file => file.Id == davItemId, cancellationToken).ConfigureAwait(false)
+                    ? FileRecheckOutcome.AlreadyQueued : FileRecheckOutcome.NotFound;
+            SignalWorkerStateChanged();
+            return FileRecheckOutcome.Queued;
+        }
+        finally { _workerAdmissionGate.Release(); }
+    }
 
     public HealthCheckDiagnosticsSnapshot CaptureHealthCheckDiagnostics()
     {
@@ -489,6 +533,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             .WithCancellation(ct)
             .ConfigureAwait(false))
         {
+            if (_repairRetryNotBefore.TryGetValue(item.Id, out var notBefore))
+            {
+                if (notBefore > currentDateTime) continue;
+                _repairRetryNotBefore.TryRemove(new KeyValuePair<Guid, DateTimeOffset>(item.Id, notBefore));
+            }
             var isRepair = item.NextHealthCheck == DateTimeOffset.UnixEpoch
                 || item.HealthRepairPending;
             if ((allowRepairs && isRepair)
@@ -1188,6 +1237,50 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         CancellationToken ct
     )
     {
+        using var stalled = new CancellationTokenSource(HealthCheckInactivityLimit, _timeProvider);
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct, stalled.Token);
+        HealthCheckActivity.Current = () =>
+        {
+            try { stalled.CancelAfter(HealthCheckInactivityLimit); }
+            catch (ObjectDisposedException)
+            {
+                // Late activity from work that outlived this attempt.
+            }
+        };
+        try
+        {
+            await PerformHealthCheckAttempt(davItem, dbClient, concurrency, attempt.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stalled.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            CompleteHealthProgress(davItem.Id);
+            var now = _timeProvider.GetUtcNow();
+            var next = now + HealthCheckStallDeferral;
+            // ponytail: repair deferrals are in-memory, so a restart retries timed-out repairs immediately.
+            if (davItem.NextHealthCheck == DateTimeOffset.UnixEpoch || davItem.HealthRepairPending)
+                _repairRetryNotBefore[davItem.Id] = next;
+            // Keep the urgent sentinel (including one set by streaming during this attempt) so the retry stays urgent.
+            await dbClient.Ctx.Items
+                .Where(item => item.Id == davItem.Id)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(item => item.LastHealthCheck, now)
+                    .SetProperty(item => item.NextHealthCheck, item =>
+                        item.NextHealthCheck == DateTimeOffset.UnixEpoch ? DateTimeOffset.UnixEpoch : (DateTimeOffset?)next), ct)
+                .ConfigureAwait(false);
+            Log.Warning(
+                "Health check for {Path} made no progress for {Limit}. Deferred next check to {NextCheck}.",
+                davItem.Path, HealthCheckInactivityLimit, next);
+        }
+    }
+
+    private async Task PerformHealthCheckAttempt
+    (
+        DavItem davItem,
+        DavDatabaseClient dbClient,
+        int concurrency,
+        CancellationToken ct
+    )
+    {
         _inProgress.TryGetValue(davItem.Id, out var diagnosticWorker);
         diagnosticWorker?.SetDiagnosticPhase("Preparing", _timeProvider.GetUtcNow());
         var providerGeneration = _configManager.GetUsenetProviderSnapshot().Generation;
@@ -1306,8 +1399,10 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             diagnosticWorker?.SetDiagnosticPhase("Checking", _timeProvider.GetUtcNow());
             var debounce = DebounceUtil.CreateDebounce(TimeSpan.FromMilliseconds(200));
             _inProgress.TryGetValue(davItem.Id, out var progressWorker);
+            var reportActivity = HealthCheckActivity.Current;
             progressHook.ProgressChanged += (_, progress) =>
             {
+                reportActivity?.Invoke();
                 try { statCts?.CancelAfter(HealthCheckProgressTimeout); }
                 catch (ObjectDisposedException)
                 {
@@ -1391,6 +1486,29 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 return;
             }
 
+            // STAT cannot see CRC damage; without a damage budget a still-corrupt recorded article fails the file.
+            var clearRecordedCorrupt = false;
+            if (!canClassify
+                && depth != HealthCheckDepth.Quick
+                && nzbFile?.CorruptSegmentIndices is { Length: > 0 } unbudgetedCorrupt
+                && !PlaybackDamageBudget.Applies(davItem.Name, nzbFile, _configManager))
+            {
+                var stillCorrupt = await FilterRecordedCorruptIndicesAsync(nzbFile, unbudgetedCorrupt, ct)
+                    .ConfigureAwait(false);
+                if (stillCorrupt.Count > 0)
+                {
+                    diagnosticWorker?.SetDiagnosticPhase("Repairing", _timeProvider.GetUtcNow());
+                    await HandleConfirmedHolesAsync(
+                            davItem, dbClient, nzbFile, segments, segmentRanges,
+                            [], stillCorrupt, repairsAdmitted, providerGeneration,
+                            observedFailureRevision, ct, allowDegraded: false)
+                        .ConfigureAwait(false);
+                    return;
+                }
+
+                clearRecordedCorrupt = true;
+            }
+
             // update the database.
             // the next check is scheduled so the interval doubles with the item's age since release.
             // clamp to a minimum interval: a null release-date (zero-segment item) or a future-dated
@@ -1427,6 +1545,15 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 && (nzbFile!.MissingSegmentIndices != null || nzbFile.CorruptSegmentIndices != null))
                 await SwapNzbFileBlobAsync(davItem, nzbFile, null, null, replaceCorruptRecord: true)
                     .ConfigureAwait(false);
+            else if (clearRecordedCorrupt)
+                await SwapNzbFileBlobAsync(
+                        davItem, nzbFile!,
+                        // Only a sweep that probed every segment proves recorded holes recovered.
+                        sampled.Count == totalSegments && !excludedRecordedHoleProbe
+                            ? null
+                            : nzbFile!.MissingSegmentIndices,
+                        null, replaceCorruptRecord: true)
+                    .ConfigureAwait(false);
 
             var repairedCount = nzbFile != null
                 ? Par2RepairService.CountRepairedSegments(nzbFile, _repairPatchStore)
@@ -1436,7 +1563,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 : sampled.Count < totalSegments
                     ? $"File is healthy (sampled {sampled.Count}/{totalSegments} segments)."
                     : "File is healthy.";
-            ExceptionMiddleware.InvalidateRepairSchedulingDedup(davItem.Id);
+            StreamingRepairScheduler.InvalidateDedup(davItem.Id);
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Healthy,
@@ -1520,7 +1647,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 await using var mutationGate = await _failureTracker
                     .AcquireMutationGateAsync(davItem.Id, ct)
                     .ConfigureAwait(false);
-                ExceptionMiddleware.InvalidateRepairSchedulingDedup(davItem.Id);
+                StreamingRepairScheduler.InvalidateDedup(davItem.Id);
                 if (await IsDurablyUrgentAsync(dbClient, davItem.Id, ct).ConfigureAwait(false))
                 {
                     CompleteHealthProgress(davItem.Id);
@@ -1536,7 +1663,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 davItem.LastHealthCheck = utcNow;
                 davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
                 davItem.UrgentRepairFailures = null;
-                ExceptionMiddleware.InvalidateRepairSchedulingDedup(davItem.Id);
+                StreamingRepairScheduler.InvalidateDedup(davItem.Id);
                 await RecordHealthResult(
                     dbClient, davItem,
                     HealthCheckResult.HealthResult.Healthy,
@@ -1655,13 +1782,14 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         DavDatabaseClient dbClient,
         DavNzbFile nzbFile,
         ConcatenatedSegmentView segments,
-        LongRange[] segmentRanges,
+        LongRange[]? segmentRanges,
         List<int> missingIndices,
         List<int> corruptIndices,
         bool repairsAdmitted,
         long providerGeneration,
         long observedFailureRevision,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool allowDegraded = true)
     {
         if (!repairsAdmitted)
         {
@@ -1712,7 +1840,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 && (nzbFile.MissingSegmentIndices != null || nzbFile.CorruptSegmentIndices != null))
                 await SwapNzbFileBlobAsync(davItem, nzbFile, null, null, replaceCorruptRecord: true)
                     .ConfigureAwait(false);
-            ExceptionMiddleware.InvalidateRepairSchedulingDedup(davItem.Id);
+            StreamingRepairScheduler.InvalidateDedup(davItem.Id);
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Healthy,
@@ -1724,6 +1852,15 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     : "PAR2 verified every file slice and found no damage.",
                 ct).ConfigureAwait(false);
             _failureTracker.TryClearFailure(davItem.Id, observedFailureRevision);
+            return;
+        }
+
+        if (!allowDegraded || segmentRanges is null)
+        {
+            Log.Information(
+                "Health check found {Count} damaged article(s) in {Path} with no damage tolerance applied. Starting repair.",
+                holeIndices.Count, davItem.Path);
+            await Repair(davItem, dbClient, ct, providerGeneration: providerGeneration).ConfigureAwait(false);
             return;
         }
 
@@ -2131,7 +2268,6 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 HealthCheckAdmissionPriority.Background));
         var remaining = new List<int>();
         var cap = _configManager.GetDegradedMaxTotalMissing();
-        var probed = 0;
         var ranges = nzbFile.SegmentByteRanges;
         foreach (var index in recorded.Distinct().OrderBy(i => i)
                      .Where(i => (uint)i < (uint)nzbFile.SegmentIds.Length))
@@ -2141,19 +2277,36 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             if (expectedSize > 0 && _repairPatchStore.IsRepaired(segmentId, expectedSize))
                 continue;
 
-            if (probed >= cap)
+            // Confirmed failures beyond the cap already fail the file, so the rest stay recorded unprobed.
+            // ponytail: probes every recorded article when most have recovered; bound probes if records grow large.
+            if (remaining.Count > cap)
             {
                 remaining.Add(index);
                 continue;
             }
 
-            probed++;
-            if (await TryConfirmSegmentCleanAsync(segmentId, ct).ConfigureAwait(false))
+            if (await TryConfirmSegmentCleanAsync(segmentId, ct).ConfigureAwait(false)
+                || await AnyFallbackCleanAsync(nzbFile, index, ct).ConfigureAwait(false))
                 continue;
             remaining.Add(index);
         }
 
         return remaining;
+    }
+
+    // Playback serves a readable fallback, so a corrupt primary alone is not damage.
+    private async Task<bool> AnyFallbackCleanAsync(DavNzbFile nzbFile, int index, CancellationToken ct)
+    {
+        if (nzbFile.SegmentFallbackIds is not { } fallbacks || index >= fallbacks.Length)
+            return false;
+        foreach (var fallbackId in fallbacks[index] ?? [])
+        {
+            if (!string.IsNullOrEmpty(fallbackId)
+                && await TryConfirmSegmentCleanAsync(fallbackId, ct).ConfigureAwait(false))
+                return true;
+        }
+
+        return false;
     }
 
     private async Task<bool> TryConfirmSegmentCleanAsync(string segmentId, CancellationToken ct)
@@ -3305,7 +3458,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             davItem.LastHealthCheck = utcNow;
             davItem.NextHealthCheck = ComputeNextHealthCheck(davItem.ReleaseDate, utcNow);
             davItem.UrgentRepairFailures = null;
-            ExceptionMiddleware.InvalidateRepairSchedulingDedup(davItem.Id);
+            StreamingRepairScheduler.InvalidateDedup(davItem.Id);
             await RecordHealthResult(
                 dbClient, davItem,
                 HealthCheckResult.HealthResult.Healthy,
@@ -3833,7 +3986,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 
         var utcNow = _timeProvider.GetUtcNow();
         var threshold = _configManager.GetAutoRemoveAfterFailures();
-        var reachedThreshold = ExceptionMiddleware.ShouldScheduleUrgentRepair(threshold, currentFailure.Count);
+        var reachedThreshold = StreamingRepairScheduler.ShouldScheduleUrgentRepair(threshold, currentFailure.Count);
         davItem.LastHealthCheck = utcNow;
         davItem.NextHealthCheck = reachedThreshold
             ? DateTimeOffset.UnixEpoch

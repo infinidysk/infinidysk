@@ -22,8 +22,17 @@ type Message = { text: string; variant: "success" | "danger" } | null;
 const DURATION_OPTIONS = [15, 30, 60] as const;
 const CAPACITY_OPTIONS = [20_000, 50_000, 100_000, 200_000] as const;
 
-function downloadName(response: Response): string {
+export function downloadName(response: Response): string {
   const header = response.headers.get("content-disposition");
+  const utf8Match = header?.match(/(?:^|;)\s*filename\*\s*=\s*UTF-8'[^']*'([^;]*)/i);
+  if (utf8Match?.[1] !== undefined) {
+    try {
+      const fileName = decodeURIComponent(utf8Match[1].trim());
+      if (fileName) return fileName;
+    } catch {
+      // A malformed UTF-8 filename must not break a successful download.
+    }
+  }
   const match = header?.match(/filename="?([^";]+)"?/i);
   return match?.[1] ?? "nzbdav-support-pack.zip";
 }

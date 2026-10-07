@@ -37,5 +37,10 @@ describe("adminFrontendOperations", () => {
   it("exposes path constants used by the backend client facade", () => {
     expect(adminApi.getConfig).toBe("/api/get-config");
     expect(adminApi.excludeSync).toBe("/api/exclude-sync");
+    expect(adminApi.browseFiles).toBe("/api/browse-files");
+    expect(adminApi.recheckFile).toBe("/api/recheck-file");
+    expect(adminApi.searchFileInArr).toBe("/api/search-file-in-arr");
+    expect(adminApi.deleteWebdavItemPreview).toBe("/api/delete-webdav-item-preview");
+    expect(adminApi.deleteWebdavItem).toBe("/api/delete-webdav-item");
   });
 });

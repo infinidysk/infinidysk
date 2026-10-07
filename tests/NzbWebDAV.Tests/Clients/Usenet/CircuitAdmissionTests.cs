@@ -330,7 +330,7 @@ public class CircuitAdmissionTests
         return breaker;
     }
 
-    private abstract class StubNntpClient : NntpClient
+    internal abstract class StubNntpClient : NntpClient
     {
         public override Task ConnectAsync(
             string host, int port, bool useSsl, CancellationToken cancellationToken) =>

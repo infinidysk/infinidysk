@@ -19,11 +19,9 @@ function table(items: HealthCheckResult[] = [], filter: HealthHistoryFilter = "a
       pageSize={25}
       pageSizeOptions={[25, 50]}
       filter={filter}
-      refreshing={false}
       onFilterSelected={vi.fn()}
       onPageSelected={vi.fn()}
       onPageSizeSelected={vi.fn()}
-      onRefresh={vi.fn()}
     />
   );
 }
@@ -48,10 +46,8 @@ function attentionTable(
       page={1}
       pageSize={25}
       pageSizeOptions={[25, 50]}
-      refreshing={false}
       onPageSelected={vi.fn()}
       onPageSizeSelected={vi.fn()}
-      onRefresh={vi.fn()}
       canRequeueActionNeeded={options.canRequeueActionNeeded ?? false}
       requeueingActionNeeded={options.requeueingActionNeeded ?? false}
       onRequeueActionNeeded={options.onRequeueActionNeeded ?? vi.fn()}
@@ -111,7 +107,7 @@ describe("HealthHistoryTable", () => {
     const { unmount } = renderDom(attentionTable({ items: [item] }));
     const badges = screen.queryAllByText("Not library linked");
     expect(badges).toHaveLength(count);
-    for (const badge of badges) expect(badge.className).toContain("bg-orange-400");
+    for (const badge of badges) expect(badge.className).toContain("badge-warning");
     unmount();
     renderDom(table([item]));
     expect(screen.queryByText("Not library linked")).toBeNull();
@@ -336,7 +332,7 @@ describe("HealthHistoryTable", () => {
     expect(markup).toContain("No degraded items");
     expect(markup).toContain("focus-within:outline-primary");
     expect(markup).toMatch(
-      /<label[^>]*btn-active[^>]*><input[^>]*checked=""[^>]*\/><span>Degraded<\/span><\/label>/,
+      /<label[^>]*btn-primary[^>]*><input[^>]*checked=""[^>]*\/><span>Degraded<\/span><\/label>/,
     );
   });
 

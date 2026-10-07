@@ -79,6 +79,11 @@ public partial class Par2RepairService
     private async Task<(Par2SetContext Set, List<SourceLayout> Layouts)> ResolveRecoverySetAsync(
         NzbDocument document, RepairPayload payload, RepairReadContext reads, CancellationToken ct)
     {
+        if (payload.SegmentIds.Any(NzbFile.IsOmittedSegmentId))
+        {
+            foreach (var file in document.Files)
+                file.RestoreStoredOmittedSegments(payload.SegmentIds, reads.Budget.Charge);
+        }
         var owners = new Dictionary<string, NzbFile?>(StringComparer.Ordinal);
         foreach (var file in document.Files)
         foreach (var segment in file.Segments)
@@ -104,14 +109,17 @@ public partial class Par2RepairService
         }
 
         var coveredOwners = new HashSet<NzbFile>(ReferenceEqualityComparer.Instance);
+        reads.RequiredSources.UnionWith(requestedOwners);
         await foreach (var set in DiscoverPar2SetsAsync(document, reads, ct).ConfigureAwait(false))
         {
             ct.ThrowIfCancellationRequested();
+            reads.RequiredSourceMissSlices.Clear();
             var sourceCandidates = document.Files.Where(file => !reads.ParityFiles.Contains(file) && file.Segments.Count > 0).ToArray();
             reads.AdmitSourceComparisons(sourceCandidates.Length, set.Main.FileIds.Count);
             var layouts = new List<SourceLayout>();
             var usedFiles = new HashSet<NzbFile>(ReferenceEqualityComparer.Instance);
             var complete = true;
+            var capped = false;
             for (var fileIndex = 0; fileIndex < set.Main.FileIds.Count; fileIndex++)
             {
                 var key = Convert.ToHexString(set.Main.FileIds[fileIndex]);
@@ -122,13 +130,27 @@ public partial class Par2RepairService
                              .OrderByDescending(file => string.Equals(file.GetSubjectFileName(), Path.GetFileName(descriptor.FileName), StringComparison.OrdinalIgnoreCase))
                              .ThenBy(file => file.Segments[0].MessageId, StringComparer.Ordinal))
                 {
-                    var layout = await TryResolveVolumeAsync(candidate, descriptor, checksums, fileIndex, set, payload, reads, ct)
-                        .ConfigureAwait(false);
+                    SourceLayout? layout;
+                    try
+                    {
+                        layout = await TryResolveVolumeAsync(candidate, descriptor, checksums, fileIndex, set, payload, reads, ct)
+                            .ConfigureAwait(false);
+                    }
+                    catch (RepairInfeasibleException exception) when (reads.SourceSliceCapExceeded)
+                    {
+                        // Another set may use larger slices; only this set is proven infeasible.
+                        reads.SourceSliceCapExceeded = false;
+                        reads.RejectionReason = exception.Message;
+                        complete = false;
+                        capped = true;
+                        break;
+                    }
                     if (layout is null) continue;
                     if (match is not null)
                         throw new RepairInfeasibleException($"PAR2 volume '{descriptor.FileName}' has ambiguous NZB identity.");
                     match = layout;
                 }
+                if (capped) break;
                 if (match is null) { complete = false; continue; }
                 if (!usedFiles.Add(match.File))
                     throw new RepairInfeasibleException("One posted volume matches multiple recoverable PAR2 files.");
@@ -148,8 +170,8 @@ public partial class Par2RepairService
     private async Task<SourceLayout?> TryResolveVolumeAsync(NzbFile file, FileDesc descriptor, IfscPacket checksums,
         int fileIndex, Par2SetContext set, RepairPayload payload, RepairReadContext reads, CancellationToken ct)
     {
-        var observation = await ObserveVolumeAsync(file, reads, ct).ConfigureAwait(false);
         var length = checked((long)descriptor.FileLength);
+        var observation = await ObserveVolumeAsync(file, payload, set.Main.SliceSize, reads, ct).ConfigureAwait(false);
         if (observation.Length != length) return null;
         var ids = file.GetSegmentIds();
         LongRange[] ranges;
@@ -188,7 +210,8 @@ public partial class Par2RepairService
         return proven > 0 ? layout : null;
     }
 
-    private async Task<NzbFileObservation> ObserveVolumeAsync(NzbFile file, RepairReadContext reads, CancellationToken ct)
+    private async Task<NzbFileObservation> ObserveVolumeAsync(NzbFile file, RepairPayload payload, ulong sliceSize,
+        RepairReadContext reads, CancellationToken ct)
     {
         if (reads.Observations.TryGetValue(file, out var cached)) return cached;
         reads.Budget.Charge(256);
@@ -235,6 +258,9 @@ public partial class Par2RepairService
                     reads.NoteUnavailable(probe.Id, probe.IsMissing
                         ? new UsenetArticleNotFoundException(probe.Id)
                         : new InvalidDataException("PAR2 identity header probe failed."));
+                if (probe.Header is null && reads.UnavailableIds.Contains(probe.Id))
+                    reads.NoteSourceMiss(file,
+                        payload.TrustedRanges.TryGetValue(probe.Id, out var range) ? range : null, checked((long)sliceSize));
                 if (probe.Header is not { FileSize: > 0 }) continue;
                 var observation = new NzbFileObservation(probe.Header.FileSize, null);
                 reads.Observations[file] = observation;
@@ -253,10 +279,13 @@ public partial class Par2RepairService
         {
             var response = await _usenetClient.DecodedBodyAsync(id, ct).ConfigureAwait(false);
             await using var stream = response.Stream!;
-            return new HeaderProbeResult(id, await stream.GetYencHeadersAsync(ct).ConfigureAwait(false));
+            var header = await stream.GetYencHeadersAsync(ct).ConfigureAwait(false);
+            HealthCheckActivity.Report();
+            return new HeaderProbeResult(id, header);
         }
         catch (Exception exception) when (exception is UsenetArticleNotFoundException or UsenetCorruptArticleException or InvalidDataException or EndOfStreamException)
         {
+            HealthCheckActivity.Report();
             return new HeaderProbeResult(id, null, true, exception is UsenetArticleNotFoundException);
         }
         finally { reads.FetchGate.Release(); }

@@ -195,7 +195,9 @@ public class UsenetStreamingClient : WrappingNntpClient
         if (WrappingNntpClient.Unwrap(InnerClient) is not MultiProviderNntpClient multi)
             return [];
 
+        // Selection skips providers past their byte quota, so they add no playback capacity.
         return multi.Providers
+            .Where(provider => !multi.IsOverLimit(provider))
             .Select(provider =>
             {
                 var admission = provider.GetConnectionAdmissionSnapshot();
@@ -507,7 +509,8 @@ public class UsenetStreamingClient : WrappingNntpClient
             connectionOpenProvider: connectionOpenProvider,
             onWarmConnectionFailure: onWarmConnectionFailure,
             circuitBreaker: circuitBreaker,
-            warmFloorOpenTimeout: warmFloorOpenTimeout);
+            warmFloorOpenTimeout: warmFloorOpenTimeout,
+            connectionLimitRejectionDetector: UsenetConnectionLimitDetector.IsConnectionLimitRejection);
         connectionPool.OnConnectionPoolChanged += onConnectionPoolChanged;
         var args = new ConnectionPoolStats.ConnectionPoolChangedEventArgs(0, 0, maxConnections);
         SynchronousObserverInvoker.Invoke(

@@ -6,6 +6,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Models;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Par2Recovery;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Tests.Fakes;
@@ -16,7 +17,7 @@ namespace NzbWebDAV.Tests.Services.Repair;
 internal sealed class Par2RepairTestReleaseBuilder(ConfigManager config, string configRoot)
 {
     internal sealed record SourceFile(string Name, byte[] Data, int[] Sizes,
-        int[]? Missing = null, string? Subject = null, byte[]? FileHashOverride = null);
+        int[]? Missing = null, string? Subject = null, byte[]? FileHashOverride = null, int[]? Omitted = null);
     internal sealed record PostedFile(SourceFile Source, string[] Ids, LongRange[] Ranges);
 
     internal async Task<SeededRelease> BuildAsync(
@@ -27,7 +28,8 @@ internal sealed class Par2RepairTestReleaseBuilder(ConfigManager config, string 
         (byte[] Index, byte[] Recovery)? parity = null,
         bool obfuscatedParity = false,
         IReadOnlyList<(string Name, byte[] Bytes)>? additionalParity = null,
-        long? recoveryFileSize = null)
+        long? recoveryFileSize = null,
+        NzbWebDAV.Services.StreamingRepairScheduler? repairScheduler = null)
     {
         var token = Guid.NewGuid().ToString("N")[..8];
         var hashOverrides = files.Where(file => file.FileHashOverride is not null)
@@ -49,8 +51,16 @@ internal sealed class Par2RepairTestReleaseBuilder(ConfigManager config, string 
             for (var index = 0; index < file.Sizes.Length; index++)
             {
                 var id = $"content-{token}-{fileIndex}-{index}@test";
-                ids[index] = id;
                 ranges[index] = LongRange.FromStartAndSize(offset, file.Sizes[index]);
+                if (file.Omitted?.Contains(index) == true)
+                {
+                    if (index == 0 || index == file.Sizes.Length - 1)
+                        throw new ArgumentException("Only interior omissions are supported.", nameof(files));
+                    ids[index] = NzbFile.CreateOmittedSegmentId(ids[0], index + 1);
+                    offset += file.Sizes[index];
+                    continue;
+                }
+                ids[index] = id;
                 if (file.Missing?.Contains(index) != true)
                     payloads[id] = file.Data.AsSpan(offset, file.Sizes[index]).ToArray();
                 headers[id] = Header(file.Name, file.Data.Length, index, file.Sizes.Length, ranges[index]);
@@ -126,7 +136,7 @@ internal sealed class Par2RepairTestReleaseBuilder(ConfigManager config, string 
         var store = new RepairPatchStore(patchDir, 32 * 1024 * 1024);
         await store.EnsureCatalogLoadedAsync(CancellationToken.None);
         var usenet = new UsenetStreamingClient(fake, store);
-        return new SeededRelease(item, posted, fake, store, new Par2RepairService(config, usenet, store), usenet, patchDir);
+        return new SeededRelease(item, posted, fake, store, new Par2RepairService(config, usenet, store, repairScheduler: repairScheduler), usenet, patchDir);
 
         void AddParity(string id, string name, byte[] bytes, long? declaredSize = null)
         {

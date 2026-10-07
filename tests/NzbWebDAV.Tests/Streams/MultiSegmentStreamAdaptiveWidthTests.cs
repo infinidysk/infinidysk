@@ -1,15 +1,19 @@
 using System.Collections.Concurrent;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Config;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Streams;
+using NzbWebDAV.Tests.Clients.Usenet;
 using NzbWebDAV.Tests.Fakes;
+using NzbWebDAV.Tests.TestUtils;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Tests.Streams;
 
+[Collection(nameof(GlobalStreamTraceCollection))]
 public class MultiSegmentStreamAdaptiveWidthTests
 {
     private const int BodyPipelineBatchSize = 4;
@@ -118,16 +122,17 @@ public class MultiSegmentStreamAdaptiveWidthTests
             client, segmentCount, articleBufferSize: 40, segmentSize: segmentSize, initialBatchPlan: plan);
 
         await client.WaitUntilAsync(
-            () => client.BatchIssueCount == expectedBatchCount,
+            () => client.StartedSegmentCount == segmentCount,
             TimeSpan.FromSeconds(5));
 
-        Assert.Equal(expectedBatchCount, client.ObservedBatchSizes.Count);
+        // The plan's target also stripes the batches, so a short tail spreads across
+        // connections instead of forming one narrow final batch.
+        Assert.True(client.ObservedBatchSizes.Count >= expectedBatchCount);
+        Assert.Equal(expectedWidth, client.ObservedBatchSizes.Max());
+        Assert.Equal(segmentCount, client.ObservedBatchSizes.Sum());
         Assert.All(
-            client.ObservedBatchSizes.Take(expectedBatchCount - 1),
+            client.ObservedBatchSizes.Take(segmentCount / expectedWidth - 1),
             size => Assert.Equal(expectedWidth, size));
-        Assert.Equal(
-            segmentCount - expectedWidth * (expectedBatchCount - 1),
-            client.ObservedBatchSizes[^1]);
         client.ReleaseAllUpTo(segmentCount - 1);
         var buffer = new byte[segmentSize];
         while (await stream.ReadAsync(buffer) > 0) { }
@@ -682,6 +687,65 @@ public class MultiSegmentStreamAdaptiveWidthTests
         }
     }
 
+    [Fact]
+    public async Task LargeArticles_IssueOneArticleBatches()
+    {
+        const int segmentCount = 6;
+        const int segmentSize = 8;
+        var client = new ControlledBatchNntpClient(segmentCount, segmentSize);
+        client.ReleaseAllUpTo(segmentCount - 1);
+
+        await using var stream = (MultiSegmentStream)MultiSegmentStream.CreateWithInitialBatchPlan(
+            client.SegmentIds.AsMemory(),
+            client,
+            articleBufferSize: 8,
+            estimatedSegmentSize: MultiSegmentStream.PipelinedArticleSizeLimit,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            CancellationToken.None,
+            fileName: "large-articles.bin",
+            initialBatchPlan: default(InitialBodyBatchPlan) with { InitialBatchWidth = 4 });
+
+        using var destination = new MemoryStream();
+        await stream.CopyToAsync(destination);
+
+        Assert.Equal(1, stream.MaxPrefetchBatchWidth);
+        Assert.Equal(MultiSegmentStream.CalculateTaskWindowSize(8, true), stream.TaskWindowSize);
+        Assert.Equal(segmentCount, client.BatchIssueCount);
+        Assert.All(client.ObservedBatchSizes, size => Assert.Equal(1, size));
+        Assert.Equal(client.ExpectedConcatenation, destination.ToArray());
+    }
+
+    [Fact]
+    public async Task LargeArticles_RecoverTransientPrimaryMiss()
+    {
+        var payloads = Enumerable.Range(0, 4)
+            .Select(i => Enumerable.Range(0, 8).Select(b => (byte)(i * 31 + b)).ToArray())
+            .ToArray();
+        var connection = new TransientMissNntpClient(payloads);
+        var cache = new ArticleMissNegativeCache(new ConfigManager());
+        using var client = new MultiProviderNntpClient(
+            [MultiProviderNntpClientTests.CreateProvider(connection, host: "a.example")],
+            articleMissCache: cache);
+
+        await using var stream = MultiSegmentStream.Create(
+            connection.SegmentIds.AsMemory(),
+            client,
+            articleBufferSize: 8,
+            estimatedSegmentSize: MultiSegmentStream.PipelinedArticleSizeLimit,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            CancellationToken.None,
+            fileName: "large-transient-miss.bin");
+
+        using var destination = new MemoryStream();
+        await stream.CopyToAsync(destination);
+
+        Assert.Equal(payloads.SelectMany(p => p).ToArray(), destination.ToArray());
+        Assert.All(connection.MissedSegmentIds, id => Assert.True(connection.Recovered(id)));
+        Assert.Equal(0, cache.Entries);
+    }
+
     private static MultiSegmentStream CreatePipelinedStream(
         ControlledBatchNntpClient client,
         int segmentCount,
@@ -799,6 +863,7 @@ internal sealed class ControlledBatchNntpClient : NntpClient
     public string[] SegmentIds { get; }
     public byte[] ExpectedConcatenation { get; }
     public List<int> ObservedBatchSizes { get; } = [];
+    public List<int[]> ObservedBatchIndexes { get; } = [];
     public int ActiveBatches
     {
         get { lock (_statsGate) return _activeBatches; }
@@ -844,9 +909,21 @@ internal sealed class ControlledBatchNntpClient : NntpClient
         get { lock (_statsGate) return _batchAdmittedCount; }
     }
     public SemaphoreSlim? SharedPermit { get; set; }
+    public int IndividualRequestCount
+    {
+        get { lock (_statsGate) return _individualRequests; }
+    }
 
     private int _remainderAdmissionAttempts;
     private int _batchAdmittedCount;
+    private int _individualRequests;
+
+    /// <summary>Fails a batch response; individual re-requests still return the payload.</summary>
+    public void FailSegment(int index, Exception exception)
+    {
+        if (_gates.TryGetValue(index, out var gate))
+            gate.TrySetException(exception);
+    }
 
     public void ReleaseSegment(int index)
     {
@@ -906,6 +983,8 @@ internal sealed class ControlledBatchNntpClient : NntpClient
         cancellationToken.ThrowIfCancellationRequested();
         var index = IndexOf(segmentId);
         var payload = _payloads[index];
+        lock (_statsGate)
+            _individualRequests++;
         var permit = SharedPermit;
         if (permit is not null)
             await permit.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -932,7 +1011,26 @@ internal sealed class ControlledBatchNntpClient : NntpClient
         }
     }
 
-    public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+    /// <summary>Segments served by a local-data overlay; only misses reach the gated batches.</summary>
+    public IReadOnlySet<int>? LocalSegments { get; set; }
+
+    public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+        IReadOnlyList<SegmentId> segmentIds,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
+        CancellationToken cancellationToken) =>
+        LocalSegments is not { } local
+            ? DecodedRemoteBodiesAsync(segmentIds, onConnectionReadyAgain, cancellationToken)
+            : LocalDataBatchOverlay.ExecuteAsync(
+                segmentIds,
+                onConnectionReadyAgain,
+                id => local.Contains(IndexOf(id))
+                    ? LocalLookupResult.Hit(CreateResponse(id.ToString(), _payloads[IndexOf(id)], () => { }))
+                    : LocalLookupResult.Miss,
+                DecodedRemoteBodiesAsync,
+                LocalDataBatchOverlay.PassThroughRemote,
+                cancellationToken);
+
+    private async Task<UsenetDecodedBodyBatch> DecodedRemoteBodiesAsync(
         IReadOnlyList<SegmentId> segmentIds,
         ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken cancellationToken)
@@ -978,6 +1076,7 @@ internal sealed class ControlledBatchNntpClient : NntpClient
             {
                 _batchIssueCount++;
                 ObservedBatchSizes.Add(batchSize);
+                ObservedBatchIndexes.Add(segmentIds.Select(IndexOf).ToArray());
                 _activeBatches++;
                 activeBatchIncremented = true;
                 _maxActiveBatches = Math.Max(_maxActiveBatches, _activeBatches);
@@ -1121,5 +1220,112 @@ internal sealed class ControlledBatchNntpClient : NntpClient
             ResponseMessage = "222 controlled body",
             Stream = new CachedYencStream(headers, inner),
         };
+    }
+}
+
+/// <summary>Answers 430 on the first BODY for each article, then serves the payload.</summary>
+internal sealed class TransientMissNntpClient(byte[][] payloads) : NntpClient
+{
+    private readonly ConcurrentDictionary<string, int> _requests = new(StringComparer.Ordinal);
+
+    public string[] SegmentIds { get; } =
+        Enumerable.Range(0, payloads.Length).Select(i => $"large-{i}").ToArray();
+
+    public IEnumerable<string> MissedSegmentIds => _requests.Keys;
+
+    public bool Recovered(string segmentId) =>
+        _requests.TryGetValue(segmentId, out var count) && count >= 2;
+
+    public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
+        IReadOnlyList<SegmentId> segmentIds,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
+        CancellationToken cancellationToken)
+    {
+        var responses = segmentIds.Select(id => Task.FromResult(Respond(id))).ToArray();
+        onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+        return Task.FromResult(new UsenetDecodedBodyBatch { Responses = responses });
+    }
+
+    public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+        SegmentId segmentId,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
+        CancellationToken cancellationToken)
+    {
+        var response = Respond(segmentId);
+        onConnectionReadyAgain?.Invoke(response.Stream is null
+            ? ArticleBodyResult.NotFound
+            : ArticleBodyResult.Retrieved);
+        return Task.FromResult(response);
+    }
+
+    private UsenetDecodedBodyResponse Respond(SegmentId segmentId)
+    {
+        var key = segmentId.ToString();
+        if (_requests.AddOrUpdate(key, 1, (_, count) => count + 1) == 1)
+        {
+            return new UsenetDecodedBodyResponse
+            {
+                SegmentId = key,
+                ResponseCode = (int)UsenetResponseType.NoArticleWithThatMessageId,
+                ResponseMessage = "430 transient miss",
+                Stream = null,
+            };
+        }
+
+        var bytes = payloads[Array.IndexOf(SegmentIds, key)];
+        var headers = new UsenetYencHeader
+        {
+            FileName = "large.bin",
+            FileSize = bytes.Length,
+            LineLength = 128,
+            PartNumber = 1,
+            TotalParts = 1,
+            PartOffset = 0,
+            PartSize = bytes.Length,
+        };
+        return new UsenetDecodedBodyResponse
+        {
+            SegmentId = key,
+            ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
+            ResponseMessage = "222 body",
+            Stream = new CachedYencStream(headers, new MemoryStream(bytes, writable: false)),
+        };
+    }
+
+    public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+        SegmentId segmentId, CancellationToken cancellationToken) =>
+        DecodedBodyAsync(segmentId, null, cancellationToken);
+
+    public override Task ConnectAsync(
+        string host, int port, bool useSsl, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
+    public override Task<UsenetResponse> AuthenticateAsync(
+        string user, string pass, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public override Task<UsenetStatResponse> StatAsync(
+        SegmentId segmentId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public override Task<UsenetHeadResponse> HeadAsync(
+        SegmentId segmentId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+        SegmentId segmentId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
+        SegmentId segmentId,
+        ArticleBodyCompletionHandler? onConnectionReadyAgain,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public override Task<UsenetDateResponse> DateAsync(CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public override void Dispose()
+    {
     }
 }

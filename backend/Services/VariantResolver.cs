@@ -119,7 +119,7 @@ public class VariantResolver(ConfigManager configManager)
             await dbClient.RemoveHistoryItemsAsync(
                     toRemove, deleteFiles: true, source: "variants-eviction", ct: ct)
                 .ConfigureAwait(false);
-            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+            await dbClient.SaveHistoryRemovalAsync(ct).ConfigureAwait(false);
             if (websocketManager is not null)
                 _ = websocketManager.SendMessage(
                     WebsocketTopic.HistoryItemRemoved, string.Join(",", toRemove));

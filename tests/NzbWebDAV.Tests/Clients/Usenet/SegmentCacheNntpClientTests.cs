@@ -1139,9 +1139,9 @@ public sealed class SegmentCacheNntpClientTests
                 ? await client.DecodedBodiesAsync(ids, new UsenetExclusiveConnection(null), CancellationToken.None)
                 : await client.DecodedBodiesAsync(ids, onConnectionReadyAgain: null, CancellationToken.None);
 
+            await batch.DrainAsync();
             Assert.Equal(1, inner.BatchRequestCount);
             Assert.Equal(["b"], inner.RequestedSegmentIds.OrderBy(x => x).ToArray());
-            await batch.DrainAsync();
             var snapshot = statistics.GetSnapshot();
             Assert.Equal(2, snapshot.Hits);
             Assert.Equal(1, snapshot.Misses);

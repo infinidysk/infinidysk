@@ -139,10 +139,11 @@ public class QueueItemProcessor(
         string mode)
     {
         var files = segmentsByFile.ToList();
-        return mode == "sampled"
+        var selected = mode == "sampled"
             ? files.SelectMany(segments =>
                 HealthCheckService.SampleSegments(segments.ToList())).ToList()
             : files.SelectMany(segments => segments).ToList();
+        return selected.Where(id => !NzbFile.IsOmittedSegmentId(id)).ToList();
     }
 
     /// <summary>
@@ -537,6 +538,18 @@ public class QueueItemProcessor(
             "first-segment",
             () => FetchFirstSegmentsStep.FetchFirstSegments(
                 nzbFiles, usenetClient, configManager, ct, part1Progress)).ConfigureAwait(false);
+        foreach (var (file, header) in segments
+            .Where(segment => !segment.MissingFirstSegment && segment.Header is not null)
+            .Select(segment => (segment.NzbFile, segment.Header!)))
+        {
+            var listedCount = file.Segments.Count;
+            if (!await file.TryFillOmittedSegmentsAsync(header, usenetClient, ct).ConfigureAwait(false))
+                continue;
+            Log.Warning(
+                "NZB file contains {OmittedCount} omitted numbered part(s) confirmed by yEnc metadata; " +
+                "preserving the missing slots for playback and repair. QueueItemId: {QueueItemId}",
+                file.Segments.Count - listedCount, queueItem.Id);
+        }
         var msFirstSeg = stepTimer.ElapsedMilliseconds;
         stepTimer.Restart();
         // step 2 progress is split 50-55 (par2) / 55-60 (lazy-rar) / 60-100
@@ -671,6 +684,7 @@ public class QueueItemProcessor(
                 .Where(x => x.IsRar || FilenameUtil.IsImportantFileType(x.FileName))
                 .Select(x => (IReadOnlyList<string>)x.NzbFile.GetSegmentIds().ToList())
                 .ToList();
+            var hasOmittedArticles = segmentsByFile.Any(file => file.Any(NzbFile.IsOmittedSegmentId));
             var totalArticles = segmentsByFile.Sum(x => x.Count);
             var checkMode = configManager.GetArticleExistenceCheckMode();
             var articlesToCheck = SelectArticlesForExistenceCheck(segmentsByFile, checkMode);
@@ -702,7 +716,7 @@ public class QueueItemProcessor(
                         part3Progress,
                         ct))
                 .ConfigureAwait(false);
-            checkedFullHealth = true;
+            checkedFullHealth = !hasOmittedArticles;
         }
         var msHealth = stepTimer.ElapsedMilliseconds;
         stepTimer.Stop();

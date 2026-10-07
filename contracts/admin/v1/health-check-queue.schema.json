@@ -20,7 +20,10 @@
           "releaseDate": { "type": ["string", "null"] },
           "lastHealthCheck": { "type": ["string", "null"] },
           "nextHealthCheck": { "type": ["string", "null"] },
-          "countsTowardUncheckedCount": { "type": "boolean" }
+          "countsTowardUncheckedCount": { "type": "boolean" },
+          "progress": { "type": ["integer", "null"] },
+          "phase": { "type": ["string", "null"] },
+          "phaseStartedAt": { "type": ["string", "null"] }
         }
       }
     }

@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using NzbWebDAV.Clients.Usenet.Contexts;
@@ -309,6 +310,60 @@ public class ArticleCachingNntpClient(
         return DecodedArticleAsync(segmentId, onConnectionReadyAgain, cancellationToken);
     }
 
+    // Cache pipelined fetches so later RAR/7z/PAR2 header reads do not download them again.
+    public override async IAsyncEnumerable<PipelinedArticleResult> DecodedArticlesPipelinedAsync(
+        IReadOnlyList<string> segmentIds,
+        int depth,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var article in base.DecodedArticlesPipelinedAsync(segmentIds, depth, cancellationToken)
+                           .ConfigureAwait(false))
+        {
+            if (!article.Found || article.Stream is null
+                || _cachedSegments.ContainsKey(article.SegmentId))
+            {
+                yield return article;
+                continue;
+            }
+
+            CacheEntry? entry = null;
+            var semaphore = _pendingRequests.GetOrAdd(article.SegmentId, _ => new SemaphoreSlim(1, 1));
+            await using (article.Stream.ConfigureAwait(false))
+            {
+                await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (!_cachedSegments.TryGetValue(article.SegmentId, out entry))
+                    {
+                        var yencHeaders = await article.Stream.GetYencHeadersAsync(cancellationToken).ConfigureAwait(false) ??
+                            throw new InvalidOperationException($"Failed to read yenc headers for segment {article.SegmentId}");
+                        await CacheDecodedStreamAsync(article.SegmentId, article.Stream, cancellationToken).ConfigureAwait(false);
+                        entry = new CacheEntry(yencHeaders, article.ArticleHeaders is not null, article.ArticleHeaders);
+                        AddCacheEntry(article.SegmentId, entry);
+                    }
+                }
+                catch (Exception e) when (!e.IsCancellationException(cancellationToken) && e is not OutOfMemoryException)
+                {
+                    // Discovery only needs a prefix; leave this article to the per-article rescue path.
+                    Log.Debug(e, "Could not cache pipelined article {SegmentId}; deferring to rescue", article.SegmentId);
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            }
+
+            if (entry is null)
+            {
+                yield return article with { Found = false, Stream = null, DefinitivelyMissing = false };
+                continue;
+            }
+
+            var cached = ReadCachedBodyAsync(article.SegmentId, entry.YencHeaders);
+            yield return article with { Stream = cached.Stream };
+        }
+    }
+
     public override Task<UsenetYencHeader> GetYencHeadersAsync(string segmentId, CancellationToken ct)
     {
         return _cachedSegments.TryGetValue(segmentId, out var existingEntry)
@@ -457,6 +512,7 @@ public class ArticleCachingNntpClient(
         {
             Responses = responses,
             Completion = uncachedBatch?.Completion ?? Task.CompletedTask,
+            Admitted = uncachedBatch?.Admitted ?? Task.CompletedTask,
         };
     }
 

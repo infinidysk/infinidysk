@@ -51,6 +51,14 @@ During WebDAV playback with batched BODY requests enabled:
 
 Provider behavior varies: some throttle per connection (wider batches can help), others per account (more connections / narrower batches). If Auto-tune reports queue pipelining is unsafe for a provider, treat wide streaming batch widths cautiously too — both use the same NNTP pipelining mechanism.
 
+### Interleaved streaming batches
+
+A connection returns a batch's articles one after another, so a batch of consecutive articles makes playback wait on that single connection for each next article while other connections sit on finished data. WebDAV playback therefore interleaves batches across the connections expected for the stream: with 4 connections and width 4, the first batch asks for articles 1, 5, 9, 13, the second for 2, 6, 10, 14, and so on, and the next articles playback needs arrive in parallel.
+
+The batch width setting keeps its meaning (articles per batch), and the bytes served are unchanged. When the decoded-article budget cannot hold a whole interleaved group at once, the stream falls back to consecutive batches rather than waiting, so interleaving adds no new partial-reservation wait between concurrent viewers. Consecutive batches reserve the budget the same way they did before interleaving.
+
+The number of interleaved batches is the stream's connection target when playback opens, counting only providers with byte quota left. It is not re-measured while connections are still opening: on real providers, interleaving across connections that are still connecting reached the next articles sooner than waiting for them to open. If a batch then has to wait for a connection because the stream lost one it had been using (another viewer or a health check took it), the stream interleaves across only the connections still downloading for it. It widens again when more of its batches run at once. Articles already in the segment cache or repair store are handed to playback straight away; they do not wait for the connection that fetches the rest of their batch.
+
 ## Enabling
 
 1. Prefer **Auto-tune** on a provider before enabling queue pipelining.

@@ -2,6 +2,9 @@
 
 Quick-start guide for AI agents working on **InfiniDysk** (formerly NzbDAV, "The NzbDAV SuperFork").
 
+
+
+
 ## What this project is
 
 InfiniDysk is a **WebDAV server** that mounts NZB documents as a virtual filesystem and streams content directly from Usenet providers — without downloading files to disk first. It exposes a **SABnzbd-compatible API** so Sonarr, Radarr, and similar tools can use it as a drop-in download client.
@@ -333,6 +336,15 @@ Prefer this rhythm:
 
 Do not accumulate a large uncommitted diff across unrelated areas.
 
+## Scrub media titles from public content
+
+We cannot verify which media is public domain, so **never write media titles** (movie, show, episode, album, book, or release/NZB names) in anything public or committed:
+
+- Commit messages, PR titles and bodies, issue titles and bodies, and review/issue/PR comments
+- Code comments, test names and fixtures, logs pasted into reports, docs, changelog text, and release/Discord announcements
+
+When quoting user logs, screenshots, or support packs, redact titles before posting (e.g. `<release-name>`). Describe content generically instead: "direct-posted 2160p MKV", "stored RAR4 episode", "obfuscated 7z season pack".
+
 ## Issue tracking
 
 Use **GitHub Issue Types** for kind — not kind labels:
@@ -481,14 +493,51 @@ Docker image builds are shared via the reusable workflow. Branch and dependabot 
 
 ## Coding guidelines
 
-1. **Minimize scope** — smallest correct diff; don't refactor adjacent code unless needed.
+1. **Minimize scope** — smallest correct diff; don't refactor adjacent code unless needed. See [Ponytail: lazy senior dev mode](#ponytail-lazy-senior-dev-mode).
 2. **Match existing patterns** — one controller per action folder under `Api/`, CSS modules + `.module.css.d.ts` in frontend, `NzbWebDAV` root namespace in backend.
 3. **Backend** — nullable enabled, async/await, Serilog for logging, `ConfigureAwait(false)` in library-style code.
 4. **Frontend** — React Router file-based routes under `app/routes/`, server loaders/actions, Tailwind + Bootstrap, typed CSS modules.
-5. **Frontend styling** — match existing daisyUI `night` patterns in `frontend/app` (semantic colors, UI kit wrappers, typography, buttons, theming) for any UI styling or refactoring work.
+5. **Frontend styling** — match existing daisyUI `night` patterns in `frontend/app` (semantic colors, UI kit wrappers, typography, buttons, theming) for any UI styling or refactoring work. Follow [`.agents/skills/daisyui-infinidysk/SKILL.md`](.agents/skills/daisyui-infinidysk/SKILL.md) for component rules and the UI review checklist.
 6. **Security** — never commit secrets; WebDAV and admin APIs require auth; frontend injects API key only for authenticated sessions.
 7. **Comments** — only for non-obvious logic; prefer clear naming.
 8. **Exception logging** — see [Stack dumps and human-friendly log events](#stack-dumps-and-human-friendly-log-events) below.
+
+## Ponytail: lazy senior dev mode
+
+Work like a lazy senior developer. Lazy means efficient, not careless. The best code is the code never written.
+
+Before writing any code, stop at the first rung that holds:
+
+1. Does this need to be built at all? (YAGNI)
+2. Does it already exist in this codebase? Reuse the helper, util, or pattern already here (e.g. `ExceptionExtensions`, `ConfigManager`, UI kit wrappers); don't rewrite it.
+3. Does the standard library (.NET BCL, Node/Web APIs) already do this? Use it.
+4. Does a native platform feature cover it (ASP.NET Core, EF Core, React Router, daisyUI)? Use it.
+5. Does an already-installed dependency or in-tree library (`libs/`) solve it? Use it.
+6. Can this be one line? Make it one line.
+7. Only then: write the minimum code that works.
+
+The ladder runs **after** you understand the problem, not instead of it: read the task and the code it touches, trace the real flow end to end, then climb.
+
+**Bug fix = root cause, not symptom.** A report names a symptom. Find every caller of the function you touch and fix the shared function once — one guard there is a smaller diff than one per caller, and patching only the path the ticket names leaves a sibling caller still broken.
+
+Rules:
+
+- No abstractions that weren't explicitly requested.
+- No new dependency if it can be avoided.
+- No boilerplate nobody asked for.
+- Deletion over addition. Boring over clever. Fewest files possible.
+- Shortest working diff wins, but only once you understand the problem. The smallest change in the wrong place isn't lazy, it's a second bug.
+- Question complex requests: "Do you actually need X, or does Y cover it?"
+- When two standard approaches are the same size, pick the edge-case-correct one. Lazy means less code, not the flimsier algorithm.
+- Mark deliberate simplifications that cut a real corner with a known ceiling (global lock, O(n²) scan, naive heuristic) with a `ponytail:` comment naming the ceiling and upgrade path.
+
+Not lazy about:
+
+- Understanding the problem — read it fully and trace the real flow before picking a rung. A small diff you don't understand is laziness dressed up as efficiency.
+- Input validation at trust boundaries, error handling that prevents data loss, security, and accessibility.
+- Real-world calibration — providers, clocks, disks, and networks never behave like the spec ideal (servers drop connections, articles go missing, clocks drift).
+- The [streaming lifecycle invariants](#streaming-lifecycle-invariants) and anything explicitly requested.
+- Leaving a check behind. Lazy code without its check is unfinished: non-trivial logic gets **one** runnable check — the smallest test that fails if the logic breaks — added to the existing xUnit (`tests/`) or Vitest (`*.test.ts`) suites. No new test frameworks or elaborate fixtures. Trivial one-liners need no test.
 
 ## Stack dumps and human-friendly log events
 

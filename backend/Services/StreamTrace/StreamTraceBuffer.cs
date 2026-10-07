@@ -424,6 +424,39 @@ public sealed class StreamTraceBuffer
         });
     }
 
+    /// <param name="waitMs">How long the reader had waited on the segment when the duplicate was issued.</param>
+    public void HedgeIssued(Guid sessionId, string segmentId, int segmentIndex, int waitMs, int hedgeDelayMs)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = sessionId,
+            Kind = StreamTraceKind.HedgeIssued.ToString(),
+            SegmentId = StreamTraceEvent.TruncateSegmentId(segmentId),
+            SegmentIndex = segmentIndex,
+            DurationMs = waitMs,
+            HedgeDelayMs = hedgeDelayMs,
+        });
+    }
+
+    /// <param name="outcome">Which fetch the reader received, from <see cref="HedgeOutcome"/>.</param>
+    /// <param name="decisionMs">Time from issuing the duplicate to choosing a result.</param>
+    public void HedgeResolved(Guid sessionId, string segmentId, int segmentIndex, string outcome, int decisionMs)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = sessionId,
+            Kind = StreamTraceKind.HedgeResolved.ToString(),
+            SegmentId = StreamTraceEvent.TruncateSegmentId(segmentId),
+            SegmentIndex = segmentIndex,
+            Status = outcome,
+            DurationMs = decisionMs,
+        });
+    }
+
     public void PrefetchWidth(Guid sessionId, int previousBatchSize, int batchSize)
     {
         Record(new StreamTraceEvent
@@ -532,6 +565,22 @@ public sealed class StreamTraceBuffer
         if (range is not { } value) return;
         if (!_sessions.TryGetValue(value.SessionId, out var session)) return;
         session.Bucket(value.Generation)?.AddConnection(wait.Ticks, wasReused);
+    }
+
+    /// <summary>Records a provider-pool acquisition that failed, timed out, or was cancelled.</summary>
+    public void ConnectionAttemptFailed(StreamTraceRangeContext? range, TimeSpan wait)
+    {
+        if (range is not { } value) return;
+        if (!_sessions.TryGetValue(value.SessionId, out var session)) return;
+        session.Bucket(value.Generation)?.AddFailedConnection(wait.Ticks);
+    }
+
+    /// <summary>Records time spent waiting for the outer download permit, whatever the outcome.</summary>
+    public void PermitWait(StreamTraceRangeContext? range, TimeSpan wait)
+    {
+        if (range is not { } value) return;
+        if (!_sessions.TryGetValue(value.SessionId, out var session)) return;
+        session.Bucket(value.Generation)?.AddPermitWait(wait.Ticks);
     }
 
     /// <summary>

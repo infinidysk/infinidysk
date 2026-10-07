@@ -7,6 +7,9 @@ using NzbWebDAV.Exceptions;
 using NzbWebDAV.Middlewares;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.StreamTrace;
+using NzbWebDAV.Streams;
+using NzbWebDAV.Tests.Fakes;
+using NzbWebDAV.Tests.Streams;
 using NzbWebDAV.Tests.TestUtils;
 using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav.Base;
@@ -331,6 +334,57 @@ public class GetAndHeadHandlerRangeTests
 
         public Task<IStoreCollection?> GetCollectionAsync(Uri uri, CancellationToken cancellationToken)
             => Task.FromResult<IStoreCollection?>(null);
+    }
+
+    [Fact]
+    public async Task Get_FiniteRange_DoesNotCompleteBeforeTheEndingArticleValidates()
+    {
+        const int segmentSize = 768 * 1024;
+        const int rangeLength = segmentSize + 400 * 1024;
+        var segments = MultiSegmentStreamIncrementalTests.CreateSegments(3, segmentSize);
+        var ranges = MultiSegmentStreamIncrementalTests.Ranges(3, segmentSize);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var corruptServed = 0;
+        var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            segmentRanges: ranges,
+            decodedStreamFactory: (id, bytes) =>
+                id == "seg-1" && Interlocked.Exchange(ref corruptServed, 1) == 0
+                    ? new FailingBodyStream(
+                        512 * 1024, () => MultiSegmentStreamIncrementalTests.Corrupt(id), gate.Task)
+                    : new MemoryStream(bytes, writable: false));
+        var item = new NzbStoreItem(() => new NzbFileStream(
+            MultiSegmentStreamIncrementalTests.Ids(3), 3L * segmentSize, client, articleBufferSize: 2,
+            segmentByteRanges: ranges.Values.ToArray(), usePipelinedBodyRequests: false,
+            fileName: $"range-trailer-{Guid.NewGuid():N}.bin"), 3L * segmentSize);
+        var config = new ConfigManager();
+        using var shared = new SharedStreamRegistry(config, new ConcurrentReadTracker());
+        var handler = new GetAndHeadHandlerPatch(
+            new SingleItemStore(item), config, new ProviderUsageTracker(), new ActiveReadRegistry(),
+            new ConcurrentReadTracker(), new StreamTraceBuffer(100, enabled: false),
+            new StreamingFailureTracker(), shared);
+        using var body = new MemoryStream();
+        var context = NewGetContext($"bytes=0-{rangeLength - 1}", body);
+
+        var request = handler.HandleRequestAsync(context);
+        await Task.WhenAny(request, Task.Delay(500));
+        Assert.False(request.IsCompleted, "the range must wait for its ending article's trailer");
+
+        gate.SetResult();
+        await MultiSegmentStreamIncrementalTests.AssertTrailerFailureAsync(request);
+        Assert.True(body.Length < rangeLength, "the final range bytes must not be written");
+        Assert.Equal(2, client.BodyRequestCounts["seg-1"]);
+    }
+
+    private sealed class NzbStoreItem(Func<Stream> open, long fileSize) : BaseStoreReadonlyItem
+    {
+        public override string Name => "file.bin";
+        public override string UniqueKey => "file";
+        public override long FileSize => fileSize;
+        public override DateTime CreatedAt => DateTime.UnixEpoch;
+        public override Task<Stream> GetReadableStreamAsync(CancellationToken cancellationToken)
+            => Task.FromResult(open());
     }
 
     [Fact]

@@ -17,12 +17,19 @@ public sealed class ContextualCancellationTokenSource : IDisposable
         _contexts = [];
     }
 
-    public static ContextualCancellationTokenSource CreateLinkedTokenSource(CancellationToken linkedToken)
+    public static ContextualCancellationTokenSource CreateLinkedTokenSource(CancellationToken linkedToken) =>
+        CopyContexts(CancellationTokenSource.CreateLinkedTokenSource(linkedToken), linkedToken);
+
+    // Carries the token's contexts without inheriting its cancellation.
+    public static ContextualCancellationTokenSource CreateWithContextsOf(CancellationToken contextToken) =>
+        CopyContexts(new CancellationTokenSource(), contextToken);
+
+    private static ContextualCancellationTokenSource CopyContexts(CancellationTokenSource cts, CancellationToken linkedToken)
     {
-        var cts = CancellationTokenSource.CreateLinkedTokenSource(linkedToken);
         var contextualCts = new ContextualCancellationTokenSource(cts);
         contextualCts.SetContext(linkedToken.GetContext<DownloadPriorityContext>());
         contextualCts.SetContext(linkedToken.GetContext<StreamingSchedulingContext>());
+        contextualCts.SetContext(linkedToken.GetContext<StreamingStripeContext>());
         contextualCts.SetContext(linkedToken.GetContext<StreamingTimeoutContext>());
         contextualCts.SetContext(linkedToken.GetContext<QueueDownloadContext>());
         contextualCts.SetContext(linkedToken.GetContext<MaintenanceDownloadContext>());
@@ -43,6 +50,8 @@ public sealed class ContextualCancellationTokenSource : IDisposable
         contextualCts.SetContext(linkedToken2.GetContext<DownloadPriorityContext>());
         contextualCts.SetContext(linkedToken1.GetContext<StreamingSchedulingContext>());
         contextualCts.SetContext(linkedToken2.GetContext<StreamingSchedulingContext>());
+        contextualCts.SetContext(linkedToken1.GetContext<StreamingStripeContext>()
+            ?? linkedToken2.GetContext<StreamingStripeContext>());
         contextualCts.SetContext(linkedToken1.GetContext<StreamingTimeoutContext>());
         contextualCts.SetContext(linkedToken2.GetContext<StreamingTimeoutContext>());
         contextualCts.SetContext(linkedToken1.GetContext<QueueDownloadContext>());

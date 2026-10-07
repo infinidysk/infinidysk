@@ -6,6 +6,7 @@ using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
+using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Tests.TestUtils;
@@ -19,6 +20,135 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 [Collection(nameof(GlobalLoggerCollection))]
 public sealed class MultiProviderNntpClientYencValidationTests
 {
+    [Fact]
+    public Task SparseLabels_CompletePostedLayout_RemainsUnchanged() => CheckSparseCompletePostAsync(false);
+
+    [Fact]
+    public Task SparseLabels_CompleteNonuniformPostWithOmittedTotal_RemainsUnchanged() => CheckSparseCompletePostAsync(true);
+
+    private static async Task CheckSparseCompletePostAsync(bool omittedTotal)
+    {
+        var size = omittedTotal ? 9 : 6;
+        var first = CreateHeader(1, omittedTotal ? 0 : 2) with { FileSize = size, HasTotalParts = !omittedTotal };
+        var last = first with { PartNumber = 2, PartOffset = 3, PartSize = size - 3 };
+        var data = new Dictionary<string, byte[]>
+        {
+            ["part-1@example"] = [1, 2, 3],
+            ["part-3@example"] = omittedTotal ? [4, 5, 6, 7, 8, 9] : [4, 5, 6],
+        };
+        using var primary = new FakeNntpClient(data, useCachedYencStreams: true,
+            yencHeaders: new Dictionary<string, UsenetYencHeader> { ["part-1@example"] = first, ["part-3@example"] = last });
+        using var backup = new FakeNntpClient(new Dictionary<string, byte[]>());
+        using var client = CreateProviderClient(primary, backup);
+        var file = new NzbFile { Subject = "fake.bin" };
+        file.Segments.Add(new NzbSegment { Number = 1, MessageId = "part-1@example", Bytes = 3, ByteRange = new(0, 3) });
+        file.Segments.Add(new NzbSegment { Number = 3, MessageId = "part-3@example", Bytes = size - 3 });
+        Assert.False(await file.TryFillOmittedSegmentsAsync(first, client, CancellationToken.None));
+        Assert.Equal(["part-1@example", "part-3@example"], file.GetSegmentIds());
+        using (YencFileValidationContext.BeginSizeProbe(file))
+        {
+            Assert.True(YencFileValidationContext.MatchesExpectedFile(first, "part-1@example"));
+            Assert.True(YencFileValidationContext.MatchesExpectedFile(last, "part-3@example"));
+        }
+        using (YencFileValidationContext.BeginStreaming(file.GetSegmentIds(), null))
+        {
+            Assert.True(YencFileValidationContext.MatchesExpectedFile(first, "part-1@example"));
+            Assert.True(YencFileValidationContext.MatchesExpectedFile(last, "part-3@example"));
+        }
+        Assert.Equal(size, await client.GetFileSizeAsync(file, CancellationToken.None));
+        await using var stream = new NzbFileStream(file.GetSegmentIds(), size, client, 4);
+        await using var output = new MemoryStream();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await stream.CopyToAsync(output, cancellation.Token);
+        Assert.Equal(Enumerable.Range(1, size).Select(value => (byte)value), output.ToArray());
+        Assert.Empty(backup.RequestedSegmentIds);
+    }
+
+    [Fact]
+    public async Task ConfirmedOmission_Restores137PartValidation()
+    {
+        var file = new NzbFile { Subject = "fake.bin" };
+        file.Segments.AddRange(Enumerable.Range(1, 137).Where(number => number != 112).Select(number =>
+            new NzbSegment { Number = number, MessageId = $"part-{number}@example", Bytes = 768_000 }));
+        var first = CreateHeader(1, 137) with { FileSize = 105_216_000, PartSize = 768_000, HasTotalParts = true };
+        using var client = new FakeNntpClient(new Dictionary<string, byte[]>());
+        using (YencFileValidationContext.BeginSizeProbe(file))
+            Assert.False(YencFileValidationContext.MatchesExpectedFile(first, file.Segments[0].MessageId));
+        Assert.True(await file.TryFillOmittedSegmentsAsync(first, client, CancellationToken.None));
+        Assert.Equal(137, file.Segments.Count);
+        foreach (var streaming in new[] { false, true })
+        {
+            using var scope = streaming
+                ? YencFileValidationContext.BeginStreaming(file.GetSegmentIds(), null)
+                : YencFileValidationContext.BeginSizeProbe(file);
+            Assert.Equal(137, YencFileValidationContext.CurrentExpectedTotalParts);
+            foreach (var number in new[] { 1, 111, 113, 137 })
+                Assert.True(YencFileValidationContext.MatchesExpectedFile(
+                    first with { PartNumber = number, PartOffset = 768_000L * (number - 1) }, $"part-{number}@example"));
+            Assert.Equal(("part-1@example", (int?)113, streaming ? null : (int?)113),
+                YencFileValidationContext.Current!.GetRequestDetails("part-113@example"));
+        }
+        Assert.Empty(client.RequestedSegmentIds);
+    }
+
+    [Theory]
+    [InlineData(0, false, false)]
+    [InlineData(0, true, false)]
+    [InlineData(4, false, false)]
+    [InlineData(4, true, false)]
+    [InlineData(0, false, true)]
+    [InlineData(0, true, true)]
+    [InlineData(4, false, true)]
+    [InlineData(4, true, true)]
+    public async Task ConfirmedOmission_PreservesBytesAcrossPlaybackAndSeeks(int bufferSize, bool pipeline, bool omittedTotal)
+    {
+        var dir = Path.Join(Path.GetTempPath(), "omitted-stream-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new RepairPatchStore(dir, 1024);
+            await store.EnsureCatalogLoadedAsync(CancellationToken.None);
+            var first = CreateHeader(1, omittedTotal ? 0 : 3) with { HasTotalParts = !omittedTotal };
+            var last = first with { PartNumber = 3, PartOffset = 6 };
+            using var primary = new FakeNntpClient(new Dictionary<string, byte[]>
+            {
+                ["part-1@example"] = [1, 2, 3], ["part-3@example"] = [7, 8, 9],
+            }, useCachedYencStreams: true,
+                segmentRanges: new Dictionary<string, LongRange> { ["part-1@example"] = new(0, 3), ["part-3@example"] = new(6, 9) },
+                yencHeaders: new Dictionary<string, UsenetYencHeader> { ["part-1@example"] = first, ["part-3@example"] = last });
+            using var backup = new FakeNntpClient(new Dictionary<string, byte[]>());
+            using var provider = CreateProviderClient(primary, backup);
+            using var client = new RepairedSegmentNntpClient(provider, store);
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var file = new NzbFile { Subject = "fake.bin" };
+            file.Segments.Add(new NzbSegment { Number = 1, MessageId = "part-1@example", Bytes = 3, ByteRange = new(0, 3) });
+            file.Segments.Add(new NzbSegment { Number = 3, MessageId = "part-3@example", Bytes = 3 });
+            Assert.True(await file.TryFillOmittedSegmentsAsync(first, client, cancellation.Token));
+            await file.ProbeSecondSegmentRangeAsync(client, 9, cancellation.Token);
+            var ranges = file.GetSegmentByteRangeIndex();
+            Assert.True(ranges.IsTrusted);
+            byte[] expected = [1, 2, 3, 0, 0, 0, 7, 8, 9];
+            foreach (var offset in new[] { 0, 1, 4, 6 })
+                Assert.Equal(expected[offset..], await ReadAsync(offset));
+            var marker = file.Segments[1].MessageId;
+            store.CommitPatch(marker, [4, 5, 6], first with { PartNumber = 2, PartOffset = 3 });
+            Assert.Equal(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9 }, await ReadAsync(0));
+            Assert.DoesNotContain(marker, primary.RequestedSegmentIds);
+            Assert.Empty(backup.RequestedSegmentIds);
+            Assert.False(cancellation.IsCancellationRequested);
+
+            async Task<byte[]> ReadAsync(int offset)
+            {
+                await using var stream = new NzbFileStream(file.GetSegmentIds(), 9, client, bufferSize,
+                    ranges.Ranges, pipeline, segmentByteRangesTrusted: ranges.IsTrusted);
+                stream.Seek(offset, SeekOrigin.Begin);
+                await using var output = new MemoryStream();
+                await stream.CopyToAsync(output, cancellation.Token);
+                return output.ToArray();
+            }
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
     [Fact]
     public async Task ValidationContext_Par2DeferralIsLimitedToItsCandidateAndRestoresStrictValidation()
     {
@@ -117,6 +247,23 @@ public sealed class MultiProviderNntpClientYencValidationTests
         });
 
         Assert.Equal(17, YencFileValidationContext.CurrentExpectedTotalParts);
+    }
+
+    [Fact]
+    public void ValidationContext_StreamingReusesFirstWinsPositionIndexAcrossReads()
+    {
+        string[] segmentIds = ["duplicate", "duplicate"];
+        string[][] fallbacks = [[], ["alternate"]];
+        var positionIndex = YencFileValidationContext.CreatePositionIndex(segmentIds, fallbacks);
+
+        using (YencFileValidationContext.BeginStreaming(segmentIds, fallbacks, positionIndex))
+            Assert.Equal(1, YencFileValidationContext.Current!.GetRequestDetails("duplicate").Position);
+
+        using (YencFileValidationContext.BeginStreaming(segmentIds, fallbacks, positionIndex))
+        {
+            Assert.Equal(1, YencFileValidationContext.Current!.GetRequestDetails("duplicate").Position);
+            Assert.Equal(2, YencFileValidationContext.Current.GetRequestDetails("alternate").Position);
+        }
     }
 
     [Fact]

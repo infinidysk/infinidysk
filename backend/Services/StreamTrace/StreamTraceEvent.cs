@@ -26,6 +26,8 @@ public sealed record StreamTraceEvent
     [JsonPropertyName("durationMs")] public int? DurationMs { get; init; }
     [JsonPropertyName("retries")] public int? Retries { get; init; }
     [JsonPropertyName("segmentId")] public string? SegmentId { get; init; }
+    [JsonPropertyName("segmentIndex")] public int? SegmentIndex { get; init; }
+    [JsonPropertyName("hedgeDelayMs")] public int? HedgeDelayMs { get; init; }
 
     [JsonPropertyName("bytes")] public long? Bytes { get; init; }
     [JsonPropertyName("endReason")] public string? EndReason { get; init; }
@@ -74,6 +76,21 @@ public sealed record StreamTraceEvent
     // concurrently — so they are shares of a range's wall clock, not a partition of it.
     [JsonPropertyName("connWaitMs")]
     public long? ConnectionWaitMs => FrozenStalls?.ConnectionWaitMs ?? RangeStalls?.ConnectionWaitMs;
+    // First-completed and worst successful provider-pool waits; not necessarily the head segment.
+    [JsonPropertyName("firstConnWaitMs")]
+    public long? FirstConnectionWaitMs => FrozenStalls?.FirstConnectionWaitMs ?? RangeStalls?.FirstConnectionWaitMs;
+    [JsonPropertyName("maxConnWaitMs")]
+    public long? MaxConnectionWaitMs => FrozenStalls?.MaxConnectionWaitMs ?? RangeStalls?.MaxConnectionWaitMs;
+    [JsonPropertyName("failedConnWaitMs")]
+    public long? FailedConnectionWaitMs => FrozenStalls?.FailedConnectionWaitMs ?? RangeStalls?.FailedConnectionWaitMs;
+    [JsonPropertyName("maxFailedConnWaitMs")]
+    public long? MaxFailedConnectionWaitMs => FrozenStalls?.MaxFailedConnectionWaitMs ?? RangeStalls?.MaxFailedConnectionWaitMs;
+    [JsonPropertyName("failedConnAttempts")]
+    public long? FailedConnectionAttempts => FrozenStalls?.FailedConnectionAttempts ?? RangeStalls?.FailedConnectionAttempts;
+    [JsonPropertyName("permitWaitMs")]
+    public long? PermitWaitMs => FrozenStalls?.PermitWaitMs ?? RangeStalls?.PermitWaitMs;
+    [JsonPropertyName("maxPermitWaitMs")]
+    public long? MaxPermitWaitMs => FrozenStalls?.MaxPermitWaitMs ?? RangeStalls?.MaxPermitWaitMs;
     [JsonPropertyName("providerWaitMs")]
     public long? ProviderWaitMs => FrozenStalls?.ProviderWaitMs ?? RangeStalls?.ProviderWaitMs;
     [JsonPropertyName("bodyDrainMs")]

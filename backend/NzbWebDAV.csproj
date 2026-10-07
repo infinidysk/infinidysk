@@ -13,6 +13,12 @@
     </PropertyGroup>
 
     <ItemGroup>
+      <!-- Idle thread-pool workers otherwise spin before sleeping. Streaming wakes them
+           per socket/TLS read, so spinning was ~40% of streaming CPU (macOS sample). -->
+      <RuntimeHostConfigurationOption Include="System.Threading.ThreadPool.UnfairSemaphoreSpinLimit" Value="0" />
+    </ItemGroup>
+
+    <ItemGroup>
       <PackageReference Include="MemoryPack" />
       <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
       <PackageReference Include="Microsoft.EntityFrameworkCore.Design">

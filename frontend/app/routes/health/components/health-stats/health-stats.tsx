@@ -63,6 +63,7 @@ export function HealthStats({ stats }: HealthStatsProps) {
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
           <Stat
+            className="col-span-2 sm:col-span-1"
             icon="fact_check"
             iconClassName="text-base-content/50"
             title="Total checked"
@@ -107,6 +108,7 @@ export function HealthStats({ stats }: HealthStatsProps) {
 }
 
 function Stat({
+  className = "",
   icon,
   iconClassName,
   iconFilled,
@@ -114,6 +116,7 @@ function Stat({
   value,
   valueClassName = "",
 }: {
+  className?: string;
   icon: string;
   iconClassName: string;
   iconFilled?: boolean;
@@ -121,9 +124,11 @@ function Stat({
   value: number;
   valueClassName?: string;
 }) {
+  // Status colour only when there is something to report; zero counts stay neutral.
+  const muted = value === 0 && valueClassName !== "";
   return (
-    <div className="min-w-0 py-2">
-      <div className={`mb-1 ${iconClassName}`}>
+    <div className={`min-w-0 py-2 ${className}`}>
+      <div className={`mb-1 ${muted ? "text-base-content/30" : iconClassName}`}>
         <Icon
           name={icon}
           {...(iconFilled !== undefined ? { filled: iconFilled } : {})}
@@ -131,7 +136,9 @@ function Stat({
         />
       </div>
       <div className="text-xs text-base-content/70">{title}</div>
-      <div className={`font-mono text-2xl font-semibold tabular-nums ${valueClassName}`}>
+      <div
+        className={`font-mono text-2xl font-semibold tabular-nums ${muted ? "text-base-content/40" : valueClassName}`}
+      >
         {value.toLocaleString()}
       </div>
     </div>

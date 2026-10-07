@@ -56,6 +56,15 @@ internal sealed class SegmentSizes
         return _discoveredSizes.TryGetValue(segmentIndex, out size);
     }
 
+    /// <summary>Size from the recorded ranges only, never one discovered while reading.</summary>
+    public bool TryGetRecordedSize(int segmentIndex, out long size)
+    {
+        size = 0;
+        if (_exactSizes.IsEmpty || segmentIndex < 0 || segmentIndex >= _segmentCount) return false;
+        size = _exactSizes.Span[segmentIndex];
+        return true;
+    }
+
     public void RecordExactSize(int segmentIndex, long size)
     {
         if (size <= 0 || segmentIndex < 0 || segmentIndex >= _segmentCount)

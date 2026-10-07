@@ -58,6 +58,7 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
     private long _allocationAttemptCount;
     private long _allocationFailureCount;
     private long _returnSequence;
+    private long _lastActivityTimestamp;
 
     public SegmentBufferPool(
         long maxIdleBytes,
@@ -100,7 +101,10 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
         _timeProvider = timeProvider ?? TimeProvider.System;
         _allocator = allocator ?? (static length => new byte[length]);
         _onAllocationFailure = onAllocationFailure ?? LogAllocationFailureDefault;
+        _lastActivityTimestamp = _timeProvider.GetTimestamp();
     }
+
+    internal SegmentBufferRetentionPolicy RetentionPolicy => _retentionPolicy;
 
     public byte[] Rent(int minimumLength)
     {
@@ -127,6 +131,7 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
 
         lock (_gate)
         {
+            _lastActivityTimestamp = _timeProvider.GetTimestamp();
             _checkedOut.Add(allocated, CheckedOutMarker);
             _checkedOutBytes += allocated.Length;
             _rentCount++;
@@ -157,6 +162,7 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
                 return;
             }
 
+            _lastActivityTimestamp = _timeProvider.GetTimestamp();
             _checkedOutBytes -= buffer.Length;
             _returnCount++;
             if (TryGetPoolableLifetimeLocked(buffer.Length) is { } lifetime)
@@ -242,6 +248,30 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
         }
     }
 
+    /// <summary>
+    /// Drops every idle buffer once the pool has seen no rent or return for
+    /// <paramref name="idleFor"/>, so a finished stream does not pin its read-ahead.
+    /// Returns the bytes released.
+    /// </summary>
+    internal long TrimIfIdle(TimeSpan idleFor)
+    {
+        lock (_gate)
+        {
+            if (_idleBytes == 0 || _timeProvider.GetElapsedTime(_lastActivityTimestamp) < idleFor)
+                return 0;
+
+            var released = _idleBytes;
+            foreach (var bucket in _buckets.Values)
+            {
+                while (bucket.TryDequeue(out var idle))
+                    RecordStaleExpiredLocked(idle.Buffer.Length);
+            }
+
+            _idleBytes = 0;
+            return released;
+        }
+    }
+
     internal SegmentBufferPoolOomSnapshot SnapshotForOom()
     {
         lock (_gate)
@@ -268,6 +298,7 @@ public sealed class SegmentBufferPool : ISegmentBufferPool
 
             if (_buckets.TryGetValue(sizeClass, out var bucket) && bucket.Count > 0)
             {
+                _lastActivityTimestamp = _timeProvider.GetTimestamp();
                 var idle = bucket.Dequeue();
                 _idleBytes -= idle.Buffer.Length;
                 _checkedOut.Add(idle.Buffer, CheckedOutMarker);

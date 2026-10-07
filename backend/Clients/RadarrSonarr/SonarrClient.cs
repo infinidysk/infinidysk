@@ -3,7 +3,7 @@ using System.Net;
 using System.Text.Json;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Clients.RadarrSonarr.SonarrModels;
-using NzbWebDAV.Utils;
+using NzbWebDAV.Services;
 using Serilog;
 
 namespace NzbWebDAV.Clients.RadarrSonarr;
@@ -248,11 +248,15 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
 
     private async Task<int?> GetSeriesId(string symlinkOrStrmPath, CancellationToken ct)
     {
-        // get series-id from cache
         string? cachedSeriesPath = null;
         var cachedSeriesId = 0;
-        foreach (var parentPath in PathUtil.GetAllParentDirectories(symlinkOrStrmPath))
+        for (var separatorIndex = symlinkOrStrmPath.AsSpan().LastIndexOfAny('/', '\\');
+             separatorIndex >= 0;
+             separatorIndex = symlinkOrStrmPath.AsSpan(0, separatorIndex).LastIndexOfAny('/', '\\'))
         {
+            var parentPath = separatorIndex == 0
+                ? symlinkOrStrmPath[..1]
+                : symlinkOrStrmPath[..separatorIndex];
             if (!SeriesPathToSeriesIdCache.TryGetValue((Host, parentPath), out cachedSeriesId))
                 continue;
 
@@ -260,25 +264,33 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
             break;
         }
 
-        // if found, verify and return it
         if (cachedSeriesPath != null)
         {
             var series = await GetSeriesOrNull(cachedSeriesId, ct).ConfigureAwait(false);
-            if (series?.Path != null && symlinkOrStrmPath.StartsWith(series.Path, StringComparison.Ordinal))
+            if (series?.Path != null &&
+                string.Equals(ToSeriesCacheKey(series.Path), cachedSeriesPath, StringComparison.Ordinal))
                 return cachedSeriesId;
             SeriesPathToSeriesIdCache.TryRemove((Host, cachedSeriesPath), out _);
         }
 
-        // otherwise, fetch all series and repopulate the cache
         int? result = null;
+        var resultPathLength = -1;
         foreach (var series in await GetAllSeries(ct).ConfigureAwait(false))
         {
-            SeriesPathToSeriesIdCache[(Host, series.Path!)] = series.Id;
-            if (symlinkOrStrmPath.StartsWith(series.Path!, StringComparison.Ordinal))
+            var seriesPath = series.Path!;
+            var cachePath = ToSeriesCacheKey(seriesPath);
+            SeriesPathToSeriesIdCache[(Host, cachePath)] = series.Id;
+            if (HealthCheckService.IsPathWithinRoot(symlinkOrStrmPath, seriesPath) &&
+                cachePath.Length > resultPathLength)
+            {
                 result = series.Id;
+                resultPathLength = cachePath.Length;
+            }
         }
 
-        // return the found series-id
         return result;
     }
+
+    private static string ToSeriesCacheKey(string seriesPath) =>
+        seriesPath.Length > 1 ? seriesPath.TrimEnd('/', '\\') : seriesPath;
 }

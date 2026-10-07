@@ -68,7 +68,6 @@ export function describeImportViolation(fromFile, source, options = {}) {
   const fromRel = relativeToApp(fromFile, appRoot);
   const importedRel = relativeToApp(importedAbs, appRoot);
   if (!fromRel || !importedRel) return null;
-
   const importedRoute = importedRel.startsWith("routes/");
   if (isSharedImporter(fromRel) && importedRoute) {
     return {

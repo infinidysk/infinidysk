@@ -1,6 +1,8 @@
+import type { ReactNode } from "react";
 import type { HealthCheckQueueItem } from "~/clients/backend-client.server";
 import { Truncate } from "~/components/truncate/truncate";
 import { Badge, Icon } from "~/components/ui";
+import { withUrlBase } from "~/utils/url-base";
 
 export type HealthTableProps = {
   isEnabled: boolean;
@@ -17,31 +19,42 @@ export function HealthTable({ isEnabled, healthCheckItems }: HealthTableProps) {
     <section className="card w-full border border-base-content/10 bg-base-100 shadow-sm">
       <div className="card-body gap-0 p-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-base-content/10 px-4 py-4 md:px-6">
-          <h2 className="card-title text-xl">Schedule</h2>
+          <div>
+            <h2 className="card-title text-xl">Schedule</h2>
+            <p className="mt-1 text-xs text-base-content/60">
+              Files currently being checked and the next ones due.
+            </p>
+          </div>
           {isEnabled && healthCheckItems.length > 0 && (
             <Badge className="badge-ghost badge-sm font-mono tabular-nums">
-              Showing {healthCheckItems.length}
+              {healthCheckItems.length} upcoming
             </Badge>
           )}
         </div>
 
         {!isEnabled ? (
           <EmptyState
-            title="Enable repairs in settings"
-            body="Once you enable repairs, mounted usenet files are queued for continuous health monitoring."
+            title="Background repairs are off"
+            body="Turn on repairs to queue mounted Usenet files for continuous health monitoring."
+            action={
+              <a className="btn btn-sm btn-primary" href={withUrlBase("/settings?tab=repairs")}>
+                <Icon name="settings" className="!text-[16px]" />
+                Open repair settings
+              </a>
+            }
           />
         ) : healthCheckItems.length === 0 ? (
           <EmptyState
             title="No items to health-check"
-            body="Once you begin processing NZBs, mounted usenet files are queued for continuous health monitoring."
+            body="Once you begin processing NZBs, mounted Usenet files are queued for continuous health monitoring."
           />
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto rounded-b-box">
             <table className="table table-zebra table-sm mb-0 w-full min-w-0 text-base-content min-[900px]:min-w-[720px]">
               <thead>
                 <tr className="border-base-content/10 [&_th]:bg-base-200 [&_th]:text-base-content/70">
                   <th className="py-3 pl-4 text-left text-xs font-semibold uppercase tracking-wide md:pl-6">
-                    Name
+                    File
                   </th>
                   <th className={desktopHeaderClass}>Created</th>
                   <th className={desktopHeaderClass}>Last check</th>
@@ -72,7 +85,7 @@ export function HealthTable({ isEnabled, healthCheckItems }: HealthTableProps) {
                                 ? null
                                 : formatWhen(item.nextHealthCheck, "ASAP")
                             }
-                            {...(item.progress != null ? { progress: item.progress } : {})}
+                            {...(item.progress != null ? { item } : {})}
                           />
                         </div>
                       </div>
@@ -81,7 +94,7 @@ export function HealthTable({ isEnabled, healthCheckItems }: HealthTableProps) {
                     <td className={desktopCellClass}>{formatAge(item.lastHealthCheck, "Never")}</td>
                     <td className={`${desktopCellClass} pr-4 md:pr-6`}>
                       {item.progress != null ? (
-                        <HealthProgressBadge percentage={item.progress} />
+                        <ActiveBadge item={item} />
                       ) : (
                         formatWhen(item.nextHealthCheck, "ASAP")
                       )}
@@ -97,7 +110,7 @@ export function HealthTable({ isEnabled, healthCheckItems }: HealthTableProps) {
   );
 }
 
-function EmptyState({ title, body }: { title: string; body: string }) {
+function EmptyState({ title, body, action }: { title: string; body: string; action?: ReactNode }) {
   return (
     <div className="hero min-h-[220px] py-8">
       <div className="hero-content">
@@ -105,6 +118,7 @@ function EmptyState({ title, body }: { title: string; body: string }) {
           <Icon name="health_and_safety" className="mb-3 !text-[48px] text-base-content/40" />
           <h3 className="text-base font-semibold text-base-content">{title}</h3>
           <p className="mt-1 text-xs leading-relaxed text-base-content/60">{body}</p>
+          {action && <div className="mt-4">{action}</div>}
         </div>
       </div>
     </div>
@@ -114,22 +128,41 @@ function EmptyState({ title, body }: { title: string; body: string }) {
 function MetaChip({
   label,
   value,
-  progress,
+  item,
 }: {
   label: string;
   value: string | null;
-  progress?: number;
+  item?: HealthCheckQueueItem;
 }) {
   return (
     <span className="inline-flex items-center gap-1.5 text-[11px] text-base-content/55">
       <span className="uppercase tracking-wide text-base-content/40">{label}</span>
-      {progress != null ? (
-        <HealthProgressBadge percentage={progress} compact />
+      {item ? (
+        <ActiveBadge item={item} compact />
       ) : (
         <span className="font-mono tabular-nums text-base-content/70">{value}</span>
       )}
     </span>
   );
+}
+
+function ActiveBadge({ item, compact = false }: { item: HealthCheckQueueItem; compact?: boolean }) {
+  // Only the STAT sweep reports a percentage; other phases show how long they have been running.
+  if (item.phase && item.phase !== "Checking") {
+    return (
+      <Badge className="badge-sm badge-info badge-soft justify-center font-semibold tabular-nums">
+        {item.phase} · {formatDuration(item.phaseStartedAt ?? null)}
+      </Badge>
+    );
+  }
+  return <HealthProgressBadge percentage={item.progress ?? 0} compact={compact} />;
+}
+
+function formatDuration(dateString: string | null) {
+  const elapsed = Math.floor((Date.now() - new Date(dateString ?? "").getTime()) / 1000);
+  if (Number.isNaN(elapsed) || elapsed < 60) return "<1m";
+  if (elapsed < 3600) return `${Math.floor(elapsed / 60)}m`;
+  return `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m`;
 }
 
 function formatAge(dateString: string | null, fallback: string) {

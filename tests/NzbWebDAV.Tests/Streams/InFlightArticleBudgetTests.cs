@@ -5,6 +5,58 @@ namespace NzbWebDAV.Tests.Streams;
 public class InFlightArticleBudgetTests
 {
     [Fact]
+    public void TryLeaseAll_LeasesEverySizeOrNothing()
+    {
+        var budget = new InFlightArticleBudget(1_000);
+
+        var leases = budget.TryLeaseAll([300, 0, 400]);
+
+        Assert.NotNull(leases);
+        Assert.Equal(700, budget.LeasedBytes);
+        Assert.Same(ArticleByteLease.Empty, leases[1]);
+        Assert.Null(budget.TryLeaseAll([200, 200]));
+        Assert.Equal(700, budget.LeasedBytes);
+
+        foreach (var lease in leases)
+            lease.Dispose();
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
+    public void TryLeaseAll_NeverTakesOversizeIdleException()
+    {
+        var budget = new InFlightArticleBudget(100);
+
+        Assert.Null(budget.TryLeaseAll([60, 60]));
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
+    public async Task TryLeaseAll_DoesNotBargeAheadOfQueuedWaiters()
+    {
+        var budget = new InFlightArticleBudget(100);
+        using var held = await budget.LeaseAsync(90, CancellationToken.None);
+        var waiter = budget.LeaseAsync(50, CancellationToken.None).AsTask();
+        while (!budget.HasWaiters)
+            await Task.Delay(5);
+
+        Assert.Null(budget.TryLeaseAll([5]));
+
+        held.Dispose();
+        using var granted = await waiter.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(50, budget.LeasedBytes);
+    }
+
+    [Fact]
+    public void TryLeaseAll_OverflowingTotal_IsRefusedWithoutLeasing()
+    {
+        var budget = new InFlightArticleBudget(long.MaxValue);
+
+        Assert.Null(budget.TryLeaseAll([long.MaxValue, 1]));
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
+    [Fact]
     public void AccountBufferedPipeBytes_PositiveNegativeAndZero_MatchLeaseCounter()
     {
         var budget = new InFlightArticleBudget(10_000);

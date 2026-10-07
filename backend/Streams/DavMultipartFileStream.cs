@@ -12,7 +12,7 @@ namespace NzbWebDAV.Streams;
 // FastReadOnlyStream retains a synchronous Read fallback for out-of-repo
 // compatibility only. In-repo nested-RAR expansion and WebDAV GET/range handlers
 // use the Memory<byte> async path below.
-public class DavMultipartFileStream : FastReadOnlyStream
+public class DavMultipartFileStream : FastReadOnlyStream, IDeliveredBytesValidation
 {
     private readonly DavMultipartFile _mpf;
     private readonly INntpClient _usenetClient;
@@ -32,6 +32,8 @@ public class DavMultipartFileStream : FastReadOnlyStream
     // synchronous); the next ReadAsync joins it before opening a new inner stream so
     // rapid scrubbing cannot overlap generations and pin the article budget.
     private Task? _pendingInnerDispose;
+    // Cancels successor geometry probes when the inner stream generation they serve ends.
+    private ContextualCancellationTokenSource? _generationCts;
 
     public DavMultipartFileStream(
         DavMultipartFile mpf,
@@ -100,6 +102,9 @@ public class DavMultipartFileStream : FastReadOnlyStream
         _innerStream?.Flush();
     }
 
+    ValueTask IDeliveredBytesValidation.ValidateDeliveredAsync(CancellationToken cancellationToken) =>
+        _innerStream.ValidateDeliveredAsync(cancellationToken);
+
     public override async ValueTask<int> ReadAsync(
         Memory<byte> buffer,
         CancellationToken cancellationToken = default)
@@ -114,7 +119,24 @@ public class DavMultipartFileStream : FastReadOnlyStream
             }
         }
         _innerStream ??= await GetFileStreamAsync(_position, cancellationToken).ConfigureAwait(false);
-        var read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+        int read;
+        try
+        {
+            read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+        }
+        // Positioning failures included: a seek's expected range came from the same recorded geometry.
+        catch (SeekPositionNotFoundException) when (
+            _resolver is not null &&
+            _resolver.RejectSegmentGeometry(_mpf, SeekFilePart(_mpf.Metadata, _position).filePartIndex))
+        {
+            // Reopen at the same offset; the part now seeks via authoritative header probes.
+            var responseEnd = _expectedReadEndExclusive;
+            await ReplaceInnerStreamAsync().ConfigureAwait(false);
+            _innerStream = await GetFileStreamAsync(_position, cancellationToken, responseEnd)
+                .ConfigureAwait(false);
+            read = await _innerStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+        }
+
         if (read == 0 &&
             _position < _length &&
             (_expectedReadEndExclusive is null || _position < _expectedReadEndExclusive))
@@ -151,12 +173,30 @@ public class DavMultipartFileStream : FastReadOnlyStream
         if (_position == absoluteOffset) return _position;
         _position = absoluteOffset;
         _expectedReadEndExclusive = null;
+        CancelGeneration();
         if (_innerStream is { } replaced)
         {
             _pendingInnerDispose = replaced.DisposeAsync().AsTask();
             _innerStream = null;
         }
         return _position;
+    }
+
+    private void CancelGeneration()
+    {
+        var cts = _generationCts;
+        _generationCts = null;
+        if (cts is null) return;
+        cts.Cancel();
+        cts.Dispose();
+    }
+
+    private async Task ReplaceInnerStreamAsync()
+    {
+        CancelGeneration();
+        var inner = _innerStream;
+        _innerStream = null;
+        if (inner is not null) await inner.DisposeAsync().ConfigureAwait(false);
     }
 
     public override void SetLength(long value)
@@ -213,7 +253,8 @@ public class DavMultipartFileStream : FastReadOnlyStream
         throw new SeekPositionNotFoundException($"Corrupt file. Cannot seek to byte position {byteOffset}.");
     }
 
-    private async Task<CombinedStream> GetFileStreamAsync(long rangeStart, CancellationToken ct)
+    private async Task<CombinedStream> GetFileStreamAsync(
+        long rangeStart, CancellationToken ct, long? responseEndExclusive = null)
     {
         // Resolve only enough trailing volumes to cover the requested offset —
         // no waiting on the background pre-warm. For byte 0 that's nothing (the
@@ -225,21 +266,37 @@ public class DavMultipartFileStream : FastReadOnlyStream
         var meta = await EnsureCoveringAsync(rangeStart, ct).ConfigureAwait(false);
         // AES maps logical response bytes to packed volume bytes non-linearly; retain
         // legacy scheduling until that mapping has a tested exact contract.
-        var finiteBudget = _mpf.Metadata.AesParams is null &&
-                           ct.GetContext<StreamingSchedulingContext>() is not null
-            ? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget()
-            : null;
+        // A reopen mid-response owes only what the original range has left.
+        var finiteBudget = responseEndExclusive - rangeStart
+                           ?? (_mpf.Metadata.AesParams is null &&
+                               ct.GetContext<StreamingSchedulingContext>() is not null
+                               ? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget()
+                               : null);
         var budget = finiteBudget is > 0 ? new FiniteMultipartBudget(finiteBudget.Value) : null;
         _expectedReadEndExclusive = budget is null
             ? null
             : rangeStart + Math.Min(finiteBudget!.Value, _length - rangeStart);
+        // Owned by this stream generation, not the triggering read (as CombinedStream prefetch).
+        _generationCts = ContextualCancellationTokenSource.CreateWithContextsOf(ct);
+        var generationCt = _generationCts.Token;
 
         if (rangeStart == 0)
-            return new CombinedStream(EnumerateFromPart(0, 0, budget, ct));
+            return new CombinedStream(EnumerateFromPart(0, 0, budget, ct, generationCt));
 
         var (filePartIndex, filePartOffset) = SeekFilePart(meta, rangeStart);
         return new CombinedStream(EnumerateFromPart(
-            filePartIndex, rangeStart - filePartOffset, budget, ct));
+            filePartIndex, rangeStart - filePartOffset, budget, ct, generationCt));
+    }
+
+    // One part's read-ahead window, so prefetch continues into the next volume instead of
+    // draining at every boundary.
+    private long GetReadAheadBytes(DavMultipartFile.FilePart part)
+    {
+        if (part.SegmentIds.Length == 0) return 0;
+        var windowSegments = MultiSegmentStream.CalculateTaskWindowSize(
+            _articleBufferSize, _usePipelinedBodyRequests, _streamingBodyBatchWidth);
+        return MultiSegmentStream.SaturatingMultiply(
+            windowSegments, part.SegmentIdByteRange.Count / part.SegmentIds.Length);
     }
 
     // Resolve trailing volumes up to (and including) the one that contains
@@ -260,7 +317,8 @@ public class DavMultipartFileStream : FastReadOnlyStream
         int firstFilePartIndex,
         long firstOffset,
         FiniteMultipartBudget? budget,
-        CancellationToken ct)
+        CancellationToken ct,
+        CancellationToken generationCt)
     {
         var i = firstFilePartIndex;
         while (true)
@@ -276,8 +334,10 @@ public class DavMultipartFileStream : FastReadOnlyStream
 
                 var partBudget = budget?.GetPartContribution(
                     part.FilePartByteRange.Count - extraOffset);
-                yield return Task.FromResult<System.IO.Stream>(
-                    OpenPart(part, extraOffset, i, partBudget, budget));
+                // Successors open inside the predecessor's read-ahead window, so their
+                // geometry probe overlaps the predecessor's tail instead of the first byte.
+                yield return OpenWithGeometryAsync(
+                    i, extraOffset, partBudget, prepareGeometry: i != firstFilePartIndex, generationCt);
                 i++;
                 continue;
             }
@@ -287,7 +347,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
                 if (budget?.IsSatisfied == true)
                     yield break;
 
-                yield return ResolveAndOpenAsync(i, budget, ct);
+                yield return ResolveAndOpenAsync(i, budget, ct, generationCt);
                 i++;
                 continue;
             }
@@ -296,12 +356,26 @@ public class DavMultipartFileStream : FastReadOnlyStream
         }
     }
 
+    private async Task<Stream> OpenWithGeometryAsync(
+        int partIndex, long extraOffset, long? partBudget, bool prepareGeometry, CancellationToken generationCt)
+    {
+        var part = _mpf.Metadata.FileParts[partIndex];
+        if (!prepareGeometry)
+            return OpenPart(part, extraOffset, partIndex, partBudget, continuation: false);
+        // Exact ranges only speed up seeks within a volume; a read that takes at most one
+        // segment of it never seeks, so the probe would be pure overhead.
+        var segmentSize = part.SegmentIdByteRange.Count / Math.Max(1, part.SegmentIds.Length);
+        if (_resolver is not null && (partBudget is null || partBudget > segmentSize))
+            part = await _resolver.PrepareSegmentGeometryAsync(_mpf, partIndex, generationCt).ConfigureAwait(false);
+        return OpenPart(part, extraOffset, partIndex, partBudget, continuation: true);
+    }
+
     private PaddedLengthStream OpenPart(
         DavMultipartFile.FilePart part,
         long extraOffset,
         int partIndex,
-        long? readBudgetOverride = null,
-        FiniteMultipartBudget? finiteBudget = null)
+        long? readBudgetOverride,
+        bool continuation)
     {
         if (part.SegmentIdByteRange.StartInclusive != 0 ||
             part.SegmentIdByteRange.Count < 0 ||
@@ -337,6 +411,10 @@ public class DavMultipartFileStream : FastReadOnlyStream
             segmentByteRangesTrusted: part.SegmentByteRangesTrusted == true,
             readBudgetOverride: readBudgetOverride,
             verificationProof: part.VerificationProof);
+        stream.RecordedSizesInferred = _resolver is not null;
+        // A successor volume skips the first-byte ramp but shares the combined read-ahead window.
+        var speculativeReadAhead = continuation ? new SpeculativeReadAhead() : null;
+        stream.SpeculativeReadAhead = speculativeReadAhead;
         stream.Seek(part.FilePartByteRange.StartInclusive + extraOffset, SeekOrigin.Begin);
         var expectedLength = part.FilePartByteRange.Count - extraOffset;
         var responseLength = readBudgetOverride is { } cap
@@ -358,8 +436,11 @@ public class DavMultipartFileStream : FastReadOnlyStream
                 SeekOffsetWithinPart = extraOffset,
                 DeclaredVolumeLength = effectivePartLength,
                 IsEncrypted = _mpf.Metadata.AesParams is not null,
-            },
-            finiteBudget is null ? null : bytes => finiteBudget.Consume(bytes));
+            })
+        {
+            ReadAheadBytes = GetReadAheadBytes(part),
+            SpeculativeReadAhead = speculativeReadAhead,
+        };
     }
 
     internal static long GetEffectivePartLength(DavMultipartFile.FilePart part) =>
@@ -368,7 +449,8 @@ public class DavMultipartFileStream : FastReadOnlyStream
     private async Task<Stream> ResolveAndOpenAsync(
         int targetIndex,
         FiniteMultipartBudget? budget,
-        CancellationToken ct)
+        CancellationToken ct,
+        CancellationToken generationCt)
     {
         await _resolver!.ResolveNextAsync(_mpf, ct).ConfigureAwait(false);
         var meta = _mpf.Metadata;
@@ -385,14 +467,13 @@ public class DavMultipartFileStream : FastReadOnlyStream
         }
 
         var part = meta.FileParts[targetIndex];
-        return OpenPart(
-            part,
-            0,
-            targetIndex,
-            budget?.GetPartContribution(part.FilePartByteRange.Count),
-            budget);
+        var partBudget = budget?.GetPartContribution(part.FilePartByteRange.Count);
+        return await OpenWithGeometryAsync(
+            targetIndex, 0, partBudget, prepareGeometry: true, generationCt).ConfigureAwait(false);
     }
 
+    // Reserved when a part opens (it always delivers its full contribution), so a part
+    // opened ahead of the reader cannot overstate what is left of the range.
     private sealed class FiniteMultipartBudget(long remaining)
     {
         public bool IsSatisfied => remaining <= 0;
@@ -402,10 +483,10 @@ public class DavMultipartFileStream : FastReadOnlyStream
             if (availableBytes <= 0 || remaining <= 0)
                 return 0;
 
-            return Math.Min(remaining, availableBytes);
+            var contribution = Math.Min(remaining, availableBytes);
+            remaining -= contribution;
+            return contribution;
         }
-
-        public void Consume(long bytes) => remaining = Math.Max(0, remaining - bytes);
     }
 
     protected override void Dispose(bool disposing)
@@ -413,6 +494,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
         if (_disposed) return;
         if (disposing)
         {
+            CancelGeneration();
             _innerStream?.Dispose();
             var pending = _pendingInnerDispose;
             if (pending is not null)
@@ -433,6 +515,7 @@ public class DavMultipartFileStream : FastReadOnlyStream
     {
         if (_disposed) return;
         _disposed = true;
+        CancelGeneration();
         if (_pendingInnerDispose is { } pending)
         {
             _pendingInnerDispose = null;

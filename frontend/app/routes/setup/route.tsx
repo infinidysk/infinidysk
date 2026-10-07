@@ -11,6 +11,7 @@ import {
   Button,
   Icon,
   ManagedEnvProvider,
+  PageHeader,
   Spinner,
   type ManagedEnvMap,
 } from "~/components/ui";
@@ -214,63 +215,68 @@ export default function SetupRoute({ loaderData }: Route.ComponentProps) {
 
   if (completion) {
     return (
-      <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 md:px-8 md:py-10">
-        <section className="space-y-5 border-y border-base-content/10 py-10 text-center">
-          <Icon name="task_alt" className="mx-auto !text-[52px] text-success" />
-          <div>
-            <h1 className="text-3xl font-bold">Setup guide complete</h1>
-            <p className="mx-auto mt-2 max-w-[65ch] text-sm text-base-content/60">
-              Your {strategy === "symlinks" ? "Symlinks" : "STRM"} configuration has been saved.
-            </p>
+      <section className="mx-auto flex min-h-full w-full min-w-0 max-w-4xl flex-col gap-4 px-4 py-4 text-sm md:px-8 md:py-10">
+        <div className="card border border-base-content/10 bg-base-200">
+          <div className="card-body items-center gap-4 text-center">
+            <Icon name="task_alt" className="!text-[48px] text-success" />
+            <div>
+              <h1 className="text-2xl font-bold">Setup guide complete</h1>
+              <p className="mx-auto mt-1 max-w-[65ch] text-base-content/60">
+                Your {strategy === "symlinks" ? "Symlinks" : "STRM"} configuration has been saved.
+              </p>
+            </div>
+            {completion.restartRequired && (
+              <Alert
+                variant="warning"
+                role="status"
+                className="alert-soft max-w-2xl text-left text-sm"
+              >
+                <Icon name="restart_alt" className="!text-[20px]" />
+                <span>
+                  Restart InfiniDysk before testing playback so the Segment Cache change takes
+                  effect.
+                </span>
+              </Alert>
+            )}
+            <div className="card-actions justify-center">
+              <a className="btn btn-sm btn-ghost max-sm:min-h-11" href={withUrlBase("/queue")}>
+                <Icon name="upload_file" className="!text-[18px]" />
+                Upload a test NZB
+              </a>
+              <Button
+                variant="primary"
+                onClick={() => void navigate(loaderData.returnTo, { replace: true })}
+              >
+                Continue to InfiniDysk
+                <Icon name="arrow_forward" className="!text-[18px]" />
+              </Button>
+            </div>
           </div>
-          {completion.restartRequired && (
-            <Alert variant="warning" className="alert-soft mx-auto max-w-2xl text-left text-sm">
-              <Icon name="restart_alt" className="!text-[20px]" />
-              <span>
-                Restart InfiniDysk before testing playback so the Segment Cache change takes effect.
-              </span>
-            </Alert>
-          )}
-          <div className="flex flex-wrap justify-center gap-3">
-            <Button
-              variant="primary"
-              onClick={() => void navigate(loaderData.returnTo, { replace: true })}
-            >
-              Continue to InfiniDysk
-              <Icon name="arrow_forward" className="!text-[18px]" />
-            </Button>
-            <a className="btn" href={withUrlBase("/queue")}>
-              Upload a test NZB
-            </a>
-          </div>
-        </section>
-      </main>
+        </div>
+      </section>
     );
   }
 
   return (
     <ManagedEnvProvider value={loaderData.managedEnv}>
-      <main className="mx-auto flex w-full max-w-5xl flex-col gap-7 px-4 py-5 md:px-8 md:py-8">
-        <header className="flex flex-wrap items-start justify-between gap-4 border-b border-base-content/10 pb-5">
-          <div>
-            <h1 className="text-3xl font-bold text-base-content">Setup Guide</h1>
-            <p className="mt-2 max-w-[65ch] text-sm text-base-content/60">
-              Configure the playback path, ingestion, backups, and library health for this
-              installation.
-            </p>
-          </div>
-          {!loaderData.state.setupRequired && (
-            <Button variant="ghost" onClick={() => void navigate(loaderData.returnTo)}>
-              <Icon name="close" className="!text-[18px]" />
-              Close
-            </Button>
-          )}
-        </header>
+      <section className="mx-auto flex min-h-full w-full min-w-0 max-w-5xl flex-col gap-4 px-4 py-4 text-sm md:px-8">
+        <PageHeader
+          title="Setup Guide"
+          subtitle="Configure the playback path, ingestion, backups, and library health for this installation."
+          actions={
+            !loaderData.state.setupRequired && (
+              <Button variant="ghost" onClick={() => void navigate(loaderData.returnTo)}>
+                <Icon name="close" className="!text-[18px]" />
+                Close
+              </Button>
+            )
+          }
+        />
 
         <SetupProgress step={step} />
 
         {isReadOnly && (
-          <Alert variant="info" className="alert-soft text-sm">
+          <Alert variant="info" role="status" className="alert-soft text-sm">
             <Icon name="lock" className="!text-[20px]" />
             <span>
               Read-only users can review this guide, but an administrator must apply changes.
@@ -280,7 +286,7 @@ export default function SetupRoute({ loaderData }: Route.ComponentProps) {
 
         <fieldset
           disabled={isReadOnly || busy}
-          className="min-w-0 border-y border-base-content/10 py-7"
+          className="min-w-0 border-y border-base-content/10 py-6"
         >
           {step === 0 && (
             <LibraryTypeStep
@@ -363,7 +369,7 @@ export default function SetupRoute({ loaderData }: Route.ComponentProps) {
             </Button>
           )}
         </footer>
-      </main>
+      </section>
 
       <ConfirmModal
         show={blocker.state === "blocked"}

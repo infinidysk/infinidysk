@@ -89,16 +89,38 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
 #pragma warning restore CA2000
 
         IDisposable? scopedSchedulingContext = null;
-        if (configManager.IsFiniteRangeSchedulerEnabled())
+        CancellationTokenContext? scopedStripeContext = null;
+        try
         {
-            var capacityProvider = Context.RequestServices
-                .GetRequiredService<StreamingCapacitySnapshotProvider>();
-#pragma warning disable CA2000 // ownership handle is disposed by StreamingScope
-            scopedSchedulingContext = token.SetContext(new StreamingSchedulingContext
+            var finiteRangeScheduler = configManager.IsFiniteRangeSchedulerEnabled();
+            var capacityProvider = finiteRangeScheduler
+                ? Context.RequestServices.GetRequiredService<StreamingCapacitySnapshotProvider>()
+                : Context.RequestServices?.GetService<StreamingCapacitySnapshotProvider>();
+            if (capacityProvider is not null)
             {
-                Snapshot = capacityProvider.Capture(),
-            });
+                var snapshot = capacityProvider.Capture();
+#pragma warning disable CA2000 // ownership handles are disposed by StreamingScope
+                scopedStripeContext = token.SetContext(new StreamingStripeContext
+                {
+                    StripeCount = snapshot.EffectiveStreamConnectionTarget,
+                });
+                if (finiteRangeScheduler)
+                {
+                    scopedSchedulingContext = token.SetContext(new StreamingSchedulingContext
+                    {
+                        Snapshot = snapshot,
+                    });
+                }
 #pragma warning restore CA2000
+            }
+        }
+        catch
+        {
+            scopedStripeContext?.Dispose();
+            scopedDownloadPriorityContext.Dispose();
+            scopedStreamingTimeoutContext.Dispose();
+            streamSemaphore?.Dispose();
+            throw;
         }
 
         // Keep this stream's per-stream budget in sync with live config changes,
@@ -130,6 +152,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
             scopedDownloadPriorityContext,
             scopedStreamingTimeoutContext,
             scopedSchedulingContext,
+            scopedStripeContext,
             streamSemaphore);
     }
 
@@ -150,6 +173,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
         IDisposable downloadPriorityContext,
         IDisposable streamingTimeoutContext,
         IDisposable? schedulingContext,
+        IDisposable? stripeContext,
         PrioritizedSemaphore? streamSemaphore) : IAsyncDisposable
     {
         private int _disposed;
@@ -164,6 +188,7 @@ public abstract class BaseStoreStreamFile(HttpContext context, ConfigManager con
             downloadPriorityContext.Dispose();
             streamingTimeoutContext.Dispose();
             schedulingContext?.Dispose();
+            stripeContext?.Dispose();
             streamSemaphore?.Dispose();
             return ValueTask.CompletedTask;
         }

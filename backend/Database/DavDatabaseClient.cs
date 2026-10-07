@@ -1,3 +1,4 @@
+using System.Data;
 using System.Text;
 using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
@@ -682,10 +683,9 @@ public sealed class DavDatabaseClient(
     }
 
     /// <summary>
-    /// Commits a history-removal change set, treating a concurrent delete of the
-    /// same history row or a duplicate <see cref="HistoryCleanupItem"/> insert as
-    /// success. Two SAB remove-from-history calls can otherwise collide on the
-    /// cleanup primary key after both have staged the same id.
+    /// Commits a history-removal change set, rechecking pending cleanup under SQLite's
+    /// write transaction and treating a concurrent delete of the same history row or
+    /// a duplicate <see cref="HistoryCleanupItem"/> insert as success.
     ///
     /// SQLite's EF provider issues one modification command per batch, so a
     /// colliding delete of N ids can surface N separate concurrency (or unique)
@@ -694,32 +694,88 @@ public sealed class DavDatabaseClient(
     /// </summary>
     public async Task SaveHistoryRemovalAsync(CancellationToken ct = default)
     {
-        var maxAttempts = CountPendingSaveEntries() + 1;
-        DbUpdateException? last = null;
-        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        var isSqlite = Ctx.Database.IsSqlite();
+        var stagedCleanup = Ctx.ChangeTracker.Entries<HistoryCleanupItem>()
+            .Where(entry => entry.State == EntityState.Added)
+            .ToList();
+        await using var ownedTransaction = isSqlite
+            && stagedCleanup.Count > 0
+            && Ctx.Database.CurrentTransaction is null
+                ? await Ctx.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
+                    .ConfigureAwait(false)
+                : null;
+
+        if (isSqlite && stagedCleanup.Count > 0)
         {
-            try
+            var stagedIds = stagedCleanup.Select(entry => entry.Entity.Id).ToList();
+            var alreadyPending = await Ctx.HistoryCleanupItems
+                .Where(item => stagedIds.Contains(item.Id))
+                .Select(item => item.Id)
+                .ToHashSetAsync(ct)
+                .ConfigureAwait(false);
+
+            foreach (var entry in stagedCleanup)
             {
-                await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
-                return;
-            }
-            catch (DbUpdateConcurrencyException ex) when (
-                ex.Entries.All(e => e.Entity is HistoryItem or DavItem))
-            {
-                last = ex;
-                var pendingBefore = CountPendingSaveEntries();
-                DetachVanishedEntries(ex);
-                if (CountPendingSaveEntries() >= pendingBefore)
-                    throw;
-            }
-            catch (DbUpdateException ex) when (TryDetachDuplicateCleanup(ex))
-            {
-                last = ex;
+                if (alreadyPending.Contains(entry.Entity.Id))
+                    entry.State = EntityState.Detached;
             }
         }
 
-        if (last is not null)
-            throw last;
+        var wasRcloneForgetSuppressed = Ctx.SuppressAutomaticRcloneVfsForget;
+        var deferRcloneForget = ownedTransaction is not null && !wasRcloneForgetSuppressed;
+        if (deferRcloneForget)
+            Ctx.SuppressAutomaticRcloneVfsForget = true;
+
+        try
+        {
+            var maxAttempts = CountPendingSaveEntries() + 1;
+            DbUpdateException? last = null;
+            for (var attempt = 0; attempt < maxAttempts; attempt++)
+            {
+                try
+                {
+                    List<DavItem> changedDavItems = deferRcloneForget
+                        ? Ctx.ChangeTracker.Entries<DavItem>()
+                            .Where(entry => entry.State is EntityState.Added or EntityState.Deleted)
+                            .Select(entry => entry.Entity)
+                            .ToList()
+                        : [];
+
+                    await Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+                    if (ownedTransaction is not null)
+                        await ownedTransaction.CommitAsync(ct).ConfigureAwait(false);
+                    if (deferRcloneForget)
+                        _ = DavDatabaseContext.RcloneVfsForget(changedDavItems, ct);
+                    if (last is DbUpdateConcurrencyException)
+                    {
+                        Log.Debug(
+                            "History removal completed. Reason: {Reason}",
+                            "another request already removed some selected rows");
+                    }
+                    return;
+                }
+                catch (DbUpdateConcurrencyException exception) when (
+                    exception.Entries.All(entry => entry.Entity is HistoryItem or DavItem))
+                {
+                    last = exception;
+                    var pendingBefore = CountPendingSaveEntries();
+                    DetachVanishedEntries(exception);
+                    if (CountPendingSaveEntries() >= pendingBefore)
+                        throw;
+                }
+                catch (DbUpdateException exception) when (TryDetachDuplicateCleanup(exception))
+                {
+                    last = exception;
+                }
+            }
+
+            if (last is not null)
+                throw last;
+        }
+        finally
+        {
+            Ctx.SuppressAutomaticRcloneVfsForget = wasRcloneForgetSuppressed;
+        }
     }
 
     private int CountPendingSaveEntries() =>
@@ -754,7 +810,8 @@ public sealed class DavDatabaseClient(
             return false;
 
         var cleanup = ex.Entries.Where(e => e.Entity is HistoryCleanupItem).ToList();
-        if (cleanup.Count == 0)
+        // A multi-command batch can attribute one key violation to every entry.
+        if (cleanup.Count != 1)
             return false;
 
         foreach (var entry in cleanup)

@@ -459,6 +459,164 @@ public class SharedStreamEntryTests : IDisposable
         entry.AbandonOpening();
     }
 
+    private const int TrailerSegmentSize = 768 * 1024;
+
+    [Fact]
+    public async Task AttachedReader_FiniteRangeWaitsForTheInFlightArticleTrailer()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var entry = StartEntry(
+            GatedTrailerUpstream(gate.Task), 3L * TrailerSegmentSize, ringSize: 4L * TrailerSegmentSize,
+            chunkSize: 64 * 1024, leadBytes: 2 * TrailerSegmentSize);
+        await using var reader = Attach(entry, 0);
+
+        await AssertRangeEndWaitsThenFailsAsync(
+            new LimitedLengthStream(reader, TrailerSegmentSize + 400 * 1024), gate);
+    }
+
+    [Fact]
+    public async Task DetachedReader_FiniteRangeWaitsForTheFallbackArticleTrailer()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        const long fileSize = 3L * TrailerSegmentSize;
+        await using var entry = StartEntry(
+            new MemoryStream(new byte[fileSize]), fileSize, ringSize: 64 * 1024,
+            chunkSize: 16 * 1024, leadBytes: 16 * 1024);
+        await using var reader = Attach(entry, 0, (offset, _) =>
+        {
+            var fallback = GatedTrailerUpstream(gate.Task);
+            fallback.Seek(offset, SeekOrigin.Begin);
+            return Task.FromResult<Stream>(fallback);
+        });
+        reader.Seek(512 * 1024, SeekOrigin.Begin);
+        Assert.True(reader.IsDetached);
+
+        await AssertRangeEndWaitsThenFailsAsync(new LimitedLengthStream(reader, 656 * 1024), gate);
+    }
+
+    [Fact]
+    public async Task DetachedReader_StillValidatesBytesItReadFromTheRing()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        const long fileSize = 3L * TrailerSegmentSize;
+        await using var entry = StartEntry(
+            GatedTrailerUpstream(gate.Task), fileSize, ringSize: 256 * 1024,
+            chunkSize: 16 * 1024, leadBytes: 128 * 1024);
+        await using var reader = Attach(entry, 0, (offset, _) =>
+        {
+            var fallback = new MemoryStream(new byte[fileSize]);
+            fallback.Seek(offset, SeekOrigin.Begin);
+            return Task.FromResult<Stream>(fallback);
+        });
+        await reader.ReadExactlyAsync(new byte[TrailerSegmentSize + 100 * 1024]);
+        reader.Seek(fileSize - 100 * 1024, SeekOrigin.Begin);
+        Assert.True(reader.IsDetached);
+
+        await AssertRangeEndWaitsThenFailsAsync(new LimitedLengthStream(reader, 50 * 1024), gate);
+    }
+
+    [Fact]
+    public async Task AttachedReader_CleanRangeDoesNotWaitForALaterArticle()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var entry = StartEntry(
+            GatedTrailerUpstream(gate.Task), 3L * TrailerSegmentSize, ringSize: 4L * TrailerSegmentSize,
+            chunkSize: 64 * 1024, leadBytes: 2 * TrailerSegmentSize);
+        await using var reader = Attach(entry, 0);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (entry.BytesPumped <= TrailerSegmentSize && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.True(entry.BytesPumped > TrailerSegmentSize, "the pump must be reading the gated article");
+
+        await new LimitedLengthStream(reader, 400 * 1024).CopyToAsync(Stream.Null)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(gate.Task.IsCompleted);
+    }
+
+    [Fact]
+    public async Task AttachedReader_RangeEndingAtLogicalEofWaitsForPendingValidation()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var entry = StartEntry(
+            new GatedValidationStream(new byte[64], gate.Task), 64, ringSize: 128, chunkSize: 128, leadBytes: 128);
+        await using var reader = Attach(entry, 0);
+
+        await AssertRangeEndWaitsThenFailsAsync(new LimitedLengthStream(reader, 64), gate);
+    }
+
+    [Fact]
+    public async Task PendingValidation_FailsOnTeardownWithoutConsultingTheTornDownUpstream()
+    {
+        var upstream = new GatedValidationStream(new byte[64], new TaskCompletionSource().Task);
+        var entry = StartEntry(upstream, 64, ringSize: 32, chunkSize: 8, leadBytes: 16);
+        await using var reader = Attach(entry, 0);
+        await reader.ReadExactlyAsync(new byte[8]);
+
+        var validation = reader.ValidateDeliveredAsync(CancellationToken.None).AsTask();
+        await Task.WhenAny(validation, Task.Delay(100));
+        Assert.False(validation.IsCompleted, "validation must wait for the pending trailer");
+
+        await entry.DisposeAsync();
+        await Assert.ThrowsAsync<IOException>(() => validation.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(0, upstream.CallsAfterDispose);
+    }
+
+    // Fails after the gate opens; once torn down it trivially succeeds, as cleared state would.
+    private sealed class GatedValidationStream(byte[] payload, Task gate)
+        : MemoryStream(payload, writable: false), IDeliveredBytesValidation
+    {
+        private int _disposed;
+        public int CallsAfterDispose;
+
+        public async ValueTask ValidateDeliveredAsync(CancellationToken cancellationToken)
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                Interlocked.Increment(ref CallsAfterDispose);
+                return;
+            }
+
+            await gate.WaitAsync(cancellationToken);
+            throw new InvalidDataException("trailer failed");
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            Volatile.Write(ref _disposed, 1);
+            base.Dispose(disposing);
+        }
+    }
+
+    private static async Task AssertRangeEndWaitsThenFailsAsync(Stream range, TaskCompletionSource gate)
+    {
+        var copy = range.CopyToAsync(Stream.Null, 64 * 1024);
+        await Task.WhenAny(copy, Task.Delay(500));
+        Assert.False(copy.IsCompleted, copy.Exception?.ToString() ?? "the range must wait for its ending article's trailer");
+
+        gate.SetResult();
+        await MultiSegmentStreamIncrementalTests.AssertTrailerFailureAsync(copy);
+    }
+
+    // The second article serves 512 KiB, waits on the gate, then fails its trailer.
+    private static NzbFileStream GatedTrailerUpstream(Task gate)
+    {
+        var segments = MultiSegmentStreamIncrementalTests.CreateSegments(3, TrailerSegmentSize);
+        var ranges = MultiSegmentStreamIncrementalTests.Ranges(3, TrailerSegmentSize);
+        var corruptServed = 0;
+        var client = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            segmentRanges: ranges,
+            decodedStreamFactory: (id, bytes) =>
+                id == "seg-1" && Interlocked.Exchange(ref corruptServed, 1) == 0
+                    ? new FailingBodyStream(512 * 1024, () => MultiSegmentStreamIncrementalTests.Corrupt(id), gate)
+                    : new MemoryStream(bytes, writable: false));
+        return new NzbFileStream(
+            MultiSegmentStreamIncrementalTests.Ids(3), 3L * TrailerSegmentSize, client, articleBufferSize: 2,
+            segmentByteRanges: ranges.Values.ToArray(), usePipelinedBodyRequests: false,
+            fileName: $"shared-trailer-{Guid.NewGuid():N}.bin");
+    }
+
     private static SharedReaderStream Attach(
         SharedStreamEntry entry,
         long start,

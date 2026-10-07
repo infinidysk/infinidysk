@@ -15,8 +15,7 @@ import {
   type LogLevel,
 } from "~/clients/backend-client.server";
 import { useLogsWebsocket, type ConnectionStatus } from "./controllers/websocket-controller";
-import { Alert, Badge, Icon } from "~/components/ui";
-import { Input } from "~/components/ui/form";
+import { Alert, Badge, Icon, PageHeader, Tooltip } from "~/components/ui";
 import { withUrlBase } from "~/utils/url-base";
 
 const ALL_LEVELS: LogLevel[] = ["Verbose", "Debug", "Information", "Warning", "Error", "Fatal"];
@@ -58,6 +57,7 @@ export default function Logs({ loaderData }: Route.ComponentProps) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [connection, setConnection] = useState<ConnectionStatus>("connecting");
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -136,7 +136,7 @@ export default function Logs({ loaderData }: Route.ComponentProps) {
     return () => {
       cancelled = true;
     };
-  }, [enabledLevels, search, source]);
+  }, [enabledLevels, search, source, reloadToken]);
 
   // WebSocket: live append (or queue while paused)
   const onBatch = useCallback((batch: LogEntry[]) => {
@@ -282,77 +282,92 @@ export default function Logs({ loaderData }: Route.ComponentProps) {
     }
     if (search) params.set("search", search);
     if (source) params.set("source", source);
-    return `/api/download-logs${params.toString() ? `?${params.toString()}` : ""}`;
+    return withUrlBase(`/api/download-logs${params.toString() ? `?${params.toString()}` : ""}`);
   }, [enabledLevels, search, source]);
 
   const totalInBuffer = useMemo(() => Object.values(counts).reduce((a, b) => a + b, 0), [counts]);
+  const filtersActive =
+    !sameLevels(enabledLevels, DEFAULT_LEVELS) || search !== "" || source !== "";
+  const clearFilters = useCallback(() => {
+    setEnabledLevels(new Set(DEFAULT_LEVELS));
+    setSearchInput("");
+    setSourceInput("");
+  }, []);
+  const toggleFollow = useCallback(() => {
+    setFollowTail((v) => {
+      if (!v) requestAnimationFrame(scrollToBottom);
+      return !v;
+    });
+  }, []);
 
   return (
-    <div className="flex h-full min-h-0 min-w-full flex-col gap-4 overflow-hidden px-4 py-4 text-sm text-base-content/70 md:px-8">
-      <div className="card shrink-0 border border-base-content/10 bg-base-100 shadow-sm">
-        <div className="card-body gap-4 p-4 md:p-6">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2.5">
-                <span
-                  className={`status status-sm ${connectionStatusClass(connection)}`}
-                  title={`WebSocket ${connection}`}
-                />
-                <h1 className="text-4xl font-bold tracking-tight text-base-content">Logs</h1>
-              </div>
-              <p className="mt-1 text-xs text-base-content/60">
-                Live application logs from the in-memory ring buffer. Last{" "}
-                {capacity.toLocaleString()} entries are kept in RAM only, not persisted across
-                restarts. Press <kbd className="kbd kbd-xs">/</kbd> to search,{" "}
-                <kbd className="kbd kbd-xs">f</kbd> to follow, <kbd className="kbd kbd-xs">Esc</kbd>{" "}
-                to blur.
-              </p>
-            </div>
-            <div className="join flex w-full flex-wrap sm:w-auto">
+    <section className="flex h-full min-h-0 min-w-0 flex-col gap-4 overflow-hidden px-4 py-4 text-sm md:px-8">
+      <PageHeader
+        title="Logs"
+        subtitle={
+          <>
+            Live application logs from the in-memory ring buffer. The last{" "}
+            {capacity.toLocaleString()} entries are kept in RAM and cleared on restart. Press{" "}
+            <kbd className="kbd kbd-xs">/</kbd> to search, <kbd className="kbd kbd-xs">f</kbd> to
+            follow, <kbd className="kbd kbd-xs">Esc</kbd> to leave search.
+          </>
+        }
+        actions={
+          <>
+            <span
+              role="status"
+              className={`badge badge-soft gap-1.5 ${connectionBadgeClass(connection)}`}
+            >
+              <span className={`status status-sm ${connectionStatusClass(connection)}`} />
+              {connectionLabel(connection)}
+            </span>
+            <Tooltip content="Keep scrolled to the newest entry (f)" placement="bottom">
               <button
                 type="button"
-                className={`btn btn-sm join-item ${followTail ? "btn-active" : "btn-ghost"}`}
+                className={`btn btn-sm ${followTail ? "border-primary/60 bg-primary/15 text-primary" : ""}`}
                 aria-pressed={followTail}
-                onClick={() => {
-                  setFollowTail((v) => {
-                    if (!v) requestAnimationFrame(scrollToBottom);
-                    return !v;
-                  });
-                }}
-                title="Auto-follow the latest entry. Shortcut: f"
+                onClick={toggleFollow}
               >
-                {followTail ? "Following" : "Follow tail"}
+                <Icon name="vertical_align_bottom" filled={followTail} className="!text-[16px]" />
+                {followTail ? "Following" : "Follow"}
               </button>
+            </Tooltip>
+            <button
+              type="button"
+              className={`btn btn-sm ${paused ? "btn-warning" : ""}`}
+              aria-pressed={paused}
+              onClick={togglePause}
+            >
+              <Icon name={paused ? "play_arrow" : "pause"} filled className="!text-[16px]" />
+              {paused ? "Resume" : "Pause"}
+              {paused && pendingCount > 0 && (
+                <span className="badge badge-xs tabular-nums">{pendingCount.toLocaleString()}</span>
+              )}
+            </button>
+            <Tooltip content="Clears this view only; the server buffer is kept" placement="bottom">
               <button
                 type="button"
-                className={`btn btn-sm join-item ${paused ? "btn-warning" : "btn-ghost"}`}
-                onClick={togglePause}
-                title={paused ? "Stream paused. Click to resume." : "Pause live stream."}
-              >
-                {paused ? `Paused (${pendingCount})` : "Pause"}
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm btn-ghost join-item"
+                className="btn btn-sm"
                 onClick={clearView}
                 disabled={entries.length === 0}
-                title="Clear the on-screen view. Server buffer is untouched."
               >
+                <Icon name="clear_all" className="!text-[16px]" />
                 Clear view
               </button>
-              <a
-                href={downloadHref}
-                className="btn btn-sm btn-ghost join-item"
-                title="Download current view as a .log file."
-                download
-              >
+            </Tooltip>
+            <Tooltip content="Download the filtered entries as a .log file" placement="bottom">
+              <a href={downloadHref} className="btn btn-sm" download>
                 <Icon name="download" className="!text-[16px]" />
                 Download
               </a>
-            </div>
-          </div>
+            </Tooltip>
+          </>
+        }
+      />
 
-          <div className="join flex-wrap">
+      <div className="flex shrink-0 flex-col gap-3 rounded-box border border-base-content/10 bg-base-200 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="join flex-wrap" role="group" aria-label="Log levels">
             {ALL_LEVELS.map((level) => (
               <LevelChip
                 key={level}
@@ -363,57 +378,91 @@ export default function Logs({ loaderData }: Route.ComponentProps) {
               />
             ))}
           </div>
+          <span className="ml-auto text-xs whitespace-nowrap tabular-nums text-base-content/60 max-sm:ml-0">
+            {entries.length.toLocaleString()} shown · {totalInBuffer.toLocaleString()} of{" "}
+            {capacity.toLocaleString()} in buffer
+          </span>
+        </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="input input-sm input-bordered flex min-w-0 flex-1 items-center gap-2 sm:min-w-[240px]">
-              <Icon name="search" className="!text-[16px] shrink-0 text-base-content/40" />
-              <input
-                ref={searchRef}
-                className="grow bg-transparent outline-none"
-                type="search"
-                value={searchInput}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setSearchInput(e.target.value)}
-                onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
-                  if (e.key === "Escape") {
-                    setSearchInput("");
-                    e.currentTarget.blur();
-                  }
-                }}
-                placeholder="Search messages, sources, stack traces…  ( / to focus )"
-                spellCheck={false}
-                autoComplete="off"
-              />
-            </label>
-            <Input
-              className="input-sm w-full sm:w-auto sm:max-w-[220px]"
-              type="text"
-              value={sourceInput}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setSourceInput(e.target.value)}
-              placeholder="Source filter (e.g. NzbWebDAV.Queue)"
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="input input-sm min-w-0 flex-1 sm:min-w-60">
+            <Icon name="search" className="!text-[16px] opacity-60" />
+            <input
+              ref={searchRef}
+              type="search"
+              aria-label="Search messages, sources, and stack traces"
+              value={searchInput}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setSearchInput(e.target.value)}
+              onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
+                if (e.key === "Escape") {
+                  setSearchInput("");
+                  e.currentTarget.blur();
+                }
+              }}
+              placeholder="Search messages, sources, stack traces"
               spellCheck={false}
               autoComplete="off"
             />
-            <span className="ml-auto font-mono text-[11px] whitespace-nowrap tabular-nums text-base-content/50 max-sm:ml-0">
-              {entries.length.toLocaleString()} shown · {totalInBuffer.toLocaleString()}/
-              {capacity.toLocaleString()} in buffer
-            </span>
-          </div>
-
-          {errorText && (
-            <Alert variant="danger" className="text-xs">
-              Couldn&apos;t load logs: {errorText}
-            </Alert>
+            <kbd className="kbd kbd-xs">/</kbd>
+          </label>
+          <label className="input input-sm w-full sm:w-72">
+            <span className="label">Source</span>
+            <input
+              type="text"
+              aria-label="Source filter"
+              value={sourceInput}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setSourceInput(e.target.value)}
+              placeholder="e.g. NzbWebDAV.Queue"
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </label>
+          {filtersActive && (
+            <button type="button" className="btn btn-sm btn-ghost" onClick={clearFilters}>
+              <Icon name="filter_alt_off" className="!text-[16px]" />
+              Clear filters
+            </button>
           )}
         </div>
+
+        {errorText && (
+          <Alert variant="danger" className="alert-soft py-2 text-xs">
+            <Icon name="error" className="!text-[18px]" />
+            <span>Couldn&apos;t load logs: {errorText}</span>
+            <button
+              type="button"
+              className="btn btn-xs"
+              onClick={() => setReloadToken((t) => t + 1)}
+            >
+              Retry
+            </button>
+          </Alert>
+        )}
       </div>
 
       <div className="card relative flex min-h-0 flex-1 flex-col overflow-hidden border border-base-content/10 bg-base-100 shadow-sm">
         {entries.length === 0 ? (
-          <div className="card-body items-center justify-center gap-1 py-16 text-center text-base-content/50">
-            <div className="text-sm text-base-content/70">No log entries to show.</div>
-            <div className="text-xs">
-              {totalInBuffer === 0 ? "Nothing has been logged yet." : "Try widening your filters."}
-            </div>
+          <div className="card-body items-center justify-center gap-2 py-16 text-center">
+            <Icon name="receipt_long" className="!text-[40px] text-base-content/30" />
+            <h2 className="text-base font-semibold text-base-content">
+              {totalInBuffer === 0
+                ? "Nothing logged yet"
+                : filtersActive
+                  ? "No entries match your filters"
+                  : "Waiting for new entries"}
+            </h2>
+            <p className="text-xs text-base-content/60">
+              {totalInBuffer === 0
+                ? "New entries stream in here as InfiniDysk logs them."
+                : filtersActive
+                  ? "Widen the level, search, or source filters to see more."
+                  : "The view is clear. New entries will appear here live."}
+            </p>
+            {filtersActive && totalInBuffer > 0 && (
+              <button type="button" className="btn btn-sm mt-2" onClick={clearFilters}>
+                Clear filters
+              </button>
+            )}
           </div>
         ) : (
           <div
@@ -445,7 +494,7 @@ export default function Logs({ loaderData }: Route.ComponentProps) {
           </button>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -459,7 +508,7 @@ function LogRow({
   onToggle: () => void;
 }) {
   const expandable = Boolean(entry.exception);
-  const rowClass = `grid w-full ${expandable ? "cursor-pointer" : ""} grid-cols-[86px_64px_1fr] items-baseline gap-3 border-l-2 border-transparent px-3.5 py-0.5 text-left transition-colors duration-75 [contain:content] ${expandable ? "hover:bg-base-content/5" : ""} max-[899px]:grid-cols-[70px_56px_1fr] max-[899px]:gap-2 max-[899px]:px-2.5 max-[899px]:py-1 ${levelRowClass(entry.level)}`;
+  const rowClass = `grid w-full ${expandable ? "cursor-pointer" : ""} grid-cols-[max-content_64px_1fr] items-baseline gap-3 border-l-2 border-transparent px-3.5 py-0.5 text-left transition-colors duration-75 [contain:content] ${expandable ? "hover:bg-base-content/5" : ""} max-[899px]:grid-cols-[max-content_56px_1fr] max-[899px]:gap-2 max-[899px]:px-2.5 max-[899px]:py-1 ${levelRowClass(entry.level)}`;
   return (
     <div
       className={rowClass}
@@ -475,7 +524,6 @@ function LogRow({
               }
             },
             "aria-expanded": expanded,
-            title: "Toggle stack trace",
           }
         : {})}
     >
@@ -494,9 +542,10 @@ function LogRow({
             {entry.source}
           </span>
         )}
-        {entry.exception && !expanded && (
-          <span className="mt-0.5 text-[10.5px] text-base-content/50">
-            ▸ expand to view stack trace
+        {entry.exception && (
+          <span className="mt-0.5 inline-flex items-center gap-0.5 font-sans text-[11px] text-base-content/60">
+            <Icon name={expanded ? "expand_more" : "chevron_right"} className="!text-[14px]" />
+            {expanded ? "Hide stack trace" : "Show stack trace"}
           </span>
         )}
         {entry.exception && expanded && (
@@ -520,7 +569,7 @@ function LevelChip({
   count: number;
   onClick: () => void;
 }) {
-  const activeClass = !active ? "btn-ghost opacity-55" : levelActiveBtnClass(level);
+  const activeClass = !active ? "btn-ghost text-base-content/50" : levelActiveBtnClass(level);
   return (
     <label
       className={`btn btn-sm join-item max-sm:min-h-11 uppercase tracking-wide focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-primary ${activeClass}`}
@@ -551,9 +600,9 @@ function levelActiveBtnClass(level: LogLevel): string {
     case "Fatal":
       return "btn-error";
     case "Debug":
-      return "btn-neutral";
     case "Verbose":
-      return "btn-ghost";
+      // btn-neutral is nearly invisible on night.
+      return "border-transparent bg-base-content/80 text-base-100";
   }
 }
 
@@ -599,6 +648,31 @@ function connectionStatusClass(s: ConnectionStatus): string {
       return "status-warning animate-pulse";
     case "disconnected":
       return "status-error";
+  }
+}
+
+function connectionBadgeClass(s: ConnectionStatus): string {
+  switch (s) {
+    case "live":
+      return "badge-success";
+    case "reconnecting":
+    case "connecting":
+      return "badge-warning";
+    case "disconnected":
+      return "badge-error";
+  }
+}
+
+function connectionLabel(s: ConnectionStatus): string {
+  switch (s) {
+    case "live":
+      return "Live";
+    case "connecting":
+      return "Connecting";
+    case "reconnecting":
+      return "Reconnecting";
+    case "disconnected":
+      return "Disconnected";
   }
 }
 

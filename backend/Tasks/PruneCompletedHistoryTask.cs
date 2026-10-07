@@ -122,7 +122,7 @@ public class PruneCompletedHistoryTask : BaseTask
             await dbClient.RemoveHistoryItemsAsync(
                     ids, deleteFiles: false, source: "prune-completed-history", ct: CancellationToken)
                 .ConfigureAwait(false);
-            await dbClient.Ctx.SaveChangesAsync(CancellationToken).ConfigureAwait(false);
+            await dbClient.SaveHistoryRemovalAsync(CancellationToken).ConfigureAwait(false);
             dbClient.Ctx.ChangeTracker.Clear();
             var remainingCount = await dbClient.Ctx.HistoryItems.CountAsync(h => ids.Contains(h.Id), CancellationToken).ConfigureAwait(false);
             if (remainingCount == existingCount && existingCount > 0)

@@ -117,7 +117,7 @@ public class DatabaseStoreSymlinkCollection(
                             source: "completed-symlinks-folder-delete",
                             ct: request.CancellationToken)
                         .ConfigureAwait(false);
-                    await dbClient.Ctx.SaveChangesAsync(request.CancellationToken).ConfigureAwait(false);
+                    await dbClient.SaveHistoryRemovalAsync(request.CancellationToken).ConfigureAwait(false);
                     _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemRemoved, string.Join(",", historyIds));
                     return DavStatusCode.NoContent;
                 }

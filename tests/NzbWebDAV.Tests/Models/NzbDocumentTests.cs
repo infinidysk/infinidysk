@@ -1,13 +1,272 @@
+using System.Globalization;
 using System.Text;
+using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Par2Recovery;
+using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Tests.TestUtils;
+using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Models;
 
 public class NzbDocumentTests
 {
+    [Fact]
+    public async Task LoadAsync_SparseLabels_AreNotPadded()
+    {
+        var file = await ParseSparseFileAsync("1,3");
+        Assert.Equal(["part-1@example", "part-3@example"], file.GetSegmentIds());
+        Assert.Equal(["alternate@example"], file.Segments[0].FallbackMessageIds);
+    }
+
+    [Theory]
+    [InlineData("1,2,4", 4, true, 12, 4, 9, 3, true)]
+    [InlineData("1,3", 2, true, 6, 2, 3, 3, false)]
+    [InlineData("1,3", 3, true, 9, 3, 6, 3, true)]
+    [InlineData("1,3", 0, false, 9, 3, 6, 3, true)]
+    [InlineData("1,3", 0, false, 9, 2, 3, 6, false)]
+    [InlineData("1,3", 3, true, 6, 3, 3, 3, false)]
+    [InlineData("2,3,4", 4, true, 12, 4, 9, 3, false)]
+    [InlineData("0,1,3", 3, true, 9, 3, 6, 3, false)]
+    [InlineData("1,?,3", 3, true, 9, 3, 6, 3, false)]
+    [InlineData("1,1000000", 1000000, true, 3000000, 1000000, 2999997, 3, false)]
+    [InlineData("1,3", 0, true, 9, 3, 6, 3, false)]
+    [InlineData("1,3", 0, null, 9, 3, 6, 3, false)]
+    [InlineData("1,3", 4, true, 9, 3, 6, 3, false)]
+    [InlineData("1,2,3", 3, true, 9, 3, 6, 3, false)]
+    [InlineData("1,3", -1, true, 9, 3, 6, 3, false)]
+    public async Task TryFillOmittedSegmentsAsync_RequiresCorroboratingHeaders(
+        string numbers, int total, bool? presence, int size,
+        int lastPart, int lastOffset, int lastSize, bool expected)
+    {
+        var file = await ParseSparseFileAsync(numbers);
+        var originals = file.Segments.ToArray();
+        var ids = file.GetSegmentIds();
+        var fallbacks = file.GetSegmentFallbackIds();
+        file.Segments[0].ByteRange = new LongRange(0, 3);
+        var ranges = file.Segments.Select(segment => segment.ByteRange).ToArray();
+        using var client = new OmittedHeaderClient(OmittedHeader(total, presence, size) with
+        {
+            PartNumber = lastPart, PartOffset = lastOffset, PartSize = lastSize,
+        });
+
+        Assert.Equal(expected, await file.TryFillOmittedSegmentsAsync(
+            OmittedHeader(total, presence, size), client, CancellationToken.None));
+
+        Assert.Equal(presence == false && total == 0 ? [ids[^1]] : Array.Empty<string>(), client.Probes);
+        if (!expected)
+        {
+            Assert.Equal(originals, file.Segments);
+            Assert.Equal(ids, file.GetSegmentIds());
+            Assert.Equal(fallbacks, file.GetSegmentFallbackIds());
+            Assert.Equal(ranges, file.Segments.Select(segment => segment.ByteRange));
+        }
+    }
+
+    [Theory]
+    [InlineData("ordinal")]
+    [InlineData("offset")]
+    [InlineData("empty")]
+    [InlineData("fileSize")]
+    public async Task TryFillOmittedSegmentsAsync_RejectsInvalidFirstGeometry(string invalid)
+    {
+        var file = await ParseSparseFileAsync("1,3");
+        var header = OmittedHeader(3, true, 9);
+        header = invalid switch
+        {
+            "ordinal" => header with { PartNumber = 2 },
+            "offset" => header with { PartOffset = 3 },
+            "empty" => header with { PartSize = 0 },
+            _ => header with { FileSize = 2 },
+        };
+        using var client = new OmittedHeaderClient(header);
+        Assert.False(await file.TryFillOmittedSegmentsAsync(header, client, CancellationToken.None));
+        Assert.Equal(2, file.Segments.Count);
+        Assert.Empty(client.Probes);
+    }
+
+    [Theory]
+    [InlineData("size")]
+    [InlineData("offset")]
+    [InlineData("length")]
+    [InlineData("total")]
+    [InlineData("explicitZero")]
+    [InlineData("unknown")]
+    [InlineData("unavailable")]
+    [InlineData("cancelled")]
+    public async Task TryFillOmittedSegmentsAsync_FailedConfirmationPreservesLayout(string failure)
+    {
+        var file = await ParseSparseFileAsync("1,3");
+        var originals = file.Segments.ToArray();
+        var lastHeader = OmittedHeader(0, false, 9) with { PartNumber = 3, PartOffset = 6 };
+        lastHeader = failure switch
+        {
+            "size" => lastHeader with { FileSize = 10 },
+            "offset" => lastHeader with { PartOffset = 5 },
+            "length" => lastHeader with { PartSize = 2 },
+            "total" => lastHeader with { TotalParts = 2, HasTotalParts = true },
+            "explicitZero" => lastHeader with { HasTotalParts = true },
+            "unknown" => lastHeader with { HasTotalParts = null },
+            _ => lastHeader,
+        };
+        using var client = new OmittedHeaderClient(lastHeader)
+        {
+            Failure = failure switch
+            {
+                "unavailable" => new IOException("confirmation unavailable"),
+                "cancelled" => new OperationCanceledException(),
+                _ => null,
+            },
+        };
+        if (failure == "cancelled")
+            await Assert.ThrowsAsync<OperationCanceledException>(() => file.TryFillOmittedSegmentsAsync(
+                OmittedHeader(0, false, 9), client, CancellationToken.None));
+        else
+            Assert.False(await file.TryFillOmittedSegmentsAsync(
+                OmittedHeader(0, false, 9), client, CancellationToken.None));
+        Assert.Equal(originals, file.Segments);
+        Assert.Equal(["part-3@example"], client.Probes);
+    }
+
+    [Fact]
+    public async Task TryFillOmittedSegmentsAsync_IsDeterministicAndIdempotent()
+    {
+        var first = await ParseSparseFileAsync("1,2,4");
+        var second = await ParseSparseFileAsync("1,2,4");
+        var originals = first.Segments.ToArray();
+        first.Segments[0].ByteRange = new LongRange(0, 3);
+        using var client = new OmittedHeaderClient(OmittedHeader(4, true, 12));
+        Assert.True(await first.TryFillOmittedSegmentsAsync(OmittedHeader(4, true, 12), client, CancellationToken.None));
+        Assert.True(await second.TryFillOmittedSegmentsAsync(OmittedHeader(4, true, 12), client, CancellationToken.None));
+        Assert.Equal(first.GetSegmentIds(), second.GetSegmentIds());
+        Assert.Same(originals[0], first.Segments[0]);
+        Assert.Same(originals[1], first.Segments[1]);
+        Assert.Same(originals[2], first.Segments[3]);
+        Assert.Equal(["alternate@example"], first.Segments[0].FallbackMessageIds);
+        Assert.Equal(new LongRange(0, 3), first.Segments[0].ByteRange);
+        var marker = first.Segments[2];
+        Assert.Equal(3, marker.Number);
+        Assert.Equal(originals[1].Bytes, marker.Bytes);
+        Assert.Null(marker.ByteRange);
+        Assert.Empty(marker.FallbackMessageIds);
+        Assert.False(await first.TryFillOmittedSegmentsAsync(OmittedHeader(4, true, 12), client, CancellationToken.None));
+        Assert.Empty(client.Probes);
+    }
+
+    [Fact]
+    public async Task ProbeSecondSegmentRangeAsync_AdjacentOmissionsDoNotTrustInferredRanges()
+    {
+        var file = await ParseSparseFileAsync("1,4,5");
+        using var client = new OmittedHeaderClient(OmittedHeader(5, true, 15) with
+        {
+            PartNumber = 4, PartOffset = 9,
+        });
+        Assert.True(await file.TryFillOmittedSegmentsAsync(OmittedHeader(5, true, 15), client, CancellationToken.None));
+        file.Segments[0].ByteRange = new LongRange(0, 3);
+        file.Segments[^1].ByteRange = new LongRange(12, 15);
+
+        await file.ProbeSecondSegmentRangeAsync(client, 15, CancellationToken.None);
+
+        Assert.Null(file.GetSegmentByteRangeIndex().Ranges);
+        Assert.Equal(["part-4@example"], client.Probes);
+        Assert.Equal(new LongRange(9, 12), file.Segments[3].ByteRange);
+    }
+
+    [Fact]
+    public void OmittedSegmentId_HasExactRecognizableShape()
+    {
+        var marker = NzbFile.CreateOmittedSegmentId("part-1@example", 3);
+        Assert.Equal(marker, NzbFile.CreateOmittedSegmentId("<part-1@example>", 3));
+        Assert.True(NntpClient.IsValidSegmentId(marker));
+        Assert.True(NzbFile.IsOmittedSegmentId(marker));
+        Assert.True(NzbFile.IsOmittedSegmentId($"<{marker}>"));
+        Assert.False(NzbFile.IsOmittedSegmentId("ordinary@" + NzbFile.OmittedSegmentDomain));
+        Assert.False(NzbFile.IsOmittedSegmentId(marker.Replace("omitted-3-", "omitted-0-", StringComparison.Ordinal)));
+        Assert.False(NzbFile.IsOmittedSegmentId(marker.Remove(12, 1)));
+        Assert.Matches(@"^omitted-3-[0-9A-F]{64}@omitted\.nzbdav\.invalid$", marker);
+    }
+
+    [Theory]
+    [InlineData("complete", true)]
+    [InlineData("legacy", false)]
+    [InlineData("unrelated", false)]
+    [InlineData("missingReal", false)]
+    [InlineData("missingMarker", false)]
+    public async Task RestoreStoredOmittedSegments_RequiresTheWholeExpandedLayout(string layout, bool expected)
+    {
+        var file = await ParseSparseFileAsync("1,2,5");
+        var originals = file.Segments.ToArray();
+        var stored = file.GetSegmentIds().ToHashSet(StringComparer.Ordinal);
+        if (layout != "legacy")
+        {
+            stored.Add(NzbFile.CreateOmittedSegmentId(layout == "unrelated" ? "other@example" : "part-1@example", 3));
+            stored.Add(NzbFile.CreateOmittedSegmentId("part-1@example", 4));
+        }
+        if (layout == "missingReal") stored.Remove("part-2@example");
+        if (layout == "missingMarker") stored.Remove(NzbFile.CreateOmittedSegmentId("part-1@example", 4));
+        long charged = 0;
+        Assert.Equal(expected, file.RestoreStoredOmittedSegments(stored, bytes =>
+        {
+            Assert.Equal(originals, file.Segments);
+            charged += bytes;
+        }));
+        Assert.Equal(expected ? 256L + 5 * 512L : 0, charged);
+        if (expected)
+        {
+            Assert.Equal(5, file.Segments.Count);
+            Assert.Equal(stored, file.GetSegmentIds().ToHashSet(StringComparer.Ordinal));
+            Assert.Same(originals[0], file.Segments[0]);
+            Assert.Same(originals[1], file.Segments[1]);
+            Assert.Same(originals[2], file.Segments[4]);
+            Assert.False(file.RestoreStoredOmittedSegments(stored, _ => Assert.Fail("Idempotent replay must not charge")));
+        }
+        else Assert.Equal(originals, file.Segments);
+    }
+
+    [Fact]
+    public async Task RestoreStoredOmittedSegments_BudgetFailurePrecedesMutation()
+    {
+        var file = await ParseSparseFileAsync("1,3");
+        var originals = file.Segments.ToArray();
+        var stored = file.GetSegmentIds().Append(NzbFile.CreateOmittedSegmentId("part-1@example", 2)).ToHashSet();
+        Assert.Throws<InvalidOperationException>(() => file.RestoreStoredOmittedSegments(stored,
+            _ => throw new InvalidOperationException("budget exhausted")));
+        Assert.Equal(originals, file.Segments);
+    }
+
+    private static async Task<NzbFile> ParseSparseFileAsync(string numbers)
+    {
+        var entries = numbers.Split(',').Select(number => number == "?"
+            ? "<segment bytes='7'>unnumbered@example</segment>"
+            : $"<segment bytes='{int.Parse(number, CultureInfo.InvariantCulture) + 10}' number='{number}'>part-{number}@example</segment>");
+        var duplicate = numbers.StartsWith("1,", StringComparison.Ordinal)
+            ? "<segment bytes='11' number='1'>alternate@example</segment>" : "";
+        var xml = "<nzb><file subject='file'><segments>" + string.Concat(entries) + duplicate + "</segments></file></nzb>";
+        await using var stream = new MemoryStream(Encoding.UTF8.GetBytes(xml));
+        return Assert.Single((await NzbDocument.LoadAsync(stream)).Files);
+    }
+
+    private static UsenetYencHeader OmittedHeader(int total, bool? presence, long size) => new()
+    {
+        FileName = "file", FileSize = size, LineLength = 128, PartNumber = 1,
+        TotalParts = total, HasTotalParts = presence, PartSize = 3, PartOffset = 0,
+    };
+
+    private sealed class OmittedHeaderClient(UsenetYencHeader header)
+        : WrappingNntpClient(new FakeNntpClient(new Dictionary<string, byte[]>()))
+    {
+        public List<string> Probes { get; } = [];
+        public Exception? Failure { get; init; }
+
+        public override Task<UsenetYencHeader> GetYencHeadersAsync(string segmentId, CancellationToken cancellationToken)
+        {
+            Probes.Add(segmentId);
+            cancellationToken.ThrowIfCancellationRequested();
+            return Failure is { } failure ? Task.FromException<UsenetYencHeader>(failure) : Task.FromResult(header);
+        }
+    }
+
     [Theory]
     [InlineData(1, 8, "<file/><file/>")]
     [InlineData(8, 1, "<file><segments><segment>one</segment><segment>two</segment></segments></file>")]
@@ -36,6 +295,25 @@ public class NzbDocumentTests
 
         await Assert.ThrowsAsync<Par2BudgetExceededException>(() => NzbDocument.LoadAsync(stream, options, CancellationToken.None));
         Assert.True(budget.ReservedBytes < 100_000);
+    }
+
+    [Theory]
+    [InlineData(" date='1071674882'", 1071674882L)]
+    [InlineData("", null)]
+    [InlineData(" date='0'", null)]
+    [InlineData(" date='-5'", null)]
+    [InlineData(" date='soon'", null)]
+    [InlineData(" date='99999999999999999'", null)]
+    public async Task LoadAsync_FileDateAttribute_SetsPostedDate(string attribute, long? expectedSeconds)
+    {
+        var xml = $"<nzb><file subject='file'{attribute}/></nzb>";
+        await using var stream = new MemoryStream(Encoding.UTF8.GetBytes(xml));
+
+        var file = Assert.Single((await NzbDocument.LoadAsync(stream)).Files);
+
+        Assert.Equal(
+            expectedSeconds is { } seconds ? DateTimeOffset.FromUnixTimeSeconds(seconds) : null,
+            file.PostedDate);
     }
 
     [Fact]

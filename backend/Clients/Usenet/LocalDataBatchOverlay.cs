@@ -1,5 +1,6 @@
 using System.Runtime.ExceptionServices;
 using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Exceptions;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
@@ -109,6 +110,9 @@ internal static class LocalDataBatchOverlay
 #pragma warning restore CA2025
         }
 
+        if (partition.Hits.Count > 0)
+            return ExecuteMixed(segmentIds, partition, output, responses, outerCallback, fetchMisses, transformRemote, cancellationToken);
+
         var deferred = new DeferredArticleBodyCallback();
         var abandonCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         UsenetDecodedBodyBatch? inner = null;
@@ -179,7 +183,7 @@ internal static class LocalDataBatchOverlay
         var overlayState = new BatchCompletionState(outerCallback, hasInnerBatch: true, cancellationToken);
         deferred.Activate(overlayState.RecordInner);
         var overlayPublisher = PublishInOrderAsync(
-            segmentIds, partition, inner, output, overlayState, transformRemote, cancellationToken);
+            segmentIds, partition, Task.FromResult(inner), output, overlayState, transformRemote, cancellationToken);
 #pragma warning disable CA2025 // Completion owns abandonCts and disposes it after overlay and inner lifecycle finish
         return new UsenetDecodedBodyBatch
         {
@@ -187,8 +191,114 @@ internal static class LocalDataBatchOverlay
             Completion = CompleteThenDisposeAsync(
                 overlayState.CompleteAsync(overlayPublisher, inner.Completion),
                 abandonCts),
+            Admitted = inner.Admitted,
         };
 #pragma warning restore CA2025
+    }
+
+    /// <summary>
+    /// Local hits must not wait on remote admission: busy connections would otherwise hold
+    /// back a readable cached prefix, and a remote setup failure would discard it.
+    /// </summary>
+    private static UsenetDecodedBodyBatch ExecuteMixed(
+        IReadOnlyList<SegmentId> segmentIds,
+        LocalBatchPartition partition,
+        TaskCompletionSource<UsenetDecodedBodyResponse>[] output,
+        Task<UsenetDecodedBodyResponse>[] responses,
+        ArticleBodyCompletionHandler? outerCallback,
+        Func<IReadOnlyList<SegmentId>, ArticleBodyCompletionHandler, CancellationToken,
+            Task<UsenetDecodedBodyBatch>> fetchMisses,
+        Func<SegmentId, UsenetDecodedBodyResponse, CancellationToken,
+            Task<UsenetDecodedBodyResponse>> transformRemote,
+        CancellationToken cancellationToken)
+    {
+        var abandonCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var state = new BatchCompletionState(outerCallback, hasInnerBatch: true, cancellationToken);
+        var remote = FetchMissesAsync(partition, fetchMisses, state, abandonCts, cancellationToken);
+        var publisher = PublishInOrderAsync(
+            segmentIds, partition, remote, output, state, transformRemote, cancellationToken);
+#pragma warning disable CA2025 // Completion owns abandonCts and disposes it after overlay and remote lifecycle finish
+        return new UsenetDecodedBodyBatch
+        {
+            Responses = responses,
+            Completion = CompleteThenDisposeAsync(
+                state.CompleteAsync(publisher, RemoteCompletionAsync(remote)),
+                abandonCts),
+            Admitted = RemoteAdmittedAsync(remote),
+        };
+#pragma warning restore CA2025
+    }
+
+    private static async Task<UsenetDecodedBodyBatch> FetchMissesAsync(
+        LocalBatchPartition partition,
+        Func<IReadOnlyList<SegmentId>, ArticleBodyCompletionHandler, CancellationToken,
+            Task<UsenetDecodedBodyBatch>> fetchMisses,
+        BatchCompletionState state,
+        ContextualCancellationTokenSource abandonCts,
+        CancellationToken cancellationToken)
+    {
+        // Return the batch to the caller before admission can block.
+        await Task.Yield();
+
+        var deferred = new DeferredArticleBodyCallback();
+        UsenetDecodedBodyBatch? inner = null;
+        try
+        {
+            var missIds = new SegmentId[partition.Misses.Count];
+            for (var index = 0; index < partition.Misses.Count; index++)
+                missIds[index] = partition.Misses[index].RequestedId;
+
+            inner = await fetchMisses(missIds, deferred.Invoke, abandonCts.Token).ConfigureAwait(false);
+            if (inner.Responses.Count != partition.Misses.Count)
+            {
+                throw new InvalidOperationException(
+                    $"Pipelined BODY returned {inner.Responses.Count} responses for {partition.Misses.Count} requests.");
+            }
+
+            deferred.Activate(state.RecordInner);
+            return inner;
+        }
+        catch (Exception exception)
+        {
+            deferred.Discard();
+            var cancelled = exception is OperationCanceledException &&
+                            cancellationToken.IsCancellationRequested;
+            state.RecordInner(
+                cancelled ? ArticleBodyResult.Cancelled : ArticleBodyResult.NotRetrieved,
+                cancelled ? null : inner is null ? "local-batch-setup" : "batch-response-count-mismatch");
+            if (inner is not null)
+                await DecodedBodyBatchCleanup.AbandonAsync(inner, abandonCts).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private static async Task RemoteAdmittedAsync(Task<UsenetDecodedBodyBatch> remote)
+    {
+        try
+        {
+            var inner = await remote.ConfigureAwait(false);
+            await inner.Admitted.ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // Admission ended; the failure itself surfaces on every miss response.
+        }
+    }
+
+    private static async Task RemoteCompletionAsync(Task<UsenetDecodedBodyBatch> remote)
+    {
+        UsenetDecodedBodyBatch inner;
+        try
+        {
+            inner = await remote.ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // Already recorded for the callback and surfaced on every miss response.
+            return;
+        }
+
+        await inner.Completion.ConfigureAwait(false);
     }
 
     private static LocalBatchPartition Partition(
@@ -239,7 +349,7 @@ internal static class LocalDataBatchOverlay
     private static async Task PublishInOrderAsync(
         IReadOnlyList<SegmentId> requested,
         LocalBatchPartition partition,
-        UsenetDecodedBodyBatch? inner,
+        Task<UsenetDecodedBodyBatch>? inner,
         TaskCompletionSource<UsenetDecodedBodyResponse>[] output,
         BatchCompletionState state,
         Func<SegmentId, UsenetDecodedBodyResponse, CancellationToken,
@@ -265,11 +375,31 @@ internal static class LocalDataBatchOverlay
                 if (localByIndex[index] is { } local)
                 {
                     response = local.Response;
+                    if (UsenetArticleAvailability.IsDefinitiveMissing(response))
+                    {
+                        state.ObserveResponse(response);
+                        output[index].TrySetException(new UsenetArticleNotFoundException(requested[index]));
+                        previousTerminal = Task.CompletedTask;
+                        continue;
+                    }
                 }
                 else
                 {
                     var miss = missByIndex[index]!;
-                    response = await inner!.Responses[miss.RemoteIndex].ConfigureAwait(false);
+                    UsenetDecodedBodyBatch batch;
+                    try
+                    {
+                        batch = await inner!.ConfigureAwait(false);
+                    }
+                    catch (Exception setupFailure) when (setupFailure is not OutOfMemoryException)
+                    {
+                        // The setup path recorded the result; local hits stay readable.
+                        output[index].TrySetException(setupFailure);
+                        previousTerminal = Task.CompletedTask;
+                        continue;
+                    }
+
+                    response = await batch.Responses[miss.RemoteIndex].ConfigureAwait(false);
                     response = await transformRemote(miss.RequestedId, response, cancellationToken)
                         .ConfigureAwait(false);
                 }

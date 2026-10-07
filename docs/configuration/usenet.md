@@ -99,6 +99,10 @@ want Auto-tune to test a higher count. When the result says speed was still clim
 the provider may benefit from a higher limit if the account permits it. If the provider later
 refuses its configured ceiling, InfiniDysk lowers the effective runtime limit without changing
 either saved value; provider cards and metrics then show capacities based on that learned limit.
+When the refusal does not state a number (for example `502 Too many connections`), InfiniDysk
+holds the provider at the connections it already has open, keeps them serving, retries new opens
+after a short fixed delay, and widens the limit by one connection every 5 seconds until the
+provider refuses again or the configured limit is reached.
 
 ## Invalid provider certificates [since 0.9.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0){ .nzbdav-since }
 

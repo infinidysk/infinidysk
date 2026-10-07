@@ -50,6 +50,10 @@ public class LazyRarProcessor(
         var sorted = SortByFilename(fileInfos);
         if (sorted is null || sorted.Count == 0) return null;
 
+        if (sorted.Any(info => !info.FileSize.HasValue &&
+            info.NzbFile.Segments.Any(segment => NzbWebDAV.Models.Nzb.NzbFile.IsOmittedSegmentId(segment.MessageId))))
+            return null;
+
         var firstInfo = sorted[0];
         var firstFileSize = firstInfo.FileSize
             ?? await usenetClient.GetFileSizeAsync(firstInfo.NzbFile, ct).ConfigureAwait(false);
@@ -261,12 +265,14 @@ public class LazyRarProcessor(
             last.EstimatedDataSize = adjusted;
         }
 
+        var continuations = new List<IRarFileHeader>(trailingInfos.Count);
         if (!await ValidateContinuationChainAsync(
                 fileHeader,
                 trailingInfos,
                 pathInArchive,
                 totalFileSize,
-                fileHeader.IsEncrypted)
+                fileHeader.IsEncrypted,
+                continuations)
                 .ConfigureAwait(false))
         {
             return null;
@@ -290,6 +296,8 @@ public class LazyRarProcessor(
             AesParams = aesParams,
             FirstPart = firstPart,
             PendingParts = pending.ToArray(),
+            ResolvedTrailingParts = BuildResolvedTrailingParts(
+                firstPart, trailingInfos, pending, continuations, totalFileSize, aesParams),
             ReleaseDate = firstInfo.ReleaseDate,
             ArchiveName = GetArchiveName(firstInfo.FileName),
             SniffedVideoExtension = sniffedVideoExtension,
@@ -301,7 +309,8 @@ public class LazyRarProcessor(
         List<GetFileInfosStep.FileInfo> trailingInfos,
         string pathInArchive,
         long expectedFileSize,
-        bool isEncrypted)
+        bool isEncrypted,
+        List<IRarFileHeader> continuations)
     {
         if (firstHeader.IsSplitBefore)
         {
@@ -394,6 +403,7 @@ public class LazyRarProcessor(
                 return false;
             }
 
+            continuations.Add(continuation);
             try
             {
                 resolvedSize = checked(resolvedSize + continuation.AdditionalDataSize);
@@ -477,6 +487,49 @@ public class LazyRarProcessor(
                 pathInArchive, terminating.FileName, e.Message);
             return false;
         }
+    }
+
+    // Validation already parsed every continuation header, so keep the ranges
+    // instead of re-fetching them on first read. Null keeps the lazy layout when
+    // the packed ranges would not publish exactly TotalFileSize.
+    private static DavMultipartFile.FilePart[]? BuildResolvedTrailingParts(
+        DavMultipartFile.FilePart firstPart,
+        List<GetFileInfosStep.FileInfo> trailingInfos,
+        List<DavMultipartFile.PendingPart> pending,
+        List<IRarFileHeader> continuations,
+        long totalFileSize,
+        AesParams? aesParams)
+    {
+        if (continuations.Count != pending.Count) return null;
+
+        var parts = new DavMultipartFile.FilePart[pending.Count];
+        var packedSum = firstPart.FilePartByteRange.Count;
+        for (var i = 0; i < parts.Length; i++)
+        {
+            var header = continuations[i];
+            var streamLength = pending[i].SegmentIdByteRange.Count;
+            var partLength = Math.Max(streamLength, header.DataStartPosition + header.AdditionalDataSize);
+            // Keep only indexes already proven during import whose end matches the reader's
+            // part length; NzbFileStream discards any other index. Never probe or trust inference here.
+            var rangeIndex = trailingInfos[i].NzbFile.GetSegmentByteRangeIndex();
+            var keepIndex = rangeIndex is { IsTrusted: true, Ranges: [.., var lastRange] }
+                            && lastRange.EndExclusive == partLength;
+            parts[i] = new DavMultipartFile.FilePart
+            {
+                SegmentIds = pending[i].SegmentIds,
+                SegmentIdByteRange = LongRange.FromStartAndSize(0, partLength),
+                FilePartByteRange = LongRange.FromStartAndSize(header.DataStartPosition, header.AdditionalDataSize),
+                SegmentByteRanges = keepIndex ? rangeIndex.Ranges : null,
+                SegmentByteRangesTrusted = keepIndex ? true : null,
+                SegmentFallbackIds = pending[i].SegmentFallbackIds,
+                VerificationProof = pending[i].VerificationProof,
+                IsSplitAfter = header.IsSplitAfter,
+            };
+            packedSum += header.AdditionalDataSize;
+        }
+
+        var publishedSize = aesParams is null ? packedSum : aesParams.DecodedSize;
+        return publishedSize == totalFileSize ? parts : null;
     }
 
     private static bool ValidateResolvedSize(
@@ -574,6 +627,8 @@ public class LazyRarProcessor(
         public required AesParams? AesParams { get; init; }
         public required DavMultipartFile.FilePart FirstPart { get; init; }
         public required DavMultipartFile.PendingPart[] PendingParts { get; init; }
+        // Non-null when import resolved every trailing volume; persisted non-lazy.
+        public DavMultipartFile.FilePart[]? ResolvedTrailingParts { get; init; }
         public required DateTimeOffset ReleaseDate { get; init; }
         public required string ArchiveName { get; init; }
         public string? SniffedVideoExtension { get; init; }

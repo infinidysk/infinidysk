@@ -3,6 +3,8 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Connections;
+using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
 using UsenetSharp.Clients;
@@ -78,6 +80,9 @@ internal static class NntpWholePathReport
                     ["notFoundCallbacks"] = deterministic.NotFoundCallbacks,
                     ["notRetrievedCallbacks"] = deterministic.NotRetrievedCallbacks,
                     ["finalArticleBudgetBytes"] = deterministic.FinalArticleBudgetBytes,
+                    ["effectiveBatchWidth"] = deterministic.EffectiveBatchWidth,
+                    ["taskWindowArticles"] = deterministic.TaskWindowArticles,
+                    ["initialPrefetchBytes"] = deterministic.InitialPrefetchBytes,
                 },
                 PerformanceReportJson.WholePathTiming(
                     timing.WallSeconds,
@@ -89,14 +94,25 @@ internal static class NntpWholePathReport
                     timing.ClientAllocatedBytes,
                     timing.Gen0Collections,
                     timing.Gen1Collections,
-                    timing.Gen2Collections));
+                    timing.Gen2Collections,
+                    timing.Delivery,
+                    peakLeasedBytes: timing.PeakLeasedBytes));
 
             Console.WriteLine(
                 $"{scenario.Name} bytes={deterministic.ActualBytes} sha256_match={deterministic.Sha256Match} " +
                 $"body_commands={deterministic.BodyCommands} peak_connections={deterministic.PeakActiveConnections} " +
+                $"effective_batch_width={deterministic.EffectiveBatchWidth} " +
+                $"task_window_articles={deterministic.TaskWindowArticles} " +
+                $"initial_prefetch_mib={deterministic.InitialPrefetchBytes / 1048576d:F1} " +
                 $"time_to_peak_active_ms={timing.TimeToPeakActiveMs:F3} " +
                 $"wall_s={timing.WallSeconds:F3} " +
-                $"throughput_mb_s={timing.ThroughputMbps:F3} client_cpu_s={timing.ClientCpuSeconds:F3}");
+                $"throughput_mb_s={timing.ThroughputMbps:F3} client_cpu_s={timing.ClientCpuSeconds:F3} " +
+                $"peak_leased_mib={timing.PeakLeasedBytes / 1048576d:F1}" +
+                (timing.Delivery is { } delivery
+                    ? $" time_to_8mb_ms={delivery.TimeTo8MbMs:F1} time_to_64mb_ms={delivery.TimeTo64MbMs:F1} " +
+                      $"longest_read_gap_ms={delivery.LongestReadGapMs:F1} " +
+                      $"p05_window_mb_s={delivery.P05WindowThroughputMbps:F1} p50_window_mb_s={delivery.P50WindowThroughputMbps:F1}"
+                    : ""));
         }
 
         if (jsonPath is not null)
@@ -146,30 +162,69 @@ internal static class NntpWholePathReport
         var budget = new InFlightArticleBudget(corpus.ExpectedBytes + scenario.DecodedArticleBytes);
         var oldBudget = InFlightArticleBudget.Current;
         InFlightArticleBudget.Current = budget;
+        var bufferedProvider = scenario.Layer is NntpWholePathLayer.BufferedStream or NntpWholePathLayer.HttpLike
+            ? CreateProvider(scenario, server.Port)
+            : null;
         try
         {
+            if (bufferedProvider is not null && scenario.WarmStart)
+                await bufferedProvider.PrewarmConnectionsAsync(PrewarmTarget(scenario), CancellationToken.None)
+                    .ConfigureAwait(false);
             var process = Process.GetCurrentProcess();
             process.Refresh();
             var cpuBefore = process.TotalProcessorTime;
             var allocatedBefore = GC.GetTotalAllocatedBytes(precise: false);
             var collectionCounts = new[] { GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2) };
+            using var samplerCts = new CancellationTokenSource();
+            var peakLeased = 0L;
+            var sampler = Task.Run(async () =>
+            {
+                using var tick = new PeriodicTimer(TimeSpan.FromMilliseconds(1));
+                try
+                {
+                    while (await tick.WaitForNextTickAsync(samplerCts.Token).ConfigureAwait(false))
+                        peakLeased = Math.Max(peakLeased, budget.LeasedBytes);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+            });
             var startedTimestamp = Stopwatch.GetTimestamp();
             var started = Stopwatch.StartNew();
-            var bytes = scenario.Layer switch
+            ReadResult bytes;
+            try
             {
-                NntpWholePathLayer.Transport => await ReadTransportAsync(
-                    scenario, server.Port, corpus, callbackCounts, verifyHash).ConfigureAwait(false),
-                NntpWholePathLayer.Provider => await ReadProviderAsync(
-                    scenario, server.Port, corpus, callbackCounts, verifyHash).ConfigureAwait(false),
-                NntpWholePathLayer.BufferedStream or NntpWholePathLayer.HttpLike =>
-                    await ReadBufferedStreamAsync(
-                        scenario, server.Port, corpus, callbackCounts, budget, verifyHash, httpLike,
-                        responseCopyChunkBytes, startedTimestamp)
-                    .ConfigureAwait(false),
-                _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
-            };
+                bytes = scenario.Layer switch
+                {
+                    NntpWholePathLayer.Transport => await ReadTransportAsync(
+                        scenario, server.Port, corpus, callbackCounts, verifyHash).ConfigureAwait(false),
+                    NntpWholePathLayer.Provider => await ReadProviderAsync(
+                        scenario, server.Port, corpus, callbackCounts, verifyHash).ConfigureAwait(false),
+                    NntpWholePathLayer.BufferedStream or NntpWholePathLayer.HttpLike =>
+                        await ReadBufferedStreamAsync(
+                            scenario, bufferedProvider!, corpus, budget, verifyHash, httpLike,
+                            responseCopyChunkBytes, startedTimestamp)
+                        .ConfigureAwait(false),
+                    _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
+                };
+            }
+            finally
+            {
+                await samplerCts.CancelAsync().ConfigureAwait(false);
+                await sampler.ConfigureAwait(false);
+            }
+            // Close connections before the server waits for idle, as the per-read provider did.
+            bufferedProvider?.Dispose();
+            bufferedProvider = null;
             started.Stop();
             process.Refresh();
+            var clientCpu = (process.TotalProcessorTime - cpuBefore).TotalSeconds;
+            var clientAllocated = GC.GetTotalAllocatedBytes(precise: false) - allocatedBefore;
+            var gen0 = GC.CollectionCount(0) - collectionCounts[0];
+            var gen1 = GC.CollectionCount(1) - collectionCounts[1];
+            var gen2 = GC.CollectionCount(2) - collectionCounts[2];
+            var delivery = bytes.Timeline?.Summarize();
 
             var serverSnapshot = await server.StopAndGetSnapshotAsync().ConfigureAwait(false);
             var shaMatches = bytes.Sha256 is null || bytes.Sha256.Equals(corpus.ExpectedSha256, StringComparison.Ordinal);
@@ -180,7 +235,6 @@ internal static class NntpWholePathReport
                 throw new InvalidOperationException($"Article budget leaked {budget.LeasedBytes} bytes.");
 
             var elapsed = Math.Max(started.Elapsed.TotalSeconds, double.Epsilon);
-            var clientCpu = (process.TotalProcessorTime - cpuBefore).TotalSeconds;
             var serverCpu = server.ProcessCpuSeconds;
             return new NntpWholePathResult(
                 scenario,
@@ -195,7 +249,10 @@ internal static class NntpWholePathReport
                     callbackCounts.NotFound,
                     callbackCounts.NotRetrieved,
                     budget.LeasedBytes,
-                    serverSnapshot.PeakActiveConnections),
+                    serverSnapshot.PeakActiveConnections,
+                    bytes.Window?.BatchWidth ?? scenario.BatchWidth,
+                    bytes.Window?.TaskWindowArticles ?? 0,
+                    bytes.Window?.InitialPrefetchBytes ?? 0),
                 new NntpWholePathTiming(
                     started.Elapsed.TotalSeconds,
                     clientCpu,
@@ -204,13 +261,16 @@ internal static class NntpWholePathReport
                     bytes.Count / elapsed / 1_000_000d,
                     bytes.TimeToFirstByte?.TotalMilliseconds ?? 0,
                     serverSnapshot.TimeToPeakActiveMs,
-                    GC.GetTotalAllocatedBytes(precise: false) - allocatedBefore,
-                    GC.CollectionCount(0) - collectionCounts[0],
-                    GC.CollectionCount(1) - collectionCounts[1],
-                    GC.CollectionCount(2) - collectionCounts[2]));
+                    clientAllocated,
+                    gen0,
+                    gen1,
+                    gen2,
+                    delivery,
+                    peakLeased));
         }
         finally
         {
+            bufferedProvider?.Dispose();
             InFlightArticleBudget.Current = oldBudget;
             File.Delete(countersPath);
         }
@@ -252,27 +312,24 @@ internal static class NntpWholePathReport
 
     private static async Task<ReadResult> ReadBufferedStreamAsync(
         NntpWholePathScenario scenario,
-        int port,
+        MultiProviderNntpClient provider,
         NntpLoopbackCorpus corpus,
-        CallbackCounts counts,
         InFlightArticleBudget budget,
         bool verifyHash,
         bool httpLike,
         int responseCopyChunkBytes,
         long copyStartedTimestamp)
     {
-        using var provider = CreateProvider(scenario, port);
         var ids = corpus.Articles.Select(article => article.SegmentId).ToArray();
         var sizes = Enumerable.Repeat((long)scenario.DecodedArticleBytes, scenario.ArticleCount).ToArray();
         if (scenario.PrewarmConnections)
+            _ = provider.PrewarmConnectionsAsync(PrewarmTarget(scenario), CancellationToken.None);
+        // Same stream-open hint WebDAV playback attaches.
+        using var streamCts = new CancellationTokenSource();
+        using var stripeScope = streamCts.Token.SetContext(new StreamingStripeContext
         {
-            var articleWindow = scenario.ArticleBufferSize ?? Math.Max(scenario.BatchWidth * 2, 4);
-            var remainingSegments = Math.Max(0, scenario.ArticleCount - 1);
-            var plannedBatches = (remainingSegments + scenario.BatchWidth - 1) / scenario.BatchWidth;
-            _ = provider.PrewarmConnectionsAsync(
-                Math.Min(plannedBatches, articleWindow),
-                CancellationToken.None);
-        }
+            StripeCount = scenario.ConnectionCount,
+        });
         await using var stream = MultiSegmentStream.Create(
             ids.AsMemory(),
             provider,
@@ -280,24 +337,40 @@ internal static class NntpWholePathReport
             estimatedSegmentSize: scenario.DecodedArticleBytes,
             failFastOnFirstSegment: true,
             usePipelinedBodyRequests: true,
-            cancellationToken: CancellationToken.None,
+            cancellationToken: streamCts.Token,
             fileName: "loopback.bin",
             exactSegmentSizes: sizes,
             inFlightArticleBudget: budget,
             bodyPipelineBatchWidth: scenario.BatchWidth);
+        var buffered = (MultiSegmentStream)stream;
+        var window = new PrefetchWindow(
+            buffered.MaxPrefetchBatchWidth, buffered.TaskWindowSize, buffered.InitialPrefetchByteCeiling);
 
         if (httpLike)
         {
-            var sink = new HttpLikeCountingSink(responseCopyChunkBytes, copyStartedTimestamp);
+            var timeline = new DeliveryTimeline(
+                copyStartedTimestamp,
+                (int)Math.Min(int.MaxValue, corpus.ExpectedBytes / responseCopyChunkBytes + 1));
+            var sink = new HttpLikeCountingSink(
+                responseCopyChunkBytes, copyStartedTimestamp, timeline: timeline);
             var sha256 = await sink.CopyFromAsync(stream, verifyHash, CancellationToken.None)
                 .ConfigureAwait(false);
-            return new ReadResult(sink.BytesWritten, sha256, sink.TimeToFirstByte);
+            return new ReadResult(sink.BytesWritten, sha256, sink.TimeToFirstByte, timeline, window);
         }
         if (verifyHash)
-            return await CopyAndHashAsync(stream, CancellationToken.None).ConfigureAwait(false);
+            return await CopyAndHashAsync(stream, CancellationToken.None).ConfigureAwait(false)
+                with { Window = window };
 
         await stream.CopyToAsync(Stream.Null, CancellationToken.None).ConfigureAwait(false);
-        return new ReadResult(corpus.ExpectedBytes, null, null);
+        return new ReadResult(corpus.ExpectedBytes, null, null, Window: window);
+    }
+
+    private static int PrewarmTarget(NntpWholePathScenario scenario)
+    {
+        var articleWindow = scenario.ArticleBufferSize ?? Math.Max(scenario.BatchWidth * 2, 4);
+        var remainingSegments = Math.Max(0, scenario.ArticleCount - 1);
+        var plannedBatches = (remainingSegments + scenario.BatchWidth - 1) / scenario.BatchWidth;
+        return Math.Min(plannedBatches, articleWindow);
     }
 
 #pragma warning disable CA2000 // MultiProviderNntpClient owns and disposes its MultiConnectionNntpClient and pool.
@@ -405,7 +478,9 @@ internal static class NntpWholePathReport
         left.ClientAllocatedBytes + right.ClientAllocatedBytes,
         left.Gen0Collections + right.Gen0Collections,
         left.Gen1Collections + right.Gen1Collections,
-        left.Gen2Collections + right.Gen2Collections);
+        left.Gen2Collections + right.Gen2Collections,
+        DeliverySmoothness.Add(left.Delivery, right.Delivery),
+        left.PeakLeasedBytes + right.PeakLeasedBytes);
 
     private static NntpWholePathTiming Divide(NntpWholePathTiming value, int divisor) => new(
         value.WallSeconds / divisor,
@@ -418,9 +493,19 @@ internal static class NntpWholePathReport
         value.ClientAllocatedBytes / divisor,
         value.Gen0Collections / divisor,
         value.Gen1Collections / divisor,
-        value.Gen2Collections / divisor);
+        value.Gen2Collections / divisor,
+        value.Delivery is { } delivery ? DeliverySmoothness.Divide(delivery, divisor) : null,
+        value.PeakLeasedBytes / divisor);
 
-    private readonly record struct ReadResult(long Count, string? Sha256, TimeSpan? TimeToFirstByte);
+    private readonly record struct ReadResult(
+        long Count,
+        string? Sha256,
+        TimeSpan? TimeToFirstByte,
+        DeliveryTimeline? Timeline = null,
+        PrefetchWindow? Window = null);
+
+    private readonly record struct PrefetchWindow(
+        int BatchWidth, int TaskWindowArticles, long InitialPrefetchBytes);
 
     private sealed class CallbackCounts
     {

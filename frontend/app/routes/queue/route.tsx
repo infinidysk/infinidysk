@@ -7,8 +7,7 @@ import { useHistoryEvents, useQueueEvents } from "./controllers/events-controlle
 import { useQueueHistoryWebsocket } from "./controllers/websocket-controller";
 import { useUploadController } from "./controllers/nzb-upload-controller";
 import { useQueueDropzone } from "./controllers/dropzone-controller";
-import { Alert, Button, PageHeader } from "~/components/ui";
-import { SimpleDropdown } from "~/components/simple-dropdown/simple-dropdown";
+import { Alert, Button, Icon, PageHeader } from "~/components/ui";
 import { useIsReadOnly } from "~/auth/authorization";
 import {
   isDefaultList,
@@ -310,10 +309,36 @@ export default function Queue(props: Route.ComponentProps) {
 
   // view
   return (
-    <div className="flex min-h-full min-w-full flex-col gap-4 px-4 py-4 text-sm text-base-content/70 md:px-8">
+    <section className="flex min-h-full min-w-0 flex-col gap-4 px-4 py-4 text-sm md:px-8">
       <PageHeader
         title="Import Queue"
         subtitle="Jobs from Sonarr, Radarr, or a manual NZB upload. Active items stay at the top; finished jobs remain in this list as history."
+        actions={
+          isReadOnly ? undefined : (
+            <>
+              <label className="select select-sm w-auto max-sm:min-h-11">
+                <span className="label">Category</span>
+                <select
+                  aria-label="Upload category"
+                  defaultValue={manualCategoryRef.current}
+                  onChange={(e) => {
+                    manualCategoryRef.current = e.target.value;
+                  }}
+                >
+                  {props.loaderData.categories.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <Button variant="primary" onClick={dropzone.open}>
+                <Icon name="upload" className="!text-[18px]" />
+                Upload NZB
+              </Button>
+            </>
+          )
+        }
       />
       {import.meta.env.DEV && searchParams.get("preview") === "1" && (
         <Alert className="alert-soft" variant="info">
@@ -329,26 +354,15 @@ export default function Queue(props: Route.ComponentProps) {
         </Alert>
       )}
 
-      <div className="min-h-[413.9px] min-[450px]:min-h-[382.9px]">
-        {!isReadOnly && (
-          <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
-            <label className="flex items-center gap-2 text-xs text-base-content/60">
-              Category
-              <SimpleDropdown
-                type="bordered"
-                options={props.loaderData.categories}
-                valueRef={manualCategoryRef}
-                ariaLabel="Upload category"
-              />
-            </label>
-            <Button variant="primary" size="small" onClick={dropzone.open}>
-              Upload NZB
-            </Button>
-          </div>
-        )}
+      <div>
         <div className="relative" {...(isReadOnly ? {} : dropzone.getRootProps())}>
           {dropzone.isDragActive && (
-            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded border-2 border-dashed border-primary bg-primary/10" />
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-box border-2 border-dashed border-primary bg-base-100/80">
+              <span className="flex items-center gap-2 text-base font-medium text-primary">
+                <Icon name="upload_file" />
+                Drop NZB files to upload
+              </span>
+            </div>
           )}
           {!isReadOnly && <input {...dropzone.getInputProps()} />}
           <QueueTable
@@ -386,7 +400,7 @@ export default function Queue(props: Route.ComponentProps) {
           />
         </div>
       </div>
-    </div>
+    </section>
   );
 }
 

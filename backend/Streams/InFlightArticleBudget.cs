@@ -197,6 +197,41 @@ public sealed class InFlightArticleBudget
         }
     }
 
+    /// <summary>
+    /// Leases every size at once or nothing, without waiting. A caller that holds part of
+    /// a group while queued could deadlock against another stream doing the same, so a
+    /// refusal leaves no credits and no waiter behind. Never barges ahead of FIFO waiters.
+    /// </summary>
+    internal ArticleByteLease[]? TryLeaseAll(ReadOnlySpan<long> sizes)
+    {
+        long total = 0;
+        foreach (var size in sizes)
+        {
+            if (size <= 0) continue;
+            if (size > long.MaxValue - total) return null;
+            total += size;
+        }
+
+        // Built before debiting so an allocation failure cannot strand credits.
+        var leases = new ArticleByteLease[sizes.Length];
+        for (var index = 0; index < sizes.Length; index++)
+            leases[index] = sizes[index] > 0 ? new ArticleByteLease(this, sizes[index]) : ArticleByteLease.Empty;
+        if (total == 0) return leases;
+
+        lock (_gate)
+        {
+            if (_waiters.First is not null) return null;
+            while (true)
+            {
+                var current = Interlocked.Read(ref _leased);
+                // Unlike single leases, a group never gets the oversize-when-idle exception.
+                if (total > Interlocked.Read(ref _capBytes) - current) return null;
+                if (Interlocked.CompareExchange(ref _leased, current + total, current) == current)
+                    return leases;
+            }
+        }
+    }
+
     private void RemoveWaiter(Waiter? waiter)
     {
         if (waiter?.Node is null) return;

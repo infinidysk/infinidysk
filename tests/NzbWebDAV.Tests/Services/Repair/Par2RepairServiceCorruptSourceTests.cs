@@ -6,9 +6,11 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Par2Recovery;
+using NzbWebDAV.Services;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Tests.Fakes;
+using NzbWebDAV.Tests.TestUtils;
 using SeededRelease = NzbWebDAV.Tests.Services.Repair.Par2RepairTestReleaseBuilder.SeededRelease;
 
 namespace NzbWebDAV.Tests.Services.Repair;
@@ -355,6 +357,53 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         Assert.Contains("recovery slices", job.FailureReason, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("false", true)]
+    [InlineData("true", false)]
+    public async Task BackgroundRepairInfeasible_SchedulesUrgentRepairOnlyWithoutTolerance(
+        string tolerance, bool expectScheduled)
+    {
+        var failureTracker = new NzbWebDAV.Services.StreamingFailureTracker();
+        var scheduled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scheduler = new NzbWebDAV.Services.StreamingRepairScheduler(_config, failureTracker)
+        {
+            CompletionHook = _ =>
+            {
+                scheduled.TrySetResult();
+                return Task.CompletedTask;
+            },
+        };
+        var fileData = PatternBytes(SliceSize * 3, 0x89);
+        await using var release = await SeedAsync(fileData, EqualSegments(3), recoveryExponents: [0u],
+            corruptOnRead: [0, 1], repairScheduler: scheduler);
+        _config.UpdateValues(
+            [new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = tolerance }]);
+        // Playback already counted this damage; the failed repair must not count it again.
+        failureTracker.RecordAttributedFailure(release.Item.Id, release.ContentSegmentIds[0]);
+
+        await release.Service.StartAsync(CancellationToken.None);
+        try
+        {
+            await release.Service.EnqueueAsync(
+                release.Item,
+                [release.ContentSegmentIds[0], release.ContentSegmentIds[1]],
+                CancellationToken.None);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (release.Service.GetDiagnosticSnapshot().TotalInfeasible == 0)
+                await Task.Delay(25, timeout.Token);
+
+            if (expectScheduled)
+                await scheduled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(1, failureTracker.GetFailureCount(release.Item.Id));
+            Assert.Equal(expectScheduled, scheduled.Task.IsCompleted);
+        }
+        finally
+        {
+            using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await release.Service.StopAsync(stopCts.Token);
+        }
+    }
+
     [Fact]
     public async Task TargetCountCap_ExceededBeforeRecoveryAllocation()
     {
@@ -372,6 +421,108 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         var job = await ReadJobAsync(release.Item.Id);
         Assert.Equal(Par2RepairJob.RepairJobState.Infeasible, job.State);
         Assert.Contains("exceeds cap", job.FailureReason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DeadSourceVolume_StopsHeaderScanOnceSliceCapIsProven()
+    {
+        const int segments = 40;
+        var fileData = PatternBytes(SliceSize * segments, 0x9A);
+        await using var release = await SeedAsync(fileData, EqualSegments(segments), recoveryExponents: [0u],
+            omitFromProvider: Enumerable.Range(0, segments).ToArray(), maxMissingSlices: "1");
+
+        var ok = await release.Service.TryPar2RepairAsync(
+            release.Item, [release.ContentSegmentIds[0]], CancellationToken.None);
+
+        Assert.Equal(Par2RepairOutcome.NotRepaired, ok);
+        var job = await ReadJobAsync(release.Item.Id);
+        Assert.Equal(Par2RepairJob.RepairJobState.Infeasible, job.State);
+        Assert.Contains("exceeds cap 1", job.FailureReason, StringComparison.Ordinal);
+        var probed = release.ContentSegmentIds.Count(id => release.Fake.BodyRequestCounts.ContainsKey(id));
+        Assert.InRange(probed, 1, 4);
+    }
+
+    [Fact]
+    public async Task UnavailableUnrelatedCandidate_DoesNotCountTowardSliceCap()
+    {
+        _config.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "true" },
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" },
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2MaxMissingSlices, ConfigValue = "1" },
+        ]);
+        var decoy = PatternBytes(SliceSize * 4, 0x5C);
+        var target = PatternBytes(SliceSize * 3, 0x6D);
+        var parity = Par2TestEncoder.EncodeSet([("target.bin", target)], SliceSize, [0u]);
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _configRoot).BuildAsync([
+            new("decoy.bin", decoy, EqualSegments(4), [0, 1, 2, 3]),
+            new("target.bin", target, EqualSegments(3), [1]),
+        ], [], parity: parity);
+
+        var ok = await release.Service.TryPar2RepairAsync(
+            release.Item, [release.ContentSegmentIds[1]], CancellationToken.None);
+
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
+        Assert.Equal(Slice(target, SliceSize, SliceSize), await ReadPatchAsync(release.Store, release.ContentSegmentIds[1]));
+    }
+
+    [Fact]
+    public async Task InlineRepair_ReportsHealthCheckActivityWhileReading()
+    {
+        var fileData = PatternBytes(SliceSize * 3, 0x7F);
+        await using var release = await SeedAsync(fileData, EqualSegments(3), recoveryExponents: [0u],
+            corruptOnRead: [0]);
+        var heartbeats = 0;
+        HealthCheckActivity.Current = () => Interlocked.Increment(ref heartbeats);
+
+        var ok = await release.Service.TryPar2RepairAsync(
+            release.Item, [release.ContentSegmentIds[0]], CancellationToken.None);
+
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
+        // Phase changes alone are a handful; reads must contribute too.
+        Assert.True(heartbeats > 10, $"heartbeats={heartbeats}");
+    }
+
+    [Fact]
+    public async Task UntrustedRanges_SequentialHeaderProbesKeepInactivityWatchdogAlive()
+    {
+        const int segments = 12;
+        var fileData = PatternBytes(SliceSize * segments, 0x7D);
+        var clock = new ControllableTimeProvider();
+        var limit = HealthCheckService.HealthCheckInactivityLimit;
+        var probeLatency = limit - TimeSpan.FromMinutes(5);
+        using var stalled = new CancellationTokenSource(limit, clock);
+        HealthCheckActivity.Current = () => stalled.CancelAfter(limit);
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _configRoot).BuildAsync(
+            [new("target.bin", fileData, EqualSegments(segments), [0])], [0u], trustedRanges: false,
+            streamFactory: (_, _, bytes) =>
+            {
+                clock.Advance(probeLatency);
+                return new MemoryStream(bytes, writable: false);
+            });
+
+        var ok = await release.Service.TryPar2RepairAsync(
+            release.Item, [release.ContentSegmentIds[0]], stalled.Token);
+
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
+        Assert.False(stalled.IsCancellationRequested);
+        Assert.True(release.Fake.BodyRequestCounts.Count >= segments, "every untrusted article header must be probed");
+    }
+
+    [Fact]
+    public async Task NonuniformArticles_MissingSmallArticlesInOneSlice_StayWithinSliceCap()
+    {
+        var fileData = PatternBytes(SliceSize * 2, 0x7E);
+        int[] sizes = [.. Enumerable.Repeat(100, 8), SliceSize * 2 - 800];
+        await using var release = await SeedAsync(fileData, sizes, recoveryExponents: [0u],
+            omitFromProvider: [0, 1, 2], maxMissingSlices: "1");
+
+        var ok = await release.Service.TryPar2RepairAsync(
+            release.Item, [release.ContentSegmentIds[0]], CancellationToken.None);
+
+        Assert.Equal(Par2RepairOutcome.Repaired, ok);
+        for (var index = 0; index < 3; index++)
+            Assert.Equal(Slice(fileData, index * 100, 100), await ReadPatchAsync(release.Store, release.ContentSegmentIds[index]));
     }
 
     [Fact]
@@ -523,7 +674,8 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         IReadOnlyList<(string FileName, byte[] Data, int[] Sizes)>? extraFiles = null,
         string? maxMissingSlices = null,
         TaskCompletionSource<bool>? sourceReadStarted = null,
-        Task? allowSourceRead = null)
+        Task? allowSourceRead = null,
+        NzbWebDAV.Services.StreamingRepairScheduler? repairScheduler = null)
     {
         _config.UpdateValues(
         [
@@ -557,7 +709,7 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
                     && allowSourceRead is not null)
                     return new GateOnFirstReadStream(bytes, sourceReadStarted, allowSourceRead);
                 return new MemoryStream(bytes, writable: false);
-            });
+            }, repairScheduler: repairScheduler);
     }
 
     private static int[] EqualSegments(int count) => Enumerable.Repeat(SliceSize, count).ToArray();

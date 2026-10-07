@@ -349,6 +349,7 @@ public sealed partial class Program
                 .AddHostedService<CurrentActivityBroadcaster>()
                 .AddSingleton(sp => new ConcurrentReadTracker(
                     configManager: sp.GetRequiredService<ConfigManager>()))
+                .AddHostedService<SegmentBufferPoolIdleTrimService>()
                 .AddSingleton<SharedStreamRegistry>()
                 .AddSingleton<StreamingReadinessCheck>()
                 .AddSingleton(_ => new RuntimeUsageTracker())
@@ -359,6 +360,7 @@ public sealed partial class Program
                     new ProviderUsageTracker(sp.GetRequiredService<ActiveReadRegistry>()))
                 .AddSingleton<QueueItemSourceTracker>()
                 .AddSingleton<StreamingFailureTracker>()
+                .AddSingleton<StreamingRepairScheduler>()
                 .AddSingleton<HealthCheckConnectionGate>()
                 .AddSingleton<SegmentCacheStatistics>()
                 .AddHostedService<SegmentCacheCleanupService>()
@@ -458,6 +460,7 @@ public sealed partial class Program
                 .AddSingleton<HealthScheduleBroadcaster>()
                 .AddHostedService(sp => sp.GetRequiredService<HealthScheduleBroadcaster>())
                 .AddSingleton<HealthCheckService>()
+                .AddSingleton(sp => new FilesLibraryIndex(sp.GetRequiredService<ConfigManager>(), TimeProvider.System))
                 .AddSingleton<IHealthCheckQuiescence>(
                     sp => sp.GetRequiredService<HealthCheckService>())
                 .AddHostedService(sp => sp.GetRequiredService<HealthCheckService>())

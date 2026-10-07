@@ -581,6 +581,9 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                 // Write the data to the destination stream. Bound the write so a client
                 // that stopped reading but kept the connection open (HTTP/2 flow control,
                 // tunnel, or proxy) cannot hold its in-flight article budget until restart.
+                // A range ending inside an article must not complete before that article validates.
+                if (bytesRead == bytesToRead)
+                    await src.ValidateDeliveredAsync(cancellationToken).ConfigureAwait(false);
                 var writeStarted = Stopwatch.GetTimestamp();
                 await writeWatchdog.WriteAsync(
                     dest, buffer.AsMemory(0, bytesRead), cancellationToken).ConfigureAwait(false);

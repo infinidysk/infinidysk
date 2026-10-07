@@ -120,6 +120,29 @@ public class ProviderCircuitBreakerConnectionFailureTests
     }
 
     [Fact]
+    public async Task RunWithConnection_LimitRejectionWithLiveConnections_LeavesBreakerAlone()
+    {
+        var factoryCalls = 0;
+        var breaker = new ProviderCircuitBreaker("full", coalesceFailureBursts: true);
+        using var pool = new ConnectionPool<INntpClient>(
+            maxConnections: 2,
+            _ => Interlocked.Increment(ref factoryCalls) == 1
+                ? ValueTask.FromResult<INntpClient>(new SuccessfulStatClient())
+                : throw new CouldNotLoginToUsenetException(
+                    "Could not login to usenet host: 502 Too many connections.", responseCode: 502));
+        using var retainedConnection = await pool.GetConnectionLockAsync(
+            SemaphorePriority.High, CancellationToken.None);
+        using var client = new MultiConnectionNntpClient(
+            pool, ProviderType.Pooled, breaker, "full");
+
+        await Assert.ThrowsAsync<CouldNotLoginToUsenetException>(
+            () => client.StatAsync("first", CancellationToken.None));
+
+        Assert.Equal(ProviderCircuitState.Closed, breaker.GetSnapshot().State);
+        Assert.Equal(0, breaker.GetSnapshot().FailureCount);
+    }
+
+    [Fact]
     public async Task RunWithConnection_HalfOpenFailedExpansion_RetripsImmediately()
     {
         var clock = 0L;

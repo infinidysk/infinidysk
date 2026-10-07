@@ -1,5 +1,6 @@
 using System.Text;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Tests.TestUtils;
@@ -13,6 +14,13 @@ public sealed class UnbufferedShortDecodeHoleTests : IDisposable
 
     public void Dispose() => PlaybackHoleTracker.ResetForTests();
 
+    // A truncated article still declares its full part in the yEnc header.
+    private static FakeNntpClient ShortDecodeClient(string[] ids) => new(
+        ids.ToDictionary(id => id, _ => "x"u8.ToArray(), StringComparer.Ordinal),
+        useCachedYencStreams: true,
+        segmentRanges: ids.Select((id, i) => (id, i)).ToDictionary(
+            x => x.id, x => LongRange.FromStartAndSize(x.i * 5L, 5), StringComparer.Ordinal));
+
     [Fact]
     public async Task ShortDecodePadding_RecordsHoleAndDoesNotFailFastAlone()
     {
@@ -24,6 +32,12 @@ public sealed class UnbufferedShortDecodeHoleTests : IDisposable
             {
                 [shortId] = "ab"u8.ToArray(),
                 [okId] = "cdef"u8.ToArray(),
+            },
+            useCachedYencStreams: true,
+            segmentRanges: new Dictionary<string, LongRange>
+            {
+                [shortId] = LongRange.FromStartAndSize(0, 5),
+                [okId] = LongRange.FromStartAndSize(5, 4),
             });
         await using var stream = new UnbufferedMultiSegmentStream(
             new[] { shortId, okId }.AsMemory(),
@@ -47,8 +61,7 @@ public sealed class UnbufferedShortDecodeHoleTests : IDisposable
     {
         var path = $"/view/short-cap-{Guid.NewGuid():N}.mkv";
         var ids = new[] { "s0@test", "s1@test", "s2@test" };
-        var client = new FakeNntpClient(
-            ids.ToDictionary(id => id, _ => "x"u8.ToArray(), StringComparer.Ordinal));
+        var client = ShortDecodeClient(ids);
         await using var stream = new UnbufferedMultiSegmentStream(
             ids.AsMemory(),
             client,
@@ -68,8 +81,7 @@ public sealed class UnbufferedShortDecodeHoleTests : IDisposable
     {
         var path = $"/view/short-range-{Guid.NewGuid():N}.mkv";
         var ids = new[] { "s0@test", "s1@test", "s2@test" };
-        var first = new FakeNntpClient(
-            ids.ToDictionary(id => id, _ => "x"u8.ToArray(), StringComparer.Ordinal));
+        var first = ShortDecodeClient(ids);
         await using (var stream = new UnbufferedMultiSegmentStream(
                          ids.AsMemory(),
                          first,
@@ -81,8 +93,7 @@ public sealed class UnbufferedShortDecodeHoleTests : IDisposable
                 async () => await stream.CopyToAsync(Stream.Null));
         }
 
-        var second = new FakeNntpClient(
-            ids.ToDictionary(id => id, _ => "x"u8.ToArray(), StringComparer.Ordinal));
+        var second = ShortDecodeClient(ids);
         await using var stream2 = new UnbufferedMultiSegmentStream(
             ids.AsMemory(),
             second,

@@ -12,6 +12,85 @@ namespace NzbWebDAV.Tests.Database;
 public class SegmentRangePersistenceTests
 {
     [Fact]
+    public async Task OmittedSecondPart_ProbesNextListedInteriorPart()
+    {
+        var file = await CreateOmittedFileAsync([1, 3, 4], 12);
+        var client = new HeaderProbeNntpClient(new Dictionary<string, LongRange>
+        {
+            ["part-3@example"] = new(6, 9),
+        });
+        await file.ProbeSecondSegmentRangeAsync(client, 12, CancellationToken.None);
+        Assert.Equal(["part-3@example"], client.RequestedIds);
+        AssertOmittedRanges(file, 4);
+    }
+
+    [Fact]
+    public async Task SingleOmissionBetweenExactEndpoints_HasExactRange()
+    {
+        var file = await CreateOmittedFileAsync([1, 3], 9);
+        var client = new HeaderProbeNntpClient(new Dictionary<string, LongRange>
+        {
+            ["part-3@example"] = new(6, 9),
+        });
+        await file.ProbeSecondSegmentRangeAsync(client, 9, CancellationToken.None);
+        Assert.Equal(["part-3@example"], client.RequestedIds);
+        Assert.Equal(new LongRange(3, 6), file.Segments[1].ByteRange);
+        AssertOmittedRanges(file, 3);
+    }
+
+    [Fact]
+    public async Task OmittedInteriorPart_UsesExistingUniformRangeInference()
+    {
+        var file = await CreateOmittedFileAsync([1, 2, 4], 12);
+        file.Segments[^1].ByteRange = new(9, 12);
+        var client = new HeaderProbeNntpClient(new Dictionary<string, LongRange>
+        {
+            ["part-2@example"] = new(3, 6),
+        });
+        await file.ProbeSecondSegmentRangeAsync(client, 12, CancellationToken.None);
+        Assert.Equal(["part-2@example"], client.RequestedIds);
+        AssertOmittedRanges(file, 4);
+    }
+
+    [Fact]
+    public async Task AdjacentOmissionsWithoutInteriorEvidence_AreNotGuessed()
+    {
+        var file = await CreateOmittedFileAsync([1, 4], 12);
+        var client = new HeaderProbeNntpClient(new Dictionary<string, LongRange>
+        {
+            ["part-4@example"] = new(9, 12),
+        });
+        await file.ProbeSecondSegmentRangeAsync(client, 12, CancellationToken.None);
+        Assert.Equal(["part-4@example"], client.RequestedIds);
+        Assert.Null(file.Segments[1].ByteRange);
+        Assert.Null(file.Segments[2].ByteRange);
+        Assert.False(file.GetSegmentByteRangeIndex().IsTrusted);
+    }
+
+    private static async Task<NzbFile> CreateOmittedFileAsync(int[] numbers, int size)
+    {
+        var file = new NzbFile { Subject = "test.mkv" };
+        file.Segments.AddRange(numbers.Select(number => new NzbSegment
+        {
+            Number = number, MessageId = $"part-{number}@example", Bytes = 100,
+        }));
+        file.Segments[0].ByteRange = new LongRange(0, 3);
+        Assert.True(await file.TryFillOmittedSegmentsAsync(new UsenetYencHeader
+        {
+            FileName = "test.mkv", FileSize = size, PartOffset = 0, PartSize = 3,
+            PartNumber = 1, TotalParts = numbers[^1], HasTotalParts = true, LineLength = 128,
+        }, new HeaderProbeNntpClient(new Dictionary<string, LongRange>()), CancellationToken.None));
+        return file;
+    }
+
+    private static void AssertOmittedRanges(NzbFile file, int count)
+    {
+        var index = file.GetSegmentByteRangeIndex();
+        Assert.True(index.IsTrusted);
+        Assert.Equal(Enumerable.Range(0, count).Select(part => new LongRange(part * 3, part * 3 + 3)), index.Ranges);
+    }
+
+    [Fact]
     public void DavNzbFile_SegmentRanges_RoundTrip()
     {
         var original = new DavNzbFile
@@ -220,12 +299,14 @@ public class SegmentRangePersistenceTests
         IReadOnlyDictionary<string, LongRange> ranges) : WrappingNntpClient(null!)
     {
         public int HeaderRequestCount { get; private set; }
+        public List<string> RequestedIds { get; } = [];
 
         public override Task<UsenetYencHeader> GetYencHeadersAsync(
             string segmentId,
             CancellationToken ct)
         {
             HeaderRequestCount++;
+            RequestedIds.Add(segmentId);
             if (!ranges.TryGetValue(segmentId, out var range))
                 throw new InvalidOperationException($"No header configured for {segmentId}");
 

@@ -19,6 +19,16 @@ Tune methodically — [First run](../getting-started/first-run.md) and speed not
 
 ## Conflicting yEnc metadata [since 1.4.2](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.2){ .nzbdav-since }
 
+A confirmed numbered omission is different from an unproved metadata conflict.
+When sparse NZB numbering and the articles' yEnc geometry corroborate an omitted
+interior part, import preserves its missing slot so later bytes keep their offsets.
+Sparse labels alone are not enough: a complete post numbered `1,3` remains a
+two-article file when its headers describe two contiguous parts. See
+[Degraded damage tolerance](../configuration/repairs.md#degraded-damage-tolerance-since-120)
+for gap filling, repair limits, and the reimport requirement for existing mounts.
+This layout check is not a PAR2 identity proof and does not excuse conflicting
+article metadata.
+
 Some articles declare positive part counts or file sizes that conflict with the NZB and PAR2 metadata. When import finds a matching file prefix and complete, checksum-verified PAR2 file and slice metadata, it can use PAR2-verified reads for that file. A matching prefix selects the candidate file; it does not establish the integrity of later bytes.
 
 Reads within the first 16 KiB verify that complete prefix against the checksum in the PAR2 file description. This keeps archive-header discovery bounded. Reads beyond that prefix buffer and verify an entire PAR2 slice using both MD5 and CRC32 before returning any bytes. This includes seeks, cached content, and physical archive volumes. Failed verification is retried against eligible providers; if verification still fails, the read fails without returning the unverified bytes. Article CRC validation and ordinary provider fallback remain enabled. Checksum-failing combinations of alternate article IDs are not exhaustively searched.

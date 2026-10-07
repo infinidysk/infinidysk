@@ -10,7 +10,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { useRevalidator, useSearchParams } from "react-router";
 import { useWebsocketTopics } from "~/utils/shared-websocket";
-import { Alert, Button, Icon, Modal, PageHeader } from "~/components/ui";
+import { Alert, Button, Icon, Modal, PageHeader, Spinner } from "~/components/ui";
 import { useIsReadOnly } from "~/auth/authorization";
 import type {
   HealthCheckQueueItem,
@@ -28,7 +28,7 @@ import {
   parseHealthItemStatusMessage,
   type HealthQueueState,
   updateHealthCheckProgress,
-} from "./health-queue-state";
+} from "~/utils/health-queue-state";
 import { withUrlBase } from "~/utils/url-base";
 import { parseConfigBoolean } from "~/utils/config-bool";
 
@@ -467,91 +467,39 @@ export default function Health({ loaderData }: Route.ComponentProps) {
   const checksClosed = Boolean(schedule && !schedule.checksOpen && !schedule.manualRunActive);
   const repairsClosed = Boolean(schedule && !schedule.repairsOpen);
   const pendingRepairs = schedule?.pendingRepairCount ?? 0;
+  const refreshing = revalidator.state !== "idle";
 
   return (
-    <div className="flex min-h-full min-w-full flex-col gap-8 px-4 py-4 text-sm text-base-content md:px-8">
+    <section className="flex min-h-full min-w-0 flex-col gap-4 px-4 py-4 text-sm md:px-8">
       <PageHeader
         title="Health"
         subtitle="Repair queue and history for files that fail Usenet article checks."
         actions={
           <>
-            <a className="btn btn-sm" href="#repair-history">
+            <a className="btn btn-ghost btn-sm max-sm:min-h-11" href="#repair-history">
               <Icon name="history" className="!text-[16px]" />
-              Jump to history
+              History
             </a>
+            <Button onClick={() => void revalidator.revalidate()} disabled={refreshing}>
+              <Icon name="refresh" className={`!text-[16px] ${refreshing ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
             {isEnabled && !isReadOnly && (
               <Button
-                variant="outline"
-                size="small"
+                variant="primary"
                 onClick={() => void onRunAllChecks()}
                 disabled={triggerState === "pending"}
               >
-                {triggerState === "pending" ? "Starting…" : "Run all checks now"}
+                <Icon
+                  name={triggerState === "pending" ? "progress_activity" : "play_arrow"}
+                  className={`!text-[16px] ${triggerState === "pending" ? "animate-spin" : ""}`}
+                />
+                {triggerState === "pending" ? "Starting…" : "Run all checks"}
               </Button>
             )}
           </>
         }
       />
-      <HealthAttentionTable
-        items={loaderData.attentionItems}
-        totalCount={loaderData.attentionTotalCount}
-        page={loaderData.attentionPage}
-        pageSize={loaderData.attentionPageSize}
-        pageSizeOptions={PAGE_SIZE_OPTIONS}
-        refreshing={revalidator.state !== "idle"}
-        canRequeueActionNeeded={isEnabled && !isReadOnly}
-        requeueingActionNeeded={requeueingActionNeeded || deleting}
-        onDelete={!isReadOnly ? requestDelete : undefined}
-        onPageSelected={(attentionPage) => setHistoryParams({ attentionPage })}
-        onPageSizeSelected={(attentionPageSize) =>
-          setHistoryParams({ attentionPageSize, attentionPage: 1 })
-        }
-        onRefresh={() => void revalidator.revalidate()}
-        onRequeueActionNeeded={(davItemId) => void onRequeueActionNeeded(davItemId)}
-      />
-      <HealthStats stats={historyStats} />
-      <Modal
-        open={deleteItem !== null}
-        title="Remove from InfiniDysk?"
-        preventClose={deleting}
-        onClose={() => setDeleteItem(null)}
-        footer={
-          <>
-            <Button variant="outline" disabled={deleting} onClick={() => setDeleteItem(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              disabled={!deletePreviewReady || deleting || isReadOnly}
-              onClick={() => void deleteAttentionFile()}
-            >
-              <Icon
-                name={deleting ? "progress_activity" : "delete"}
-                className={deleting ? "animate-spin" : ""}
-              />
-              {deleting ? "Removing..." : "Remove"}
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-3">
-          <p className="break-all font-medium">{deleteItem?.nzbFileName ?? deleteItem?.jobName}</p>
-          <p className="break-all font-mono text-xs">{deleteItem?.path}</p>
-          <p>
-            This permanently removes this file from WebDAV and may prune its download history if no
-            files remain. Imported symlinks and STRM files are not removed and may stop playing. No
-            replacement will be fetched.
-          </p>
-          {!deletePreviewReady && !deleteError && (
-            <p role="status">Checking removal eligibility...</p>
-          )}
-          {deleteError && (
-            <Alert variant="danger" role="alert">
-              {deleteError}
-            </Alert>
-          )}
-        </div>
-      </Modal>
       {requeueFeedback && (
         <Alert
           className="alert-soft py-3 text-sm"
@@ -573,7 +521,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         </Alert>
       )}
       {checksClosed && (
-        <Alert className="alert-soft" variant="info">
+        <Alert className="alert-soft" variant="info" role="status">
           <Icon name="schedule" className="shrink-0 !text-[20px]" />
           <div>
             <div className="font-semibold">Health checks are scheduled</div>
@@ -586,7 +534,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         </Alert>
       )}
       {repairsClosed && pendingRepairs > 0 && (
-        <Alert className="alert-soft" variant="warning">
+        <Alert className="alert-soft" variant="warning" role="status">
           <Icon name="schedule" className="shrink-0 !text-[20px]" />
           <div>
             <div className="font-semibold">Repairs deferred</div>
@@ -599,7 +547,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         </Alert>
       )}
       {isEnabled && uncheckedCount > 20 && (
-        <Alert className="alert-soft" variant="warning">
+        <Alert className="alert-soft" variant="warning" role="status">
           <Icon name="warning" filled className="shrink-0 !text-[20px]" />
           <div>
             <div className="font-semibold">Initial health scan pending</div>
@@ -610,6 +558,67 @@ export default function Health({ loaderData }: Route.ComponentProps) {
           </div>
         </Alert>
       )}
+      <HealthAttentionTable
+        items={loaderData.attentionItems}
+        totalCount={loaderData.attentionTotalCount}
+        page={loaderData.attentionPage}
+        pageSize={loaderData.attentionPageSize}
+        pageSizeOptions={PAGE_SIZE_OPTIONS}
+        canRequeueActionNeeded={isEnabled && !isReadOnly}
+        requeueingActionNeeded={requeueingActionNeeded || deleting}
+        onDelete={!isReadOnly ? requestDelete : undefined}
+        onPageSelected={(attentionPage) => setHistoryParams({ attentionPage })}
+        onPageSizeSelected={(attentionPageSize) =>
+          setHistoryParams({ attentionPageSize, attentionPage: 1 })
+        }
+        onRequeueActionNeeded={(davItemId) => void onRequeueActionNeeded(davItemId)}
+      />
+      <HealthStats stats={historyStats} />
+      <Modal
+        open={deleteItem !== null}
+        title="Remove from InfiniDysk?"
+        preventClose={deleting}
+        onClose={() => setDeleteItem(null)}
+        footer={
+          <>
+            <Button variant="ghost" disabled={deleting} onClick={() => setDeleteItem(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              disabled={!deletePreviewReady || deleting || isReadOnly}
+              onClick={() => void deleteAttentionFile()}
+            >
+              <Icon
+                name={deleting ? "progress_activity" : "delete"}
+                className={deleting ? "animate-spin" : ""}
+              />
+              {deleting ? "Removing…" : "Remove"}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="break-all font-medium">{deleteItem?.nzbFileName ?? deleteItem?.jobName}</p>
+          <p className="break-all font-mono text-xs">{deleteItem?.path}</p>
+          <p>
+            This permanently removes this file from WebDAV and may prune its download history if no
+            files remain. Imported symlinks and STRM files are not removed and may stop playing. No
+            replacement will be fetched.
+          </p>
+          {!deletePreviewReady && !deleteError && (
+            <p role="status" className="flex items-center gap-2 text-base-content/70">
+              <Spinner size="sm" />
+              Checking removal eligibility…
+            </p>
+          )}
+          {deleteError && (
+            <Alert variant="danger" role="alert">
+              {deleteError}
+            </Alert>
+          )}
+        </div>
+      </Modal>
       <HealthTable
         isEnabled={isEnabled}
         healthCheckItems={getVisibleHealthCheckItems(queueItems)}
@@ -621,12 +630,10 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         pageSize={loaderData.historyPageSize}
         pageSizeOptions={PAGE_SIZE_OPTIONS}
         filter={loaderData.historyFilter}
-        refreshing={revalidator.state !== "idle"}
         onFilterSelected={onHistoryFilterSelected}
         onPageSelected={(page) => setHistoryParams({ page })}
         onPageSizeSelected={onHistoryPageSizeSelected}
-        onRefresh={() => void revalidator.revalidate()}
       />
-    </div>
+    </section>
   );
 }

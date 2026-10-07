@@ -25,6 +25,8 @@ internal sealed record NntpWholePathScenario(
     public int HandshakeDelayMs { get; init; }
     public int? ArticleBufferSize { get; init; }
     public bool PrewarmConnections { get; init; }
+    // Awaits prewarming before the measurement origin instead of racing it at read start.
+    public bool WarmStart { get; init; }
 
     public static IReadOnlyList<NntpWholePathScenario> Quick =>
     [
@@ -35,12 +37,14 @@ internal sealed record NntpWholePathScenario(
         new("plain-http-like-w4", NntpWholePathLayer.HttpLike, false, 8, 256 * 1024, 4, 4, 0, null, YencCrcValidationMode.Require),
     ];
 
+    // 4 MiB articles cap batches at one, so these variants sweep the task window (buffer x configured
+    // width), not batching; the baseline pins effectiveBatchWidth, taskWindowArticles and initialPrefetchBytes.
     public static IReadOnlyList<NntpWholePathScenario> Sustained =>
     [
-        new("plain-buffered-w1", NntpWholePathLayer.BufferedStream, false, 256, 4 * 1024 * 1024, 20, 1, 0, null, YencCrcValidationMode.Require),
-        new("plain-buffered-w2", NntpWholePathLayer.BufferedStream, false, 256, 4 * 1024 * 1024, 20, 2, 0, null, YencCrcValidationMode.Require),
-        new("plain-buffered-w4", NntpWholePathLayer.BufferedStream, false, 256, 4 * 1024 * 1024, 20, 4, 0, null, YencCrcValidationMode.Require),
-        new("plain-buffered-w8", NntpWholePathLayer.BufferedStream, false, 256, 4 * 1024 * 1024, 20, 8, 0, null, YencCrcValidationMode.Require),
+        new("plain-buffered-w1", NntpWholePathLayer.BufferedStream, false, 256, 4 * 1024 * 1024, 20, 1, 0, null, YencCrcValidationMode.Require) { ArticleBufferSize = 16 },
+        new("plain-buffered-w2", NntpWholePathLayer.BufferedStream, false, 256, 4 * 1024 * 1024, 20, 2, 0, null, YencCrcValidationMode.Require) { ArticleBufferSize = 16 },
+        new("plain-buffered-w4", NntpWholePathLayer.BufferedStream, false, 256, 4 * 1024 * 1024, 20, 4, 0, null, YencCrcValidationMode.Require) { ArticleBufferSize = 16 },
+        new("plain-buffered-w8", NntpWholePathLayer.BufferedStream, false, 256, 4 * 1024 * 1024, 20, 8, 0, null, YencCrcValidationMode.Require) { ArticleBufferSize = 16 },
     ];
 
     public static IReadOnlyList<NntpWholePathScenario> Profile =>
@@ -63,6 +67,26 @@ internal sealed record NntpWholePathScenario(
         },
     ];
 
+    // Warm, paced connections isolate ordered-delivery stalls from connection-ramp latency.
+    public static IReadOnlyList<NntpWholePathScenario> Smoothness =>
+    [
+        Paced("paced-256mib-w1", batchWidth: 1),
+        Paced("paced-256mib-w4", batchWidth: 4),
+        Paced("paced-256mib-w8", batchWidth: 8),
+        // Fewer connections than the default window can use: scheduling must not
+        // depend on spare capacity to stay steady.
+        Paced("paced-256mib-w4-4conn", batchWidth: 4, connections: 4),
+        // One stripe per buffered article: a full-batch-per-stripe start would fill the whole window.
+        Paced("paced-256mib-w4-40conn", batchWidth: 4, connections: 40),
+    ];
+
+    private static NntpWholePathScenario Paced(string name, int batchWidth, int connections = 20) =>
+        new(name, NntpWholePathLayer.HttpLike, false, 342, 768 * 1024, connections, batchWidth, 40, 6_000_000, YencCrcValidationMode.Require)
+        {
+            ArticleBufferSize = 40,
+            WarmStart = true,
+        };
+
     public static IReadOnlyList<NntpWholePathScenario> ForSet(string set) =>
         set.Equals("quick", StringComparison.OrdinalIgnoreCase)
             ? Quick
@@ -72,7 +96,9 @@ internal sealed record NntpWholePathScenario(
                     ? Profile
                     : set.Equals("cold", StringComparison.OrdinalIgnoreCase)
                         ? Cold
-                        : throw new ArgumentException(
-                            "--set must be 'quick', 'sustained', 'profile', or 'cold'.",
-                            nameof(set));
+                        : set.Equals("smoothness", StringComparison.OrdinalIgnoreCase)
+                            ? Smoothness
+                            : throw new ArgumentException(
+                                "--set must be 'quick', 'sustained', 'profile', 'cold', or 'smoothness'.",
+                                nameof(set));
 }
