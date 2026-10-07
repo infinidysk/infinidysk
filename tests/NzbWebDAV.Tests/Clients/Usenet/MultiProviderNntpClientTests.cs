@@ -3276,13 +3276,13 @@ public class MultiProviderNntpClientTests
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            while (backup.SingularRequests < 4)
+            while (backup.PendingSingularRequests < 4)
                 await Task.Delay(10, timeout.Token);
 
             // Read-ahead bodies are still streaming; the next batch must not wait on their permits.
             var demand = await client.DecodedBodiesAsync(
                 ["demand-0"], onConnectionReadyAgain: null, CancellationToken.None);
-            while (backup.SingularRequests < 5)
+            while (backup.PendingSingularRequests < 5)
                 await Task.Delay(10, timeout.Token);
 
             var response = await demand.Responses[0].WaitAsync(TimeSpan.FromSeconds(3));
@@ -3331,7 +3331,7 @@ public class MultiProviderNntpClientTests
         UsenetDecodedBodyResponse? demandResponse = null;
         try
         {
-            await WaitUntilAsync(() => backupConnection.SingularRequests == transferCap);
+            await WaitUntilAsync(() => backupConnection.PendingSingularRequests == transferCap);
             Assert.Equal(transferCap, backup.GetConnectionAdmissionSnapshot()!.ActiveTransferOperations);
 
             // Undrained read-ahead bodies hold the whole cap: admission must give up within budget.
@@ -3393,6 +3393,7 @@ public class MultiProviderNntpClientTests
         {
             BatchResponseCode = 222,
             DeferSingularCompletion = true,
+            CancelDeferredOnCancellation = true,
         };
         var primary = CreateProvider(
             new ScriptedNntpClient { BatchResponseCode = 430 }, host: "primary.example", maxConnections: 4);
@@ -3415,49 +3416,52 @@ public class MultiProviderNntpClientTests
             PerSegmentTimeout = TimeSpan.FromSeconds(10),
             MaxRetries = 0,
         });
-        var activeCallbacks = 0;
-        var waitingCallbacks = 0;
+        var activeResults = new ConcurrentQueue<ArticleBodyResult>();
+        var waitingResults = new ConcurrentQueue<ArticleBodyResult>();
 
         var active = await client.DecodedBodiesAsync(
-            ["active-0", "active-1"], (_, _) => Interlocked.Increment(ref activeCallbacks), activeCts.Token);
+            ["active-0", "active-1"], (result, _) => activeResults.Enqueue(result), activeCts.Token);
+        UsenetDecodedBodyResponse? openBody = null;
         try
         {
-            await WaitUntilAsync(() => backupConnection.SingularRequests == 2);
+            await WaitUntilAsync(() => backupConnection.PendingSingularRequests == 2);
             var waiting = await client.DecodedBodiesAsync(
-                ["waiting-0", "waiting-1"], (_, _) => Interlocked.Increment(ref waitingCallbacks), waitingCts.Token);
+                ["waiting-0", "waiting-1"], (result, _) => waitingResults.Enqueue(result), waitingCts.Token);
             await WaitUntilAsync(() =>
                 backup.GetConnectionAdmissionSnapshot()!.WaitingTransferOperations == 2);
 
             await waitingCts.CancelAsync();
             foreach (var response in waiting.Responses)
                 await Assert.ThrowsAnyAsync<OperationCanceledException>(() => response);
-            await Task.WhenAny(waiting.Completion, Task.Delay(TimeSpan.FromSeconds(3)));
-            Assert.True(waiting.Completion.IsCompleted);
-            Assert.Equal(1, Volatile.Read(ref waitingCallbacks));
+            await waiting.Completion.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Equal([ArticleBodyResult.NotRetrieved], waitingResults);
             Assert.Equal(2, backupConnection.SingularRequests);
             var snapshot = backup.GetConnectionAdmissionSnapshot()!;
             Assert.Equal(0, snapshot.WaitingTransferOperations);
             Assert.Equal(2, snapshot.ActiveTransferOperations);
 
-            // Cancel the batch whose bodies are still in flight, then let the transport drain.
-            // Ordered publication releases the next response only after the prior stream is disposed.
-            foreach (var task in active.Responses)
-            {
-                var response = await task.WaitAsync(TimeSpan.FromSeconds(3));
-                if (response.Stream != null) await response.Stream.DisposeAsync();
-            }
+            // Cancel while active-0's body is still open and active-1 is not yet published.
+            openBody = await active.Responses[0].WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.NotNull(openBody.Stream);
             await activeCts.CancelAsync();
-            Assert.Equal(0, Volatile.Read(ref activeCallbacks));
+            await WaitUntilAsync(() => backupConnection.PendingSingularRequests == 0);
+            Assert.Equal(0, backup.GetConnectionAdmissionSnapshot()!.ActiveTransferOperations);
+            Assert.Equal(0, backup.ActiveConnections);
+
+            await openBody.Stream.DisposeAsync();
+            openBody = null;
+            var second = await active.Responses[1].WaitAsync(TimeSpan.FromSeconds(3));
+            if (second.Stream != null) await second.Stream.DisposeAsync();
+            await active.Completion.WaitAsync(TimeSpan.FromSeconds(3));
         }
         finally
         {
             backupConnection.CompletePendingSingularRequests();
+            if (openBody?.Stream != null) await openBody.Stream.DisposeAsync();
         }
 
-        await Task.WhenAny(active.Completion, Task.Delay(TimeSpan.FromSeconds(3)));
-        Assert.True(active.Completion.IsCompleted);
-        Assert.Equal(1, Volatile.Read(ref activeCallbacks));
-        Assert.Equal(1, Volatile.Read(ref waitingCallbacks));
+        Assert.Equal([ArticleBodyResult.NotRetrieved], activeResults);
+        Assert.Equal([ArticleBodyResult.NotRetrieved], waitingResults);
         Assert.Equal(0, backup.GetConnectionAdmissionSnapshot()!.ActiveTransferOperations);
         Assert.Equal(0, backup.ActiveConnections);
         Assert.Equal(0, primary.PendingSelections);
@@ -3484,7 +3488,7 @@ public class MultiProviderNntpClientTests
         UsenetDecodedBodyResponse? other = null;
         try
         {
-            await WaitUntilAsync(() => backupConnection.SingularRequests == 4);
+            await WaitUntilAsync(() => backupConnection.PendingSingularRequests == 4);
             await Task.Delay(200);
             Assert.Equal(4, backupConnection.SingularRequests);
 
@@ -3501,7 +3505,9 @@ public class MultiProviderNntpClientTests
             Assert.Equal(5, backupConnection.SingularRequests);
 
             backupConnection.CompleteNextPendingSingularRequest();
-            await WaitUntilAsync(() => backupConnection.SingularRequests == 6);
+            // wide-1..wide-3 plus the newly admitted wide-4: wait for its callback, not just its request.
+            await WaitUntilAsync(() =>
+                backupConnection.SingularRequests == 6 && backupConnection.PendingSingularRequests == 4);
         }
         finally
         {
@@ -4044,10 +4050,20 @@ public class MultiProviderNntpClientTests
         public Func<Exception>? FaultBatchResponsesWith { get; init; }
         public Func<string, Exception>? SingularException { get; init; }
         public bool DeferSingularCompletion { get; init; }
+        /// <summary>Deferred bodies drain as <see cref="ArticleBodyResult.Cancelled"/> when their command token cancels.</summary>
+        public bool CancelDeferredOnCancellation { get; init; }
         public int BatchRequests { get; private set; }
         private int _singularRequests;
         public int SingularRequests => Volatile.Read(ref _singularRequests);
         private readonly LinkedList<ArticleBodyCompletionHandler> _pendingSingularCallbacks = new();
+
+        public int PendingSingularRequests
+        {
+            get
+            {
+                lock (_pendingSingularCallbacks) return _pendingSingularCallbacks.Count;
+            }
+        }
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
@@ -4089,7 +4105,12 @@ public class MultiProviderNntpClientTests
 
             var response = CreateResponse(segmentId, SingularResponseCode);
             if (DeferSingularCompletion && onConnectionReadyAgain != null)
-                lock (_pendingSingularCallbacks) _pendingSingularCallbacks.AddLast(onConnectionReadyAgain);
+            {
+                LinkedListNode<ArticleBodyCompletionHandler> node;
+                lock (_pendingSingularCallbacks) node = _pendingSingularCallbacks.AddLast(onConnectionReadyAgain);
+                if (CancelDeferredOnCancellation)
+                    cancellationToken.Register(() => CompletePendingSingularRequest(node, ArticleBodyResult.Cancelled));
+            }
             else
                 onConnectionReadyAgain?.Invoke(ToArticleBodyResult(SingularResponseCode));
             return Task.FromResult(response);
@@ -4110,16 +4131,30 @@ public class MultiProviderNntpClientTests
 
         private bool CompletePendingSingularRequest(bool fromEnd)
         {
-            ArticleBodyCompletionHandler callback;
+            LinkedListNode<ArticleBodyCompletionHandler>? node;
             lock (_pendingSingularCallbacks)
             {
-                var node = fromEnd ? _pendingSingularCallbacks.Last : _pendingSingularCallbacks.First;
+                node = fromEnd ? _pendingSingularCallbacks.Last : _pendingSingularCallbacks.First;
                 if (node is null) return false;
                 _pendingSingularCallbacks.Remove(node);
-                callback = node.Value;
             }
 
-            callback(ToArticleBodyResult(SingularResponseCode));
+            node.Value(ToArticleBodyResult(SingularResponseCode));
+            return true;
+        }
+
+        private bool CompletePendingSingularRequest(
+            LinkedListNode<ArticleBodyCompletionHandler> node,
+            ArticleBodyResult result)
+        {
+            lock (_pendingSingularCallbacks)
+            {
+                // Already completed by the other path (manual drain vs. cancellation).
+                if (node.List is null) return false;
+                _pendingSingularCallbacks.Remove(node);
+            }
+
+            node.Value(result);
             return true;
         }
 
