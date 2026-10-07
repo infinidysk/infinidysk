@@ -19,6 +19,11 @@ internal sealed class StreamTraceRangeStalls
     private long _clientWriteTicks;
     private long _firstConnectionWaitTicks = -1;
     private long _maxConnectionWaitTicks;
+    private long _failedConnectionWaitTicks;
+    private long _maxFailedConnectionWaitTicks;
+    private long _failedConnectionAttempts;
+    private long _permitWaitTicks;
+    private long _maxPermitWaitTicks;
     private long _connectionsOpened;
     private long _connectionsReused;
     private long _fetches;
@@ -28,6 +33,11 @@ internal sealed class StreamTraceRangeStalls
         ? first / TimeSpan.TicksPerMillisecond
         : null;
     public long? MaxConnectionWaitMs => Milliseconds(Interlocked.Read(ref _maxConnectionWaitTicks));
+    public long? FailedConnectionWaitMs => Milliseconds(Interlocked.Read(ref _failedConnectionWaitTicks));
+    public long? MaxFailedConnectionWaitMs => Milliseconds(Interlocked.Read(ref _maxFailedConnectionWaitTicks));
+    public long? FailedConnectionAttempts => Count(Interlocked.Read(ref _failedConnectionAttempts));
+    public long? PermitWaitMs => Milliseconds(Interlocked.Read(ref _permitWaitTicks));
+    public long? MaxPermitWaitMs => Milliseconds(Interlocked.Read(ref _maxPermitWaitTicks));
     public long? ProviderWaitMs => Milliseconds(Interlocked.Read(ref _providerWaitTicks));
     public long? BodyDrainMs => Milliseconds(Interlocked.Read(ref _bodyDrainTicks));
     public long? ConsumerWaitMs => Milliseconds(Interlocked.Read(ref _consumerWaitTicks));
@@ -62,18 +72,33 @@ internal sealed class StreamTraceRangeStalls
     {
         waitTicks = Math.Max(0, waitTicks);
         Interlocked.CompareExchange(ref _firstConnectionWaitTicks, waitTicks, -1);
-        if (waitTicks > 0) Interlocked.Add(ref _connectionWaitTicks, waitTicks);
-        var max = Interlocked.Read(ref _maxConnectionWaitTicks);
-        while (waitTicks > max)
-        {
-            var seen = Interlocked.CompareExchange(ref _maxConnectionWaitTicks, waitTicks, max);
-            if (seen == max) break;
-            max = seen;
-        }
+        AddWait(ref _connectionWaitTicks, ref _maxConnectionWaitTicks, waitTicks);
         if (wasReused)
             Interlocked.Increment(ref _connectionsReused);
         else
             Interlocked.Increment(ref _connectionsOpened);
+    }
+
+    public void AddFailedConnection(long waitTicks)
+    {
+        AddWait(ref _failedConnectionWaitTicks, ref _maxFailedConnectionWaitTicks, waitTicks);
+        Interlocked.Increment(ref _failedConnectionAttempts);
+    }
+
+    public void AddPermitWait(long waitTicks) =>
+        AddWait(ref _permitWaitTicks, ref _maxPermitWaitTicks, waitTicks);
+
+    private static void AddWait(ref long total, ref long max, long waitTicks)
+    {
+        if (waitTicks <= 0) return;
+        Interlocked.Add(ref total, waitTicks);
+        var current = Interlocked.Read(ref max);
+        while (waitTicks > current)
+        {
+            var seen = Interlocked.CompareExchange(ref max, waitTicks, current);
+            if (seen == current) break;
+            current = seen;
+        }
     }
 
     public void AddFetch(long providerWaitTicks)
@@ -91,6 +116,11 @@ internal sealed class StreamTraceRangeStalls
         ConnectionWaitMs: ConnectionWaitMs,
         FirstConnectionWaitMs: FirstConnectionWaitMs,
         MaxConnectionWaitMs: MaxConnectionWaitMs,
+        FailedConnectionWaitMs: FailedConnectionWaitMs,
+        MaxFailedConnectionWaitMs: MaxFailedConnectionWaitMs,
+        FailedConnectionAttempts: FailedConnectionAttempts,
+        PermitWaitMs: PermitWaitMs,
+        MaxPermitWaitMs: MaxPermitWaitMs,
         ProviderWaitMs: ProviderWaitMs,
         BodyDrainMs: BodyDrainMs,
         ConsumerWaitMs: ConsumerWaitMs,
@@ -110,6 +140,11 @@ internal sealed record StreamTraceRangeStallsSnapshot(
     long? ConnectionWaitMs,
     long? FirstConnectionWaitMs,
     long? MaxConnectionWaitMs,
+    long? FailedConnectionWaitMs,
+    long? MaxFailedConnectionWaitMs,
+    long? FailedConnectionAttempts,
+    long? PermitWaitMs,
+    long? MaxPermitWaitMs,
     long? ProviderWaitMs,
     long? BodyDrainMs,
     long? ConsumerWaitMs,
