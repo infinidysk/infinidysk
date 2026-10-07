@@ -7,7 +7,8 @@ namespace NzbWebDAV.Streams;
 /// <param name="readAheadBytes">
 /// When positive, opens the next stream and reads its first bytes once a
 /// <see cref="PaddedLengthStream"/> part has this many bytes or fewer left, so the next
-/// part's download pipeline is running before the boundary.
+/// part's download pipeline is running before the boundary. Further parts open while
+/// every byte ahead of the reader still fits the window, so short parts never shrink it.
 /// </param>
 public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadBytes = 0) : FastReadOnlyNonSeekableStream, IDeliveredBytesValidation
 {
@@ -15,7 +16,7 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
 
     private readonly IEnumerator<Task<Stream>> _streams = streams.GetEnumerator();
     private Stream? _currentStream;
-    private Task<PreparedPart?>? _nextPart;
+    private readonly Queue<Task<PreparedPart?>> _nextParts = new();
     private ContextualCancellationTokenSource? _prefetchCts;
     private byte[]? _primed;
     private int _primedOffset;
@@ -55,17 +56,13 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
             _position += readCount;
             if (readCount > 0)
             {
-                if (_nextPart is null
-                    && _currentStream is PaddedLengthStream part
+                if (_currentStream is PaddedLengthStream part
                     && (part.ReadAheadBytes > 0 ? part.ReadAheadBytes : readAheadBytes) is > 0 and var window
-                    && part.Length - part.Position <= window
-                    // Next-part leases must never take credits the current tail still needs.
-                        // Unknown inner wrappers report false, declining prefetch.
-                    && ((ISegmentIssueProgress)part).AllSegmentsIssued)
+                    && CanPrefetchAnotherPart(part, window))
                 {
                     // Owned by the stream, not the triggering read: only disposal cancels prefetch.
                     _prefetchCts ??= ContextualCancellationTokenSource.CreateWithContextsOf(cancellationToken);
-                    _nextPart = PrepareNextAsync(_prefetchCts.Token);
+                    _nextParts.Enqueue(PrepareNextAsync(_prefetchCts.Token));
                 }
 
                 return readCount;
@@ -76,13 +73,30 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
         }
     }
 
+    private bool CanPrefetchAnotherPart(PaddedLengthStream current, long window)
+    {
+        var bytesAhead = current.Length - current.Position;
+        ISegmentIssueProgress last = current;
+        foreach (var pending in _nextParts)
+        {
+            // Wait for a part still opening; a finished sequence or foreign stream ends the chain.
+            if (!pending.IsCompletedSuccessfully || pending.Result?.Stream is not PaddedLengthStream next)
+                return false;
+            bytesAhead += next.Length;
+            last = next;
+        }
+
+        // Next-part leases must never take credits an earlier part still needs.
+        // Unknown inner wrappers report false, declining prefetch.
+        return bytesAhead <= window && last.AllSegmentsIssued;
+    }
+
     private async ValueTask<bool> OpenNextAsync()
     {
         PreparedPart? next;
-        if (_nextPart is { } pending)
+        if (_nextParts.TryDequeue(out var pending))
         {
             // A failed prefetch surfaces here, at the boundary, after every current-part byte.
-            _nextPart = null;
             next = await pending.ConfigureAwait(false);
         }
         else
@@ -195,19 +209,23 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
 
     private async Task DisposeNextPartAsync()
     {
-        var pending = _nextPart;
-        _nextPart = null;
         try
         {
-            if (pending is not null && await pending.ConfigureAwait(false) is { } next)
+            while (_nextParts.TryDequeue(out var pending))
             {
-                if (next.Primed is { } primed) ArrayPool<byte>.Shared.Return(primed);
-                await next.Stream.DisposeAsync().ConfigureAwait(false);
+                try
+                {
+                    if (await pending.ConfigureAwait(false) is { } next)
+                    {
+                        if (next.Primed is { } primed) ArrayPool<byte>.Shared.Return(primed);
+                        await next.Stream.DisposeAsync().ConfigureAwait(false);
+                    }
+                }
+                catch (Exception e) when (e is not OutOfMemoryException)
+                {
+                    Serilog.Log.Debug(e, "Prefetched part failed to open or dispose after the combined stream closed");
+                }
             }
-        }
-        catch (Exception e) when (e is not OutOfMemoryException)
-        {
-            Serilog.Log.Debug(e, "Prefetched part failed to open or dispose after the combined stream closed");
         }
         finally
         {

@@ -254,6 +254,57 @@ public class DavMultipartFileStreamTests
         Assert.Equal(Enumerable.Range(2, 14).Select(x => (byte)x).ToArray(), rest.ToArray());
     }
 
+    [Fact]
+    public async Task ReadAsync_ReadAheadWindowSpansMoreThanOneUpcomingVolume()
+    {
+        // Four 8-byte volumes against a 32-byte read-ahead window: while the reader is
+        // still in the first volume, the window covers the third one too.
+        var thirdBodyRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var names = new[] { "one", "two", "three", "four" };
+        using var client = new FakeNntpClient(
+            names.Select((name, part) => (name, part)).ToDictionary(
+                x => x.name,
+                x => Enumerable.Range(x.part * 8, 8).Select(b => (byte)b).ToArray()),
+            useCachedYencStreams: true,
+            decodedStreamFactory: (id, bytes) =>
+            {
+                if (id == "three") thirdBodyRequested.TrySetResult();
+                return new MemoryStream(bytes, writable: false);
+            });
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta
+            {
+                FileParts = names.Select(name => new DavMultipartFile.FilePart
+                {
+                    SegmentIds = [name],
+                    SegmentIdByteRange = new LongRange(0, 8),
+                    FilePartByteRange = new LongRange(0, 8),
+                }).ToArray(),
+            },
+        };
+        await using var stream = new DavMultipartFileStream(
+            multipart, client, articleBufferSize: 4, resolver: null,
+            usePipelinedBodyRequests: false, fileName: "movie.mkv");
+
+        var buffer = new byte[1];
+        while (stream.Position < 7 && !thirdBodyRequested.Task.IsCompleted)
+        {
+            Assert.Equal(1, await stream.ReadAsync(buffer));
+            await Task.WhenAny(thirdBodyRequested.Task, Task.Delay(500));
+        }
+
+        Assert.True(thirdBodyRequested.Task.IsCompleted);
+        Assert.True(stream.Position < 8);
+        using var rest = new MemoryStream();
+        await stream.CopyToAsync(rest);
+        Assert.Equal(
+            Enumerable.Range((int)(32 - rest.Length), (int)rest.Length).Select(x => (byte)x).ToArray(),
+            rest.ToArray());
+        Assert.Equal(32, stream.Position);
+    }
+
     [Theory]
     [InlineData(0, true)]
     // Unindexed volume with an archive header: the inner stream opens via fast seek.

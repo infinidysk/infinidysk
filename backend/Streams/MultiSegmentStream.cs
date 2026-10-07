@@ -175,6 +175,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     /// The exact sizes may be inferred and a caller can re-derive them, so a fallback that
     /// contradicts them is evidence to recover geometry rather than a bad donor.
     /// </param>
+    /// <param name="startAtFullPrefetch">
+    /// The stream continues a sequential read (the next volume of a multipart file), so
+    /// it skips the first-byte ramp and prefetches its whole window from the start.
+    /// </param>
     internal static Stream CreateWithInitialBatchPlan
     (
         Memory<string> segmentIds,
@@ -197,7 +201,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         InitialBodyBatchPlan? initialBatchPlan = null,
         LongRange? expectedFirstSegmentRange = null,
         bool expectedFirstSegmentRangeWasClippedAtFileEnd = false,
-        bool recordedSizesInferred = false
+        bool recordedSizesInferred = false,
+        bool startAtFullPrefetch = false
     )
     {
         return articleBufferSize == 0
@@ -229,6 +234,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 expectedFirstSegmentRange,
                 expectedFirstSegmentRangeWasClippedAtFileEnd,
                 recordedSizesInferred,
+                startAtFullPrefetch,
                 cancellationToken);
     }
 
@@ -303,6 +309,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         internal LongRange? ExpectedFirstSegmentRange { get; init; }
         internal bool ExpectedFirstSegmentRangeWasClippedAtFileEnd { get; init; }
         internal bool RecordedSizesInferred { get; init; }
+        internal bool StartAtFullPrefetch { get; init; }
     }
 
     /// <summary>
@@ -330,7 +337,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         HashSet<string>? knownCorruptSegmentIds = null,
         IReadOnlySet<int>? knownMissingSegmentIndices = null,
         InitialBodyBatchPlan? initialBatchPlan = null,
-        bool recordedSizesInferred = false)
+        bool recordedSizesInferred = false,
+        bool startAtFullPrefetch = false)
     {
         return CreateFirstSegmentHybridCore(
             new FirstSegmentHybridOptions(
@@ -354,6 +362,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             {
                 InitialBatchPlan = initialBatchPlan,
                 RecordedSizesInferred = recordedSizesInferred,
+                StartAtFullPrefetch = startAtFullPrefetch,
             },
             firstSegmentPrefixBytes: 0);
     }
@@ -668,7 +677,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             options.KnownCorruptSegmentIds,
             remainingKnownMissing,
             options.InitialBatchPlan,
-            recordedSizesInferred: options.RecordedSizesInferred);
+            recordedSizesInferred: options.RecordedSizesInferred,
+            startAtFullPrefetch: options.StartAtFullPrefetch);
 
         return new FirstSegmentHybridPlan(
             head,
@@ -776,6 +786,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         LongRange? expectedFirstSegmentRange,
         bool expectedFirstSegmentRangeWasClippedAtFileEnd,
         bool recordedSizesInferred,
+        bool startAtFullPrefetch,
         CancellationToken cancellationToken
     )
     {
@@ -860,7 +871,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 ? long.MaxValue
                 : initialPlannedBytes + plannedBytes;
         }
-        _initialPrefetchByteCeiling = Math.Min(_prefetchByteCeiling, initialPlannedBytes);
+        _initialPrefetchByteCeiling = startAtFullPrefetch
+            ? _prefetchByteCeiling
+            : Math.Min(_prefetchByteCeiling, initialPlannedBytes);
         if (_stripeCount > 1)
         {
             Log.Debug(
