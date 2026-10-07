@@ -2,6 +2,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Config;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services.StreamTrace;
@@ -72,22 +73,43 @@ public sealed class MultiSegmentStreamHedgeProviderTests
     }
 
     [Fact]
-    public async Task OriginalFailsAfterDuplicateWins_IsNotRetriedAndReleasesItsPermit()
+    public async Task OriginalFailsAfterDuplicateWins_ReleasesItsPermit()
     {
         await using var harness = new Harness();
         using var trace = new MultiSegmentStreamHedgeTests.HedgeTraceCapture();
 
         var buffer = await harness.ReadAllAsync();
+        harness.AssertDuplicateOnOtherProvider();
+        // The failed original keeps its normal provider fallback; the stream discards the result.
         harness.Gate.Original.TrySetException(new IOException("connection reset"));
         await harness.AssertSettledAsync();
-        // Long enough for a retry or rescue (250 ms + 500 ms) to have fired.
-        await Task.Delay(TimeSpan.FromMilliseconds(1200));
 
         Assert.Equal(harness.Expected, buffer);
-        harness.AssertDuplicateOnOtherProvider();
-        var hedges = trace.AssertHedge(StalledId, 1, HedgeOutcome.Duplicate);
-        // Failed originals that a duplicate already replaced do not walk providers again.
-        Assert.Equal(SegmentCount + hedges.Count, harness.TotalBodyRequests);
+        trace.AssertHedge(StalledId, 1, HedgeOutcome.Duplicate);
+    }
+
+    [Fact]
+    public async Task OriginalMissingWhileDuplicateBodyPending_FallsBackInsteadOfZeroFilling()
+    {
+        var duplicateBody = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var harness = new Harness(duplicateBody.Task);
+        using var trace = new MultiSegmentStreamHedgeTests.HedgeTraceCapture();
+        try
+        {
+            var buffer = await harness.ReadAllAsync();
+
+            // The duplicate's headers arrived but its body never validated, so the original's
+            // 430 walks providers as usual instead of resolving to a zero-filled hole.
+            Assert.Equal(harness.Expected, buffer);
+            Assert.True(harness.Gate.DuplicateHosts.Count >= 2, "The missing original did not fall back.");
+            trace.AssertHedge(StalledId, 1, HedgeOutcome.Original);
+        }
+        finally
+        {
+            duplicateBody.TrySetResult();
+        }
+
+        await harness.AssertSettledAsync();
     }
 
     private sealed class Harness : IAsyncDisposable
@@ -102,16 +124,23 @@ public sealed class MultiSegmentStreamHedgeProviderTests
         private readonly CancellationTokenSource _cts = new();
         private readonly IDisposable _priority;
         private readonly Stream _stream;
+        private int _duplicateBodyClaimed;
 
-        public Harness()
+        /// <param name="duplicateBody">When set, the first duplicate body for the stalled article
+        /// blocks until it completes, and the held original then fails with a 430.</param>
+        public Harness(Task? duplicateBody = null)
         {
             _segments = Enumerable.Range(0, SegmentCount)
                 .ToDictionary(i => $"seg-{i}", i => Enumerable.Repeat((byte)i, SegmentSize).ToArray());
             var ranges = _segments.Keys
                 .Select((id, index) => KeyValuePair.Create(id, new LongRange(index * SegmentSize, (index + 1L) * SegmentSize)))
                 .ToDictionary();
-            _connectionA = new GatedConnection("a.example", new FakeNntpClient(_segments, useCachedYencStreams: true, segmentRanges: ranges), Gate);
-            _connectionB = new GatedConnection("b.example", new FakeNntpClient(_segments, useCachedYencStreams: true, segmentRanges: ranges), Gate);
+            _connectionA = new GatedConnection("a.example", new FakeNntpClient(
+                _segments, useCachedYencStreams: true, segmentRanges: ranges,
+                decodedStreamFactory: BodyFactory("a.example", duplicateBody)), Gate);
+            _connectionB = new GatedConnection("b.example", new FakeNntpClient(
+                _segments, useCachedYencStreams: true, segmentRanges: ranges,
+                decodedStreamFactory: BodyFactory("b.example", duplicateBody)), Gate);
             _providerA = MultiProviderNntpClientTests.CreateProvider(_connectionA, host: "a.example", maxConnections: 4);
             _providerB = MultiProviderNntpClientTests.CreateProvider(_connectionB, host: "b.example", maxConnections: 4);
             _client = new DownloadingNntpClient(
@@ -139,7 +168,21 @@ public sealed class MultiSegmentStreamHedgeProviderTests
 
         public byte[] Expected => _segments.Values.SelectMany(bytes => bytes).ToArray();
 
-        public int TotalBodyRequests => _connectionA.TotalBodyRequests + _connectionB.TotalBodyRequests;
+        private Func<string, byte[], Stream>? BodyFactory(string host, Task? duplicateBody) =>
+            duplicateBody is null
+                ? null
+                : (key, bytes) =>
+                {
+                    Stream body = new MemoryStream(bytes, writable: false);
+                    if (key != StalledId || Gate.OriginalHost is not { } originalHost || originalHost == host ||
+                        Interlocked.Exchange(ref _duplicateBodyClaimed, 1) != 0)
+                        return body;
+                    _ = Task.Delay(TimeSpan.FromMilliseconds(100)).ContinueWith(
+                        _ => Gate.Original.TrySetException(
+                            new UsenetArticleNotFoundException(StalledId, "430 No such article")),
+                        TaskScheduler.Default);
+                    return new GatedReadStream(body, duplicateBody);
+                };
 
         public async Task<byte[]> ReadAllAsync()
         {
@@ -233,8 +276,6 @@ public sealed class MultiSegmentStreamHedgeProviderTests
     {
         private readonly SemaphoreSlim _innerLock = new(1, 1);
 
-        public int TotalBodyRequests => inner.BodyRequestCounts.Values.Sum();
-
         public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken)
         {
@@ -310,6 +351,50 @@ public sealed class MultiSegmentStreamHedgeProviderTests
         {
             await gate.Original.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             return await response.ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>A body whose reads wait for <paramref name="gate"/>, like a slow transfer after the headers.</summary>
+    private sealed class GatedReadStream(Stream inner, Task gate) : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+
+        public override long Position
+        {
+            get => inner.Position;
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            gate.GetAwaiter().GetResult();
+            return inner.Read(buffer, offset, count);
+        }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) inner.Dispose();
+            base.Dispose(disposing);
         }
     }
 }

@@ -238,6 +238,55 @@ public sealed class MultiSegmentStreamHedgeTests
         }
     }
 
+    [Theory]
+    [InlineData(1, 3)] // adjacent articles in consecutive batches
+    [InlineData(2, 1)] // adjacent articles on different striped connections
+    public async Task SuccessorOnAnotherConnection_KeepsTheHedgeDelay(int stripeCount, int stalledIndex)
+    {
+        var (segments, ranges) = CreateSegments(16);
+        var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        var originalId = $"seg-{stalledIndex}";
+        var successorId = $"seg-{stalledIndex + 1}";
+        var batches = new ConcurrentQueue<string[]>();
+        StalledArticleClient? stalled = null;
+        stalled = new StalledArticleClient(inner, originalId, successorId)
+        {
+            OnBatchRequested = ids => batches.Enqueue(ids.Select(id => id.ToString()).ToArray()),
+            // The successor answers soon after the original is raced, well inside a normal hedge delay.
+            BeforeSingleRequest = (id, attempt) =>
+            {
+                if (id == originalId && attempt == 1)
+                    _ = Task.Delay(TimeSpan.FromMilliseconds(150))
+                        .ContinueWith(_ => stalled!.Release(successorId), TaskScheduler.Default);
+                return Task.CompletedTask;
+            },
+        };
+        using var disposeStalled = stalled;
+        using var trace = new HedgeTraceCapture();
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        using var hint = cts.Token.SetContext(new StreamingStripeContext { StripeCount = stripeCount });
+        var stream = CreateStream(segments, stalled, cts.Token);
+        try
+        {
+            var buffer = new byte[segments.Count * SegmentSize];
+            await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true)
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal(segments.Values.SelectMany(bytes => bytes), buffer);
+            Assert.DoesNotContain(batches, batch => batch.Contains(originalId) && batch.Contains(successorId));
+            Assert.Equal(2, inner.BodyRequestCounts[originalId]);
+            // Not queued behind the replaced original, so it is not raced without the delay.
+            Assert.Equal(1, inner.BodyRequestCounts[successorId]);
+            Assert.Single(trace.AssertHedge(originalId, stalledIndex, HedgeOutcome.Duplicate));
+        }
+        finally
+        {
+            stalled.Release();
+            await stream.DisposeAsync();
+        }
+    }
+
     private const int SegmentSize = 64;
     private const int BatchWidth = 4;
 
@@ -267,7 +316,7 @@ public sealed class MultiSegmentStreamHedgeTests
 
     /// <summary>
     /// Routes stream-trace events for the current async flow into a private buffer and restores
-    /// the process-wide buffer on dispose. Users must join <see cref="StreamTraceCollection"/>.
+    /// the process-wide buffer on dispose. Users must join <see cref="GlobalStreamTraceCollection"/>.
     /// </summary>
     internal sealed class HedgeTraceCapture : IDisposable
     {
