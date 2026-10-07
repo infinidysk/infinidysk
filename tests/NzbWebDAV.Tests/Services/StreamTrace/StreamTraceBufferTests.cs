@@ -147,6 +147,8 @@ public class StreamTraceBufferTests
         Assert.Equal(400, first.ConsumerWaitMs);
         Assert.Equal(3, first.ClientWriteMs);
         Assert.Equal(570, first.ConnectionWaitMs);
+        Assert.Equal(70, first.FirstConnectionWaitMs);
+        Assert.Equal(500, first.MaxConnectionWaitMs);
         Assert.Equal(1, first.ConnectionsReused);
         Assert.Equal(1, first.ConnectionsOpened);
 
@@ -156,6 +158,7 @@ public class StreamTraceBufferTests
 
         var second = buffer.GetSessionEvents(session).Last();
         Assert.Equal(15, second.ProviderWaitMs);
+        Assert.Null(second.FirstConnectionWaitMs);
         Assert.Null(second.ConsumerWaitMs);
         Assert.Null(second.ConnectionWaitMs);
         Assert.Null(second.ConnectionsOpened);

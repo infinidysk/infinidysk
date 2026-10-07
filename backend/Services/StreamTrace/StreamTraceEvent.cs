@@ -74,6 +74,11 @@ public sealed record StreamTraceEvent
     // concurrently — so they are shares of a range's wall clock, not a partition of it.
     [JsonPropertyName("connWaitMs")]
     public long? ConnectionWaitMs => FrozenStalls?.ConnectionWaitMs ?? RangeStalls?.ConnectionWaitMs;
+    // connWaitMs sums overlapping acquisitions; these isolate the range's first and worst single wait.
+    [JsonPropertyName("firstConnWaitMs")]
+    public long? FirstConnectionWaitMs => FrozenStalls?.FirstConnectionWaitMs ?? RangeStalls?.FirstConnectionWaitMs;
+    [JsonPropertyName("maxConnWaitMs")]
+    public long? MaxConnectionWaitMs => FrozenStalls?.MaxConnectionWaitMs ?? RangeStalls?.MaxConnectionWaitMs;
     [JsonPropertyName("providerWaitMs")]
     public long? ProviderWaitMs => FrozenStalls?.ProviderWaitMs ?? RangeStalls?.ProviderWaitMs;
     [JsonPropertyName("bodyDrainMs")]

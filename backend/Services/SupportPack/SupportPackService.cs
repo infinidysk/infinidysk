@@ -338,7 +338,10 @@ public sealed class SupportPackService(
         article bodies), consumerWaitMs (playback starved waiting for prefetch), and
         clientWriteMs (blocked writing to the player). They overlap, because segments
         are fetched concurrently, so read them as shares of the range rather than a
-        breakdown that sums to its duration.
+        breakdown that sums to its duration. connWaitMs is summed over every connection
+        acquisition the range made, so it grows with fetches; firstConnWaitMs is the
+        wait of the range's first acquisition (normally the head segment) and
+        maxConnWaitMs is its worst single acquisition wait.
 
         Each RangeEnd also reports fetches, the number of segment fetches attributed to
         that range. providerWaitMs is an aggregate across concurrent fetches, so it can
