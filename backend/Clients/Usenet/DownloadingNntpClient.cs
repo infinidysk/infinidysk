@@ -5,6 +5,7 @@ using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Services.Metrics;
+using NzbWebDAV.Services.StreamTrace;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Clients.Usenet;
@@ -220,7 +221,14 @@ public class DownloadingNntpClient : WrappingNntpClient
     {
         var workload = DownloadWorkloadClassifier.Classify(cancellationToken);
         var waitTimer = Stopwatch.StartNew();
-        await semaphore.WaitAsync(priority, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await semaphore.WaitAsync(priority, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            StreamTrace.TryPermitWait(MultiProviderNntpClient.CurrentStreamTraceRange, waitTimer.Elapsed);
+        }
         var elapsed = waitTimer.Elapsed;
         _latencyTracker?.Record(
             providerKey: null,

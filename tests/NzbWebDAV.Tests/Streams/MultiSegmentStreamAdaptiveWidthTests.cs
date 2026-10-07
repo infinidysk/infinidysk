@@ -13,7 +13,7 @@ using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Tests.Streams;
 
-[Collection(nameof(StreamTraceCollection))]
+[Collection(nameof(GlobalStreamTraceCollection))]
 public class MultiSegmentStreamAdaptiveWidthTests
 {
     private const int BodyPipelineBatchSize = 4;

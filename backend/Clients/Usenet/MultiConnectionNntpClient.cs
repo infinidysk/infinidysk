@@ -1302,12 +1302,16 @@ public class MultiConnectionNntpClient(
             try
             {
                 if (!latencyRecorded)
+                {
+                    var elapsed = Stopwatch.GetElapsedTime(started);
                     latencyTracker?.Record(
                         MetricsKey,
                         LatencyPhase.PoolWait,
                         workload,
                         operation,
-                        Stopwatch.GetElapsedTime(started));
+                        elapsed);
+                    StreamTrace.TryConnectionAttemptFailed(traceRange, elapsed);
+                }
                 if (!returnConnectionLock)
                     connectionLock?.Dispose();
             }

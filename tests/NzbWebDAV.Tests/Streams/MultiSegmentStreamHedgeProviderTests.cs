@@ -18,7 +18,7 @@ namespace NzbWebDAV.Tests.Streams;
 /// (<see cref="DownloadingNntpClient"/>), provider selection
 /// (<see cref="MultiProviderNntpClient"/>) and pooled connections for two providers.
 /// </summary>
-[Collection(nameof(StreamTraceCollection))]
+[Collection(nameof(GlobalStreamTraceCollection))]
 public sealed class MultiSegmentStreamHedgeProviderTests
 {
     private const int SegmentCount = 8;

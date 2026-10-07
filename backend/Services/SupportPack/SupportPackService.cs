@@ -338,7 +338,15 @@ public sealed class SupportPackService(
         article bodies), consumerWaitMs (playback starved waiting for prefetch), and
         clientWriteMs (blocked writing to the player). They overlap, because segments
         are fetched concurrently, so read them as shares of the range rather than a
-        breakdown that sums to its duration.
+        breakdown that sums to its duration. connWaitMs is summed over every successful
+        provider-pool acquisition the range made, so it grows with fetches.
+        firstConnWaitMs is the first acquisition to complete successfully (concurrent
+        prefetch can finish before the head segment, so it is not necessarily the head
+        wait) and maxConnWaitMs is the worst successful acquisition. Failed, timed-out,
+        and cancelled acquisitions are reported separately as failedConnWaitMs,
+        maxFailedConnWaitMs, and failedConnAttempts. permitWaitMs and maxPermitWaitMs
+        cover the outer download-permit wait taken before provider-pool acquisition,
+        whatever its outcome; none of the connection fields include it.
 
         Each RangeEnd also reports fetches, the number of segment fetches attributed to
         that range. providerWaitMs is an aggregate across concurrent fetches, so it can

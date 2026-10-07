@@ -13,7 +13,7 @@ using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Streams;
 
-[Collection(nameof(StreamTraceCollection))]
+[Collection(nameof(GlobalStreamTraceCollection))]
 public sealed class MultiSegmentStreamHedgeTests
 {
     [Fact]

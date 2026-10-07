@@ -567,6 +567,22 @@ public sealed class StreamTraceBuffer
         session.Bucket(value.Generation)?.AddConnection(wait.Ticks, wasReused);
     }
 
+    /// <summary>Records a provider-pool acquisition that failed, timed out, or was cancelled.</summary>
+    public void ConnectionAttemptFailed(StreamTraceRangeContext? range, TimeSpan wait)
+    {
+        if (range is not { } value) return;
+        if (!_sessions.TryGetValue(value.SessionId, out var session)) return;
+        session.Bucket(value.Generation)?.AddFailedConnection(wait.Ticks);
+    }
+
+    /// <summary>Records time spent waiting for the outer download permit, whatever the outcome.</summary>
+    public void PermitWait(StreamTraceRangeContext? range, TimeSpan wait)
+    {
+        if (range is not { } value) return;
+        if (!_sessions.TryGetValue(value.SessionId, out var session)) return;
+        session.Bucket(value.Generation)?.AddPermitWait(wait.Ticks);
+    }
+
     /// <summary>
     /// Records how a range finished. <paramref name="range"/> may be null when no range was
     /// opened — tracing started mid-read, or the read timed out while the stream was still

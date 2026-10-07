@@ -147,6 +147,8 @@ public class StreamTraceBufferTests
         Assert.Equal(400, first.ConsumerWaitMs);
         Assert.Equal(3, first.ClientWriteMs);
         Assert.Equal(570, first.ConnectionWaitMs);
+        Assert.Equal(70, first.FirstConnectionWaitMs);
+        Assert.Equal(500, first.MaxConnectionWaitMs);
         Assert.Equal(1, first.ConnectionsReused);
         Assert.Equal(1, first.ConnectionsOpened);
 
@@ -156,9 +158,35 @@ public class StreamTraceBufferTests
 
         var second = buffer.GetSessionEvents(session).Last();
         Assert.Equal(15, second.ProviderWaitMs);
+        Assert.Null(second.FirstConnectionWaitMs);
         Assert.Null(second.ConsumerWaitMs);
         Assert.Null(second.ConnectionWaitMs);
         Assert.Null(second.ConnectionsOpened);
+    }
+
+    [Fact]
+    public void ConnectionWaits_FirstIsFirstCompletedAndFailuresArePartitioned()
+    {
+        var buffer = new StreamTraceBuffer(capacity: 100, maxSessions: 50);
+        var session = Guid.NewGuid();
+        var range = buffer.RangeOpen(session, "/view/a.mkv", "GET", 0, null, 1000, null, null);
+
+        // A prefetch acquisition completes before the still-blocked head segment.
+        buffer.ConnectionAcquired(range, TimeSpan.FromMilliseconds(20), wasReused: true);
+        buffer.ConnectionAttemptFailed(range, TimeSpan.FromMilliseconds(3000));
+        buffer.ConnectionAcquired(range, TimeSpan.FromMilliseconds(400), wasReused: true);
+        buffer.PermitWait(range, TimeSpan.FromMilliseconds(250));
+        buffer.PermitWait(range, TimeSpan.FromMilliseconds(50));
+        buffer.RangeEnd(session, range, ReadSession.EndReasonCode.Completed, 4096);
+
+        var ended = buffer.GetSessionEvents(session).Last();
+        Assert.Equal(20, ended.FirstConnectionWaitMs);
+        Assert.Equal(400, ended.MaxConnectionWaitMs);
+        Assert.Equal(420, ended.ConnectionWaitMs);
+        Assert.Equal(3000, ended.MaxFailedConnectionWaitMs);
+        Assert.Equal(1, ended.FailedConnectionAttempts);
+        Assert.Equal(300, ended.PermitWaitMs);
+        Assert.Equal(250, ended.MaxPermitWaitMs);
     }
 
     [Fact]

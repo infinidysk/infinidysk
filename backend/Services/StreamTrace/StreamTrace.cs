@@ -61,4 +61,10 @@ public static class StreamTrace
 
     public static void TryConnectionAcquired(StreamTraceRangeContext? range, TimeSpan wait, bool wasReused)
         => _buffer?.ConnectionAcquired(range, wait, wasReused);
+
+    public static void TryConnectionAttemptFailed(StreamTraceRangeContext? range, TimeSpan wait)
+        => _buffer?.ConnectionAttemptFailed(range, wait);
+
+    public static void TryPermitWait(StreamTraceRangeContext? range, TimeSpan wait)
+        => _buffer?.PermitWait(range, wait);
 }
