@@ -395,6 +395,12 @@ public class NzbFileStreamTests
             segmentRanges: new Dictionary<string, LongRange> { ["segment"] = new(12, 16) });
         var previousBudget = NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget();
         NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(1);
+        var sink = new CollectingSink();
+        var previousLogger = Log.Logger;
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Warning()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
         try
         {
             await using var stream = new NzbFileStream(
@@ -408,9 +414,15 @@ public class NzbFileStreamTests
 
             await Assert.ThrowsAsync<SeekPositionNotFoundException>(
                 async () => await stream.ReadAsync(new byte[1]));
+            var probeWarnings = sink.Events
+                .Where(e => e.RenderMessage().Contains("outside file size", StringComparison.Ordinal))
+                .ToList();
+            Assert.NotEmpty(probeWarnings);
+            Assert.All(probeWarnings, e => Assert.Null(e.Exception));
         }
         finally
         {
+            Log.Logger = previousLogger;
             NzbWebDAV.WebDav.Requests.RangeContext.SetReadBudget(previousBudget);
         }
     }
