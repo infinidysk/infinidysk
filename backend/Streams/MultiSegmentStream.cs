@@ -9,6 +9,7 @@ using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services.Diagnostics;
+using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Services.StreamTrace;
 using Serilog;
@@ -78,6 +79,19 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     private readonly ConcurrentQueue<Task> _batchCompletionObservers = new();
     private readonly HashSet<string>? _knownCorruptSegmentIds;
     private readonly IReadOnlySet<int>? _knownMissingSegmentIndices;
+
+    // Head-of-line hedging (#893): one duplicate fetch when the next segment straggles.
+    private static readonly TimeSpan HedgeFloor = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan HedgePollInterval = TimeSpan.FromMilliseconds(50);
+    private const int HedgeLatencyMultiplier = 2;
+    private const int ResponseLatencySamples = 32;
+    private readonly long[] _responseLatencyTicks = new long[ResponseLatencySamples];
+    private int _responseLatencyCount;
+    // Ring of issue timestamps; sized past the most segments that can be issued ahead of the reader.
+    private readonly long[] _segmentIssuedAt;
+    private int _highestRespondedIndex = -1;
+    private int _nextHeadIndex;
+    private ConcurrentDictionary<int, byte>? _supersededSegments;
 
     private int GetCorruptionRetryLimit(string segmentId) =>
         _knownCorruptSegmentIds is not null && _knownCorruptSegmentIds.Contains(segmentId)
@@ -842,6 +856,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 BodyPipelineBatchSize);
         }
         _streamTasks = Channel.CreateBounded<Task<SegmentDownloadResult>>(_taskWindowSize);
+        _segmentIssuedAt = new long[_taskWindowSize * 2 + Math.Max(1, _bodyPipelineBatchSize) + 1];
         _stripeCount = usePipelinedBodyRequests
             ? ResolveStripeCount(initialBatchPlan, articleBufferSize, cancellationToken)
             : 1;
@@ -1186,6 +1201,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             group.Leases[slot] = null;
             var segmentIndex = groupStart + slot;
             var segmentId = _segmentIds.Span[segmentIndex];
+            NoteSegmentIssued(segmentIndex);
             group.Tasks[slot] = _knownMissingSegmentIndices?.Contains(segmentIndex) == true
                 ? DownloadKnownMissingSegment(
                     segmentId, segmentIndex, lease, isFirstSegment: segmentIndex == 0, cancellationToken)
@@ -1281,6 +1297,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             await _streamTasks.Writer.WaitToWriteAsync(cancellationToken).ConfigureAwait(false);
             var lease = await LeaseSegmentBytesAsync(
                 GetPlannedSegmentBytes(index), cancellationToken).ConfigureAwait(false);
+            NoteSegmentIssued(index);
             var streamTask = DownloadSegment(
                 segmentId, index, lease, isFirstSegment: index == 0, cancellationToken);
             var planned = GetPlannedSegmentBytes(index);
@@ -1477,6 +1494,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                             .DecodedBodyAsync(segmentId, cancellationToken)
                             .ConfigureAwait(false);
                     }
+
+                    if (resume is null && attempt == 0)
+                        NoteSegmentResponded(segmentIndex);
 
                     await ThrowOnSegmentIdMismatchAsync(segmentId, bodyResponse).ConfigureAwait(false);
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
@@ -1773,6 +1793,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             // already-on-the-wire body, and UsenetSharp's pump cannot release the shared
             // batch connection until every handed-out stream is consumed or disposed.
             var response = await responseTask.ConfigureAwait(false);
+            NoteSegmentResponded(segmentIndex);
             if (PlaybackHoleTracker.ShouldFailFast(_fileName, out var failFast))
             {
                 if (response.Stream is not null)
@@ -2212,6 +2233,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         int segmentIndex,
         Exception exception)
     {
+        // A hedge already delivered this segment; a late failure of the original is not a hole.
+        if (_supersededSegments?.ContainsKey(segmentIndex) == true)
+            ExceptionDispatchInfo.Capture(exception).Throw();
+
         if (!_segmentSizes.TryGetFillLength(segmentIndex, out var fill, out var isExact))
         {
             if (exception.TryGetCausingException(out UsenetCorruptArticleException? _))
@@ -2610,11 +2635,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 // faulted tasks still count as present when the consumer arrived.
                 var nextSegment = streamTask
                     ?? throw new InvalidOperationException("Segment channel returned a null task.");
+                var headIndex = _nextHeadIndex++;
                 var readyWhenNeeded = wasQueued && nextSegment.IsCompleted;
                 // Test hook: fires after readiness is sampled and before the segment task is awaited,
                 // so lockstep tests can keep the gate closed until starvation is observed.
                 TestOnSegmentReadiness?.Invoke(readyWhenNeeded);
-                var result = await nextSegment.ConfigureAwait(false);
+                var result = nextSegment.IsCompleted
+                    ? await nextSegment.ConfigureAwait(false)
+                    : await AwaitHeadSegmentAsync(nextSegment, headIndex).ConfigureAwait(false);
                 StreamTrace.TryStall(
                     traceRange,
                     StreamStallKind.ConsumerWait,
@@ -2639,6 +2667,124 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             await _stream.DisposeAsync().ConfigureAwait(false);
             _stream = null;
         }
+    }
+
+    private void NoteSegmentIssued(int segmentIndex) =>
+        Volatile.Write(ref _segmentIssuedAt[segmentIndex % _segmentIssuedAt.Length], Stopwatch.GetTimestamp());
+
+    private void NoteSegmentResponded(int segmentIndex)
+    {
+        var issuedAt = Volatile.Read(ref _segmentIssuedAt[segmentIndex % _segmentIssuedAt.Length]);
+        var sample = (uint)(Interlocked.Increment(ref _responseLatencyCount) - 1) % ResponseLatencySamples;
+        Volatile.Write(ref _responseLatencyTicks[sample], Stopwatch.GetElapsedTime(issuedAt).Ticks);
+        int seen;
+        while ((seen = Volatile.Read(ref _highestRespondedIndex)) < segmentIndex &&
+               Interlocked.CompareExchange(ref _highestRespondedIndex, segmentIndex, seen) != seen)
+        {
+        }
+    }
+
+    private TimeSpan GetHedgeDelay()
+    {
+        var count = (int)Math.Min((uint)Volatile.Read(ref _responseLatencyCount), ResponseLatencySamples);
+        if (count == 0) return HedgeFloor;
+        Span<long> samples = stackalloc long[ResponseLatencySamples];
+        for (var index = 0; index < count; index++)
+            samples[index] = Volatile.Read(ref _responseLatencyTicks[index]);
+        samples[..count].Sort();
+        var hedgeDelay = TimeSpan.FromTicks(samples[count / 2] * HedgeLatencyMultiplier);
+        return hedgeDelay > HedgeFloor ? hedgeDelay : HedgeFloor;
+    }
+
+    /// <summary>
+    /// Waits for the head segment; once it outlives the hedge delay while a later segment has
+    /// already answered, races one duplicate fetch and keeps whichever finishes first.
+    /// </summary>
+    private async Task<SegmentDownloadResult> AwaitHeadSegmentAsync(
+        Task<SegmentDownloadResult> head,
+        int headIndex)
+    {
+        if (_knownMissingSegmentIndices?.Contains(headIndex) == true ||
+            DownloadWorkloadClassifier.Classify(_cts.Token) != DownloadWorkload.Streaming)
+        {
+            return await head.ConfigureAwait(false);
+        }
+
+        var issuedAt = Volatile.Read(ref _segmentIssuedAt[headIndex % _segmentIssuedAt.Length]);
+        var hedgeDelay = GetHedgeDelay();
+        while (!head.IsCompleted)
+        {
+            if (_cts.IsCancellationRequested) return await head.ConfigureAwait(false);
+            var remaining = hedgeDelay - Stopwatch.GetElapsedTime(issuedAt);
+            if (remaining <= TimeSpan.Zero && Volatile.Read(ref _highestRespondedIndex) > headIndex)
+                break;
+            await Task.WhenAny(head, Task.Delay(remaining > HedgePollInterval ? remaining : HedgePollInterval))
+                .ConfigureAwait(false);
+        }
+
+        if (head.IsCompleted) return await head.ConfigureAwait(false);
+
+#pragma warning disable CA2000 // disposed by the continuation once the hedge settles
+        var hedgeCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+#pragma warning restore CA2000
+        var hedge = HedgeSegmentAsync(headIndex, hedgeCts.Token);
+        _ = hedge.ContinueWith(
+            static (_, state) => ((ContextualCancellationTokenSource)state!).Dispose(),
+            hedgeCts,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        Log.Debug(
+            "Segment {SegmentIndex} of {FileName} outstanding for {ElapsedMs} ms; racing a duplicate fetch.",
+            headIndex, _fileName, (long)Stopwatch.GetElapsedTime(issuedAt).TotalMilliseconds);
+
+        var first = await Task.WhenAny(head, hedge).ConfigureAwait(false);
+        if (first == hedge && hedge.IsCompletedSuccessfully)
+        {
+            LazyInitializer.EnsureInitialized(ref _supersededSegments).TryAdd(headIndex, 0);
+            // The original shares its connection with other batched articles, so it is not
+            // cancelled; its body is drained or discarded on arrival without a provider failure.
+            _orphanedDisposals.Enqueue(DisposeStreamAsync(head));
+            Log.Debug("Duplicate fetch won segment {SegmentIndex} of {FileName}.", headIndex, _fileName);
+            return await hedge.ConfigureAwait(false);
+        }
+
+        if (!hedge.IsCompleted)
+        {
+            try
+            {
+                // Caller cancellation releases the loser's connection without penalizing its provider.
+                await hedgeCts.CancelAsync().ConfigureAwait(false);
+            }
+            catch (ObjectDisposedException)
+            {
+                // The hedge completed and released its token source.
+            }
+        }
+
+        _orphanedDisposals.Enqueue(DisposeStreamAsync(hedge));
+        return await head.ConfigureAwait(false);
+    }
+
+    private async Task<SegmentDownloadResult> HedgeSegmentAsync(int segmentIndex, CancellationToken cancellationToken)
+    {
+        var segmentId = _segmentIds.Span[segmentIndex];
+        var estimate = GetPlannedSegmentBytes(segmentIndex);
+        UsenetDecodedBodyResponse response;
+        using (FetchAttributionContext.Begin(_fileName))
+        using (MultiProviderNntpClient.BeginHedgeFetchScope())
+        {
+            response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken).ConfigureAwait(false);
+        }
+
+        await ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
+        // ponytail: the hedge body is unbudgeted (at most one article per stalled reader); lease it if memory pressure shows up.
+#pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
+        var drained = await ValidateAndDrainSegmentAsync(
+#pragma warning restore CA2000
+                response.Stream!, segmentIndex, cancellationToken, ArticleByteLease.Empty, estimate)
+            .ConfigureAwait(false);
+        return ToDownloadResult(drained, estimate, segmentId);
     }
 
     private void ObserveBatchReadiness(bool readyWhenNeeded)
