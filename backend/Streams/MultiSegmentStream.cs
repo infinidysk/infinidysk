@@ -2674,7 +2674,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
     private void NoteSegmentResponded(int segmentIndex)
     {
-        var issuedAt = Volatile.Read(ref _segmentIssuedAt[segmentIndex % _segmentIssuedAt.Length]);
+        // Zero marks the segment as answered: bytes are flowing, so a duplicate would only double them.
+        var issuedAt = Interlocked.Exchange(ref _segmentIssuedAt[segmentIndex % _segmentIssuedAt.Length], 0);
+        if (issuedAt == 0) return;
         var sample = (uint)(Interlocked.Increment(ref _responseLatencyCount) - 1) % ResponseLatencySamples;
         Volatile.Write(ref _responseLatencyTicks[sample], Stopwatch.GetElapsedTime(issuedAt).Ticks);
         int seen;
@@ -2697,8 +2699,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     }
 
     /// <summary>
-    /// Waits for the head segment; once it outlives the hedge delay while a later segment has
-    /// already answered, races one duplicate fetch and keeps whichever finishes first.
+    /// Waits for the head segment; once it has had no server response for the hedge delay while a
+    /// later segment has already answered, races one duplicate fetch and keeps whichever finishes first.
     /// </summary>
     private async Task<SegmentDownloadResult> AwaitHeadSegmentAsync(
         Task<SegmentDownloadResult> head,
@@ -2710,12 +2712,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             return await head.ConfigureAwait(false);
         }
 
-        var issuedAt = Volatile.Read(ref _segmentIssuedAt[headIndex % _segmentIssuedAt.Length]);
+        // Time the reader's own wait: read-ahead segments are issued long before a paced reader needs them.
+        var waitStarted = Stopwatch.GetTimestamp();
         var hedgeDelay = GetHedgeDelay();
         while (!head.IsCompleted)
         {
-            if (_cts.IsCancellationRequested) return await head.ConfigureAwait(false);
-            var remaining = hedgeDelay - Stopwatch.GetElapsedTime(issuedAt);
+            var issuedAt = Volatile.Read(ref _segmentIssuedAt[headIndex % _segmentIssuedAt.Length]);
+            if (issuedAt == 0 || _cts.IsCancellationRequested) return await head.ConfigureAwait(false);
+            var remaining = hedgeDelay - Stopwatch.GetElapsedTime(waitStarted);
             if (remaining <= TimeSpan.Zero && Volatile.Read(ref _highestRespondedIndex) > headIndex)
                 break;
             await Task.WhenAny(head, Task.Delay(remaining > HedgePollInterval ? remaining : HedgePollInterval))
@@ -2735,8 +2739,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
         Log.Debug(
-            "Segment {SegmentIndex} of {FileName} outstanding for {ElapsedMs} ms; racing a duplicate fetch.",
-            headIndex, _fileName, (long)Stopwatch.GetElapsedTime(issuedAt).TotalMilliseconds);
+            "Segment {SegmentIndex} of {FileName} unanswered after a {ElapsedMs} ms read wait; racing a duplicate fetch.",
+            headIndex, _fileName, (long)Stopwatch.GetElapsedTime(waitStarted).TotalMilliseconds);
 
         var first = await Task.WhenAny(head, hedge).ConfigureAwait(false);
         if (first == hedge && hedge.IsCompletedSuccessfully)
