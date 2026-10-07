@@ -212,8 +212,6 @@ public class MultiProviderNntpClient(
     private static readonly AsyncLocal<bool> HedgeFetchScope = new();
     // Provider each article's first in-flight BODY waits on, so a hedge can try another first.
     private readonly ConcurrentDictionary<SegmentId, MultiConnectionNntpClient> _awaitingBody = new();
-    // Articles whose duplicate arrived while the original was still awaited; a failed original skips its fallback walk.
-    private readonly ConcurrentDictionary<SegmentId, byte> _hedgeDelivered = new();
 
     /// <summary>Marks fetches in this flow as duplicates racing a stalled original.</summary>
     public static IDisposable BeginHedgeFetchScope()
@@ -221,15 +219,6 @@ public class MultiProviderNntpClient(
         var previous = HedgeFetchScope.Value;
         HedgeFetchScope.Value = true;
         return new ScopeReleaser(() => HedgeFetchScope.Value = previous);
-    }
-
-    private void NoteHedgeDelivered(SegmentId segmentId)
-    {
-        if (!_awaitingBody.ContainsKey(segmentId)) return;
-        _hedgeDelivered.TryAdd(segmentId, 0);
-        // The original may have resolved between the check and the add; it clears the mark after
-        // leaving _awaitingBody, so re-checking here leaves no stale entry behind.
-        if (!_awaitingBody.ContainsKey(segmentId)) _hedgeDelivered.TryRemove(segmentId, out _);
     }
 
     /// <summary>
@@ -702,7 +691,6 @@ public class MultiProviderNntpClient(
             ExceptionDispatchInfo? lastException = null;
             ExceptionDispatchInfo? inconclusiveAdmissionFailure = null;
             string? inconclusiveAdmissionProvider = null;
-            var supersededByHedge = false;
             try
             {
                 var awaiting = _awaitingBody.TryAdd(segmentId, primaryProvider);
@@ -712,11 +700,7 @@ public class MultiProviderNntpClient(
                 }
                 finally
                 {
-                    if (awaiting)
-                    {
-                        _awaitingBody.TryRemove(KeyValuePair.Create(segmentId, primaryProvider));
-                        supersededByHedge = _hedgeDelivered.TryRemove(segmentId, out _);
-                    }
+                    if (awaiting) _awaitingBody.TryRemove(KeyValuePair.Create(segmentId, primaryProvider));
                 }
 
                 await RejectMismatchedYencFileAsync(
@@ -803,13 +787,6 @@ public class MultiProviderNntpClient(
             //   and walk fallbacks immediately (that is the point of cross-request caching).
             // - MarkMissing only from definitive misses inside the retry/fallback loop below.
             IReadOnlyList<MultiConnectionNntpClient> retryProviders;
-            if (supersededByHedge)
-            {
-                // A duplicate already delivered this article; walking providers would fetch it again.
-                lastException?.Throw();
-                throw new UsenetArticleNotFoundException(segmentId, response?.ResponseMessage);
-            }
-
             var primaryCachedMiss = IsCachedMissing(segmentId, primaryProvider, NntpOperation.PipelinedBody);
             var exhaustedTimeout = lastException != null
                 && lastException.SourceException.TryGetCausingException<TimeoutException>(out _);
@@ -1283,11 +1260,7 @@ public class MultiProviderNntpClient(
                 }
                 finally
                 {
-                    if (awaiting)
-                    {
-                        _awaitingBody.TryRemove(KeyValuePair.Create(segmentId, provider));
-                        _hedgeDelivered.TryRemove(segmentId, out _);
-                    }
+                    if (awaiting) _awaitingBody.TryRemove(KeyValuePair.Create(segmentId, provider));
                 }
 
                 await RejectMismatchedYencFileAsync(
@@ -1301,7 +1274,6 @@ public class MultiProviderNntpClient(
                         provider.MetricsKey, SegmentFetch.FetchStatus.Ok,
                         stopwatch.ElapsedMilliseconds, attemptIndex, fetchWorkload, traceRange, priorMisses);
                     result = WrapProviderResponse(result, provider.MetricsKey);
-                    if (hedging) NoteHedgeDelivered(segmentId);
                     deferredCallback.Activate(onConnectionReadyAgain ?? ((_, _) => { }));
                     return result;
                 }
