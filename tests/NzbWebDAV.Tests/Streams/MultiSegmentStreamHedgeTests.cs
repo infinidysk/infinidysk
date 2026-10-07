@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Concurrency;
@@ -93,33 +94,237 @@ public sealed class MultiSegmentStreamHedgeTests
         Assert.Equal(1, inner.BodyRequestCounts["seg-1"]);
     }
 
-    private sealed class StalledArticleClient(INntpClient inner, string stalledId) : WrappingNntpClient(inner)
+    [Fact]
+    public async Task PaddedDuplicate_DoesNotReplaceHealthyOriginal()
     {
-        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private int _stalled;
+        var (segments, ranges) = CreateSegments(8);
+        var factoryCalls = 0;
+        // The duplicate (second body for seg-1) decodes short; the original is intact.
+        var inner = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            segmentRanges: ranges,
+            decodedStreamFactory: (key, bytes) =>
+                key == "seg-1" && Interlocked.Increment(ref factoryCalls) == 2
+                    ? new MemoryStream(bytes[..(bytes.Length / 2)], writable: false)
+                    : new MemoryStream(bytes, writable: false));
+        var duplicateRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var stalled = new StalledArticleClient(inner, "seg-1")
+        {
+            BeforeSingleRequest = (id, _) =>
+            {
+                if (id == "seg-1") duplicateRequested.TrySetResult();
+                return Task.CompletedTask;
+            },
+        };
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        await using var stream = CreateStream(segments, stalled, cts.Token);
+
+        var buffer = new byte[segments.Count * SegmentSize];
+        var read = stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true).AsTask();
+        await duplicateRequested.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Task.Delay(TimeSpan.FromMilliseconds(200));
+        stalled.Release();
+        await read.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(segments.Values.SelectMany(bytes => bytes), buffer);
+        Assert.Equal(2, inner.BodyRequestCounts["seg-1"]);
+    }
+
+    [Fact]
+    public async Task SupersededOriginalFailure_IsNotRescued()
+    {
+        var (segments, ranges) = CreateSegments(8);
+        var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        using var stalled = new StalledArticleClient(inner, "seg-1");
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        await using var stream = CreateStream(segments, stalled, cts.Token);
+
+        var buffer = new byte[segments.Count * SegmentSize];
+        await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(2, inner.BodyRequestCounts["seg-1"]);
+
+        // The original fails after the duplicate delivered; the stream stays open long enough
+        // for retries and rescue (250 ms + 500 ms) to have fired.
+        stalled.Fail("seg-1", new IOException("connection reset"));
+        await Task.Delay(TimeSpan.FromMilliseconds(1200));
+
+        Assert.Equal(segments.Values.SelectMany(bytes => bytes), buffer);
+        Assert.Equal(2, inner.BodyRequestCounts["seg-1"]);
+    }
+
+    [Fact]
+    public async Task ExhaustedOriginal_PendingDuplicateStillDelivers()
+    {
+        var (segments, ranges) = CreateSegments(8);
+        var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        StalledArticleClient? stalled = null;
+        stalled = new StalledArticleClient(inner, "seg-1")
+        {
+            BeforeSingleRequest = async (id, attempt) =>
+            {
+                if (id != "seg-1") return;
+                if (attempt > 1) throw new IOException("rescue unavailable");
+                // The original dies as soon as the duplicate is issued; the duplicate answers slowly.
+                stalled!.Fail("seg-1", new IOException("connection reset"));
+                await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            },
+        };
+        using var disposeStalled = stalled;
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        await using var stream = CreateStream(segments, stalled, cts.Token);
+
+        var buffer = new byte[segments.Count * SegmentSize];
+        await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(segments.Values.SelectMany(bytes => bytes), buffer);
+    }
+
+    [Fact]
+    public async Task LateOriginalAfterRingWraparound_DoesNotDisableNewerDuplicate()
+    {
+        int ringLength;
+        var (probeSegments, _) = CreateSegments(1);
+        await using (var probe = CreateStream(
+                         probeSegments, new FakeNntpClient(probeSegments), CancellationToken.None))
+            ringLength = ((MultiSegmentStream)probe).TaskWindowSize * 2 + BatchWidth + 1;
+
+        // seg-(1 + ring) shares seg-1's tracking slot.
+        var newerId = $"seg-{1 + ringLength}";
+        var (segments, ranges) = CreateSegments(ringLength + 8);
+        var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        StalledArticleClient? stalled = null;
+        stalled = new StalledArticleClient(inner, "seg-1", newerId)
+        {
+            OnBatchRequested = ids =>
+            {
+                if (ids.Any(id => id.ToString() == newerId))
+                    _ = Task.Delay(TimeSpan.FromMilliseconds(100))
+                        .ContinueWith(_ => stalled!.Release("seg-1"), TaskScheduler.Default);
+            },
+        };
+        using var disposeStalled = stalled;
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        var stream = CreateStream(segments, stalled, cts.Token);
+        try
+        {
+            var buffer = new byte[segments.Count * SegmentSize];
+            await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true)
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(15));
+
+            Assert.Equal(segments.Values.SelectMany(bytes => bytes), buffer);
+            Assert.Equal(2, inner.BodyRequestCounts[newerId]);
+        }
+        finally
+        {
+            stalled.Release();
+            await stream.DisposeAsync();
+        }
+    }
+
+    private const int SegmentSize = 64;
+    private const int BatchWidth = 4;
+
+    private static (Dictionary<string, byte[]> Segments, Dictionary<string, LongRange> Ranges) CreateSegments(int count)
+    {
+        var segments = Enumerable.Range(0, count)
+            .ToDictionary(i => $"seg-{i}", i => Enumerable.Repeat((byte)i, SegmentSize).ToArray());
+        var ranges = segments.Keys
+            .Select((id, index) => KeyValuePair.Create(id, new LongRange(index * SegmentSize, (index + 1L) * SegmentSize)))
+            .ToDictionary();
+        return (segments, ranges);
+    }
+
+    private static Stream CreateStream(
+        Dictionary<string, byte[]> segments, INntpClient client, CancellationToken cancellationToken) =>
+        MultiSegmentStream.Create(
+            segments.Keys.ToArray().AsMemory(),
+            client,
+            articleBufferSize: 40,
+            estimatedSegmentSize: SegmentSize,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true,
+            cancellationToken,
+            fileName: "hedge.bin",
+            exactSegmentSizes: Enumerable.Repeat((long)SegmentSize, segments.Count).ToArray(),
+            bodyPipelineBatchWidth: BatchWidth);
+
+    private sealed class StalledArticleClient(INntpClient inner, params string[] stalledIds) : WrappingNntpClient(inner)
+    {
+        private readonly Dictionary<string, TaskCompletionSource> _gates = stalledIds.ToDictionary(
+            id => id, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        private readonly ConcurrentDictionary<string, byte> _stalled = new();
+        private readonly ConcurrentDictionary<string, int> _singleRequests = new();
         private int _failedCallbacks;
 
         public int FailedCallbacks => Volatile.Read(ref _failedCallbacks);
 
-        public void Release() => _gate.TrySetResult();
+        /// <summary>Runs before each single-article body request with the 1-based request count for that id.</summary>
+        public Func<string, int, Task>? BeforeSingleRequest { get; init; }
+
+        public Action<IReadOnlyList<SegmentId>>? OnBatchRequested { get; init; }
+
+        public void Release()
+        {
+            foreach (var gate in _gates.Values) gate.TrySetResult();
+        }
+
+        public void Release(string id) => _gates[id].TrySetResult();
+
+        public void Fail(string id, Exception exception) => _gates[id].TrySetException(exception);
+
+        public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId, CancellationToken cancellationToken)
+        {
+            await RunSingleRequestHookAsync(segmentId).ConfigureAwait(false);
+            return await base.DecodedBodyAsync(segmentId, cancellationToken).ConfigureAwait(false);
+        }
+
+        public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken)
+        {
+            await RunSingleRequestHookAsync(segmentId).ConfigureAwait(false);
+            return await base.DecodedBodyAsync(segmentId, onConnectionReadyAgain, cancellationToken).ConfigureAwait(false);
+        }
+
+        private Task RunSingleRequestHookAsync(SegmentId segmentId)
+        {
+            var id = segmentId.ToString();
+            var attempt = _singleRequests.AddOrUpdate(id, 1, (_, count) => count + 1);
+            return BeforeSingleRequest?.Invoke(id, attempt) ?? Task.CompletedTask;
+        }
 
         public override async Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
             ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
+            OnBatchRequested?.Invoke(segmentIds);
             var batch = await base.DecodedBodiesAsync(segmentIds, Track(onConnectionReadyAgain), cancellationToken)
                 .ConfigureAwait(false);
             var responses = batch.Responses.ToArray();
             for (var index = 0; index < responses.Length; index++)
             {
-                if (segmentIds[index].ToString() != stalledId || Interlocked.Exchange(ref _stalled, 1) != 0)
+                var id = segmentIds[index].ToString();
+                if (!_gates.TryGetValue(id, out var gate) || !_stalled.TryAdd(id, 0))
                     continue;
-                var original = responses[index];
-                responses[index] = _gate.Task.ContinueWith(_ => original, TaskScheduler.Default).Unwrap();
+                responses[index] = AfterGateAsync(gate.Task, responses[index]);
             }
 
             return batch with { Responses = responses };
+        }
+
+        private static async Task<UsenetDecodedBodyResponse> AfterGateAsync(
+            Task gate, Task<UsenetDecodedBodyResponse> original)
+        {
+            await gate.ConfigureAwait(false);
+            return await original.ConfigureAwait(false);
         }
 
         private ArticleBodyCompletionHandler Track(ArticleBodyCompletionHandler? callback) =>

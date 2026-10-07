@@ -89,6 +89,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     private int _responseLatencyCount;
     // Ring of issue timestamps; sized past the most segments that can be issued ahead of the reader.
     private readonly long[] _segmentIssuedAt;
+    // Segment that owns each ring slot: a superseded original can answer after its slot is reused.
+    private readonly int[] _segmentIssuedOwner;
     private int _highestRespondedIndex = -1;
     private int _nextHeadIndex;
     private ConcurrentDictionary<int, byte>? _supersededSegments;
@@ -857,6 +859,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         }
         _streamTasks = Channel.CreateBounded<Task<SegmentDownloadResult>>(_taskWindowSize);
         _segmentIssuedAt = new long[_taskWindowSize * 2 + Math.Max(1, _bodyPipelineBatchSize) + 1];
+        _segmentIssuedOwner = new int[_segmentIssuedAt.Length];
         _stripeCount = usePipelinedBodyRequests
             ? ResolveStripeCount(initialBatchPlan, articleBufferSize, cancellationToken)
             : 1;
@@ -1478,6 +1481,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             {
                 try
                 {
+                    if (IsSuperseded(segmentIndex))
+                        throw new OperationCanceledException("A duplicate fetch already delivered this segment.");
+
                     // An incremental body that failed mid-drain resumes at its own attempt so
                     // retry limits and corruption evidence carry across the handoff.
                     if (priorFailure is not null)
@@ -1510,6 +1516,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                         .ConfigureAwait(false);
                     lease = null;
                     return ToDownloadResult(drained, estimate, segmentId);
+                }
+                catch (Exception) when (IsSuperseded(segmentIndex))
+                {
+                    // The duplicate won: skip retries, rescue, fallback, and hole reports.
+                    throw;
                 }
                 catch (UsenetArticleNotFoundException e)
                 {
@@ -1833,6 +1844,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             // A tracker-provided fail-fast bypasses the miss/corruption recovery below:
             // those handlers can issue fallback or rescue requests on a path already
             // declared dead, and a successful fallback would defeat the fail-fast.
+            throw;
+        }
+        catch (Exception) when (IsSuperseded(segmentIndex))
+        {
+            // The duplicate won: skip rescue, fallback, and hole reports.
             throw;
         }
         catch (UsenetArticleNotFoundException e)
@@ -2234,7 +2250,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         Exception exception)
     {
         // A hedge already delivered this segment; a late failure of the original is not a hole.
-        if (_supersededSegments?.ContainsKey(segmentIndex) == true)
+        if (IsSuperseded(segmentIndex))
             ExceptionDispatchInfo.Capture(exception).Throw();
 
         if (!_segmentSizes.TryGetFillLength(segmentIndex, out var fill, out var isExact))
@@ -2332,7 +2348,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         CancellationToken cancellationToken,
         ArticleByteLease? existingLease = null,
         long? leasedEstimate = null,
-        IIncrementalSegmentHandler? incremental = null)
+        IIncrementalSegmentHandler? incremental = null,
+        bool reportShortDecode = true)
     {
         try
         {
@@ -2365,7 +2382,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         }
 
         return await DrainSegmentAsync(
-                source, segmentIndex, cancellationToken, existingLease, leasedEstimate, incremental)
+                source, segmentIndex, cancellationToken, existingLease, leasedEstimate, incremental,
+                reportShortDecode)
             .ConfigureAwait(false);
     }
 
@@ -2393,7 +2411,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         CancellationToken cancellationToken,
         ArticleByteLease? existingLease = null,
         long? leasedEstimate = null,
-        IIncrementalSegmentHandler? incremental = null)
+        IIncrementalSegmentHandler? incremental = null,
+        bool reportShortDecode = true)
     {
         ArticleByteLease? lease = existingLease;
         var ownsLease = existingLease is null;
@@ -2438,7 +2457,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                             Stopwatch.GetElapsedTime(incrementalStarted));
                         if (!hasExactSize)
                             _segmentSizes.RecordObservedSize(segmentIndex, drainedBytes);
-                        else if (drainedBytes < exactSize)
+                        else if (drainedBytes < exactSize && !IsSuperseded(segmentIndex))
                             SegmentHoleReporter.ReportShortDecode(
                                 _fileName, incrementalSegmentId, segmentIndex, exactSize - drainedBytes);
                         if (length != estimate)
@@ -2470,13 +2489,13 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 && _expectedFirstSegmentRange is { } expectedFirstSegmentRange)
             {
                 shortPadded = AlignDrainedSegment(
-                    buffer, segmentIndex, drained, expectedFirstSegmentRange.Count);
+                    buffer, segmentIndex, drained, expectedFirstSegmentRange.Count, reportShortDecode);
                 if (!hasExactSize)
                     _segmentSizes.RecordObservedSize(segmentIndex, buffer.Length);
             }
             else if (hasExactSize)
             {
-                shortPadded = AlignDrainedSegment(buffer, segmentIndex, drained, exactSize);
+                shortPadded = AlignDrainedSegment(buffer, segmentIndex, drained, exactSize, reportShortDecode);
             }
             else
                 _segmentSizes.RecordObservedSize(segmentIndex, drained);
@@ -2588,7 +2607,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     }
 
     /// <returns>True when the body was short and padded to the recorded length.</returns>
-    private bool AlignDrainedSegment(PooledBufferStream buffer, int segmentIndex, long drained, long expected)
+    private bool AlignDrainedSegment(
+        PooledBufferStream buffer, int segmentIndex, long drained, long expected, bool reportShortDecode)
     {
         if (drained == expected) return false;
 
@@ -2603,7 +2623,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
         var shortfall = expected - drained;
         var segmentId = _segmentIds.Span[segmentIndex];
-        SegmentHoleReporter.ReportShortDecode(_fileName, segmentId, segmentIndex, shortfall);
+        if (reportShortDecode && !IsSuperseded(segmentIndex))
+            SegmentHoleReporter.ReportShortDecode(_fileName, segmentId, segmentIndex, shortfall);
         buffer.SetLength(expected);
         return true;
     }
@@ -2669,14 +2690,25 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         }
     }
 
-    private void NoteSegmentIssued(int segmentIndex) =>
-        Volatile.Write(ref _segmentIssuedAt[segmentIndex % _segmentIssuedAt.Length], Stopwatch.GetTimestamp());
+    private bool IsSuperseded(int segmentIndex) => _supersededSegments?.ContainsKey(segmentIndex) == true;
+
+    private void NoteSegmentIssued(int segmentIndex)
+    {
+        var slot = segmentIndex % _segmentIssuedAt.Length;
+        // Owner first: a responder that sees this timestamp must also see the new owner.
+        Volatile.Write(ref _segmentIssuedOwner[slot], segmentIndex);
+        Volatile.Write(ref _segmentIssuedAt[slot], Stopwatch.GetTimestamp());
+    }
 
     private void NoteSegmentResponded(int segmentIndex)
     {
+        var slot = segmentIndex % _segmentIssuedAt.Length;
+        var issuedAt = Volatile.Read(ref _segmentIssuedAt[slot]);
         // Zero marks the segment as answered: bytes are flowing, so a duplicate would only double them.
-        var issuedAt = Interlocked.Exchange(ref _segmentIssuedAt[segmentIndex % _segmentIssuedAt.Length], 0);
-        if (issuedAt == 0) return;
+        if (issuedAt == 0 ||
+            Volatile.Read(ref _segmentIssuedOwner[slot]) != segmentIndex ||
+            Interlocked.CompareExchange(ref _segmentIssuedAt[slot], 0, issuedAt) != issuedAt)
+            return;
         var sample = (uint)(Interlocked.Increment(ref _responseLatencyCount) - 1) % ResponseLatencySamples;
         Volatile.Write(ref _responseLatencyTicks[sample], Stopwatch.GetElapsedTime(issuedAt).Ticks);
         int seen;
@@ -2700,7 +2732,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
     /// <summary>
     /// Waits for the head segment; once it has had no server response for the hedge delay while a
-    /// later segment has already answered, races one duplicate fetch and keeps whichever finishes first.
+    /// later segment has already answered, races one duplicate fetch and keeps the first complete result.
     /// </summary>
     private async Task<SegmentDownloadResult> AwaitHeadSegmentAsync(
         Task<SegmentDownloadResult> head,
@@ -2743,7 +2775,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             headIndex, _fileName, (long)Stopwatch.GetElapsedTime(waitStarted).TotalMilliseconds);
 
         var first = await Task.WhenAny(head, hedge).ConfigureAwait(false);
-        if (first == hedge && hedge.IsCompletedSuccessfully)
+        var originalExhausted = first == head && !_cts.IsCancellationRequested &&
+                                head.Exception?.InnerException is TransientSegmentExhaustionException;
+        if (originalExhausted)
+            await ((Task)hedge).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+        // A padded duplicate never replaces the original: it would turn a healthy read into a degraded one.
+        if ((first == hedge || originalExhausted) && hedge.IsCompletedSuccessfully &&
+            !(await hedge.ConfigureAwait(false)).IsShortPad)
         {
             LazyInitializer.EnsureInitialized(ref _supersededSegments).TryAdd(headIndex, 0);
             // The original shares its connection with other batched articles, so it is not
@@ -2786,7 +2825,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 #pragma warning disable CA2000 // stream ownership transfers to the returned SegmentDownloadResult
         var drained = await ValidateAndDrainSegmentAsync(
 #pragma warning restore CA2000
-                response.Stream!, segmentIndex, cancellationToken, ArticleByteLease.Empty, estimate)
+                response.Stream!, segmentIndex, cancellationToken, ArticleByteLease.Empty, estimate,
+                reportShortDecode: false)
             .ConfigureAwait(false);
         return ToDownloadResult(drained, estimate, segmentId);
     }
