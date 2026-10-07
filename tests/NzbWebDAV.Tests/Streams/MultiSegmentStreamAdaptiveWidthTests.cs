@@ -7,11 +7,13 @@ using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Clients.Usenet;
 using NzbWebDAV.Tests.Fakes;
+using NzbWebDAV.Tests.TestUtils;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Tests.Streams;
 
+[Collection(nameof(StreamTraceCollection))]
 public class MultiSegmentStreamAdaptiveWidthTests
 {
     private const int BodyPipelineBatchSize = 4;

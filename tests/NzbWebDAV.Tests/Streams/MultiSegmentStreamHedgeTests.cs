@@ -5,12 +5,15 @@ using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
+using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
+using NzbWebDAV.Tests.TestUtils;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Tests.Streams;
 
+[Collection(nameof(StreamTraceCollection))]
 public sealed class MultiSegmentStreamHedgeTests
 {
     [Fact]
@@ -24,6 +27,7 @@ public sealed class MultiSegmentStreamHedgeTests
             .ToDictionary();
         var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
         using var stalled = new StalledArticleClient(inner, "seg-1");
+        using var trace = new HedgeTraceCapture();
         using var cts = new CancellationTokenSource();
         using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
         var stream = MultiSegmentStream.Create(
@@ -46,6 +50,8 @@ public sealed class MultiSegmentStreamHedgeTests
             Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(5), $"Delivery waited {elapsed.Elapsed} on the stalled original.");
             Assert.Equal(segments.Values.SelectMany(bytes => bytes), buffer);
             Assert.Equal(2, inner.BodyRequestCounts["seg-1"]);
+            // Later articles answered on their own, so only the stalled one is raced.
+            Assert.Single(trace.AssertHedge("seg-1", 1, HedgeOutcome.Duplicate));
         }
         finally
         {
@@ -117,6 +123,7 @@ public sealed class MultiSegmentStreamHedgeTests
                 return Task.CompletedTask;
             },
         };
+        using var trace = new HedgeTraceCapture();
         using var cts = new CancellationTokenSource();
         using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
         await using var stream = CreateStream(segments, stalled, cts.Token);
@@ -130,6 +137,7 @@ public sealed class MultiSegmentStreamHedgeTests
 
         Assert.Equal(segments.Values.SelectMany(bytes => bytes), buffer);
         Assert.Equal(2, inner.BodyRequestCounts["seg-1"]);
+        trace.AssertHedge("seg-1", 1, HedgeOutcome.OriginalAfterDuplicateShort);
     }
 
     [Fact]
@@ -174,6 +182,7 @@ public sealed class MultiSegmentStreamHedgeTests
             },
         };
         using var disposeStalled = stalled;
+        using var trace = new HedgeTraceCapture();
         using var cts = new CancellationTokenSource();
         using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
         await using var stream = CreateStream(segments, stalled, cts.Token);
@@ -183,6 +192,7 @@ public sealed class MultiSegmentStreamHedgeTests
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal(segments.Values.SelectMany(bytes => bytes), buffer);
+        trace.AssertHedge("seg-1", 1, HedgeOutcome.DuplicateAfterOriginalExhausted);
     }
 
     [Fact]
@@ -254,6 +264,55 @@ public sealed class MultiSegmentStreamHedgeTests
             fileName: "hedge.bin",
             exactSegmentSizes: Enumerable.Repeat((long)SegmentSize, segments.Count).ToArray(),
             bodyPipelineBatchWidth: BatchWidth);
+
+    /// <summary>
+    /// Routes stream-trace events for the current async flow into a private buffer and restores
+    /// the process-wide buffer on dispose. Users must join <see cref="StreamTraceCollection"/>.
+    /// </summary>
+    internal sealed class HedgeTraceCapture : IDisposable
+    {
+        private readonly StreamTraceBuffer? _previous = StreamTrace.Buffer;
+        private readonly StreamTraceBuffer _buffer = new(capacity: 1_000, maxSessions: 16);
+        private readonly Guid _sessionId = Guid.NewGuid();
+        private readonly IDisposable _scope;
+
+        public HedgeTraceCapture()
+        {
+            StreamTrace.Configure(_buffer);
+            _scope = MultiProviderNntpClient.BeginReadSessionScope(_sessionId);
+            _buffer.RangeOpen(_sessionId, "/view/hedge.bin", "GET", 0, null, null, null, null);
+        }
+
+        /// <summary>
+        /// Asserts the first hedge waited at least the delay floor and resolved with
+        /// <paramref name="outcome"/>; returns every hedge's (index, delay, outcome) in order.
+        /// </summary>
+        public IReadOnlyList<(int? Index, int? DelayMs, string? Outcome)> AssertHedge(
+            string segmentId, int segmentIndex, string outcome)
+        {
+            var events = _buffer.GetSessionEvents(_sessionId);
+            var issued = events.Where(e => e.Kind == nameof(StreamTraceKind.HedgeIssued)).ToList();
+            var resolved = events.Where(e => e.Kind == nameof(StreamTraceKind.HedgeResolved)).ToList();
+            var summary = string.Join("; ", events.Where(e => e.Kind.StartsWith("Hedge", StringComparison.Ordinal))
+                .Select(e => $"{e.Kind} {e.SegmentId}#{e.SegmentIndex} status={e.Status} ms={e.DurationMs} delay={e.HedgeDelayMs}"));
+            Assert.True(issued.Count > 0 && issued.Count == resolved.Count, $"Unpaired hedge events: {summary}");
+            Assert.Equal(issued.Select(e => e.SegmentIndex), resolved.Select(e => e.SegmentIndex));
+            Assert.All(issued, e => Assert.True(e.DurationMs >= e.HedgeDelayMs, $"Hedge fired early: {summary}"));
+
+            Assert.Equal(segmentId, issued[0].SegmentId);
+            Assert.Equal(segmentIndex, issued[0].SegmentIndex);
+            Assert.True(issued[0].HedgeDelayMs >= 500, $"First hedge skipped the delay floor: {summary}");
+            Assert.Equal(segmentId, resolved[0].SegmentId);
+            Assert.Equal(outcome, resolved[0].Status);
+            return issued.Zip(resolved, (i, r) => (i.SegmentIndex, i.HedgeDelayMs, r.Status)).ToList();
+        }
+
+        public void Dispose()
+        {
+            _scope.Dispose();
+            StreamTrace.Configure(_previous ?? new StreamTraceBuffer(capacity: 1, maxSessions: 10, enabled: false));
+        }
+    }
 
     private sealed class StalledArticleClient(INntpClient inner, params string[] stalledIds) : WrappingNntpClient(inner)
     {
