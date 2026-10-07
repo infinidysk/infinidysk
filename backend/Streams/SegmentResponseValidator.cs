@@ -72,8 +72,10 @@ internal static class SegmentResponseValidator
             $"but its recorded range holds {recorded}.");
     }
 
+    // A segment clipped at file end records its in-file length; positioning geometry validates the rest.
     public static async ValueTask<bool> IsFallbackPartSizeCompatibleAsync(
-        Stream bodyStream, SegmentSizes segmentSizes, int segmentIndex, CancellationToken ct)
+        Stream bodyStream, SegmentSizes segmentSizes, int segmentIndex, CancellationToken ct,
+        bool clippedAtFileEnd = false)
     {
         if (!segmentSizes.TryGetExactSize(segmentIndex, out var exact)) return true;
         if (bodyStream is not YencStream yenc) return true;
@@ -81,7 +83,8 @@ internal static class SegmentResponseValidator
         try
         {
             var header = await yenc.GetYencHeadersAsync(ct).ConfigureAwait(false);
-            return header is null || header.PartSize <= 0 || header.PartSize == exact;
+            return header is null || header.PartSize <= 0 || header.PartSize == exact ||
+                   (clippedAtFileEnd && header.PartSize > exact);
         }
         catch (OperationCanceledException)
         {

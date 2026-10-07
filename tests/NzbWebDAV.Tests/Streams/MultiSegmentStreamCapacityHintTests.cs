@@ -222,10 +222,45 @@ public class MultiSegmentStreamCapacityHintTests
             usePipelinedBodyRequests: false,
             CancellationToken.None,
             fileName: "geometry.bin",
+            exactSegmentSizes: new long[] { 5 },
             expectedFirstSegmentRange: new LongRange(5, 10),
             expectedFirstSegmentRangeWasClippedAtFileEnd: true);
 
-        Assert.Equal(1, await stream.ReadAsync(new byte[1]));
+        using var output = new MemoryStream();
+        await stream.CopyToAsync(output);
+
+        Assert.Equal(bytes[..5], output.ToArray());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task Drain_ServesClippedTailFromAlternate_WhenPrimaryIsMissing(int articleBufferSize)
+    {
+        var client = new FakeNntpClient(
+            new Dictionary<string, byte[]> { ["alt"] = "abcdef"u8.ToArray() },
+            useCachedYencStreams: true,
+            segmentRanges: new Dictionary<string, LongRange> { ["alt"] = new(5, 11) });
+
+        await using var stream = MultiSegmentStream.Create(
+            new[] { "missing" }.AsMemory(),
+            client,
+            articleBufferSize,
+            estimatedSegmentSize: 6,
+            failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: false,
+            CancellationToken.None,
+            fileName: "geometry.bin",
+            segmentFallbacks: [["alt"]],
+            exactSegmentSizes: new long[] { 5 },
+            expectedFirstSegmentRange: new LongRange(5, 10),
+            expectedFirstSegmentRangeWasClippedAtFileEnd: true);
+
+        using var output = new MemoryStream();
+        await stream.CopyToAsync(output);
+
+        Assert.Equal("abcde"u8.ToArray(), output.ToArray());
+        Assert.Contains("alt", client.RequestedSegmentIds);
     }
 
     [Fact]

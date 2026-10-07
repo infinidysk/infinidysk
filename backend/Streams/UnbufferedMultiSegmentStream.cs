@@ -412,7 +412,8 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
                 return null;
             }
             if (!await SegmentResponseValidator.IsFallbackPartSizeCompatibleAsync(
-                    stream, _segmentSizes, segmentIndex, cancellationToken).ConfigureAwait(false))
+                    stream, _segmentSizes, segmentIndex, cancellationToken, IsClippedAtFileEnd(segmentIndex))
+                    .ConfigureAwait(false))
             {
                 await DisposeBodyStreamAsync(stream).ConfigureAwait(false);
                 return null;
@@ -953,7 +954,8 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
                     continue;
                 }
                 if (!await SegmentResponseValidator.IsFallbackPartSizeCompatibleAsync(
-                        fallbackStream!, _segmentSizes, segmentIndex, cancellationToken)
+                        fallbackStream!, _segmentSizes, segmentIndex, cancellationToken,
+                        IsClippedAtFileEnd(segmentIndex))
                         .ConfigureAwait(false))
                 {
                     Log.Debug(
@@ -1034,7 +1036,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
                 }
 
                 // A clipped final segment's size is its in-file length, so its full yEnc part cannot match.
-                if (!(_openSegmentIndex == 0 && _expectedFirstSegmentRangeWasClippedAtFileEnd))
+                if (!IsClippedAtFileEnd(_openSegmentIndex))
                 {
                     await SegmentResponseValidator.ThrowOnRecordedSizeMismatchAsync(
                             response.Stream!, _segmentSizes, _openSegmentIndex, _fileName, cancellationToken)
@@ -1049,6 +1051,9 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
             }
         }
     }
+
+    private bool IsClippedAtFileEnd(int segmentIndex) =>
+        segmentIndex == 0 && _expectedFirstSegmentRangeWasClippedAtFileEnd;
 
     private async Task<bool> MatchesPositioningGeometryAsync(
         Stream stream,

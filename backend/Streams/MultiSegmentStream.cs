@@ -1717,7 +1717,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         {
             await ThrowOnSegmentIdMismatchAsync(segmentId, body).ConfigureAwait(false);
             if (!await SegmentResponseValidator.IsFallbackPartSizeCompatibleAsync(
-                    stream, _segmentSizes, segmentIndex, cancellationToken).ConfigureAwait(false))
+                    stream, _segmentSizes, segmentIndex, cancellationToken, IsClippedAtFileEnd(segmentIndex))
+                    .ConfigureAwait(false))
             {
                 await stream.DisposeAsync().ConfigureAwait(false);
                 return null;
@@ -2114,7 +2115,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                     }
                     await ThrowOnSegmentIdMismatchAsync(fallbackId, bodyResponse).ConfigureAwait(false);
                     if (!await SegmentResponseValidator.IsFallbackPartSizeCompatibleAsync(
-                            bodyResponse.Stream!, _segmentSizes, segmentIndex, cancellationToken)
+                            bodyResponse.Stream!, _segmentSizes, segmentIndex, cancellationToken,
+                            IsClippedAtFileEnd(segmentIndex))
                         .ConfigureAwait(false))
                     {
                         Log.Debug(
@@ -2296,6 +2298,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         return new TransientSegmentExhaustionException(message, failure);
     }
 
+    private bool IsClippedAtFileEnd(int segmentIndex) =>
+        segmentIndex == 0 && _expectedFirstSegmentRangeWasClippedAtFileEnd;
+
     private async Task<DrainedSegment> ValidateAndDrainSegmentAsync(
         Stream source,
         int segmentIndex,
@@ -2315,7 +2320,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             }
 
             // A clipped final segment's size is its in-file length, so its full yEnc part cannot match.
-            if (!(segmentIndex == 0 && _expectedFirstSegmentRangeWasClippedAtFileEnd))
+            if (!IsClippedAtFileEnd(segmentIndex))
             {
                 await SegmentResponseValidator.ThrowOnRecordedSizeMismatchAsync(
                     source, _segmentSizes, segmentIndex, _fileName, cancellationToken).ConfigureAwait(false);
