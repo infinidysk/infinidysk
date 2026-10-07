@@ -3344,7 +3344,9 @@ public class MultiProviderNntpClientTests
             var starvedCallbacks = 0;
             var starved = await client.DecodedBodiesAsync(
                 ["starved-0"], (_, _) => Interlocked.Increment(ref starvedCallbacks), starvedCts.Token);
-            await Assert.ThrowsAsync<ProviderTransferAdmissionTimeoutException>(() => starved.Responses[0]);
+            var admissionError = await Assert.ThrowsAsync<ProviderTransferAdmissionTimeoutException>(
+                () => starved.Responses[0]);
+            Assert.NotEqual("BatchFallbackGate", admissionError.Phase);
             await starved.Completion.WaitAsync(TimeSpan.FromSeconds(3));
             Assert.False(starvedCts.IsCancellationRequested);
             Assert.Equal(1, Volatile.Read(ref starvedCallbacks));
@@ -4118,9 +4120,9 @@ public class MultiProviderNntpClientTests
 
         public void CompletePendingSingularRequests()
         {
-            while (CompletePendingSingularRequest(fromEnd: false))
-            {
-            }
+            var completed = true;
+            while (completed)
+                completed = CompletePendingSingularRequest(fromEnd: false);
         }
 
         public void CompleteNextPendingSingularRequest() =>
