@@ -91,6 +91,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     private readonly long[] _segmentIssuedAt;
     // Segment that owns each ring slot: a superseded original can answer after its slot is reused.
     private readonly int[] _segmentIssuedOwner;
+    // Live article requested just before each one in the same pipelined batch (same connection), or -1.
+    private readonly int[] _segmentBatchPredecessor;
     private int _highestRespondedIndex = -1;
     private int _nextHeadIndex;
     private ConcurrentDictionary<int, byte>? _supersededSegments;
@@ -860,6 +862,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         _streamTasks = Channel.CreateBounded<Task<SegmentDownloadResult>>(_taskWindowSize);
         _segmentIssuedAt = new long[_taskWindowSize * 2 + Math.Max(1, _bodyPipelineBatchSize) + 1];
         _segmentIssuedOwner = new int[_segmentIssuedAt.Length];
+        _segmentBatchPredecessor = new int[_segmentIssuedAt.Length];
         _stripeCount = usePipelinedBodyRequests
             ? ResolveStripeCount(initialBatchPlan, articleBufferSize, cancellationToken)
             : 1;
@@ -1198,14 +1201,17 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         }
 
         var liveResponseIndex = 0;
+        var previousLive = -1;
         foreach (var slot in slots)
         {
             var lease = group.Leases[slot]!;
             group.Leases[slot] = null;
             var segmentIndex = groupStart + slot;
             var segmentId = _segmentIds.Span[segmentIndex];
-            NoteSegmentIssued(segmentIndex);
-            group.Tasks[slot] = _knownMissingSegmentIndices?.Contains(segmentIndex) == true
+            var knownMissing = _knownMissingSegmentIndices?.Contains(segmentIndex) == true;
+            NoteSegmentIssued(segmentIndex, knownMissing ? -1 : previousLive);
+            if (!knownMissing) previousLive = segmentIndex;
+            group.Tasks[slot] = knownMissing
                 ? DownloadKnownMissingSegment(
                     segmentId, segmentIndex, lease, isFirstSegment: segmentIndex == 0, cancellationToken)
                 : DownloadBatchSegment(
@@ -2692,12 +2698,28 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
     private bool IsSuperseded(int segmentIndex) => _supersededSegments?.ContainsKey(segmentIndex) == true;
 
-    private void NoteSegmentIssued(int segmentIndex)
+    private void NoteSegmentIssued(int segmentIndex, int batchPredecessor = -1)
     {
         var slot = segmentIndex % _segmentIssuedAt.Length;
+        Volatile.Write(ref _segmentBatchPredecessor[slot], batchPredecessor);
         // Owner first: a responder that sees this timestamp must also see the new owner.
         Volatile.Write(ref _segmentIssuedOwner[slot], segmentIndex);
         Volatile.Write(ref _segmentIssuedAt[slot], Stopwatch.GetTimestamp());
+    }
+
+    /// <summary>
+    /// Pipelined responses on one connection arrive in request order, so a segment requested right
+    /// after an original that a duplicate already replaced, and that is still unanswered, is stalled too.
+    /// </summary>
+    private bool IsQueuedBehindSupersededOriginal(int segmentIndex)
+    {
+        var slot = segmentIndex % _segmentIssuedAt.Length;
+        if (Volatile.Read(ref _segmentIssuedOwner[slot]) != segmentIndex) return false;
+        var predecessor = Volatile.Read(ref _segmentBatchPredecessor[slot]);
+        if (predecessor < 0 || !IsSuperseded(predecessor)) return false;
+        var predecessorSlot = predecessor % _segmentIssuedAt.Length;
+        return Volatile.Read(ref _segmentIssuedOwner[predecessorSlot]) == predecessor &&
+               Volatile.Read(ref _segmentIssuedAt[predecessorSlot]) != 0;
     }
 
     private void NoteSegmentResponded(int segmentIndex)
@@ -2746,9 +2768,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
         // Time the reader's own wait: read-ahead segments are issued long before a paced reader needs them.
         var waitStarted = Stopwatch.GetTimestamp();
-        // Pipelined responses arrive in request order, so an article queued behind a stalled
-        // original that a duplicate already replaced is stalled too: race it without waiting again.
-        var hedgeDelay = IsSuperseded(headIndex - 1) ? TimeSpan.Zero : GetHedgeDelay();
+        var hedgeDelay = IsQueuedBehindSupersededOriginal(headIndex) ? TimeSpan.Zero : GetHedgeDelay();
         while (!head.IsCompleted)
         {
             var issuedAt = Volatile.Read(ref _segmentIssuedAt[headIndex % _segmentIssuedAt.Length]);
