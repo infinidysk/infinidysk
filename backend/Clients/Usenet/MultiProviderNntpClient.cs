@@ -543,9 +543,9 @@ public class MultiProviderNntpClient(
                     // Admission (start-order) is separate from transfer completion so segment
                     // N+1 can begin its fallback walk after N has admitted/started, without
                     // waiting for N's body stream to finish. Concurrent starts are bounded by
-                    // fallbackStartGate until each transfer's body callback fires. Late callbacks
-                    // may release after this scope, so the (handle-less) semaphore is not disposed.
-#pragma warning disable CA2000 // released by transfer callbacks that outlive this scope; no wait handle to free
+                    // fallbackStartGate until each transfer's body callback fires. Completion
+                    // disposes it after every decision and transfer callback has released.
+#pragma warning disable CA2000 // ownership moves to CompleteOwnedBatchAsync
                     var fallbackStartGate = new SemaphoreSlim(MaxConcurrentFallbackStarts);
 #pragma warning restore CA2000
                     Task previousFallbackAdmission = Task.CompletedTask;
@@ -584,7 +584,8 @@ public class MultiProviderNntpClient(
                             primaryBatch.Completion,
                             coordinator.Completion,
                             publisher,
-                            ownedCts),
+                            ownedCts,
+                            fallbackStartGate),
                     };
 #pragma warning restore CA2025
                 }
@@ -883,14 +884,9 @@ public class MultiProviderNntpClient(
                             gateOwnedByTransfer = true;
                             deferredCallback.Activate((result, failureReason) =>
                             {
-                                try
-                                {
-                                    coordinator.CompleteTransfer(result, failureReason);
-                                }
-                                finally
-                                {
-                                    fallbackStartGate.Release();
-                                }
+                                // Release before completing the transfer: coordinator completion disposes the gate.
+                                fallbackStartGate.Release();
+                                coordinator.CompleteTransfer(result, failureReason);
                             });
                         }
                         else
@@ -1032,7 +1028,8 @@ public class MultiProviderNntpClient(
         Task transportCompletion,
         Task coordinatorCompletion,
         Task publisher,
-        ContextualCancellationTokenSource owner)
+        ContextualCancellationTokenSource owner,
+        SemaphoreSlim fallbackStartGate)
     {
         try
         {
@@ -1043,6 +1040,7 @@ public class MultiProviderNntpClient(
         finally
         {
             owner.Dispose();
+            fallbackStartGate.Dispose();
         }
     }
 
