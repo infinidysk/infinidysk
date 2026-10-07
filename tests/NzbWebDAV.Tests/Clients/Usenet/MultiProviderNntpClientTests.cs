@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Concurrency;
@@ -3299,6 +3300,230 @@ public class MultiProviderNntpClientTests
         }
     }
 
+    [Fact]
+    public async Task BatchFailover_BatchesSharingSaturatedTransferCap_StayBoundedAndDemandProceedsWhenCapacityReturns()
+    {
+        const int transferCap = 2;
+        MultiConnectionNntpClient? backup = null;
+        var activeTransfersAtRequest = new ConcurrentQueue<int>();
+        var backupConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            DeferSingularCompletion = true,
+            OnRequest = () => activeTransfersAtRequest.Enqueue(
+                backup!.GetConnectionAdmissionSnapshot()!.ActiveTransferOperations),
+        };
+        var primary = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 430 }, host: "primary.example", maxConnections: 4);
+        backup = CreateProvider(
+            backupConnection,
+            host: "backup.example",
+            providerType: ProviderType.BackupOnly,
+            maxConnections: 8,
+            maxTransferConnections: transferCap);
+        using var client = new MultiProviderNntpClient([primary, backup], retryPrimaryOnMiss: () => false);
+
+        var readAhead = new[]
+        {
+            await client.DecodedBodiesAsync(["ahead-0"], onConnectionReadyAgain: null, CancellationToken.None),
+            await client.DecodedBodiesAsync(["ahead-1"], onConnectionReadyAgain: null, CancellationToken.None),
+        };
+        UsenetDecodedBodyResponse? demandResponse = null;
+        try
+        {
+            await WaitUntilAsync(() => backupConnection.SingularRequests == transferCap);
+            Assert.Equal(transferCap, backup.GetConnectionAdmissionSnapshot()!.ActiveTransferOperations);
+
+            // Undrained read-ahead bodies hold the whole cap: admission must give up within budget.
+            using var starvedCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            using var starvedContext = starvedCts.Token.SetContext(new StreamingTimeoutContext
+            {
+                PerSegmentTimeout = TimeSpan.FromMilliseconds(100),
+                MaxRetries = 0,
+            });
+            var starvedCallbacks = 0;
+            var starved = await client.DecodedBodiesAsync(
+                ["starved-0"], (_, _) => Interlocked.Increment(ref starvedCallbacks), starvedCts.Token);
+            await Assert.ThrowsAsync<ProviderTransferAdmissionTimeoutException>(() => starved.Responses[0]);
+            await starved.Completion.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.False(starvedCts.IsCancellationRequested);
+            Assert.Equal(1, Volatile.Read(ref starvedCallbacks));
+            Assert.Equal(transferCap, backupConnection.SingularRequests);
+
+            using var demandCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var demandContext = demandCts.Token.SetContext(new StreamingTimeoutContext
+            {
+                PerSegmentTimeout = TimeSpan.FromSeconds(5),
+                MaxRetries = 0,
+            });
+            var demand = await client.DecodedBodiesAsync(
+                ["demand-0"], onConnectionReadyAgain: null, demandCts.Token);
+            await WaitUntilAsync(() =>
+                backup.GetConnectionAdmissionSnapshot()!.WaitingTransferOperations == 1);
+            Assert.False(demand.Responses[0].IsCompleted);
+
+            backupConnection.CompleteNextPendingSingularRequest();
+            demandResponse = await demand.Responses[0].WaitAsync(TimeSpan.FromSeconds(3));
+
+            Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, demandResponse.ResponseType);
+            Assert.Equal(transferCap + 1, backupConnection.SingularRequests);
+            Assert.All(activeTransfersAtRequest, active => Assert.InRange(active, 1, transferCap));
+        }
+        finally
+        {
+            backupConnection.CompletePendingSingularRequests();
+            if (demandResponse?.Stream != null) await demandResponse.Stream.DisposeAsync();
+            foreach (var task in readAhead.Select(batch => batch.Responses[0]))
+            {
+                var response = await task.WaitAsync(TimeSpan.FromSeconds(3));
+                if (response.Stream != null) await response.Stream.DisposeAsync();
+            }
+        }
+
+        Assert.Equal(0, backup.GetConnectionAdmissionSnapshot()!.ActiveTransferOperations);
+        Assert.Equal(0, backup.ActiveConnections);
+        Assert.Equal(0, primary.PendingSelections);
+        Assert.Equal(0, backup.PendingSelections);
+    }
+
+    [Fact]
+    public async Task BatchFailover_CancellationWhileBatchesShareSaturatedBackup_SettlesCallbacksAndLeases()
+    {
+        var backupConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            DeferSingularCompletion = true,
+        };
+        var primary = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 430 }, host: "primary.example", maxConnections: 4);
+        var backup = CreateProvider(
+            backupConnection,
+            host: "backup.example",
+            providerType: ProviderType.BackupOnly,
+            maxConnections: 8,
+            maxTransferConnections: 2);
+        using var client = new MultiProviderNntpClient([primary, backup], retryPrimaryOnMiss: () => false);
+        using var activeCts = new CancellationTokenSource();
+        using var waitingCts = new CancellationTokenSource();
+        using var activeContext = activeCts.Token.SetContext(new StreamingTimeoutContext
+        {
+            PerSegmentTimeout = TimeSpan.FromSeconds(10),
+            MaxRetries = 0,
+        });
+        using var waitingContext = waitingCts.Token.SetContext(new StreamingTimeoutContext
+        {
+            PerSegmentTimeout = TimeSpan.FromSeconds(10),
+            MaxRetries = 0,
+        });
+        var activeCallbacks = 0;
+        var waitingCallbacks = 0;
+
+        var active = await client.DecodedBodiesAsync(
+            ["active-0", "active-1"], (_, _) => Interlocked.Increment(ref activeCallbacks), activeCts.Token);
+        try
+        {
+            await WaitUntilAsync(() => backupConnection.SingularRequests == 2);
+            var waiting = await client.DecodedBodiesAsync(
+                ["waiting-0", "waiting-1"], (_, _) => Interlocked.Increment(ref waitingCallbacks), waitingCts.Token);
+            await WaitUntilAsync(() =>
+                backup.GetConnectionAdmissionSnapshot()!.WaitingTransferOperations == 2);
+
+            await waitingCts.CancelAsync();
+            foreach (var response in waiting.Responses)
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => response);
+            await Task.WhenAny(waiting.Completion, Task.Delay(TimeSpan.FromSeconds(3)));
+            Assert.True(waiting.Completion.IsCompleted);
+            Assert.Equal(1, Volatile.Read(ref waitingCallbacks));
+            Assert.Equal(2, backupConnection.SingularRequests);
+            var snapshot = backup.GetConnectionAdmissionSnapshot()!;
+            Assert.Equal(0, snapshot.WaitingTransferOperations);
+            Assert.Equal(2, snapshot.ActiveTransferOperations);
+
+            // Cancel the batch whose bodies are still in flight, then let the transport drain.
+            // Ordered publication releases the next response only after the prior stream is disposed.
+            foreach (var task in active.Responses)
+            {
+                var response = await task.WaitAsync(TimeSpan.FromSeconds(3));
+                if (response.Stream != null) await response.Stream.DisposeAsync();
+            }
+            await activeCts.CancelAsync();
+            Assert.Equal(0, Volatile.Read(ref activeCallbacks));
+        }
+        finally
+        {
+            backupConnection.CompletePendingSingularRequests();
+        }
+
+        await Task.WhenAny(active.Completion, Task.Delay(TimeSpan.FromSeconds(3)));
+        Assert.True(active.Completion.IsCompleted);
+        Assert.Equal(1, Volatile.Read(ref activeCallbacks));
+        Assert.Equal(1, Volatile.Read(ref waitingCallbacks));
+        Assert.Equal(0, backup.GetConnectionAdmissionSnapshot()!.ActiveTransferOperations);
+        Assert.Equal(0, backup.ActiveConnections);
+        Assert.Equal(0, primary.PendingSelections);
+        Assert.Equal(0, backup.PendingSelections);
+    }
+
+    [Fact]
+    public async Task BatchFailover_FifthFallbackInBatch_WaitsForReleaseWhileAnotherBatchProceeds()
+    {
+        var backupConnection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            DeferSingularCompletion = true,
+        };
+        using var client = new MultiProviderNntpClient(
+        [
+            CreateProvider(new ScriptedNntpClient { BatchResponseCode = 430 }, host: "primary.example", maxConnections: 4),
+            CreateProvider(
+                backupConnection, host: "backup.example", providerType: ProviderType.BackupOnly, maxConnections: 16),
+        ], retryPrimaryOnMiss: () => false);
+
+        var wide = await client.DecodedBodiesAsync(
+            ["wide-0", "wide-1", "wide-2", "wide-3", "wide-4"], onConnectionReadyAgain: null, CancellationToken.None);
+        UsenetDecodedBodyResponse? other = null;
+        try
+        {
+            await WaitUntilAsync(() => backupConnection.SingularRequests == 4);
+            await Task.Delay(200);
+            Assert.Equal(4, backupConnection.SingularRequests);
+
+            var otherBatch = await client.DecodedBodiesAsync(
+                ["other-0"], onConnectionReadyAgain: null, CancellationToken.None);
+            other = await otherBatch.Responses[0].WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, other.ResponseType);
+            Assert.Equal(5, backupConnection.SingularRequests);
+            Assert.False(wide.Responses[4].IsCompleted);
+
+            // Releasing the other batch's transfer must not admit this batch's fifth fallback.
+            backupConnection.CompleteLastPendingSingularRequest();
+            await Task.Delay(200);
+            Assert.Equal(5, backupConnection.SingularRequests);
+
+            backupConnection.CompleteNextPendingSingularRequest();
+            await WaitUntilAsync(() => backupConnection.SingularRequests == 6);
+        }
+        finally
+        {
+            backupConnection.CompletePendingSingularRequests();
+            if (other?.Stream != null) await other.Stream.DisposeAsync();
+            foreach (var task in wide.Responses)
+            {
+                var response = await task.WaitAsync(TimeSpan.FromSeconds(3));
+                if (response.Stream != null) await response.Stream.DisposeAsync();
+            }
+        }
+
+        await wide.Completion.WaitAsync(TimeSpan.FromSeconds(3));
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        while (!condition())
+            await Task.Delay(10, timeout.Token);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(3)]
@@ -3820,8 +4045,9 @@ public class MultiProviderNntpClientTests
         public Func<string, Exception>? SingularException { get; init; }
         public bool DeferSingularCompletion { get; init; }
         public int BatchRequests { get; private set; }
-        public int SingularRequests { get; private set; }
-        private readonly Queue<ArticleBodyCompletionHandler> _pendingSingularCallbacks = new();
+        private int _singularRequests;
+        public int SingularRequests => Volatile.Read(ref _singularRequests);
+        private readonly LinkedList<ArticleBodyCompletionHandler> _pendingSingularCallbacks = new();
 
         public override Task<UsenetDecodedBodyBatch> DecodedBodiesAsync(
             IReadOnlyList<SegmentId> segmentIds,
@@ -3856,14 +4082,14 @@ public class MultiProviderNntpClientTests
             ArticleBodyCompletionHandler? onConnectionReadyAgain,
             CancellationToken cancellationToken)
         {
-            SingularRequests++;
+            Interlocked.Increment(ref _singularRequests);
             OnRequest?.Invoke();
             if (SingularException != null)
                 throw SingularException(segmentId.ToString());
 
             var response = CreateResponse(segmentId, SingularResponseCode);
             if (DeferSingularCompletion && onConnectionReadyAgain != null)
-                _pendingSingularCallbacks.Enqueue(onConnectionReadyAgain);
+                lock (_pendingSingularCallbacks) _pendingSingularCallbacks.AddLast(onConnectionReadyAgain);
             else
                 onConnectionReadyAgain?.Invoke(ToArticleBodyResult(SingularResponseCode));
             return Task.FromResult(response);
@@ -3871,8 +4097,30 @@ public class MultiProviderNntpClientTests
 
         public void CompletePendingSingularRequests()
         {
-            while (_pendingSingularCallbacks.TryDequeue(out var callback))
-                callback(ToArticleBodyResult(SingularResponseCode));
+            while (CompletePendingSingularRequest(fromEnd: false))
+            {
+            }
+        }
+
+        public void CompleteNextPendingSingularRequest() =>
+            Assert.True(CompletePendingSingularRequest(fromEnd: false));
+
+        public void CompleteLastPendingSingularRequest() =>
+            Assert.True(CompletePendingSingularRequest(fromEnd: true));
+
+        private bool CompletePendingSingularRequest(bool fromEnd)
+        {
+            ArticleBodyCompletionHandler callback;
+            lock (_pendingSingularCallbacks)
+            {
+                var node = fromEnd ? _pendingSingularCallbacks.Last : _pendingSingularCallbacks.First;
+                if (node is null) return false;
+                _pendingSingularCallbacks.Remove(node);
+                callback = node.Value;
+            }
+
+            callback(ToArticleBodyResult(SingularResponseCode));
+            return true;
         }
 
         private static ArticleBodyResult ToArticleBodyResult(int responseCode) => responseCode switch
@@ -3906,7 +4154,7 @@ public class MultiProviderNntpClientTests
         public override Task<UsenetStatResponse> StatAsync(
             SegmentId segmentId, CancellationToken cancellationToken)
         {
-            SingularRequests++;
+            Interlocked.Increment(ref _singularRequests);
             OnRequest?.Invoke();
             if (SingularException != null)
                 throw SingularException(segmentId.ToString());
