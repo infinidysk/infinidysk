@@ -44,6 +44,9 @@ public class MultiProviderNntpClient(
 
     protected override long? ProviderGeneration => providerGeneration;
 
+    public override bool HasSpareFetchCapacity(CancellationToken cancellationToken) =>
+        providers.Any(provider => provider.UnreservedConnectionsFor(NntpOperation.Body) > 0);
+
     internal const string InconclusiveMissReason =
         "not every enabled provider answered (a circuit breaker was open, or a provider timed out or failed)";
 

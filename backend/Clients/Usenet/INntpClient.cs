@@ -18,6 +18,12 @@ public interface INntpClient : IDisposable
     Task PrewarmConnectionsAsync(int targetConnections, CancellationToken cancellationToken) =>
         Task.CompletedTask;
 
+    /// <summary>
+    /// Whether a BODY fetch issued now under this token would be admitted without queuing.
+    /// Best-effort: capacity can be taken before the fetch starts.
+    /// </summary>
+    bool HasSpareFetchCapacity(CancellationToken cancellationToken) => true;
+
     // core methods
     Task ConnectAsync(
         string host, int port, bool useSsl, CancellationToken cancellationToken);

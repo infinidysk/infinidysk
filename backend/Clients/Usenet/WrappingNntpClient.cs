@@ -30,6 +30,9 @@ public class WrappingNntpClient(INntpClient usenetClient) : NntpClient, INntpCon
         _usenetClient is INntpConnectionStats stats ? stats.InFlightConnections : 0;
     public override bool ReadStartWarmupEnabled => _usenetClient.ReadStartWarmupEnabled;
 
+    public override bool HasSpareFetchCapacity(CancellationToken cancellationToken) =>
+        _usenetClient.HasSpareFetchCapacity(cancellationToken);
+
     public override Task PrewarmConnectionsAsync(
         int targetConnections,
         CancellationToken cancellationToken) =>
