@@ -14,7 +14,6 @@ using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.Websocket;
 using Serilog;
-using UsenetSharp.Models;
 
 namespace NzbWebDAV.Clients.Usenet;
 
@@ -521,15 +520,10 @@ public class UsenetStreamingClient : WrappingNntpClient
         return connectionPool;
     }
 
-    private static async Task KeepAliveAsync(INntpClient connection, CancellationToken cancellationToken)
-    {
-        var response = await connection.DateAsync(cancellationToken).ConfigureAwait(false);
-        if (response.ResponseType != UsenetResponseType.DateAndTime)
-        {
-            throw new RetryableDownloadException(
-                $"Unexpected NNTP response to idle DATE keepalive: {response.ResponseMessage}");
-        }
-    }
+    internal static Task KeepAliveAsync(
+        INntpClient connection,
+        CancellationToken cancellationToken) =>
+        MultiConnectionNntpClient.CheckDateLivenessAsync(connection, cancellationToken);
 
     // Hard ceiling for TCP/TLS connect + AUTHINFO. Long enough for slow providers,
     // short enough that three stuck handshakes cannot pin the pool forever.
