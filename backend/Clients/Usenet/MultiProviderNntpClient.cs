@@ -44,6 +44,16 @@ public class MultiProviderNntpClient(
 
     protected override long? ProviderGeneration => providerGeneration;
 
+    // Mirrors the hedged walk's first candidate, which the duplicate queues on before any failover.
+    public override bool HasSpareFetchCapacity(SegmentId segmentId, CancellationToken cancellationToken)
+    {
+        var ordered = SelectOrderedProviders(NntpOperation.Body, out var reserved);
+        ReleasePendingSelection(ref reserved, NntpOperation.Body);
+        DemoteStalledProvider(ordered, segmentId);
+        return ordered.FirstOrDefault(provider => !IsCachedMissing(segmentId, provider, NntpOperation.Body))
+            is { } first && first.UnreservedConnectionsFor(NntpOperation.Body) > 0;
+    }
+
     internal const string InconclusiveMissReason =
         "not every enabled provider answered (a circuit breaker was open, or a provider timed out or failed)";
 
@@ -1195,12 +1205,7 @@ public class MultiProviderNntpClient(
         var orderedProviders = SelectOrderedProviders(
             operation, out var attemptReserved, out var skippedOpenCircuit);
         var hedging = HedgeFetchScope.Value;
-        if (hedging && orderedProviders.Count > 1 &&
-            _awaitingBody.TryGetValue(segmentId, out var stalled) &&
-            orderedProviders.Remove(stalled))
-        {
-            orderedProviders.Add(stalled);
-        }
+        if (hedging) DemoteStalledProvider(orderedProviders, segmentId);
 
         using var releasePending = new ScopeReleaser(
             () => ReleasePendingSelection(ref attemptReserved, operation));
@@ -2209,6 +2214,13 @@ public class MultiProviderNntpClient(
             reserved?.ReservePending(operation);
             return ordered;
         }
+    }
+
+    // A duplicate tries the provider still holding the original last.
+    private void DemoteStalledProvider(List<MultiConnectionNntpClient> ordered, SegmentId segmentId)
+    {
+        if (ordered.Count > 1 && _awaitingBody.TryGetValue(segmentId, out var stalled) && ordered.Remove(stalled))
+            ordered.Add(stalled);
     }
 
     private void MovePendingSelection(

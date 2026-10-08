@@ -96,6 +96,10 @@ public class DownloadingNntpClient : WrappingNntpClient
         }
     }
 
+    public override bool HasSpareFetchCapacity(SegmentId segmentId, CancellationToken cancellationToken) =>
+        SelectSemaphore(cancellationToken).Semaphore.HasFreePermit &&
+        base.HasSpareFetchCapacity(segmentId, cancellationToken);
+
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(SegmentId segmentId,
         CancellationToken cancellationToken)
     {

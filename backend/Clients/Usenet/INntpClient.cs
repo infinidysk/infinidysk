@@ -18,6 +18,13 @@ public interface INntpClient : IDisposable
     Task PrewarmConnectionsAsync(int targetConnections, CancellationToken cancellationToken) =>
         Task.CompletedTask;
 
+    /// <summary>
+    /// Whether a duplicate BODY fetch for <paramref name="segmentId"/> issued now under this token
+    /// would be admitted by the provider it would try first without queuing.
+    /// Best-effort: capacity can be taken before the fetch starts.
+    /// </summary>
+    bool HasSpareFetchCapacity(SegmentId segmentId, CancellationToken cancellationToken) => true;
+
     // core methods
     Task ConnectAsync(
         string host, int port, bool useSsl, CancellationToken cancellationToken);

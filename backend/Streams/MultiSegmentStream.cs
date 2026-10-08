@@ -82,8 +82,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     private readonly IReadOnlySet<int>? _knownMissingSegmentIndices;
 
     // Head-of-line hedging (#893): one duplicate fetch when the next segment straggles.
-    private static readonly TimeSpan HedgeFloor = TimeSpan.FromMilliseconds(500);
-    private static readonly TimeSpan HedgePollInterval = TimeSpan.FromMilliseconds(50);
+    internal static readonly TimeSpan HedgeFloor = TimeSpan.FromMilliseconds(500);
+    internal static readonly TimeSpan HedgePollInterval = TimeSpan.FromMilliseconds(50);
     private const int HedgeLatencyMultiplier = 2;
     private const int ResponseLatencySamples = 32;
     private readonly long[] _responseLatencyTicks = new long[ResponseLatencySamples];

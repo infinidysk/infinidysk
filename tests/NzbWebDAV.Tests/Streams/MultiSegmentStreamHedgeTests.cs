@@ -287,6 +287,182 @@ public sealed class MultiSegmentStreamHedgeTests
         }
     }
 
+    [Fact]
+    public async Task StalledFirstSegmentOfRange_DuplicateFetchStartsPlaybackAndCancelsOriginal()
+    {
+        var (segments, ranges) = CreateSegments(1);
+        var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        var stalled = new FirstBodyStallsClient(inner);
+        using var trace = new HedgeTraceCapture();
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        await using var stream = new UnbufferedMultiSegmentStream(
+            segments.Keys.ToArray().AsMemory(), stalled, SegmentSize, "hedge.bin",
+            exactSegmentSizes: new long[] { SegmentSize });
+
+        var buffer = new byte[SegmentSize];
+        await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true, cts.Token)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(segments["seg-0"], buffer);
+        Assert.Single(trace.AssertHedge("seg-0", 0, HedgeOutcome.Duplicate));
+        // The stalled original is released through caller cancellation, not left holding its connection.
+        await stalled.OriginalCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, stalled.Requests);
+    }
+
+    [Theory]
+    [InlineData("short", HedgeOutcome.OriginalAfterDuplicateShort)]
+    [InlineData("wrong-size", HedgeOutcome.OriginalAfterDuplicateFailed)]
+    // A clipped final segment skips the recorded-size check, so only plausibility bounds the buffer.
+    [InlineData("oversized-clipped", HedgeOutcome.OriginalAfterDuplicateFailed)]
+    [InlineData("wrong-id", HedgeOutcome.OriginalAfterDuplicateFailed)]
+    public async Task StalledFirstSegmentOfRange_InvalidDuplicateDoesNotReplaceHealthyOriginal(
+        string defect, string outcome)
+    {
+        var (segments, ranges) = CreateSegments(1);
+        var bodies = 0;
+        var duplicateSize = defect switch
+        {
+            "wrong-size" => SegmentSize * 2,
+            "oversized-clipped" => 1L << 30,
+            _ => 0,
+        };
+        // The original is held before it reaches the fake, so the duplicate is the first body served.
+        var inner = new FakeNntpClient(
+            segments,
+            useCachedYencStreams: true,
+            segmentRanges: ranges,
+            decodedStreamFactory: (_, bytes) =>
+                defect == "short" && Interlocked.Increment(ref bodies) == 1
+                    ? new MemoryStream(bytes[..(bytes.Length / 2)], writable: false)
+                    : new MemoryStream(bytes, writable: false),
+            responseHeaderFactory: (_, request) =>
+                duplicateSize > 0 && request == 1
+                    ? new UsenetYencHeader
+                    {
+                        FileName = "fake.bin",
+                        FileSize = duplicateSize,
+                        LineLength = 128,
+                        PartNumber = 1,
+                        TotalParts = 1,
+                        PartOffset = 0,
+                        PartSize = duplicateSize,
+                    }
+                    : null);
+        var original = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stalled = new FirstBodyStallsClient(inner, original.Task)
+        {
+            DuplicateResponse = defect == "wrong-id" ? response => response with { SegmentId = "other-article" } : null,
+        };
+        using var trace = new HedgeTraceCapture();
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        var clipped = defect == "oversized-clipped";
+        await using var stream = new UnbufferedMultiSegmentStream(
+            segments.Keys.ToArray().AsMemory(), stalled, SegmentSize, "hedge.bin",
+            exactSegmentSizes: new long[] { SegmentSize },
+            expectedFirstSegmentRange: clipped ? new LongRange(0, SegmentSize) : null,
+            expectedFirstSegmentRangeWasClippedAtFileEnd: clipped);
+
+        var buffer = new byte[SegmentSize];
+        var read = stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true, cts.Token).AsTask();
+        await stalled.DuplicateRequested.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Task.Delay(TimeSpan.FromMilliseconds(200));
+        original.TrySetResult();
+        await read.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(segments["seg-0"], buffer);
+        Assert.Equal(2, stalled.Requests);
+        Assert.False(stalled.OriginalCancelled.Task.IsCompleted, "The healthy original was cancelled.");
+        trace.AssertHedge("seg-0", 0, outcome);
+    }
+
+    [Fact]
+    public async Task StalledFirstSegmentWithoutKnownLength_SmallerDuplicateCannotReplaceHealthyOriginal()
+    {
+        var (segments, ranges) = CreateSegments(1);
+        var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        var original = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var oneByte = new UsenetYencHeader
+        {
+            FileName = "fake.bin",
+            FileSize = 1,
+            LineLength = 128,
+            PartNumber = 1,
+            TotalParts = 1,
+            PartOffset = 0,
+            PartSize = 1,
+        };
+        // Were a duplicate sent, it would be one internally consistent byte.
+        var stalled = new FirstBodyStallsClient(inner, original.Task)
+        {
+            DuplicateResponse = response =>
+            {
+                response.Stream?.Dispose();
+                return response with
+                {
+                    Stream = new CachedYencStream(oneByte, new MemoryStream(segments["seg-0"][..1], writable: false)),
+                };
+            },
+        };
+        using var trace = new HedgeTraceCapture();
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        await using var stream = new UnbufferedMultiSegmentStream(
+            segments.Keys.ToArray().AsMemory(), stalled, SegmentSize, "hedge.bin");
+
+        var buffer = new byte[SegmentSize];
+        var read = stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true, cts.Token).AsTask();
+        await Task.Delay(MultiSegmentStream.HedgeFloor * 2);
+        original.TrySetResult();
+        await read.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(segments["seg-0"], buffer);
+        Assert.Equal(1, stalled.Requests);
+        Assert.False(stalled.OriginalCancelled.Task.IsCompleted, "The healthy original was cancelled.");
+        trace.AssertNoHedge();
+    }
+
+    private sealed class FirstBodyStallsClient(INntpClient inner, Task? originalGate = null) : WrappingNntpClient(inner)
+    {
+        private int _requests;
+
+        public int Requests => Volatile.Read(ref _requests);
+
+        public TaskCompletionSource OriginalCancelled { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource DuplicateRequested { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Func<UsenetDecodedBodyResponse, UsenetDecodedBodyResponse>? DuplicateResponse { get; init; }
+
+        public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId, CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _requests) != 1)
+            {
+                DuplicateRequested.TrySetResult();
+                var duplicate = await base.DecodedBodyAsync(segmentId, cancellationToken).ConfigureAwait(false);
+                return DuplicateResponse?.Invoke(duplicate) ?? duplicate;
+            }
+
+            try
+            {
+                await (originalGate ?? Task.Delay(Timeout.Infinite, CancellationToken.None))
+                    .WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                OriginalCancelled.TrySetResult();
+                throw;
+            }
+
+            return await base.DecodedBodyAsync(segmentId, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private const int SegmentSize = 64;
     private const int BatchWidth = 4;
 
@@ -355,6 +531,9 @@ public sealed class MultiSegmentStreamHedgeTests
             Assert.Equal(outcome, resolved[0].Status);
             return issued.Zip(resolved, (i, r) => (i.SegmentIndex, i.HedgeDelayMs, r.Status)).ToList();
         }
+
+        public void AssertNoHedge() =>
+            Assert.DoesNotContain(_buffer.GetSessionEvents(_sessionId), e => e.Kind.StartsWith("Hedge", StringComparison.Ordinal));
 
         public void Dispose()
         {

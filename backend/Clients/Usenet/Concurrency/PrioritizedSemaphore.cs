@@ -81,6 +81,17 @@ public sealed class PrioritizedSemaphore : IDisposable
         }
     }
 
+    internal bool HasFreePermit
+    {
+        get
+        {
+            lock (_lock)
+                return _enteredCount < _maxAllowed
+                       && _highPriorityWaiters.Count == 0
+                       && _lowPriorityWaiters.Count == 0;
+        }
+    }
+
     internal bool TryWait()
     {
         lock (_lock)

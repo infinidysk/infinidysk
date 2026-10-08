@@ -5,6 +5,7 @@ using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
+using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Services.StreamTrace;
 using Serilog;
@@ -25,6 +26,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
     private readonly string[][]? _segmentFallbacks;
     private readonly INntpClient _usenetClient;
     private readonly SegmentSizes _segmentSizes;
+    private readonly long _estimatedSegmentSize;
     private readonly string _fileName;
     private readonly bool _useContainerAwareFill;
     private readonly long? _firstSegmentFileOffset;
@@ -50,6 +52,8 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
     private bool _isPositioning;
     private long _openSegmentCallerBytes;
     private SegmentRecoveryState? _recoveryState;
+    private ContextualCancellationTokenSource? _bodyCts;
+    private int _hedgedSegmentIndex = -1;
     private bool _disposed;
 
 
@@ -74,6 +78,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
         _segmentFallbacks = segmentFallbacks;
         _usenetClient = usenetClient;
         _segmentSizes = new SegmentSizes(exactSegmentSizes, segmentIds.Length);
+        _estimatedSegmentSize = estimatedSegmentSize;
         _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
         _useContainerAwareFill = useContainerAwareFill;
         _firstSegmentFileOffset = firstSegmentFileOffset;
@@ -1022,35 +1027,210 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
     {
         ThrowIfPlaybackFailFast();
         using (FetchAttributionContext.Begin(_fileName))
-        {
-            var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
-                .ConfigureAwait(false);
-            try
-            {
-                if (!await MatchesPositioningGeometryAsync(
-                        response.Stream!, _openSegmentIndex, cancellationToken).ConfigureAwait(false))
-                {
-                    throw new SeekPositionNotFoundException(
-                        $"BODY geometry for segment {_openSegmentIndex} of {_fileName} does not match " +
-                        $"the expected positioning range {_expectedFirstSegmentRange}.");
-                }
+            return await DecodedBodyWithHedgeAsync(segmentId, cancellationToken).ConfigureAwait(false);
+    }
 
-                // A clipped final segment's size is its in-file length, so its full yEnc part cannot match.
-                if (!IsClippedAtFileEnd(_openSegmentIndex))
-                {
-                    await SegmentResponseValidator.ThrowOnRecordedSizeMismatchAsync(
-                            response.Stream!, _segmentSizes, _openSegmentIndex, _fileName, cancellationToken)
-                        .ConfigureAwait(false);
-                }
-                return response;
-            }
-            catch
+    private async Task<UsenetDecodedBodyResponse> ValidatedBodyAsync(
+        Task<UsenetDecodedBodyResponse> fetch,
+        string segmentId,
+        int segmentIndex,
+        CancellationToken cancellationToken)
+    {
+        var response = await fetch.ConfigureAwait(false);
+        try
+        {
+            await SegmentResponseValidator.ThrowOnSegmentIdMismatchAsync(segmentId, response).ConfigureAwait(false);
+            if (!await MatchesPositioningGeometryAsync(
+                    response.Stream!, segmentIndex, cancellationToken).ConfigureAwait(false))
             {
-                await DisposeBodyStreamAsync(response.Stream).ConfigureAwait(false);
-                throw;
+                throw new SeekPositionNotFoundException(
+                    $"BODY geometry for segment {segmentIndex} of {_fileName} does not match " +
+                    $"the expected positioning range {_expectedFirstSegmentRange}.");
             }
+
+            // A clipped final segment's size is its in-file length, so its full yEnc part cannot match.
+            if (!IsClippedAtFileEnd(segmentIndex))
+            {
+                await SegmentResponseValidator.ThrowOnRecordedSizeMismatchAsync(
+                        response.Stream!, _segmentSizes, segmentIndex, _fileName, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            return response;
+        }
+        catch
+        {
+            await DisposeBodyStreamAsync(response.Stream).ConfigureAwait(false);
+            throw;
         }
     }
+
+    /// <summary>
+    /// Validates and fully downloads a duplicate BODY so a short or corrupt copy can never
+    /// displace an original that is still streaming.
+    /// </summary>
+    private async Task<UsenetDecodedBodyResponse> CompleteDuplicateAsync(
+        Task<UsenetDecodedBodyResponse> fetch,
+        string segmentId,
+        int segmentIndex,
+        CancellationToken cancellationToken)
+    {
+        var response = await ValidatedBodyAsync(fetch, segmentId, segmentIndex, cancellationToken)
+            .ConfigureAwait(false);
+        var body = response.Stream!;
+        try
+        {
+            var header = await body.GetYencHeadersAsync(cancellationToken).ConfigureAwait(false);
+            if (header is null || !IsTrustedDuplicateSize(header, segmentIndex))
+            {
+                throw new InvalidDataException(
+                    $"Duplicate BODY for segment {segmentIndex} declares an implausible yEnc part size {header?.PartSize}.");
+            }
+
+            // ponytail: one article per hedged stream is held in memory; lease it if memory pressure shows up.
+            var buffered = new byte[header.PartSize];
+            var filled = await body.ReadAtLeastAsync(buffered, buffered.Length, throwOnEndOfStream: false, cancellationToken)
+                .ConfigureAwait(false);
+            if (filled != buffered.Length)
+            {
+                throw new EndOfStreamException(
+                    $"Duplicate BODY for segment {segmentIndex} ended after {filled} of {header.PartSize} bytes.");
+            }
+
+            if (await body.ReadAsync(new byte[1], cancellationToken).ConfigureAwait(false) != 0)
+                throw new InvalidDataException($"Duplicate BODY for segment {segmentIndex} exceeds its yEnc part size.");
+            return response with { Stream = new CachedYencStream(header, new MemoryStream(buffered, writable: false)) };
+        }
+        finally
+        {
+            await DisposeBodyStreamAsync(body).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Streams the segment's BODY; when a streaming read has had no validated response for the hedge
+    /// delay and a duplicate can be admitted without queuing, races one complete, validated duplicate.
+    /// </summary>
+    private async Task<UsenetDecodedBodyResponse> DecodedBodyWithHedgeAsync(
+        string segmentId,
+        CancellationToken cancellationToken)
+    {
+        var segmentIndex = _openSegmentIndex;
+        if (_hedgedSegmentIndex == segmentIndex || !CanVerifyDuplicateLength(segmentIndex) ||
+            DownloadWorkloadClassifier.Classify(cancellationToken) != DownloadWorkload.Streaming)
+        {
+            return await ValidatedBodyAsync(
+                    _usenetClient.DecodedBodyAsync(segmentId, cancellationToken), segmentId, segmentIndex,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        // The previous body is finished or disposed before the next fetch starts.
+        _bodyCts?.Dispose();
+        // The body keeps reading under its fetch token, so the winner's source lives as long as the body.
+        var originalCts = _bodyCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var original = ValidatedBodyAsync(
+            _usenetClient.DecodedBodyAsync(segmentId, originalCts.Token), segmentId, segmentIndex, originalCts.Token);
+        await ((Task)original).WaitAsync(MultiSegmentStream.HedgeFloor, cancellationToken)
+            .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        // A duplicate that would queue behind saturated admission cannot answer sooner and costs a permit.
+        while (!original.IsCompleted && !cancellationToken.IsCancellationRequested &&
+               !_usenetClient.HasSpareFetchCapacity(segmentId, cancellationToken))
+        {
+            await ((Task)original).WaitAsync(MultiSegmentStream.HedgePollInterval, cancellationToken)
+                .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+
+        if (original.IsCompleted || cancellationToken.IsCancellationRequested)
+            return await original.ConfigureAwait(false);
+
+        _hedgedSegmentIndex = segmentIndex;
+        var traceSession = MultiProviderNntpClient.CurrentReadSessionId;
+        if (traceSession is { } issuedSession)
+        {
+            var delayMs = (int)MultiSegmentStream.HedgeFloor.TotalMilliseconds;
+            StreamTrace.TryHedgeIssued(issuedSession, segmentId, segmentIndex, delayMs, delayMs);
+        }
+
+        Log.Debug(
+            "Segment {SegmentIndex} of {FileName} unanswered after {DelayMs} ms; racing a duplicate fetch.",
+            segmentIndex, _fileName, MultiSegmentStream.HedgeFloor.TotalMilliseconds);
+        var raceStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+#pragma warning disable CA2000 // owned by _bodyCts if it wins, otherwise disposed once the loser settles
+        var hedgeCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+#pragma warning restore CA2000
+        Task<UsenetDecodedBodyResponse> hedgeFetch;
+        // The scope's AsyncLocal flag flows into the fetch when it starts; it need not outlive the call.
+#pragma warning disable CA2025
+        using (MultiProviderNntpClient.BeginHedgeFetchScope())
+            hedgeFetch = _usenetClient.DecodedBodyAsync(segmentId, hedgeCts.Token);
+        // hedgeCts is disposed only after this task settles (see DisposeLateBodyAsync / Dispose).
+        var hedge = CompleteDuplicateAsync(hedgeFetch, segmentId, segmentIndex, hedgeCts.Token);
+#pragma warning restore CA2025
+
+        var winner = await Task.WhenAny(original, hedge).ConfigureAwait(false);
+        var loser = winner == original ? hedge : original;
+        if (!winner.IsCompletedSuccessfully && !cancellationToken.IsCancellationRequested)
+        {
+            // One fetch failing does not end the race while the other can still answer.
+            await ((Task)loser).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            if (loser.IsCompletedSuccessfully)
+                (winner, loser) = (loser, winner);
+        }
+
+        var loserCts = loser == hedge ? hedgeCts : originalCts;
+        _bodyCts = loser == hedge ? originalCts : hedgeCts;
+        // Caller cancellation releases the loser's connection without penalizing its provider.
+        await loserCts.CancelAsync().ConfigureAwait(false);
+#pragma warning disable CA2025 // DisposeLateBodyAsync disposes the token source only after the loser settles
+        _ = DisposeLateBodyAsync(loser, loserCts);
+#pragma warning restore CA2025
+
+        var outcome = cancellationToken.IsCancellationRequested ? HedgeOutcome.Cancelled
+            : !winner.IsCompletedSuccessfully ? HedgeOutcome.OriginalFailed
+            : winner == hedge ? HedgeOutcome.Duplicate
+            : hedge.Exception?.InnerException is EndOfStreamException ? HedgeOutcome.OriginalAfterDuplicateShort
+            : hedge.IsFaulted ? HedgeOutcome.OriginalAfterDuplicateFailed
+            : HedgeOutcome.Original;
+        Log.Debug(
+            "Duplicate fetch race for segment {SegmentIndex} of {FileName} resolved: {Outcome}.",
+            segmentIndex, _fileName, outcome);
+        if (traceSession is { } resolvedSession)
+        {
+            StreamTrace.TryHedgeResolved(
+                resolvedSession, segmentId, segmentIndex, outcome,
+                (int)System.Diagnostics.Stopwatch.GetElapsedTime(raceStarted).TotalMilliseconds);
+        }
+
+        // Both failed: surface the original's failure so recovery classifies it as before.
+        if (!winner.IsCompletedSuccessfully) _ = hedge.Exception;
+        return await (winner.IsCompletedSuccessfully ? winner : original).ConfigureAwait(false);
+    }
+
+    private static async Task DisposeLateBodyAsync(
+        Task<UsenetDecodedBodyResponse> fetch,
+        ContextualCancellationTokenSource cts)
+    {
+        await ((Task)fetch).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (fetch.IsCompletedSuccessfully)
+            await DisposeBodyStreamAsync((await fetch.ConfigureAwait(false)).Stream).ConfigureAwait(false);
+        else
+            _ = fetch.Exception;
+        cts.Dispose();
+    }
+
+    // A duplicate may replace the original only when local metadata proves the segment's length.
+    private bool CanVerifyDuplicateLength(int segmentIndex) =>
+        (segmentIndex == 0 && _expectedFirstSegmentRange is not null) ||
+        (!IsClippedAtFileEnd(segmentIndex) && _segmentSizes.TryGetExactSize(segmentIndex, out _));
+
+    // The length comes from the recorded size or the already-matched positioning range; plausibility only bounds the buffer.
+    private bool IsTrustedDuplicateSize(UsenetYencHeader header, int segmentIndex) =>
+        header.PartSize > 0 && header.PartSize <= Array.MaxLength &&
+        ((!IsClippedAtFileEnd(segmentIndex) &&
+          _segmentSizes.TryGetExactSize(segmentIndex, out var recorded) && recorded == header.PartSize) ||
+         (segmentIndex == 0 && _expectedFirstSegmentRange is not null &&
+          MultiSegmentStream.IsPlausiblePartSize(
+              header.PartSize, header.TotalParts, _segmentIds.Length, _estimatedSegmentSize)));
 
     private bool IsClippedAtFileEnd(int segmentIndex) =>
         segmentIndex == 0 && _expectedFirstSegmentRangeWasClippedAtFileEnd;
@@ -1145,6 +1325,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
         if (!disposing) return;
         _disposed = true;
         _stream?.Dispose();
+        _bodyCts?.Dispose();
         base.Dispose(disposing);
     }
 }
