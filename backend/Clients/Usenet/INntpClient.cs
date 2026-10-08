@@ -19,10 +19,11 @@ public interface INntpClient : IDisposable
         Task.CompletedTask;
 
     /// <summary>
-    /// Whether a BODY fetch issued now under this token would be admitted without queuing.
+    /// Whether a duplicate BODY fetch for <paramref name="segmentId"/> issued now under this token
+    /// would be admitted by the provider it would try first without queuing.
     /// Best-effort: capacity can be taken before the fetch starts.
     /// </summary>
-    bool HasSpareFetchCapacity(CancellationToken cancellationToken) => true;
+    bool HasSpareFetchCapacity(SegmentId segmentId, CancellationToken cancellationToken) => true;
 
     // core methods
     Task ConnectAsync(

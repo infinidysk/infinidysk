@@ -23,7 +23,7 @@ public abstract class NntpClient : INntpClient
 
     public virtual int PipeliningDepth => 0;
     public virtual bool ReadStartWarmupEnabled => false;
-    public virtual bool HasSpareFetchCapacity(CancellationToken cancellationToken) => true;
+    public virtual bool HasSpareFetchCapacity(SegmentId segmentId, CancellationToken cancellationToken) => true;
     protected virtual long? ProviderGeneration => null;
 
     public virtual Task PrewarmConnectionsAsync(

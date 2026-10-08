@@ -314,11 +314,20 @@ public sealed class MultiSegmentStreamHedgeTests
     [Theory]
     [InlineData("short", HedgeOutcome.OriginalAfterDuplicateShort)]
     [InlineData("wrong-size", HedgeOutcome.OriginalAfterDuplicateFailed)]
+    // A clipped final segment skips the recorded-size check, so only plausibility bounds the buffer.
+    [InlineData("oversized-clipped", HedgeOutcome.OriginalAfterDuplicateFailed)]
+    [InlineData("wrong-id", HedgeOutcome.OriginalAfterDuplicateFailed)]
     public async Task StalledFirstSegmentOfRange_InvalidDuplicateDoesNotReplaceHealthyOriginal(
         string defect, string outcome)
     {
         var (segments, ranges) = CreateSegments(1);
         var bodies = 0;
+        var duplicateSize = defect switch
+        {
+            "wrong-size" => SegmentSize * 2,
+            "oversized-clipped" => 1L << 30,
+            _ => 0,
+        };
         // The original is held before it reaches the fake, so the duplicate is the first body served.
         var inner = new FakeNntpClient(
             segments,
@@ -329,26 +338,32 @@ public sealed class MultiSegmentStreamHedgeTests
                     ? new MemoryStream(bytes[..(bytes.Length / 2)], writable: false)
                     : new MemoryStream(bytes, writable: false),
             responseHeaderFactory: (_, request) =>
-                defect == "wrong-size" && request == 1
+                duplicateSize > 0 && request == 1
                     ? new UsenetYencHeader
                     {
                         FileName = "fake.bin",
-                        FileSize = SegmentSize * 2,
+                        FileSize = duplicateSize,
                         LineLength = 128,
                         PartNumber = 1,
                         TotalParts = 1,
                         PartOffset = 0,
-                        PartSize = SegmentSize * 2,
+                        PartSize = duplicateSize,
                     }
                     : null);
         var original = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var stalled = new FirstBodyStallsClient(inner, original.Task);
+        var stalled = new FirstBodyStallsClient(inner, original.Task)
+        {
+            DuplicateResponse = defect == "wrong-id" ? response => response with { SegmentId = "other-article" } : null,
+        };
         using var trace = new HedgeTraceCapture();
         using var cts = new CancellationTokenSource();
         using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        var clipped = defect == "oversized-clipped";
         await using var stream = new UnbufferedMultiSegmentStream(
             segments.Keys.ToArray().AsMemory(), stalled, SegmentSize, "hedge.bin",
-            exactSegmentSizes: new long[] { SegmentSize });
+            exactSegmentSizes: new long[] { SegmentSize },
+            expectedFirstSegmentRange: clipped ? new LongRange(0, SegmentSize) : null,
+            expectedFirstSegmentRangeWasClippedAtFileEnd: clipped);
 
         var buffer = new byte[SegmentSize];
         var read = stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true, cts.Token).AsTask();
@@ -375,23 +390,27 @@ public sealed class MultiSegmentStreamHedgeTests
         public TaskCompletionSource DuplicateRequested { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public Func<UsenetDecodedBodyResponse, UsenetDecodedBodyResponse>? DuplicateResponse { get; init; }
+
         public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId, CancellationToken cancellationToken)
         {
             if (Interlocked.Increment(ref _requests) != 1)
-                DuplicateRequested.TrySetResult();
-            else
             {
-                try
-                {
-                    await (originalGate ?? Task.Delay(Timeout.Infinite, CancellationToken.None))
-                        .WaitAsync(cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    OriginalCancelled.TrySetResult();
-                    throw;
-                }
+                DuplicateRequested.TrySetResult();
+                var duplicate = await base.DecodedBodyAsync(segmentId, cancellationToken).ConfigureAwait(false);
+                return DuplicateResponse?.Invoke(duplicate) ?? duplicate;
+            }
+
+            try
+            {
+                await (originalGate ?? Task.Delay(Timeout.Infinite, CancellationToken.None))
+                    .WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                OriginalCancelled.TrySetResult();
+                throw;
             }
 
             return await base.DecodedBodyAsync(segmentId, cancellationToken).ConfigureAwait(false);
