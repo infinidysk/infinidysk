@@ -20,7 +20,9 @@ internal sealed record Par2SequentialCandidateSource(
     Func<long, Memory<byte>, Exception?, CancellationToken, Task> Recover,
     // Bytes the current request still wants from the current position, or null when open-ended.
     Func<long?> ReadBudget,
-    int WindowSlices);
+    // Slice buffers this stream may hold at once: queued, being filled, and the one the reader holds.
+    // One means each slice is verified on demand.
+    int BufferSlices);
 
 internal sealed class Par2VerifiedFileStream(
     Par2FileProof proof,
@@ -36,6 +38,19 @@ internal sealed class Par2VerifiedFileStream(
     private SliceProducer? _producer;
     // Teardown of a producer a Seek abandoned; the next read joins it before leasing again.
     private Task? _pendingTeardown;
+    // Bounds every sequential slice buffer, including the producer's working buffer and the reader's slice.
+    private readonly SemaphoreSlim? _bufferCredits =
+        sequential is null ? null : new SemaphoreSlim(Math.Max(1, sequential.BufferSlices));
+
+    // Verification buffers are held outside the article budget, so their total stays bounded by bytes.
+    internal const long MaximumBufferBytes = 16L * 1024 * 1024;
+    private const int MinimumBufferSlices = 4;
+
+    // Sequential slice buffers (queued, being filled, and the reader's) for the wanted read-ahead bytes.
+    // A slice too large for MaximumBufferBytes gets one buffer and is verified on demand.
+    internal static int GetBufferSlices(long readAheadBytes, int sliceSize) =>
+        (int)Math.Max(1, Math.Min(Math.Max(readAheadBytes, (long)MinimumBufferSlices * sliceSize),
+            MaximumBufferBytes) / sliceSize);
 
     public override bool CanSeek => true;
     public override long Length => proof.FileLength;
@@ -103,6 +118,9 @@ internal sealed class Par2VerifiedFileStream(
             _pendingTeardown = null;
             await pending.ConfigureAwait(false);
         }
+        // The reader is moving to another slice, so its buffer is free for the producer.
+        _verifiedSlice = -1;
+        ReturnSlice();
 
         while (true)
         {
@@ -133,8 +151,8 @@ internal sealed class Par2VerifiedFileStream(
                 _producer = null;
                 await producer.DisposeAsync().ConfigureAwait(false);
                 if (next.Index != sliceIndex) continue;
-                _verifiedSlice = -1;
-                _slice ??= ArrayPool<byte>.Shared.Rent(proof.SliceSize);
+                await _bufferCredits!.WaitAsync(cancellationToken).ConfigureAwait(false);
+                _slice = ArrayPool<byte>.Shared.Rent(proof.SliceSize);
                 Array.Clear(_slice, 0, proof.SliceSize);
                 await sequential!.Recover((long)sliceIndex * proof.SliceSize,
                     _slice.AsMemory(0, SliceLength(sliceIndex)), next.Failure, cancellationToken).ConfigureAwait(false);
@@ -147,11 +165,10 @@ internal sealed class Par2VerifiedFileStream(
             if (next.Index != sliceIndex)
             {
                 // A short forward seek inside the window skips already verified slices.
-                ArrayPool<byte>.Shared.Return(next.Buffer!);
+                ReturnBuffer(next.Buffer!);
                 continue;
             }
 
-            if (_slice is { } previous) ArrayPool<byte>.Shared.Return(previous);
             _slice = next.Buffer;
             _verifiedSlice = sliceIndex;
             return;
@@ -167,7 +184,8 @@ internal sealed class Par2VerifiedFileStream(
         if (source.ReadBudget() is > 0 and var budget && budget < Length - _position)
             end = Math.Min(Length, ((_position + budget + sliceSize - 1) / sliceSize) * sliceSize);
         var endSlice = (int)((end - 1) / sliceSize) + 1;
-        return new SliceProducer(proof, source, firstSlice, Math.Max(firstSlice + 1, endSlice), cancellationToken);
+        return new SliceProducer(proof, source, _bufferCredits!, firstSlice, Math.Max(firstSlice + 1, endSlice),
+            cancellationToken);
     }
 
     public override long Seek(long offset, SeekOrigin origin)
@@ -219,6 +237,7 @@ internal sealed class Par2VerifiedFileStream(
             await pending.ConfigureAwait(false);
         }
         ReturnSlice();
+        _bufferCredits?.Dispose();
         _prefix = null;
         GC.SuppressFinalize(this);
         await base.DisposeAsync().ConfigureAwait(false);
@@ -231,11 +250,12 @@ internal sealed class Par2VerifiedFileStream(
             _disposed = true;
             // Synchronous disposal cannot wait for the candidate stream; teardown completes in the background.
             var teardown = _producer?.DisposeAsync().AsTask();
+            if (_pendingTeardown is { } pending) teardown = teardown is null ? pending : Task.WhenAll(pending, teardown);
             _producer = null;
             _pendingTeardown = null;
-            if (teardown is null) ReturnSlice();
+            if (teardown is null) ReleaseBuffers();
             else
-                _ = teardown.ContinueWith(static (_, state) => ((Par2VerifiedFileStream)state!).ReturnSlice(),
+                _ = teardown.ContinueWith(static (_, state) => ((Par2VerifiedFileStream)state!).ReleaseBuffers(),
                     this, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
             _prefix = null;
         }
@@ -245,7 +265,19 @@ internal sealed class Par2VerifiedFileStream(
 
     private void ReturnSlice()
     {
-        if (Interlocked.Exchange(ref _slice, null) is { } slice) ArrayPool<byte>.Shared.Return(slice);
+        if (Interlocked.Exchange(ref _slice, null) is { } slice) ReturnBuffer(slice);
+    }
+
+    private void ReturnBuffer(byte[] buffer)
+    {
+        ArrayPool<byte>.Shared.Return(buffer);
+        _bufferCredits?.Release();
+    }
+
+    private void ReleaseBuffers()
+    {
+        ReturnSlice();
+        _bufferCredits?.Dispose();
     }
 
     // Buffer is null when the slice failed; Failure is null for a checksum mismatch.
@@ -256,13 +288,15 @@ internal sealed class Par2VerifiedFileStream(
 
     /// <summary>
     /// Reads slices in order from one candidate stream, verifies each as it arrives, and keeps at
-    /// most <see cref="Par2SequentialCandidateSource.WindowSlices"/> verified slices ahead of the reader.
+    /// most <see cref="Par2SequentialCandidateSource.BufferSlices"/> slice buffers together with the reader.
     /// It stops at the first failing slice and reports it so only that slice takes the recovery path.
     /// </summary>
     private sealed class SliceProducer : IAsyncDisposable
     {
         private readonly Par2FileProof _proof;
         private readonly Par2SequentialCandidateSource _source;
+        private readonly SemaphoreSlim _bufferCredits;
+        private readonly bool _coversFileEnd;
         private readonly Channel<VerifiedSlice> _verified;
         private readonly ContextualCancellationTokenSource _cts;
         private readonly int _endSlice;
@@ -275,15 +309,18 @@ internal sealed class Par2VerifiedFileStream(
         internal SliceProducer(
             Par2FileProof proof,
             Par2SequentialCandidateSource source,
+            SemaphoreSlim bufferCredits,
             int firstSlice,
             int endSlice,
             CancellationToken contextToken)
         {
             _proof = proof;
             _source = source;
+            _bufferCredits = bufferCredits;
+            _coversFileEnd = (long)endSlice * proof.SliceSize >= proof.FileLength;
             _nextSlice = firstSlice;
             _endSlice = endSlice;
-            _verified = Channel.CreateBounded<VerifiedSlice>(new BoundedChannelOptions(Math.Max(1, source.WindowSlices))
+            _verified = Channel.CreateBounded<VerifiedSlice>(new BoundedChannelOptions(Math.Max(1, source.BufferSlices))
             {
                 SingleReader = true,
                 SingleWriter = true,
@@ -294,12 +331,15 @@ internal sealed class Par2VerifiedFileStream(
             _run = RunAsync(firstSlice, _cts.Token);
         }
 
+        // Only when this generation reads to the end of the file. Recovery of a failed slice does not draw on
+        // the shared article budget, so a next part opened ahead of the reader cannot starve it.
         internal bool AllSegmentsIssued =>
-            _finished || Volatile.Read(ref _candidate) is ISegmentIssueProgress { AllSegmentsIssued: true };
+            _coversFileEnd
+            && (_finished || Volatile.Read(ref _candidate) is ISegmentIssueProgress { AllSegmentsIssued: true });
 
         internal bool CanServe(int sliceIndex) =>
             sliceIndex >= _nextSlice && sliceIndex < _endSlice
-            && sliceIndex - _nextSlice <= Math.Max(1, _source.WindowSlices);
+            && sliceIndex - _nextSlice <= Math.Max(1, _source.BufferSlices);
 
         internal async ValueTask<VerifiedSlice> ReadAsync(CancellationToken cancellationToken)
         {
@@ -323,6 +363,7 @@ internal sealed class Par2VerifiedFileStream(
                 {
                     var start = index * sliceSize;
                     var count = (int)Math.Min(sliceSize, length - start);
+                    await _bufferCredits.WaitAsync(ct).ConfigureAwait(false);
                     var buffer = ArrayPool<byte>.Shared.Rent(_proof.SliceSize);
                     var failed = false;
                     Exception? failure = null;
@@ -339,13 +380,13 @@ internal sealed class Par2VerifiedFileStream(
                     }
                     catch
                     {
-                        ArrayPool<byte>.Shared.Return(buffer);
+                        ReturnBuffer(buffer);
                         throw;
                     }
 
                     if (failed)
                     {
-                        ArrayPool<byte>.Shared.Return(buffer);
+                        ReturnBuffer(buffer);
                         // Release the candidate's leases before the reader retries this slice.
                         await ReleaseCandidateAsync().ConfigureAwait(false);
                         await _verified.Writer.WriteAsync(new VerifiedSlice(index, null, failure), ct).ConfigureAwait(false);
@@ -358,7 +399,7 @@ internal sealed class Par2VerifiedFileStream(
                     }
                     catch
                     {
-                        ArrayPool<byte>.Shared.Return(buffer);
+                        ReturnBuffer(buffer);
                         throw;
                     }
                 }
@@ -414,8 +455,14 @@ internal sealed class Par2VerifiedFileStream(
             _cts.Dispose();
             while (_verified.Reader.TryRead(out var slice))
             {
-                if (slice.Buffer is { } buffer) ArrayPool<byte>.Shared.Return(buffer);
+                if (slice.Buffer is { } buffer) ReturnBuffer(buffer);
             }
+        }
+
+        private void ReturnBuffer(byte[] buffer)
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+            _bufferCredits.Release();
         }
     }
 }

@@ -122,14 +122,15 @@ public class NzbFileStream(
                 throw new InvalidDataException("Invalid persisted PAR2 verification metadata.");
             if (_verifiedStream is not null) return _verifiedStream;
             var reader = new Par2CandidateReader(
-                verificationProof, usenetClient, ReadPar2CandidateAsync, () => RecordedSizesInferred);
+                verificationProof, usenetClient, ReadPar2CandidateAsync, () => RecordedSizesInferred,
+                RecoverPar2CandidateAsync);
             var sequential = new Par2SequentialCandidateSource(
                 OpenSequentialPar2Candidate,
                 () => YencFileValidationContext.BeginBufferedPar2ProofRead(
                     fileSegmentIds, segmentFallbacks, _segmentPositionIndex),
                 reader.RecoverAsync,
                 () => readBudgetOverride ?? NzbWebDAV.WebDav.Requests.RangeContext.GetReadBudget(),
-                GetVerifiedWindowSlices(verificationProof.SliceSize));
+                GetVerifiedBufferSlices(verificationProof.SliceSize));
             // A volume opened ahead of the reader goes straight to the sequential candidate so its
             // prefetch starts before the reader arrives.
             _verifiedStream = new Par2VerifiedFileStream(verificationProof,
@@ -138,19 +139,14 @@ public class NzbFileStream(
         }
     }
 
-    private const int MinimumVerifiedWindowSlices = 2;
-    private const int MaximumVerifiedWindowSlices = 8;
-
-    // Verified slices held ahead of the reader: a quarter of the normal read-ahead window.
-    private int GetVerifiedWindowSlices(int sliceSize)
-    {
-        var readAheadBytes = MultiSegmentStream.SaturatingMultiply(
-            MultiSegmentStream.CalculateTaskWindowSize(
-                articleBufferSize, usePipelinedBodyRequests, streamingBodyBatchWidth),
-            EstimatedSegmentSize);
-        return (int)Math.Clamp(readAheadBytes / 4 / sliceSize,
-            MinimumVerifiedWindowSlices, MaximumVerifiedWindowSlices);
-    }
+    // Slice buffers held at once: a quarter of the normal read-ahead window.
+    private int GetVerifiedBufferSlices(int sliceSize) =>
+        Par2VerifiedFileStream.GetBufferSlices(
+            MultiSegmentStream.SaturatingMultiply(
+                MultiSegmentStream.CalculateTaskWindowSize(
+                    articleBufferSize, usePipelinedBodyRequests, streamingBodyBatchWidth),
+                EstimatedSegmentSize) / 4,
+            sliceSize);
 
     // One candidate stream with normal read-ahead serves consecutive slices.
     private NzbFileStream OpenSequentialPar2Candidate(long start, long endExclusive)
@@ -169,7 +165,18 @@ public class NzbFileStream(
         return candidate;
     }
 
-    private async Task ReadPar2CandidateAsync(long start, Memory<byte> target, CancellationToken cancellationToken)
+    // Recovery reads one slice while the reader waits on it. A next part opened ahead of the reader may hold the
+    // shared article credits until this part is consumed, so recovery admits outside that budget.
+    private static readonly InFlightArticleBudget Par2RecoveryBudget = new(long.MaxValue / 4);
+
+    private Task RecoverPar2CandidateAsync(long start, Memory<byte> target, CancellationToken cancellationToken) =>
+        ReadPar2CandidateAsync(start, target, Par2RecoveryBudget, cancellationToken);
+
+    private Task ReadPar2CandidateAsync(long start, Memory<byte> target, CancellationToken cancellationToken) =>
+        ReadPar2CandidateAsync(start, target, inFlightArticleBudget, cancellationToken);
+
+    private async Task ReadPar2CandidateAsync(
+        long start, Memory<byte> target, InFlightArticleBudget? budget, CancellationToken cancellationToken)
     {
         using var validation = YencFileValidationContext.BeginBufferedPar2ProofRead(
             fileSegmentIds, segmentFallbacks, _segmentPositionIndex);
@@ -177,7 +184,7 @@ public class NzbFileStream(
             fileSegmentIds, Length, usenetClient, articleBufferSize: articleBufferSize,
             segmentByteRanges: _segmentByteRanges, usePipelinedBodyRequests: usePipelinedBodyRequests,
             fileName: fileName, segmentFallbacks: segmentFallbacks,
-            inFlightArticleBudget: inFlightArticleBudget, readBudgetOverride: target.Length,
+            inFlightArticleBudget: budget, readBudgetOverride: target.Length,
             streamingBodyBatchWidth: streamingBodyBatchWidth);
         candidate.RecordedSizesInferred = RecordedSizesInferred;
         candidate.Position = start;

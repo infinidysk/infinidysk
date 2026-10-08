@@ -299,6 +299,64 @@ public class Par2VerifiedFileStreamTests
         Assert.Equal(fake.BodyRequestCount, fake.CompletionCallbackCount);
     }
 
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData(32L, false)]
+    public async Task Read_SignalsAllSegmentsIssuedOnlyWhenReadingToFileEnd(long? readBudget, bool expected)
+    {
+        var data = Enumerable.Range(0, 96).Select(value => (byte)value).ToArray();
+        await using var stream = CreateSequential(data, 32, bufferSlices: 4,
+            (start, _) => new CandidateStream(data) { Position = start }, readBudget);
+        var output = new byte[32];
+        Assert.Equal(32, await stream.ReadAsync(output));
+        // A producer that stops before the file end must not invite the next part ahead of the reader.
+        Assert.Equal(expected, ((ISegmentIssueProgress)stream).AllSegmentsIssued);
+    }
+
+    [Theory]
+    [InlineData(1, 32)]
+    [InlineData(3, 96)]
+    public async Task Read_PausedReaderHoldsAtMostBufferSlices(int bufferSlices, int expectedCandidateBytes)
+    {
+        var data = Enumerable.Range(0, 256).Select(value => (byte)value).ToArray();
+        CandidateStream? candidate = null;
+        await using var stream = CreateSequential(data, 32, bufferSlices,
+            (start, _) => candidate = new CandidateStream(data) { Position = start });
+        var output = new byte[32];
+        Assert.Equal(32, await stream.ReadAsync(output));
+        await Task.Delay(200);
+        // The reader's slice counts against the cap, so a paused reader stops the producer.
+        Assert.Equal(expectedCandidateBytes, candidate!.Position);
+        Assert.Equal(32, await stream.ReadAsync(output));
+        Assert.Equal(data[32..64], output);
+    }
+
+    [Theory]
+    [InlineData(Par2FileProof.MaxVerificationSliceSize, 0L, 1)]
+    [InlineData(Par2FileProof.MaxVerificationSliceSize, long.MaxValue, 1)]
+    [InlineData(8 * 1024 * 1024, 0L, 2)]
+    [InlineData(1_536_000, 0L, 4)]
+    [InlineData(1_536_000, long.MaxValue, 10)]
+    public void GetBufferSlices_BoundsVerificationMemoryByBytes(int sliceSize, long readAheadBytes, int expected)
+    {
+        var slices = Par2VerifiedFileStream.GetBufferSlices(readAheadBytes, sliceSize);
+        Assert.Equal(expected, slices);
+        Assert.True(slices == 1 || (long)slices * sliceSize <= Par2VerifiedFileStream.MaximumBufferBytes);
+    }
+
+    private static Par2VerifiedFileStream CreateSequential(
+        byte[] data, int sliceSize, int bufferSlices, Func<long, long, Stream> open, long? readBudget = null) =>
+        new(CreateProof(data, sliceSize), (_, _, _) => throw new InvalidOperationException("Unexpected slice read."),
+            sequential: new Par2SequentialCandidateSource(open, () => new MemoryStream(),
+                (_, _, _, _) => throw new InvalidOperationException("Unexpected recovery."),
+                () => readBudget, bufferSlices));
+
+    // Reports all segments issued as soon as it opens.
+    private sealed class CandidateStream(byte[] data) : MemoryStream(data, writable: false), ISegmentIssueProgress
+    {
+        bool ISegmentIssueProgress.AllSegmentsIssued => true;
+    }
+
     [Fact]
     public void Seek_PreservesNzbFileStreamBounds()
     {
