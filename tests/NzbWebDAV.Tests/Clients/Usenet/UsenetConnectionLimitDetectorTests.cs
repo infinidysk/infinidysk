@@ -28,12 +28,22 @@ public class UsenetConnectionLimitDetectorTests
     }
 
     [Fact]
-    public void AuthStage_481WithConnectionLimitMessage_ReturnsFalse()
+    public void AuthStage_481WithConnectionLimitMessage_ReturnsLearned()
     {
-        // Wrong response code — only 502 triggers the shrink.
         var ex = new CouldNotLoginToUsenetException(
             "Could not login to usenet host: 481 connection limit (50) reached",
             responseCode: 481);
+
+        Assert.True(UsenetConnectionLimitDetector.TryLearn(ex, out var learned));
+        Assert.Equal(50, learned);
+    }
+
+    [Fact]
+    public void AuthStage_NonLimitResponseCode_ReturnsFalse()
+    {
+        var ex = new CouldNotLoginToUsenetException(
+            "Could not login to usenet host: 400 connection limit (50) reached",
+            responseCode: 400);
 
         Assert.False(UsenetConnectionLimitDetector.TryLearn(ex, out _));
     }
@@ -130,7 +140,10 @@ public class UsenetConnectionLimitDetectorTests
     [InlineData("502 Maximum connections reached", 502, true)]
     [InlineData("502 connection limit (150) reached", 502, true)]
     [InlineData("502 authentication failed", 502, false)]
-    [InlineData("502 Too many connections.", 481, false)]
+    [InlineData("481 (remote) (aucl:xx;xx0) exceeded maximum number of connections per user", 481, true)]
+    [InlineData("481 Too many connections.", 481, true)]
+    [InlineData("481 Authentication failed", 481, false)]
+    [InlineData("400 Too many connections.", 400, false)]
     public void IsConnectionLimitRejection_AuthStage(string message, int code, bool expected)
     {
         var ex = new CouldNotLoginToUsenetException(
