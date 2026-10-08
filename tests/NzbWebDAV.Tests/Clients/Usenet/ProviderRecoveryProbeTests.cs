@@ -155,11 +155,8 @@ public class ProviderRecoveryProbeTests
             warmConnectionFloor: 1,
             keepAlive: UsenetStreamingClient.KeepAliveAsync);
 
-        using (var connection = await pool.GetConnectionLockAsync(SemaphorePriority.Low)
-                   .WaitAsync(safetyTimeout))
-        {
-            Assert.Same(dateClient, connection.Connection);
-        }
+        // A manual borrow races the background floor refill, which can then park on the only permit.
+        await WaitUntilAsync(() => pool.LiveConnections == 1 && pool.IdleConnections == 1, safetyTimeout);
 
         for (var sweepIndex = 0; sweepIndex < 2; sweepIndex++)
         {
@@ -171,6 +168,14 @@ public class ProviderRecoveryProbeTests
         Assert.Equal(1, pool.LiveConnections);
         Assert.Equal(1, pool.IdleConnections);
         Assert.Equal(0, pool.ActiveConnections);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (!condition() && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.True(condition(), "Timed out waiting for connection-pool state.");
     }
 
     private static ProviderCircuitBreaker HalfOpenBreaker()
