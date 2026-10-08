@@ -298,25 +298,30 @@ public class MultiConnectionNntpClient(
         return RunWithConnection(
             "DATE",
             SemaphorePriority.Low,
-            RequireSuccessfulDateAsync,
+            (connection, _, commandCt) => CheckDateLivenessAsync(connection, commandCt),
             onConnectionReadyAgain: null,
             ct
         );
     }
 
-    private static async Task<UsenetDateResponse> RequireSuccessfulDateAsync(
+    internal static async Task<UsenetDateResponse> CheckDateLivenessAsync(
         INntpClient connection,
-        ArticleBodyCompletionHandler _,
         CancellationToken ct)
     {
         var response = await connection.DateAsync(ct).ConfigureAwait(false);
-        if (response.ResponseType != UsenetResponseType.DateAndTime)
+        if (response.ResponseType is UsenetResponseType.DateAndTime
+            or UsenetResponseType.CommandNotRecognized
+            || (response.ResponseType == UsenetResponseType.ServiceDiscontinued
+                && string.Equals(
+                    response.ResponseMessage,
+                    "400 Unrecognized command",
+                    StringComparison.Ordinal)))
         {
-            throw new RetryableDownloadException(
-                $"Unexpected NNTP response to DATE: {response.ResponseMessage}");
+            return response;
         }
 
-        return response;
+        throw new RetryableDownloadException(
+            $"Unexpected NNTP response to DATE: {response.ResponseMessage}");
     }
 
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync
