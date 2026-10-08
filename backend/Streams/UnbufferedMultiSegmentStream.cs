@@ -5,6 +5,7 @@ using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
+using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.Repair;
 using NzbWebDAV.Services.StreamTrace;
 using Serilog;
@@ -50,6 +51,8 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
     private bool _isPositioning;
     private long _openSegmentCallerBytes;
     private SegmentRecoveryState? _recoveryState;
+    private ContextualCancellationTokenSource? _bodyCts;
+    private int _hedgedSegmentIndex = -1;
     private bool _disposed;
 
 
@@ -1023,7 +1026,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
         ThrowIfPlaybackFailFast();
         using (FetchAttributionContext.Begin(_fileName))
         {
-            var response = await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken)
+            var response = await DecodedBodyWithHedgeAsync(segmentId, cancellationToken)
                 .ConfigureAwait(false);
             try
             {
@@ -1050,6 +1053,103 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
                 throw;
             }
         }
+    }
+
+    /// <summary>
+    /// Streams the segment's BODY; when a streaming read has had no server response for the hedge
+    /// delay, races one duplicate fetch on another connection and keeps the first successful response.
+    /// </summary>
+    private async Task<UsenetDecodedBodyResponse> DecodedBodyWithHedgeAsync(
+        string segmentId,
+        CancellationToken cancellationToken)
+    {
+        var segmentIndex = _openSegmentIndex;
+        if (_hedgedSegmentIndex == segmentIndex ||
+            DownloadWorkloadClassifier.Classify(cancellationToken) != DownloadWorkload.Streaming)
+        {
+            return await _usenetClient.DecodedBodyAsync(segmentId, cancellationToken).ConfigureAwait(false);
+        }
+
+        // The previous body is finished or disposed before the next fetch starts.
+        _bodyCts?.Dispose();
+        // The body keeps reading under its fetch token, so the winner's source lives as long as the body.
+        var originalCts = _bodyCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var original = _usenetClient.DecodedBodyAsync(segmentId, originalCts.Token);
+        await ((Task)original).WaitAsync(MultiSegmentStream.HedgeFloor, cancellationToken)
+            .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (original.IsCompleted || cancellationToken.IsCancellationRequested)
+            return await original.ConfigureAwait(false);
+
+        _hedgedSegmentIndex = segmentIndex;
+        var traceSession = MultiProviderNntpClient.CurrentReadSessionId;
+        if (traceSession is { } issuedSession)
+        {
+            var delayMs = (int)MultiSegmentStream.HedgeFloor.TotalMilliseconds;
+            StreamTrace.TryHedgeIssued(issuedSession, segmentId, segmentIndex, delayMs, delayMs);
+        }
+
+        Log.Debug(
+            "Segment {SegmentIndex} of {FileName} unanswered after {DelayMs} ms; racing a duplicate fetch.",
+            segmentIndex, _fileName, MultiSegmentStream.HedgeFloor.TotalMilliseconds);
+        var raceStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+#pragma warning disable CA2000 // owned by _bodyCts if it wins, otherwise disposed once the loser settles
+        var hedgeCts = ContextualCancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+#pragma warning restore CA2000
+        Task<UsenetDecodedBodyResponse> hedge;
+        // The scope's AsyncLocal flag flows into the fetch when it starts; it need not outlive the call.
+#pragma warning disable CA2025
+        using (MultiProviderNntpClient.BeginHedgeFetchScope())
+            hedge = _usenetClient.DecodedBodyAsync(segmentId, hedgeCts.Token);
+#pragma warning restore CA2025
+
+        var winner = await Task.WhenAny(original, hedge).ConfigureAwait(false);
+        var loser = winner == original ? hedge : original;
+        if (!winner.IsCompletedSuccessfully && !cancellationToken.IsCancellationRequested)
+        {
+            // One fetch failing does not end the race while the other can still answer.
+            await ((Task)loser).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            if (loser.IsCompletedSuccessfully)
+                (winner, loser) = (loser, winner);
+        }
+
+        var loserCts = loser == hedge ? hedgeCts : originalCts;
+        _bodyCts = loser == hedge ? originalCts : hedgeCts;
+        // Caller cancellation releases the loser's connection without penalizing its provider.
+        await loserCts.CancelAsync().ConfigureAwait(false);
+#pragma warning disable CA2025 // DisposeLateBodyAsync disposes the token source only after the loser settles
+        _ = DisposeLateBodyAsync(loser, loserCts);
+#pragma warning restore CA2025
+
+        var outcome = cancellationToken.IsCancellationRequested ? HedgeOutcome.Cancelled
+            : !winner.IsCompletedSuccessfully ? HedgeOutcome.OriginalFailed
+            : winner == hedge ? HedgeOutcome.Duplicate
+            : hedge.IsFaulted ? HedgeOutcome.OriginalAfterDuplicateFailed
+            : HedgeOutcome.Original;
+        Log.Debug(
+            "Duplicate fetch race for segment {SegmentIndex} of {FileName} resolved: {Outcome}.",
+            segmentIndex, _fileName, outcome);
+        if (traceSession is { } resolvedSession)
+        {
+            StreamTrace.TryHedgeResolved(
+                resolvedSession, segmentId, segmentIndex, outcome,
+                (int)System.Diagnostics.Stopwatch.GetElapsedTime(raceStarted).TotalMilliseconds);
+        }
+
+        // Both failed: surface the original's failure so recovery classifies it as before.
+        if (!winner.IsCompletedSuccessfully) _ = hedge.Exception;
+        return await (winner.IsCompletedSuccessfully ? winner : original).ConfigureAwait(false);
+    }
+
+    private static async Task DisposeLateBodyAsync(
+        Task<UsenetDecodedBodyResponse> fetch,
+        ContextualCancellationTokenSource cts)
+    {
+        await ((Task)fetch).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (fetch.IsCompletedSuccessfully)
+            await DisposeBodyStreamAsync((await fetch.ConfigureAwait(false)).Stream).ConfigureAwait(false);
+        else
+            _ = fetch.Exception;
+        cts.Dispose();
     }
 
     private bool IsClippedAtFileEnd(int segmentIndex) =>
@@ -1145,6 +1245,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
         if (!disposing) return;
         _disposed = true;
         _stream?.Dispose();
+        _bodyCts?.Dispose();
         base.Dispose(disposing);
     }
 }

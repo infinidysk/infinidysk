@@ -287,6 +287,59 @@ public sealed class MultiSegmentStreamHedgeTests
         }
     }
 
+    [Fact]
+    public async Task StalledFirstSegmentOfRange_DuplicateFetchStartsPlaybackAndCancelsOriginal()
+    {
+        var (segments, ranges) = CreateSegments(1);
+        var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        var stalled = new FirstBodyStallsClient(inner);
+        using var trace = new HedgeTraceCapture();
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        await using var stream = new UnbufferedMultiSegmentStream(
+            segments.Keys.ToArray().AsMemory(), stalled, SegmentSize, "hedge.bin",
+            exactSegmentSizes: new long[] { SegmentSize });
+
+        var buffer = new byte[SegmentSize];
+        await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true, cts.Token)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(segments["seg-0"], buffer);
+        Assert.Single(trace.AssertHedge("seg-0", 0, HedgeOutcome.Duplicate));
+        // The stalled original is released through caller cancellation, not left holding its connection.
+        await stalled.OriginalCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, stalled.Requests);
+    }
+
+    private sealed class FirstBodyStallsClient(INntpClient inner) : WrappingNntpClient(inner)
+    {
+        private int _requests;
+
+        public int Requests => Volatile.Read(ref _requests);
+
+        public TaskCompletionSource OriginalCancelled { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
+            SegmentId segmentId, CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _requests) == 1)
+            {
+                try
+                {
+                    await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    OriginalCancelled.TrySetResult();
+                    throw;
+                }
+            }
+
+            return await base.DecodedBodyAsync(segmentId, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private const int SegmentSize = 64;
     private const int BatchWidth = 4;
 
