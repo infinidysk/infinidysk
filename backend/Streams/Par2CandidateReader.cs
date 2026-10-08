@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Exceptions;
@@ -13,18 +14,36 @@ internal sealed class Par2CandidateReader(
     Func<bool>? geometryRecoverable = null)
 {
     internal Task ReadAsync(long start, Memory<byte> target, CancellationToken cancellationToken) =>
-        ReadVerifiedAsync(start, target, false, cancellationToken);
+        ReadVerifiedAsync(start, target, false, null, cancellationToken);
 
     internal Task ReadPrefixAsync(long start, Memory<byte> target, CancellationToken cancellationToken) =>
-        ReadVerifiedAsync(start, target, true, cancellationToken);
+        ReadVerifiedAsync(start, target, true, null, cancellationToken);
 
-    private async Task ReadVerifiedAsync(long start, Memory<byte> target, bool prefix, CancellationToken cancellationToken)
+    // The sequential read counts as the default attempt; a failure it would not have retried propagates.
+    // A null failure is a checksum mismatch.
+    internal Task RecoverAsync(long start, Memory<byte> target, Exception? failure, CancellationToken cancellationToken)
+    {
+        if (failure is not null && !IsRetryableCandidateFailure(failure, cancellationToken))
+            ExceptionDispatchInfo.Throw(failure);
+        return ReadVerifiedAsync(start, target, false, failure ?? ChecksumMismatch(), cancellationToken);
+    }
+
+    private static InvalidDataException ChecksumMismatch() => new("PAR2 candidate slice checksum mismatch.");
+
+    private bool IsRetryableCandidateFailure(Exception exception, CancellationToken cancellationToken) =>
+        !exception.IsCancellationException(cancellationToken)
+        && !(exception is SeekPositionNotFoundException && geometryRecoverable?.Invoke() == true)
+        && (exception is IOException or InvalidOperationException or NonRetryableDownloadException
+            || exception.TryGetKnownErrorMessage(out _));
+
+    private async Task ReadVerifiedAsync(
+        long start, Memory<byte> target, bool prefix, Exception? sequentialFailure, CancellationToken cancellationToken)
     {
         if (!proof.IsValidFor(proof.FileLength))
             throw new InvalidDataException("Invalid persisted PAR2 verification metadata.");
         var padded = prefix || target.Length == proof.SliceSize ? target : new byte[proof.SliceSize];
         var sliceIndex = checked((int)(start / proof.SliceSize));
-        Exception? lastFailure = null;
+        var lastFailure = sequentialFailure;
 
         async Task<bool> TryCandidateAsync()
         {
@@ -39,20 +58,17 @@ internal sealed class Par2CandidateReader(
                     padded[..target.Length].CopyTo(target);
                     return true;
                 }
-                lastFailure = new InvalidDataException("PAR2 candidate slice checksum mismatch.");
+                lastFailure = ChecksumMismatch();
             }
             // Retrying providers reuses the same recorded ranges; let the owner re-derive them.
-            catch (Exception exception) when (!exception.IsCancellationException(cancellationToken)
-                && !(exception is SeekPositionNotFoundException && geometryRecoverable?.Invoke() == true)
-                && (exception is IOException or InvalidOperationException or NonRetryableDownloadException
-                    || exception.TryGetKnownErrorMessage(out _)))
+            catch (Exception exception) when (IsRetryableCandidateFailure(exception, cancellationToken))
             {
                 lastFailure = exception;
             }
             return false;
         }
 
-        if (await TryCandidateAsync().ConfigureAwait(false)) return;
+        if (sequentialFailure is null && await TryCandidateAsync().ConfigureAwait(false)) return;
         if (WrappingNntpClient.Unwrap(client) is MultiProviderNntpClient providers)
         {
             foreach (var retry in providers.GetPar2VerificationProviders()

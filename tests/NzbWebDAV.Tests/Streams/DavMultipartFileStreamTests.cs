@@ -472,6 +472,99 @@ public class DavMultipartFileStreamTests
         Assert.Equal(0, budget.LeasedBytes);
     }
 
+    [Fact]
+    public async Task ReadAsync_VerifiedVolumeRecoversMiddleSliceBeforeNextVolumePrefetchesUnderTightBudget()
+    {
+        const int segmentsPerPart = 6;
+        const int segmentSize = 32;
+        const int volumeSize = segmentsPerPart * segmentSize;
+        var segments = new Dictionary<string, byte[]>();
+        var segmentRanges = new Dictionary<string, LongRange>();
+        DavMultipartFile.FilePart Part(string name, int partIndex)
+        {
+            var ids = Enumerable.Range(0, segmentsPerPart).Select(i => $"{name}-{i}").ToArray();
+            for (var i = 0; i < segmentsPerPart; i++)
+            {
+                var first = partIndex * volumeSize + i * segmentSize;
+                segments[ids[i]] = Enumerable.Range(first, segmentSize).Select(x => (byte)x).ToArray();
+                segmentRanges[ids[i]] = LongRange.FromStartAndSize(i * segmentSize, segmentSize);
+            }
+            return new DavMultipartFile.FilePart
+            {
+                SegmentIds = ids,
+                SegmentIdByteRange = new LongRange(0, volumeSize),
+                FilePartByteRange = new LongRange(0, volumeSize),
+                SegmentByteRanges = ids.Select(id => segmentRanges[id]).ToArray(),
+            };
+        }
+        var parts = new[] { Part("one", 0), Part("two", 1) };
+        parts[0].VerificationProof = Par2VerifiedFileStreamTests.CreateProof(
+            parts[0].SegmentIds.SelectMany(id => segments[id]).ToArray(), 2 * segmentSize);
+        // Three two-segment slices; the middle one is corrupt on the primary and only the backup recovers it.
+        // Reading after recovery resumes on a new candidate that needs the same shared credits.
+        var corrupt = new Dictionary<string, byte[]>(segments) { ["one-3"] = segments["one-3"].Select(x => (byte)~x).ToArray() };
+        var headers = segments.Keys.ToDictionary(id => id, id =>
+        {
+            var index = int.Parse(id[^1..]);
+            return new UsenetSharp.Models.UsenetYencHeader
+            {
+                FileName = id[..^2], LineLength = 128, FileSize = volumeSize, PartOffset = index * segmentSize,
+                PartSize = segmentSize, TotalParts = segmentsPerPart, PartNumber = index + 1
+            };
+        });
+        // The next volume holds its credits until the reader reaches it, so it must not open while any
+        // slice of the current volume is unverified. The corrupt slice is held back to give it the chance.
+        var budget = new InFlightArticleBudget(3 * segmentSize);
+        var successorRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var order = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        using var primary = new FakeNntpClient(corrupt, useCachedYencStreams: true, segmentRanges: segmentRanges, yencHeaders: headers,
+            decodedStreamFactory: (id, bytes) =>
+            {
+                if (id == "two-0")
+                {
+                    order.Enqueue("successor");
+                    successorRequested.TrySetResult();
+                }
+                if (id == "one-3") successorRequested.Task.Wait(TimeSpan.FromMilliseconds(500));
+                return new MemoryStream(bytes);
+            });
+        using var backup = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: segmentRanges, yencHeaders: headers,
+            decodedStreamFactory: (id, bytes) =>
+            {
+                if (id == "one-3") order.Enqueue("recovery");
+                return new MemoryStream(bytes);
+            });
+        using var client = new MultiProviderNntpClient(
+            [
+                NzbWebDAV.Tests.Clients.Usenet.MultiProviderNntpClientTests.CreateProvider(primary, host: "primary.example"),
+                NzbWebDAV.Tests.Clients.Usenet.MultiProviderNntpClientTests.CreateProvider(backup, host: "backup.example", providerType: ProviderType.BackupOnly)
+            ], articleMissCache: new ArticleMissNegativeCache(new ConfigManager()));
+        var multipart = new DavMultipartFile
+        {
+            Id = Guid.NewGuid(),
+            Metadata = new DavMultipartFile.Meta { FileParts = parts },
+        };
+        var stream = new DavMultipartFileStream(
+            multipart, client, articleBufferSize: 64, resolver: null,
+            usePipelinedBodyRequests: false, fileName: "movie.mkv", inFlightArticleBudget: budget);
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var all = new MemoryStream();
+        var buffer = new byte[8];
+        int read;
+        while ((read = await stream.ReadAsync(buffer, timeout.Token)) > 0)
+            all.Write(buffer, 0, read);
+        await stream.DisposeAsync();
+
+        Assert.Equal(Enumerable.Range(0, 2 * volumeSize).Select(x => (byte)x).ToArray(), all.ToArray());
+        Assert.True(backup.BodyRequestCounts.GetValueOrDefault("one-3") > 0);
+        Assert.Equal("recovery", order.First());
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (budget.LeasedBytes != 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
     [Theory]
     [InlineData(0, false)]
     [InlineData(4, false)]
