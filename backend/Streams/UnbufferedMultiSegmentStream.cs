@@ -1115,7 +1115,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
         CancellationToken cancellationToken)
     {
         var segmentIndex = _openSegmentIndex;
-        if (_hedgedSegmentIndex == segmentIndex ||
+        if (_hedgedSegmentIndex == segmentIndex || !CanVerifyDuplicateLength(segmentIndex) ||
             DownloadWorkloadClassifier.Classify(cancellationToken) != DownloadWorkload.Streaming)
         {
             return await ValidatedBodyAsync(
@@ -1218,13 +1218,19 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
         cts.Dispose();
     }
 
-    // Buffering sizes come from recorded geometry or the file's average part, never the remote header alone.
+    // A duplicate may replace the original only when local metadata proves the segment's length.
+    private bool CanVerifyDuplicateLength(int segmentIndex) =>
+        (segmentIndex == 0 && _expectedFirstSegmentRange is not null) ||
+        (!IsClippedAtFileEnd(segmentIndex) && _segmentSizes.TryGetExactSize(segmentIndex, out _));
+
+    // The length comes from the recorded size or the already-matched positioning range; plausibility only bounds the buffer.
     private bool IsTrustedDuplicateSize(UsenetYencHeader header, int segmentIndex) =>
         header.PartSize > 0 && header.PartSize <= Array.MaxLength &&
         ((!IsClippedAtFileEnd(segmentIndex) &&
           _segmentSizes.TryGetExactSize(segmentIndex, out var recorded) && recorded == header.PartSize) ||
-         MultiSegmentStream.IsPlausiblePartSize(
-             header.PartSize, header.TotalParts, _segmentIds.Length, _estimatedSegmentSize));
+         (segmentIndex == 0 && _expectedFirstSegmentRange is not null &&
+          MultiSegmentStream.IsPlausiblePartSize(
+              header.PartSize, header.TotalParts, _segmentIds.Length, _estimatedSegmentSize)));
 
     private bool IsClippedAtFileEnd(int segmentIndex) =>
         segmentIndex == 0 && _expectedFirstSegmentRangeWasClippedAtFileEnd;

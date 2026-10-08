@@ -378,6 +378,52 @@ public sealed class MultiSegmentStreamHedgeTests
         trace.AssertHedge("seg-0", 0, outcome);
     }
 
+    [Fact]
+    public async Task StalledFirstSegmentWithoutKnownLength_SmallerDuplicateCannotReplaceHealthyOriginal()
+    {
+        var (segments, ranges) = CreateSegments(1);
+        var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        var original = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var oneByte = new UsenetYencHeader
+        {
+            FileName = "fake.bin",
+            FileSize = 1,
+            LineLength = 128,
+            PartNumber = 1,
+            TotalParts = 1,
+            PartOffset = 0,
+            PartSize = 1,
+        };
+        // Were a duplicate sent, it would be one internally consistent byte.
+        var stalled = new FirstBodyStallsClient(inner, original.Task)
+        {
+            DuplicateResponse = response =>
+            {
+                response.Stream?.Dispose();
+                return response with
+                {
+                    Stream = new CachedYencStream(oneByte, new MemoryStream(segments["seg-0"][..1], writable: false)),
+                };
+            },
+        };
+        using var trace = new HedgeTraceCapture();
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        await using var stream = new UnbufferedMultiSegmentStream(
+            segments.Keys.ToArray().AsMemory(), stalled, SegmentSize, "hedge.bin");
+
+        var buffer = new byte[SegmentSize];
+        var read = stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true, cts.Token).AsTask();
+        await Task.Delay(MultiSegmentStream.HedgeFloor * 2);
+        original.TrySetResult();
+        await read.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(segments["seg-0"], buffer);
+        Assert.Equal(1, stalled.Requests);
+        Assert.False(stalled.OriginalCancelled.Task.IsCompleted, "The healthy original was cancelled.");
+        trace.AssertNoHedge();
+    }
+
     private sealed class FirstBodyStallsClient(INntpClient inner, Task? originalGate = null) : WrappingNntpClient(inner)
     {
         private int _requests;
