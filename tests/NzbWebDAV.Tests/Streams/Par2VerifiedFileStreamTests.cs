@@ -248,6 +248,57 @@ public class Par2VerifiedFileStreamTests
         Assert.Equal(0, await stream.ReadAsync(prefix));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NzbFileStream_SequentialSlicesShareOneReadAheadStreamAndRejectCorruption(bool corruptThirdSlice)
+    {
+        var data = Enumerable.Range(0, 128).Select(value => (byte)value).ToArray();
+        var segments = Enumerable.Range(0, 8).ToDictionary(index => $"s{index}", index => data[(index * 16)..((index + 1) * 16)]);
+        if (corruptThirdSlice)
+            segments["s5"] = segments["s5"].Select((value, index) => index == 15 ? (byte)(value ^ 1) : value).ToArray();
+        var headers = segments.Keys.Select((id, index) => (id, index)).ToDictionary(entry => entry.id, entry => new UsenetYencHeader
+        {
+            FileName = "test.bin", LineLength = 128, FileSize = 128, PartOffset = entry.index * 16, PartSize = 16,
+            TotalParts = 8, PartNumber = entry.index + 1
+        });
+        using var fake = new FakeNntpClient(segments, useCachedYencStreams: true, yencHeaders: headers);
+        using var client = new MultiProviderNntpClient(
+            [NzbWebDAV.Tests.Clients.Usenet.MultiProviderNntpClientTests.CreateProvider(fake)]);
+        await using var stream = new NzbFileStream(segments.Keys.ToArray(), 128, client, 4,
+            verificationProof: CreateProof(data, 32));
+
+        var first = new byte[8];
+        Assert.Equal(8, await stream.ReadAsync(first));
+        Assert.Equal(data[..8], first);
+        // Read-ahead fetches later slices before the caller asks for them.
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!fake.RequestedSegmentIds.Contains("s4") && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.Contains("s4", fake.RequestedSegmentIds);
+
+        var output = new byte[56];
+        await stream.ReadExactlyAsync(output);
+        Assert.Equal(data[8..64], output);
+        if (corruptThirdSlice)
+        {
+            var untouched = new byte[] { 200, 201, 202 };
+            await Assert.ThrowsAsync<NzbWebDAV.Exceptions.NonRetryableDownloadException>(async () => await stream.ReadAsync(untouched));
+            Assert.Equal(new byte[] { 200, 201, 202 }, untouched);
+            Assert.Equal(64, stream.Position);
+        }
+        else
+        {
+            using var rest = new MemoryStream();
+            await stream.CopyToAsync(rest);
+            Assert.Equal(data[64..], rest.ToArray());
+            // One persistent candidate stream: no segment is re-fetched per slice.
+            Assert.All(segments.Keys, id => Assert.Equal(1, fake.BodyRequestCounts[id]));
+        }
+        await stream.DisposeAsync();
+        Assert.Equal(fake.BodyRequestCount, fake.CompletionCallbackCount);
+    }
+
     [Fact]
     public void Seek_PreservesNzbFileStreamBounds()
     {
