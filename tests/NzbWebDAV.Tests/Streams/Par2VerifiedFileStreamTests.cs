@@ -309,8 +309,51 @@ public class Par2VerifiedFileStreamTests
             (start, _) => new CandidateStream(data) { Position = start }, readBudget);
         var output = new byte[32];
         Assert.Equal(32, await stream.ReadAsync(output));
+        var progress = (ISegmentIssueProgress)stream;
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (progress.AllSegmentsIssued != expected && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
         // A producer that stops before the file end must not invite the next part ahead of the reader.
-        Assert.Equal(expected, ((ISegmentIssueProgress)stream).AllSegmentsIssued);
+        Assert.Equal(expected, progress.AllSegmentsIssued);
+    }
+
+    [Fact]
+    public async Task Read_SignalsAllSegmentsIssuedOnlyAfterEveryRemainingSliceVerifies()
+    {
+        var data = Enumerable.Range(0, 128).Select(value => (byte)value).ToArray();
+        var corrupt = data.ToArray();
+        corrupt[40] ^= 1;
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recovered = 0;
+        await using var stream = CreateSequential(data, 32, bufferSlices: 4,
+            (start, _) => new CandidateStream(corrupt, gateAt: start == 0 ? 32 : null, gate.Task) { Position = start },
+            recover: (start, target, _, _) =>
+            {
+                Interlocked.Increment(ref recovered);
+                data.AsMemory((int)start, target.Length).CopyTo(target);
+                return Task.CompletedTask;
+            });
+        var progress = (ISegmentIssueProgress)stream;
+        var output = new byte[32];
+        Assert.Equal(32, await stream.ReadAsync(output));
+        // The candidate has issued everything, but the middle slice is not verified yet.
+        await Task.Delay(50);
+        Assert.False(progress.AllSegmentsIssued);
+
+        gate.SetResult();
+        Assert.Equal(32, await stream.ReadAsync(output));
+        Assert.Equal(data[32..64], output);
+        Assert.Equal(1, recovered);
+        // Reading resumes on a new candidate after the recovered slice.
+        Assert.Equal(32, await stream.ReadAsync(output));
+        Assert.Equal(data[64..96], output);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!progress.AllSegmentsIssued && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.True(progress.AllSegmentsIssued);
+        using var rest = new MemoryStream();
+        await stream.CopyToAsync(rest);
+        Assert.Equal(data[96..], rest.ToArray());
     }
 
     [Theory]
@@ -324,7 +367,10 @@ public class Par2VerifiedFileStreamTests
             (start, _) => candidate = new CandidateStream(data) { Position = start });
         var output = new byte[32];
         Assert.Equal(32, await stream.ReadAsync(output));
-        await Task.Delay(200);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while ((candidate?.Position ?? 0) < expectedCandidateBytes && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        await Task.Delay(100);
         // The reader's slice counts against the cap, so a paused reader stops the producer.
         Assert.Equal(expectedCandidateBytes, candidate!.Position);
         Assert.Equal(32, await stream.ReadAsync(output));
@@ -345,16 +391,24 @@ public class Par2VerifiedFileStreamTests
     }
 
     private static Par2VerifiedFileStream CreateSequential(
-        byte[] data, int sliceSize, int bufferSlices, Func<long, long, Stream> open, long? readBudget = null) =>
+        byte[] data, int sliceSize, int bufferSlices, Func<long, long, Stream> open, long? readBudget = null,
+        Func<long, Memory<byte>, Exception?, CancellationToken, Task>? recover = null) =>
         new(CreateProof(data, sliceSize), (_, _, _) => throw new InvalidOperationException("Unexpected slice read."),
             sequential: new Par2SequentialCandidateSource(open, () => new MemoryStream(),
-                (_, _, _, _) => throw new InvalidOperationException("Unexpected recovery."),
+                recover ?? ((_, _, _, _) => throw new InvalidOperationException("Unexpected recovery.")),
                 () => readBudget, bufferSlices));
 
-    // Reports all segments issued as soon as it opens.
-    private sealed class CandidateStream(byte[] data) : MemoryStream(data, writable: false), ISegmentIssueProgress
+    // Reports all segments issued as soon as it opens; reads at or past gateAt wait for the gate.
+    private sealed class CandidateStream(byte[] data, long? gateAt = null, Task? gate = null)
+        : MemoryStream(data, writable: false), ISegmentIssueProgress
     {
         bool ISegmentIssueProgress.AllSegmentsIssued => true;
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Position >= gateAt) await gate!.WaitAsync(cancellationToken);
+            return await base.ReadAsync(buffer, cancellationToken);
+        }
     }
 
     [Fact]

@@ -11,9 +11,7 @@ internal sealed class Par2CandidateReader(
     Par2FileProof proof,
     INntpClient client,
     Func<long, Memory<byte>, CancellationToken, Task> readCandidate,
-    Func<bool>? geometryRecoverable = null,
-    // Reads a candidate after a sequential failure; defaults to readCandidate.
-    Func<long, Memory<byte>, CancellationToken, Task>? recoverCandidate = null)
+    Func<bool>? geometryRecoverable = null)
 {
     internal Task ReadAsync(long start, Memory<byte> target, CancellationToken cancellationToken) =>
         ReadVerifiedAsync(start, target, false, null, cancellationToken);
@@ -46,7 +44,6 @@ internal sealed class Par2CandidateReader(
         var padded = prefix || target.Length == proof.SliceSize ? target : new byte[proof.SliceSize];
         var sliceIndex = checked((int)(start / proof.SliceSize));
         var lastFailure = sequentialFailure;
-        var read = sequentialFailure is null ? readCandidate : recoverCandidate ?? readCandidate;
 
         async Task<bool> TryCandidateAsync()
         {
@@ -54,7 +51,7 @@ internal sealed class Par2CandidateReader(
             padded.Span.Clear();
             try
             {
-                await read(start, padded[..target.Length], cancellationToken).ConfigureAwait(false);
+                await readCandidate(start, padded[..target.Length], cancellationToken).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
                 if (prefix ? start == 0 && proof.VerifyPrefix(padded.Span) : proof.VerifySlice(padded.Span, sliceIndex))
                 {

@@ -39,8 +39,10 @@ internal sealed class Par2VerifiedFileStream(
     // Teardown of a producer a Seek abandoned; the next read joins it before leasing again.
     private Task? _pendingTeardown;
     // Bounds every sequential slice buffer, including the producer's working buffer and the reader's slice.
+#pragma warning disable CA2213 // a read continuation may still return a buffer after disposal; no wait handle is created
     private readonly SemaphoreSlim? _bufferCredits =
         sequential is null ? null : new SemaphoreSlim(Math.Max(1, sequential.BufferSlices));
+#pragma warning restore CA2213
 
     // Verification buffers are held outside the article budget, so their total stays bounded by bytes.
     internal const long MaximumBufferBytes = 16L * 1024 * 1024;
@@ -129,8 +131,15 @@ internal sealed class Par2VerifiedFileStream(
                 _producer = null;
                 await current.DisposeAsync().ConfigureAwait(false);
             }
-            _producer ??= StartProducer(sliceIndex, cancellationToken);
-            var producer = _producer;
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var producer = _producer ??= StartProducer(sliceIndex, cancellationToken);
+            if (_disposed)
+            {
+                // Synchronous disposal raced the start and cannot see this producer.
+                _producer = null;
+                await producer.DisposeAsync().ConfigureAwait(false);
+                ObjectDisposedException.ThrowIf(_disposed, this);
+            }
 
             VerifiedSlice next;
             try
@@ -237,7 +246,6 @@ internal sealed class Par2VerifiedFileStream(
             await pending.ConfigureAwait(false);
         }
         ReturnSlice();
-        _bufferCredits?.Dispose();
         _prefix = null;
         GC.SuppressFinalize(this);
         await base.DisposeAsync().ConfigureAwait(false);
@@ -253,9 +261,9 @@ internal sealed class Par2VerifiedFileStream(
             if (_pendingTeardown is { } pending) teardown = teardown is null ? pending : Task.WhenAll(pending, teardown);
             _producer = null;
             _pendingTeardown = null;
-            if (teardown is null) ReleaseBuffers();
+            if (teardown is null) ReturnSlice();
             else
-                _ = teardown.ContinueWith(static (_, state) => ((Par2VerifiedFileStream)state!).ReleaseBuffers(),
+                _ = teardown.ContinueWith(static (_, state) => ((Par2VerifiedFileStream)state!).ReturnSlice(),
                     this, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
             _prefix = null;
         }
@@ -272,12 +280,6 @@ internal sealed class Par2VerifiedFileStream(
     {
         ArrayPool<byte>.Shared.Return(buffer);
         _bufferCredits?.Release();
-    }
-
-    private void ReleaseBuffers()
-    {
-        ReturnSlice();
-        _bufferCredits?.Dispose();
     }
 
     // Buffer is null when the slice failed; Failure is null for a checksum mismatch.
@@ -331,11 +333,9 @@ internal sealed class Par2VerifiedFileStream(
             _run = RunAsync(firstSlice, _cts.Token);
         }
 
-        // Only when this generation reads to the end of the file. Recovery of a failed slice does not draw on
-        // the shared article budget, so a next part opened ahead of the reader cannot starve it.
-        internal bool AllSegmentsIssued =>
-            _coversFileEnd
-            && (_finished || Volatile.Read(ref _candidate) is ISegmentIssueProgress { AllSegmentsIssued: true });
+        // Only once every remaining slice is verified: a failed slice's recovery and the candidate that resumes
+        // after it both need shared article credits, which a next part opened ahead of the reader would hold.
+        internal bool AllSegmentsIssued => _coversFileEnd && _finished;
 
         internal bool CanServe(int sliceIndex) =>
             sliceIndex >= _nextSlice && sliceIndex < _endSlice
@@ -409,7 +409,7 @@ internal sealed class Par2VerifiedFileStream(
             {
                 // Seek or dispose ended this generation.
             }
-            catch (Exception exception)
+            catch (Exception exception) when (exception is not OutOfMemoryException)
             {
                 _verified.Writer.TryWrite(new VerifiedSlice(index, null, exception));
             }

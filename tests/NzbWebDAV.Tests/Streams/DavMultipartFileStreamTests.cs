@@ -473,9 +473,9 @@ public class DavMultipartFileStreamTests
     }
 
     [Fact]
-    public async Task ReadAsync_VerifiedVolumeRecoversCorruptSliceWhileNextVolumePrefetchesUnderTightBudget()
+    public async Task ReadAsync_VerifiedVolumeRecoversMiddleSliceBeforeNextVolumePrefetchesUnderTightBudget()
     {
-        const int segmentsPerPart = 4;
+        const int segmentsPerPart = 6;
         const int segmentSize = 32;
         const int volumeSize = segmentsPerPart * segmentSize;
         var segments = new Dictionary<string, byte[]>();
@@ -500,8 +500,8 @@ public class DavMultipartFileStreamTests
         var parts = new[] { Part("one", 0), Part("two", 1) };
         parts[0].VerificationProof = Par2VerifiedFileStreamTests.CreateProof(
             parts[0].SegmentIds.SelectMany(id => segments[id]).ToArray(), 2 * segmentSize);
-        // Two-segment slices, so recovery reaches the budgeted remainder after its unbudgeted head segment.
-        // The current volume's last slice is corrupt on the primary and only the backup recovers it.
+        // Three two-segment slices; the middle one is corrupt on the primary and only the backup recovers it.
+        // Reading after recovery resumes on a new candidate that needs the same shared credits.
         var corrupt = new Dictionary<string, byte[]>(segments) { ["one-3"] = segments["one-3"].Select(x => (byte)~x).ToArray() };
         var headers = segments.Keys.ToDictionary(id => id, id =>
         {
@@ -512,21 +512,26 @@ public class DavMultipartFileStreamTests
                 PartSize = segmentSize, TotalParts = segmentsPerPart, PartNumber = index + 1
             };
         });
-        // One segment of credit. When the corrupt slice is served, a successor-style lease queues for the
-        // shared budget and takes the credit as soon as the candidate releases it; recovery must not need it.
-        var budget = new InFlightArticleBudget(segmentSize);
-        Task<ArticleByteLease>? heldBySuccessor = null;
+        // The next volume holds its credits until the reader reaches it, so it must not open while any
+        // slice of the current volume is unverified. The corrupt slice is held back to give it the chance.
+        var budget = new InFlightArticleBudget(3 * segmentSize);
+        var successorRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var order = new System.Collections.Concurrent.ConcurrentQueue<string>();
         using var primary = new FakeNntpClient(corrupt, useCachedYencStreams: true, segmentRanges: segmentRanges, yencHeaders: headers,
             decodedStreamFactory: (id, bytes) =>
             {
-                if (id == "one-3") heldBySuccessor ??= budget.LeaseAsync(segmentSize, CancellationToken.None).AsTask();
+                if (id == "two-0")
+                {
+                    order.Enqueue("successor");
+                    successorRequested.TrySetResult();
+                }
+                if (id == "one-3") successorRequested.Task.Wait(TimeSpan.FromMilliseconds(500));
                 return new MemoryStream(bytes);
             });
-        // The successor drains (releasing its credit) only after recovery reaches the backup.
         using var backup = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: segmentRanges, yencHeaders: headers,
             decodedStreamFactory: (id, bytes) =>
             {
-                if (id == "one-3") _ = heldBySuccessor?.ContinueWith(t => t.Result.Dispose(), TaskScheduler.Default);
+                if (id == "one-3") order.Enqueue("recovery");
                 return new MemoryStream(bytes);
             });
         using var client = new MultiProviderNntpClient(
@@ -553,8 +558,7 @@ public class DavMultipartFileStreamTests
 
         Assert.Equal(Enumerable.Range(0, 2 * volumeSize).Select(x => (byte)x).ToArray(), all.ToArray());
         Assert.True(backup.BodyRequestCounts.GetValueOrDefault("one-3") > 0);
-        Assert.NotNull(heldBySuccessor);
-        await heldBySuccessor;
+        Assert.Equal("recovery", order.First());
         var deadline = DateTime.UtcNow.AddSeconds(10);
         while (budget.LeasedBytes != 0 && DateTime.UtcNow < deadline)
             await Task.Delay(10);
