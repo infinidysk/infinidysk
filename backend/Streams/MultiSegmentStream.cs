@@ -1169,7 +1169,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         List<int> remaining,
         CancellationToken cancellationToken)
     {
-        while (group.Published < group.Tasks.Length && group.Tasks[group.Published] is null)
+        while (group.Published < group.Tasks.Length && group.Tasks[group.Published] is null
+               && !IsDemandIdle)
         {
             var slot = group.Published;
             remaining.Remove(slot);
