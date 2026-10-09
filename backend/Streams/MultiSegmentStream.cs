@@ -51,6 +51,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     private readonly long _prefetchByteCeiling;
     private readonly long _initialPrefetchByteCeiling;
     private readonly SpeculativeReadAhead? _speculativeReadAhead;
+    private readonly SharedStreamDemandGate? _demandGate;
     // Planned bytes of segments handed to the reader; grows the ceiling like TCP slow start.
     private long _consumedPrefetchBytes;
     private readonly int _taskWindowSize;
@@ -895,6 +896,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         }
         _initialPrefetchByteCeiling = Math.Min(_prefetchByteCeiling, initialPlannedBytes);
         _speculativeReadAhead = speculativeReadAhead;
+        _demandGate = cancellationToken.GetContext<SharedStreamDemandGate>();
         if (_stripeCount > 1)
         {
             Log.Debug(
@@ -1000,10 +1002,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             // same article-buffer memory cost when the consumer is starving.
             var batchWidth = _batchSizer?.Current ?? _bodyPipelineBatchSize;
             await _streamTasks.Writer.WaitToWriteAsync(cancellationToken).ConfigureAwait(false);
+            if (IsDemandIdle) continue;
             var issued = _stripeCount > 1 && batchWidth > 1
                 ? await TryIssueStripedGroupAsync(batchStart, batchWidth, cancellationToken).ConfigureAwait(false)
                 : 0;
-            if (issued == 0)
+            if (issued == 0 && !IsDemandIdle)
             {
                 issued = await IssueContiguousBatchAsync(
                         batchStart, Math.Min(batchWidth, _segmentIds.Length - batchStart), cancellationToken)
@@ -1029,6 +1032,13 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             {
                 group.Leases[slot] = await LeaseSegmentBytesAsync(
                     GetPlannedSegmentBytes(batchStart + slot), cancellationToken).ConfigureAwait(false);
+            }
+
+            // A reader can detach while leases wait; give them back and let the loop park.
+            if (IsDemandIdle)
+            {
+                AbandonUnpublished(group);
+                return 0;
             }
 
             var (running, admitted) = await IssueBatchAsync(
@@ -1099,7 +1109,13 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             for (var issued = 0; remaining.Count > 0; issued++)
             {
                 if (issued > 0)
+                {
                     ThrowIfPlaybackFailFast();
+                    // ponytail: a detached group parks holding its own reservations (at most one
+                    // group); releasing and re-leasing part of a group risks the deadlock above.
+                    if (_demandGate is { } demandGate)
+                        await demandGate.WaitForDemandAsync(cancellationToken).ConfigureAwait(false);
+                }
                 // After a capacity loss the rest of the group takes the nearest segments
                 // instead of queueing them behind stripes that can no longer run in parallel.
                 var stride = Math.Clamp(Math.Min(stripes - issued, _stripeTarget), 1, remaining.Count);
@@ -1153,7 +1169,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         List<int> remaining,
         CancellationToken cancellationToken)
     {
-        while (group.Published < group.Tasks.Length && group.Tasks[group.Published] is null)
+        while (group.Published < group.Tasks.Length && group.Tasks[group.Published] is null
+               && !IsDemandIdle)
         {
             var slot = group.Published;
             remaining.Remove(slot);
@@ -1313,12 +1330,16 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             if (ShouldStopPrefetch(index, enqueuedBytes))
                 break;
 
-            await WaitForPrefetchCeilingAsync(cancellationToken).ConfigureAwait(false);
-
             var segmentId = _segmentIds.Span[index];
+            await WaitForPrefetchCeilingAsync(cancellationToken).ConfigureAwait(false);
             await _streamTasks.Writer.WaitToWriteAsync(cancellationToken).ConfigureAwait(false);
-            var lease = await LeaseSegmentBytesAsync(
-                GetPlannedSegmentBytes(index), cancellationToken).ConfigureAwait(false);
+            if (await LeaseUnlessDemandIdleAsync(GetPlannedSegmentBytes(index), cancellationToken)
+                    .ConfigureAwait(false) is not { } lease)
+            {
+                index--;
+                continue;
+            }
+
             NoteSegmentIssued(index);
             var streamTask = DownloadSegment(
                 segmentId, index, lease, isFirstSegment: index == 0, cancellationToken);
@@ -1428,6 +1449,19 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         }
     }
 
+    private bool IsDemandIdle => _demandGate?.IsIdle == true;
+
+    /// <summary>Returns null, holding nothing, when a reader detached during the lease wait.</summary>
+    private async ValueTask<ArticleByteLease?> LeaseUnlessDemandIdleAsync(
+        long plannedBytes,
+        CancellationToken cancellationToken)
+    {
+        var lease = await LeaseSegmentBytesAsync(plannedBytes, cancellationToken).ConfigureAwait(false);
+        if (!IsDemandIdle) return lease;
+        lease.Dispose();
+        return null;
+    }
+
     /// <summary>
     /// When <see cref="_readBudget"/> is null, pause the producer once in-flight planned
     /// bytes reach task-window-size × estimated segment size so full-file GETs cannot retain
@@ -1436,6 +1470,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     /// </summary>
     private async Task WaitForPrefetchCeilingAsync(CancellationToken cancellationToken)
     {
+        if (_demandGate is { } demandGate)
+            await demandGate.WaitForDemandAsync(cancellationToken).ConfigureAwait(false);
         if (_prefetchByteCeiling <= 0) return;
 
         while (Interlocked.Read(ref _inFlightPrefetchBytes) >= CurrentPrefetchByteCeiling)

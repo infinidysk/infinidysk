@@ -226,6 +226,63 @@ public sealed class MultiSegmentStreamStripingTests
     }
 
     [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DemandIdledWhileStripeAwaitsAdmission_IssuesNoFrontierProbeAndParksTheGroup(bool resume)
+    {
+        // The first stripe returns with its misses awaiting a connection. Detaching then must
+        // stop the cached frontier probes and park the group's remaining stripes.
+        var permit = new SemaphoreSlim(1, 1);
+        await permit.WaitAsync();
+        var gate = new SharedStreamDemandGate();
+        var requests = new List<int[]>();
+        var requestsAtIdle = -1;
+        var client = new ControlledBatchNntpClient(16, SegmentSize, uniqueBytes: true)
+        {
+            SharedPermit = permit,
+            LocalSegments = new HashSet<int> { 0, 1, 2, 3 },
+        };
+        client.OnBatchRequested = indexes =>
+        {
+            lock (requests)
+            {
+                requests.Add(indexes);
+                if (requestsAtIdle < 0 && indexes.Contains(4))
+                {
+                    requestsAtIdle = requests.Count;
+                    gate.SetIdle();
+                }
+            }
+        };
+        var budget = new InFlightArticleBudget(1024 * SegmentSize);
+        using var cts = new CancellationTokenSource();
+        using var hint = cts.Token.SetContext(new StreamingStripeContext { StripeCount = 4 });
+        using var demand = cts.Token.SetContext(gate);
+        var stream = CreateStream(client, cts.Token, budget);
+
+        await client.WaitUntilAsync(() => gate.IsIdle, Timeout);
+        await Task.Delay(100);
+        permit.Release();
+        await client.WaitUntilAsync(() => client.BatchIssueCount >= 1, Timeout);
+        await Task.Delay(100);
+        lock (requests)
+        {
+            Assert.Equal(new[] { 0, 4, 8, 12 }, requests[requestsAtIdle - 1]);
+            Assert.Equal(requestsAtIdle, requests.Count);
+        }
+
+        if (resume)
+        {
+            gate.SetDemand();
+            client.ReleaseAllUpTo(15);
+            Assert.Equal(client.ExpectedConcatenation, await ReadAllAsync(stream));
+        }
+
+        await stream.DisposeAsync().AsTask().WaitAsync(Timeout);
+        await client.WaitUntilAsync(() => budget.LeasedBytes == 0, Timeout);
+    }
+
+    [Theory]
     [InlineData(10, 4, 4, new[] { 0, 4, 8 })]
     [InlineData(12, 1, 4, new[] { 0, 1, 2, 3 })]
     [InlineData(3, 4, 4, new[] { 0 })]
