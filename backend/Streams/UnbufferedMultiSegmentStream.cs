@@ -563,7 +563,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
                 segmentId,
                 exception.ProviderKey,
                 attempt);
-            if (MultiProviderNntpClient.CurrentReadSessionId is { } sessionId)
+            if (StreamTrace.CurrentSessionId is { } sessionId)
                 StreamTrace.TryRetry(sessionId, segmentId, attempt, failure.Message);
             await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken)
                 .ConfigureAwait(false);
@@ -676,7 +676,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
                 "Segment {SegmentId} failed before emitting bytes; retrying BODY (attempt {Attempt}).",
                 segmentId,
                 attempt);
-            if (MultiProviderNntpClient.CurrentReadSessionId is { } sessionId)
+            if (StreamTrace.CurrentSessionId is { } sessionId)
                 StreamTrace.TryRetry(sessionId, segmentId, attempt, failure.Message);
             await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken)
                 .ConfigureAwait(false);
@@ -897,7 +897,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
                 ? MultiSegmentStream.InconclusiveGapFillTemplate
                 : "Article {SegmentId} missing on all providers while reading {FileName}. Filling the {Bytes}-byte gap to preserve later file offsets.";
         ZeroFillLogLimiter.Write(template, segmentId, _fileName, fill, cause);
-        if (MultiProviderNntpClient.CurrentReadSessionId is { } sessionId)
+        if (StreamTrace.CurrentSessionId is { } sessionId)
             StreamTrace.TryZeroFill(sessionId, segmentId, fill);
         if (isCorruption)
             Par2RepairTriggerSink.ReportCorruption(_fileName, segmentId);
@@ -1144,7 +1144,7 @@ public class UnbufferedMultiSegmentStream : FastReadOnlyNonSeekableStream, ISegm
             return await original.ConfigureAwait(false);
 
         _hedgedSegmentIndex = segmentIndex;
-        var traceSession = MultiProviderNntpClient.CurrentReadSessionId;
+        var traceSession = StreamTrace.CurrentSessionId;
         if (traceSession is { } issuedSession)
         {
             var delayMs = (int)MultiSegmentStream.HedgeFloor.TotalMilliseconds;

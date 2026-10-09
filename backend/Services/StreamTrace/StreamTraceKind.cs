@@ -20,4 +20,6 @@ public enum StreamTraceKind
     VolumePrepare = 15,
     HeadWaitSummary = 16,
     PipelineSample = 17,
+    SharedAttach = 18,
+    PumpSample = 19,
 }

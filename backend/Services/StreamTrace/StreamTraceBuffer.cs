@@ -535,7 +535,7 @@ public sealed class StreamTraceBuffer
     }
 
     /// <param name="summary">Fixed phase codes with counts and milliseconds, never a path or message ID.</param>
-    internal void HeadWaitSummary(Guid sessionId, string summary, TimeSpan totalWait, int heads)
+    internal void HeadWaitSummary(Guid sessionId, long? rangeGeneration, string summary, TimeSpan totalWait, int heads)
     {
         Record(new StreamTraceEvent
         {
@@ -543,14 +543,17 @@ public sealed class StreamTraceBuffer
             AtUnixMs = Now(),
             SessionId = sessionId,
             Kind = StreamTraceKind.HeadWaitSummary.ToString(),
+            RangeGeneration = rangeGeneration,
             Message = summary,
             DurationMs = (int)Math.Clamp(totalWait.TotalMilliseconds, 0, int.MaxValue),
             PlannedSegments = heads,
         });
     }
 
+    /// <param name="headWaitMs">Age of the reader's in-progress head wait, or null when not waiting.</param>
     internal void PipelineSample(
         Guid sessionId,
+        long? rangeGeneration,
         int segmentIndex,
         int queuedSegments,
         int awaitingSegments,
@@ -558,6 +561,7 @@ public sealed class StreamTraceBuffer
         int activeBatches,
         int? batchSize,
         long inFlightBytes,
+        int? headWaitMs,
         int? poolActive,
         int? poolLive,
         int? poolMax)
@@ -568,7 +572,9 @@ public sealed class StreamTraceBuffer
             AtUnixMs = Now(),
             SessionId = sessionId,
             Kind = StreamTraceKind.PipelineSample.ToString(),
+            RangeGeneration = rangeGeneration,
             SegmentIndex = segmentIndex,
+            DurationMs = headWaitMs,
             QueuedSegments = queuedSegments,
             AwaitingSegments = awaitingSegments,
             RespondedAhead = respondedAhead,
@@ -578,6 +584,42 @@ public sealed class StreamTraceBuffer
             PoolActive = poolActive,
             PoolLive = poolLive,
             PoolMax = poolMax,
+        });
+    }
+
+    /// <summary>
+    /// Links a client range to the shared-stream producer whose session carries the
+    /// upstream segment evidence. <paramref name="producerSessionId"/> is that session's id.
+    /// </summary>
+    internal void PumpSample(
+        StreamTraceRangeContext range, long bytesPumped, int? poolActive, int? poolLive, int? poolMax)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = range.SessionId,
+            Kind = StreamTraceKind.PumpSample.ToString(),
+            RangeGeneration = range.Generation,
+            BytesServed = bytesPumped,
+            PoolActive = poolActive,
+            PoolLive = poolLive,
+            PoolMax = poolMax,
+        });
+    }
+
+    internal void SharedAttach(StreamTraceRangeContext range, Guid producerSessionId, long producerAnchor, long readerStart)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = range.SessionId,
+            Kind = StreamTraceKind.SharedAttach.ToString(),
+            RangeGeneration = range.Generation,
+            Message = producerSessionId.ToString(),
+            RangeStart = producerAnchor,
+            Offset = readerStart,
         });
     }
 

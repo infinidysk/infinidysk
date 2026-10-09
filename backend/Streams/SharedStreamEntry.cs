@@ -1,10 +1,13 @@
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Database.Models.Metrics;
+using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Logging;
+using NzbWebDAV.Services.StreamTrace;
 using NzbWebDAV.WebDav.Base;
 using Serilog;
 
@@ -364,6 +367,24 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
     private async Task PumpLoopAsync()
     {
         var scratch = SharedStreamAccountingPool.PumpScratch.Rent(_chunkSize);
+        // The pump runs without the request's flow, so it traces as its own session keyed by EntryId.
+        var traceRange = StreamTrace.Buffer?.RangeOpen(
+            EntryId, Path, "PUMP", Anchor, null, FileSize, null, null, System.IO.Path.GetFileName(Path));
+        using var traceScope = MultiProviderNntpClient.BeginStreamTraceRangeScope(traceRange);
+        // Covers the first-article phase that runs before any buffered pipeline exists.
+#pragma warning disable CA2000 // disposed in finally, before RangeEnd, so no sample trails the range
+        var pumpSampler = traceRange is { } sampledRange
+            ? new Timer(
+                static state =>
+                {
+                    var (entry, range) = ((SharedStreamEntry, StreamTraceRangeContext))state!;
+                    StreamTrace.TryPumpSample(range, entry.BytesPumped);
+                },
+                (this, sampledRange), TimeSpan.Zero, TimeSpan.FromSeconds(1))
+            : null;
+#pragma warning restore CA2000
+        var traceEnd = ReadSession.EndReasonCode.Aborted;
+        string? traceMessage = null;
         try
         {
             var upstream = _upstream
@@ -384,6 +405,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
                     // Logical EOF can precede a pending trailer, e.g. AES plaintext ending before its ciphertext.
                     TrackValidation(upstream.ValidateDeliveredAsync(ct), long.MaxValue);
                     _ring.SetComplete();
+                    traceEnd = ReadSession.EndReasonCode.Completed;
                     return;
                 }
 
@@ -403,6 +425,8 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
+            traceEnd = ReadSession.EndReasonCode.Error;
+            traceMessage = ex.GetType().Name;
             if (ex.TryGetCausingException(out CircuitAdmissionRejectedException? _))
             {
                 if (CircuitFailureThrottle.ShouldLog("circuit-admission", TimeSpan.FromSeconds(30), out var suppressed))
@@ -439,7 +463,37 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         finally
         {
             SharedStreamAccountingPool.PumpScratch.Return(scratch);
+            if (pumpSampler is not null) await pumpSampler.DisposeAsync().ConfigureAwait(false);
+            if (traceRange is { } endedRange) EndPumpTrace(endedRange, traceEnd, traceMessage);
         }
+    }
+
+    // A clean EOF is final only once trailing validation settles, so defer Completed until then.
+    private void EndPumpTrace(
+        StreamTraceRangeContext range, ReadSession.EndReasonCode end, string? message)
+    {
+        if (end == ReadSession.EndReasonCode.Completed)
+        {
+            if (!_validationTail.IsCompleted)
+            {
+                _ = _validationTail.ContinueWith(
+                    static (_, state) =>
+                    {
+                        var (entry, deferred) = ((SharedStreamEntry, StreamTraceRangeContext))state!;
+                        entry.EndPumpTrace(deferred, ReadSession.EndReasonCode.Completed, null);
+                    },
+                    (this, range), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+                return;
+            }
+
+            if (Volatile.Read(ref _validationFailure) is { } failure)
+                (end, message) = failure is OperationCanceledException
+                    ? (ReadSession.EndReasonCode.Aborted, message)
+                    : (ReadSession.EndReasonCode.Error, failure.GetType().Name);
+        }
+
+        StreamTrace.Buffer?.RangeEnd(EntryId, range, end, BytesPumped, message);
     }
 
     private async Task WaitForPumpSpaceAsync(CancellationToken cancellationToken)

@@ -72,32 +72,44 @@ public static class StreamTrace
     internal static Guid? CurrentSessionId =>
         MultiProviderNntpClient.CurrentStreamTraceRange?.SessionId ?? MultiProviderNntpClient.CurrentReadSessionId;
 
-    internal static void TryHeadWaitSummary(Guid sessionId, string summary, TimeSpan totalWait, int heads)
+    internal static void TryHeadWaitSummary(
+        Guid sessionId, long? rangeGeneration, string summary, TimeSpan totalWait, int heads)
     {
-        if (_buffer is { Enabled: true } buffer) buffer.HeadWaitSummary(sessionId, summary, totalWait, heads);
+        if (_buffer is { Enabled: true } buffer)
+            buffer.HeadWaitSummary(sessionId, rangeGeneration, summary, totalWait, heads);
     }
 
     internal static void TryPipelineSample(
         Guid sessionId,
+        long? rangeGeneration,
         int segmentIndex,
         int queuedSegments,
         int awaitingSegments,
         int respondedAhead,
         int activeBatches,
         int? batchSize,
-        long inFlightBytes)
+        long inFlightBytes,
+        int? headWaitMs)
     {
         if (_buffer is not { Enabled: true } buffer) return;
-        int? poolActive = null, poolLive = null, poolMax = null;
-        if (_connectionProbe?.Invoke() is { } pools)
-        {
-            poolActive = pools.Sum(p => p.ActiveConnections);
-            poolLive = pools.Sum(p => p.LiveConnections);
-            poolMax = pools.Sum(p => p.EffectiveMaxConnections);
-        }
+        var (poolActive, poolLive, poolMax) = ProbePools();
         buffer.PipelineSample(
-            sessionId, segmentIndex, queuedSegments, awaitingSegments, respondedAhead, activeBatches,
-            batchSize, inFlightBytes, poolActive, poolLive, poolMax);
+            sessionId, rangeGeneration, segmentIndex, queuedSegments, awaitingSegments, respondedAhead,
+            activeBatches, batchSize, inFlightBytes, headWaitMs, poolActive, poolLive, poolMax);
+    }
+
+    internal static void TryPumpSample(StreamTraceRangeContext range, long bytesPumped)
+    {
+        if (_buffer is not { Enabled: true } buffer) return;
+        var (poolActive, poolLive, poolMax) = ProbePools();
+        buffer.PumpSample(range, bytesPumped, poolActive, poolLive, poolMax);
+    }
+
+    private static (int? Active, int? Live, int? Max) ProbePools()
+    {
+        if (_connectionProbe?.Invoke() is not { } pools) return (null, null, null);
+        return (pools.Sum(p => p.ActiveConnections), pools.Sum(p => p.LiveConnections),
+            pools.Sum(p => p.EffectiveMaxConnections));
     }
 
     internal static void TryWait(
