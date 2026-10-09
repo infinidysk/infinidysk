@@ -422,6 +422,7 @@ public class DavMultipartFileStream : FastReadOnlyStream, IDeliveredBytesValidat
         // A successor volume skips the first-byte ramp but shares the combined read-ahead window.
         var speculativeReadAhead = continuation ? new SpeculativeReadAhead() : null;
         stream.SpeculativeReadAhead = speculativeReadAhead;
+        stream.TracePartIndex = partIndex;
         stream.Seek(part.FilePartByteRange.StartInclusive + extraOffset, SeekOrigin.Begin);
         var expectedLength = part.FilePartByteRange.Count - extraOffset;
         var responseLength = readBudgetOverride is { } cap
