@@ -455,6 +455,49 @@ public sealed class MultiSegmentStreamHedgeTests
         Assert.Contains(trace.Events, e => e.Kind == nameof(StreamTraceKind.PipelineSample) && e.SegmentIndex == 0);
     }
 
+    [Fact]
+    public async Task HeadWait_StartedBeforeTracingEnabled_IsRecordedOnCompletion()
+    {
+        var (segments, ranges) = CreateSegments(8);
+        var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        using var stalled = new StalledArticleClient(inner, "seg-1");
+        using var trace = new HedgeTraceCapture(enabled: false);
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        await using var stream = CreateStream(segments, stalled, cts.Token);
+        var headWaiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var heads = 0;
+        ((MultiSegmentStream)stream).TestOnSegmentReadiness = ready =>
+        {
+            if (++heads == 2 && !ready) headWaiting.TrySetResult();
+        };
+
+        try
+        {
+            var buffer = new byte[segments.Count * SegmentSize];
+            var pending = stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true).AsTask();
+            await headWaiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            // Tracing turns on while the reader is already blocked on the head; released inside the hedge floor.
+            trace.Enable();
+            await Task.Delay(150);
+            stalled.Release();
+            await pending.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            stalled.Release();
+        }
+
+        var wait = Assert.Single(trace.Events, e => e.Kind == nameof(StreamTraceKind.HeadWait) && e.SegmentIndex == 1);
+        Assert.True(wait.DurationMs >= 50, $"Wait was {wait.DurationMs} ms.");
+        Assert.True(wait.ReaderBlocked);
+        Assert.Null(wait.EndReason);
+
+        await stream.DisposeAsync();
+        var summary = Assert.Single(trace.Events, e => e.Kind == nameof(StreamTraceKind.HeadWaitSummary));
+        Assert.Contains($"{wait.Status}=", summary.Message);
+    }
+
     private sealed class FirstBodyStallsClient(INntpClient inner, Task? originalGate = null) : WrappingNntpClient(inner)
     {
         private int _requests;
@@ -528,14 +571,21 @@ public sealed class MultiSegmentStreamHedgeTests
     internal sealed class HedgeTraceCapture : IDisposable
     {
         private readonly StreamTraceBuffer? _previous = StreamTrace.Buffer;
-        private readonly StreamTraceBuffer _buffer = new(capacity: 1_000, maxSessions: 16);
+        private readonly StreamTraceBuffer _buffer;
         private readonly Guid _sessionId = Guid.NewGuid();
         private readonly IDisposable _scope;
 
-        public HedgeTraceCapture()
+        public HedgeTraceCapture(bool enabled = true)
         {
+            _buffer = new StreamTraceBuffer(capacity: 1_000, maxSessions: 16, enabled: enabled);
             StreamTrace.Configure(_buffer);
             _scope = MultiProviderNntpClient.BeginReadSessionScope(_sessionId);
+            if (enabled) Enable();
+        }
+
+        public void Enable()
+        {
+            if (!_buffer.Enabled) _buffer.EnableFor(TimeSpan.Zero, 1_000, "test");
             _buffer.RangeOpen(_sessionId, "/view/hedge.bin", "GET", 0, null, null, null, null);
         }
 
