@@ -47,7 +47,14 @@ export function MediaPreview(props: MediaPreviewProps) {
   };
 
   return (
-    <Modal open title={fileName} onClose={onClose} size="wide">
+    // Stable gutter: a toggling scrollbar resizes the video, which re-toggles the scrollbar.
+    <Modal
+      open
+      title={fileName}
+      onClose={onClose}
+      size="wide"
+      className="[scrollbar-gutter:stable]"
+    >
       <div className="flex flex-col gap-3">
         <StatusBanner player={player} mimeType={mimeType} />
 
