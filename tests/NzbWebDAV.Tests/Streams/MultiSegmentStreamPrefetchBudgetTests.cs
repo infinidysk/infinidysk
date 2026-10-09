@@ -192,6 +192,55 @@ public class MultiSegmentStreamPrefetchBudgetTests
         Assert.Equal(segments["idle-0"], buffer);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DemandIdledDuringLeaseWait_ReleasesLeaseWithoutIssuing(bool pipelined)
+    {
+        const int segmentSize = 100;
+        var segments = Enumerable.Range(0, 20).ToDictionary(
+            i => $"wait-{i}",
+            i => Enumerable.Repeat((byte)i, segmentSize).ToArray());
+        var client = new FakeNntpClient(segments, useCachedYencStreams: true);
+        var budget = new InFlightArticleBudget(segmentSize * 4);
+        var gate = new SharedStreamDemandGate();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var context = cts.Token.SetContext(gate);
+        var held = await budget.LeaseAsync(segmentSize * 4, cts.Token);
+
+        var stream = MultiSegmentStream.Create(
+            segments.Keys.ToArray().AsMemory(), client, articleBufferSize: 10,
+            estimatedSegmentSize: segmentSize, failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: pipelined, cts.Token, fileName: "wait.bin", readBudget: null,
+            inFlightArticleBudget: budget);
+        try
+        {
+            for (var i = 0; i < 100 && budget.ThrottleEvents == 0; i++)
+                await Task.Delay(10);
+            Assert.True(budget.ThrottleEvents > 0, "Expected the producer to wait on the byte budget");
+
+            gate.SetIdle();
+            held.Dispose();
+            await Task.Delay(150);
+            Assert.Empty(client.RequestedSegmentIds);
+            Assert.Equal(0, budget.LeasedBytes);
+
+            gate.SetDemand();
+            var buffer = new byte[segmentSize];
+            await stream.ReadExactlyAsync(buffer, cts.Token);
+            Assert.Equal(segments["wait-0"], buffer);
+        }
+        finally
+        {
+            held.Dispose();
+            await stream.DisposeAsync();
+        }
+
+        for (var i = 0; i < 100 && budget.LeasedBytes != 0; i++)
+            await Task.Delay(10);
+        Assert.Equal(0, budget.LeasedBytes);
+    }
+
     [Fact]
     public async Task GlobalCap_LimitsLeasedBytesAndThrottleUnderContention()
     {

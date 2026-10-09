@@ -32,11 +32,19 @@ public sealed class SharedStreamDemandGate
         resumed?.TrySetResult();
     }
 
-    public Task WaitForDemandAsync(CancellationToken cancellationToken)
+    public Task WaitForDemandAsync(CancellationToken cancellationToken) =>
+        IsIdle ? WaitUntilDemandAsync(cancellationToken) : Task.CompletedTask;
+
+    private async Task WaitUntilDemandAsync(CancellationToken cancellationToken)
     {
-        Task? resumed;
-        lock (_lock)
-            resumed = _resumed?.Task;
-        return resumed is null ? Task.CompletedTask : resumed.WaitAsync(cancellationToken);
+        // A wake from an older signal must not count if another detach already idled the gate.
+        while (true)
+        {
+            Task? resumed;
+            lock (_lock)
+                resumed = _resumed?.Task;
+            if (resumed is null) return;
+            await resumed.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 }
