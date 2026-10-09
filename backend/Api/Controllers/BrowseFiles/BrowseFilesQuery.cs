@@ -218,8 +218,18 @@ internal static class BrowseFilesQuery
             var parentId = parent?.Id;
             var directories = context.Items.AsNoTracking().Where(item => parentId != null && item.ParentId == parentId && item.Type == DavItem.ItemType.Directory);
             if (!showHidden) directories = directories.Where(item => !item.Path.Contains("/."));
-            if (request.HasFilters) directories = directories.Where(directory => files.Any(file =>
-                file.Path.Length > directory.Path.Length && file.Path.Substring(0, directory.Path.Length + 1) == directory.Path + "/"));
+            if (request.HasFilters)
+            {
+                // One scan of matching descendants; a correlated EXISTS per directory re-ran the whole projection.
+                var prefix = request.ParentPath + "/";
+                var descendantPaths = parentId == null ? [] : await files
+                    .Where(file => file.Path.Length > prefix.Length && file.Path.Substring(0, prefix.Length) == prefix)
+                    .Select(file => file.Path).ToListAsync(cancellationToken).ConfigureAwait(false);
+                var matchingPaths = descendantPaths
+                    .Select(path => path.IndexOf('/', prefix.Length) is var end and > 0 ? path[..end] : null)
+                    .OfType<string>().Distinct(StringComparer.Ordinal).ToList();
+                directories = directories.Where(directory => matchingPaths.Contains(directory.Path));
+            }
             var projected = directories.Select(directory => new DirectoryProjection
             {
                 Id = directory.Id, ParentId = directory.ParentId, Name = directory.Name, Path = directory.Path, CreatedAt = directory.CreatedAt,

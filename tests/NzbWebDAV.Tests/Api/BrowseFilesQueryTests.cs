@@ -95,6 +95,20 @@ public sealed class BrowseFilesQueryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Tree_SearchUnderNestedParentKeepsOnlyBranchesWithMatchingDescendants()
+    {
+        var category = Add("tv", directory: true);
+        var show = Add("show", category, true);
+        var showPrefix = Add("show2", category, true);
+        Add("match-video.mkv", Add("season", show, true));
+        Add("other.mkv", showPrefix);
+        Add("match-loose.mkv", category);
+        var page = await Read("?parentPath=/content/tv&q=match");
+        Assert.Equal([show.Id], page.Rows.Where(row => row.IsDirectory).Select(row => row.Id));
+        Assert.Contains(page.Rows, row => row.Name == "match-loose.mkv");
+    }
+
+    [Fact]
     public async Task List_UsesTheSameFullScopeFiltersAsTree()
     {
         var directory = Add("tv", directory: true);
