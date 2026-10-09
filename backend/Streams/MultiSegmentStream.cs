@@ -1701,6 +1701,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             owner.ResolveIncrementalReadiness(ready: false);
             StreamTrace.TryStall(
                 MultiProviderNntpClient.CurrentStreamTraceRange, StreamStallKind.ConsumerWait, elapsed);
+            if (elapsed >= StreamTrace.WaitThreshold)
+                StreamTrace.TryWait(StreamTraceKind.HeadWait, "incremental-body", elapsed, segmentIndex: segmentIndex);
         }
     }
 
@@ -2686,13 +2688,27 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 // Test hook: fires after readiness is sampled and before the segment task is awaited,
                 // so lockstep tests can keep the gate closed until starvation is observed.
                 TestOnSegmentReadiness?.Invoke(readyWhenNeeded);
+                string? headPhase = null;
+                int? issueAgeMs = null;
+                var respondedAhead = 0;
+                var queuedSegments = 0;
+                if ((!wasQueued || !nextSegment.IsCompleted) && StreamTrace.IsEnabled)
+                {
+                    headPhase = wasQueued ? DescribeHeadWait(headIndex, out issueAgeMs) : "not-queued";
+                    respondedAhead = Math.Max(0, Volatile.Read(ref _highestRespondedIndex) - headIndex);
+                    queuedSegments = _streamTasks.Reader.Count;
+                }
                 var result = nextSegment.IsCompleted
                     ? await nextSegment.ConfigureAwait(false)
                     : await AwaitHeadSegmentAsync(nextSegment, headIndex).ConfigureAwait(false);
-                StreamTrace.TryStall(
-                    traceRange,
-                    StreamStallKind.ConsumerWait,
-                    Stopwatch.GetElapsedTime(waitStarted));
+                var headWait = Stopwatch.GetElapsedTime(waitStarted);
+                StreamTrace.TryStall(traceRange, StreamStallKind.ConsumerWait, headWait);
+                if (headPhase is not null && headWait >= StreamTrace.WaitThreshold)
+                {
+                    StreamTrace.TryWait(
+                        StreamTraceKind.HeadWait, headPhase, headWait, segmentIndex: headIndex,
+                        issueAgeMs: issueAgeMs, respondedAhead: respondedAhead, queuedSegments: queuedSegments);
+                }
                 Interlocked.Add(ref _consumedPrefetchBytes, result.PlannedBytes);
                 ReleaseInFlightPrefetchBytes(result.PlannedBytes);
                 // Ignore the first delivered segment (startup warm-up).
@@ -2716,6 +2732,18 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     }
 
     private bool IsSuperseded(int segmentIndex) => _supersededSegments?.ContainsKey(segmentIndex) == true;
+
+    // "body-draining" means the server answered but the body is still being received, buffered or retried.
+    private string DescribeHeadWait(int headIndex, out int? issueAgeMs)
+    {
+        issueAgeMs = null;
+        var slot = headIndex % _segmentIssuedAt.Length;
+        var issuedAt = Volatile.Read(ref _segmentIssuedAt[slot]);
+        if (Volatile.Read(ref _segmentIssuedOwner[slot]) != headIndex) return "unknown";
+        if (issuedAt == 0) return "body-draining";
+        issueAgeMs = (int)Math.Min(int.MaxValue, Stopwatch.GetElapsedTime(issuedAt).TotalMilliseconds);
+        return "awaiting-response";
+    }
 
     private void NoteSegmentIssued(int segmentIndex, int batchPredecessor = -1)
     {

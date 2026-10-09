@@ -1,5 +1,7 @@
 ﻿using System.Buffers;
+using System.Diagnostics;
 using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Services.StreamTrace;
 using UsenetSharp.Streams;
 
 namespace NzbWebDAV.Streams;
@@ -30,6 +32,8 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
     private int _primedOffset;
     private int _primedCount;
     private long _position;
+    // Ordinal within this stream, not the archive volume number.
+    private int _partsOpened;
     private bool _isDisposed;
 
     private sealed record PreparedPart(Stream Stream, byte[]? Primed, int PrimedCount);
@@ -164,6 +168,8 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
         }
 
         // A failed prefetch surfaces here, at the boundary, after every current-part byte.
+        var phase = pending is null ? "cold" : pending.Prepared.IsCompleted ? "prepared" : "preparing";
+        var waitStarted = Stopwatch.GetTimestamp();
         var next = pending is not null
             ? await pending.Prepared.ConfigureAwait(false)
             : opening is not null
@@ -171,6 +177,12 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
                 : null;
 
         if (next is null) return false;
+        StreamTrace.TryWait(
+            StreamTraceKind.VolumeBoundary,
+            phase,
+            Stopwatch.GetElapsedTime(waitStarted),
+            partIndex: _partsOpened++,
+            offset: _position);
         _currentStream = next.Stream;
         _primed = next.Primed;
         _primedOffset = 0;

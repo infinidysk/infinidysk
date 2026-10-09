@@ -1,3 +1,5 @@
+using NzbWebDAV.Clients.Usenet;
+
 namespace NzbWebDAV.Services.StreamTrace;
 
 /// <summary>
@@ -55,6 +57,31 @@ public static class StreamTrace
         long? bytes = null,
         TimeSpan? elapsed = null)
         => _buffer?.StreamStartup(sessionId, rangeGeneration, phase, bytes, elapsed);
+
+    /// <summary>Reader waits shorter than this are steady-state noise, not stalls.</summary>
+    internal static readonly TimeSpan WaitThreshold = TimeSpan.FromMilliseconds(50);
+
+    internal static bool IsEnabled => _buffer?.Enabled == true;
+
+    internal static void TryWait(
+        StreamTraceKind kind,
+        string phase,
+        TimeSpan elapsed,
+        int? segmentIndex = null,
+        int? partIndex = null,
+        long? offset = null,
+        int? issueAgeMs = null,
+        int? respondedAhead = null,
+        int? queuedSegments = null)
+    {
+        if (_buffer is not { Enabled: true } buffer) return;
+        var range = MultiProviderNntpClient.CurrentStreamTraceRange;
+        var sessionId = range?.SessionId ?? MultiProviderNntpClient.CurrentReadSessionId;
+        if (sessionId is not { } value) return;
+        buffer.Wait(
+            kind, value, range?.Generation, phase, elapsed, segmentIndex, partIndex, offset,
+            issueAgeMs, respondedAhead, queuedSegments);
+    }
 
     public static void TryStall(StreamTraceRangeContext? range, StreamStallKind kind, TimeSpan elapsed)
         => _buffer?.AddStall(range, kind, elapsed);

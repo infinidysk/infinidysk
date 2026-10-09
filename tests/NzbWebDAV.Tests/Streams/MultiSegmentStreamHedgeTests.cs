@@ -424,6 +424,29 @@ public sealed class MultiSegmentStreamHedgeTests
         trace.AssertNoHedge();
     }
 
+    [Fact]
+    public async Task UnansweredHeadSegment_TracesAwaitingResponseWait()
+    {
+        var (segments, ranges) = CreateSegments(8);
+        var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        using var stalled = new StalledArticleClient(inner, "seg-1");
+        using var trace = new HedgeTraceCapture();
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        await using var stream = CreateStream(segments, stalled, cts.Token);
+
+        // Released inside the hedge floor, so the reader waits on the original alone.
+        _ = Task.Delay(TimeSpan.FromMilliseconds(250)).ContinueWith(_ => stalled.Release(), TaskScheduler.Default);
+        var buffer = new byte[segments.Count * SegmentSize];
+        await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        var wait = Assert.Single(trace.Events, e => e.Kind == nameof(StreamTraceKind.HeadWait) && e.SegmentIndex == 1);
+        Assert.Equal("awaiting-response", wait.Status);
+        Assert.True(wait.DurationMs >= 50, $"Wait was {wait.DurationMs} ms.");
+        Assert.NotNull(wait.IssueAgeMs);
+    }
+
     private sealed class FirstBodyStallsClient(INntpClient inner, Task? originalGate = null) : WrappingNntpClient(inner)
     {
         private int _requests;
@@ -531,6 +554,8 @@ public sealed class MultiSegmentStreamHedgeTests
             Assert.Equal(outcome, resolved[0].Status);
             return issued.Zip(resolved, (i, r) => (i.SegmentIndex, i.HedgeDelayMs, r.Status)).ToList();
         }
+
+        public IReadOnlyList<StreamTraceEvent> Events => _buffer.GetSessionEvents(_sessionId);
 
         public void AssertNoHedge() =>
             Assert.DoesNotContain(_buffer.GetSessionEvents(_sessionId), e => e.Kind.StartsWith("Hedge", StringComparison.Ordinal));

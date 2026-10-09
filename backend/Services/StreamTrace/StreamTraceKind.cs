@@ -15,4 +15,7 @@ public enum StreamTraceKind
     RequestEnd = 10,
     HedgeIssued = 11,
     HedgeResolved = 12,
+    HeadWait = 13,
+    VolumeBoundary = 14,
+    VolumePrepare = 15,
 }

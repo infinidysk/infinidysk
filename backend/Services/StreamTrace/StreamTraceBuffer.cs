@@ -502,6 +502,38 @@ public sealed class StreamTraceBuffer
         });
     }
 
+    /// <param name="phase">Where the wait was blocked; a fixed code, never a path or message ID.</param>
+    internal void Wait(
+        StreamTraceKind kind,
+        Guid sessionId,
+        long? rangeGeneration,
+        string phase,
+        TimeSpan elapsed,
+        int? segmentIndex = null,
+        int? partIndex = null,
+        long? offset = null,
+        int? issueAgeMs = null,
+        int? respondedAhead = null,
+        int? queuedSegments = null)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = sessionId,
+            Kind = kind.ToString(),
+            Status = phase,
+            RangeGeneration = rangeGeneration,
+            DurationMs = (int)Math.Clamp(elapsed.TotalMilliseconds, 0, int.MaxValue),
+            SegmentIndex = segmentIndex,
+            PartIndex = partIndex,
+            Offset = offset,
+            IssueAgeMs = issueAgeMs,
+            RespondedAhead = respondedAhead,
+            QueuedSegments = queuedSegments,
+        });
+    }
+
     /// <summary>
     /// Bounded, range-attributed startup/handoff evidence. <paramref name="phase"/>
     /// is produced only by the typed mapping in
