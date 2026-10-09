@@ -504,6 +504,8 @@ public sealed partial class Program
             // run
             var app = builder.Build();
             BlobStore.Use(app.Services.GetRequiredService<IBlobStore>());
+            StreamTrace.ConfigureConnectionProbe(
+                () => app.Services.GetRequiredService<UsenetStreamingClient>().GetProviderConnectionSnapshots());
             // Must run before anything that reads Scheme/Host/RemoteIpAddress.
             app.UseForwardedHeaders();
             app.UseMiddleware<RequestCorrelationMiddleware>();

@@ -73,6 +73,8 @@ public class NzbFileStream(
     internal bool RecordedSizesInferred { get; set; }
     // Set for a multipart successor volume, which prefetches within the combined read-ahead window.
     internal SpeculativeReadAhead? SpeculativeReadAhead { get; set; }
+    // Archive volume this stream reads, carried on its pipelines' trace events.
+    internal int? TracePartIndex { get; set; }
     internal Task? PrewarmObservationForTests { get; private set; }
     private readonly LongRange[]? _segmentByteRanges = ValidateAndCloneSegmentByteRanges(
         segmentByteRanges,
@@ -159,6 +161,7 @@ public class NzbFileStream(
         {
             RecordedSizesInferred = RecordedSizesInferred,
             SpeculativeReadAhead = SpeculativeReadAhead,
+            TracePartIndex = TracePartIndex,
         };
         candidate.Position = start;
         return candidate;
@@ -762,6 +765,7 @@ public class NzbFileStream(
                         ExpectedFirstSegmentRangeWasClippedAtFileEnd = expectedFirstSegmentRangeWasClippedAtFileEnd,
                         RecordedSizesInferred = RecordedSizesInferred,
                         SpeculativeReadAhead = SpeculativeReadAhead,
+                        TraceFlow = StreamTraceFlow.Capture(TracePartIndex),
                     },
                     prefixBytes)
                 .ConfigureAwait(false);
@@ -1160,7 +1164,8 @@ public class NzbFileStream(
             sliced.KnownMissing,
             initialBatchPlan,
             RecordedSizesInferred,
-            SpeculativeReadAhead);
+            SpeculativeReadAhead,
+            StreamTraceFlow.Capture(TracePartIndex));
     }
 
     private void StartConnectionPrewarm(

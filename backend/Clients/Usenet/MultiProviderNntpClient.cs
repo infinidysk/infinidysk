@@ -217,7 +217,11 @@ public class MultiProviderNntpClient(
     internal static Guid? CurrentReadSessionId => ReadSessionScope.Value;
 
     private static readonly AsyncLocal<StreamTraceRangeContext?> StreamTraceRangeScope = new();
-    internal static StreamTraceRangeContext? CurrentStreamTraceRange => StreamTraceRangeScope.Value;
+    private static readonly AsyncLocal<StreamTraceLazyRange?> LazyStreamTraceRangeScope = new();
+    internal static StreamTraceRangeContext? CurrentStreamTraceRange =>
+        StreamTraceRangeScope.Value ?? LazyStreamTraceRangeScope.Value?.Resolve();
+    internal static StreamTraceRangeContext? BoundStreamTraceRange => StreamTraceRangeScope.Value;
+    internal static StreamTraceLazyRange? CurrentLazyStreamTraceRange => LazyStreamTraceRangeScope.Value;
 
     private static readonly AsyncLocal<bool> HedgeFetchScope = new();
     // Provider each article's first in-flight BODY waits on, so a hedge can try another first.
@@ -259,6 +263,14 @@ public class MultiProviderNntpClient(
         var previous = StreamTraceRangeScope.Value;
         StreamTraceRangeScope.Value = range;
         return new ScopeReleaser(() => StreamTraceRangeScope.Value = previous);
+    }
+
+    /// <summary>Binds a range that opens on first use while tracing is enabled, so live activation reaches this flow.</summary>
+    internal static IDisposable BeginLazyStreamTraceRangeScope(StreamTraceLazyRange range)
+    {
+        var previous = LazyStreamTraceRangeScope.Value;
+        LazyStreamTraceRangeScope.Value = range;
+        return new ScopeReleaser(() => LazyStreamTraceRangeScope.Value = previous);
     }
 
     private sealed class ScopeReleaser(Action onDispose) : IDisposable

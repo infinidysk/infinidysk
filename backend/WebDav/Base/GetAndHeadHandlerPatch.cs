@@ -312,6 +312,8 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                     var traceRange = _streamTrace.RangeOpen(
                         sessionId, path, request.Method, copyStart, copyEnd,
                         stream.CanSeek ? stream.Length : null, userAgent, clientIp, fileName);
+                    if (traceRange is { } attachedRange && stream is NzbWebDAV.Streams.SharedReaderStream shared)
+                        _streamTrace.SharedAttach(attachedRange, shared.Entry.EntryId, shared.Entry.Anchor, copyStart);
                     var requestTiming = httpContext.Features.Get<StreamTraceRequestTiming>();
                     if (requestTiming is not null)
                         requestTiming.Range = traceRange;

@@ -15,4 +15,11 @@ public enum StreamTraceKind
     RequestEnd = 10,
     HedgeIssued = 11,
     HedgeResolved = 12,
+    HeadWait = 13,
+    VolumeBoundary = 14,
+    VolumePrepare = 15,
+    HeadWaitSummary = 16,
+    PipelineSample = 17,
+    SharedAttach = 18,
+    PumpSample = 19,
 }

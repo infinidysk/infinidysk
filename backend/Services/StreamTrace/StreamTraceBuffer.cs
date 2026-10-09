@@ -502,6 +502,127 @@ public sealed class StreamTraceBuffer
         });
     }
 
+    /// <summary>Reader-blocked waits are authoritative; preparation spans are supporting evidence.</summary>
+    internal void Wait(StreamTraceWait wait)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = wait.SessionId,
+            Kind = wait.Kind.ToString(),
+            Status = wait.Phase,
+            RangeGeneration = wait.RangeGeneration,
+            DurationMs = ClampMs(wait.Elapsed),
+            PipelineId = wait.PipelineId,
+            SegmentIndex = wait.SegmentIndex,
+            PartIndex = wait.PartIndex,
+            Offset = wait.Offset,
+            IssueAgeMs = wait.IssueAgeMs,
+            RespondedAhead = wait.RespondedAhead,
+            QueuedSegments = wait.QueuedSegments,
+            NotQueuedMs = wait.NotQueuedMs,
+            AwaitingResponseMs = wait.AwaitingResponseMs,
+            BodyDrainingMs = wait.BodyDrainingMs,
+            ReaderBlocked = wait.ReaderBlocked,
+            EndReason = wait.Outcome,
+        });
+    }
+
+    private static int ClampMs(TimeSpan elapsed) => (int)Math.Clamp(elapsed.TotalMilliseconds, 0, int.MaxValue);
+
+    /// <param name="summary">Fixed phase codes with counts and milliseconds, never a path or message ID.</param>
+    internal void HeadWaitSummary(
+        Guid sessionId, long? rangeGeneration, int pipelineId, int? partIndex, string summary, TimeSpan totalWait,
+        int heads)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = sessionId,
+            Kind = StreamTraceKind.HeadWaitSummary.ToString(),
+            RangeGeneration = rangeGeneration,
+            PipelineId = pipelineId,
+            PartIndex = partIndex,
+            Message = summary,
+            DurationMs = ClampMs(totalWait),
+            PlannedSegments = heads,
+        });
+    }
+
+    internal void PipelineSample(StreamTracePipelineSample sample, StreamTracePoolProbe pools)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = sample.SessionId,
+            Kind = StreamTraceKind.PipelineSample.ToString(),
+            RangeGeneration = sample.RangeGeneration,
+            PipelineId = sample.PipelineId,
+            PartIndex = sample.PartIndex,
+            SegmentIndex = sample.SegmentIndex,
+            Status = sample.WaitPhase,
+            DurationMs = sample.WaitMs,
+            QueuedSegments = sample.QueuedSegments,
+            AwaitingSegments = sample.AwaitingSegments,
+            RespondedAhead = sample.RespondedAhead,
+            ActiveBatches = sample.ActiveBatches,
+            BatchSize = sample.BatchSize,
+            Bytes = sample.InFlightBytes,
+            PoolActive = pools.Active,
+            PoolLive = pools.Live,
+            PoolMax = pools.Max,
+            AdmissionFree = pools.AdmissionFree,
+            AdmissionWaiting = pools.AdmissionWaiting,
+        });
+    }
+
+    /// <param name="state">Fixed pump state code explaining why it is or is not reading upstream.</param>
+    /// <param name="readerLeadBytes">Bytes buffered past the furthest reader, or null with no readers.</param>
+    internal void PumpSample(
+        StreamTraceRangeContext range, long bytesPumped, string state, int readers, long? readerLeadBytes,
+        StreamTracePoolProbe pools)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = range.SessionId,
+            Kind = StreamTraceKind.PumpSample.ToString(),
+            RangeGeneration = range.Generation,
+            Status = state,
+            BytesServed = bytesPumped,
+            Readers = readers,
+            ReaderLeadBytes = readerLeadBytes,
+            PoolActive = pools.Active,
+            PoolLive = pools.Live,
+            PoolMax = pools.Max,
+            AdmissionFree = pools.AdmissionFree,
+            AdmissionWaiting = pools.AdmissionWaiting,
+        });
+    }
+
+    /// <summary>
+    /// Links a client range to the shared-stream producer whose session carries the
+    /// upstream segment evidence. <paramref name="producerSessionId"/> is that session's id.
+    /// </summary>
+    internal void SharedAttach(StreamTraceRangeContext range, Guid producerSessionId, long producerAnchor, long readerStart)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = range.SessionId,
+            Kind = StreamTraceKind.SharedAttach.ToString(),
+            RangeGeneration = range.Generation,
+            Message = producerSessionId.ToString(),
+            RangeStart = producerAnchor,
+            Offset = readerStart,
+        });
+    }
+
     /// <summary>
     /// Bounded, range-attributed startup/handoff evidence. <paramref name="phase"/>
     /// is produced only by the typed mapping in
