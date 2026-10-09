@@ -5,7 +5,7 @@
   <ItemGroup>
     <PackageVersion Include="AwesomeAssertions" Version="9.6.0" />
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
-    <PackageVersion Include="coverlet.collector" Version="10.0.1" />
+    <PackageVersion Include="coverlet.collector" Version="10.1.0" />
     <PackageVersion Include="JsonSchema.Net" Version="9.4.0" />
     <PackageVersion Include="MemoryPack" Version="1.21.4" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.12" />
@@ -21,7 +21,7 @@
     <PackageVersion Include="NWebDav.Server" Version="0.2.0-beta.2" />
     <PackageVersion Include="prometheus-net" Version="8.2.1" />
     <PackageVersion Include="prometheus-net.AspNetCore" Version="8.2.1" />
-    <PackageVersion Include="Scalar.AspNetCore" Version="2.17.8" />
+    <PackageVersion Include="Scalar.AspNetCore" Version="2.17.13" />
     <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageVersion Include="Serilog.Expressions" Version="5.0.0" />
     <PackageVersion Include="Serilog.Sinks.Console" Version="6.1.1" />
