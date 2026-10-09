@@ -28,6 +28,8 @@ public static class FetchFirstSegmentsStep
     )
     {
         var files = nzbFiles.Where(x => x.Segments.Count > 0).ToList();
+        // Providers can answer a message-id with another post's article; reject it so failover reaches the real one.
+        using var firstSegmentValidation = YencFileValidationContext.BeginFirstSegmentProbe();
 
         if (configManager.IsQueuePipeliningEnabled())
             return await FetchFirstSegmentsPipelined(

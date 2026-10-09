@@ -1653,6 +1653,12 @@ public class MultiProviderNntpClient(
             segmentId.ToString(), providerKey, response.ResponseCode, header);
         await bodyStream.DisposeAsync().ConfigureAwait(false);
 
+        if (YencFileValidationContext.IsFirstSegmentProbe)
+            throw new UsenetMismatchedArticleException(
+                segmentId,
+                $"Provider returned yEnc part {header.PartNumber}/{header.TotalParts} starting at byte " +
+                $"{header.PartOffset} for a file's first segment.");
+
         throw new UsenetMismatchedArticleException(
             segmentId,
             header.PartNumber,
