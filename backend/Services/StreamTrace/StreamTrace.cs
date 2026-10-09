@@ -1,4 +1,5 @@
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Models;
 
 namespace NzbWebDAV.Services.StreamTrace;
 
@@ -62,6 +63,42 @@ public static class StreamTrace
     internal static readonly TimeSpan WaitThreshold = TimeSpan.FromMilliseconds(50);
 
     internal static bool IsEnabled => _buffer?.Enabled == true;
+
+    private static Func<IReadOnlyList<ProviderConnectionSnapshot>>? _connectionProbe;
+
+    public static void ConfigureConnectionProbe(Func<IReadOnlyList<ProviderConnectionSnapshot>> probe)
+        => _connectionProbe = probe;
+
+    internal static Guid? CurrentSessionId =>
+        MultiProviderNntpClient.CurrentStreamTraceRange?.SessionId ?? MultiProviderNntpClient.CurrentReadSessionId;
+
+    internal static void TryHeadWaitSummary(Guid sessionId, string summary, TimeSpan totalWait, int heads)
+    {
+        if (_buffer is { Enabled: true } buffer) buffer.HeadWaitSummary(sessionId, summary, totalWait, heads);
+    }
+
+    internal static void TryPipelineSample(
+        Guid sessionId,
+        int segmentIndex,
+        int queuedSegments,
+        int awaitingSegments,
+        int respondedAhead,
+        int activeBatches,
+        int? batchSize,
+        long inFlightBytes)
+    {
+        if (_buffer is not { Enabled: true } buffer) return;
+        int? poolActive = null, poolLive = null, poolMax = null;
+        if (_connectionProbe?.Invoke() is { } pools)
+        {
+            poolActive = pools.Sum(p => p.ActiveConnections);
+            poolLive = pools.Sum(p => p.LiveConnections);
+            poolMax = pools.Sum(p => p.EffectiveMaxConnections);
+        }
+        buffer.PipelineSample(
+            sessionId, segmentIndex, queuedSegments, awaitingSegments, respondedAhead, activeBatches,
+            batchSize, inFlightBytes, poolActive, poolLive, poolMax);
+    }
 
     internal static void TryWait(
         StreamTraceKind kind,

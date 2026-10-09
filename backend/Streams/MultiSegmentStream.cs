@@ -96,6 +96,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     private readonly int[] _segmentBatchPredecessor;
     private int _highestRespondedIndex = -1;
     private int _nextHeadIndex;
+    // Trace-only: every head acquisition by phase, including sub-threshold waits; emitted at dispose.
+    private static readonly string[] HeadWaitPhases =
+        ["ready", "not-queued", "awaiting-response", "body-draining", "incremental-body", "unknown"];
+    private const int IncrementalBodyPhase = 4;
+    private readonly int[] _headWaitCounts = new int[HeadWaitPhases.Length];
+    private readonly long[] _headWaitTicks = new long[HeadWaitPhases.Length];
+    private Guid? _traceSessionId;
+    private long _nextPipelineSampleAt;
     private ConcurrentDictionary<int, byte>? _supersededSegments;
 
     private int GetCorruptionRetryLimit(string segmentId) =>
@@ -1699,6 +1707,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         public void OnReaderWaited(TimeSpan elapsed)
         {
             owner.ResolveIncrementalReadiness(ready: false);
+            owner.RecordHeadWait("incremental-body", elapsed);
             StreamTrace.TryStall(
                 MultiProviderNntpClient.CurrentStreamTraceRange, StreamStallKind.ConsumerWait, elapsed);
             if (elapsed >= StreamTrace.WaitThreshold)
@@ -2692,6 +2701,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 int? issueAgeMs = null;
                 var respondedAhead = 0;
                 var queuedSegments = 0;
+                if (StreamTrace.IsEnabled)
+                {
+                    _traceSessionId ??= StreamTrace.CurrentSessionId;
+                    MaybeSamplePipeline(headIndex);
+                }
                 if ((!wasQueued || !nextSegment.IsCompleted) && StreamTrace.IsEnabled)
                 {
                     headPhase = wasQueued ? DescribeHeadWait(headIndex, out issueAgeMs) : "not-queued";
@@ -2703,6 +2717,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                     : await AwaitHeadSegmentAsync(nextSegment, headIndex).ConfigureAwait(false);
                 var headWait = Stopwatch.GetElapsedTime(waitStarted);
                 StreamTrace.TryStall(traceRange, StreamStallKind.ConsumerWait, headWait);
+                if (headPhase is not null || readyWhenNeeded) RecordHeadWait(headPhase ?? "ready", headWait);
                 if (headPhase is not null && headWait >= StreamTrace.WaitThreshold)
                 {
                     StreamTrace.TryWait(
@@ -2732,6 +2747,56 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     }
 
     private bool IsSuperseded(int segmentIndex) => _supersededSegments?.ContainsKey(segmentIndex) == true;
+
+    private void RecordHeadWait(string phase, TimeSpan elapsed)
+    {
+        if (_traceSessionId is null) return;
+        var index = Array.IndexOf(HeadWaitPhases, phase);
+        if (index < 0) return;
+        Interlocked.Increment(ref _headWaitCounts[index]);
+        Interlocked.Add(ref _headWaitTicks[index], elapsed.Ticks);
+    }
+
+    private void MaybeSamplePipeline(int headIndex)
+    {
+        if (_traceSessionId is not { } sessionId) return;
+        var now = Stopwatch.GetTimestamp();
+        if (now < _nextPipelineSampleAt) return;
+        _nextPipelineSampleAt = now + Stopwatch.Frequency;
+
+        var awaiting = 0;
+        for (var slot = 0; slot < _segmentIssuedAt.Length; slot++)
+        {
+            if (Volatile.Read(ref _segmentIssuedOwner[slot]) >= headIndex &&
+                Volatile.Read(ref _segmentIssuedAt[slot]) != 0)
+                awaiting++;
+        }
+
+        StreamTrace.TryPipelineSample(
+            sessionId, headIndex, _streamTasks.Reader.Count, awaiting,
+            Math.Max(0, Volatile.Read(ref _highestRespondedIndex) - headIndex),
+            Volatile.Read(ref _activeBatches), _batchSizer?.Current ?? _bodyPipelineBatchSize,
+            Interlocked.Read(ref _inFlightPrefetchBytes));
+    }
+
+    private void EmitHeadWaitSummary()
+    {
+        if (_traceSessionId is not { } sessionId) return;
+        var parts = new List<string>(HeadWaitPhases.Length);
+        var totalTicks = 0L;
+        var heads = 0;
+        for (var i = 0; i < HeadWaitPhases.Length; i++)
+        {
+            var count = Volatile.Read(ref _headWaitCounts[i]);
+            if (count == 0) continue;
+            var ticks = Interlocked.Read(ref _headWaitTicks[i]);
+            totalTicks += ticks;
+            if (i != IncrementalBodyPhase) heads += count;
+            parts.Add($"{HeadWaitPhases[i]}={count}/{(long)TimeSpan.FromTicks(ticks).TotalMilliseconds}ms");
+        }
+        if (parts.Count == 0) return;
+        StreamTrace.TryHeadWaitSummary(sessionId, string.Join(' ', parts), TimeSpan.FromTicks(totalTicks), heads);
+    }
 
     // "body-draining" means the server answered but the body is still being received, buffered or retried.
     private string DescribeHeadWait(int headIndex, out int? issueAgeMs)
@@ -3056,6 +3121,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
     private async Task DisposeCoreAsync()
     {
+        EmitHeadWaitSummary();
         try
         {
             try

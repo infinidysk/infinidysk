@@ -534,6 +534,53 @@ public sealed class StreamTraceBuffer
         });
     }
 
+    /// <param name="summary">Fixed phase codes with counts and milliseconds, never a path or message ID.</param>
+    internal void HeadWaitSummary(Guid sessionId, string summary, TimeSpan totalWait, int heads)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = sessionId,
+            Kind = StreamTraceKind.HeadWaitSummary.ToString(),
+            Message = summary,
+            DurationMs = (int)Math.Clamp(totalWait.TotalMilliseconds, 0, int.MaxValue),
+            PlannedSegments = heads,
+        });
+    }
+
+    internal void PipelineSample(
+        Guid sessionId,
+        int segmentIndex,
+        int queuedSegments,
+        int awaitingSegments,
+        int respondedAhead,
+        int activeBatches,
+        int? batchSize,
+        long inFlightBytes,
+        int? poolActive,
+        int? poolLive,
+        int? poolMax)
+    {
+        Record(new StreamTraceEvent
+        {
+            Sequence = 0,
+            AtUnixMs = Now(),
+            SessionId = sessionId,
+            Kind = StreamTraceKind.PipelineSample.ToString(),
+            SegmentIndex = segmentIndex,
+            QueuedSegments = queuedSegments,
+            AwaitingSegments = awaitingSegments,
+            RespondedAhead = respondedAhead,
+            ActiveBatches = activeBatches,
+            BatchSize = batchSize,
+            Bytes = inFlightBytes,
+            PoolActive = poolActive,
+            PoolLive = poolLive,
+            PoolMax = poolMax,
+        });
+    }
+
     /// <summary>
     /// Bounded, range-attributed startup/handoff evidence. <paramref name="phase"/>
     /// is produced only by the typed mapping in

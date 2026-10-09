@@ -18,4 +18,6 @@ public enum StreamTraceKind
     HeadWait = 13,
     VolumeBoundary = 14,
     VolumePrepare = 15,
+    HeadWaitSummary = 16,
+    PipelineSample = 17,
 }

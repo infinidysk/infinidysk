@@ -33,6 +33,12 @@ public sealed record StreamTraceEvent
     [JsonPropertyName("respondedAhead")] public int? RespondedAhead { get; init; }
     [JsonPropertyName("queuedSegments")] public int? QueuedSegments { get; init; }
     [JsonPropertyName("partIndex")] public int? PartIndex { get; init; }
+    // PipelineSample: segments requested but not yet answered, and provider pool occupancy.
+    [JsonPropertyName("awaitingSegments")] public int? AwaitingSegments { get; init; }
+    [JsonPropertyName("activeBatches")] public int? ActiveBatches { get; init; }
+    [JsonPropertyName("poolActive")] public int? PoolActive { get; init; }
+    [JsonPropertyName("poolLive")] public int? PoolLive { get; init; }
+    [JsonPropertyName("poolMax")] public int? PoolMax { get; init; }
 
     [JsonPropertyName("bytes")] public long? Bytes { get; init; }
     [JsonPropertyName("endReason")] public string? EndReason { get; init; }

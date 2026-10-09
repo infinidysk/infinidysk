@@ -445,6 +445,12 @@ public sealed class MultiSegmentStreamHedgeTests
         Assert.Equal("awaiting-response", wait.Status);
         Assert.True(wait.DurationMs >= 50, $"Wait was {wait.DurationMs} ms.");
         Assert.NotNull(wait.IssueAgeMs);
+
+        await stream.DisposeAsync();
+        var summary = Assert.Single(trace.Events, e => e.Kind == nameof(StreamTraceKind.HeadWaitSummary));
+        Assert.Contains("awaiting-response=", summary.Message);
+        Assert.Equal(segments.Count, summary.PlannedSegments);
+        Assert.Contains(trace.Events, e => e.Kind == nameof(StreamTraceKind.PipelineSample) && e.SegmentIndex == 0);
     }
 
     private sealed class FirstBodyStallsClient(INntpClient inner, Task? originalGate = null) : WrappingNntpClient(inner)
