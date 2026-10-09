@@ -2725,7 +2725,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                     var wasQueued = _streamTasks.Reader.TryRead(out var streamTask);
                     if (!wasQueued)
                     {
-                        if (StreamTrace.IsEnabled) headPhase = "not-queued";
+                        // Captured regardless of enablement so a wait that spans trace activation is still recorded.
+                        headPhase = HeadWaitPhases[NotQueuedPhase];
                         if (!await _streamTasks.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false) ||
                             !_streamTasks.Reader.TryRead(out streamTask))
                             return 0;
@@ -2742,7 +2743,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                     // Test hook: fires after readiness is sampled and before the segment task is awaited,
                     // so lockstep tests can keep the gate closed until starvation is observed.
                     TestOnSegmentReadiness?.Invoke(readyWhenNeeded);
-                    if (wasQueued && !nextSegment.IsCompleted && StreamTrace.IsEnabled)
+                    if (wasQueued && !nextSegment.IsCompleted)
                         headPhase = DescribeHeadWait(headIndex, out issueAgeMs);
                     if (headPhase is not null)
                     {
@@ -2754,7 +2755,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                         ? await nextSegment.ConfigureAwait(false)
                         : await AwaitHeadSegmentAsync(nextSegment, headIndex).ConfigureAwait(false);
                 }
-                catch (Exception e) when (headPhase is not null)
+                catch (Exception e) when (headPhase is not null && StreamTrace.IsEnabled)
                 {
                     try
                     {
@@ -2780,7 +2781,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 var waitEnded = Stopwatch.GetTimestamp();
                 StreamTrace.TryStall(
                     traceRange, StreamStallKind.ConsumerWait, Stopwatch.GetElapsedTime(waitStarted, waitEnded));
-                if (headPhase is not null)
+                if (headPhase is not null && StreamTrace.IsEnabled)
                 {
                     TraceHeadWait(
                         headIndex, headPhase, waitStarted, dequeuedAt, waitEnded, issueAgeMs, respondedAhead,
