@@ -2,6 +2,7 @@ using System.Text;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Database.Models.Metrics;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Logging;
 using NzbWebDAV.Models;
 using NzbWebDAV.Streams;
@@ -136,6 +137,25 @@ public class SharedStreamEntryTests : IDisposable
         await Task.Delay(50);
         Assert.Equal(SharedStreamEntryState.Ready, entry.State);
         Assert.Equal(payload[(int)reattachAt..], await ReadAllAsync(second));
+    }
+
+    [Fact]
+    public async Task LastReaderDetach_IdlesUpstreamDemandUntilReattach()
+    {
+        var (upstream, _, payload) = CreateUpstream();
+        await using var entry = StartEntry(upstream, payload.Length);
+        var gate = entry.EntryToken.GetContext<SharedStreamDemandGate>();
+        Assert.NotNull(gate);
+        var first = Attach(entry, 0);
+        Assert.False(gate.IsIdle);
+        Assert.Equal(8, await ReadExactAsync(first, new byte[8]));
+        var cursor = first.Cursor;
+        await first.DisposeAsync();
+        Assert.True(gate.IsIdle);
+
+        await using var second = Attach(entry, cursor);
+        Assert.False(gate.IsIdle);
+        Assert.Equal(payload[(int)cursor..], await ReadAllAsync(second));
     }
 
     [Fact]

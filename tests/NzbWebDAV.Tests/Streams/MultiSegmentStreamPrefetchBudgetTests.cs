@@ -1,3 +1,5 @@
+using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Fakes;
 using NzbWebDAV.Tests.TestUtils;
@@ -160,6 +162,34 @@ public class MultiSegmentStreamPrefetchBudgetTests
 
         Assert.True(client.RequestedSegmentIds.Count >= articleBufferSize - 1,
             $"Expected prefetch near buffer size without budget, got {client.RequestedSegmentIds.Count}");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IdleSharedDemand_HoldsPrefetchUntilDemandResumes(bool pipelined)
+    {
+        const int segmentSize = 100;
+        var segments = Enumerable.Range(0, 20).ToDictionary(
+            i => $"idle-{i}",
+            i => Enumerable.Repeat((byte)i, segmentSize).ToArray());
+        var client = new FakeNntpClient(segments, useCachedYencStreams: true);
+        var gate = new SharedStreamDemandGate();
+        gate.SetIdle();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var context = cts.Token.SetContext(gate);
+
+        await using var stream = MultiSegmentStream.Create(
+            segments.Keys.ToArray().AsMemory(), client, articleBufferSize: 10,
+            estimatedSegmentSize: segmentSize, failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: pipelined, cts.Token, fileName: "idle.bin", readBudget: null);
+        await Task.Delay(150);
+        Assert.Empty(client.RequestedSegmentIds);
+
+        gate.SetDemand();
+        var buffer = new byte[segmentSize];
+        await stream.ReadExactlyAsync(buffer, cts.Token);
+        Assert.Equal(segments["idle-0"], buffer);
     }
 
     [Fact]

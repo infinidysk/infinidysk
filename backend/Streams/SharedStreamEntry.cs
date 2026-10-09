@@ -28,6 +28,8 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
     private readonly int _chunkSize;
     private readonly Dictionary<long, SharedReaderStream> _readers = [];
     private readonly DateTimeOffset _createdAt;
+    private readonly SharedStreamDemandGate _demand = new();
+    private readonly CancellationTokenContext _demandContext;
 
     private Stream? _upstream;
     private IAsyncDisposable? _ownership;
@@ -79,6 +81,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         _leadBytes = leadBytes ?? SharedStreamRingBuffer.LeadBytes;
         _ring = new SharedStreamRingBuffer(ringSizeBytes, anchor, pool, _chunkSize);
         _entryCts = CancellationTokenSource.CreateLinkedTokenSource(registryRootToken);
+        _demandContext = _entryCts.Token.SetContext(_demand);
         _createdAt = _timeProvider.GetUtcNow();
         _state = SharedStreamEntryState.Opening;
     }
@@ -172,6 +175,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         _ring.ReleaseAll();
         try { _entryCts.Cancel(); }
         catch (ObjectDisposedException) { }
+        _demandContext.Dispose();
         _entryCts.Dispose();
     }
 
@@ -214,6 +218,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
                 this, _ring, readerId, startOffset, FileSize, _ringSize, fallbackFactory);
             _readers[readerId] = reader;
             _ring.RegisterReader(readerId, startOffset);
+            _demand.SetDemand();
             SignalPumpLocked();
             missReason = null;
             return reader;
@@ -242,6 +247,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
             else if (_state == SharedStreamEntryState.Ready && _readers.Count == 0)
             {
                 _state = SharedStreamEntryState.Draining;
+                _demand.SetIdle();
                 StartGraceLocked();
             }
 
@@ -594,6 +600,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
 
         // 6. Return ring chunks last.
         _ring.ReleaseAll();
+        _demandContext.Dispose();
         _entryCts.Dispose();
 
         lock (_lock)

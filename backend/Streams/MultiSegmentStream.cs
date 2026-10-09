@@ -51,6 +51,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     private readonly long _prefetchByteCeiling;
     private readonly long _initialPrefetchByteCeiling;
     private readonly SpeculativeReadAhead? _speculativeReadAhead;
+    private readonly SharedStreamDemandGate? _demandGate;
     // Planned bytes of segments handed to the reader; grows the ceiling like TCP slow start.
     private long _consumedPrefetchBytes;
     private readonly int _taskWindowSize;
@@ -895,6 +896,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         }
         _initialPrefetchByteCeiling = Math.Min(_prefetchByteCeiling, initialPlannedBytes);
         _speculativeReadAhead = speculativeReadAhead;
+        _demandGate = cancellationToken.GetContext<SharedStreamDemandGate>();
         if (_stripeCount > 1)
         {
             Log.Debug(
@@ -1436,6 +1438,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     /// </summary>
     private async Task WaitForPrefetchCeilingAsync(CancellationToken cancellationToken)
     {
+        if (_demandGate is { } demandGate)
+            await demandGate.WaitForDemandAsync(cancellationToken).ConfigureAwait(false);
         if (_prefetchByteCeiling <= 0) return;
 
         while (Interlocked.Read(ref _inFlightPrefetchBytes) >= CurrentPrefetchByteCeiling)
