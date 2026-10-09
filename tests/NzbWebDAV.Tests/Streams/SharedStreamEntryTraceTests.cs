@@ -62,11 +62,13 @@ public sealed class SharedStreamEntryTraceTests
         }
     }
 
-    [Fact]
-    public async Task Pump_SamplesWhileUpstreamBlocksAndStopsOnDispose()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Pump_SamplesWhileUpstreamBlocksAndStopsOnDispose(bool enabledAtStart)
     {
         var previous = StreamTrace.Buffer;
-        var buffer = new StreamTraceBuffer(capacity: 1_000, maxSessions: 16);
+        var buffer = new StreamTraceBuffer(capacity: 1_000, maxSessions: 16, enabled: enabledAtStart);
         StreamTrace.Configure(buffer);
         try
         {
@@ -80,17 +82,40 @@ public sealed class SharedStreamEntryTraceTests
                 ContentIdentity = new SharedContentIdentity("blocked-test", null, 64),
             });
 
-            int PumpSamples() => buffer.GetSessionEvents(entry.EntryId)
-                .Count(e => e.Kind == nameof(StreamTraceKind.PumpSample));
-            var deadline = DateTime.UtcNow.AddSeconds(5);
-            while (PumpSamples() < 2 && DateTime.UtcNow < deadline)
-                await Task.Delay(50);
-            Assert.True(PumpSamples() >= 2, "Pump did not sample while its upstream read was blocked.");
+            async Task<StreamTraceEvent> WaitForPumpSample(string state)
+            {
+                var deadline = DateTime.UtcNow.AddSeconds(5);
+                while (DateTime.UtcNow < deadline)
+                {
+                    StreamTrace.SampleAll();
+                    if (buffer.GetSessionEvents(entry.EntryId).LastOrDefault(e =>
+                            e.Kind == nameof(StreamTraceKind.PumpSample) && e.Status == state) is { } sample)
+                        return sample;
+                    await Task.Delay(25);
+                }
+
+                throw new TimeoutException($"No pump sample with state {state}.");
+            }
+
+            // A pump that is already running, or blocked, is reached when tracing turns on.
+            await Task.Delay(100);
+            if (!enabledAtStart) buffer.EnableFor(TimeSpan.Zero, 1_000, "test");
+            var idle = await WaitForPumpSample("paused-no-reader");
+            Assert.Equal(0, idle.Readers);
+            Assert.Equal("PUMP", Assert.Single(buffer.GetSessionEvents(entry.EntryId),
+                e => e.Kind == nameof(StreamTraceKind.RangeOpen)).Method);
+
+            await using (entry.TryAttach(0, (_, _) => throw new InvalidOperationException(), out _)!)
+            {
+                var blocked = await WaitForPumpSample("reading-upstream");
+                Assert.Equal(1, blocked.Readers);
+                Assert.Equal(0, blocked.ReaderLeadBytes);
+            }
 
             await entry.DisposeAsync();
             var afterDispose = buffer.GetSessionEvents(entry.EntryId).Count;
             Assert.Contains(buffer.GetSessionEvents(entry.EntryId), e => e.Kind == nameof(StreamTraceKind.RangeEnd));
-            await Task.Delay(1_100);
+            StreamTrace.SampleAll();
             Assert.Equal(afterDispose, buffer.GetSessionEvents(entry.EntryId).Count);
         }
         finally

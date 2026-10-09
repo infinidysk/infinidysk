@@ -445,6 +445,8 @@ public sealed class MultiSegmentStreamHedgeTests
         Assert.Equal("awaiting-response", wait.Status);
         Assert.True(wait.DurationMs >= 50, $"Wait was {wait.DurationMs} ms.");
         Assert.NotNull(wait.IssueAgeMs);
+        Assert.True(wait.AwaitingResponseMs >= 50, $"Awaiting split was {wait.AwaitingResponseMs} ms.");
+        Assert.True(wait.ReaderBlocked);
 
         await stream.DisposeAsync();
         var summary = Assert.Single(trace.Events, e => e.Kind == nameof(StreamTraceKind.HeadWaitSummary));
