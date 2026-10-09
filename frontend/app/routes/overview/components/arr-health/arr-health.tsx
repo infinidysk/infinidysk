@@ -39,7 +39,10 @@ export function ArrHealth({ data, window }: ArrHealthProps) {
   ).map(([, group]) => group);
 
   return (
-    <section className="card w-full min-w-0 border border-base-content/10 bg-base-100 shadow-sm">
+    <section
+      id="arr-health"
+      className="card w-full min-w-0 border border-base-content/10 bg-base-100 shadow-sm"
+    >
       <div className="card-body gap-3 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>

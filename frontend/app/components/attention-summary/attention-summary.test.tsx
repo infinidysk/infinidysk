@@ -84,6 +84,10 @@ describe("AttentionSummary", () => {
       expect(
         screen.getByRole("link", { name: "Arr connection settings" }).getAttribute("href"),
       ).toBe("/settings?tab=arrs");
+      const waitingLink = screen.queryByRole("link", { name: "View waiting imports" });
+      if (status === "degraded" && !hasWarnings && !hasErrors)
+        expect(waitingLink?.getAttribute("href")).toBe("/overview#arr-health");
+      else expect(waitingLink).toBeNull();
       if (status === "offline") expect(screen.getByText("Connection refused")).toBeTruthy();
     },
   );
