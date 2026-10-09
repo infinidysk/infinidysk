@@ -114,7 +114,7 @@ public sealed class GetArrHealthControllerTests
                 Title = $"item-{i}",
                 DownloadId = Guid.NewGuid(),
                 CreatedAt = DateTime.SpecifyKind(
-                    now.UtcDateTime.AddMinutes(-1 - i).ToLocalTime(),
+                    now.UtcDateTime.AddMinutes(-1d - i * 2d).ToLocalTime(),
                     DateTimeKind.Unspecified),
             }).ToList(),
         };

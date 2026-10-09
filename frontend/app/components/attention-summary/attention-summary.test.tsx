@@ -48,14 +48,15 @@ afterEach(() => {
 
 describe("AttentionSummary", () => {
   it.each([
-    ["degraded", true, false, "This app reports queue warnings."],
-    ["degraded", false, true, "This app reports queue errors."],
-    ["degraded", true, true, "This app reports queue warnings and errors."],
-    ["degraded", false, false, "Imports are taking longer than expected."],
-    ["offline", false, false, "InfiniDysk could not poll this instance."],
+    ["degraded", true, false, 0, "This app reports queue warnings."],
+    ["degraded", false, true, 0, "This app reports queue errors."],
+    ["degraded", true, true, 0, "This app reports queue warnings and errors."],
+    ["degraded", false, false, 1, "Imports are taking longer than expected."],
+    ["degraded", false, false, 0, "This Arr integration reports a degraded status."],
+    ["offline", false, false, 0, "InfiniDysk could not poll this instance."],
   ] as const)(
-    "explains %s status with warnings=%s and errors=%s in place",
-    async (status, hasWarnings, hasErrors, reason) => {
+    "explains %s status with warnings=%s, errors=%s, awaiting=%s in place",
+    async (status, hasWarnings, hasErrors, awaitingCount, reason) => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
       const data = mockArrHealthData();
       data.instances = [
@@ -66,7 +67,7 @@ describe("AttentionSummary", () => {
           hasWarnings,
           hasErrors,
           queueCount: 1,
-          awaitingCount: 0,
+          awaitingCount,
           lastError: status === "offline" ? "Connection refused" : null,
         },
       ];
@@ -84,6 +85,10 @@ describe("AttentionSummary", () => {
       expect(
         screen.getByRole("link", { name: "Arr connection settings" }).getAttribute("href"),
       ).toBe("/settings?tab=arrs");
+      const waitingLink = screen.queryByRole("link", { name: "View waiting imports" });
+      if (status === "degraded" && !hasWarnings && !hasErrors && awaitingCount > 0)
+        expect(waitingLink?.getAttribute("href")).toBe("/overview#arr-health");
+      else expect(waitingLink).toBeNull();
       if (status === "offline") expect(screen.getByText("Connection refused")).toBeTruthy();
     },
   );
