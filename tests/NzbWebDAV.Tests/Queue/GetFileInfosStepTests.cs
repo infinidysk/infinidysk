@@ -420,6 +420,16 @@ public class GetFileInfosStepTests
     }
 
     [Fact]
+    public void GetFileInfos_IgnoresRarHeaderNameWhenContentLacksRarMagic()
+    {
+        var result = Assert.Single(GetFileInfosStep.GetFileInfos(
+            [Seg("release.nfo", "Other.Post.part01.rar", "not a rar volume"u8.ToArray())], []));
+
+        Assert.Equal("release.nfo", result.FileName);
+        Assert.False(result.IsRar);
+    }
+
+    [Fact]
     public void GetFileInfos_RepairsCollidingSubjectsUsingDistinctYencHeaders()
     {
         var inputs = new List<FetchFirstSegmentsStep.NzbFileWithFirstSegment>
