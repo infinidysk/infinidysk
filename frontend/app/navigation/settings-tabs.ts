@@ -11,6 +11,7 @@ export type SettingsTab =
   | "watchtower"
   | "warden"
   | "arrs"
+  | "media-servers"
   | "rclone"
   | "general"
   | "repairs"
@@ -77,6 +78,7 @@ export const SETTINGS_TAB_GROUPS: SettingsTabGroup[] = [
     title: "Integrations",
     items: [
       { id: "arrs", label: "Arr Apps", icon: "sync_alt" },
+      { id: "media-servers", label: "Media Servers", icon: "live_tv" },
       { id: "rclone", label: "Rclone Server", icon: "dns" },
     ],
   },

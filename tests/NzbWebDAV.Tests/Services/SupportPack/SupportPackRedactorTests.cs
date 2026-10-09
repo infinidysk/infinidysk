@@ -161,6 +161,19 @@ public class SupportPackRedactorTests
     }
 
     [Fact]
+    public void RedactText_KnownShortSecretsAreRedactedWithoutBroadeningGenericLiteralMatching()
+    {
+        var redactor = new SupportPackRedactor(["abc"], ["q7!"]);
+
+        var result = redactor.RedactText("generic abc configured q7!");
+
+        Assert.Contains("abc", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("q7!", result, StringComparison.Ordinal);
+        Assert.Contains("configured [REDACTED]", result, StringComparison.Ordinal);
+    }
+
+
+    [Fact]
     public void RedactText_KeepsVersionStringsThatLookLikeAddresses()
     {
         var redactor = new SupportPackRedactor([]);
@@ -209,6 +222,22 @@ public class SupportPackRedactorTests
         Assert.Equal("[REDACTED]", provider.GetProperty("User").GetString());
         Assert.Equal("[REDACTED]", provider.GetProperty("Pass").GetString());
     }
+
+    [Fact]
+    public void RedactConfigurationValue_RedactsMediaServerTokens()
+    {
+        var redactor = new SupportPackRedactor([]);
+        var result = redactor.RedactConfigurationValue(
+            ConfigKeys.MediaServersInstances,
+            "{\"Instances\":[{\"Name\":\"Plex\",\"BaseUrl\":\"http://plex.test\",\"Token\":\"media-secret\"}]}");
+
+        Assert.DoesNotContain("media-secret", result, StringComparison.Ordinal);
+        using var document = JsonDocument.Parse(result);
+        Assert.Equal(
+            "[REDACTED]",
+            document.RootElement.GetProperty("Instances")[0].GetProperty("Token").GetString());
+    }
+
 
     [Fact]
     public void RedactText_StillRedactsSentinelSecretsInsideAllowlistedJson()

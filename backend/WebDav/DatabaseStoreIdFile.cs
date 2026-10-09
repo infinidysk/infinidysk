@@ -22,6 +22,7 @@ public class DatabaseStoreIdFile(
 {
     public SharedContentIdentity ContentIdentity =>
         new(UniqueKey, davItem.FileBlobId, FileSize);
+    public Guid DavItemId => davItem.Id;
     public override string Name => davItem.Id.ToString();
     public override string UniqueKey => davItem.Id.ToString();
     public override long FileSize => davItem.FileSize!.Value;
