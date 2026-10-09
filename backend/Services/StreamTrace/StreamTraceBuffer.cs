@@ -502,40 +502,39 @@ public sealed class StreamTraceBuffer
         });
     }
 
-    /// <param name="phase">Where the wait was blocked; a fixed code, never a path or message ID.</param>
-    internal void Wait(
-        StreamTraceKind kind,
-        Guid sessionId,
-        long? rangeGeneration,
-        string phase,
-        TimeSpan elapsed,
-        int? segmentIndex = null,
-        int? partIndex = null,
-        long? offset = null,
-        int? issueAgeMs = null,
-        int? respondedAhead = null,
-        int? queuedSegments = null)
+    /// <summary>Reader-blocked waits are authoritative; preparation spans are supporting evidence.</summary>
+    internal void Wait(StreamTraceWait wait)
     {
         Record(new StreamTraceEvent
         {
             Sequence = 0,
             AtUnixMs = Now(),
-            SessionId = sessionId,
-            Kind = kind.ToString(),
-            Status = phase,
-            RangeGeneration = rangeGeneration,
-            DurationMs = (int)Math.Clamp(elapsed.TotalMilliseconds, 0, int.MaxValue),
-            SegmentIndex = segmentIndex,
-            PartIndex = partIndex,
-            Offset = offset,
-            IssueAgeMs = issueAgeMs,
-            RespondedAhead = respondedAhead,
-            QueuedSegments = queuedSegments,
+            SessionId = wait.SessionId,
+            Kind = wait.Kind.ToString(),
+            Status = wait.Phase,
+            RangeGeneration = wait.RangeGeneration,
+            DurationMs = ClampMs(wait.Elapsed),
+            PipelineId = wait.PipelineId,
+            SegmentIndex = wait.SegmentIndex,
+            PartIndex = wait.PartIndex,
+            Offset = wait.Offset,
+            IssueAgeMs = wait.IssueAgeMs,
+            RespondedAhead = wait.RespondedAhead,
+            QueuedSegments = wait.QueuedSegments,
+            NotQueuedMs = wait.NotQueuedMs,
+            AwaitingResponseMs = wait.AwaitingResponseMs,
+            BodyDrainingMs = wait.BodyDrainingMs,
+            ReaderBlocked = wait.ReaderBlocked,
+            EndReason = wait.Outcome,
         });
     }
 
+    private static int ClampMs(TimeSpan elapsed) => (int)Math.Clamp(elapsed.TotalMilliseconds, 0, int.MaxValue);
+
     /// <param name="summary">Fixed phase codes with counts and milliseconds, never a path or message ID.</param>
-    internal void HeadWaitSummary(Guid sessionId, long? rangeGeneration, string summary, TimeSpan totalWait, int heads)
+    internal void HeadWaitSummary(
+        Guid sessionId, long? rangeGeneration, int pipelineId, int? partIndex, string summary, TimeSpan totalWait,
+        int heads)
     {
         Record(new StreamTraceEvent
         {
@@ -544,55 +543,47 @@ public sealed class StreamTraceBuffer
             SessionId = sessionId,
             Kind = StreamTraceKind.HeadWaitSummary.ToString(),
             RangeGeneration = rangeGeneration,
+            PipelineId = pipelineId,
+            PartIndex = partIndex,
             Message = summary,
-            DurationMs = (int)Math.Clamp(totalWait.TotalMilliseconds, 0, int.MaxValue),
+            DurationMs = ClampMs(totalWait),
             PlannedSegments = heads,
         });
     }
 
-    /// <param name="headWaitMs">Age of the reader's in-progress head wait, or null when not waiting.</param>
-    internal void PipelineSample(
-        Guid sessionId,
-        long? rangeGeneration,
-        int segmentIndex,
-        int queuedSegments,
-        int awaitingSegments,
-        int respondedAhead,
-        int activeBatches,
-        int? batchSize,
-        long inFlightBytes,
-        int? headWaitMs,
-        int? poolActive,
-        int? poolLive,
-        int? poolMax)
+    internal void PipelineSample(StreamTracePipelineSample sample, StreamTracePoolProbe pools)
     {
         Record(new StreamTraceEvent
         {
             Sequence = 0,
             AtUnixMs = Now(),
-            SessionId = sessionId,
+            SessionId = sample.SessionId,
             Kind = StreamTraceKind.PipelineSample.ToString(),
-            RangeGeneration = rangeGeneration,
-            SegmentIndex = segmentIndex,
-            DurationMs = headWaitMs,
-            QueuedSegments = queuedSegments,
-            AwaitingSegments = awaitingSegments,
-            RespondedAhead = respondedAhead,
-            ActiveBatches = activeBatches,
-            BatchSize = batchSize,
-            Bytes = inFlightBytes,
-            PoolActive = poolActive,
-            PoolLive = poolLive,
-            PoolMax = poolMax,
+            RangeGeneration = sample.RangeGeneration,
+            PipelineId = sample.PipelineId,
+            PartIndex = sample.PartIndex,
+            SegmentIndex = sample.SegmentIndex,
+            Status = sample.WaitPhase,
+            DurationMs = sample.WaitMs,
+            QueuedSegments = sample.QueuedSegments,
+            AwaitingSegments = sample.AwaitingSegments,
+            RespondedAhead = sample.RespondedAhead,
+            ActiveBatches = sample.ActiveBatches,
+            BatchSize = sample.BatchSize,
+            Bytes = sample.InFlightBytes,
+            PoolActive = pools.Active,
+            PoolLive = pools.Live,
+            PoolMax = pools.Max,
+            AdmissionFree = pools.AdmissionFree,
+            AdmissionWaiting = pools.AdmissionWaiting,
         });
     }
 
-    /// <summary>
-    /// Links a client range to the shared-stream producer whose session carries the
-    /// upstream segment evidence. <paramref name="producerSessionId"/> is that session's id.
-    /// </summary>
+    /// <param name="state">Fixed pump state code explaining why it is or is not reading upstream.</param>
+    /// <param name="readerLeadBytes">Bytes buffered past the furthest reader, or null with no readers.</param>
     internal void PumpSample(
-        StreamTraceRangeContext range, long bytesPumped, int? poolActive, int? poolLive, int? poolMax)
+        StreamTraceRangeContext range, long bytesPumped, string state, int readers, long? readerLeadBytes,
+        StreamTracePoolProbe pools)
     {
         Record(new StreamTraceEvent
         {
@@ -601,13 +592,22 @@ public sealed class StreamTraceBuffer
             SessionId = range.SessionId,
             Kind = StreamTraceKind.PumpSample.ToString(),
             RangeGeneration = range.Generation,
+            Status = state,
             BytesServed = bytesPumped,
-            PoolActive = poolActive,
-            PoolLive = poolLive,
-            PoolMax = poolMax,
+            Readers = readers,
+            ReaderLeadBytes = readerLeadBytes,
+            PoolActive = pools.Active,
+            PoolLive = pools.Live,
+            PoolMax = pools.Max,
+            AdmissionFree = pools.AdmissionFree,
+            AdmissionWaiting = pools.AdmissionWaiting,
         });
     }
 
+    /// <summary>
+    /// Links a client range to the shared-stream producer whose session carries the
+    /// upstream segment evidence. <paramref name="producerSessionId"/> is that session's id.
+    /// </summary>
     internal void SharedAttach(StreamTraceRangeContext range, Guid producerSessionId, long producerAnchor, long readerStart)
     {
         Record(new StreamTraceEvent

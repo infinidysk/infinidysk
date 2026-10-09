@@ -17,7 +17,7 @@ namespace NzbWebDAV.Streams;
 /// One shared upstream Usenet stream for a file region. Owns the pump, ring, grace
 /// timer, and entry-scoped cancellation token. Attach is valid only in Ready/Draining.
 /// </summary>
-internal sealed class SharedStreamEntry : IAsyncDisposable
+internal sealed class SharedStreamEntry : IAsyncDisposable, IStreamTraceSampled
 {
     private static readonly LogThrottle CircuitFailureThrottle = new();
     private readonly object _lock = new();
@@ -52,6 +52,10 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
     private TaskCompletionSource _validationProgress =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private SharedStreamReapReason _reapReason = SharedStreamReapReason.Grace;
+    private readonly Lock _traceGate = new();
+    private StreamTraceLazyRange? _traceLazy;
+    private bool _traceClosed;
+    private volatile string _pumpState = "starting";
 
     internal SharedStreamEntry(
         string path,
@@ -368,21 +372,14 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
     {
         var scratch = SharedStreamAccountingPool.PumpScratch.Rent(_chunkSize);
         // The pump runs without the request's flow, so it traces as its own session keyed by EntryId.
-        var traceRange = StreamTrace.Buffer?.RangeOpen(
-            EntryId, Path, "PUMP", Anchor, null, FileSize, null, null, System.IO.Path.GetFileName(Path));
-        using var traceScope = MultiProviderNntpClient.BeginStreamTraceRangeScope(traceRange);
+        // Opened lazily so enabling tracing mid-stream still reaches a running or blocked pump.
+        var traceLazy = new StreamTraceLazyRange(() => StreamTrace.Buffer?.RangeOpen(
+            EntryId, Path, "PUMP", Anchor, null, FileSize, null, null, System.IO.Path.GetFileName(Path)));
+        _traceLazy = traceLazy;
+        using var traceScope = MultiProviderNntpClient.BeginLazyStreamTraceRangeScope(traceLazy);
+        traceLazy.Resolve();
         // Covers the first-article phase that runs before any buffered pipeline exists.
-#pragma warning disable CA2000 // disposed in finally, before RangeEnd, so no sample trails the range
-        var pumpSampler = traceRange is { } sampledRange
-            ? new Timer(
-                static state =>
-                {
-                    var (entry, range) = ((SharedStreamEntry, StreamTraceRangeContext))state!;
-                    StreamTrace.TryPumpSample(range, entry.BytesPumped);
-                },
-                (this, sampledRange), TimeSpan.Zero, TimeSpan.FromSeconds(1))
-            : null;
-#pragma warning restore CA2000
+        StreamTrace.RegisterSampled(this);
         var traceEnd = ReadSession.EndReasonCode.Aborted;
         string? traceMessage = null;
         try
@@ -398,6 +395,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
             while (!ct.IsCancellationRequested)
             {
                 await WaitForPumpSpaceAsync(ct).ConfigureAwait(false);
+                _pumpState = "reading-upstream";
                 var read = await upstream.ReadAsync(scratch.AsMemory(0, _chunkSize), ct)
                     .ConfigureAwait(false);
                 if (read == 0)
@@ -405,6 +403,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
                     // Logical EOF can precede a pending trailer, e.g. AES plaintext ending before its ciphertext.
                     TrackValidation(upstream.ValidateDeliveredAsync(ct), long.MaxValue);
                     _ring.SetComplete();
+                    _pumpState = "completed";
                     traceEnd = ReadSession.EndReasonCode.Completed;
                     return;
                 }
@@ -427,6 +426,7 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         {
             traceEnd = ReadSession.EndReasonCode.Error;
             traceMessage = ex.GetType().Name;
+            _pumpState = "failed";
             if (ex.TryGetCausingException(out CircuitAdmissionRejectedException? _))
             {
                 if (CircuitFailureThrottle.ShouldLog("circuit-admission", TimeSpan.FromSeconds(30), out var suppressed))
@@ -463,8 +463,27 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         finally
         {
             SharedStreamAccountingPool.PumpScratch.Return(scratch);
-            if (pumpSampler is not null) await pumpSampler.DisposeAsync().ConfigureAwait(false);
-            if (traceRange is { } endedRange) EndPumpTrace(endedRange, traceEnd, traceMessage);
+            // Closed under the sample gate so no sample trails the range end.
+            lock (_traceGate) _traceClosed = true;
+            StreamTrace.UnregisterSampled(this);
+            if (traceLazy.Close() is { } endedRange) EndPumpTrace(endedRange, traceEnd, traceMessage);
+        }
+    }
+
+    void IStreamTraceSampled.Sample()
+    {
+        lock (_traceGate)
+        {
+            if (_traceClosed || _traceLazy?.Resolve() is not { } range) return;
+            int readers;
+            long? lead;
+            lock (_lock)
+            {
+                readers = _readers.Count;
+                lead = readers > 0 ? _ring.Frontier - _ring.GetMaxCursor() : null;
+            }
+
+            StreamTrace.TryPumpSample(range, BytesPumped, _pumpState, readers, lead);
         }
     }
 
@@ -504,8 +523,9 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
             Task wait;
             lock (_lock)
             {
-                if (!ShouldPausePumpLocked())
+                if (PumpPauseLocked() is not { } pause)
                     return;
+                _pumpState = pause;
                 wait = _pumpWakeup.Task;
                 if (!ShouldPausePumpLocked())
                     return;
@@ -515,13 +535,16 @@ internal sealed class SharedStreamEntry : IAsyncDisposable
         }
     }
 
-    private bool ShouldPausePumpLocked()
+    private bool ShouldPausePumpLocked() => PumpPauseLocked() is not null;
+
+    // Why the pump is idle, or null when it may read upstream.
+    private string? PumpPauseLocked()
     {
         if (_state >= SharedStreamEntryState.Disposing)
-            return true;
+            return "paused-closing";
         if (_readers.Count == 0)
-            return true;
-        return _ring.Frontier - _ring.GetMaxCursor() >= _leadBytes;
+            return "paused-no-reader";
+        return _ring.Frontier - _ring.GetMaxCursor() >= _leadBytes ? "paused-reader-lead" : null;
     }
 
     private void MaybeEvict()

@@ -30,6 +30,13 @@ public sealed record StreamTraceEvent
     [JsonPropertyName("hedgeDelayMs")] public int? HedgeDelayMs { get; init; }
     // HeadWait: time since the blocking segment was requested, when the reader started waiting.
     [JsonPropertyName("issueAgeMs")] public int? IssueAgeMs { get; init; }
+    // HeadWait: the wait split by the phase the head segment was in; status is the phase at wait start.
+    [JsonPropertyName("notQueuedMs")] public int? NotQueuedMs { get; init; }
+    [JsonPropertyName("awaitingResponseMs")] public int? AwaitingResponseMs { get; init; }
+    [JsonPropertyName("bodyDrainingMs")] public int? BodyDrainingMs { get; init; }
+    // Waits: false for background preparation that no reader was blocked on.
+    [JsonPropertyName("readerBlocked")] public bool? ReaderBlocked { get; init; }
+    [JsonPropertyName("pipelineId")] public int? PipelineId { get; init; }
     [JsonPropertyName("respondedAhead")] public int? RespondedAhead { get; init; }
     [JsonPropertyName("queuedSegments")] public int? QueuedSegments { get; init; }
     [JsonPropertyName("partIndex")] public int? PartIndex { get; init; }
@@ -39,6 +46,11 @@ public sealed record StreamTraceEvent
     [JsonPropertyName("poolActive")] public int? PoolActive { get; init; }
     [JsonPropertyName("poolLive")] public int? PoolLive { get; init; }
     [JsonPropertyName("poolMax")] public int? PoolMax { get; init; }
+    [JsonPropertyName("admissionFree")] public int? AdmissionFree { get; init; }
+    [JsonPropertyName("admissionWaiting")] public int? AdmissionWaiting { get; init; }
+    // PumpSample: attached readers and bytes buffered past the furthest one.
+    [JsonPropertyName("readers")] public int? Readers { get; init; }
+    [JsonPropertyName("readerLeadBytes")] public long? ReaderLeadBytes { get; init; }
 
     [JsonPropertyName("bytes")] public long? Bytes { get; init; }
     [JsonPropertyName("endReason")] public string? EndReason { get; init; }
