@@ -17,7 +17,7 @@ public enum ArticleBodyResult
     /// <summary>The caller cancelled the operation and the connection was successfully drained.</summary>
     Cancelled,
 
-    /// <summary>The consumer abandoned the body; the connection must be replaced without penalizing provider health.</summary>
+    /// <summary>The body was abandoned or contained invalid article data; the connection must be discarded without penalizing provider health.</summary>
     Discarded,
 }
 

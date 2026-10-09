@@ -354,7 +354,7 @@ public partial class UsenetClient
 
                 failure = bodyReadResult.Failure;
                 nextResponseIndex++;
-                if (failure is UsenetSharp.Exceptions.UsenetBodyAbandonedException)
+                if (failure is UsenetSharp.Exceptions.UsenetBodyAbandonedException or InvalidDataException)
                 {
                     if (completionResult != ArticleBodyResult.NotRetrieved)
                     {

@@ -492,8 +492,9 @@ public class UsenetClientDeterministicTests
         Assert.That(decoded.ToArray(), Is.EqualTo(expected));
     }
 
-    [Test]
-    public async Task DecodedBodyAsync_WithInvalidCrc32_Fails()
+    [TestCase(YencCrcValidationMode.WhenPresent)]
+    [TestCase(YencCrcValidationMode.Require)]
+    public async Task DecodedBodyAsync_WithInvalidCrc32_Fails(YencCrcValidationMode crcValidation)
     {
         var expected = Encoding.ASCII.GetBytes("crc validation failure");
         var incorrectCrc32 = RapidYencSharp.Crc32.Compute(expected) ^ 1;
@@ -502,20 +503,35 @@ public class UsenetClientDeterministicTests
                 writer, expected, $"size={expected.Length} crc32={incorrectCrc32:x8}"));
         await using var client = new UsenetClient(new UsenetClientOptions
         {
-            CrcValidation = YencCrcValidationMode.Require
+            CrcValidation = crcValidation
         });
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
-        var completion = new TaskCompletionSource<ArticleBodyResult>(
+        var completion = new TaskCompletionSource<(ArticleBodyResult Result, string? Reason)>(
             TaskCreationOptions.RunContinuationsAsynchronously);
+        var callbackCount = 0;
 
         var response = await client.DecodedBodyAsync(
-            "article@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
+            "article@example.com",
+            (result, reason) =>
+            {
+                Interlocked.Increment(ref callbackCount);
+                completion.TrySetResult((result, reason));
+            },
+            CancellationToken.None);
+        await using var stream = response.Stream!;
 
         var exception = Assert.ThrowsAsync<InvalidDataException>(async () =>
-            await response.Stream!.CopyToAsync(Stream.Null));
-        Assert.That(exception!.Message, Does.Contain("trailer expected"));
-        Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
-            Is.EqualTo(ArticleBodyResult.NotRetrieved));
+            await stream.CopyToAsync(Stream.Null).WaitAsync(TimeSpan.FromSeconds(2)));
+        var observed = await completion.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Multiple(() =>
+        {
+            Assert.That(exception!.Message, Does.Contain("trailer expected"));
+            Assert.That(observed.Result, Is.EqualTo(ArticleBodyResult.Discarded));
+            Assert.That(observed.Reason, Is.EqualTo(nameof(InvalidDataException)));
+            Assert.That(callbackCount, Is.EqualTo(1));
+            Assert.That(client.IsHealthy, Is.False);
+        });
+        await client.WaitForReadyAsync().WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     [Test]
@@ -1567,6 +1583,83 @@ public class UsenetClientDeterministicTests
         Assert.That(client.IsHealthy, Is.False);
         Assert.That(async () => await batch.Completion.WaitAsync(TimeSpan.FromSeconds(2)),
             Throws.InstanceOf<UsenetProtocolException>());
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task DecodedBodiesAsync_WithInvalidCrc32_FaultsPendingAndPreservesProviderFailures(
+        bool previousFailure)
+    {
+        var expected = Encoding.ASCII.GetBytes("batch crc validation failure");
+        var incorrectCrc32 = RapidYencSharp.Crc32.Compute(expected) ^ 1;
+        SegmentId[] segmentIds = previousFailure
+            ? ["bad@example.com", "corrupt@example.com", "next@example.com"]
+            : ["corrupt@example.com", "next@example.com"];
+        await using var server = ScriptedNntpServer.StartConnectionScript(
+            async (reader, writer, cancellationToken) =>
+            {
+                foreach (var segmentId in segmentIds)
+                {
+                    Assert.That(await reader.ReadLineAsync(cancellationToken),
+                        Is.EqualTo($"BODY <{segmentId.Value}>"));
+                }
+
+                if (previousFailure)
+                {
+                    await writer.WriteLineAsync("500 unsupported command");
+                }
+
+                await WriteYencArticleAsync(
+                    writer, expected, $"size={expected.Length} crc32={incorrectCrc32:x8}");
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            });
+        await using var client = new UsenetClient(new UsenetClientOptions
+        {
+            CrcValidation = YencCrcValidationMode.WhenPresent
+        });
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+        var completion = new TaskCompletionSource<(ArticleBodyResult Result, string? Reason)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var callbackCount = 0;
+        var batch = await client.DecodedBodiesAsync(
+            segmentIds,
+            (result, reason) =>
+            {
+                Interlocked.Increment(ref callbackCount);
+                completion.TrySetResult((result, reason));
+            },
+            CancellationToken.None);
+
+        if (previousFailure)
+        {
+            var previous = await batch.Responses[0].WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.That(previous.ResponseCode, Is.EqualTo(500));
+        }
+
+        var response = await batch.Responses[previousFailure ? 1 : 0]
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        await using var stream = response.Stream!;
+        var bodyFailure = Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await stream.CopyToAsync(Stream.Null).WaitAsync(TimeSpan.FromSeconds(2)));
+        var pendingFailure = Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await batch.Responses[^1].WaitAsync(TimeSpan.FromSeconds(2)));
+        var batchFailure = Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await batch.Completion.WaitAsync(TimeSpan.FromSeconds(2)));
+        var observed = await completion.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(bodyFailure!.Message, Does.Contain("trailer expected"));
+            Assert.That(pendingFailure, Is.SameAs(bodyFailure));
+            Assert.That(batchFailure, Is.SameAs(bodyFailure));
+            Assert.That(observed.Result,
+                Is.EqualTo(previousFailure ? ArticleBodyResult.NotRetrieved : ArticleBodyResult.Discarded));
+            Assert.That(observed.Reason,
+                Is.EqualTo(previousFailure ? "unexpected-response-500" : nameof(InvalidDataException)));
+            Assert.That(callbackCount, Is.EqualTo(1));
+            Assert.That(client.IsHealthy, Is.False);
+        });
+        await client.WaitForReadyAsync().WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     [Test]
