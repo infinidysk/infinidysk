@@ -302,8 +302,15 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams, long readAheadByt
     {
         try
         {
-            while (_nextParts.TryDequeue(out var pending))
+            while (true)
             {
+                PendingPart? pending;
+                // A read racing disposal may still dequeue in OpenNextAsync.
+                lock (_gate)
+                {
+                    if (!_nextParts.TryDequeue(out pending)) break;
+                }
+
                 try
                 {
                     if (await pending.Prepared.ConfigureAwait(false) is { } next)
