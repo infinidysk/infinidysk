@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.6.1](https://github.com/infinidysk/infinidysk/compare/v1.6.0...v1.6.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **deps:** Bump advanced-security/component-detection-dependency-submission-action ([#1682](https://github.com/infinidysk/infinidysk/issues/1682)) ([6d21118](https://github.com/infinidysk/infinidysk/commit/6d21118d4136f95784bd0743bee2e511abb671fe))
+* **deps:** Bump dotnet-stryker from 4.16.0 to 5.0.0 ([#1480](https://github.com/infinidysk/infinidysk/issues/1480)) ([a914b40](https://github.com/infinidysk/infinidysk/commit/a914b4092173632852f2a2aa80204e9d1c21253f))
+* **deps:** Bump NUnit from 4.6.1 to 5.0.0 ([#1644](https://github.com/infinidysk/infinidysk/issues/1644)) ([a13d490](https://github.com/infinidysk/infinidysk/commit/a13d49088fc8534c97364badab0f38f538331750))
+* **deps:** Bump the npm-minor-and-patch group ([#1681](https://github.com/infinidysk/infinidysk/issues/1681)) ([a3c3a8b](https://github.com/infinidysk/infinidysk/commit/a3c3a8b9f3f28a6be3673e12b7eb74da4111c56c))
+* **deps:** Bump the nuget-minor-and-patch group with 2 updates ([#1683](https://github.com/infinidysk/infinidysk/issues/1683)) ([45f35b5](https://github.com/infinidysk/infinidysk/commit/45f35b5b300181e3df483ddb542c0bdf0b59b072))
+* **deps:** Bump the react-router group across 1 directory with 5 updates ([#1531](https://github.com/infinidysk/infinidysk/issues/1531)) ([0d75b5d](https://github.com/infinidysk/infinidysk/commit/0d75b5d15c40c35cae092797877bc735afb94bb9))
+* **deps:** Bump xunit.v3 from 3.2.2 to 4.0.1 ([#1534](https://github.com/infinidysk/infinidysk/issues/1534)) ([8eea89a](https://github.com/infinidysk/infinidysk/commit/8eea89a20e5af9d05bdaa283d1b3e99d60e5ae86))
+* **deps:** Bump zensical from 0.0.66 to 0.0.67 in the docs-python group ([#1680](https://github.com/infinidysk/infinidysk/issues/1680)) ([c1df5ae](https://github.com/infinidysk/infinidysk/commit/c1df5ae6882c6bb21a5fef0b7fd89d6f3bb5fc99))
+* **queue:** indexer watermark files no longer fail imports with 'Rar signature not found' on some providers ([#1679](https://github.com/infinidysk/infinidysk/issues/1679)) ([e1130a0](https://github.com/infinidysk/infinidysk/commit/e1130a0129fa4ffb479a0fa226b696cc575706fe))
+
 ## [1.6.0](https://github.com/infinidysk/infinidysk/compare/v1.5.1...v1.6.0) (2026-10-09)
 
 
