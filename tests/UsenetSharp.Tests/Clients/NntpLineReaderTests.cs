@@ -22,7 +22,7 @@ public class NntpLineReaderTests
         await stream.RefillStarted.WaitAsync(TimeSpan.FromSeconds(2));
         cancellation.Cancel();
 
-        Assert.CatchAsync<OperationCanceledException>(async () => await cancelledRead);
+        await Assert.CatchAsync<OperationCanceledException>(async () => await cancelledRead);
         var second = await reader.ReadLineAsync(CancellationToken.None);
 
         Assert.That(first, Is.EqualTo("first response"));
@@ -35,7 +35,7 @@ public class NntpLineReaderTests
         await using var stream = new MemoryStream(Encoding.Latin1.GetBytes("22"));
         using var reader = new NntpLineReader(stream);
 
-        var exception = Assert.ThrowsAsync<UsenetProtocolException>(async () =>
+        var exception = await Assert.ThrowsAsync<UsenetProtocolException>(async () =>
             await reader.ReadLineAsync(CancellationToken.None));
         Assert.That(exception!.Message, Does.Contain("unterminated line"));
     }
@@ -60,9 +60,9 @@ public class NntpLineReaderTests
         var first = RequireBatch(await reader.ReadCompleteLinesAsync(CancellationToken.None));
         Assert.That(Encoding.ASCII.GetString(first.Memory.Span), Is.EqualTo("one\r\ntwo\r\n"));
 
-        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await reader.ReadCompleteLinesAsync(CancellationToken.None));
-        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await reader.ReadLineBytesAsync(CancellationToken.None));
 
         reader.Advance("one\r\n".Length);
@@ -70,7 +70,7 @@ public class NntpLineReaderTests
         Assert.That(Encoding.ASCII.GetString(second.Memory.Span), Is.EqualTo("two\r\n"));
 
         reader.Advance("two\r\n".Length);
-        Assert.ThrowsAsync<UsenetProtocolException>(async () =>
+        await Assert.ThrowsAsync<UsenetProtocolException>(async () =>
             await reader.ReadCompleteLinesAsync(CancellationToken.None));
     }
 
@@ -225,7 +225,7 @@ public class NntpLineReaderTests
         var cancelledRead = reader.ReadCompleteLinesAsync(cancellation.Token).AsTask();
         await stream.RefillStarted.WaitAsync(TimeSpan.FromSeconds(2));
         cancellation.Cancel();
-        Assert.CatchAsync<OperationCanceledException>(async () => await cancelledRead);
+        await Assert.CatchAsync<OperationCanceledException>(async () => await cancelledRead);
 
         var line = await reader.ReadLineAsync(CancellationToken.None);
         Assert.That(line, Is.EqualTo("second"));
@@ -237,7 +237,7 @@ public class NntpLineReaderTests
         await using var stream = new MemoryStream(Encoding.ASCII.GetBytes("22"));
         using var reader = new NntpLineReader(stream);
 
-        var exception = Assert.ThrowsAsync<UsenetProtocolException>(async () =>
+        var exception = await Assert.ThrowsAsync<UsenetProtocolException>(async () =>
             await reader.ReadCompleteLinesAsync(CancellationToken.None));
         Assert.That(exception!.Message, Does.Contain("unterminated line"));
     }
@@ -261,7 +261,7 @@ public class NntpLineReaderTests
         await using var stream = new FragmentedReadStream(line, [3, 3, 5]);
         using var reader = new NntpLineReader(stream, maximumLineLength: 8, bufferSize: 3);
 
-        var exception = Assert.ThrowsAsync<UsenetProtocolException>(async () =>
+        var exception = await Assert.ThrowsAsync<UsenetProtocolException>(async () =>
             await reader.ReadCompleteLinesAsync(CancellationToken.None));
         Assert.That(exception!.Message, Does.Contain("8-byte limit"));
     }
@@ -274,7 +274,7 @@ public class NntpLineReaderTests
         await using var stream = new MemoryStream(bytes);
         using var reader = new NntpLineReader(stream, maximumLineLength: 8, bufferSize: 64);
 
-        var exception = Assert.ThrowsAsync<UsenetProtocolException>(async () =>
+        var exception = await Assert.ThrowsAsync<UsenetProtocolException>(async () =>
             await reader.ReadCompleteLinesAsync(CancellationToken.None));
         Assert.That(exception!.Message, Does.Contain("8-byte limit"));
     }
@@ -288,7 +288,7 @@ public class NntpLineReaderTests
 
         reader.Dispose();
         reader.Dispose();
-        Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
             await reader.ReadCompleteLinesAsync(CancellationToken.None));
     }
 

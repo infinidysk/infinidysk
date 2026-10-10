@@ -215,7 +215,7 @@ public class YencStreamTests
         // Act & Assert
         using var yencStream = new YencStream(emptyStream);
         var buffer = new byte[10];
-        Assert.ThrowsAsync<InvalidDataException>(async () => await yencStream.ReadAsync(buffer));
+        await Assert.ThrowsAsync<InvalidDataException>(async () => await yencStream.ReadAsync(buffer));
     }
 
     [Test]
@@ -227,7 +227,7 @@ public class YencStreamTests
         // Act & Assert
         using var yencStream = new YencStream(invalidStream);
         var buffer = new byte[10];
-        Assert.ThrowsAsync<InvalidDataException>(async () => await yencStream.ReadAsync(buffer));
+        await Assert.ThrowsAsync<InvalidDataException>(async () => await yencStream.ReadAsync(buffer));
     }
 
     [Test]

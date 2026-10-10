@@ -166,7 +166,7 @@ public class AsyncSemaphoreTests
         cts.Cancel();
 
         // Assert
-        Assert.ThrowsAsync<TaskCanceledException>(async () => await waitTask);
+        await Assert.ThrowsAsync<TaskCanceledException>(async () => await waitTask);
     }
 
     [Test]
@@ -178,7 +178,7 @@ public class AsyncSemaphoreTests
         cts.Cancel();
 
         // Act & Assert
-        Assert.ThrowsAsync<TaskCanceledException>(async () => await semaphore.WaitAsync(cts.Token));
+        await Assert.ThrowsAsync<TaskCanceledException>(async () => await semaphore.WaitAsync(cts.Token));
     }
 
     [Test]
@@ -246,7 +246,7 @@ public class AsyncSemaphoreTests
         semaphore.Dispose();
 
         // Assert
-        var ex = Assert.ThrowsAsync<ObjectDisposedException>(async () => await waitTask);
+        var ex = await Assert.ThrowsAsync<ObjectDisposedException>(async () => await waitTask);
         Assert.That(ex!.ObjectName, Is.EqualTo(typeof(UsenetSharp.Concurrency.AsyncSemaphore).FullName));
     }
 
@@ -404,9 +404,9 @@ public class AsyncSemaphoreTests
         semaphore.Dispose();
 
         // Assert
-        Assert.ThrowsAsync<ObjectDisposedException>(async () => await wait1);
-        Assert.ThrowsAsync<ObjectDisposedException>(async () => await wait2);
-        Assert.ThrowsAsync<ObjectDisposedException>(async () => await wait3);
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () => await wait1);
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () => await wait2);
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () => await wait3);
     }
 
     [Test]
