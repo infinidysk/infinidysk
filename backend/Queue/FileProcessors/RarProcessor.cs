@@ -59,6 +59,8 @@ public class RarProcessor(
                         x.AdditionalDataSize
                     ),
                     AesParams = x.GetAesParams(password),
+                    IsEncrypted = x.IsEncrypted,
+                    PasswordVerified = x.IsPasswordVerified(password),
                     FileUncompressedSize = x.UncompressedSize,
                     IsUncompressedSizeUnknown = x.IsUncompressedSizeUnknown,
                     ReleaseDate = fileInfo.ReleaseDate,
@@ -151,6 +153,15 @@ public class RarProcessor(
         public required string PathWithinArchive { get; init; }
         public required LongRange ByteRangeWithinPart { get; init; }
         public required AesParams? AesParams { get; init; }
+
+        /// <summary>The member's data is encrypted (whether or not a usable password was supplied).</summary>
+        public bool IsEncrypted { get; init; }
+
+        /// <summary>The supplied password was checked against the archive; see <c>RarHeaderExtensions.IsPasswordVerified</c>.</summary>
+        public bool PasswordVerified { get; init; }
+
+        /// <summary>0 for members of a posted archive; 1+ for members expanded out of a nested stored RAR.</summary>
+        public int NestingDepth { get; init; }
 
         public required long FileUncompressedSize { get; init; }
 

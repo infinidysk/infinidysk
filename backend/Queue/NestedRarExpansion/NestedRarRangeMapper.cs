@@ -20,7 +20,10 @@ public static class NestedRarRangeMapper
         AesParams? aesParams,
         long fileUncompressedSize,
         DateTimeOffset releaseDate,
-        bool isUncompressedSizeUnknown = false)
+        bool isUncompressedSizeUnknown = false,
+        bool isEncrypted = false,
+        bool passwordVerified = false,
+        int nestingDepth = 0)
     {
         if (sortedOuterSegments.Length == 0)
             return [];
@@ -75,6 +78,9 @@ public static class NestedRarRangeMapper
                     layout.Outer.ByteRangeWithinPart.StartInclusive + partStart,
                     partCount),
                 AesParams = aesParams,
+                IsEncrypted = isEncrypted,
+                PasswordVerified = passwordVerified,
+                NestingDepth = nestingDepth,
                 FileUncompressedSize = fileUncompressedSize,
                 IsUncompressedSizeUnknown = isUncompressedSizeUnknown,
             });

@@ -49,12 +49,14 @@ internal static class Rar4TestArchiveBuilder
         ReadOnlySpan<byte> payloadPrefix = default,
         bool encrypted = false,
         IReadOnlyList<(string FileName, int PackedSize)>? trailingMembers = null,
-        IReadOnlyList<string>? trailingDirectories = null)
+        IReadOnlyList<string>? trailingDirectories = null,
+        bool isVolume = true,
+        bool endOfArchive = false)
     {
         using var stream = new MemoryStream();
         stream.Write([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00]);
 
-        WriteArchiveHeader(stream, firstVolume);
+        WriteArchiveHeader(stream, firstVolume, isVolume);
         WriteFileEntry(
             stream,
             fileName,
@@ -88,14 +90,16 @@ internal static class Rar4TestArchiveBuilder
                 isDirectory: true,
                 payloadPrefix: default);
         stream.Write(new byte[trailingBytes]);
+        if (endOfArchive)
+            WriteHeader(stream, [0x7B, 0x00, 0x00, 0x07, 0x00]); // ENDARC, HEAD_SIZE=7
         return stream.ToArray();
     }
 
-    private static void WriteArchiveHeader(Stream stream, bool firstVolume)
+    private static void WriteArchiveHeader(Stream stream, bool firstVolume, bool isVolume)
     {
         Span<byte> archiveBody = stackalloc byte[11];
         archiveBody[0] = 0x73;
-        var archiveFlags = firstVolume ? (ushort)0x0101 : (ushort)0x0001;
+        var archiveFlags = !isVolume ? (ushort)0x0000 : firstVolume ? (ushort)0x0101 : (ushort)0x0001;
         BinaryPrimitives.WriteUInt16LittleEndian(archiveBody[1..], archiveFlags);
         BinaryPrimitives.WriteUInt16LittleEndian(archiveBody[3..], 13);
         BinaryPrimitives.WriteUInt16LittleEndian(archiveBody[5..], 0);
