@@ -10,6 +10,8 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- Keep VSTest; xunit.v3 4.x defaults to MTP, which .NET 10 dotnet test rejects without a repo-wide runner switch. -->
+    <IsTestingPlatformApplication>false</IsTestingPlatformApplication>
     <!--
       Vendored upstream test suite (ported with libs/SharpCompress): exempt
       from the repo-wide latest-All analyzer policy, same as the library it

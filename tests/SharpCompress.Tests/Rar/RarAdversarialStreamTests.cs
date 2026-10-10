@@ -29,25 +29,37 @@ public class RarAdversarialStreamTests : ArchiveTests
     [Fact(Timeout = 30_000)]
     public void Rar_MultiVolume_TruncatedLastPart_ThrowsIncompleteArchiveException()
     {
-        AssertMultiVolumeTruncationThrows(useExplicitBufferLoop: false);
+        AssertMultiVolumeTruncationThrows(
+            useExplicitBufferLoop: false,
+            TestContext.Current.CancellationToken
+        );
     }
 
     [Fact(Timeout = 30_000)]
     public void Rar_MultiVolume_TruncatedLastPart_Throws_ViaSyncRead()
     {
-        AssertMultiVolumeTruncationThrows(useExplicitBufferLoop: true);
+        AssertMultiVolumeTruncationThrows(
+            useExplicitBufferLoop: true,
+            TestContext.Current.CancellationToken
+        );
     }
 
     [Fact(Timeout = 30_000)]
     public async Task Rar_MultiVolume_TruncatedLastPart_ThrowsIncompleteArchiveException_Async()
     {
-        await AssertMultiVolumeTruncationThrowsAsync(useMemoryOverload: false);
+        await AssertMultiVolumeTruncationThrowsAsync(
+            useMemoryOverload: false,
+            TestContext.Current.CancellationToken
+        );
     }
 
     [Fact(Timeout = 30_000)]
     public async Task Rar_MultiVolume_TruncatedLastPart_Throws_ViaReadAsyncMemory()
     {
-        await AssertMultiVolumeTruncationThrowsAsync(useMemoryOverload: true);
+        await AssertMultiVolumeTruncationThrowsAsync(
+            useMemoryOverload: true,
+            TestContext.Current.CancellationToken
+        );
     }
 
     [Theory]
@@ -134,7 +146,8 @@ public class RarAdversarialStreamTests : ArchiveTests
         // RarArchive.OpenAsyncArchive still sync-reads headers, so CancelAfterBytesReadStream
         // (sync Read unsupported) cannot wrap the archive source. Cancel after the first entry chunk.
         var archiveBytes = await File.ReadAllBytesAsync(
-            Path.Join(TEST_ARCHIVES_PATH, "Rar.rar")
+            Path.Join(TEST_ARCHIVES_PATH, "Rar.rar"),
+            TestContext.Current.CancellationToken
         );
         await using var archive = await RarArchive.OpenAsyncArchive(new MemoryStream(archiveBytes));
         using var cts = new CancellationTokenSource();
@@ -160,6 +173,7 @@ public class RarAdversarialStreamTests : ArchiveTests
     [Fact(Timeout = 30_000)]
     public void SevenZip_Truncated_Throws()
     {
+        var cancellationToken = TestContext.Current.CancellationToken;
         var path = Path.Join(TEST_ARCHIVES_PATH, "7Zip.solid.7z");
         using var fileStream = File.OpenRead(path);
         using var truncated = TruncatedStream.AtPercent(fileStream, 50, leaveOpen: false);
@@ -169,6 +183,7 @@ public class RarAdversarialStreamTests : ArchiveTests
             using var archive = SevenZipArchive.OpenArchive(truncated);
             foreach (var entry in archive.Entries.Where(e => !e.IsDirectory))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 using var entryStream = entry.OpenEntryStream();
                 entryStream.CopyTo(Stream.Null);
             }
@@ -180,6 +195,7 @@ public class RarAdversarialStreamTests : ArchiveTests
     [Fact(Timeout = 30_000)]
     public void Zip_Truncated_Throws()
     {
+        var cancellationToken = TestContext.Current.CancellationToken;
         var path = Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip");
         using var fileStream = File.OpenRead(path);
         using var truncated = TruncatedStream.AtPercent(fileStream, 50, leaveOpen: false);
@@ -189,6 +205,7 @@ public class RarAdversarialStreamTests : ArchiveTests
             using var archive = ArchiveFactory.OpenArchive(truncated);
             foreach (var entry in archive.Entries.Where(e => !e.IsDirectory))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 using var entryStream = entry.OpenEntryStream();
                 entryStream.CopyTo(Stream.Null);
             }
@@ -253,7 +270,10 @@ public class RarAdversarialStreamTests : ArchiveTests
         }
     }
 
-    private void AssertMultiVolumeTruncationThrows(bool useExplicitBufferLoop)
+    private void AssertMultiVolumeTruncationThrows(
+        bool useExplicitBufferLoop,
+        CancellationToken cancellationToken
+    )
     {
         var streams = OpenTruncatedMultiVolume(percentOfLastPart: 50);
         try
@@ -263,10 +283,11 @@ public class RarAdversarialStreamTests : ArchiveTests
             {
                 foreach (var entry in archive.Entries.Where(e => !e.IsDirectory))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     using var entryStream = entry.OpenEntryStream();
                     if (useExplicitBufferLoop)
                     {
-                        DrainWithSyncRead(entryStream);
+                        DrainWithSyncRead(entryStream, cancellationToken);
                     }
                     else
                     {
@@ -286,7 +307,10 @@ public class RarAdversarialStreamTests : ArchiveTests
         }
     }
 
-    private async Task AssertMultiVolumeTruncationThrowsAsync(bool useMemoryOverload)
+    private async Task AssertMultiVolumeTruncationThrowsAsync(
+        bool useMemoryOverload,
+        CancellationToken cancellationToken
+    )
     {
         var streams = OpenTruncatedMultiVolume(percentOfLastPart: 50);
         try
@@ -294,21 +318,23 @@ public class RarAdversarialStreamTests : ArchiveTests
             await using var archive = await RarArchive.OpenAsyncArchive(streams);
             var exception = await Assert.ThrowsAnyAsync<Exception>(async () =>
             {
-                await foreach (var entry in archive.EntriesAsync)
+                await foreach (var entry in archive.EntriesAsync.WithCancellation(cancellationToken))
                 {
                     if (entry.IsDirectory)
                     {
                         continue;
                     }
 
-                    await using var entryStream = await entry.OpenEntryStreamAsync();
+                    await using var entryStream = await entry.OpenEntryStreamAsync(
+                        cancellationToken
+                    );
                     if (useMemoryOverload)
                     {
-                        await DrainWithReadAsyncMemory(entryStream);
+                        await DrainWithReadAsyncMemory(entryStream, cancellationToken);
                     }
                     else
                     {
-                        await DrainWithReadAsyncByteArray(entryStream);
+                        await DrainWithReadAsyncByteArray(entryStream, cancellationToken);
                     }
                 }
             });
@@ -324,11 +350,12 @@ public class RarAdversarialStreamTests : ArchiveTests
         }
     }
 
-    private static void DrainWithSyncRead(Stream entryStream)
+    private static void DrainWithSyncRead(Stream entryStream, CancellationToken cancellationToken)
     {
         var buffer = new byte[4096];
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var read = entryStream.Read(buffer, 0, buffer.Length);
             if (read == 0)
             {
@@ -337,12 +364,15 @@ public class RarAdversarialStreamTests : ArchiveTests
         }
     }
 
-    private static async Task DrainWithReadAsyncByteArray(Stream entryStream)
+    private static async Task DrainWithReadAsyncByteArray(
+        Stream entryStream,
+        CancellationToken cancellationToken
+    )
     {
         var buffer = new byte[4096];
         while (true)
         {
-            var read = await entryStream.ReadAsync(buffer, 0, buffer.Length);
+            var read = await entryStream.ReadAsync(buffer, 0, buffer.Length, cancellationToken);
             if (read == 0)
             {
                 break;
@@ -350,12 +380,15 @@ public class RarAdversarialStreamTests : ArchiveTests
         }
     }
 
-    private static async Task DrainWithReadAsyncMemory(Stream entryStream)
+    private static async Task DrainWithReadAsyncMemory(
+        Stream entryStream,
+        CancellationToken cancellationToken
+    )
     {
         var buffer = new byte[4096];
         while (true)
         {
-            var read = await entryStream.ReadAsync(buffer.AsMemory());
+            var read = await entryStream.ReadAsync(buffer.AsMemory(), cancellationToken);
             if (read == 0)
             {
                 break;
