@@ -430,6 +430,17 @@ public class GetFileInfosStepTests
     }
 
     [Fact]
+    public void GetFileInfos_KeepsRarHeaderNameWhenFirstSegmentTooShortForSignature()
+    {
+        byte[] truncatedRar5Magic = [0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01];
+
+        var result = Assert.Single(GetFileInfosStep.GetFileInfos(
+            [Seg("0123456789abcdef0123456789abcdef", "archive.part01.rar", truncatedRar5Magic)], []));
+
+        Assert.Equal("archive.part01.rar", result.FileName);
+    }
+
+    [Fact]
     public void GetFileInfos_RepairsCollidingSubjectsUsingDistinctYencHeaders()
     {
         var inputs = new List<FetchFirstSegmentsStep.NzbFileWithFirstSegment>

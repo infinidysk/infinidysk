@@ -171,7 +171,9 @@ public static class GetFileInfosStep
         var isRar = file.HasRar4Magic() || file.HasRar5Magic();
         var headerFileName = file.Header?.FileName ?? "";
         // Every RAR volume starts with the signature; a RAR header name over other content is another post's article.
-        if (!file.MissingFirstSegment && !isRar && FilenameUtil.IsRarFile(headerFileName))
+        // Under 8 bytes the RAR5 signature cannot be tested, so keep the name.
+        if (!file.MissingFirstSegment && file.First16KB?.Length >= 8 &&
+            !isRar && FilenameUtil.IsRarFile(headerFileName))
             headerFileName = "";
         var par2FileName = fileDesc?.FileName ?? "";
         var namePick = new List<(string? FileName, int Priority, bool IsPar2Name)>
