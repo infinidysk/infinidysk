@@ -272,14 +272,15 @@ public class UsenetStreamingClient : WrappingNntpClient
     }
 
     /// <summary>
-    /// A disabled provider never carries traffic, so it must not open or keep alive warm
-    /// sockets against the account. Every other type keeps the configured floor.
+    /// Disabled and backup-only providers keep no warm sockets: backup-only is a last-resort
+    /// article fill, so it opens connections on demand. Other types keep the configured floor.
     /// </summary>
     internal static int ResolveWarmConnectionFloor(
         ConfigManager configManager,
         UsenetProviderConfig.ConnectionDetails provider)
     {
-        if (provider.Type == ProviderType.Disabled || !configManager.IsWarmConnectionsEnabled())
+        if (provider.Type is ProviderType.Disabled or ProviderType.BackupOnly
+            || !configManager.IsWarmConnectionsEnabled())
             return 0;
         return configManager.GetWarmConnectionsFloor(provider.MaxConnections);
     }
