@@ -127,7 +127,8 @@ public class AsyncParityAndCancellationTests : TestBase
     public async Task SevenZip_AsyncExtraction_ShouldRespectCancellationDuringRead()
     {
         var archiveBytes = await File.ReadAllBytesAsync(
-            Path.Join(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z")
+            Path.Join(TEST_ARCHIVES_PATH, "7Zip.LZMA.7z"),
+            TestContext.Current.CancellationToken
         );
         using var cts = new CancellationTokenSource();
         await using var stream = new CancelAfterBytesReadStream(
@@ -150,7 +151,8 @@ public class AsyncParityAndCancellationTests : TestBase
     public async Task Zip_AsyncExtraction_ShouldRespectCancellationDuringRead()
     {
         var archiveBytes = await File.ReadAllBytesAsync(
-            Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip")
+            Path.Join(TEST_ARCHIVES_PATH, "Zip.deflate.zip"),
+            TestContext.Current.CancellationToken
         );
         using var cts = new CancellationTokenSource();
         await using var stream = new CancelAfterBytesReadStream(
