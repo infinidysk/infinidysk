@@ -173,7 +173,7 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
     {
         var headerNumbers = storedFileSegments
             .Select(x => x.PartNumber.PartNumberFromHeader)
-            .Where(n => n is >= 0)
+            .Where(n => n is >= 0 or -1)
             .Select(n => n!.Value)
             .ToList();
         var filenameNumbers = storedFileSegments
@@ -182,7 +182,10 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
             .Select(n => n!.Value)
             .ToList();
 
-        var headerPresentForAll = storedFileSegments.All(x => x.PartNumber.PartNumberFromHeader is >= 0);
+        // -1 is the known first-volume marker, not a missing header number.
+        // RAR5 omits that volume field; dropping the marker here can select
+        // misleading filenames and publish a complete archive in the wrong order.
+        var headerPresentForAll = storedFileSegments.All(x => x.PartNumber.PartNumberFromHeader is >= 0 or -1);
         var filenamePresentForAll = storedFileSegments.All(x => x.PartNumber.PartNumberFromFilename is >= 0);
         var headerDistinct = headerNumbers.Count > 0
                              && headerNumbers.Distinct().Count() == headerNumbers.Count;

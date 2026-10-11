@@ -28,6 +28,32 @@ public class RarAggregatorTests
     }
 
     [Fact]
+    public void SortByPartNumber_UsesFirstVolumeHeaderWhenFilenamesAreShuffled()
+    {
+        // RAR5 omits the first volume number; RarProcessor represents it as -1.
+        // This is the observed Arthur order: part06 is first, then part01, part04.
+        var first = Segment(headerPart: -1, filenamePart: 6, start: 0, length: 4);
+        var second = Segment(headerPart: 1, filenamePart: 1, start: 0, length: 3);
+        var third = Segment(headerPart: 2, filenamePart: 4, start: 0, length: 3);
+        var parts = new List<RarProcessor.StoredFileSegment> { second, third, first };
+
+        Assert.Equal(RarAggregator.PartNumberSource.Header,
+            RarAggregator.SelectPartNumberSource(parts));
+        Assert.Equal([first, second, third], RarAggregator.PrepareMember(parts));
+    }
+
+    [Fact]
+    public void SortByPartNumber_UsesFirstVolumeHeaderWithoutFilenameNumbers()
+    {
+        var first = SegmentNullable(headerPart: -1, filenamePart: null, start: 0, length: 5);
+        var second = SegmentNullable(headerPart: 1, filenamePart: null, start: 0, length: 5);
+
+        Assert.Equal(RarAggregator.PartNumberSource.Header,
+            RarAggregator.SelectPartNumberSource([second, first]));
+        Assert.Equal([first, second], RarAggregator.SortByPartNumber([second, first]));
+    }
+
+    [Fact]
     public void SortByPartNumber_RejectsAmbiguousDuplicateParts()
     {
         var first = Segment(headerPart: 0, filenamePart: 1, start: 0, length: 5);
