@@ -22,6 +22,9 @@ Choose how Radarr/Sonarr import completed jobs. Set this under **Settings → SA
 
     STRM files contain authenticated streaming URLs; keep Base URL and WebDAV credentials correct.
 
+    Jellyfin fills in duration and audio/subtitle languages for STRM items only after first playback —
+    see [Media servers](media-servers.md#emby-jellyfin).
+
 ## Path consistency
 
 The completed path InfiniDysk reports must appear **at the same absolute path** inside Radarr/Sonarr containers. Map host volumes identically.
