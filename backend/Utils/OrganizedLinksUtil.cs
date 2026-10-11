@@ -41,19 +41,29 @@ public static class OrganizedLinksUtil
         if (libraryRoot == null)
             return [];
 
-        return GetLibraryDavItemLinks(libraryRoot, configManager.GetRcloneMountDir(), CancellationToken.None);
+        return GetLibraryDavItemLinks(
+            libraryRoot,
+            configManager.GetRcloneMountDir(),
+            GetStrmPathPrefix(configManager),
+            CancellationToken.None);
     }
 
     internal static IEnumerable<DavItemLink> GetLibraryDavItemLinks(
-        string libraryRoot, string mountDir, CancellationToken cancellationToken)
+        string libraryRoot, string mountDir, string strmPathPrefix, CancellationToken cancellationToken)
     {
         foreach (var info in SymlinkAndStrmUtil.GetAllSymlinksAndStrms(libraryRoot, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var link = GetDavItemLink(info, mountDir);
+            var link = GetDavItemLink(info, mountDir, strmPathPrefix);
             if (link is not null) yield return link.Value;
         }
     }
+
+    // "/stream" for a Base URL of https://host/stream; empty when hosted at the root.
+    internal static string GetStrmPathPrefix(ConfigManager configManager) =>
+        Uri.TryCreate(configManager.GetBaseUrl(), UriKind.Absolute, out var uri)
+            ? uri.AbsolutePath.TrimEnd('/')
+            : string.Empty;
 
     private static bool TryGetLinkFromCache
     (
@@ -72,7 +82,7 @@ public static class OrganizedLinksUtil
         var fileInfo = new FileInfo(linkFromCache);
         var symlinkOrStrmInfo = SymlinkAndStrmUtil.GetSymlinkOrStrmInfo(fileInfo);
         if (symlinkOrStrmInfo == null) return false;
-        var davItemLink = GetDavItemLink(symlinkOrStrmInfo, mountDir);
+        var davItemLink = GetDavItemLink(symlinkOrStrmInfo, mountDir, GetStrmPathPrefix(configManager));
         return davItemLink?.DavItemId == targetDavItem.Id;
     }
 
@@ -102,7 +112,10 @@ public static class OrganizedLinksUtil
 
             var current = SymlinkAndStrmUtil.GetSymlinkOrStrmInfo(new FileInfo(fullPath));
             return current is not null
-                   && GetDavItemLink(current, configManager.GetRcloneMountDir())?.DavItemId
+                   && GetDavItemLink(
+                       current,
+                       configManager.GetRcloneMountDir(),
+                       GetStrmPathPrefix(configManager))?.DavItemId
                    == davItemId;
         }
         catch (Exception e) when (e is FileNotFoundException
@@ -143,7 +156,10 @@ public static class OrganizedLinksUtil
         {
             var current = SymlinkAndStrmUtil.GetSymlinkOrStrmInfo(new FileInfo(quarantinePath));
             if (current is null
-                || GetDavItemLink(current, configManager.GetRcloneMountDir())?.DavItemId
+                || GetDavItemLink(
+                    current,
+                    configManager.GetRcloneMountDir(),
+                    GetStrmPathPrefix(configManager))?.DavItemId
                 != expected.DavItemId)
             {
                 throw new InvalidOperationException(
@@ -207,7 +223,10 @@ public static class OrganizedLinksUtil
         var current = SymlinkAndStrmUtil.GetSymlinkOrStrmInfo(
             new FileInfo(quarantined.QuarantinePath));
         if (current is null
-            || GetDavItemLink(current, configManager.GetRcloneMountDir())?.DavItemId
+            || GetDavItemLink(
+                current,
+                configManager.GetRcloneMountDir(),
+                GetStrmPathPrefix(configManager))?.DavItemId
             != quarantined.Expected.DavItemId)
         {
             throw new InvalidOperationException(
@@ -256,8 +275,9 @@ public static class OrganizedLinksUtil
     )
     {
         var mountDir = configManager.GetRcloneMountDir();
+        var strmPathPrefix = GetStrmPathPrefix(configManager);
         return symlinkOrStrmInfos
-            .Select(x => GetDavItemLink(x, mountDir))
+            .Select(x => GetDavItemLink(x, mountDir, strmPathPrefix))
             .Where(x => x != null)
             .Select(x => x!.Value);
     }
@@ -265,13 +285,14 @@ public static class OrganizedLinksUtil
     private static DavItemLink? GetDavItemLink
     (
         SymlinkAndStrmUtil.ISymlinkOrStrmInfo symlinkOrStrmInfo,
-        string mountDir
+        string mountDir,
+        string strmPathPrefix
     )
     {
         return symlinkOrStrmInfo switch
         {
             SymlinkAndStrmUtil.SymlinkInfo symlinkInfo => GetDavItemLink(symlinkInfo, mountDir),
-            SymlinkAndStrmUtil.StrmInfo strmInfo => GetDavItemLink(strmInfo),
+            SymlinkAndStrmUtil.StrmInfo strmInfo => GetDavItemLink(strmInfo, strmPathPrefix),
             _ => throw new InvalidOperationException("Unknown link type")
         };
     }
@@ -294,13 +315,21 @@ public static class OrganizedLinksUtil
         };
     }
 
-    internal static DavItemLink? GetDavItemLink(SymlinkAndStrmUtil.StrmInfo strmInfo)
+    internal static DavItemLink? GetDavItemLink(SymlinkAndStrmUtil.StrmInfo strmInfo, string strmPathPrefix)
     {
+        const string idsRoute = "/view/.ids/";
         var targetUrl = strmInfo.TargetUrl;
         // a malformed strm file must not abort the library walk
         if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri)) return null;
         var absolutePath = uri.AbsolutePath;
-        if (!absolutePath.StartsWith("/view/.ids/", StringComparison.Ordinal)) return null;
+        // strm files embed the Base URL, so a sub-path deployment prefixes the route
+        if (strmPathPrefix.Length > 0
+            && absolutePath.StartsWith(strmPathPrefix + idsRoute, StringComparison.Ordinal))
+        {
+            absolutePath = absolutePath[strmPathPrefix.Length..];
+        }
+
+        if (!absolutePath.StartsWith(idsRoute, StringComparison.Ordinal)) return null;
         var guid = Path.GetFileNameWithoutExtension(absolutePath);
         if (!Guid.TryParse(guid, out var davItemId)) return null;
         return new DavItemLink()
