@@ -99,6 +99,6 @@ internal sealed record NntpWholePathScenario(
                         : set.Equals("smoothness", StringComparison.OrdinalIgnoreCase)
                             ? Smoothness
                             : throw new ArgumentException(
-                                "--set must be 'quick', 'sustained', 'profile', 'cold', or 'smoothness'.",
+                                "--set must be 'quick', 'sustained', 'profile', 'cold', 'smoothness', or 'seek'.",
                                 nameof(set));
 }
