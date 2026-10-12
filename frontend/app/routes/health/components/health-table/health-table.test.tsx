@@ -50,6 +50,7 @@ describe("HealthTable", () => {
 
     expect(markup).not.toContain("<progress ");
     expect(markup).not.toContain("0%");
-    expect(markup.match(/Repairing · 12m/g)).toHaveLength(2);
+    expect(markup.match(/Repairing for 12m/g)).toHaveLength(2);
+    expect(markup).toContain("not a countdown");
   });
 });
