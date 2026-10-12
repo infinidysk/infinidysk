@@ -26,6 +26,25 @@ public sealed class PlaybackHoleTrackerTests : IDisposable
     }
 
     [Fact]
+    public void RefillingKnownHoles_DoesNotCountTowardFailFast()
+    {
+        var path = $"/view/refill-{Guid.NewGuid():N}.mkv";
+        var miss = new UsenetArticleNotFoundException("a@test");
+        PlaybackHoleTracker.RecordHole(path, "a@test", miss);
+        PlaybackHoleTracker.RecordGoodSegment(path);
+        PlaybackHoleTracker.RecordHole(path, "b@test", miss);
+        PlaybackHoleTracker.RecordGoodSegment(path);
+
+        // A re-read fills both known holes before the reader reports the segments between them.
+        PlaybackHoleTracker.RecordHole(path, "a@test", miss);
+        PlaybackHoleTracker.RecordHole(path, "b@test", miss);
+        Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
+
+        PlaybackHoleTracker.RecordHole(path, "c@test", miss);
+        Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
+    }
+
+    [Fact]
     public void GoodSegment_ResetsConsecutiveWindow()
     {
         var path = $"/view/reset-{Guid.NewGuid():N}.mkv";

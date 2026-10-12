@@ -106,7 +106,12 @@ internal static class PlaybackHoleTracker
             ResetIfStale(state, now);
             Prune(state, now);
             state.LastEventUtc = now;
-            state.HoleTimes.Add(now);
+            // Re-filling a hole already confirmed missing is not a new failure. Read-ahead
+            // fills known holes instantly, before the reader reports the healthy segments
+            // between them, so recounting would fail scattered holes as if consecutive.
+            // Each stream still caps its own consecutive fills.
+            if (!state.MissingSegmentIds.Contains(segmentId))
+                state.HoleTimes.Add(now);
             // An inconclusive miss still counts toward consecutive-hole fail-fast, but later reads
             // must ask the providers again instead of treating the segment as known-missing.
             if (!exception.IsInconclusiveArticleMiss())
