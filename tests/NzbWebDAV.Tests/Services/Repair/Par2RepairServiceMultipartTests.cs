@@ -554,11 +554,11 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
         var data = Data(4096 * 3, "identity-target");
         var parity = Par2TestEncoder.EncodeSet([("protected.bin", Data(data.Length, "identity-protected"))], 4096, [1u]);
         await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
-            new("decoy.bin", Data(data.Length, "identity-decoy"), Sizes(data.Length)),
+            new("decoy.bin", Data(data.Length, "identity-decoy"), Sizes(data.Length), [0]),
             new("target.bin", data, Sizes(data.Length), [0]),
         ], [], parity: parity);
-        if (requestLimit) release.Service.IdentityRequestLimitForTests = 11;
-        else release.Service.IdentityByteLimitForTests = 50_000;
+        if (requestLimit) release.Service.IdentityRequestLimitForTests = 7;
+        else release.Service.IdentityByteLimitForTests = 20_000;
 
         Assert.Equal(Par2RepairOutcome.NotRepaired, await release.Service.TryPar2RepairAsync(release.Item,
             [release.ContentSegmentIds[0]], CancellationToken.None));
@@ -587,7 +587,7 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task IdentityProbes_AllowMatchingSlicesBeyondEarlyPositions()
+    public async Task IdentityProbes_RejectCandidateOnceMismatchesExceedMissingSliceCap()
     {
         var protectedData = Data(4096 * 72, "late-proof-original");
         var postedData = Data(protectedData.Length, "late-proof-posted");
@@ -600,8 +600,41 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
 
         Assert.Equal(Par2RepairOutcome.NotRepaired, await release.Service.TryPar2RepairAsync(release.Item,
             [release.Files[0].Ids[0]], CancellationToken.None));
-        Assert.Contains("Missing slice count", (await ReadJobAsync()).FailureReason, StringComparison.Ordinal);
-        Assert.Contains(release.Files[0].Ids[70], release.Fake.BodyRequestCounts.Keys);
+        Assert.Contains("fails more than 1 PAR2 slice checksums", (await ReadJobAsync()).FailureReason, StringComparison.Ordinal);
+        Assert.DoesNotContain(release.Files[0].Ids[70], release.Fake.BodyRequestCounts.Keys);
+    }
+
+    [Fact]
+    public async Task IdentityProbes_RejectEqualSizeVolumesByPrefixWithinBudget()
+    {
+        var volumes = Enumerable.Range(0, 12).Select(index => new Par2RepairTestReleaseBuilder.SourceFile(
+            $"protected.part{index:00}.rar", Data(4096 * 4, $"equal-size-{index}"), [4096, 4096, 4096, 4096],
+            index == 11 ? [1] : null, Subject: $"obfuscated-{index:00}")).ToArray();
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync(
+            volumes, [1], DavItem.ItemSubType.MultipartFile, obfuscatedParity: true);
+        // One 16 KiB prefix per volume plus slack; full scans of wrong volumes would need megabytes.
+        release.Service.IdentityByteLimitForTests = volumes.Length * 16384L + 64 * 1024;
+
+        Assert.Equal(Par2RepairOutcome.Repaired, await release.Service.TryPar2RepairAsync(release.Item,
+            [release.Files[11].Ids[1]], CancellationToken.None));
+        await AssertPatchAsync(release, 11, 1);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IdentityProbes_UseImportProofWhenDamagedVolumeIsUnreadable(bool withProofs)
+    {
+        var decoy = Data(4096 * 2, "proof-decoy");
+        var target = Data(4096 * 2, "proof-target");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("protected.part1.rar", decoy, [decoy.Length], Subject: "obfuscated-a"),
+            new("protected.part2.rar", target, [target.Length], [0], Subject: "obfuscated-b"),
+        ], [1, 2], DavItem.ItemSubType.MultipartFile, obfuscatedParity: true, withProofs: withProofs);
+
+        Assert.Equal(withProofs ? Par2RepairOutcome.Repaired : Par2RepairOutcome.NotRepaired,
+            await release.Service.TryPar2RepairAsync(release.Item, [release.Files[1].Ids[0]], CancellationToken.None));
+        if (withProofs) await AssertPatchAsync(release, 1, 0);
     }
 
     [Theory]

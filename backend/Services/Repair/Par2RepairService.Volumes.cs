@@ -14,7 +14,7 @@ namespace NzbWebDAV.Services.Repair;
 public partial class Par2RepairService
 {
     private sealed record RepairPayload(DavNzbFile? PlainFile, HashSet<string> SegmentIds,
-        Dictionary<string, LongRange> TrustedRanges);
+        Dictionary<string, LongRange> TrustedRanges, List<(string[] SegmentIds, Par2FileProof Proof)> Proofs);
 
     private sealed record SourceLayout(int FileIndex, NzbFile File, FileDesc Descriptor,
         IfscPacket Checksums, Par2FileSliceMap Map, string[] SegmentIds, bool PayloadOwned);
@@ -25,13 +25,14 @@ public partial class Par2RepairService
         var client = new DavDatabaseClient(context);
         var ids = new HashSet<string>(StringComparer.Ordinal);
         var ranges = new Dictionary<string, LongRange>(StringComparer.Ordinal);
+        var proofs = new List<(string[] SegmentIds, Par2FileProof Proof)>();
         DavNzbFile? plain = null;
         switch (item.SubType)
         {
             case DavItem.ItemSubType.NzbFile:
                 plain = await client.GetDavNzbFileAsync(item, ct).ConfigureAwait(false)
                     ?? throw new MissingFilePayloadException(item, item.SubType);
-                AddPart(plain.SegmentIds, plain.SegmentByteRanges, plain.SegmentByteRangesTrusted);
+                AddPart(plain.SegmentIds, plain.SegmentByteRanges, plain.SegmentByteRangesTrusted, plain.VerificationProof);
                 foreach (var index in ValidIndices(plain.MissingSegmentIndices, plain.SegmentIds.Length)
                              .Concat(ValidIndices(plain.CorruptSegmentIndices, plain.SegmentIds.Length)))
                     reads.UnavailableIds.Add(plain.SegmentIds[index]);
@@ -46,19 +47,21 @@ public partial class Par2RepairService
                 var multipart = await client.GetDavMultipartFileAsync(item, ct).ConfigureAwait(false)
                     ?? throw new MissingFilePayloadException(item, item.SubType);
                 foreach (var part in multipart.Metadata.FileParts)
-                    AddPart(part.SegmentIds, part.SegmentByteRanges, part.SegmentByteRangesTrusted);
+                    AddPart(part.SegmentIds, part.SegmentByteRanges, part.SegmentByteRangesTrusted, part.VerificationProof);
                 foreach (var part in multipart.Metadata.PendingParts)
-                    AddPart(part.SegmentIds, null, false);
+                    AddPart(part.SegmentIds, null, false, part.VerificationProof);
                 break;
             default:
                 throw new RepairInfeasibleException("This item has no supported Usenet streaming payload.");
         }
 
         if (ids.Count == 0) throw new MissingFilePayloadException(item, item.SubType);
-        return new RepairPayload(plain, ids, ranges);
+        return new RepairPayload(plain, ids, ranges, proofs);
 
-        void AddPart(string[] segmentIds, LongRange[]? segmentRanges, bool? trusted)
+        void AddPart(string[] segmentIds, LongRange[]? segmentRanges, bool? trusted, Par2FileProof? proof = null)
         {
+            if (proof is not null && segmentIds.Length > 0 && proof.IsValidFor(proof.FileLength))
+                proofs.Add((segmentIds, proof));
             if (segmentIds.Any(string.IsNullOrWhiteSpace) || segmentIds.Distinct(StringComparer.Ordinal).Count() != segmentIds.Length)
                 throw new RepairInfeasibleException("Streaming payload has empty or duplicate article IDs in a volume part.");
             if (trusted == true && segmentRanges?.Length != segmentIds.Length)
@@ -108,6 +111,16 @@ public partial class Par2RepairService
             }
         }
 
+        // Import-time identity: null marks a volume whose parts carry conflicting proofs.
+        var proofs = new Dictionary<NzbFile, Par2FileProof?>(ReferenceEqualityComparer.Instance);
+        foreach (var (ids, proof) in payload.Proofs)
+        {
+            if (!owners.TryGetValue(ids[0], out var owner) || owner is null
+                || ids.Any(id => !owners.TryGetValue(id, out var other) || other != owner)) continue;
+            proofs[owner] = proofs.TryGetValue(owner, out var previous)
+                            && (previous is null || !previous.FileId.AsSpan().SequenceEqual(proof.FileId)) ? null : proof;
+        }
+
         var coveredOwners = new HashSet<NzbFile>(ReferenceEqualityComparer.Instance);
         reads.RequiredSources.UnionWith(requestedOwners);
         await foreach (var set in DiscoverPar2SetsAsync(document, reads, ct).ConfigureAwait(false))
@@ -126,29 +139,35 @@ public partial class Par2RepairService
                 var descriptor = set.FileDescsById[key];
                 var checksums = set.IfscsByFileId[key];
                 SourceLayout? match = null;
-                foreach (var candidate in sourceCandidates
-                             .OrderByDescending(file => string.Equals(file.GetSubjectFileName(), Path.GetFileName(descriptor.FileName), StringComparison.OrdinalIgnoreCase))
-                             .ThenBy(file => file.Segments[0].MessageId, StringComparer.Ordinal))
+                var ordered = sourceCandidates
+                    .OrderByDescending(file => string.Equals(file.GetSubjectFileName(), Path.GetFileName(descriptor.FileName), StringComparison.OrdinalIgnoreCase))
+                    .ThenBy(file => file.Segments[0].MessageId, StringComparer.Ordinal).ToArray();
+                // Slice proofs are costly, so only volumes without a readable prefix or proof try them, and only when nothing else matched.
+                for (var pass = 0; pass < 2 && match is null && !capped; pass++)
                 {
-                    SourceLayout? layout;
-                    try
+                    var allowSliceProof = pass == 1;
+                    foreach (var candidate in ordered)
                     {
-                        layout = await TryResolveVolumeAsync(candidate, descriptor, checksums, fileIndex, set, payload, reads, ct)
-                            .ConfigureAwait(false);
+                        SourceLayout? layout;
+                        try
+                        {
+                            layout = await TryResolveVolumeAsync(candidate, descriptor, checksums, fileIndex, set, payload,
+                                proofs.GetValueOrDefault(candidate), allowSliceProof, reads, ct).ConfigureAwait(false);
+                        }
+                        catch (RepairInfeasibleException exception) when (reads.SourceSliceCapExceeded)
+                        {
+                            // Another set may use larger slices; only this set is proven infeasible.
+                            reads.SourceSliceCapExceeded = false;
+                            reads.RejectionReason = exception.Message;
+                            complete = false;
+                            capped = true;
+                            break;
+                        }
+                        if (layout is null) continue;
+                        if (match is not null)
+                            throw new RepairInfeasibleException($"PAR2 volume '{descriptor.FileName}' has ambiguous NZB identity.");
+                        match = layout;
                     }
-                    catch (RepairInfeasibleException exception) when (reads.SourceSliceCapExceeded)
-                    {
-                        // Another set may use larger slices; only this set is proven infeasible.
-                        reads.SourceSliceCapExceeded = false;
-                        reads.RejectionReason = exception.Message;
-                        complete = false;
-                        capped = true;
-                        break;
-                    }
-                    if (layout is null) continue;
-                    if (match is not null)
-                        throw new RepairInfeasibleException($"PAR2 volume '{descriptor.FileName}' has ambiguous NZB identity.");
-                    match = layout;
                 }
                 if (capped) break;
                 if (match is null) { complete = false; continue; }
@@ -168,11 +187,25 @@ public partial class Par2RepairService
     }
 
     private async Task<SourceLayout?> TryResolveVolumeAsync(NzbFile file, FileDesc descriptor, IfscPacket checksums,
-        int fileIndex, Par2SetContext set, RepairPayload payload, RepairReadContext reads, CancellationToken ct)
+        int fileIndex, Par2SetContext set, RepairPayload payload, Par2FileProof? proof, bool allowSliceProof,
+        RepairReadContext reads, CancellationToken ct)
     {
         var length = checked((long)descriptor.FileLength);
-        var observation = await ObserveVolumeAsync(file, payload, set.Main.SliceSize, reads, ct).ConfigureAwait(false);
-        if (observation.Length != length) return null;
+        bool prefixProven;
+        if (proof is not null)
+        {
+            if (proof.FileLength != length || !proof.FileId.AsSpan().SequenceEqual(descriptor.FileID)) return null;
+            prefixProven = true;
+        }
+        else
+        {
+            var observation = await ObserveVolumeAsync(file, payload, set.Main.SliceSize, reads, ct).ConfigureAwait(false);
+            if (observation.Length != length) return null;
+            // A readable 16 KiB prefix with another hash proves this is a different volume.
+            if (observation.First16KHash is { } prefix && prefix != Convert.ToHexString(descriptor.File16kHash)) return null;
+            prefixProven = observation.First16KHash is not null;
+        }
+        if (!prefixProven && !allowSliceProof) return null;
         var ids = file.GetSegmentIds();
         LongRange[] ranges;
         try
@@ -191,21 +224,24 @@ public partial class Par2RepairService
                 (int)set.Main.SliceSize, checksums.Slices.Count, ranges, out var map, out _) || map is null)
             return null;
         var layout = new SourceLayout(fileIndex, file, descriptor, checksums, map, ids, ids.Any(payload.SegmentIds.Contains));
-
-        if (!observation.PrefixAttempted)
-        {
-            var prefix = await ReadVolumePrefixHashAsync(layout, reads, ct).ConfigureAwait(false);
-            observation = observation with { First16KHash = prefix, PrefixAttempted = true };
-            reads.Observations[file] = observation;
-        }
-        if (observation.First16KHash == Convert.ToHexString(descriptor.File16kHash)) return layout;
+        if (prefixProven) return layout;
 
         var proven = 0;
+        var mismatched = 0;
         foreach (var local in Enumerable.Range(0, map.SliceCount).OrderBy(index => index == 0 ? 0 : index == map.SliceCount - 1 ? 1 : 2))
         {
             var bytes = await ReadIdentitySliceAsync(layout, map.GlobalSliceBase + local, reads, ct).ConfigureAwait(false);
-            if (bytes is null || !Par2Reconstructor.VerifySliceChecksum(bytes, checksums.Slices[local])) continue;
-            if (++proven == 2) break;
+            if (bytes is null) continue;
+            if (Par2Reconstructor.VerifySliceChecksum(bytes, checksums.Slices[local]))
+            {
+                if (++proven == 2) break;
+            }
+            // Beyond the missing-slice cap the volume is unrepairable even if it is the right one.
+            else if (++mismatched > reads.MaxMissingSlices)
+            {
+                reads.RejectionReason = $"Volume candidate for '{descriptor.FileName}' fails more than {reads.MaxMissingSlices} PAR2 slice checksums.";
+                return null;
+            }
         }
         return proven > 0 ? layout : null;
     }
@@ -215,6 +251,12 @@ public partial class Par2RepairService
     {
         if (reads.Observations.TryGetValue(file, out var cached)) return cached;
         reads.Budget.Charge(256);
+        if (await ReadVolumePrefixAsync(file, reads, ct).ConfigureAwait(false) is { } read)
+        {
+            var observed = new NzbFileObservation(read.FileLength, read.Hash);
+            reads.Observations[file] = observed;
+            return observed;
+        }
         var indices = Enumerable.Range(0, file.Segments.Count)
             .OrderBy(index => index == 0 ? 0 : index == file.Segments.Count - 1 ? 1 : 2)
             .ToArray();
@@ -340,29 +382,55 @@ public partial class Par2RepairService
     }
 
 #pragma warning disable CA5351
-    private async Task<string?> ReadVolumePrefixHashAsync(SourceLayout layout, RepairReadContext reads, CancellationToken ct)
+    // Null when the first article yields no yEnc size; a null Hash means the 16 KiB prefix is unreadable.
+    private async Task<(long FileLength, string? Hash)?> ReadVolumePrefixAsync(NzbFile file, RepairReadContext reads, CancellationToken ct)
     {
-        var length = (int)Math.Min(16 * 1024, layout.Map.FileLength);
-        if (layout.Map.SegmentRanges.Where(range => range.StartInclusive < length)
-            .Select((_, index) => layout.SegmentIds[index]).Any(reads.UnavailableIds.Contains)) return null;
-        reads.AdmitIdentityWork(length);
-        using var reservation = reads.Budget.Reserve(length + 1024L);
-        var prefix = new byte[length];
+        const int prefixLimit = 16 * 1024;
+        using var reservation = reads.Budget.Reserve(prefixLimit + 1024L);
+        byte[]? prefix = null;
+        long fileLength = 0;
         var offset = 0;
         await reads.FetchGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            for (var index = 0; offset < length; index++)
+            for (var index = 0; index < file.Segments.Count && (prefix is null || offset < prefix.Length); index++)
             {
-                var body = await ReadIdentityBodyCoreAsync(layout, index, reads, ct).ConfigureAwait(false);
-                if (body is null) return null;
-                var count = (int)Math.Min(layout.Map.SegmentRanges[index].Count, length - offset);
-                body.AsSpan(0, count).CopyTo(prefix.AsSpan(offset));
-                offset += count;
+                var id = file.Segments[index].MessageId;
+                if (reads.UnavailableIds.Contains(id)) break;
+                reads.AdmitIdentityWork(0, request: true);
+                reads.Budget.Charge(512 + 2L * id.Length);
+                try
+                {
+                    var response = await _usenetClient.DecodedBodyAsync(id, ct).ConfigureAwait(false);
+                    await using var stream = response.Stream!;
+                    var header = await stream.GetYencHeadersAsync(ct).ConfigureAwait(false);
+                    HealthCheckActivity.Report();
+                    if (header is null) break;
+                    reads.Headers[id] = header;
+                    if (prefix is null)
+                    {
+                        if (header.FileSize <= 0) return null;
+                        fileLength = header.FileSize;
+                        prefix = new byte[(int)Math.Min(prefixLimit, fileLength)];
+                        reads.AdmitIdentityWork(prefix.Length);
+                    }
+                    if (header.FileSize != fileLength || header.PartOffset != offset || header.PartSize <= 0) break;
+                    var count = (int)Math.Min(header.PartSize, prefix.Length - offset);
+                    await using var counted = new RepairCountingStream(stream, bytes => reads.ReadBytes(bytes));
+                    await counted.ReadExactlyAsync(prefix.AsMemory(offset, count), ct).ConfigureAwait(false);
+                    offset += count;
+                }
+                catch (Exception exception) when (IsUnavailableArticle(exception))
+                {
+                    HealthCheckActivity.Report();
+                    reads.NoteUnavailable(id, exception);
+                    break;
+                }
             }
-            return Convert.ToHexString(MD5.HashData(prefix));
         }
         finally { reads.FetchGate.Release(); }
+        if (prefix is null) return null;
+        return (fileLength, offset == prefix.Length ? Convert.ToHexString(MD5.HashData(prefix)) : null);
     }
 #pragma warning restore CA5351
 
