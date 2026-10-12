@@ -26,22 +26,26 @@ public sealed class PlaybackHoleTrackerTests : IDisposable
     }
 
     [Fact]
-    public void RefillingKnownHoles_DoesNotCountTowardFailFast()
+    public void DiscoveredHoles_CountOnlyWhenFilled()
     {
-        var path = $"/view/refill-{Guid.NewGuid():N}.mkv";
+        var path = $"/view/discovered-{Guid.NewGuid():N}.mkv";
         var miss = new UsenetArticleNotFoundException("a@test");
-        PlaybackHoleTracker.RecordHole(path, "a@test", miss);
-        PlaybackHoleTracker.RecordGoodSegment(path);
-        PlaybackHoleTracker.RecordHole(path, "b@test", miss);
-        PlaybackHoleTracker.RecordGoodSegment(path);
+        foreach (var id in new[] { "a@test", "b@test", "c@test" })
+            PlaybackHoleTracker.RecordDiscoveredHole(path, id, miss);
 
-        // A re-read fills both known holes before the reader reports the segments between them.
-        PlaybackHoleTracker.RecordHole(path, "a@test", miss);
-        PlaybackHoleTracker.RecordHole(path, "b@test", miss);
+        Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
+        Assert.True(PlaybackHoleTracker.IsKnownMissingSegment(path, "c@test"));
+
+        PlaybackHoleTracker.RecordFilledHole(path, miss);
+        PlaybackHoleTracker.RecordFilledHole(path, miss);
+        PlaybackHoleTracker.RecordGoodSegment(path);
+        PlaybackHoleTracker.RecordFilledHole(path, miss);
+        PlaybackHoleTracker.RecordFilledHole(path, miss);
         Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
 
-        PlaybackHoleTracker.RecordHole(path, "c@test", miss);
-        Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
+        PlaybackHoleTracker.RecordFilledHole(path, miss);
+        Assert.True(PlaybackHoleTracker.ShouldFailFast(path, out var stored));
+        Assert.Same(miss, stored);
     }
 
     [Fact]
