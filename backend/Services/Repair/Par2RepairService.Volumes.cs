@@ -142,17 +142,17 @@ public partial class Par2RepairService
                 var ordered = sourceCandidates
                     .OrderByDescending(file => string.Equals(file.GetSubjectFileName(), Path.GetFileName(descriptor.FileName), StringComparison.OrdinalIgnoreCase))
                     .ThenBy(file => file.Segments[0].MessageId, StringComparer.Ordinal).ToArray();
-                // Slice proofs are costly, so only volumes without a readable prefix or proof try them, and only when nothing else matched.
-                for (var pass = 0; pass < 2 && match is null && !capped; pass++)
+                // Slice proofs are costly: unreadable prefixes try them only when nothing proved a match,
+                // and mismatched (possibly corrupt) prefixes only after that also failed.
+                for (var pass = 0; pass < 3 && match is null && !capped; pass++)
                 {
-                    var allowSliceProof = pass == 1;
                     foreach (var candidate in ordered)
                     {
                         SourceLayout? layout;
                         try
                         {
                             layout = await TryResolveVolumeAsync(candidate, descriptor, checksums, fileIndex, set, payload,
-                                proofs.GetValueOrDefault(candidate), allowSliceProof, reads, ct).ConfigureAwait(false);
+                                proofs.GetValueOrDefault(candidate), pass, reads, ct).ConfigureAwait(false);
                         }
                         catch (RepairInfeasibleException exception) when (reads.SourceSliceCapExceeded)
                         {
@@ -187,7 +187,7 @@ public partial class Par2RepairService
     }
 
     private async Task<SourceLayout?> TryResolveVolumeAsync(NzbFile file, FileDesc descriptor, IfscPacket checksums,
-        int fileIndex, Par2SetContext set, RepairPayload payload, Par2FileProof? proof, bool allowSliceProof,
+        int fileIndex, Par2SetContext set, RepairPayload payload, Par2FileProof? proof, int pass,
         RepairReadContext reads, CancellationToken ct)
     {
         var length = checked((long)descriptor.FileLength);
@@ -201,11 +201,12 @@ public partial class Par2RepairService
         {
             var observation = await ObserveVolumeAsync(file, payload, set.Main.SliceSize, reads, ct).ConfigureAwait(false);
             if (observation.Length != length) return null;
-            // A readable 16 KiB prefix with another hash proves this is a different volume.
-            if (observation.First16KHash is { } prefix && prefix != Convert.ToHexString(descriptor.File16kHash)) return null;
-            prefixProven = observation.First16KHash is not null;
+            prefixProven = observation.First16KHash == Convert.ToHexString(descriptor.File16kHash);
+            // A mismatched prefix may be readable corruption, so it is deferred to the last slice-proof pass.
+            var deferPass = prefixProven ? 0 : observation.First16KHash is null ? 1 : 2;
+            if (pass != deferPass) return null;
         }
-        if (!prefixProven && !allowSliceProof) return null;
+        if (!prefixProven && pass == 0) return null;
         var ids = file.GetSegmentIds();
         LongRange[] ranges;
         try

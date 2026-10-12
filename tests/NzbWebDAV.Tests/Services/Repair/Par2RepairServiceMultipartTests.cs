@@ -605,6 +605,25 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task IdentityProbes_RepairVolumeWithReadableCorruptPrefix()
+    {
+        var data = Data(4096 * 8, "corrupt-prefix");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length), [6]),
+        ], [1, 2], DavItem.ItemSubType.MultipartFile,
+            streamFactory: (_, segment, bytes) =>
+            {
+                var posted = bytes.ToArray();
+                if (segment == 0) posted[0] ^= 0xFF;
+                return new MemoryStream(posted, writable: false);
+            });
+
+        Assert.Equal(Par2RepairOutcome.Repaired, await release.Service.TryPar2RepairAsync(release.Item,
+            [release.Files[0].Ids[6]], CancellationToken.None));
+        await AssertPatchAsync(release, 0, 6);
+    }
+
+    [Fact]
     public async Task IdentityProbes_RejectEqualSizeVolumesByPrefixWithinBudget()
     {
         var volumes = Enumerable.Range(0, 12).Select(index => new Par2RepairTestReleaseBuilder.SourceFile(
