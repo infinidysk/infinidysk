@@ -77,6 +77,9 @@ internal sealed class FirstSegmentHandoffStream : FastReadOnlyNonSeekableStream,
 
     internal bool RemainderScheduledForTests => Volatile.Read(ref _remainderStarted) != 0;
 
+    /// <summary>Starts a required remainder before the first read, e.g. during head positioning.</summary>
+    internal void StartRemainder() => StartRemainderOnce();
+
     ValueTask IDeliveredBytesValidation.ValidateDeliveredAsync(CancellationToken cancellationToken) =>
         (_head ?? _remainder).ValidateDeliveredAsync(cancellationToken);
 

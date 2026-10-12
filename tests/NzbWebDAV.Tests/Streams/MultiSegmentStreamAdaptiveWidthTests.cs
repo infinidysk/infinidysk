@@ -368,6 +368,26 @@ public class MultiSegmentStreamAdaptiveWidthTests
         Assert.Equal(RemainderStartPolicy.AtHeadEof, plan.StartPolicy);
     }
 
+    [Theory]
+    [InlineData(100L, false)]
+    [InlineData(101L, true)]
+    public void PlanHybridRemainder_UnknownHeadStartsEarlyOnlyWhenBudgetExceedsOneArticle(
+        long readBudget,
+        bool early)
+    {
+        var plan = MultiSegmentStream.PlanHybridRemainder(
+            segmentCount: 4,
+            firstExactSizes: default,
+            firstSegmentPrefixBytes: 0,
+            readBudget: readBudget,
+            estimatedSegmentSize: 100);
+
+        Assert.Equal(readBudget, plan.RemainderBudget);
+        Assert.Equal(
+            early ? RemainderStartPolicy.AfterFirstPositiveRead : RemainderStartPolicy.AtHeadEof,
+            plan.StartPolicy);
+    }
+
     [Fact]
     public void PlanHybridRemainder_UnknownHeadFullGetStartsRemainderAfterFirstRead()
     {

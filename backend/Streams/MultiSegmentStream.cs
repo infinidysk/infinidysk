@@ -503,10 +503,36 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
         var plan = BuildFirstSegmentHybridPlan(options, firstSegmentPrefixBytes);
 
-        var positionedHead = await DiscardPrefixOrDisposeAsync(
-                plan.Head, firstSegmentPrefixBytes, options.CancellationToken)
-            .ConfigureAwait(false);
+        if (plan.CreateRemainder is null || firstSegmentPrefixBytes == 0)
+        {
+            var positionedHead = await DiscardPrefixOrDisposeAsync(
+                    plan.Head, firstSegmentPrefixBytes, options.CancellationToken)
+                .ConfigureAwait(false);
+            return WrapHybridPlan(plan, positionedHead, options.CancellationToken);
+        }
 
+        // Begin the head BODY first, then fetch the remainder while the prefix is discarded.
+        var handoff = (FirstSegmentHandoffStream)WrapHybridPlan(plan, plan.Head, options.CancellationToken);
+        var discard = DiscardPrefixOrDisposeAsync(plan.Head, firstSegmentPrefixBytes, options.CancellationToken);
+        handoff.StartRemainder();
+        try
+        {
+            await discard.ConfigureAwait(false);
+        }
+        catch
+        {
+            await handoff.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        return handoff;
+    }
+
+    private static Stream WrapHybridPlan(
+        FirstSegmentHybridPlan plan,
+        Stream positionedHead,
+        CancellationToken cancellationToken)
+    {
         if (plan.CreateRemainder is null)
         {
             StreamStartupTrace.TryRecord(
@@ -524,7 +550,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             positionedHead,
             plan.CreateRemainder,
             plan.StartPolicy,
-            options.CancellationToken);
+            cancellationToken);
     }
 
     private static async Task<Stream> DiscardPrefixOrDisposeAsync(
@@ -677,7 +703,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             options.SegmentIds.Length,
             planningFirstExactSizes,
             firstSegmentPrefixBytes,
-            effectiveReadBudget);
+            effectiveReadBudget,
+            options.EstimatedSegmentSize);
 
 #pragma warning disable CA2000 // ownership transfers to the caller / FirstSegmentHandoffStream
         Stream head = new UnbufferedMultiSegmentStream(
@@ -749,7 +776,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         int segmentCount,
         ReadOnlyMemory<long> firstExactSizes,
         long firstSegmentPrefixBytes,
-        long? readBudget)
+        long? readBudget,
+        long estimatedSegmentSize = 0)
     {
         var hasExactHead = firstExactSizes.Length == 1;
         long? headAvailable = null;
@@ -798,13 +826,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         }
 
         // Unknown first-segment size: a full GET always needs the remainder, so eagerness
-        // is safe. A finite budget cannot prove the head will not satisfy it, so keep
-        // the legacy lazy-at-EOF start and do not subtract an unknown head.
-        if (readBudget is null)
+        // is safe. A finite budget within one estimated article may be served by the head
+        // alone, so only that case keeps the lazy-at-EOF start. The unknown head is never
+        // subtracted from the budget.
+        if (readBudget is null || (estimatedSegmentSize > 0 && readBudget > estimatedSegmentSize))
         {
             return new HybridRemainderPlan(
                 null,
-                null,
+                readBudget,
                 true,
                 RemainderStartPolicy.AfterFirstPositiveRead);
         }

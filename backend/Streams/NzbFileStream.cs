@@ -850,9 +850,21 @@ public class NzbFileStream(
                 }
 
                 PooledBufferStream? head = null;
+                Stream? rest = null;
                 var bodyDisposeAttempted = false;
                 try
                 {
+                    // The header gives the exact head length, so fetch the rest of the range
+                    // while this article drains instead of after it.
+                    long? restBudget = readBudget is { } budget ? budget - (end - rangeStart) : null;
+                    if (index + 1 < fileSegmentIds.Length && restBudget is not <= 0)
+                    {
+#pragma warning disable CA2000 // rest is disposed in the outer finally unless ownership moves to the returned CombinedStream
+                        rest = GetMultiSegmentStream(
+                            index + 1, failFastOnFirstSegment: false, restBudget, ct, end, firstSegmentHybrid: false);
+#pragma warning restore CA2000
+                    }
+
                     try
                     {
                         await body.DiscardExactBytesAsync(rangeStart - start, ct).ConfigureAwait(false);
@@ -914,9 +926,19 @@ public class NzbFileStream(
                         : new BudgetedStream(head, seekLease);
 #pragma warning restore CA2000
                     seekLease = null;
-                    var spliced = new CombinedStream(SpliceHeadThenRest(owned, index + 1, readBudget, ct))
-                        .OnDispose(() => owned.Dispose());
+                    var ownedRest = rest;
+#pragma warning disable CA2025 // the streams are completed results owned by CombinedStream / OnDispose
+                    var spliced = new CombinedStream(ownedRest is null
+                            ? [Task.FromResult(owned)]
+                            : [Task.FromResult(owned), Task.FromResult(ownedRest)])
+#pragma warning restore CA2025
+                        .OnDispose(() =>
+                        {
+                            owned.Dispose();
+                            ownedRest?.Dispose();
+                        });
                     head = null;
+                    rest = null;
                     return spliced;
                 }
                 finally
@@ -930,6 +952,8 @@ public class NzbFileStream(
                     {
                         if (head is not null)
                             await head.DisposeAsync().ConfigureAwait(false);
+                        if (rest is not null)
+                            await rest.DisposeAsync().ConfigureAwait(false);
                     }
                 }
             }
@@ -966,17 +990,6 @@ public class NzbFileStream(
         if (budget is null || estimate <= 0)
             return ArticleByteLease.Empty;
         return await budget.LeaseAsync(estimate, ct).ConfigureAwait(false);
-    }
-
-    private IEnumerable<Task<Stream>> SpliceHeadThenRest(
-        Stream head,
-        int restFirstIndex,
-        long? readBudget,
-        CancellationToken ct)
-    {
-        yield return Task.FromResult(head);
-        yield return Task.FromResult(
-            GetMultiSegmentStream(restFirstIndex, failFastOnFirstSegment: false, readBudget, ct));
     }
 
     private readonly record struct SlicedSegments(
@@ -1132,7 +1145,8 @@ public class NzbFileStream(
         bool failFastOnFirstSegment,
         long? readBudget,
         CancellationToken cancellationToken,
-        long rangeStart = 0)
+        long rangeStart = 0,
+        bool firstSegmentHybrid = true)
     {
         var initialBatchPlan = TryCreateInitialBatchPlan(
             firstSegmentIndex, rangeStart, readBudget, cancellationToken, out var finitePlan);
@@ -1144,6 +1158,32 @@ public class NzbFileStream(
             rangeStart,
             readBudget,
             cancellationToken);
+        if (!firstSegmentHybrid)
+        {
+            return MultiSegmentStream.CreateWithInitialBatchPlan(
+                sliced.SegmentIds,
+                usenetClient,
+                articleBufferSize,
+                EstimatedSegmentSize,
+                failFastOnFirstSegment,
+                usePipelinedBodyRequests,
+                cancellationToken,
+                fileName,
+                readBudget,
+                sliced.Fallbacks,
+                sliced.ExactSizes,
+                inFlightArticleBudget,
+                useContainerAwareFill,
+                sliced.FirstSegmentFileOffset,
+                streamingBodyBatchWidth,
+                knownCorruptSegmentIds,
+                sliced.KnownMissing,
+                initialBatchPlan,
+                recordedSizesInferred: RecordedSizesInferred,
+                speculativeReadAhead: SpeculativeReadAhead,
+                traceFlow: StreamTraceFlow.Capture(TracePartIndex));
+        }
+
         return MultiSegmentStream.CreateFirstSegmentHybridWithInitialBatchPlan(
             sliced.SegmentIds,
             usenetClient,
