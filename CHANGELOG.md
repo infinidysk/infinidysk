@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.6.1](https://github.com/infinidysk/infinidysk/compare/v1.6.0...v1.6.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **deps:** Bump advanced-security/component-detection-dependency-submission-action ([#1682](https://github.com/infinidysk/infinidysk/issues/1682)) ([6d21118](https://github.com/infinidysk/infinidysk/commit/6d21118d4136f95784bd0743bee2e511abb671fe))
+* **deps:** Bump dotnet-stryker from 4.16.0 to 5.0.0 ([#1480](https://github.com/infinidysk/infinidysk/issues/1480)) ([a914b40](https://github.com/infinidysk/infinidysk/commit/a914b4092173632852f2a2aa80204e9d1c21253f))
+* **deps:** Bump NUnit from 4.6.1 to 5.0.0 ([#1644](https://github.com/infinidysk/infinidysk/issues/1644)) ([a13d490](https://github.com/infinidysk/infinidysk/commit/a13d49088fc8534c97364badab0f38f538331750))
+* **deps:** Bump the npm-minor-and-patch group ([#1681](https://github.com/infinidysk/infinidysk/issues/1681)) ([a3c3a8b](https://github.com/infinidysk/infinidysk/commit/a3c3a8b9f3f28a6be3673e12b7eb74da4111c56c))
+* **deps:** Bump the nuget-minor-and-patch group with 2 updates ([#1683](https://github.com/infinidysk/infinidysk/issues/1683)) ([45f35b5](https://github.com/infinidysk/infinidysk/commit/45f35b5b300181e3df483ddb542c0bdf0b59b072))
+* **deps:** Bump the react-router group across 1 directory with 5 updates ([#1531](https://github.com/infinidysk/infinidysk/issues/1531)) ([0d75b5d](https://github.com/infinidysk/infinidysk/commit/0d75b5d15c40c35cae092797877bc735afb94bb9))
+* **deps:** Bump xunit.v3 from 3.2.2 to 4.0.1 ([#1534](https://github.com/infinidysk/infinidysk/issues/1534)) ([8eea89a](https://github.com/infinidysk/infinidysk/commit/8eea89a20e5af9d05bdaa283d1b3e99d60e5ae86))
+* **deps:** Bump zensical from 0.0.66 to 0.0.67 in the docs-python group ([#1680](https://github.com/infinidysk/infinidysk/issues/1680)) ([c1df5ae](https://github.com/infinidysk/infinidysk/commit/c1df5ae6882c6bb21a5fef0b7fd89d6f3bb5fc99))
+* **health:** PAR2 repair no longer fails on multi-volume releases with an identity byte-limit error ([#1694](https://github.com/infinidysk/infinidysk/issues/1694)) ([f5bc20b](https://github.com/infinidysk/infinidysk/commit/f5bc20b93ac6f106bf3d4d7dcc1bd89e9e95883d))
+* **queue:** indexer watermark files no longer fail imports with 'Rar signature not found' on some providers ([#1679](https://github.com/infinidysk/infinidysk/issues/1679)) ([e1130a0](https://github.com/infinidysk/infinidysk/commit/e1130a0129fa4ffb479a0fa226b696cc575706fe))
+* **queue:** preserve first-volume header ordering for stored RAR files ([#1688](https://github.com/infinidysk/infinidysk/issues/1688)) ([206b9ad](https://github.com/infinidysk/infinidysk/commit/206b9ad7e0f48c3a9147a3c88def368d23298919))
+* **usenet:** keep backup-only providers demand-only with no warm floor ([#1687](https://github.com/infinidysk/infinidysk/issues/1687)) ([41a1475](https://github.com/infinidysk/infinidysk/commit/41a1475f0784b138b76e508939233e552c875d7c))
+* **webdav:** re-reading a range with filled holes no longer aborts or returns 404 ([#1698](https://github.com/infinidysk/infinidysk/issues/1698)) ([fa96956](https://github.com/infinidysk/infinidysk/commit/fa969560b350dd1599737e80521aab88aa462d64))
+* **webdav:** recognize strm links under the configured base url path prefix ([#1692](https://github.com/infinidysk/infinidysk/issues/1692)) ([48715c5](https://github.com/infinidysk/infinidysk/commit/48715c5157b3902db9e00aa37a4ebb8a15cc7887))
+
+
+### Performance Improvements
+
+* **webdav:** fetch the rest of a seek range while the first article downloads ([#1697](https://github.com/infinidysk/infinidysk/issues/1697)) ([2f9f45a](https://github.com/infinidysk/infinidysk/commit/2f9f45a04d231f1ef931a835d6a189c4cf2b65f1)), closes [#1677](https://github.com/infinidysk/infinidysk/issues/1677)
+
+
+### UX
+
+* **health:** label active phases as elapsed time with a spinner ([#1699](https://github.com/infinidysk/infinidysk/issues/1699)) ([585b7d6](https://github.com/infinidysk/infinidysk/commit/585b7d6b46e66325dc9a1f7f86733f89d3fdf8fc))
+
 ## [1.6.0](https://github.com/infinidysk/infinidysk/compare/v1.5.1...v1.6.0) (2026-10-09)
 
 
