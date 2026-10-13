@@ -1734,6 +1734,10 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
             .ToHashSet();
     }
 
+    /// <summary>Importable media is checked in every category; explicit health categories also opt in.</summary>
+    public bool ShouldCheckMediaReadiness(string category) =>
+        IsEnsureImportableMediaEnabled() || GetMediaReadinessCategories().Contains(category.ToLowerInvariant());
+
     private static readonly HashSet<string> DefaultMediaReadinessCategories =
         new(StringComparer.OrdinalIgnoreCase) { "tv", "movies", "movie", "series", "audio" };
 

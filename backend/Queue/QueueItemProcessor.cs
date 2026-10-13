@@ -728,9 +728,9 @@ public class QueueItemProcessor(
             ct.GetContext<QueueDownloadContext>()?.SemaphoreWaitMilliseconds ?? 0);
 
         // BODY-level readiness runs before finalization so a slow or damaged probe can
-        // never hold the process-wide finalize lock. Targets are the same direct media
+        // never hold the process-wide finalize lock. Targets are the same media
         // files that output filtering will mount.
-        if (configManager.GetMediaReadinessCategories().Contains(queueItem.Category.ToLowerInvariant()))
+        if (configManager.ShouldCheckMediaReadiness(queueItem.Category))
         {
             await RunStageAsync(
                 "import-readiness",

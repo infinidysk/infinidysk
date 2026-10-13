@@ -24,7 +24,7 @@ SABnzbd-compatible download client API used by Radarr/Sonarr. See also [API comp
 | Trusted local hosts [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | `api.addurl-trusted-hosts` | env `TRUSTED_INTERNAL_HOSTS` | SSRF allowlist for private addurl |
 | Fail downloads without video or audio | `api.ensure-importable-video` | on | Reject NZBs with no media after configured filtering; failures identify [RAR-inside-7z limitations](../features/archives.md) when applicable. Disabling this permits raw archive mounts, not nested-archive playback. |
 | Fail when non-media missing articles | inverse of `api.skip-non-video-on-missing-articles` | skip non-media by default | Media files (video/audio) always fail on missing articles; companion files are skipped unless this is enabled |
-| Article health check categories [since 1.2.5](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.5){ .nzbdav-since } | `api.ensure-article-existence-categories` | empty (off) | Per-category STAT checks plus a final direct-media BODY readiness read; may be slow |
+| Article health check categories [since 1.2.5](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.5){ .nzbdav-since } | `api.ensure-article-existence-categories` | empty (off) | Per-category STAT checks plus final media BODY readiness reads; may be slow |
 | Article health check mode | `api.article-existence-check-mode` | `full` | Full or per-file sampled verification |
 | Always send full History | `api.ignore-history-limit` | on | Ignore client history limit |
 | Save backup copies of incoming NZBs | `api.nzb-backup-enabled` | off | On-disk `*.nzb` copies |
@@ -34,6 +34,25 @@ SABnzbd-compatible download client API used by Radarr/Sonarr. See also [API comp
 Queue capacity and admission limits are configured separately under
 [Queue](queue.md). The default user agent for retrieving NZBs, including
 matched `addurl` requests, is configured under [Indexers](indexers.md).
+
+## Rejecting unreadable media before completion [since 1.6.2](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.2){ .nzbdav-since }
+
+With **Fail downloads without video or audio** enabled (the default), final media
+readiness checks apply to every download category, including custom names such as
+`radarr` and `sonarr4k`. Direct files retain opening and closing byte checks.
+Stored RAR, 7z, split-media, and nested-archive outputs receive a bounded check of
+the extracted media header, after slicing and decryption. Filtered companion and
+sample files are excluded from these checks.
+
+Zero-filled or unrecognized video headers and malformed Matroska/WebM EBML headers
+fail the download before it is reported completed. Sonarr/Radarr can then handle
+the failed download according to their failed-download settings, instead of
+waiting for import with an inconclusive sample warning. A provider timeout stays
+retryable; these header probes are not whole-file integrity or playback checks.
+
+Disabling **Fail downloads without video or audio** retains readiness checks only
+for explicitly configured **Article health check categories**. This change adds
+no new setting and does not rewrite or revalidate previously completed files.
 
 ## STRM sidecar cleanup [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
 
