@@ -4,25 +4,17 @@ wait_either() {
     local pid1=$1
     local pid2=$2
 
-    while true; do
-        if ! kill -0 "$pid1" 2>/dev/null; then
-            wait "$pid1"
-            local exit_code=$?
-            EXITED_PID=$pid1
-            REMAINING_PID=$pid2
-            return "$exit_code"
-        fi
+    wait -n "$pid1" "$pid2"
+    local exit_code=$?
 
-        if ! kill -0 "$pid2" 2>/dev/null; then
-            wait "$pid2"
-            local exit_code=$?
-            EXITED_PID=$pid2
-            REMAINING_PID=$pid1
-            return "$exit_code"
-        fi
-
-        sleep 0.5
-    done
+    if ! kill -0 "$pid1" 2>/dev/null; then
+        EXITED_PID=$pid1
+        REMAINING_PID=$pid2
+    else
+        EXITED_PID=$pid2
+        REMAINING_PID=$pid1
+    fi
+    return "$exit_code"
 }
 
 # Signal handling for graceful shutdown
