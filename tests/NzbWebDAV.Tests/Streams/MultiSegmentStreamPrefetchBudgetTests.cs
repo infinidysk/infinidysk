@@ -222,6 +222,10 @@ public class MultiSegmentStreamPrefetchBudgetTests
             gate.SetIdle();
             held.Dispose();
             await Task.Delay(150);
+            // Wait for the producer to observe idle demand and release its lease.
+            // A fixed delay races the continuation on busy CI workers.
+            for (var i = 0; i < 100 && budget.LeasedBytes != 0; i++)
+                await Task.Delay(10);
             Assert.Empty(client.RequestedSegmentIds);
             Assert.Equal(0, budget.LeasedBytes);
 
