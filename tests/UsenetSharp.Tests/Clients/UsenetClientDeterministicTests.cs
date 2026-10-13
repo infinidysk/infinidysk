@@ -789,12 +789,12 @@ public class UsenetClientDeterministicTests
         var cancelledAt = Environment.TickCount64;
         cts.Cancel();
 
-        await Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
+        await Assert.CatchAsync<OperationCanceledException>(async () => await copyTask);
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
         Assert.That(Environment.TickCount64 - cancelledAt, Is.LessThan(100));
         Assert.That(client.IsHealthy, Is.False);
-        await Assert.ThrowsAsync<OperationCanceledException>(async () => await batch.Responses[1]);
+        await Assert.CatchAsync<OperationCanceledException>(async () => await batch.Responses[1]);
     }
 
     [Test]
