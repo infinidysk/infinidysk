@@ -114,7 +114,7 @@ public class UsenetClientArticleAsyncTests
 
         // Act & Assert
         var segmentId = "8mthBMhpfyOJFM7OPe2RsZhm@CAtZlPkA1OiI.WLo";
-        var exception = Assert.ThrowsAsync<UsenetNotConnectedException>(async () =>
+        var exception = await Assert.ThrowsAsync<UsenetNotConnectedException>(async () =>
             await client.ArticleAsync(segmentId, cancellationToken));
 
         Assert.That(exception, Is.Not.Null);

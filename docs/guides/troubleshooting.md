@@ -165,6 +165,8 @@ Generate a pack from **Settings → Support** — [Technical support pack](../co
 - Paths must match exactly between InfiniDysk completed path and *Arr containers.
 - Symlinks: rclone mount healthy? `ls` shows `completed-symlinks` and `.ids`?
 - STRM: Base URL reachable from Emby/Jellyfin?
+- STRM items show `0m 0s` or no audio languages in Jellyfin until played once? Expected —
+  see [Media servers](media-servers.md#emby-jellyfin).
 - Check Automatic Queue Management rules — [Arrs](../configuration/arrs.md).
 
 ## 403 / 405 on MKCOL, PUT or DELETE

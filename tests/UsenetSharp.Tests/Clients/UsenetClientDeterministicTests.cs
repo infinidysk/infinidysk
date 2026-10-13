@@ -44,7 +44,7 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient();
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        Assert.ThrowsAsync<UsenetProtocolException>(() => client.DateAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<UsenetProtocolException>(() => client.DateAsync(CancellationToken.None));
         Assert.That(client.IsHealthy, Is.False);
     }
 
@@ -69,7 +69,7 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient();
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<ArgumentException>(() =>
             client.StatAsync("safe@example.com\r\nQUIT", CancellationToken.None));
         Assert.That(server.Commands, Is.Empty);
         Assert.That(client.IsHealthy, Is.True);
@@ -100,7 +100,7 @@ public class UsenetClientDeterministicTests
         Assert.That(response.ArticleExists, Is.True);
 
         var rejected = accepted + "x";
-        Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<ArgumentException>(() =>
             client.StatAsync(rejected, CancellationToken.None));
         Assert.That(client.IsHealthy, Is.True);
     }
@@ -112,7 +112,7 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient();
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<ArgumentException>(() =>
             client.AuthenticateAsync("user\r\nQUIT", "password", CancellationToken.None));
         Assert.That(server.Commands, Is.Empty);
     }
@@ -127,7 +127,7 @@ public class UsenetClientDeterministicTests
         });
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
             client.AuthenticateAsync("user", "pass", CancellationToken.None));
         Assert.That(server.Commands, Is.Empty);
         Assert.That(client.IsHealthy, Is.True);
@@ -140,9 +140,9 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient();
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<ArgumentException>(() =>
             client.AuthenticateAsync(new string('u', 497), "pass", CancellationToken.None));
-        Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<ArgumentException>(() =>
             client.AuthenticateAsync("john smith", "pass", CancellationToken.None));
         Assert.That(server.Commands, Is.Empty);
         Assert.That(client.IsHealthy, Is.True);
@@ -181,7 +181,7 @@ public class UsenetClientDeterministicTests
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
-        Assert.ThrowsAsync<OperationCanceledException>(() => client.DateAsync(cts.Token));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => client.DateAsync(cts.Token));
     }
 
     [Test]
@@ -315,7 +315,7 @@ public class UsenetClientDeterministicTests
         var response = await client.BodyAsync("article@example.com", CancellationToken.None);
         var buffer = new byte[1];
         using var readCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
-        Assert.ThrowsAsync<OperationCanceledException>(async () =>
+        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
             await response.Stream!.ReadAsync(buffer.AsMemory(), readCts.Token));
 
         releaseRemainder.SetResult();
@@ -492,8 +492,9 @@ public class UsenetClientDeterministicTests
         Assert.That(decoded.ToArray(), Is.EqualTo(expected));
     }
 
-    [Test]
-    public async Task DecodedBodyAsync_WithInvalidCrc32_Fails()
+    [TestCase(YencCrcValidationMode.WhenPresent)]
+    [TestCase(YencCrcValidationMode.Require)]
+    public async Task DecodedBodyAsync_WithInvalidCrc32_Fails(YencCrcValidationMode crcValidation)
     {
         var expected = Encoding.ASCII.GetBytes("crc validation failure");
         var incorrectCrc32 = RapidYencSharp.Crc32.Compute(expected) ^ 1;
@@ -502,20 +503,35 @@ public class UsenetClientDeterministicTests
                 writer, expected, $"size={expected.Length} crc32={incorrectCrc32:x8}"));
         await using var client = new UsenetClient(new UsenetClientOptions
         {
-            CrcValidation = YencCrcValidationMode.Require
+            CrcValidation = crcValidation
         });
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
-        var completion = new TaskCompletionSource<ArticleBodyResult>(
+        var completion = new TaskCompletionSource<(ArticleBodyResult Result, string? Reason)>(
             TaskCreationOptions.RunContinuationsAsynchronously);
+        var callbackCount = 0;
 
         var response = await client.DecodedBodyAsync(
-            "article@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
+            "article@example.com",
+            (result, reason) =>
+            {
+                Interlocked.Increment(ref callbackCount);
+                completion.TrySetResult((result, reason));
+            },
+            CancellationToken.None);
+        await using var stream = response.Stream!;
 
-        var exception = Assert.ThrowsAsync<InvalidDataException>(async () =>
-            await response.Stream!.CopyToAsync(Stream.Null));
-        Assert.That(exception!.Message, Does.Contain("trailer expected"));
-        Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
-            Is.EqualTo(ArticleBodyResult.NotRetrieved));
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await stream.CopyToAsync(Stream.Null).WaitAsync(TimeSpan.FromSeconds(2)));
+        var observed = await completion.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Multiple(() =>
+        {
+            Assert.That(exception!.Message, Does.Contain("trailer expected"));
+            Assert.That(observed.Result, Is.EqualTo(ArticleBodyResult.Discarded));
+            Assert.That(observed.Reason, Is.EqualTo(nameof(InvalidDataException)));
+            Assert.That(callbackCount, Is.EqualTo(1));
+            Assert.That(client.IsHealthy, Is.False);
+        });
+        await client.WaitForReadyAsync().WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     [Test]
@@ -533,7 +549,7 @@ public class UsenetClientDeterministicTests
         var response = await client.DecodedBodyAsync(
             "article@example.com", CancellationToken.None);
 
-        Assert.ThrowsAsync<InvalidDataException>(async () =>
+        await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await response.Stream!.CopyToAsync(Stream.Null));
     }
 
@@ -575,7 +591,7 @@ public class UsenetClientDeterministicTests
         var response = await client.DecodedBodyAsync(
             "article@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
 
-        Assert.ThrowsAsync<UsenetProtocolException>(async () =>
+        await Assert.ThrowsAsync<UsenetProtocolException>(async () =>
             await response.Stream!.CopyToAsync(Stream.Null));
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
@@ -609,7 +625,7 @@ public class UsenetClientDeterministicTests
         var copyTask = response.Stream.CopyToAsync(Stream.Null);
         timeProvider.Advance(readTimeout);
 
-        Assert.ThrowsAsync<TimeoutException>(async () =>
+        await Assert.ThrowsAsync<TimeoutException>(async () =>
             await copyTask.WaitAsync(TimeSpan.FromSeconds(2)));
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
@@ -654,7 +670,7 @@ public class UsenetClientDeterministicTests
         cts.Cancel();
         continueBody.SetResult();
 
-        Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.Cancelled));
         var date = await client.DateAsync(CancellationToken.None);
@@ -690,12 +706,12 @@ public class UsenetClientDeterministicTests
         var cancelledAt = Environment.TickCount64;
         cts.Cancel();
 
-        Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
         Assert.That(Environment.TickCount64 - cancelledAt, Is.LessThan(100));
         Assert.That(client.IsHealthy, Is.False);
-        Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.DateAsync(CancellationToken.None));
     }
 
@@ -729,7 +745,7 @@ public class UsenetClientDeterministicTests
         var cancelledAt = Environment.TickCount64;
         cts.Cancel();
 
-        Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
         Assert.That(Environment.TickCount64 - cancelledAt, Is.LessThan(100));
@@ -773,12 +789,12 @@ public class UsenetClientDeterministicTests
         var cancelledAt = Environment.TickCount64;
         cts.Cancel();
 
-        Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
         Assert.That(Environment.TickCount64 - cancelledAt, Is.LessThan(100));
         Assert.That(client.IsHealthy, Is.False);
-        Assert.ThrowsAsync<OperationCanceledException>(async () => await batch.Responses[1]);
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await batch.Responses[1]);
     }
 
     [Test]
@@ -1216,7 +1232,7 @@ public class UsenetClientDeterministicTests
         cts.Cancel();
         continueBody.SetResult();
 
-        Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.Cancelled));
         await response.Stream!.DisposeAsync();
@@ -1558,15 +1574,92 @@ public class UsenetClientDeterministicTests
             CancellationToken.None);
         var truncated = await batch.Responses[0];
 
-        Assert.ThrowsAsync<UsenetProtocolException>(async () =>
+        await Assert.ThrowsAsync<UsenetProtocolException>(async () =>
             await truncated.Stream!.CopyToAsync(Stream.Null));
-        Assert.ThrowsAsync<UsenetProtocolException>(async () =>
+        await Assert.ThrowsAsync<UsenetProtocolException>(async () =>
             await batch.Responses[1]);
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
         Assert.That(client.IsHealthy, Is.False);
         Assert.That(async () => await batch.Completion.WaitAsync(TimeSpan.FromSeconds(2)),
             Throws.InstanceOf<UsenetProtocolException>());
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task DecodedBodiesAsync_WithInvalidCrc32_FaultsPendingAndPreservesProviderFailures(
+        bool previousFailure)
+    {
+        var expected = Encoding.ASCII.GetBytes("batch crc validation failure");
+        var incorrectCrc32 = RapidYencSharp.Crc32.Compute(expected) ^ 1;
+        SegmentId[] segmentIds = previousFailure
+            ? ["bad@example.com", "corrupt@example.com", "next@example.com"]
+            : ["corrupt@example.com", "next@example.com"];
+        await using var server = ScriptedNntpServer.StartConnectionScript(
+            async (reader, writer, cancellationToken) =>
+            {
+                foreach (var segmentId in segmentIds)
+                {
+                    Assert.That(await reader.ReadLineAsync(cancellationToken),
+                        Is.EqualTo($"BODY <{segmentId.Value}>"));
+                }
+
+                if (previousFailure)
+                {
+                    await writer.WriteLineAsync("500 unsupported command");
+                }
+
+                await WriteYencArticleAsync(
+                    writer, expected, $"size={expected.Length} crc32={incorrectCrc32:x8}");
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            });
+        await using var client = new UsenetClient(new UsenetClientOptions
+        {
+            CrcValidation = YencCrcValidationMode.WhenPresent
+        });
+        await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
+        var completion = new TaskCompletionSource<(ArticleBodyResult Result, string? Reason)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var callbackCount = 0;
+        var batch = await client.DecodedBodiesAsync(
+            segmentIds,
+            (result, reason) =>
+            {
+                Interlocked.Increment(ref callbackCount);
+                completion.TrySetResult((result, reason));
+            },
+            CancellationToken.None);
+
+        if (previousFailure)
+        {
+            var previous = await batch.Responses[0].WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.That(previous.ResponseCode, Is.EqualTo(500));
+        }
+
+        var response = await batch.Responses[previousFailure ? 1 : 0]
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        await using var stream = response.Stream!;
+        var bodyFailure = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await stream.CopyToAsync(Stream.Null).WaitAsync(TimeSpan.FromSeconds(2)));
+        var pendingFailure = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await batch.Responses[^1].WaitAsync(TimeSpan.FromSeconds(2)));
+        var batchFailure = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await batch.Completion.WaitAsync(TimeSpan.FromSeconds(2)));
+        var observed = await completion.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(bodyFailure!.Message, Does.Contain("trailer expected"));
+            Assert.That(pendingFailure, Is.SameAs(bodyFailure));
+            Assert.That(batchFailure, Is.SameAs(bodyFailure));
+            Assert.That(observed.Result,
+                Is.EqualTo(previousFailure ? ArticleBodyResult.NotRetrieved : ArticleBodyResult.Discarded));
+            Assert.That(observed.Reason,
+                Is.EqualTo(previousFailure ? "unexpected-response-500" : nameof(InvalidDataException)));
+            Assert.That(callbackCount, Is.EqualTo(1));
+            Assert.That(client.IsHealthy, Is.False);
+        });
+        await client.WaitForReadyAsync().WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     [Test]
@@ -1587,7 +1680,7 @@ public class UsenetClientDeterministicTests
         var batch = await client.DecodedBodiesAsync(
             new SegmentId[] { "truncated@example.com" }, CancellationToken.None);
         var truncated = await batch.Responses[0];
-        Assert.ThrowsAsync<UsenetProtocolException>(async () =>
+        await Assert.ThrowsAsync<UsenetProtocolException>(async () =>
             await truncated.Stream!.CopyToAsync(Stream.Null));
         Assert.That(async () => await batch.Completion.WaitAsync(TimeSpan.FromSeconds(2)),
             Throws.InstanceOf<UsenetProtocolException>());
@@ -1720,7 +1813,7 @@ public class UsenetClientDeterministicTests
         cts.Cancel();
         closeConnection.SetResult();
 
-        Assert.CatchAsync<OperationCanceledException>(async () => await copyTask);
+        await Assert.CatchAsync<OperationCanceledException>(async () => await copyTask);
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
         Assert.That(client.IsHealthy, Is.False);
@@ -1742,7 +1835,7 @@ public class UsenetClientDeterministicTests
         var response = await client.BodyAsync(
             "article@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
 
-        Assert.ThrowsAsync<UsenetProtocolException>(async () =>
+        await Assert.ThrowsAsync<UsenetProtocolException>(async () =>
             await response.Stream!.CopyToAsync(Stream.Null));
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
@@ -1769,7 +1862,7 @@ public class UsenetClientDeterministicTests
         var response = await client.BodyAsync(
             "article@example.com", (_, reason) => completion.SetResult(reason), CancellationToken.None);
 
-        Assert.ThrowsAsync<UsenetProtocolException>(async () =>
+        await Assert.ThrowsAsync<UsenetProtocolException>(async () =>
             await response.Stream!.CopyToAsync(Stream.Null));
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Does.Contain(nameof(UsenetProtocolException)));
@@ -1915,7 +2008,7 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient();
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        var exception = Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        var exception = await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.CapabilitiesAsync(CancellationToken.None));
         Assert.That(exception!.Message, Does.Contain("VERSION"));
         Assert.That(client.IsHealthy, Is.True);
@@ -1937,7 +2030,7 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient();
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.CapabilitiesAsync(CancellationToken.None));
         Assert.That(client.IsHealthy, Is.False);
     }
@@ -2075,7 +2168,7 @@ public class UsenetClientDeterministicTests
         await using var server = ScriptedNntpServer.WithGreeting(greeting);
         await using var client = new UsenetClient();
 
-        var exception = Assert.ThrowsAsync<UsenetConnectionException>(() =>
+        var exception = await Assert.ThrowsAsync<UsenetConnectionException>(() =>
             client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None));
         Assert.That(exception!.IsTransient, Is.EqualTo(isTransient));
     }
@@ -2117,7 +2210,7 @@ public class UsenetClientDeterministicTests
         });
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        Assert.ThrowsAsync<ArgumentException>(() => client.DecodedBodiesAsync(
+        await Assert.ThrowsAsync<ArgumentException>(() => client.DecodedBodiesAsync(
             new SegmentId[] { "a@example.com", "b@example.com", "c@example.com" },
             CancellationToken.None));
         Assert.That(server.Commands, Is.Empty);
@@ -2138,11 +2231,11 @@ public class UsenetClientDeterministicTests
         writeStream.SetMode(ControllableWriteStream.WriteMode.BlockUntilCancelled);
         client.ReplaceConnectionStreamForTests(writeStream);
 
-        Assert.ThrowsAsync<TimeoutException>(() => client.DecodedBodiesAsync(
+        await Assert.ThrowsAsync<TimeoutException>(() => client.DecodedBodiesAsync(
             new SegmentId[] { "article@example.com" },
             CancellationToken.None));
         Assert.That(client.IsHealthy, Is.False);
-        var exception = Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        var exception = await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.StatAsync("other@example.com", CancellationToken.None));
         Assert.That(exception!.Message, Does.Contain("connection unusable"));
     }
@@ -2161,7 +2254,7 @@ public class UsenetClientDeterministicTests
         writeStream.SetMode(ControllableWriteStream.WriteMode.BlockUntilCancelled);
         client.ReplaceConnectionStreamForTests(writeStream);
 
-        Assert.ThrowsAsync<TimeoutException>(() =>
+        await Assert.ThrowsAsync<TimeoutException>(() =>
             client.StatAsync("article@example.com", CancellationToken.None));
         Assert.That(client.IsHealthy, Is.False);
     }
@@ -2187,9 +2280,9 @@ public class UsenetClientDeterministicTests
         await writeStream.WriteEntered.WaitAsync(TimeSpan.FromSeconds(2));
         cts.Cancel();
 
-        Assert.CatchAsync<OperationCanceledException>(async () => await batchTask);
+        await Assert.CatchAsync<OperationCanceledException>(async () => await batchTask);
         Assert.That(client.IsHealthy, Is.False);
-        var exception = Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        var exception = await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.StatAsync("other@example.com", CancellationToken.None));
         Assert.That(exception!.Message, Does.Contain("connection unusable"));
     }
@@ -2205,11 +2298,11 @@ public class UsenetClientDeterministicTests
         writeStream.SetMode(ControllableWriteStream.WriteMode.ThrowIOException);
         client.ReplaceConnectionStreamForTests(writeStream);
 
-        Assert.ThrowsAsync<IOException>(() => client.DecodedBodiesAsync(
+        await Assert.ThrowsAsync<IOException>(() => client.DecodedBodiesAsync(
             new SegmentId[] { "article@example.com" },
             CancellationToken.None));
         Assert.That(client.IsHealthy, Is.False);
-        var exception = Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        var exception = await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.StatAsync("other@example.com", CancellationToken.None));
         Assert.That(exception!.Message, Does.Contain("connection unusable"));
     }
@@ -2357,10 +2450,10 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient();
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        Assert.ThrowsAsync<ArgumentException>(() => client.StatPipelinedAsync(
+        await Assert.ThrowsAsync<ArgumentException>(() => client.StatPipelinedAsync(
             new SegmentId[] { "safe@example.com", "bad\r\nid@example.com" },
             CancellationToken.None));
-        Assert.ThrowsAsync<ArgumentException>(() => client.StatPipelinedAsync(
+        await Assert.ThrowsAsync<ArgumentException>(() => client.StatPipelinedAsync(
             new SegmentId[] { "has space@example.com" },
             CancellationToken.None));
 
@@ -2381,13 +2474,13 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient();
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        var exception = Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        var exception = await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.StatPipelinedAsync(
                 new SegmentId[] { "expected@example.com" },
                 CancellationToken.None));
         Assert.That(exception!.Message, Does.Contain("desynchronized"));
         Assert.That(client.IsHealthy, Is.False);
-        var followUp = Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        var followUp = await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.StatAsync("other@example.com", CancellationToken.None));
         Assert.That(followUp!.Message, Does.Contain("connection unusable"));
     }
@@ -2473,7 +2566,7 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient();
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        Assert.ThrowsAsync<UsenetProtocolException>(() => client.StatPipelinedAsync(
+        await Assert.ThrowsAsync<UsenetProtocolException>(() => client.StatPipelinedAsync(
             new SegmentId[] { "first@example.com", "second@example.com" },
             CancellationToken.None));
         Assert.That(client.IsHealthy, Is.False);
@@ -2493,11 +2586,11 @@ public class UsenetClientDeterministicTests
         writeStream.SetMode(ControllableWriteStream.WriteMode.BlockUntilCancelled);
         client.ReplaceConnectionStreamForTests(writeStream);
 
-        Assert.ThrowsAsync<TimeoutException>(() => client.StatPipelinedAsync(
+        await Assert.ThrowsAsync<TimeoutException>(() => client.StatPipelinedAsync(
             new SegmentId[] { "article@example.com" },
             CancellationToken.None));
         Assert.That(client.IsHealthy, Is.False);
-        var exception = Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        var exception = await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.StatAsync("other@example.com", CancellationToken.None));
         Assert.That(exception!.Message, Does.Contain("connection unusable"));
     }
@@ -2541,7 +2634,7 @@ public class UsenetClientDeterministicTests
         cts.Cancel();
         sendReplies.SetResult();
 
-        Assert.ThrowsAsync<OperationCanceledException>(async () => await batchTask);
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await batchTask);
         Assert.That(client.IsHealthy, Is.True);
         var date = await client.DateAsync(CancellationToken.None);
         Assert.That(date.ResponseCode, Is.EqualTo((int)UsenetResponseType.DateAndTime));
@@ -2577,7 +2670,7 @@ public class UsenetClientDeterministicTests
         await commandsReceived.Task.WaitAsync(TimeSpan.FromSeconds(2));
         cts.Cancel();
 
-        Assert.ThrowsAsync<OperationCanceledException>(async () => await batchTask);
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await batchTask);
         Assert.That(client.IsHealthy, Is.False);
     }
 
@@ -2624,7 +2717,7 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient();
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        var exception = Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        var exception = await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.HeadAsync("article@example.com", CancellationToken.None));
         Assert.That(exception!.Message, Does.Contain("header terminator"));
         Assert.That(client.IsHealthy, Is.False);
@@ -2645,7 +2738,7 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient();
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        var exception = Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        var exception = await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.HeadAsync("article@example.com", CancellationToken.None));
         Assert.That(exception!.Message, Does.Contain("256 KiB"));
         Assert.That(client.IsHealthy, Is.False);
@@ -2742,7 +2835,7 @@ public class UsenetClientDeterministicTests
         var response = await client.BodyAsync(
             "article@example.com", (result, _) => completion.SetResult(result), CancellationToken.None);
         using var reader = new StreamReader(response.Stream!, Encoding.Latin1);
-        Assert.ThrowsAsync<UsenetProtocolException>(async () => await reader.ReadToEndAsync());
+        await Assert.ThrowsAsync<UsenetProtocolException>(async () => await reader.ReadToEndAsync());
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
     }
@@ -2758,7 +2851,7 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient();
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.StatAsync("article@example.com", CancellationToken.None));
         Assert.That(client.IsHealthy, Is.False);
     }
@@ -2786,7 +2879,7 @@ public class UsenetClientDeterministicTests
         var copyTask = response.Stream!.CopyToAsync(Stream.Null);
         timeProvider.Advance(readTimeout);
 
-        Assert.ThrowsAsync<TimeoutException>(async () =>
+        await Assert.ThrowsAsync<TimeoutException>(async () =>
             await copyTask.WaitAsync(TimeSpan.FromSeconds(2)));
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
@@ -2866,7 +2959,7 @@ public class UsenetClientDeterministicTests
             (_, _, _) => Task.CompletedTask);
         await using var client = new UsenetClient();
 
-        Assert.ThrowsAsync<AuthenticationException>(async () =>
+        await Assert.ThrowsAsync<AuthenticationException>(async () =>
             await client.ConnectAsync("127.0.0.1", server.Port, true, CancellationToken.None));
     }
 
@@ -3049,12 +3142,12 @@ public class UsenetClientDeterministicTests
             Is.EqualTo(previousFailure ? ArticleBodyResult.NotRetrieved : ArticleBodyResult.Discarded));
         if (batch is not null)
         {
-            Assert.CatchAsync<UsenetProtocolException>(async () =>
+            await Assert.CatchAsync<UsenetProtocolException>(async () =>
                 await batch.Completion.WaitAsync(TimeSpan.FromSeconds(2)));
-            Assert.CatchAsync<UsenetProtocolException>(async () => await batch.Responses[^1]);
+            await Assert.CatchAsync<UsenetProtocolException>(async () => await batch.Responses[^1]);
         }
         Assert.That(callbackCount, Is.EqualTo(1));
-        Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.DateAsync(CancellationToken.None));
     }
 
@@ -3094,7 +3187,7 @@ public class UsenetClientDeterministicTests
         cts.Cancel();
         continueBody.SetResult();
 
-        Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
         var date = await client.DateAsync(CancellationToken.None);
@@ -3144,7 +3237,7 @@ public class UsenetClientDeterministicTests
         cts.Cancel();
         continueBody.SetResult();
 
-        Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
         await client.DateAsync(CancellationToken.None);
@@ -3186,7 +3279,7 @@ public class UsenetClientDeterministicTests
         var chargedAtCancel = Volatile.Read(ref charged);
         cts.Cancel();
 
-        Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await copyTask);
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
         await Task.Delay(100);
@@ -3230,11 +3323,11 @@ public class UsenetClientDeterministicTests
         await timeProvider.WaitForCreatedTimerCountAsync(timersBeforeCancel + 1, waitCts.Token);
         timeProvider.Advance(readTimeout);
 
-        Assert.ThrowsAsync<OperationCanceledException>(async () =>
+        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
             await copyTask.WaitAsync(TimeSpan.FromSeconds(2)));
         Assert.That(await completion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
-        var exception = Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        var exception = await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.DateAsync(CancellationToken.None));
         Assert.That(exception!.InnerException, Is.TypeOf<TimeoutException>());
     }
@@ -3252,7 +3345,7 @@ public class UsenetClientDeterministicTests
         Assert.That(recordConnectionFailure, Is.Not.Null);
         recordConnectionFailure!.Invoke(client, [interruption]);
 
-        var exception = Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        var exception = await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.DateAsync(CancellationToken.None));
 
         Assert.Multiple(() =>
@@ -3277,10 +3370,10 @@ public class UsenetClientDeterministicTests
         });
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        Assert.ThrowsAsync<TimeoutException>(() =>
+        await Assert.ThrowsAsync<TimeoutException>(() =>
             client.StatAsync("article@example.com", CancellationToken.None));
         Assert.That(client.IsHealthy, Is.False);
-        var exception = Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        var exception = await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.StatAsync("other@example.com", CancellationToken.None));
         Assert.That(exception!.Message, Does.Contain("connection unusable"));
     }
@@ -3309,7 +3402,7 @@ public class UsenetClientDeterministicTests
             "ARTICLE" => client.ArticleAsync("article@example.com", CancellationToken.None),
             _ => client.StatAsync("article@example.com", CancellationToken.None),
         };
-        Assert.ThrowsAsync<TimeoutException>(async () => await command);
+        await Assert.ThrowsAsync<TimeoutException>(async () => await command);
         Assert.That(client.IsHealthy, Is.False);
 
         await client.DisposeAsync();
@@ -3371,7 +3464,7 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient();
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.ArticleAsync("article@example.com", CancellationToken.None));
         Assert.That(client.IsHealthy, Is.False);
     }
@@ -3411,7 +3504,7 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient();
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        Assert.ThrowsAsync<UsenetProtocolException>(() =>
+        await Assert.ThrowsAsync<UsenetProtocolException>(() =>
             client.StatAsync("article@example.com", CancellationToken.None));
         Assert.That(client.IsHealthy, Is.False);
     }
@@ -3442,7 +3535,7 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient();
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        Assert.ThrowsAsync<UsenetProtocolException>(() => client.DateAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<UsenetProtocolException>(() => client.DateAsync(CancellationToken.None));
     }
 
     [Test]
@@ -3477,7 +3570,7 @@ public class UsenetClientDeterministicTests
         var client = new UsenetClient();
         await client.DisposeAsync();
 
-        Assert.ThrowsAsync<ObjectDisposedException>(() => client.DateAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => client.DateAsync(CancellationToken.None));
     }
 
     [Test]
@@ -3490,7 +3583,7 @@ public class UsenetClientDeterministicTests
             client.DisposeAsync().AsTask(),
             Task.Run(client.Dispose));
 
-        Assert.ThrowsAsync<ObjectDisposedException>(() => client.DateAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => client.DateAsync(CancellationToken.None));
     }
 
     [Test]
@@ -3544,7 +3637,7 @@ public class UsenetClientDeterministicTests
 
         await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
 
-        Assert.ThrowsAsync<ObjectDisposedException>(() => queuedBody);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => queuedBody);
         Assert.That(await queuedCompletion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             Is.EqualTo(ArticleBodyResult.NotRetrieved));
         Assert.That(await activeCompletion.Task.WaitAsync(TimeSpan.FromSeconds(2)),
@@ -3565,7 +3658,7 @@ public class UsenetClientDeterministicTests
 
         await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
 
-        Assert.ThrowsAsync<OperationCanceledException>(async () =>
+        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
             await response.Stream!.CopyToAsync(Stream.Null));
     }
 
@@ -3654,7 +3747,7 @@ public class UsenetClientDeterministicTests
             Assert.That(response.YencHeader.PartSize, Is.EqualTo(500));
             Assert.That(client.IsHealthy, Is.False);
         });
-        Assert.ThrowsAsync<UsenetProtocolException>(
+        await Assert.ThrowsAsync<UsenetProtocolException>(
             () => client.DateAsync(CancellationToken.None));
     }
 
@@ -3753,7 +3846,7 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient(options);
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        Assert.ThrowsAsync<UsenetProtocolException>(() => client.YencHeadersAsync(
+        await Assert.ThrowsAsync<UsenetProtocolException>(() => client.YencHeadersAsync(
             new SegmentId("probe@example"), CancellationToken.None));
         Assert.That(client.IsHealthy, Is.False);
     }
@@ -3773,7 +3866,7 @@ public class UsenetClientDeterministicTests
         await using var client = new UsenetClient();
         await client.ConnectAsync("127.0.0.1", server.Port, false, CancellationToken.None);
 
-        Assert.ThrowsAsync<UsenetProtocolException>(() => client.YencHeadersAsync(
+        await Assert.ThrowsAsync<UsenetProtocolException>(() => client.YencHeadersAsync(
             new SegmentId("probe@example"), CancellationToken.None));
         Assert.That(client.IsHealthy, Is.False);
     }
@@ -3809,12 +3902,12 @@ public class UsenetClientDeterministicTests
 
         foreach (var responseTask in batch.Responses)
         {
-            var thrown = Assert.ThrowsAsync<OutOfMemoryException>(
+            var thrown = await Assert.ThrowsAsync<OutOfMemoryException>(
                 () => responseTask.WaitAsync(TimeSpan.FromSeconds(2)));
             Assert.That(thrown, Is.SameAs(oom));
         }
 
-        var completionThrown = Assert.ThrowsAsync<OutOfMemoryException>(
+        var completionThrown = await Assert.ThrowsAsync<OutOfMemoryException>(
             () => batch.Completion.WaitAsync(TimeSpan.FromSeconds(2)));
         Assert.That(completionThrown, Is.SameAs(oom));
         Assert.That(callbackCount, Is.EqualTo(1));
@@ -3858,10 +3951,10 @@ public class UsenetClientDeterministicTests
 
         var first = await batch.Responses[0].WaitAsync(TimeSpan.FromSeconds(2));
         Assert.That(first.Stream, Is.Not.Null);
-        var remainingThrown = Assert.ThrowsAsync<OutOfMemoryException>(
+        var remainingThrown = await Assert.ThrowsAsync<OutOfMemoryException>(
             () => batch.Responses[1].WaitAsync(TimeSpan.FromSeconds(2)));
         Assert.That(remainingThrown, Is.SameAs(oom));
-        var completionThrown = Assert.ThrowsAsync<OutOfMemoryException>(
+        var completionThrown = await Assert.ThrowsAsync<OutOfMemoryException>(
             () => batch.Completion.WaitAsync(TimeSpan.FromSeconds(2)));
         Assert.That(completionThrown, Is.SameAs(oom));
         Assert.That(callbackCount, Is.EqualTo(1));

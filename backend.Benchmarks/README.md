@@ -119,6 +119,19 @@ dotnet run --project backend.Benchmarks -c Release -- \
   --nntp-whole-path-report --set smoothness
 ```
 
+`--set seek` measures mount-style seeks: five forward seeks and one backward
+over the same paced 342 × 768 KiB file, each opening a fresh `NzbFileStream`
+and reading one bounded 8 MiB range (an rclone chunk). It reports median, p90,
+and max time to first byte and to range completion, plus BODY commands per
+seek. `seek-bounded-8mib-recorded-ranges` uses exact segment byte ranges;
+`seek-bounded-8mib-migrated` omits them, as for items imported before ranges
+were recorded. It is manual only and has no baseline.
+
+```bash
+dotnet run --project backend.Benchmarks -c Release -- \
+  --nntp-whole-path-report --set seek
+```
+
 The committed sustained baseline begins with conservative bootstrap timing
 envelopes because its 20 GiB local run is intentionally deferred to the
 dedicated benchmark phase. Before treating its timing envelope as a regression

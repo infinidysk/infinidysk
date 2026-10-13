@@ -149,9 +149,14 @@ function MetaChip({
 function ActiveBadge({ item, compact = false }: { item: HealthCheckQueueItem; compact?: boolean }) {
   // Only the STAT sweep reports a percentage; other phases show how long they have been running.
   if (item.phase && item.phase !== "Checking") {
+    const elapsed = formatDuration(item.phaseStartedAt ?? null);
     return (
-      <Badge className="badge-sm badge-info badge-soft justify-center font-semibold tabular-nums">
-        {item.phase} · {formatDuration(item.phaseStartedAt ?? null)}
+      <Badge
+        className="badge-sm badge-info badge-soft justify-center gap-1.5 font-semibold tabular-nums"
+        title={`${item.phase} in progress for ${elapsed}. This is elapsed time, not a countdown.`}
+      >
+        <span className="loading loading-spinner loading-xs" aria-hidden="true" />
+        {item.phase} for {elapsed}
       </Badge>
     );
   }

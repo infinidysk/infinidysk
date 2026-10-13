@@ -26,6 +26,29 @@ public sealed class PlaybackHoleTrackerTests : IDisposable
     }
 
     [Fact]
+    public void DiscoveredHoles_CountOnlyWhenFilled()
+    {
+        var path = $"/view/discovered-{Guid.NewGuid():N}.mkv";
+        var miss = new UsenetArticleNotFoundException("a@test");
+        foreach (var id in new[] { "a@test", "b@test", "c@test" })
+            PlaybackHoleTracker.RecordDiscoveredHole(path, id, miss);
+
+        Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
+        Assert.True(PlaybackHoleTracker.IsKnownMissingSegment(path, "c@test"));
+
+        PlaybackHoleTracker.RecordFilledHole(path, miss);
+        PlaybackHoleTracker.RecordFilledHole(path, miss);
+        PlaybackHoleTracker.RecordGoodSegment(path);
+        PlaybackHoleTracker.RecordFilledHole(path, miss);
+        PlaybackHoleTracker.RecordFilledHole(path, miss);
+        Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
+
+        PlaybackHoleTracker.RecordFilledHole(path, miss);
+        Assert.True(PlaybackHoleTracker.ShouldFailFast(path, out var stored));
+        Assert.Same(miss, stored);
+    }
+
+    [Fact]
     public void GoodSegment_ResetsConsecutiveWindow()
     {
         var path = $"/view/reset-{Guid.NewGuid():N}.mkv";

@@ -74,14 +74,14 @@ public class DateAsyncTests
     }
 
     [Test]
-    public void DateAsync_WithoutConnection_ThrowsException()
+    public async Task DateAsync_WithoutConnection_ThrowsException()
     {
         // Arrange
         var client = new UsenetClient();
         var cancellationToken = CancellationToken.None;
 
         // Act & Assert
-        var exception = Assert.ThrowsAsync<UsenetNotConnectedException>(
+        var exception = await Assert.ThrowsAsync<UsenetNotConnectedException>(
             async () => await client.DateAsync(cancellationToken));
 
         Assert.That(exception.Message, Does.Contain("Not connected"),

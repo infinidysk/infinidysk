@@ -12,7 +12,7 @@ public class ConnectAsyncTests
         var cancellationToken = CancellationToken.None;
 
         // Act & Assert
-        Assert.DoesNotThrowAsync(async () => await client.ConnectAsync(
+        await Assert.DoesNotThrowAsync(async () => await client.ConnectAsync(
             Credentials.Host,
             563, // Standard NNTP SSL port
             true, // Use SSL
@@ -28,7 +28,7 @@ public class ConnectAsyncTests
         var cancellationToken = CancellationToken.None;
 
         // Act & Assert
-        Assert.DoesNotThrowAsync(async () => await client.ConnectAsync(
+        await Assert.DoesNotThrowAsync(async () => await client.ConnectAsync(
             Credentials.Host,
             119, // Standard NNTP non-SSL port
             false, // Do not use SSL
@@ -44,7 +44,7 @@ public class ConnectAsyncTests
         var cancellationToken = CancellationToken.None;
 
         // Act & Assert
-        var exception = Assert.ThrowsAsync<System.Net.Sockets.SocketException>(async () =>
+        var exception = await Assert.ThrowsAsync<System.Net.Sockets.SocketException>(async () =>
             await client.ConnectAsync(
                 "invalid.host.that.does.not.exist.example.com",
                 563,
@@ -63,7 +63,7 @@ public class ConnectAsyncTests
         var cancellationToken = CancellationToken.None;
 
         // Act & Assert
-        var exception = Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
+        var exception = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
             await client.ConnectAsync(
                 Credentials.Host,
                 99999, // Invalid port

@@ -46,6 +46,9 @@ public sealed class PaddedLengthStream(
     // Bound by the combined stream when this part is opened ahead of its reader.
     internal SpeculativeReadAhead? SpeculativeReadAhead { get; init; }
 
+    // Zero-based archive volume index, matching VolumePrepare and pipeline trace events.
+    internal int? PartIndex => context?.PartNumber - 1;
+
     private readonly string _fileName = string.IsNullOrEmpty(fileName) ? "unknown" : fileName;
     private long _position;
     private bool _underlyingEnded;

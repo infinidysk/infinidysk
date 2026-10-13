@@ -29,13 +29,21 @@ internal sealed class Par2RepairTestReleaseBuilder(ConfigManager config, string 
         bool obfuscatedParity = false,
         IReadOnlyList<(string Name, byte[] Bytes)>? additionalParity = null,
         long? recoveryFileSize = null,
-        NzbWebDAV.Services.StreamingRepairScheduler? repairScheduler = null)
+        NzbWebDAV.Services.StreamingRepairScheduler? repairScheduler = null,
+        bool withProofs = false)
     {
         var token = Guid.NewGuid().ToString("N")[..8];
         var hashOverrides = files.Where(file => file.FileHashOverride is not null)
             .ToDictionary(file => file.Name, file => file.FileHashOverride!, StringComparer.Ordinal);
         var (indexBytes, recoveryBytes) = parity ?? Par2TestEncoder.EncodeSet(
             files.Select(file => (file.Name, file.Data)).ToArray(), 4096, recoveryExponents, hashOverrides);
+        var proofs = new Dictionary<string, Par2FileProof?>(StringComparer.Ordinal);
+        if (withProofs)
+        {
+            using var indexStream = new MemoryStream(indexBytes);
+            await foreach (var descriptor in Par2.ReadVerifiedFileDescriptions(indexStream))
+                proofs[descriptor.FileName] = descriptor.VerificationProof;
+        }
         var payloads = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         var headers = new Dictionary<string, UsenetYencHeader>(StringComparer.Ordinal);
         var sourcePositions = new Dictionary<string, (int File, int Segment)>(StringComparer.Ordinal);
@@ -91,6 +99,7 @@ internal sealed class Par2RepairTestReleaseBuilder(ConfigManager config, string 
             await BlobStore.WriteBlob(fileBlobId, new DavNzbFile
             {
                 Id = itemId, SegmentIds = target.Ids, SegmentByteRanges = target.Ranges, SegmentByteRangesTrusted = trustedRanges,
+                VerificationProof = proofs.GetValueOrDefault(target.Source.Name),
             });
         else if (subtype == DavItem.ItemSubType.RarFile)
             await BlobStore.WriteBlob(fileBlobId, new DavRarFile
@@ -114,11 +123,13 @@ internal sealed class Par2RepairTestReleaseBuilder(ConfigManager config, string 
                         SegmentIds = file.Ids, SegmentByteRanges = file.Ranges, SegmentByteRangesTrusted = trustedRanges,
                         SegmentIdByteRange = LongRange.FromStartAndSize(0, file.Source.Data.Length),
                         FilePartByteRange = LongRange.FromStartAndSize(0, file.Source.Data.Length),
+                        VerificationProof = proofs.GetValueOrDefault(file.Source.Name),
                     }).ToArray(),
                     PendingParts = pendingParts ? posted.Skip(1).Select(file => new DavMultipartFile.PendingPart
                     {
                         SegmentIds = file.Ids, EstimatedDataSize = file.Source.Data.Length,
                         SegmentIdByteRange = LongRange.FromStartAndSize(0, file.Source.Data.Length),
+                        VerificationProof = proofs.GetValueOrDefault(file.Source.Name),
                     }).ToArray() : [],
                 },
             });

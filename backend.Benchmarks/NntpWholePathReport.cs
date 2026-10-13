@@ -29,6 +29,12 @@ internal static class NntpWholePathReport
         string scenarioSet,
         string? scenarioName = null)
     {
+        if (scenarioSet.Equals("seek", StringComparison.OrdinalIgnoreCase))
+        {
+            await NntpSeekReport.RunAsync(jsonPath, scenarioName).ConfigureAwait(false);
+            return;
+        }
+
         var selected = NntpWholePathScenario.ForSet(scenarioSet)
             .Where(scenario => scenarioName is null ||
                                scenario.Name.Equals(scenarioName, StringComparison.Ordinal))
@@ -374,7 +380,7 @@ internal static class NntpWholePathReport
     }
 
 #pragma warning disable CA2000 // MultiProviderNntpClient owns and disposes its MultiConnectionNntpClient and pool.
-    private static MultiProviderNntpClient CreateProvider(NntpWholePathScenario scenario, int port)
+    internal static MultiProviderNntpClient CreateProvider(NntpWholePathScenario scenario, int port)
     {
         var pool = new ConnectionPool<INntpClient>(
             scenario.ConnectionCount,

@@ -52,7 +52,7 @@ public sealed class PlaybackDavItemResolver(ConfigManager configManager)
             SymlinkAndStrmUtil.SymlinkInfo symlink =>
                 OrganizedLinksUtil.GetDavItemLink(symlink, configManager.GetRcloneMountDir()),
             SymlinkAndStrmUtil.StrmInfo strm =>
-                OrganizedLinksUtil.GetDavItemLink(strm),
+                OrganizedLinksUtil.GetDavItemLink(strm, OrganizedLinksUtil.GetStrmPathPrefix(configManager)),
             _ => null,
         };
 

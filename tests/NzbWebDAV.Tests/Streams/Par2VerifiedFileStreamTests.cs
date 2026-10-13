@@ -248,6 +248,169 @@ public class Par2VerifiedFileStreamTests
         Assert.Equal(0, await stream.ReadAsync(prefix));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NzbFileStream_SequentialSlicesShareOneReadAheadStreamAndRejectCorruption(bool corruptThirdSlice)
+    {
+        var data = Enumerable.Range(0, 128).Select(value => (byte)value).ToArray();
+        var segments = Enumerable.Range(0, 8).ToDictionary(index => $"s{index}", index => data[(index * 16)..((index + 1) * 16)]);
+        if (corruptThirdSlice)
+            segments["s5"] = segments["s5"].Select((value, index) => index == 15 ? (byte)(value ^ 1) : value).ToArray();
+        var headers = segments.Keys.Select((id, index) => (id, index)).ToDictionary(entry => entry.id, entry => new UsenetYencHeader
+        {
+            FileName = "test.bin", LineLength = 128, FileSize = 128, PartOffset = entry.index * 16, PartSize = 16,
+            TotalParts = 8, PartNumber = entry.index + 1
+        });
+        using var fake = new FakeNntpClient(segments, useCachedYencStreams: true, yencHeaders: headers);
+        using var client = new MultiProviderNntpClient(
+            [NzbWebDAV.Tests.Clients.Usenet.MultiProviderNntpClientTests.CreateProvider(fake)]);
+        await using var stream = new NzbFileStream(segments.Keys.ToArray(), 128, client, 4,
+            verificationProof: CreateProof(data, 32));
+
+        var first = new byte[8];
+        Assert.Equal(8, await stream.ReadAsync(first));
+        Assert.Equal(data[..8], first);
+        // Read-ahead fetches later slices before the caller asks for them.
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!fake.RequestedSegmentIds.Contains("s4") && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.Contains("s4", fake.RequestedSegmentIds);
+
+        var output = new byte[56];
+        await stream.ReadExactlyAsync(output);
+        Assert.Equal(data[8..64], output);
+        if (corruptThirdSlice)
+        {
+            var untouched = new byte[] { 200, 201, 202 };
+            await Assert.ThrowsAsync<NzbWebDAV.Exceptions.NonRetryableDownloadException>(async () => await stream.ReadAsync(untouched));
+            Assert.Equal(new byte[] { 200, 201, 202 }, untouched);
+            Assert.Equal(64, stream.Position);
+        }
+        else
+        {
+            using var rest = new MemoryStream();
+            await stream.CopyToAsync(rest);
+            Assert.Equal(data[64..], rest.ToArray());
+            // One persistent candidate stream: no segment is re-fetched per slice.
+            Assert.All(segments.Keys, id => Assert.Equal(1, fake.BodyRequestCounts[id]));
+        }
+        await stream.DisposeAsync();
+        Assert.Equal(fake.BodyRequestCount, fake.CompletionCallbackCount);
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData(32L, false)]
+    public async Task Read_SignalsAllSegmentsIssuedOnlyWhenReadingToFileEnd(long? readBudget, bool expected)
+    {
+        var data = Enumerable.Range(0, 96).Select(value => (byte)value).ToArray();
+        await using var stream = CreateSequential(data, 32, bufferSlices: 4,
+            (start, _) => new CandidateStream(data) { Position = start }, readBudget);
+        var output = new byte[32];
+        Assert.Equal(32, await stream.ReadAsync(output));
+        var progress = (ISegmentIssueProgress)stream;
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (progress.AllSegmentsIssued != expected && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        // A producer that stops before the file end must not invite the next part ahead of the reader.
+        Assert.Equal(expected, progress.AllSegmentsIssued);
+    }
+
+    [Fact]
+    public async Task Read_SignalsAllSegmentsIssuedOnlyAfterEveryRemainingSliceVerifies()
+    {
+        var data = Enumerable.Range(0, 128).Select(value => (byte)value).ToArray();
+        var corrupt = data.ToArray();
+        corrupt[40] ^= 1;
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recovered = 0;
+        await using var stream = CreateSequential(data, 32, bufferSlices: 4,
+            (start, _) => new CandidateStream(corrupt, gateAt: start == 0 ? 32 : null, gate.Task) { Position = start },
+            recover: (start, target, _, _) =>
+            {
+                Interlocked.Increment(ref recovered);
+                data.AsMemory((int)start, target.Length).CopyTo(target);
+                return Task.CompletedTask;
+            });
+        var progress = (ISegmentIssueProgress)stream;
+        var output = new byte[32];
+        Assert.Equal(32, await stream.ReadAsync(output));
+        // The candidate has issued everything, but the middle slice is not verified yet.
+        await Task.Delay(50);
+        Assert.False(progress.AllSegmentsIssued);
+
+        gate.SetResult();
+        Assert.Equal(32, await stream.ReadAsync(output));
+        Assert.Equal(data[32..64], output);
+        Assert.Equal(1, recovered);
+        // Reading resumes on a new candidate after the recovered slice.
+        Assert.Equal(32, await stream.ReadAsync(output));
+        Assert.Equal(data[64..96], output);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!progress.AllSegmentsIssued && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.True(progress.AllSegmentsIssued);
+        using var rest = new MemoryStream();
+        await stream.CopyToAsync(rest);
+        Assert.Equal(data[96..], rest.ToArray());
+    }
+
+    [Theory]
+    [InlineData(1, 32)]
+    [InlineData(3, 96)]
+    public async Task Read_PausedReaderHoldsAtMostBufferSlices(int bufferSlices, int expectedCandidateBytes)
+    {
+        var data = Enumerable.Range(0, 256).Select(value => (byte)value).ToArray();
+        CandidateStream? candidate = null;
+        await using var stream = CreateSequential(data, 32, bufferSlices,
+            (start, _) => candidate = new CandidateStream(data) { Position = start });
+        var output = new byte[32];
+        Assert.Equal(32, await stream.ReadAsync(output));
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while ((candidate?.Position ?? 0) < expectedCandidateBytes && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        await Task.Delay(100);
+        // The reader's slice counts against the cap, so a paused reader stops the producer.
+        Assert.Equal(expectedCandidateBytes, candidate!.Position);
+        Assert.Equal(32, await stream.ReadAsync(output));
+        Assert.Equal(data[32..64], output);
+    }
+
+    [Theory]
+    [InlineData(Par2FileProof.MaxVerificationSliceSize, 0L, 1)]
+    [InlineData(Par2FileProof.MaxVerificationSliceSize, long.MaxValue, 1)]
+    [InlineData(8 * 1024 * 1024, 0L, 2)]
+    [InlineData(1_536_000, 0L, 4)]
+    [InlineData(1_536_000, long.MaxValue, 10)]
+    public void GetBufferSlices_BoundsVerificationMemoryByBytes(int sliceSize, long readAheadBytes, int expected)
+    {
+        var slices = Par2VerifiedFileStream.GetBufferSlices(readAheadBytes, sliceSize);
+        Assert.Equal(expected, slices);
+        Assert.True(slices == 1 || (long)slices * sliceSize <= Par2VerifiedFileStream.MaximumBufferBytes);
+    }
+
+    private static Par2VerifiedFileStream CreateSequential(
+        byte[] data, int sliceSize, int bufferSlices, Func<long, long, Stream> open, long? readBudget = null,
+        Func<long, Memory<byte>, Exception?, CancellationToken, Task>? recover = null) =>
+        new(CreateProof(data, sliceSize), (_, _, _) => throw new InvalidOperationException("Unexpected slice read."),
+            sequential: new Par2SequentialCandidateSource(open, () => new MemoryStream(),
+                recover ?? ((_, _, _, _) => throw new InvalidOperationException("Unexpected recovery.")),
+                () => readBudget, bufferSlices));
+
+    // Reports all segments issued as soon as it opens; reads at or past gateAt wait for the gate.
+    private sealed class CandidateStream(byte[] data, long? gateAt = null, Task? gate = null)
+        : MemoryStream(data, writable: false), ISegmentIssueProgress
+    {
+        bool ISegmentIssueProgress.AllSegmentsIssued => true;
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Position >= gateAt) await gate!.WaitAsync(cancellationToken);
+            return await base.ReadAsync(buffer, cancellationToken);
+        }
+    }
+
     [Fact]
     public void Seek_PreservesNzbFileStreamBounds()
     {

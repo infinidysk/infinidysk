@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Models;
 
 namespace NzbWebDAV.Config;
@@ -41,9 +42,7 @@ internal static class EffectiveStreamingConfigManifest
                 MaxConnections: provider.MaxConnections,
                 TlsEnabled: provider.UseSsl,
                 TlsVerification: !provider.SkipTlsVerification,
-                WarmConnectionFloor: provider.Type == ProviderType.Disabled || !configManager.IsWarmConnectionsEnabled()
-                    ? 0
-                    : configManager.GetWarmConnectionsFloor(provider.MaxConnections)));
+                WarmConnectionFloor: UsenetStreamingClient.ResolveWarmConnectionFloor(configManager, provider)));
         }
 
         return new EffectiveStreamingConfigDocument(

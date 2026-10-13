@@ -1,5 +1,6 @@
 using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Queue.PostProcessors;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Tests.Utils;
@@ -102,7 +103,7 @@ public class OrganizedLinksUtilTests
             TargetUrl = "not a url",
         };
 
-        var link = OrganizedLinksUtil.GetDavItemLink(strm);
+        var link = OrganizedLinksUtil.GetDavItemLink(strm, "");
 
         Assert.Null(link);
     }
@@ -116,7 +117,7 @@ public class OrganizedLinksUtilTests
             TargetUrl = "http://localhost:3000/view/.ids/not-a-guid.mkv",
         };
 
-        var link = OrganizedLinksUtil.GetDavItemLink(strm);
+        var link = OrganizedLinksUtil.GetDavItemLink(strm, "");
 
         Assert.Null(link);
     }
@@ -131,7 +132,7 @@ public class OrganizedLinksUtilTests
             TargetUrl = $"http://localhost:3000/view/.ids/{id}.mkv",
         };
 
-        var link = OrganizedLinksUtil.GetDavItemLink(strm);
+        var link = OrganizedLinksUtil.GetDavItemLink(strm, "");
 
         Assert.NotNull(link);
         var parsed = link ?? throw new InvalidOperationException("expected link");
@@ -149,6 +150,68 @@ public class OrganizedLinksUtilTests
             TargetUrl = $"http://localhost:3000/view/.ids-foreign/{id}.mkv",
         };
 
-        Assert.Null(OrganizedLinksUtil.GetDavItemLink(strm));
+        Assert.Null(OrganizedLinksUtil.GetDavItemLink(strm, ""));
+    }
+
+    [Theory]
+    [InlineData("http://localhost:3000")]
+    [InlineData("https://media.test/stream")]
+    [InlineData("https://media.test/stream/")]
+    [InlineData("https://media.test/apps/stream")]
+    public void GetDavItemLink_Strm_ParsesGeneratedTargetUnderBaseUrl(string baseUrl)
+    {
+        var configManager = new ConfigManager();
+        configManager.UpdateValues([
+            new ConfigItem { ConfigName = ConfigKeys.GeneralBaseUrl, ConfigValue = baseUrl },
+            new ConfigItem { ConfigName = ConfigKeys.ApiStrmKey, ConfigValue = "synthetic-strm-key" },
+        ]);
+        var id = Guid.NewGuid();
+        var item = new DavItem
+        {
+            Id = id,
+            IdPrefix = id.ToString("N")[..DavItem.IdPrefixLength],
+            CreatedAt = DateTime.UtcNow,
+            Name = "movie.mkv",
+            Path = "/content/movie.mkv",
+        };
+        var strm = new SymlinkAndStrmUtil.StrmInfo
+        {
+            StrmPath = "/library/movie.strm",
+            TargetUrl = CreateStrmFilesPostProcessor.GetStrmTargetUrl(configManager, item),
+        };
+
+        var link = OrganizedLinksUtil.GetDavItemLink(strm, OrganizedLinksUtil.GetStrmPathPrefix(configManager));
+
+        Assert.Equal(id, link?.DavItemId);
+    }
+
+    [Fact]
+    public void GetDavItemLink_Strm_KeepsRootRouteWhenBaseUrlHasPrefix()
+    {
+        var id = Guid.NewGuid();
+        var strm = new SymlinkAndStrmUtil.StrmInfo
+        {
+            StrmPath = "/library/movie.strm",
+            TargetUrl = $"http://localhost:3000/view/.ids/{id}.mkv",
+        };
+
+        Assert.Equal(id, OrganizedLinksUtil.GetDavItemLink(strm, "/stream")?.DavItemId);
+    }
+
+    [Theory]
+    [InlineData("", "/stream/view/.ids/")]
+    [InlineData("/stream", "/other/view/.ids/")]
+    [InlineData("/stream", "/streaming/view/.ids/")]
+    [InlineData("/stream", "/stream/view/.ids-foreign/")]
+    [InlineData("/stream", "/x/stream/view/.ids/")]
+    public void GetDavItemLink_Strm_RejectsUnconfiguredPrefix(string configuredPrefix, string route)
+    {
+        var strm = new SymlinkAndStrmUtil.StrmInfo
+        {
+            StrmPath = "/library/movie.strm",
+            TargetUrl = $"https://media.test{route}{Guid.NewGuid()}.mkv",
+        };
+
+        Assert.Null(OrganizedLinksUtil.GetDavItemLink(strm, configuredPrefix));
     }
 }

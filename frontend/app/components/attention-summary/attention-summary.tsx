@@ -284,7 +284,9 @@ export function AttentionSummary({
                             ? "This app reports queue errors. Check Activity > Queue in the Arr app."
                             : instance.hasWarnings
                               ? "This app reports queue warnings. Check Activity > Queue in the Arr app."
-                              : "Imports are taking longer than expected. Check Activity > Queue in the Arr app."}
+                              : instance.awaitingCount > 0
+                                ? "Imports are taking longer than expected."
+                                : "This Arr integration reports a degraded status."}
                     </p>
                     {instance.status === "offline" && instance.lastError && (
                       <p className="mt-1 whitespace-pre-wrap text-base-content/80">
@@ -294,9 +296,22 @@ export function AttentionSummary({
                   </li>
                 ))}
               </ul>
-              <Link to={settingsPath("arrs")} className="link text-sm text-base-content/80">
-                Arr connection settings
-              </Link>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {affectedArrs.some(
+                  (instance) =>
+                    instance.status === "degraded" &&
+                    !instance.hasWarnings &&
+                    !instance.hasErrors &&
+                    instance.awaitingCount > 0,
+                ) && (
+                  <Link to="/overview#arr-health" className="link text-sm text-base-content/80">
+                    View waiting imports
+                  </Link>
+                )}
+                <Link to={settingsPath("arrs")} className="link text-sm text-base-content/80">
+                  Arr connection settings
+                </Link>
+              </div>
             </div>
           ) : (
             arrUnavailable && (

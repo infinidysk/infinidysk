@@ -15,7 +15,7 @@ public sealed class FilesLibraryIndex : IDisposable
 {
     internal static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(60);
     internal static readonly TimeSpan ScanTimeout = TimeSpan.FromSeconds(30);
-    private sealed record ConfigurationKey(string LibraryRoot, string MountRoot);
+    private sealed record ConfigurationKey(string LibraryRoot, string MountRoot, string StrmPathPrefix);
     private static readonly IReadOnlyDictionary<Guid, string[]> EmptyLinks =
         new Dictionary<Guid, string[]>().ToFrozenDictionary();
     private readonly ConfigManager _configManager;
@@ -28,7 +28,7 @@ public sealed class FilesLibraryIndex : IDisposable
     private Task? _refreshTask;
     private bool _disposed;
 
-    internal Func<string, string, CancellationToken, IReadOnlyDictionary<Guid, string[]>> ReadLinks { get; set; } = Scan;
+    internal Func<string, string, string, CancellationToken, IReadOnlyDictionary<Guid, string[]>> ReadLinks { get; set; } = Scan;
 
     public FilesLibraryIndex(ConfigManager configManager, TimeProvider timeProvider)
     {
@@ -78,7 +78,12 @@ public sealed class FilesLibraryIndex : IDisposable
     private void RefreshConfigurationUnderLock()
     {
         var root = _configManager.GetLibraryDir();
-        var current = string.IsNullOrWhiteSpace(root) ? null : new ConfigurationKey(root, _configManager.GetRcloneMountDir());
+        var current = string.IsNullOrWhiteSpace(root)
+            ? null
+            : new ConfigurationKey(
+                root,
+                _configManager.GetRcloneMountDir(),
+                OrganizedLinksUtil.GetStrmPathPrefix(_configManager));
         if (current == _configuration && (current is not null || _snapshot.State == "not-configured")) return;
         _configuration = current;
         _lastAttempt = null;
@@ -99,7 +104,11 @@ public sealed class FilesLibraryIndex : IDisposable
         timeout.CancelAfter(ScanTimeout);
         try
         {
-            var links = await Task.Run(() => ReadLinks(configuration.LibraryRoot, configuration.MountRoot, timeout.Token),
+            var links = await Task.Run(() => ReadLinks(
+                    configuration.LibraryRoot,
+                    configuration.MountRoot,
+                    configuration.StrmPathPrefix,
+                    timeout.Token),
                 timeout.Token).ConfigureAwait(false);
             timeout.Token.ThrowIfCancellationRequested();
             Publish(configuration, new("ready", _timeProvider.GetUtcNow(), links, null));
@@ -145,10 +154,12 @@ public sealed class FilesLibraryIndex : IDisposable
         }
     }
 
-    private static IReadOnlyDictionary<Guid, string[]> Scan(string libraryRoot, string mountDir, CancellationToken cancellationToken)
+    private static IReadOnlyDictionary<Guid, string[]> Scan(
+        string libraryRoot, string mountDir, string strmPathPrefix, CancellationToken cancellationToken)
     {
         var links = new Dictionary<Guid, HashSet<string>>();
-        foreach (var link in OrganizedLinksUtil.GetLibraryDavItemLinks(libraryRoot, mountDir, cancellationToken))
+        foreach (var link in OrganizedLinksUtil.GetLibraryDavItemLinks(
+                     libraryRoot, mountDir, strmPathPrefix, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (!links.TryGetValue(link.DavItemId, out var paths)) links[link.DavItemId] = paths = new(StringComparer.Ordinal);

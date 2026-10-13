@@ -18,6 +18,16 @@ Use **STRM Files** when the server supports `.strm` playback:
 
 Alternatively, mount WebDAV with rclone and treat the library like Plex if you prefer filesystem entries.
 
+!!! note "Jellyfin shows 0m 0s and no audio languages for STRM items"
+    Jellyfin does not probe `.strm` files during library scans or manual metadata refreshes. Duration,
+    codecs and audio/subtitle languages appear only after an item is played for the first time; until
+    then the item lists `0m 0s` and offers no audio-language choice. This is Jellyfin behavior, not an
+    InfiniDysk fault, and NFO files cannot supply audio languages.
+
+    If you need media info at scan time, use **Symlinks** with an rclone mount instead — Jellyfin then
+    probes files during scans, at the cost of reading file headers from Usenet. Populating media info
+    for STRM imports is tracked in [#1691](https://github.com/infinidysk/infinidysk/issues/1691).
+
 ## Path and permission tips
 
 - Match `PUID`/`PGID` across InfiniDysk, rclone (`--uid`/`--gid`), and *Arr.

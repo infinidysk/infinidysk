@@ -2671,6 +2671,30 @@ public class MultiProviderNntpClientTests
         }
     }
 
+    [Theory]
+    [InlineData(ProviderType.Disabled, false)]
+    [InlineData(ProviderType.BackupOnly, false)] // tier order sends the duplicate to the busy primary first
+    [InlineData(ProviderType.Pooled, true)]
+    public void HedgeCapacity_FollowsTheDuplicatesFirstCandidate(ProviderType idleType, bool expected)
+    {
+        var busy = CreateProvider(new ScriptedNntpClient { BatchResponseCode = 222 }, host: "busy.example");
+        var idle = CreateProvider(
+            new ScriptedNntpClient { BatchResponseCode = 222 }, host: "idle.example", providerType: idleType);
+        using var client = new MultiProviderNntpClient([busy, idle], cascadeEnabled: () => true);
+
+        busy.ReservePending(NntpOperation.Body);
+        try
+        {
+            Assert.Equal(expected, client.HasSpareFetchCapacity("seg-1", CancellationToken.None));
+            Assert.Equal(1, busy.PendingSelections);
+            Assert.Equal(0, idle.PendingSelections);
+        }
+        finally
+        {
+            busy.ReleasePending(NntpOperation.Body);
+        }
+    }
+
     [Fact]
     public async Task PoolMode_OneActiveConnectionOnWiderPoolYieldsToIdlePeer()
     {

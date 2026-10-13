@@ -19,6 +19,7 @@ internal sealed class YencFileValidationContext : IDisposable
     private readonly string[][]? _segmentFallbacks;
     private readonly Lazy<Dictionary<string, int>> _positionIndex;
     private readonly bool _deferToPar2Proof;
+    private readonly bool _firstSegmentProbe;
 
     private YencFileValidationContext(
         int expectedTotalParts,
@@ -27,9 +28,11 @@ internal sealed class YencFileValidationContext : IDisposable
         string[]? segmentIds = null,
         string[][]? segmentFallbacks = null,
         bool deferToPar2Proof = false,
-        Lazy<Dictionary<string, int>>? positionIndex = null)
+        Lazy<Dictionary<string, int>>? positionIndex = null,
+        bool firstSegmentProbe = false)
     {
         ExpectedTotalParts = expectedTotalParts;
+        _firstSegmentProbe = firstSegmentProbe;
         Stage = stage;
         _file = file;
         _segmentIds = segmentIds;
@@ -43,8 +46,11 @@ internal sealed class YencFileValidationContext : IDisposable
     public static int? CurrentExpectedTotalParts => Current?.ExpectedTotalParts;
     public int ExpectedTotalParts { get; }
     public string Stage { get; }
+    public static bool IsFirstSegmentProbe => Current?._firstSegmentProbe == true;
 
+    // A file's first article always starts at byte 0, so a nonzero offset is another post's article.
     public static bool MatchesExpectedFile(UsenetYencHeader header, string? requestedId = null) =>
+        IsFirstSegmentProbe ? header.PartOffset == 0 :
         Current?._deferToPar2Proof == true
         || CurrentExpectedTotalParts is not { } expectedTotalParts
         || (expectedTotalParts == 1 && header.TotalParts == 0)
@@ -79,6 +85,9 @@ internal sealed class YencFileValidationContext : IDisposable
 
     public static IDisposable Begin(int expectedTotalParts) =>
         new YencFileValidationContext(expectedTotalParts);
+
+    public static IDisposable BeginFirstSegmentProbe() =>
+        new YencFileValidationContext(1, "FirstSegment", firstSegmentProbe: true);
 
     public static IDisposable BeginSizeProbe(NzbFile file) =>
         new YencFileValidationContext(file.Segments.Count, "SizeProbe", file: file);

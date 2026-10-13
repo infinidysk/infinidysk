@@ -443,6 +443,77 @@ public class RemoveUnlinkedFilesTaskTests
     }
 
     [Fact]
+    public async Task DryRun_DoesNotTreatStrmUnderBaseUrlPathPrefixAsUnlinked()
+    {
+        await BaseTask.ResetRunningTaskForTestsAsync();
+        var libraryDir = Path.Join(Path.GetTempPath(), $"nzbdav-lib-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(libraryDir);
+        await using var harness = await TempDb.CreateAsync();
+        try
+        {
+            var ctx = harness.Context;
+            await SeedRootsAsync(ctx);
+
+            var rootIds = Enumerable.Range(0, 5).Select(_ => Guid.NewGuid()).ToList();
+            var prefixedId = Guid.NewGuid();
+            foreach (var id in rootIds.Append(prefixedId))
+            {
+                ctx.Items.Add(DavItem.New(
+                    id,
+                    DavItem.ContentFolder,
+                    $"{id:N}.mkv",
+                    10,
+                    DavItem.ItemType.UsenetFile,
+                    DavItem.ItemSubType.NzbFile,
+                    null,
+                    null,
+                    null,
+                    null));
+            }
+
+            await ctx.SaveChangesAsync();
+
+            foreach (var id in rootIds)
+            {
+                await File.WriteAllTextAsync(
+                    Path.Join(libraryDir, $"{id:N}.strm"),
+                    $"http://localhost/view/.ids/{id}.mkv");
+            }
+
+            await File.WriteAllTextAsync(
+                Path.Join(libraryDir, $"{prefixedId:N}.strm"),
+                $"https://media.test/stream/view/.ids/{prefixedId}.mkv");
+
+            var config = new ConfigManager();
+            config.UpdateValues(
+            [
+                new ConfigItem { ConfigName = ConfigKeys.MediaLibraryDir, ConfigValue = libraryDir },
+                new ConfigItem { ConfigName = ConfigKeys.GeneralBaseUrl, ConfigValue = "https://media.test/stream/" },
+            ]);
+
+            var websocket = new WebsocketManager();
+            var task = new RemoveUnlinkedFilesTask(
+                config,
+                websocket,
+                isDryRun: true,
+                createContext: () => harness.CreateContext());
+
+            Assert.True(await task.Execute());
+
+            var progress = websocket.PeekLastMessage(WebsocketTopic.CleanupTaskProgress);
+            Assert.NotNull(progress);
+            Assert.StartsWith("Dry Run - Done.", progress);
+            Assert.Contains("Identified 0 unlinked files", progress);
+        }
+        finally
+        {
+            await BaseTask.ResetRunningTaskForTestsAsync();
+            RemoveUnlinkedFilesTask.ClearAuditPathsForTests();
+            try { Directory.Delete(libraryDir, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
+    [Fact]
     public async Task Execute_ReturnsFalse_WhenAnotherTaskIsRunning()
     {
         await BaseTask.ResetRunningTaskForTestsAsync();

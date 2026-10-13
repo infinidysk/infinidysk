@@ -21,7 +21,7 @@ public class AuthenticateAsyncTests
         );
 
         // Act & Assert - Should not throw
-        Assert.DoesNotThrowAsync(async () =>
+        await Assert.DoesNotThrowAsync(async () =>
             await client.AuthenticateAsync(
                 Credentials.Username,
                 Credentials.Password,
@@ -66,7 +66,7 @@ public class AuthenticateAsyncTests
         var cancellationToken = CancellationToken.None;
 
         // Act & Assert
-        var exception = Assert.ThrowsAsync<UsenetNotConnectedException>(async () =>
+        var exception = await Assert.ThrowsAsync<UsenetNotConnectedException>(async () =>
             await client.AuthenticateAsync(
                 Credentials.Username,
                 Credentials.Password,
@@ -94,7 +94,7 @@ public class AuthenticateAsyncTests
         );
 
         // Act & Assert - Should not throw
-        Assert.DoesNotThrowAsync(async () =>
+        await Assert.DoesNotThrowAsync(async () =>
             await client.AuthenticateAsync(
                 Credentials.Username,
                 Credentials.Password,
@@ -118,7 +118,7 @@ public class AuthenticateAsyncTests
         );
 
         // Act & Assert - Should not throw
-        Assert.DoesNotThrowAsync(async () =>
+        await Assert.DoesNotThrowAsync(async () =>
             await client.AuthenticateAsync(
                 Credentials.Username,
                 Credentials.Password,

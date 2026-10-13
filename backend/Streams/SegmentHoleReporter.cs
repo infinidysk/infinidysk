@@ -16,7 +16,8 @@ internal static class SegmentHoleReporter
         string fileName,
         string segmentId,
         int segmentIndex,
-        long shortfall)
+        long shortfall,
+        bool readerIsPadding = true)
     {
         var hole = new UsenetArticleNotFoundException(segmentId);
         ZeroFillLogLimiter.Write(
@@ -28,7 +29,10 @@ internal static class SegmentHoleReporter
         if (MultiProviderNntpClient.CurrentReadSessionId is { } sessionId)
             StreamTrace.TryZeroFill(sessionId, segmentId, shortfall);
 
-        PlaybackHoleTracker.RecordHole(fileName, segmentId, hole);
+        if (readerIsPadding)
+            PlaybackHoleTracker.RecordHole(fileName, segmentId, hole);
+        else
+            PlaybackHoleTracker.RecordDiscoveredHole(fileName, segmentId, hole);
         Par2RepairTriggerSink.Current?.ReportZeroFill(fileName, segmentId, segmentIndex, shortfall);
         return hole;
     }

@@ -171,7 +171,7 @@ public sealed class ArrHealthServiceTests
         }
 
         var downloadId = Guid.NewGuid();
-        var createdAt = DateTime.Now.AddMinutes(-10);
+        var createdAt = DateTime.Now.AddMinutes(-30);
         harness.Dav.HistoryItems.Add(CompletedHistory(downloadId, createdAt));
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         for (var i = 0; i < 5; i++)
@@ -220,6 +220,19 @@ public sealed class ArrHealthServiceTests
             ArrHealthMath.ComputeWaitingMs(createdAt, DateTimeOffset.UtcNow),
             snap.MedianHandoffMs30d,
             snap.MedianSampleCount30d));
+    }
+
+    [Theory]
+    [InlineData(5_000, 14, false)]
+    [InlineData(5_000, 16, true)]
+    [InlineData(600_000, 20, false)]
+    [InlineData(600_000, 31, true)]
+    public void IsUnusual_RequiresBothMedianMultipleAndAbsoluteFloor(long medianMs, int waitingMinutes, bool expected)
+    {
+        Assert.Equal(expected, ArrHealthMath.IsUnusual(
+            (long)TimeSpan.FromMinutes(waitingMinutes).TotalMilliseconds,
+            medianMs,
+            ArrHealthMath.UnusualMedianMinSamples));
     }
 
     [Fact]

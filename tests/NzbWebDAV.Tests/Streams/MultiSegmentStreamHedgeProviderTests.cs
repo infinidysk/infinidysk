@@ -112,6 +112,81 @@ public sealed class MultiSegmentStreamHedgeProviderTests
         await harness.AssertSettledAsync();
     }
 
+    [Fact]
+    public async Task RangeStart_DuplicateWins_OriginalIsCancelledAndReleasesItsPermit()
+    {
+        await using var harness = new Harness(startup: true);
+        using var trace = new MultiSegmentStreamHedgeTests.HedgeTraceCapture();
+
+        var buffer = await harness.ReadAllAsync();
+
+        Assert.Equal(harness.Expected, buffer);
+        harness.AssertDuplicateOnOtherProvider();
+        trace.AssertHedge(StartupId, 0, HedgeOutcome.Duplicate);
+        await harness.AssertSettledAsync();
+        Assert.Equal(1, harness.Gate.CancelledOriginals);
+    }
+
+    [Fact]
+    public async Task RangeStart_OriginalAnswersFirst_DuplicateIsCancelledAndReleasesItsPermit()
+    {
+        await using var harness = new Harness(startup: true);
+        using var trace = new MultiSegmentStreamHedgeTests.HedgeTraceCapture();
+        harness.Gate.BeforeDuplicate = async cancellationToken =>
+        {
+            harness.Gate.Original.TrySetResult();
+            await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
+        };
+
+        var buffer = await harness.ReadAllAsync();
+
+        Assert.Equal(harness.Expected, buffer);
+        harness.AssertDuplicateOnOtherProvider();
+        trace.AssertHedge(StartupId, 0, HedgeOutcome.Original);
+        await harness.AssertSettledAsync();
+        Assert.Equal(1, harness.Gate.CancelledDuplicates);
+        Assert.Equal(0, harness.Gate.CancelledOriginals);
+    }
+
+    [Fact]
+    public async Task RangeStart_CallerCancelsDuringRace_BothFetchesReleaseTheirPermits()
+    {
+        await using var harness = new Harness(startup: true);
+        var duplicateStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Gate.BeforeDuplicate = async cancellationToken =>
+        {
+            duplicateStarted.TrySetResult();
+            await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
+        };
+
+        var read = harness.ReadAllAsync();
+        await duplicateStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await harness.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => read);
+        await harness.AssertSettledAsync();
+        Assert.Equal(1, harness.Gate.CancelledOriginals);
+        Assert.Equal(1, harness.Gate.CancelledDuplicates);
+    }
+
+    [Fact]
+    public async Task RangeStart_NoSpareConnection_DoesNotQueueADuplicate()
+    {
+        await using var harness = new Harness(startup: true, singleConnection: true);
+        using var trace = new MultiSegmentStreamHedgeTests.HedgeTraceCapture();
+        _ = Task.Delay(MultiSegmentStream.HedgeFloor * 2)
+            .ContinueWith(_ => harness.Gate.Original.TrySetResult(), TaskScheduler.Default);
+
+        var buffer = await harness.ReadAllAsync();
+
+        Assert.Equal(harness.Expected, buffer);
+        Assert.Empty(harness.Gate.DuplicateHosts);
+        trace.AssertNoHedge();
+        await harness.AssertSettledAsync();
+    }
+
+    private const string StartupId = "seg-0";
+
     private sealed class Harness : IAsyncDisposable
     {
         private readonly Dictionary<string, byte[]> _segments;
@@ -128,8 +203,12 @@ public sealed class MultiSegmentStreamHedgeProviderTests
 
         /// <param name="duplicateBody">When set, the first duplicate body for the stalled article
         /// blocks until it completes, and the held original then fails with a 430.</param>
-        public Harness(Task? duplicateBody = null)
+        /// <param name="startup">Reads through the unbuffered range-start path, whose first
+        /// single-article request is the held original.</param>
+        /// <param name="singleConnection">Only provider A, with one connection.</param>
+        public Harness(Task? duplicateBody = null, bool startup = false, bool singleConnection = false)
         {
+            Gate = new ArticleGate(startup ? StartupId : StalledId) { HoldFirstSingle = startup };
             _segments = Enumerable.Range(0, SegmentCount)
                 .ToDictionary(i => $"seg-{i}", i => Enumerable.Repeat((byte)i, SegmentSize).ToArray());
             var ranges = _segments.Keys
@@ -141,17 +220,23 @@ public sealed class MultiSegmentStreamHedgeProviderTests
             _connectionB = new GatedConnection("b.example", new FakeNntpClient(
                 _segments, useCachedYencStreams: true, segmentRanges: ranges,
                 decodedStreamFactory: BodyFactory("b.example", duplicateBody)), Gate);
-            _providerA = MultiProviderNntpClientTests.CreateProvider(_connectionA, host: "a.example", maxConnections: 4);
+            _providerA = MultiProviderNntpClientTests.CreateProvider(
+                _connectionA, host: "a.example", maxConnections: singleConnection ? 1 : 4);
             _providerB = MultiProviderNntpClientTests.CreateProvider(_connectionB, host: "b.example", maxConnections: 4);
             _client = new DownloadingNntpClient(
-                new MultiProviderNntpClient([_providerA, _providerB], cascadeEnabled: () => true),
+                new MultiProviderNntpClient(
+                    singleConnection ? [_providerA] : [_providerA, _providerB], cascadeEnabled: () => true),
                 new ConfigManager());
             _priority = _cts.Token.SetContext(new DownloadPriorityContext
             {
                 Priority = SemaphorePriority.High,
                 StreamSemaphore = _permits,
             });
-            _stream = MultiSegmentStream.Create(
+            _stream = startup
+                ? new UnbufferedMultiSegmentStream(
+                    _segments.Keys.ToArray().AsMemory(), _client, SegmentSize, "hedge.bin",
+                    exactSegmentSizes: Enumerable.Repeat((long)SegmentSize, SegmentCount).ToArray())
+                : MultiSegmentStream.Create(
                 _segments.Keys.ToArray().AsMemory(),
                 _client,
                 articleBufferSize: 40,
@@ -164,7 +249,7 @@ public sealed class MultiSegmentStreamHedgeProviderTests
                 bodyPipelineBatchWidth: 4);
         }
 
-        public ArticleGate Gate { get; } = new(StalledId);
+        public ArticleGate Gate { get; }
 
         public byte[] Expected => _segments.Values.SelectMany(bytes => bytes).ToArray();
 
@@ -174,7 +259,7 @@ public sealed class MultiSegmentStreamHedgeProviderTests
                 : (key, bytes) =>
                 {
                     Stream body = new MemoryStream(bytes, writable: false);
-                    if (key != StalledId || Gate.OriginalHost is not { } originalHost || originalHost == host ||
+                    if (key != Gate.Id || Gate.OriginalHost is not { } originalHost || originalHost == host ||
                         Interlocked.Exchange(ref _duplicateBodyClaimed, 1) != 0)
                         return body;
                     _ = Task.Delay(TimeSpan.FromMilliseconds(100)).ContinueWith(
@@ -187,10 +272,12 @@ public sealed class MultiSegmentStreamHedgeProviderTests
         public async Task<byte[]> ReadAllAsync()
         {
             var buffer = new byte[SegmentCount * SegmentSize];
-            await _stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true)
+            await _stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: true, _cts.Token)
                 .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
             return buffer;
         }
+
+        public Task CancelAsync() => _cts.CancelAsync();
 
         public void AssertDuplicateOnOtherProvider()
         {
@@ -247,6 +334,7 @@ public sealed class MultiSegmentStreamHedgeProviderTests
     {
         private int _claimed;
         private int _cancelledDuplicates;
+        private int _cancelledOriginals;
         private readonly System.Collections.Concurrent.ConcurrentQueue<string> _duplicateHosts = new();
 
         public string Id => id;
@@ -254,6 +342,10 @@ public sealed class MultiSegmentStreamHedgeProviderTests
         public string? OriginalHost { get; private set; }
         public IReadOnlyCollection<string> DuplicateHosts => _duplicateHosts;
         public int CancelledDuplicates => Volatile.Read(ref _cancelledDuplicates);
+        public int CancelledOriginals => Volatile.Read(ref _cancelledOriginals);
+
+        /// <summary>The first single-article request is the original and waits for <see cref="Original"/>.</summary>
+        public bool HoldFirstSingle { get; init; }
         public Func<CancellationToken, Task>? BeforeDuplicate { get; set; }
 
         public bool TryClaimOriginal(string host)
@@ -265,6 +357,7 @@ public sealed class MultiSegmentStreamHedgeProviderTests
 
         public void RecordDuplicate(string host) => _duplicateHosts.Enqueue(host);
         public void RecordCancelledDuplicate() => Interlocked.Increment(ref _cancelledDuplicates);
+        public void RecordCancelledOriginal() => Interlocked.Increment(ref _cancelledOriginals);
     }
 
     /// <summary>
@@ -279,7 +372,20 @@ public sealed class MultiSegmentStreamHedgeProviderTests
         public override async Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
             SegmentId segmentId, ArticleBodyCompletionHandler? onConnectionReadyAgain, CancellationToken cancellationToken)
         {
-            if (segmentId.ToString() == gate.Id)
+            if (segmentId.ToString() == gate.Id && gate.HoldFirstSingle && gate.TryClaimOriginal(host))
+            {
+                try
+                {
+                    await gate.Original.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    gate.RecordCancelledOriginal();
+                    onConnectionReadyAgain?.Invoke(ArticleBodyResult.Cancelled, null);
+                    throw;
+                }
+            }
+            else if (segmentId.ToString() == gate.Id)
             {
                 gate.RecordDuplicate(host);
                 if (gate.BeforeDuplicate is { } hook)

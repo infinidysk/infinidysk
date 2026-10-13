@@ -4,6 +4,8 @@ internal static class ArrHealthMath
 {
     internal const int UnusualMedianMinSamples = 5;
     internal const double UnusualWaitMultiplier = 3.0;
+    // Streamed imports hand off in seconds, so a pure median multiple flags routine slow imports.
+    internal static readonly TimeSpan UnusualWaitFloor = TimeSpan.FromMinutes(15);
     internal static readonly TimeSpan MedianWindow = TimeSpan.FromDays(30);
 
     internal static long? ComputeHandoffMs(DateTimeOffset importedAt, DateTime? createdAt)
@@ -35,6 +37,6 @@ internal static class ArrHealthMath
     {
         if (waitingMs is null || medianMs is null || medianMs.Value <= 0 || sampleCount < UnusualMedianMinSamples)
             return false;
-        return waitingMs.Value > UnusualWaitMultiplier * medianMs.Value;
+        return waitingMs.Value > Math.Max(UnusualWaitMultiplier * medianMs.Value, UnusualWaitFloor.TotalMilliseconds);
     }
 }

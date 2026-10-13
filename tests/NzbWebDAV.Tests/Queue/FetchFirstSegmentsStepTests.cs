@@ -11,6 +11,8 @@ using NzbWebDAV.Queue;
 using NzbWebDAV.Queue.DeobfuscationSteps._1.FetchFirstSegment;
 using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
 using NzbWebDAV.Streams;
+using NzbWebDAV.Tests.Clients.Usenet;
+using NzbWebDAV.Tests.Fakes;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
 
@@ -393,6 +395,39 @@ public class FetchFirstSegmentsStepTests
             [file], client, config, CancellationToken.None));
 
         Assert.InRange(result.ReleaseDate, before, DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
+    public async Task FetchFirstSegments_PrimaryReturnsAnotherPostsArticle_UsesBackupProvider()
+    {
+        var config = CreatePipeliningConfig(enabled: true, depth: 2);
+        var correct = Encoding.ASCII.GetBytes("Rar!" + new string('x', 60));
+        using var wrongPost = new FakeNntpClient(
+            new Dictionary<string, byte[]> { ["seg@example.com"] = new byte[64] },
+            useCachedYencStreams: true,
+            yencHeaders: new Dictionary<string, UsenetYencHeader>
+            {
+                ["seg@example.com"] = new()
+                {
+                    FileName = "other.bin", FileSize = 198_179_840, LineLength = 128,
+                    PartNumber = 569, TotalParts = 575, PartOffset = 195_812_352, PartSize = 64,
+                },
+            });
+        using var correctPost = new FakeNntpClient(
+            new Dictionary<string, byte[]> { ["seg@example.com"] = correct }, useCachedYencStreams: true);
+        using var client = new MultiProviderNntpClient(
+        [
+            MultiProviderNntpClientTests.CreateProvider(wrongPost, host: "wrong.example"),
+            MultiProviderNntpClientTests.CreateProvider(
+                correctPost, host: "correct.example", providerType: ProviderType.BackupOnly),
+        ]);
+
+        var result = Assert.Single(await FetchFirstSegmentsStep.FetchFirstSegments(
+            [CreateFile("seg@example.com", "\"movie.part01.rar\" yEnc")], client, config, CancellationToken.None));
+
+        Assert.False(result.MissingFirstSegment);
+        Assert.Equal(correct, result.First16KB);
+        Assert.Equal(1, correctPost.BodyRequestCounts["seg@example.com"]);
     }
 
     private static ConfigManager CreatePipeliningConfig(bool enabled, int depth)

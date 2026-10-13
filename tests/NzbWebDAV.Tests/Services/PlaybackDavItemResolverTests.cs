@@ -35,6 +35,36 @@ public sealed class PlaybackDavItemResolverTests : IDisposable
     }
 
     [Fact]
+    public void Resolve_MapsActiveStrmUnderConfiguredBaseUrlPathPrefix()
+    {
+        var library = Path.Join(_root, "library");
+        Directory.CreateDirectory(library);
+        var id = Guid.NewGuid();
+        File.WriteAllText(
+            Path.Join(library, "movie.strm"),
+            $"https://media.example/stream/view/.ids/{id}.mkv");
+
+        var config = Config(library);
+        config.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.GeneralBaseUrl,
+                ConfigValue = "https://media.example/stream",
+            },
+        ]);
+
+        var resolver = new PlaybackDavItemResolver(config);
+        var resolved = resolver.Resolve(Instance("/movies", library), new PlaybackObservation
+        {
+            NativeSessionId = "s-prefix",
+            MediaSourcePath = "/movies/movie.strm",
+        });
+
+        Assert.Equal(id, resolved);
+    }
+
+    [Fact]
     public void Resolve_DoesNotUseFilenameOrTitleFallback()
     {
         var library = Path.Join(_root, "library");

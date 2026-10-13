@@ -310,6 +310,89 @@ public class KnownMissingFastPathTests
         }
     }
 
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(4, false)]
+    [InlineData(4, true)]
+    public async Task SparseHoles_FirstReadAndReread_PadEveryHole(int articleBufferSize, bool usePipelinedBodyRequests)
+    {
+        PlaybackHoleTracker.ResetForTests();
+        var path = $"/view/sparse-{Guid.NewGuid():N}.mkv";
+        var ids = Enumerable.Range(0, 9).Select(i => $"seg-{i}@test").ToArray();
+        var holes = new HashSet<int> { 1, 3, 5, 7 };
+        var client = new FakeNntpClient(
+            ids.Where((_, i) => !holes.Contains(i)).ToDictionary(id => id, _ => "abc"u8.ToArray()));
+        var expected = string.Concat(ids.Select((_, i) => holes.Contains(i) ? "\0\0\0" : "abc"));
+        try
+        {
+            // Read-ahead discovers holes before the reader consumes the healthy segments between them.
+            for (var pass = 0; pass < 2; pass++)
+            {
+                await using var stream = MultiSegmentStream.Create(
+                    ids.AsMemory(),
+                    client,
+                    articleBufferSize,
+                    estimatedSegmentSize: 3,
+                    failFastOnFirstSegment: false,
+                    usePipelinedBodyRequests,
+                    CancellationToken.None,
+                    fileName: path,
+                    exactSegmentSizes: Enumerable.Repeat(3L, ids.Length).ToArray());
+                using var output = new MemoryStream();
+
+                await stream.CopyToAsync(output);
+
+                Assert.Equal(expected, Encoding.ASCII.GetString(output.ToArray()));
+            }
+
+            Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
+        }
+        finally
+        {
+            PlaybackHoleTracker.ResetForTests();
+        }
+    }
+
+    [Fact]
+    public async Task KnownAdjacentHolesAfterWindow_FailAcrossHybridBoundaryAndRearmLockout()
+    {
+        PlaybackHoleTracker.ResetForTests();
+        var clock = new ManualTimeProvider();
+        PlaybackHoleTracker.Clock = clock;
+        var path = $"/view/hybrid-{Guid.NewGuid():N}.mkv";
+        var ids = Enumerable.Range(0, 5).Select(i => $"seg-{i}@test").ToArray();
+        var client = new FakeNntpClient(ids.Skip(3).ToDictionary(id => id, _ => "abc"u8.ToArray()));
+        try
+        {
+            foreach (var id in ids.Take(3))
+                PlaybackHoleTracker.RecordHole(path, id, new UsenetArticleNotFoundException(id));
+            clock.Advance(PlaybackHoleTracker.ConsecutiveWindow + TimeSpan.FromSeconds(1));
+            Assert.False(PlaybackHoleTracker.ShouldFailFast(path, out _));
+            Assert.True(PlaybackHoleTracker.IsKnownMissingSegment(path, ids[2]));
+
+            // The unbuffered head pads one hole and the buffered remainder two: one logical run of three.
+            await using var stream = MultiSegmentStream.CreateFirstSegmentHybrid(
+                ids.AsMemory(),
+                client,
+                articleBufferSize: 4,
+                estimatedSegmentSize: 3,
+                failFastOnFirstSegment: false,
+                usePipelinedBodyRequests: true,
+                CancellationToken.None,
+                fileName: path,
+                exactSegmentSizes: Enumerable.Repeat(3L, ids.Length).ToArray());
+
+            await Assert.ThrowsAsync<UsenetArticleNotFoundException>(
+                async () => await stream.CopyToAsync(Stream.Null));
+
+            Assert.True(PlaybackHoleTracker.ShouldFailFast(path, out _));
+        }
+        finally
+        {
+            PlaybackHoleTracker.ResetForTests();
+        }
+    }
+
     private static Stream CreateGapFillStream(
         string[] ids,
         INntpClient client,
@@ -457,5 +540,14 @@ public class KnownMissingFastPathTests
                 base.Dispose(disposing);
             }
         }
+    }
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private DateTimeOffset _utcNow = DateTimeOffset.UtcNow;
+
+        public void Advance(TimeSpan delta) => _utcNow += delta;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
     }
 }

@@ -134,8 +134,10 @@ public sealed class EffectiveStreamingConfigManifestTests
         Assert.DoesNotContain("usenet.segment-cache.path", json);
     }
 
-    [Fact]
-    public void DisabledProvider_HasZeroEffectiveWarmConnectionFloor()
+    [Theory]
+    [InlineData(ProviderType.Disabled)]
+    [InlineData(ProviderType.BackupOnly)]
+    public void DemandOnlyProvider_HasZeroEffectiveWarmConnectionFloor(ProviderType type)
     {
         var config = new ConfigManager();
         config.UpdateValues(
@@ -149,7 +151,7 @@ public sealed class EffectiveStreamingConfigManifestTests
                     [
                         new UsenetProviderConfig.ConnectionDetails
                         {
-                            Type = ProviderType.Disabled,
+                            Type = type,
                             Host = "nntp.example",
                             Port = 563,
                             UseSsl = true,

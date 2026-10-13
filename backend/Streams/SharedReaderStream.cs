@@ -44,6 +44,7 @@ internal sealed class SharedReaderStream : FastReadOnlyStream, IDeliveredBytesVa
     }
 
     internal long ReaderId => _readerId;
+    internal SharedStreamEntry Entry => _entry;
     internal bool IsDetached => _detached;
     internal long Cursor => _cursor;
 

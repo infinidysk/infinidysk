@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Contexts;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Services;
+using NzbWebDAV.Services.StreamTrace;
 using Serilog;
 using UsenetSharp.Streams;
 
@@ -366,7 +368,12 @@ public class DavMultipartFileStream : FastReadOnlyStream, IDeliveredBytesValidat
         // segment of it never seeks, so the probe would be pure overhead.
         var segmentSize = part.SegmentIdByteRange.Count / Math.Max(1, part.SegmentIds.Length);
         if (_resolver is not null && (partBudget is null || partBudget > segmentSize))
+        {
+            var started = Stopwatch.GetTimestamp();
             part = await _resolver.PrepareSegmentGeometryAsync(_mpf, partIndex, generationCt).ConfigureAwait(false);
+            StreamTrace.TryWait(
+                StreamTraceKind.VolumePrepare, "geometry", Stopwatch.GetElapsedTime(started), partIndex: partIndex);
+        }
         return OpenPart(part, extraOffset, partIndex, partBudget, continuation: true);
     }
 
@@ -415,6 +422,7 @@ public class DavMultipartFileStream : FastReadOnlyStream, IDeliveredBytesValidat
         // A successor volume skips the first-byte ramp but shares the combined read-ahead window.
         var speculativeReadAhead = continuation ? new SpeculativeReadAhead() : null;
         stream.SpeculativeReadAhead = speculativeReadAhead;
+        stream.TracePartIndex = partIndex;
         stream.Seek(part.FilePartByteRange.StartInclusive + extraOffset, SeekOrigin.Begin);
         var expectedLength = part.FilePartByteRange.Count - extraOffset;
         var responseLength = readBudgetOverride is { } cap
@@ -452,7 +460,10 @@ public class DavMultipartFileStream : FastReadOnlyStream, IDeliveredBytesValidat
         CancellationToken ct,
         CancellationToken generationCt)
     {
+        var started = Stopwatch.GetTimestamp();
         await _resolver!.ResolveNextAsync(_mpf, ct).ConfigureAwait(false);
+        StreamTrace.TryWait(
+            StreamTraceKind.VolumePrepare, "resolve", Stopwatch.GetElapsedTime(started), partIndex: targetIndex);
         var meta = _mpf.Metadata;
         if (targetIndex >= meta.FileParts.Length)
         {

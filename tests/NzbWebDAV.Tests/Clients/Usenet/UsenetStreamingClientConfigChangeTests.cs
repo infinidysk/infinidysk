@@ -46,9 +46,9 @@ public class UsenetStreamingClientConfigChangeTests
     [Theory]
     [InlineData(ProviderType.Pooled, 2)]
     [InlineData(ProviderType.BackupAndStats, 2)]
-    [InlineData(ProviderType.BackupOnly, 2)]
+    [InlineData(ProviderType.BackupOnly, 0)]
     [InlineData(ProviderType.Disabled, 0)]
-    public void ResolveWarmConnectionFloor_SkipsOnlyDisabledProviders(ProviderType type, int expectedFloor)
+    public void ResolveWarmConnectionFloor_SkipsDisabledAndBackupOnlyProviders(ProviderType type, int expectedFloor)
     {
         var config = new ConfigManager();
         Assert.True(config.IsWarmConnectionsEnabled());

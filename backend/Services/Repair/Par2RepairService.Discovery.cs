@@ -484,6 +484,6 @@ public partial class Par2RepairService
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
-    private sealed record NzbFileObservation(long? Length, string? First16KHash, bool PrefixAttempted = false);
+    private sealed record NzbFileObservation(long? Length, string? First16KHash);
     private sealed class RepairInfeasibleException(string message) : Exception(message);
 }

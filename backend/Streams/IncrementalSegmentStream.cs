@@ -27,6 +27,12 @@ internal interface IIncrementalSegmentHandler
 
     /// <summary>Runs on the reader after it waited for body bytes that had not arrived.</summary>
     void OnReaderWaited(TimeSpan elapsed);
+
+    /// <summary>Runs on the reader before it waits for body bytes.</summary>
+    void OnReaderWaiting() { }
+
+    /// <summary>Runs on the reader when its wait for body bytes was cancelled or failed.</summary>
+    void OnReaderWaitAbandoned(TimeSpan elapsed, bool cancelled) { }
 }
 
 /// <summary>
@@ -288,7 +294,26 @@ internal sealed class IncrementalSegmentStream : FastReadOnlyNonSeekableStream, 
             }
 
             var waitStarted = Stopwatch.GetTimestamp();
-            await progress.WaitAsync(cancellationToken).ConfigureAwait(false);
+            _handler.OnReaderWaiting();
+            try
+            {
+                await progress.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                try
+                {
+                    _handler.OnReaderWaitAbandoned(
+                        Stopwatch.GetElapsedTime(waitStarted), e is OperationCanceledException);
+                }
+                catch (Exception traceFailure) when (traceFailure is not OutOfMemoryException)
+                {
+                    Log.Debug(traceFailure, "Failed to record an abandoned segment body wait.");
+                }
+
+                throw;
+            }
+
             _handler.OnReaderWaited(Stopwatch.GetElapsedTime(waitStarted));
         }
     }

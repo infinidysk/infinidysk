@@ -293,7 +293,7 @@ public partial class UsenetClient
                     null => ArticleBodyResult.Retrieved,
                     OperationCanceledException when connectionReusable =>
                         ArticleBodyResult.Cancelled,
-                    UsenetBodyAbandonedException => ArticleBodyResult.Discarded,
+                    UsenetBodyAbandonedException or InvalidDataException => ArticleBodyResult.Discarded,
                     _ => ArticleBodyResult.NotRetrieved
                 };
                 onConnectionReadyAgain?.Invoke(

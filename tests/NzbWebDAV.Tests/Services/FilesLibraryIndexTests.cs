@@ -22,7 +22,7 @@ public sealed class FilesLibraryIndexTests
         var count = 0;
         using var index = new FilesLibraryIndex(Config(), new ControllableTimeProvider())
         {
-            ReadLinks = (_, _, token) =>
+            ReadLinks = (_, _, _, token) =>
             {
                 Interlocked.Increment(ref count);
                 started.TrySetResult();
@@ -59,11 +59,32 @@ public sealed class FilesLibraryIndexTests
     }
 
     [Fact]
+    public async Task BaseUrlPathPrefix_RecognizesPrefixedStrmAndInvalidatesOnChange()
+    {
+        var root = Path.Join(Path.GetTempPath(), $"files-library-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var id = Guid.NewGuid();
+            await File.WriteAllTextAsync(Path.Join(root, "movie.strm"), $"https://media.test/stream/view/.ids/{id}.mkv");
+            var config = Config(root);
+            config.UpdateValues([new ConfigItem { ConfigName = ConfigKeys.GeneralBaseUrl, ConfigValue = "https://media.test/stream" }]);
+            using var index = new FilesLibraryIndex(config, new ControllableTimeProvider());
+            Assert.Equal([Path.Join(root, "movie.strm")], (await index.RefreshAsync(CancellationToken.None)).Links[id]);
+
+            config.UpdateValues([new ConfigItem { ConfigName = ConfigKeys.GeneralBaseUrl, ConfigValue = "https://media.test" }]);
+            Assert.Equal("unknown", index.GetSnapshot().State);
+            Assert.False((await index.RefreshAsync(CancellationToken.None)).Links.ContainsKey(id));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public async Task PartialFailure_DoesNotPublishNegativeMembership()
     {
         using var index = new FilesLibraryIndex(Config(), new ControllableTimeProvider())
         {
-            ReadLinks = (_, _, _) => throw new IOException("synthetic failure"),
+            ReadLinks = (_, _, _, _) => throw new IOException("synthetic failure"),
         };
         var snapshot = await index.RefreshAsync(CancellationToken.None);
         Assert.Equal("unknown", snapshot.State);
@@ -78,7 +99,7 @@ public sealed class FilesLibraryIndexTests
         var attempts = 0;
         using var index = new FilesLibraryIndex(Config(), clock)
         {
-            ReadLinks = (_, _, _) => { Interlocked.Increment(ref attempts); throw new IOException(); },
+            ReadLinks = (_, _, _, _) => { Interlocked.Increment(ref attempts); throw new IOException(); },
         };
         await index.RefreshAsync(CancellationToken.None);
         for (var indexRead = 0; indexRead < 20; indexRead++) Assert.Equal("unknown", index.GetSnapshot().State);
@@ -96,7 +117,7 @@ public sealed class FilesLibraryIndexTests
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var index = new FilesLibraryIndex(config, new ControllableTimeProvider())
         {
-            ReadLinks = (_, _, token) => { started.TrySetResult(); release.Wait(token); return new Dictionary<Guid, string[]>(); },
+            ReadLinks = (_, _, _, token) => { started.TrySetResult(); release.Wait(token); return new Dictionary<Guid, string[]>(); },
         };
         var refresh = index.RefreshAsync(CancellationToken.None);
         await started.Task;
@@ -112,7 +133,7 @@ public sealed class FilesLibraryIndexTests
         using var caller = new CancellationTokenSource();
         using var index = new FilesLibraryIndex(Config(), new ControllableTimeProvider())
         {
-            ReadLinks = (_, _, token) => { release.Wait(token); return new Dictionary<Guid, string[]>(); },
+            ReadLinks = (_, _, _, token) => { release.Wait(token); return new Dictionary<Guid, string[]>(); },
         };
         var cancelled = index.RefreshAsync(caller.Token);
         var surviving = index.RefreshAsync(CancellationToken.None);
@@ -129,7 +150,7 @@ public sealed class FilesLibraryIndexTests
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var index = new FilesLibraryIndex(Config(), new ControllableTimeProvider())
         {
-            ReadLinks = (_, _, token) => { started.TrySetResult(); release.Wait(token); return new Dictionary<Guid, string[]>(); },
+            ReadLinks = (_, _, _, token) => { started.TrySetResult(); release.Wait(token); return new Dictionary<Guid, string[]>(); },
         };
         var refresh = index.RefreshAsync(CancellationToken.None);
         await started.Task;

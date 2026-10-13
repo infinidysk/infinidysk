@@ -809,7 +809,7 @@ public sealed class RemoveMissingPayloadsTask : BaseTask
         }
     }
 
-    private static bool CanProveGeneratedSidecarNoLongerTargetsItem(DavItem item)
+    private bool CanProveGeneratedSidecarNoLongerTargetsItem(DavItem item)
     {
         if (string.IsNullOrWhiteSpace(item.GeneratedStrmPath))
             return true;
@@ -832,7 +832,8 @@ public sealed class RemoveMissingPayloadsTask : BaseTask
         if (current is not SymlinkAndStrmUtil.StrmInfo strm)
             return false;
 
-        return OrganizedLinksUtil.GetDavItemLink(strm)?.DavItemId != item.Id;
+        return OrganizedLinksUtil.GetDavItemLink(strm, OrganizedLinksUtil.GetStrmPathPrefix(_configManager))
+            ?.DavItemId != item.Id;
     }
 
     private async Task RemoveEmptyAncestorDirectoriesAsync(

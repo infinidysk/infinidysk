@@ -90,7 +90,7 @@ public class ReadOnlyStreamTests
         var buffer = new byte[10];
 
         // Act & Assert
-        Assert.ThrowsAsync<NotSupportedException>(
+        await Assert.ThrowsAsync<NotSupportedException>(
             async () => await stream.WriteAsync(buffer, 0, 5, CancellationToken.None));
     }
 
@@ -102,7 +102,7 @@ public class ReadOnlyStreamTests
         var buffer = new byte[10];
 
         // Act & Assert
-        var exception = Assert.ThrowsAsync<NotSupportedException>(
+        var exception = await Assert.ThrowsAsync<NotSupportedException>(
             async () => await stream.WriteAsync(buffer.AsMemory(), CancellationToken.None));
         Assert.That(exception, Is.Not.Null);
     }
@@ -144,7 +144,7 @@ public class ReadOnlyStreamTests
         var stream = new TestReadOnlyStream(new byte[] { 1, 2, 3 });
 
         // Act & Assert
-        Assert.DoesNotThrowAsync(async () => await stream.FlushAsync(CancellationToken.None));
+        await Assert.DoesNotThrowAsync(async () => await stream.FlushAsync(CancellationToken.None));
     }
 
     [Test]

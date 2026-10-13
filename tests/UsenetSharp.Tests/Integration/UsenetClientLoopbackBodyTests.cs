@@ -100,7 +100,7 @@ public sealed class UsenetClientLoopbackBodyTests
         await using var server = ScriptedNntpServer.StartTlsConnectionScript((_, _, _) => Task.CompletedTask);
         await using var client = new UsenetClient();
 
-        Assert.ThrowsAsync<AuthenticationException>(() =>
+        await Assert.ThrowsAsync<AuthenticationException>(() =>
             client.ConnectAsync("127.0.0.1", server.Port, true, CancellationToken.None));
     }
 }

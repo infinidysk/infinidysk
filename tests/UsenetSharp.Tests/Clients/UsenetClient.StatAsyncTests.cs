@@ -91,7 +91,7 @@ public class StatAsyncTests
         var cancellationToken = CancellationToken.None;
 
         // Act & Assert
-        var exception = Assert.ThrowsAsync<UsenetNotConnectedException>(async () =>
+        var exception = await Assert.ThrowsAsync<UsenetNotConnectedException>(async () =>
             await client.StatAsync(ValidSegmentIds[0], cancellationToken));
 
         Assert.That(exception, Is.Not.Null);

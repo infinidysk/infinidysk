@@ -44,6 +44,16 @@ public class MultiProviderNntpClient(
 
     protected override long? ProviderGeneration => providerGeneration;
 
+    // Mirrors the hedged walk's first candidate, which the duplicate queues on before any failover.
+    public override bool HasSpareFetchCapacity(SegmentId segmentId, CancellationToken cancellationToken)
+    {
+        var ordered = SelectOrderedProviders(NntpOperation.Body, out var reserved);
+        ReleasePendingSelection(ref reserved, NntpOperation.Body);
+        DemoteStalledProvider(ordered, segmentId);
+        return ordered.FirstOrDefault(provider => !IsCachedMissing(segmentId, provider, NntpOperation.Body))
+            is { } first && first.UnreservedConnectionsFor(NntpOperation.Body) > 0;
+    }
+
     internal const string InconclusiveMissReason =
         "not every enabled provider answered (a circuit breaker was open, or a provider timed out or failed)";
 
@@ -207,7 +217,11 @@ public class MultiProviderNntpClient(
     internal static Guid? CurrentReadSessionId => ReadSessionScope.Value;
 
     private static readonly AsyncLocal<StreamTraceRangeContext?> StreamTraceRangeScope = new();
-    internal static StreamTraceRangeContext? CurrentStreamTraceRange => StreamTraceRangeScope.Value;
+    private static readonly AsyncLocal<StreamTraceLazyRange?> LazyStreamTraceRangeScope = new();
+    internal static StreamTraceRangeContext? CurrentStreamTraceRange =>
+        StreamTraceRangeScope.Value ?? LazyStreamTraceRangeScope.Value?.Resolve();
+    internal static StreamTraceRangeContext? BoundStreamTraceRange => StreamTraceRangeScope.Value;
+    internal static StreamTraceLazyRange? CurrentLazyStreamTraceRange => LazyStreamTraceRangeScope.Value;
 
     private static readonly AsyncLocal<bool> HedgeFetchScope = new();
     // Provider each article's first in-flight BODY waits on, so a hedge can try another first.
@@ -249,6 +263,14 @@ public class MultiProviderNntpClient(
         var previous = StreamTraceRangeScope.Value;
         StreamTraceRangeScope.Value = range;
         return new ScopeReleaser(() => StreamTraceRangeScope.Value = previous);
+    }
+
+    /// <summary>Binds a range that opens on first use while tracing is enabled, so live activation reaches this flow.</summary>
+    internal static IDisposable BeginLazyStreamTraceRangeScope(StreamTraceLazyRange range)
+    {
+        var previous = LazyStreamTraceRangeScope.Value;
+        LazyStreamTraceRangeScope.Value = range;
+        return new ScopeReleaser(() => LazyStreamTraceRangeScope.Value = previous);
     }
 
     private sealed class ScopeReleaser(Action onDispose) : IDisposable
@@ -1195,12 +1217,7 @@ public class MultiProviderNntpClient(
         var orderedProviders = SelectOrderedProviders(
             operation, out var attemptReserved, out var skippedOpenCircuit);
         var hedging = HedgeFetchScope.Value;
-        if (hedging && orderedProviders.Count > 1 &&
-            _awaitingBody.TryGetValue(segmentId, out var stalled) &&
-            orderedProviders.Remove(stalled))
-        {
-            orderedProviders.Add(stalled);
-        }
+        if (hedging) DemoteStalledProvider(orderedProviders, segmentId);
 
         using var releasePending = new ScopeReleaser(
             () => ReleasePendingSelection(ref attemptReserved, operation));
@@ -1635,6 +1652,12 @@ public class MultiProviderNntpClient(
         YencFileValidationContext.Current?.ReportMismatch(
             segmentId.ToString(), providerKey, response.ResponseCode, header);
         await bodyStream.DisposeAsync().ConfigureAwait(false);
+
+        if (YencFileValidationContext.IsFirstSegmentProbe)
+            throw new UsenetMismatchedArticleException(
+                segmentId,
+                $"Provider returned yEnc part {header.PartNumber}/{header.TotalParts} starting at byte " +
+                $"{header.PartOffset} for a file's first segment.");
 
         throw new UsenetMismatchedArticleException(
             segmentId,
@@ -2209,6 +2232,13 @@ public class MultiProviderNntpClient(
             reserved?.ReservePending(operation);
             return ordered;
         }
+    }
+
+    // A duplicate tries the provider still holding the original last.
+    private void DemoteStalledProvider(List<MultiConnectionNntpClient> ordered, SegmentId segmentId)
+    {
+        if (ordered.Count > 1 && _awaitingBody.TryGetValue(segmentId, out var stalled) && ordered.Remove(stalled))
+            ordered.Add(stalled);
     }
 
     private void MovePendingSelection(
