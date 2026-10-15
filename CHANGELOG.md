@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.2](https://github.com/infinidysk/infinidysk/compare/v1.6.1...v1.6.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **health:** initialize the playback repair trigger before serving requests ([#1705](https://github.com/infinidysk/infinidysk/issues/1705)) ([18a0c4b](https://github.com/infinidysk/infinidysk/commit/18a0c4bf0448ddf02c329ac12a613fcce8b33caf))
+
 ## [1.6.1](https://github.com/infinidysk/infinidysk/compare/v1.6.0...v1.6.1) (2026-10-12)
 
 
