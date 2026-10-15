@@ -504,6 +504,7 @@ public sealed partial class Program
             // run
             var app = builder.Build();
             BlobStore.Use(app.Services.GetRequiredService<IBlobStore>());
+            _ = app.Services.GetRequiredService<Par2RepairTriggerSink>();
             StreamTrace.ConfigureConnectionProbe(
                 () => app.Services.GetRequiredService<UsenetStreamingClient>().GetProviderConnectionSnapshots());
             // Must run before anything that reads Scheme/Host/RemoteIpAddress.
