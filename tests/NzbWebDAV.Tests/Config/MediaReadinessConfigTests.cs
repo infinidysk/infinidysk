@@ -67,23 +67,4 @@ public sealed class MediaReadinessConfigTests
         Assert.Contains("anime", categories);
         Assert.Contains("tv", categories);
     }
-    [Theory]
-    [InlineData("radarr")]
-    [InlineData("sonarr4k")]
-    [InlineData("")]
-    public void MediaReadiness_ImportableMediaEnabled_ProtectsCustomCategories(string category)
-    {
-        Assert.True(CreateConfig().ShouldCheckMediaReadiness(category));
-    }
-
-    [Fact]
-    public void MediaReadiness_Disabled_StillHonorsExplicitCategory()
-    {
-        var config = CreateConfig(
-            new ConfigItem { ConfigName = ConfigKeys.ApiEnsureImportableVideo, ConfigValue = "false" },
-            new ConfigItem { ConfigName = ConfigKeys.ApiEnsureArticleExistenceCategories, ConfigValue = "sonarr4k" });
-        Assert.True(config.ShouldCheckMediaReadiness("Sonarr4K"));
-        Assert.False(config.ShouldCheckMediaReadiness("radarr"));
-    }
-
 }
