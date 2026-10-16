@@ -33,17 +33,15 @@ public sealed class StrmPublishAfterCommitTests : IAsyncLifetime
     private const string JobName = "movie-job";
     private const string VideoFileName = "movie.mkv";
     private const string NestedArchiveOnlyBase64 =
-        "N3q8ryccAARxc4HsKQAAAAAAAADCAAAAAAAAAFwWo6EaRd+jj0LygQRCgohtYXRyb3NrYXByZXZpZXdyYXItdHdv" +
-        "cmFyLW9uZQEEBgADCRsHBwAHCwMAAQEAAQEAAQEADBsHBwAICgFy7CZOu1XyGixZVHEAAAUDGQwAAAAAAAAAAAAA" +
-        "AAARUQBTAGEAbQBwAGwAZQBzAC8AcAByAGUAdgBpAGUAdwAuAG0AawB2AAAAaQBuAG4AZQByAC4AcgAwADAAAABp" +
-        "AG4AbgBlAHIALgByAGEAcgAAABkCAAAUGgEAzEZ0TwFb3QHMRnRPAVvdAcxGdE8BW90BFQ4BACCAtIEggLSBIIC0" +
-        "gQAA";
+        "N3q8ryccAAT/31JgFQAAAAAAAAB0AAAAAAAAAEfe5xhyYXItb25lcmFyLXR3b3ByZXZpZXcB" +
+        "BAYAAwkHBwcABwsDAAEBAAEBAAEBAAwHBwcACAAABQMRTwBpAG4AbgBlAHIALgByAGEAcgAA" +
+        "AGkAbgBuAGUAcgAuAHIAMAAwAAAAUwBhAG0AcABsAGUALwBwAHIAZQB2AGkAZQB3AC4AbQBr" +
+        "AHYAAAAAAA==";
     private const string NestedArchiveWithMediaBase64 =
-        "N3q8ryccAAQByhdkRAAAAAAAAADeAAAAAAAAAClNtrkaRd+jj0LygQRCgohtYXRyb3NrYXByZXZpZXdyYXItdHdv" +
-        "cmFyLW9uZRpF36OPQvKBBEKCiG1hdHJvc2thZmVhdHVyZQEEBgAECRsHBxsABwsEAAEBAAEBAAEBAAEBAAwbBwcb" +
-        "AAgKAXLsJk67VfIaLFlUcSS2dOgAAAUEGQMAAAARZQBTAGEAbQBwAGwAZQBzAC8AcAByAGUAdgBpAGUAdwAuAG0A" +
-        "awB2AAAAaQBuAG4AZQByAC4AcgAwADAAAABpAG4AbgBlAHIALgByAGEAcgAAAG0AbwB2AGkAZQAuAG0AawB2AAAA" +
-        "FCIBAMxGdE8BW90BzEZ0TwFb3QHMRnRPAVvdAcxGdE8BW90BFRIBACCAtIEggLSBIIC0gSCAtIEAAA==";
+        "N3q8ryccAARtZlqlHAAAAAAAAACNAAAAAAAAADTiUmFyYXItb25lcmFyLXR3b3ByZXZpZXdm" +
+        "ZWF0dXJlAQQGAAQJBwcHBwAHCwQAAQEAAQEAAQEAAQEADAcHBwcACAAABQQRYwBpAG4AbgBl" +
+        "AHIALgByAGEAcgAAAGkAbgBuAGUAcgAuAHIAMAAwAAAAUwBhAG0AcABsAGUALwBwAHIAZQB2" +
+        "AGkAZQB3AC4AbQBrAHYAAABtAG8AdgBpAGUALgBtAGsAdgAAAAAA";
 
     private readonly string _configRoot =
         Path.Join(Path.GetTempPath(), $"nzbdav-strm-cfg-{Guid.NewGuid():N}");
@@ -55,7 +53,6 @@ public sealed class StrmPublishAfterCommitTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Convert.FromHexString("1A45DFA38F42F281044282886D6174726F736B61").CopyTo(_payload, 0);
         _previousConfigPath = Environment.GetEnvironmentVariable("CONFIG_PATH");
         Directory.CreateDirectory(_configRoot);
         Directory.CreateDirectory(_strmDir);

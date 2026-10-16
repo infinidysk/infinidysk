@@ -37,7 +37,6 @@ public sealed class FinalizeDatabaseErrorTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Convert.FromHexString("1A45DFA38F42F281044282886D6174726F736B61").CopyTo(_payload, 0);
         _previousConfigPath = Environment.GetEnvironmentVariable("CONFIG_PATH");
         Directory.CreateDirectory(_configRoot);
         Environment.SetEnvironmentVariable("CONFIG_PATH", _configRoot);
