@@ -14,57 +14,47 @@ public sealed class MediaReadinessConfigTests
     }
 
     [Fact]
-    public void MediaReadiness_EmptyCategoriesAndVideoDisabled_IsEmpty()
+    public void MediaReadiness_EmptyCategoriesAndVideoDisabled_ChecksNothing()
     {
         var config = CreateConfig(
             new ConfigItem { ConfigName = ConfigKeys.ApiEnsureImportableVideo, ConfigValue = "false" });
 
-        Assert.Empty(config.GetMediaReadinessCategories());
+        Assert.False(config.ShouldCheckMediaReadiness("tv"));
+        Assert.False(config.ShouldCheckMediaReadiness("radarr"));
     }
 
-    [Fact]
-    public void MediaReadiness_VideoEnabled_IncludesDefaultMediaCategories()
+    [Theory]
+    [InlineData("tv")]
+    [InlineData("movies")]
+    [InlineData("radarr")]
+    [InlineData("sonarr4k")]
+    [InlineData("")]
+    public void MediaReadiness_VideoEnabled_ChecksEveryCategory(string category)
     {
         var config = CreateConfig(
             new ConfigItem { ConfigName = ConfigKeys.ApiEnsureImportableVideo, ConfigValue = "true" });
 
-        var categories = config.GetMediaReadinessCategories();
-        Assert.Contains("tv", categories);
-        Assert.Contains("movies", categories);
-        Assert.Contains("audio", categories);
+        Assert.True(config.ShouldCheckMediaReadiness(category));
     }
 
     [Fact]
     public void MediaReadiness_VideoDefault_IsEnabled()
     {
-        // ensure-importable-video defaults to true, so media categories are ready by default.
+        // ensure-importable-video defaults to true, so custom categories are checked by default.
         var config = CreateConfig();
 
-        Assert.Contains("tv", config.GetMediaReadinessCategories());
+        Assert.True(config.ShouldCheckMediaReadiness("radarr"));
     }
 
     [Fact]
-    public void MediaReadiness_ExplicitCategories_AlwaysIncluded()
+    public void MediaReadiness_VideoDisabled_StillHonorsExplicitCategories()
     {
         var config = CreateConfig(
             new ConfigItem { ConfigName = ConfigKeys.ApiEnsureImportableVideo, ConfigValue = "false" },
-            new ConfigItem { ConfigName = ConfigKeys.ApiEnsureArticleExistenceCategories, ConfigValue = "anime, docs" });
+            new ConfigItem { ConfigName = ConfigKeys.ApiEnsureArticleExistenceCategories, ConfigValue = "anime, Sonarr4K" });
 
-        var categories = config.GetMediaReadinessCategories();
-        Assert.Contains("anime", categories);
-        Assert.Contains("docs", categories);
-        Assert.DoesNotContain("tv", categories);
-    }
-
-    [Fact]
-    public void MediaReadiness_VideoEnabled_MergesExplicitAndDefault()
-    {
-        var config = CreateConfig(
-            new ConfigItem { ConfigName = ConfigKeys.ApiEnsureImportableVideo, ConfigValue = "true" },
-            new ConfigItem { ConfigName = ConfigKeys.ApiEnsureArticleExistenceCategories, ConfigValue = "anime" });
-
-        var categories = config.GetMediaReadinessCategories();
-        Assert.Contains("anime", categories);
-        Assert.Contains("tv", categories);
+        Assert.True(config.ShouldCheckMediaReadiness("anime"));
+        Assert.True(config.ShouldCheckMediaReadiness("sonarr4k"));
+        Assert.False(config.ShouldCheckMediaReadiness("tv"));
     }
 }

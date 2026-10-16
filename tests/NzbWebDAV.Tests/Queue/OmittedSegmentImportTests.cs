@@ -84,7 +84,7 @@ public sealed class OmittedSegmentImportTests : IAsyncLifetime
             new ConfigItem { ConfigName = ConfigKeys.ApiEnsureArticleExistenceCategories, ConfigValue = "other" },
             new ConfigItem { ConfigName = ConfigKeys.ApiArticleExistenceCheckMode, ConfigValue = "full" },
         ]);
-        Assert.Contains("other", config.GetMediaReadinessCategories());
+        Assert.True(config.ShouldCheckMediaReadiness("other"));
         await using var context = new DavDatabaseContext();
         var queueItem = new QueueItem
         {
