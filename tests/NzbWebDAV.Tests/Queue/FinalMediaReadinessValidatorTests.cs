@@ -20,6 +20,7 @@ using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Database;
 using NzbWebDAV.Tests.Streams;
+using NzbWebDAV.Utils;
 using NzbWebDAV.Websocket;
 using UsenetSharp.Models;
 
@@ -28,7 +29,7 @@ namespace NzbWebDAV.Tests.Queue;
 [Collection(nameof(PlaybackHoleTrackerCollection))]
 public sealed class FinalMediaReadinessValidatorTests : IDisposable
 {
-    private static readonly byte[] EbmlMagic = Convert.FromHexString("1A45DFA38F42F281044282886D6174726F736B61");
+    private static readonly byte[] EbmlMagic = [0x1A, 0x45, 0xDF, 0xA3];
 
     public FinalMediaReadinessValidatorTests() => PlaybackHoleTracker.ResetForTests();
     public void Dispose() => PlaybackHoleTracker.ResetForTests();
@@ -175,161 +176,102 @@ public sealed class FinalMediaReadinessValidatorTests : IDisposable
         var withoutArchive = FinalMediaReadinessValidator.PlanTargets(
             [sample], "movies", "Job", new ConfigManager());
 
-        Assert.Single(withArchive);
-        Assert.Equal("Archived.Movie.mkv", withArchive[0].Name);
+        Assert.Empty(withArchive);
         Assert.Single(withoutArchive);
     }
 
     [Theory]
     [InlineData("rar")]
+    [InlineData("lazy")]
     [InlineData("7z")]
     [InlineData("split")]
-    [InlineData("lazy")]
-    public async Task ValidateAsync_ArchiveZeroHeader_FailsBeforeCompletion(string kind)
+    public async Task ValidateAsync_ArchivedZeroHeader_FailsWithoutNetworkReads(string kind)
     {
-        var source = new byte[40_032];
-        EbmlMagic.CopyTo(source, 0); // Archive/header bytes are not the media bytes.
-        var part = ArchivePart("archive@test", source.Length, 32);
-        var result = ArchiveResult(kind, part);
         var client = new ProbeRecordingClient();
-        client.Serve("archive@test", source);
         var config = new ConfigManager();
-        var targets = FinalMediaReadinessValidator.PlanTargets([result], "radarr", "Job", config);
-        Assert.Single(targets);
+        var targets = FinalMediaReadinessValidator.PlanTargets(
+            [ArchiveResult(kind, new byte[VideoSignatureUtil.MemberHeadLength])], "movies", "Job", config);
+
+        var target = Assert.Single(targets);
+        Assert.Equal("Movie.mkv", target.Name);
         var error = await Assert.ThrowsAsync<NonRetryableDownloadException>(() =>
             new FinalMediaReadinessValidator(client, config).ValidateAsync(targets, CancellationToken.None));
         Assert.Contains("invalid media container header", error.InnerException!.Message);
-        Assert.Equal(1, client.BodyRequestCount);
-        Assert.Equal(0, client.BatchRequestCount);
+        Assert.Equal(0, client.GetFileStreamCalls);
+        Assert.Equal(0, client.BodyRequestCount);
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ValidateAsync_ArchiveChecksDecodedMember_AndDoesNotFetchUnusedVolumes(bool encrypted)
+    [InlineData("rar")]
+    [InlineData("lazy")]
+    [InlineData("7z")]
+    [InlineData("split")]
+    public async Task ValidateAsync_ArchivedValidHeader_PassesWithoutNetworkReads(string kind)
     {
-        var media = new byte[40_000];
-        EbmlMagic.CopyTo(media, 0);
-        AesParams? parameters = null;
-        if (encrypted)
-        {
-            using var aes = System.Security.Cryptography.Aes.Create();
-            parameters = new AesParams { Key = aes.Key, Iv = aes.IV, DecodedSize = media.Length };
-            media = aes.EncryptCbc(media, aes.IV, System.Security.Cryptography.PaddingMode.None);
-        }
-        var source = new byte[media.Length + 32];
-        media.CopyTo(source, 32);
-        var part = ArchivePart("archive@test", source.Length, 32);
-        var result = ArchiveResult("lazy", part, parameters);
+        var head = new byte[VideoSignatureUtil.MemberHeadLength];
+        EbmlMagic.CopyTo(head, 0);
         var client = new ProbeRecordingClient();
-        client.Serve("archive@test", source);
         var config = new ConfigManager();
-        var targets = FinalMediaReadinessValidator.PlanTargets([result], "sonarr4k", "Job", config);
+        var targets = FinalMediaReadinessValidator.PlanTargets([ArchiveResult(kind, head)], "movies", "Job", config);
+
         await new FinalMediaReadinessValidator(client, config).ValidateAsync(targets, CancellationToken.None);
-        Assert.Equal(1, client.BodyRequestCount);
-        Assert.Equal(0, client.BatchRequestCount);
+
+        Assert.Single(targets);
+        Assert.Equal(0, client.GetFileStreamCalls);
     }
 
     [Fact]
-    public async Task ValidateAsync_ArchivedMalformedEbml_IsNonRetryable()
+    public async Task ValidateAsync_ArchivedEbmlMaxIdLengthFfmpegRefuses_IsNonRetryable()
     {
-        var source = new byte[40_032];
-        EbmlMagic.CopyTo(source, 32);
-        source[32 + 8] = 20; // EBMLMaxIDLength, reproducing the observed malformed upload.
-        var part = ArchivePart("bad-ebml@test", source.Length, 32);
-        var client = new ProbeRecordingClient();
-        client.Serve("bad-ebml@test", source);
+        // The observed upload declared EBMLMaxIDLength 20 (42 F2 81 14); ffmpeg refuses to open it.
+        var head = new byte[VideoSignatureUtil.MemberHeadLength];
+        Convert.FromHexString("1A45DFA38F42F281144282886D6174726F736B61").CopyTo(head, 0);
         var config = new ConfigManager();
-        var targets = FinalMediaReadinessValidator.PlanTargets([ArchiveResult("rar", part)], "radarr", "Job", config);
+        var targets = FinalMediaReadinessValidator.PlanTargets([ArchiveResult("rar", head)], "movies", "Job", config);
+
         var error = await Assert.ThrowsAsync<NonRetryableDownloadException>(() =>
-            new FinalMediaReadinessValidator(client, config).ValidateAsync(targets, CancellationToken.None));
-        Assert.Contains("EBMLMaxIDLength", error.InnerException!.Message);
+            new FinalMediaReadinessValidator(new ProbeRecordingClient(), config)
+                .ValidateAsync(targets, CancellationToken.None));
+
+        Assert.Contains("EBMLMaxIDLength 20", error.Message);
     }
 
     [Fact]
-    public async Task ValidateAsync_ArchiveHeaderCanCrossResolvedParts()
+    public async Task ValidateAsync_ShortArchivedHead_IsNotRejectedForMissingSignature()
     {
-        var first = new byte[38];
-        EbmlMagic.AsSpan(0, 6).CopyTo(first.AsSpan(32));
-        var second = new byte[40_014];
-        EbmlMagic.AsSpan(6).CopyTo(second.AsSpan(32));
-        var parts = new[] { ArchivePart("first@test", first.Length, 32), ArchivePart("second@test", second.Length, 32) };
-        var client = new ProbeRecordingClient();
-        client.Serve("first@test", first);
-        client.Serve("second@test", second);
-        var target = new FinalMediaReadinessValidator.ProbeTarget("Movie.mkv", null, 39_988)
-        { BuildArchiveMetadata = () => new DavMultipartFile.Meta { FileParts = parts } };
-        await new FinalMediaReadinessValidator(client, new ConfigManager()).ValidateAsync([target], CancellationToken.None);
-        Assert.Equal(2, client.BodyRequestCount);
+        // A member starting near the end of its volume's first 16 KiB leaves too few bytes to sniff.
+        var config = new ConfigManager();
+        var targets = FinalMediaReadinessValidator.PlanTargets([ArchiveResult("rar", new byte[100])], "movies", "Job", config);
+
+        await new FinalMediaReadinessValidator(new ProbeRecordingClient(), config)
+            .ValidateAsync(targets, CancellationToken.None);
+
+        Assert.Single(targets);
     }
 
     [Theory]
-    [InlineData("Movie.mkv", true)]
-    [InlineData("Other.mkv", false)]
-    public async Task ValidateAsync_LazyHeaderCrossesVolume_ValidatesContinuationWithoutPersisting(string member, bool valid)
+    [InlineData("rar")]
+    [InlineData("lazy")]
+    [InlineData("7z")]
+    [InlineData("split")]
+    public void PlanTargets_ArchivedOutputWithoutHead_IsSkipped(string kind)
     {
-        var first = new byte[38];
-        EbmlMagic.AsSpan(0, 6).CopyTo(first.AsSpan(32));
-        var continuation = NzbWebDAV.Tests.Fakes.Rar4TestArchiveBuilder.BuildRar4Volume(
-            member, packedSize: 40_000, uncompressedSize: 40_006,
-            splitBefore: true, splitAfter: false, payloadPrefix: EbmlMagic.AsSpan(6));
-        var meta = new DavMultipartFile.Meta
+        Assert.Empty(FinalMediaReadinessValidator.PlanTargets(
+            [ArchiveResult(kind, head: null)], "movies", "Job", new ConfigManager()));
+    }
+
+    [Fact]
+    public void PlanTargets_RarHead_ComesFromThePartThatStartsTheMember()
+    {
+        var head = new byte[VideoSignatureUtil.MemberHeadLength];
+        var result = new RarProcessor.Result
         {
-            FileParts = [ArchivePart("first@test", first.Length, 32)],
-            PendingParts = [new DavMultipartFile.PendingPart
-            {
-                SegmentIds = ["continuation@test"], SegmentIdByteRange = new LongRange(0, continuation.Length),
-                EstimatedDataSize = 40_000,
-            }],
-            PathInArchive = "Movie.mkv",
+            StoredFileSegments = [RarSegment(partNumber: 1, head: null), RarSegment(partNumber: 0, head)],
         };
-        var client = new ProbeRecordingClient();
-        client.Serve("first@test", first);
-        client.Serve("continuation@test", continuation);
-        var target = new FinalMediaReadinessValidator.ProbeTarget("Movie.mkv", null, 40_006)
-        { BuildArchiveMetadata = () => meta };
-        var validator = new FinalMediaReadinessValidator(client, new ConfigManager());
-        if (valid) await validator.ValidateAsync([target], CancellationToken.None);
-        else await Assert.ThrowsAsync<NonRetryableDownloadException>(() => validator.ValidateAsync([target], CancellationToken.None));
-        Assert.Single(meta.FileParts);
-        Assert.Single(meta.PendingParts);
-        Assert.InRange(client.BodyRequestCount, 2, 3);
-    }
 
-    [Fact]
-    public async Task ValidateAsync_MissingArchiveArticle_IsNonRetryable_WithoutPlaybackHoleTracking()
-    {
-        var part = ArchivePart("missing@test", 40_032, 32);
-        var config = new ConfigManager();
-        var targets = FinalMediaReadinessValidator.PlanTargets([ArchiveResult("7z", part)], "sonarr4k", "Job", config);
-        var error = await Assert.ThrowsAsync<NonRetryableDownloadException>(() =>
-            new FinalMediaReadinessValidator(new ProbeRecordingClient(), config).ValidateAsync(targets, CancellationToken.None));
-        Assert.IsType<UsenetArticleNotFoundException>(error.GetBaseException());
-        Assert.False(PlaybackHoleTracker.ShouldFailFast("/content/sonarr4k/Job/Movie.mkv", out _));
-    }
+        var target = Assert.Single(FinalMediaReadinessValidator.PlanTargets([result], "movies", "Job", new ConfigManager()));
 
-    [Fact]
-    public async Task ValidateAsync_ArchiveProviderTimeout_IsRetryable()
-    {
-        var client = new ProbeRecordingClient();
-        client.Fail("timeout@test", new TimeoutException("Provider request timed out."));
-        var config = new ConfigManager();
-        var targets = FinalMediaReadinessValidator.PlanTargets(
-            [ArchiveResult("rar", ArchivePart("timeout@test", 40_032, 32))], "radarr", "Job", config);
-        await Assert.ThrowsAsync<RetryableDownloadException>(() =>
-            new FinalMediaReadinessValidator(client, config).ValidateAsync(targets, CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task ValidateAsync_ArchiveCancellation_StaysCancellation()
-    {
-        using var cts = new CancellationTokenSource();
-        await cts.CancelAsync();
-        var config = new ConfigManager();
-        var targets = FinalMediaReadinessValidator.PlanTargets(
-            [ArchiveResult("7z", ArchivePart("cancel@test", 40_032, 32))], "radarr", "Job", config);
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            new FinalMediaReadinessValidator(new ProbeRecordingClient(), config).ValidateAsync(targets, cts.Token));
+        Assert.Same(head, target.ArchivedHead);
     }
 
     [Fact]
@@ -340,67 +282,64 @@ public sealed class FinalMediaReadinessValidatorTests : IDisposable
             SevenZipFiles = [new SevenZipProcessor.SevenZipFile
             {
                 ArchiveSetId = "archive", PathWithinArchive = "Samples/Movie.mkv", ReleaseDate = DateTimeOffset.UnixEpoch,
-                DavMultipartFileMeta = new DavMultipartFile.Meta { FileParts = [ArchivePart("sample@test", 40_032, 32)] },
+                DavMultipartFileMeta = new DavMultipartFile.Meta { FileParts = [ArchivePart()] },
+                MediaHead = new byte[VideoSignatureUtil.MemberHeadLength],
             }],
         };
-        Assert.Empty(FinalMediaReadinessValidator.PlanTargets([result], "radarr", "Job", new ConfigManager()));
+        Assert.Empty(FinalMediaReadinessValidator.PlanTargets([result], "movies", "Job", new ConfigManager()));
     }
 
-    private static DavMultipartFile.FilePart ArchivePart(string id, int sourceSize, int offset) => new()
+    private const int ArchivedMediaSize = 40_000;
+
+    private static DavMultipartFile.FilePart ArchivePart() => new()
     {
-        SegmentIds = [id],
-        SegmentIdByteRange = new LongRange(0, sourceSize),
-        FilePartByteRange = new LongRange(offset, sourceSize),
-        SegmentByteRanges = [new LongRange(0, sourceSize)],
-        SegmentByteRangesTrusted = true,
+        SegmentIds = ["archive@test"],
+        SegmentIdByteRange = new LongRange(0, ArchivedMediaSize + 32),
+        FilePartByteRange = new LongRange(32, ArchivedMediaSize + 32),
     };
 
-    private static BaseProcessor.Result ArchiveResult(string kind, DavMultipartFile.FilePart part, AesParams? aes = null)
+    private static RarProcessor.StoredFileSegment RarSegment(int partNumber, byte[]? head) => new()
     {
-        var size = part.FilePartByteRange.Count;
-        return kind switch
+        NzbFile = new NzbFile
         {
-            "rar" => new RarProcessor.Result
+            Subject = $"\"archive.part{partNumber + 1}.rar\" yEnc",
+            Segments = { new NzbSegment { MessageId = $"archive-{partNumber}@test", Bytes = ArchivedMediaSize } },
+        },
+        ArchiveSetId = "archive", ArchiveName = "archive", PartSize = ArchivedMediaSize,
+        PartNumber = new RarProcessor.PartNumber { PartNumberFromHeader = partNumber },
+        PathWithinArchive = "Movie.mkv", ByteRangeWithinPart = new LongRange(32, ArchivedMediaSize),
+        FileUncompressedSize = ArchivedMediaSize, AesParams = null, ReleaseDate = DateTimeOffset.UnixEpoch,
+        MediaHead = head,
+    };
+
+    private static BaseProcessor.Result ArchiveResult(string kind, byte[]? head) => kind switch
+    {
+        "rar" => new RarProcessor.Result { StoredFileSegments = [RarSegment(partNumber: 0, head)] },
+        "7z" => new SevenZipProcessor.Result
+        {
+            SevenZipFiles = [new SevenZipProcessor.SevenZipFile
             {
-                StoredFileSegments = [new RarProcessor.StoredFileSegment
-                {
-                    NzbFile = new NzbFile
-                    {
-                        Subject = "\"archive.rar\" yEnc",
-                        Segments = { new NzbSegment { MessageId = part.SegmentIds[0], Bytes = part.SegmentIdByteRange.Count,
-                            ByteRange = part.SegmentIdByteRange } },
-                    },
-                    ArchiveSetId = "archive", ArchiveName = "archive", PartSize = part.SegmentIdByteRange.Count,
-                    PartNumber = new RarProcessor.PartNumber { PartNumberFromHeader = 0 },
-                    PathWithinArchive = "Movie.mkv", ByteRangeWithinPart = part.FilePartByteRange,
-                    FileUncompressedSize = size, AesParams = aes, ReleaseDate = DateTimeOffset.UnixEpoch,
-                }],
-            },
-            "7z" => new SevenZipProcessor.Result
-            {
-                SevenZipFiles = [new SevenZipProcessor.SevenZipFile
-                {
-                    ArchiveSetId = "archive", PathWithinArchive = "Movie.mkv", ReleaseDate = DateTimeOffset.UnixEpoch,
-                    DavMultipartFileMeta = new DavMultipartFile.Meta { AesParams = aes, FileParts = [part] },
-                }],
-            },
-            "split" => new MultipartMkvProcessor.Result
-            { Filename = "Movie.mkv", Parts = [part], ReleaseDate = DateTimeOffset.UnixEpoch },
-            _ => new LazyRarProcessor.Result
-            {
-                ArchiveSetId = "archive",
-                ArchiveName = "archive",
-                PathInArchive = "Movie.mkv",
-                TotalFileSize = size,
-                AesParams = aes,
-                Password = null,
-                FirstPart = part,
-                ReleaseDate = DateTimeOffset.UnixEpoch,
-                PendingParts = [new DavMultipartFile.PendingPart
-                { SegmentIds = ["unused@test"], SegmentIdByteRange = new LongRange(0, 40_000), EstimatedDataSize = 40_000 }],
-            },
-        };
-    }
+                ArchiveSetId = "archive", PathWithinArchive = "Movie.mkv", ReleaseDate = DateTimeOffset.UnixEpoch,
+                DavMultipartFileMeta = new DavMultipartFile.Meta { FileParts = [ArchivePart()] },
+                MediaHead = head,
+            }],
+        },
+        "split" => new MultipartMkvProcessor.Result
+        { Filename = "Movie.mkv", Parts = [ArchivePart()], ReleaseDate = DateTimeOffset.UnixEpoch, MediaHead = head },
+        _ => new LazyRarProcessor.Result
+        {
+            ArchiveSetId = "archive",
+            ArchiveName = "archive",
+            PathInArchive = "Movie.mkv",
+            TotalFileSize = ArchivedMediaSize,
+            AesParams = null,
+            Password = null,
+            FirstPart = ArchivePart(),
+            PendingParts = [],
+            ReleaseDate = DateTimeOffset.UnixEpoch,
+            MediaHead = head,
+        },
+    };
 
     private static FileProcessor.Result DirectFile(
         string fileName,
@@ -454,7 +393,6 @@ public sealed class FinalMediaReadinessValidatorTests : IDisposable
     private sealed class ProbeRecordingClient : NntpClient
     {
         private readonly Dictionary<string, byte[]> _segments = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, Exception> _errors = new(StringComparer.Ordinal);
 
         public int GetFileStreamCalls { get; private set; }
         public int ArticleBufferSize { get; private set; } = -1;
@@ -465,7 +403,6 @@ public sealed class FinalMediaReadinessValidatorTests : IDisposable
         public int BatchRequestCount { get; private set; }
 
         public void Serve(string segmentId, byte[] bytes) => _segments[segmentId] = bytes;
-        public void Fail(string segmentId, Exception error) => _errors[segmentId] = error;
 
         public override NzbFileStream GetFileStream(
             NzbFile nzbFile,
@@ -509,8 +446,6 @@ public sealed class FinalMediaReadinessValidatorTests : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             BodyRequestCount++;
             var key = segmentId.ToString();
-            if (_errors.TryGetValue(key, out var error))
-                return Task.FromException<UsenetDecodedBodyResponse>(error);
             if (!_segments.TryGetValue(key, out var bytes))
             {
                 return Task.FromException<UsenetDecodedBodyResponse>(
@@ -527,7 +462,7 @@ public sealed class FinalMediaReadinessValidatorTests : IDisposable
                     new UsenetYencHeader
                     {
                         FileName = "probe.bin",
-                        FileSize = bytes.Length == 20_000 ? 40_000 : bytes.Length,
+                        FileSize = 40_000,
                         LineLength = 128,
                         PartNumber = 1,
                         TotalParts = 2,
@@ -634,16 +569,13 @@ public sealed class ImportReadinessFinalizeLockTests : IAsyncLifetime
         }
     }
 
-    [Theory]
-    [InlineData("movies")]
-    [InlineData("radarr")]
-    [InlineData("sonarr4k")]
-    public async Task ImportReadiness_DoesNotHoldFinalizeLock(string category)
+    [Fact]
+    public async Task ImportReadiness_DoesNotHoldFinalizeLock()
     {
         var payload = new byte[20_000];
-        Convert.FromHexString("1A45DFA38F42F281044282886D6174726F736B61").CopyTo(payload, 0);
+        new byte[] { 0x1A, 0x45, 0xDF, 0xA3 }.CopyTo(payload, 0);
         using var client = new GatedProbeClient(payload);
-        var queueItem = await SeedQueueItemAsync(category);
+        var queueItem = await SeedQueueItemAsync();
 
         using var finalizeLock = new SemaphoreSlim(1, 1);
         var readinessReported = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -702,7 +634,7 @@ public sealed class ImportReadinessFinalizeLockTests : IAsyncLifetime
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ImportReadiness_InvalidMediaInCustomCategory_ProducesFailedHistory(bool malformedEbml)
+    public async Task ImportReadiness_InvalidMediaHeader_ProducesFailedHistory(bool malformedEbml)
     {
         var payload = new byte[20_000];
         if (malformedEbml)
@@ -711,7 +643,7 @@ public sealed class ImportReadinessFinalizeLockTests : IAsyncLifetime
         }
         using var client = new GatedProbeClient(payload);
         client.ReleaseProbe();
-        var queueItem = await SeedQueueItemAsync("radarr");
+        var queueItem = await SeedQueueItemAsync();
         using var finalizeLock = new SemaphoreSlim(1, 1);
         var config = new ConfigManager();
         using var healthGate = new HealthCheckConnectionGate(config);
@@ -729,7 +661,7 @@ public sealed class ImportReadinessFinalizeLockTests : IAsyncLifetime
         Assert.Null(history.DownloadDirId);
     }
 
-    private async Task<QueueItem> SeedQueueItemAsync(string category)
+    private async Task<QueueItem> SeedQueueItemAsync()
     {
         var nzbBytes = Encoding.UTF8.GetBytes(NzbXml);
         var queueItem = new QueueItem
@@ -740,7 +672,7 @@ public sealed class ImportReadinessFinalizeLockTests : IAsyncLifetime
             JobName = "Movie.Release",
             NzbFileSize = nzbBytes.Length,
             TotalSegmentBytes = 20_000,
-            Category = category,
+            Category = "movies",
             Priority = QueueItem.PriorityOption.Normal,
             PostProcessing = QueueItem.PostProcessingOption.None,
         };

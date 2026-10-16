@@ -6,17 +6,17 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue.FileAggregators;
 using NzbWebDAV.Queue.FileProcessors;
-using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using Serilog;
 
 namespace NzbWebDAV.Queue.PostProcessors;
 
 /// <summary>
-/// Reads archive media headers and the opening and closing bytes of direct outputs before SAB reports
-/// completion. Probes run unbuffered and unpipelined — one segment at a time — and
-/// under a non-rooted label, so they neither hold playback-scale prefetch windows
-/// nor consult or seed the process-wide playback-hole tracker.
+/// Reads the opening and closing bytes of direct media outputs before SAB reports
+/// completion, and checks archived and split outputs against the opening bytes import
+/// already read, without further network reads. Probes run unbuffered and unpipelined —
+/// one segment at a time — and under a non-rooted label, so they neither hold
+/// playback-scale prefetch windows nor consult or seed the process-wide playback-hole tracker.
 /// </summary>
 internal sealed class FinalMediaReadinessValidator(
     INntpClient usenetClient,
@@ -24,10 +24,14 @@ internal sealed class FinalMediaReadinessValidator(
 {
     private const int ProbeBytes = VideoSignatureUtil.First16KBLength;
 
-    /// <summary>A mounted media output, backed by a direct file or decoded archive parts.</summary>
+    // A member that starts near the end of its volume's first 16 KiB leaves too few bytes
+    // to sniff every container (MPEG-TS needs 565); such heads only get the EBML check.
+    private const int MinimumArchivedSignatureBytes = 1024;
+
+    /// <summary>A mounted media output: a direct NZB file, or the archived head import already read.</summary>
     internal sealed record ProbeTarget(string Name, NzbFile? NzbFile, long FileSize)
     {
-        internal Func<DavMultipartFile.Meta>? BuildArchiveMetadata { get; init; }
+        internal byte[]? ArchivedHead { get; init; }
     }
 
     /// <summary>
@@ -50,6 +54,7 @@ internal sealed class FinalMediaReadinessValidator(
         foreach (var file in outputs)
         {
             if (!FilenameUtil.IsMediaFile(file.Name)) continue;
+            if (file.DirectFile is null && file.ArchivedHead is null) continue;
             var davPath = PlannedDavPath(category, mountName, file);
             if (FileFilterUtil.GetRemovalReason(
                     file.Name,
@@ -61,7 +66,7 @@ internal sealed class FinalMediaReadinessValidator(
                 continue;
 
             targets.Add(new ProbeTarget(file.Name, file.DirectFile, file.FileSize)
-            { BuildArchiveMetadata = file.BuildArchiveMetadata });
+            { ArchivedHead = file.ArchivedHead });
         }
 
         return targets;
@@ -73,11 +78,12 @@ internal sealed class FinalMediaReadinessValidator(
         {
             try
             {
-                if (target.BuildArchiveMetadata is { } buildArchive)
+                if (target.ArchivedHead is { } archivedHead)
                 {
-                    var archiveHead = await ArchiveMediaReadinessProbe.ReadHeadAsync(
-                        usenetClient, buildArchive(), target.Name, target.FileSize, ct).ConfigureAwait(false);
-                    ValidateContainerSignature(target.Name, archiveHead, target.FileSize);
+                    ValidateContainerSignature(
+                        target.Name,
+                        archivedHead,
+                        signatureRequired: archivedHead.Length >= Math.Min(MinimumArchivedSignatureBytes, target.FileSize));
                     continue;
                 }
 
@@ -92,7 +98,7 @@ internal sealed class FinalMediaReadinessValidator(
 
                 var head = await ReadExactlyAtAsync(stream, 0, Math.Min(ProbeBytes, target.FileSize), ct)
                     .ConfigureAwait(false);
-                ValidateContainerSignature(target.Name, head, target.FileSize);
+                ValidateContainerSignature(target.Name, head, signatureRequired: true);
 
                 var tailStart = Math.Max(0, target.FileSize - ProbeBytes);
                 _ = await ReadExactlyAtAsync(stream, tailStart, target.FileSize - tailStart, ct)
@@ -151,11 +157,10 @@ internal sealed class FinalMediaReadinessValidator(
             read += count;
         }
 
-        await stream.ValidateDeliveredAsync(ct).ConfigureAwait(false);
         return buffer;
     }
 
-    private static void ValidateContainerSignature(string name, byte[] head, long fileSize)
+    private static void ValidateContainerSignature(string name, byte[] head, bool signatureRequired)
     {
         var extension = Path.GetExtension(name);
         var expected = extension.Equals(".mkv", StringComparison.OrdinalIgnoreCase)
@@ -169,8 +174,8 @@ internal sealed class FinalMediaReadinessValidator(
             || extension.Equals(".mpeg", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".ts", StringComparison.OrdinalIgnoreCase);
         var signature = VideoSignatureUtil.GuessVideoExtension(head);
-        var error = signature == ".mkv" ? MatroskaHeaderValidator.GetError(head, fileSize) : null;
-        if ((expected && signature is null) || error is not null)
+        var error = signature == ".mkv" ? MatroskaHeaderValidator.GetError(head) : null;
+        if ((expected && signatureRequired && signature is null) || error is not null)
         {
             throw new NonRetryableDownloadException(
                 $"Import readiness check found an invalid media container header for {name}." +

@@ -1,8 +1,5 @@
-using NzbWebDAV.Queue.FileProcessors;
-using NzbWebDAV.Database.Models;
-using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
-using NzbWebDAV.Exceptions;
+using NzbWebDAV.Queue.FileProcessors;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Queue.FileAggregators;
@@ -19,7 +16,9 @@ internal static class PlannedImportOutputs
     internal sealed record PlannedOutput(string Name, long FileSize, string RelativePath)
     {
         internal NzbFile? DirectFile { get; init; }
-        internal Func<DavMultipartFile.Meta>? BuildArchiveMetadata { get; init; }
+
+        /// <summary>Opening bytes of an archived or split output, read during import; null when unavailable.</summary>
+        internal byte[]? ArchivedHead { get; init; }
     }
 
     internal static long GetLargestVideoFileSize(
@@ -56,7 +55,7 @@ internal static class PlannedImportOutputs
                 PathSanitizer.SanitizeComponent(Path.GetFileName(group.Key.PathWithinArchive)),
                 sniffedVideoExtension, mountName, allowBaseRename: rarGroups.Count == 1);
             yield return new PlannedOutput(name, RarAggregator.ResolvePublishedFileSize(parts), group.Key.PathWithinArchive)
-            { BuildArchiveMetadata = () => BuildRarMetadata(parts) };
+            { ArchivedHead = parts.Select(x => x.MediaHead).FirstOrDefault(x => x is not null) };
         }
 
         foreach (var lazy in processorResults.OfType<LazyRarProcessor.Result>())
@@ -65,18 +64,7 @@ internal static class PlannedImportOutputs
                 PathSanitizer.SanitizeComponent(Path.GetFileName(lazy.PathInArchive)),
                 lazy.SniffedVideoExtension, mountName, allowBaseRename: true);
             yield return new PlannedOutput(name, lazy.TotalFileSize, lazy.PathInArchive)
-            {
-                BuildArchiveMetadata = () => new DavMultipartFile.Meta
-                {
-                    AesParams = lazy.AesParams,
-                    FileParts = lazy.ResolvedTrailingParts is { } resolved
-                        ? [lazy.FirstPart, .. resolved] : [lazy.FirstPart],
-                    PendingParts = lazy.ResolvedTrailingParts is null ? lazy.PendingParts : [],
-                    PathInArchive = lazy.PathInArchive,
-                    ArchivePassword = lazy.Password,
-                    ExpectedFileSize = lazy.TotalFileSize,
-                },
-            };
+            { ArchivedHead = lazy.MediaHead };
         }
 
         foreach (var result in processorResults.OfType<SevenZipProcessor.Result>())
@@ -93,7 +81,7 @@ internal static class PlannedImportOutputs
                     yield return new PlannedOutput(
                         name, meta.AesParams?.DecodedSize ?? meta.FileParts.Sum(x => x.FilePartByteRange.Count),
                         sevenZipFile.PathWithinArchive)
-                    { BuildArchiveMetadata = () => meta };
+                    { ArchivedHead = sevenZipFile.MediaHead };
                 }
             }
         }
@@ -103,42 +91,7 @@ internal static class PlannedImportOutputs
             yield return new PlannedOutput(
                 PathSanitizer.SanitizeComponent(multipart.Filename),
                 multipart.Parts.Sum(x => x.FilePartByteRange.Count), multipart.Filename)
-            {
-                BuildArchiveMetadata = () => new DavMultipartFile.Meta { FileParts = multipart.Parts.ToArray() },
-            };
+            { ArchivedHead = multipart.MediaHead };
         }
     }
-    private static DavMultipartFile.Meta BuildRarMetadata(List<RarProcessor.StoredFileSegment> segments)
-    {
-        RarProcessor.StoredFileSegment[] parts;
-        try
-        {
-            parts = RarAggregator.PrepareMember(segments);
-        }
-        catch (InvalidDataException e)
-        {
-            throw new NonRetryableDownloadException("Archive media has an invalid volume layout.", e);
-        }
-        var (size, aes) = RarAggregator.ResolvePublishedSizeAndAes(parts);
-        return new DavMultipartFile.Meta
-        {
-            AesParams = aes,
-            ExpectedFileSize = size,
-            FileParts = parts.Select(part =>
-            {
-                var index = part.NzbFile.GetSegmentByteRangeIndex();
-                return new DavMultipartFile.FilePart
-                {
-                    SegmentIds = part.NzbFile.GetSegmentIds(),
-                    SegmentIdByteRange = LongRange.FromStartAndSize(0, part.PartSize),
-                    FilePartByteRange = part.ByteRangeWithinPart,
-                    SegmentByteRanges = index.Ranges,
-                    SegmentByteRangesTrusted = index.IsTrusted,
-                    SegmentFallbackIds = part.NzbFile.GetSegmentFallbackIds(),
-                    VerificationProof = part.NzbFile.VerificationProof,
-                };
-            }).ToArray(),
-        };
-    }
-
 }

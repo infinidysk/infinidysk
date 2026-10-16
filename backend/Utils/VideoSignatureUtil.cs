@@ -1,8 +1,14 @@
+using System.Security.Cryptography;
+using NzbWebDAV.Models;
+
 namespace NzbWebDAV.Utils;
 
 public static class VideoSignatureUtil
 {
     public const int First16KBLength = 16 * 1024;
+
+    /// <summary>Opening member bytes kept for the import-readiness header check.</summary>
+    public const int MemberHeadLength = 4 * 1024;
 
     public static async Task<byte[]> ReadFirst16KBAsync(Stream stream, CancellationToken ct)
     {
@@ -102,6 +108,31 @@ public static class VideoSignatureUtil
             return null;
 
         return GuessVideoExtension(slice);
+    }
+
+    /// <summary>
+    /// Returns up to <see cref="MemberHeadLength"/> opening bytes of an archive member that
+    /// starts within the parent's first 16 KiB, so readiness can check the member header
+    /// without another network read. Encrypted members are decrypted in memory, whole
+    /// AES-CBC blocks only. Returns null when the member starts outside the buffer.
+    /// </summary>
+    public static byte[]? MemberHeadFromFirst16KB(byte[] first16KB, long dataStart, AesParams? aesParams)
+    {
+        if (dataStart < 0 || dataStart >= first16KB.Length)
+            return null;
+
+        var slice = first16KB.AsSpan((int)dataStart);
+        slice = slice[..Math.Min(slice.Length, MemberHeadLength)];
+        if (aesParams is null)
+            return slice.ToArray();
+
+        var blocks = slice[..(slice.Length & ~15)];
+        if (blocks.IsEmpty)
+            return null;
+
+        using var aes = Aes.Create();
+        aes.Key = aesParams.Key;
+        return aes.DecryptCbc(blocks, aesParams.Iv, PaddingMode.None);
     }
 
     private static bool IsMpegTransportStream(ReadOnlySpan<byte> data)
