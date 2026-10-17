@@ -50,6 +50,7 @@ nav = [
     { "NNTP pipelining" = "features/nntp-pipelining.md" },
     { "Connection warming" = "features/connection-warming.md" },
     { "SABnzbd API" = "features/sab-api.md" },
+    { "NZB inspection" = "features/inspect-nzb.md" },
   ]},
   { "Configuration" = [
     { "Overview" = "configuration/index.md" },

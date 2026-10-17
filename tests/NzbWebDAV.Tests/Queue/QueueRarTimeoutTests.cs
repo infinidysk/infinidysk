@@ -174,7 +174,7 @@ public class QueueRarTimeoutTests
         await processorCts.CancelAsync();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            QueueItemProcessor.RunProcessorWithRarSiblingAbortAsync(
+            ArchiveImportPlanner.RunProcessorWithRarSiblingAbortAsync(
                 new CancellingNonRarProcessor(processorCts.Token),
                 new Progress<int>(),
                 processorCts,
@@ -197,7 +197,7 @@ public class QueueRarTimeoutTests
     {
         var progress = new Progress<int>();
         return processors
-            .Select(processor => QueueItemProcessor.RunProcessorWithRarSiblingAbortAsync(
+            .Select(processor => ArchiveImportPlanner.RunProcessorWithRarSiblingAbortAsync(
                 processor, progress, processorCts, workerToken))
             .WithConcurrencyAsync(2, workerToken)
             .GetAllAsync(ct: workerToken);
