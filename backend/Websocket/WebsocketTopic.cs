@@ -7,6 +7,7 @@ public class WebsocketTopic
     // Stateful topics
     public static readonly WebsocketTopic UsenetConnections = new("cxs", TopicType.State, isKeyed: true, replayAllKeys: true);
     public static readonly WebsocketTopic ActiveReads = new("ar", TopicType.State);
+    public static readonly WebsocketTopic CurrentActivity = new("ca", TopicType.State);
     public static readonly WebsocketTopic SymlinkTaskProgress = new("stp", TopicType.State);
     public static readonly WebsocketTopic CleanupTaskProgress = new("ctp", TopicType.State);
     public static readonly WebsocketTopic MissingPayloadCleanupProgress = new("mpcp", TopicType.State);

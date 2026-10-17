@@ -32,11 +32,19 @@ internal sealed partial class SupportPackRedactor
     private readonly List<string> _literalSecrets;
     private readonly Dictionary<string, string> _ipAliases = new(StringComparer.Ordinal);
 
-    public SupportPackRedactor(IEnumerable<string?> literalSecrets)
+    public SupportPackRedactor(
+        IEnumerable<string?> literalSecrets,
+        IEnumerable<string?>? knownSecrets = null)
     {
-        _literalSecrets = literalSecrets
+        var genericSecrets = literalSecrets
             .Where(value => !string.IsNullOrWhiteSpace(value) && value!.Length >= 4)
-            .Select(value => value!)
+            .Select(value => value!);
+        var configuredSecrets = (knownSecrets ?? [])
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!);
+
+        _literalSecrets = genericSecrets
+            .Concat(configuredSecrets)
             .Distinct(StringComparer.Ordinal)
             .OrderByDescending(value => value.Length)
             .ToList();
@@ -56,7 +64,8 @@ internal sealed partial class SupportPackRedactor
         }
 
         if (key is ConfigKeys.UsenetProviders or ConfigKeys.ArrInstances
-            or ConfigKeys.IndexersInstances or ConfigKeys.ProfilesInstances)
+            or ConfigKeys.IndexersInstances or ConfigKeys.ProfilesInstances
+            or ConfigKeys.MediaServersInstances)
         {
             try
             {
