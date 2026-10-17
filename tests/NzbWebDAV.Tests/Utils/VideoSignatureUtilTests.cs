@@ -127,4 +127,41 @@ public class VideoSignatureUtilTests
 
         Assert.Equal(".mkv", VideoSignatureUtil.SniffMemberFromFirst16KB(first16KB, offset, encrypted: false));
     }
+
+    [Fact]
+    public void MemberHeadFromFirst16KB_StoredMember_ReturnsBoundedBytesFromDataStart()
+    {
+        var first16KB = Enumerable.Range(0, VideoSignatureUtil.First16KBLength).Select(i => (byte)i).ToArray();
+
+        var head = VideoSignatureUtil.MemberHeadFromFirst16KB(first16KB, 100, aesParams: null);
+
+        Assert.NotNull(head);
+        Assert.Equal(VideoSignatureUtil.MemberHeadLength, head.Length);
+        Assert.Equal(first16KB.AsSpan(100, head.Length).ToArray(), head);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(VideoSignatureUtil.First16KBLength)]
+    [InlineData(VideoSignatureUtil.First16KBLength + 10)]
+    public void MemberHeadFromFirst16KB_MemberOutsideBuffer_ReturnsNull(long dataStart)
+    {
+        Assert.Null(VideoSignatureUtil.MemberHeadFromFirst16KB(
+            new byte[VideoSignatureUtil.First16KBLength], dataStart, aesParams: null));
+    }
+
+    [Fact]
+    public void MemberHeadFromFirst16KB_EncryptedMember_DecryptsWholeBlocksInMemory()
+    {
+        using var aes = System.Security.Cryptography.Aes.Create();
+        var plain = new byte[64];
+        EbmlMagic.CopyTo(plain, 0);
+        var first16KB = new byte[32 + plain.Length + 7]; // 7 trailing bytes are a partial block
+        aes.EncryptCbc(plain, aes.IV, System.Security.Cryptography.PaddingMode.None).CopyTo(first16KB, 32);
+        var aesParams = new NzbWebDAV.Models.AesParams { Key = aes.Key, Iv = aes.IV, DecodedSize = plain.Length };
+
+        var head = VideoSignatureUtil.MemberHeadFromFirst16KB(first16KB, 32, aesParams);
+
+        Assert.Equal(plain, head);
+    }
 }

@@ -1,3 +1,4 @@
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue.FileProcessors;
 using NzbWebDAV.Utils;
 
@@ -12,23 +13,32 @@ namespace NzbWebDAV.Queue.FileAggregators;
 /// </summary>
 internal static class PlannedImportOutputs
 {
+    internal sealed record PlannedOutput(string Name, long FileSize, string RelativePath)
+    {
+        internal NzbFile? DirectFile { get; init; }
+
+        /// <summary>Opening bytes of an archived or split output, read during import; null when unavailable.</summary>
+        internal byte[]? ArchivedHead { get; init; }
+    }
+
     internal static long GetLargestVideoFileSize(
         List<BaseProcessor.Result> processorResults,
         string mountName)
     {
-        return PlanNamesAndSizes(processorResults, mountName)
+        return PlanOutputs(processorResults, mountName)
             .Where(x => FilenameUtil.IsVideoFile(x.Name))
             .Select(x => x.FileSize)
             .DefaultIfEmpty(0)
             .Max();
     }
 
-    private static IEnumerable<(string Name, long FileSize)> PlanNamesAndSizes(
+    internal static IEnumerable<PlannedOutput> PlanOutputs(
         List<BaseProcessor.Result> processorResults,
         string mountName)
     {
         foreach (var direct in FileAggregator.PlanDirectFiles(processorResults, mountName))
-            yield return (direct.Name, direct.FileSize);
+            yield return new PlannedOutput(direct.Name, direct.FileSize, direct.RelativePath)
+            { DirectFile = direct.NzbFile };
 
         var rarGroups = processorResults
             .OfType<RarProcessor.Result>()
@@ -41,24 +51,20 @@ internal static class PlannedImportOutputs
             var sniffedVideoExtension = parts
                 .Select(x => x.SniffedVideoExtension)
                 .FirstOrDefault(x => x is not null);
-            yield return (
-                ImportableVideoNamer.Normalize(
-                                        PathSanitizer.SanitizeComponent(Path.GetFileName(group.Key.PathWithinArchive)),
-                    sniffedVideoExtension,
-                    mountName,
-                      allowBaseRename: rarGroups.Count == 1),
-                RarAggregator.ResolvePublishedFileSize(parts));
+            var name = ImportableVideoNamer.Normalize(
+                PathSanitizer.SanitizeComponent(Path.GetFileName(group.Key.PathWithinArchive)),
+                sniffedVideoExtension, mountName, allowBaseRename: rarGroups.Count == 1);
+            yield return new PlannedOutput(name, RarAggregator.ResolvePublishedFileSize(parts), group.Key.PathWithinArchive)
+            { ArchivedHead = parts.Select(x => x.MediaHead).FirstOrDefault(x => x is not null) };
         }
 
         foreach (var lazy in processorResults.OfType<LazyRarProcessor.Result>())
         {
-            yield return (
-                ImportableVideoNamer.Normalize(
-                    PathSanitizer.SanitizeComponent(Path.GetFileName(lazy.PathInArchive)),
-                    lazy.SniffedVideoExtension,
-                    mountName,
-                    allowBaseRename: true),
-                lazy.TotalFileSize);
+            var name = ImportableVideoNamer.Normalize(
+                PathSanitizer.SanitizeComponent(Path.GetFileName(lazy.PathInArchive)),
+                lazy.SniffedVideoExtension, mountName, allowBaseRename: true);
+            yield return new PlannedOutput(name, lazy.TotalFileSize, lazy.PathInArchive)
+            { ArchivedHead = lazy.MediaHead };
         }
 
         foreach (var result in processorResults.OfType<SevenZipProcessor.Result>())
@@ -69,23 +75,23 @@ internal static class PlannedImportOutputs
                 foreach (var sevenZipFile in sevenZipFiles)
                 {
                     var meta = sevenZipFile.DavMultipartFileMeta;
-                    yield return (
-                        ImportableVideoNamer.Normalize(
-                            PathSanitizer.SanitizeComponent(Path.GetFileName(sevenZipFile.PathWithinArchive)),
-                            sevenZipFile.SniffedVideoExtension,
-                            mountName,
-                            allowBaseRename: sevenZipFiles.Count == 1),
-                        meta.AesParams?.DecodedSize
-                            ?? meta.FileParts.Sum(x => x.FilePartByteRange.Count));
+                    var name = ImportableVideoNamer.Normalize(
+                        PathSanitizer.SanitizeComponent(Path.GetFileName(sevenZipFile.PathWithinArchive)),
+                        sevenZipFile.SniffedVideoExtension, mountName, allowBaseRename: sevenZipFiles.Count == 1);
+                    yield return new PlannedOutput(
+                        name, meta.AesParams?.DecodedSize ?? meta.FileParts.Sum(x => x.FilePartByteRange.Count),
+                        sevenZipFile.PathWithinArchive)
+                    { ArchivedHead = sevenZipFile.MediaHead };
                 }
             }
         }
 
         foreach (var multipart in processorResults.OfType<MultipartMkvProcessor.Result>())
         {
-            yield return (
+            yield return new PlannedOutput(
                 PathSanitizer.SanitizeComponent(multipart.Filename),
-                multipart.Parts.Sum(x => x.FilePartByteRange.Count));
+                multipart.Parts.Sum(x => x.FilePartByteRange.Count), multipart.Filename)
+            { ArchivedHead = multipart.MediaHead };
         }
     }
 }

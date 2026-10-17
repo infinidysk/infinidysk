@@ -43,29 +43,37 @@ public class RarProcessor(
         {
             StoredFileSegments = headers
                 .OfType<IRarFileHeader>()
-                .Select(x => new StoredFileSegment()
+                .Select(x =>
                 {
-                    NzbFile = fileInfo.NzbFile,
-                    ArchiveSetId = archiveSetId,
-                    PartSize = ResolvePartSize(
-                        stream.Length,
-                        x.DataStartPosition,
-                        x.AdditionalDataSize),
-                    ArchiveName = archiveName,
-                    PartNumber = partNumber,
-                    PathWithinArchive = x.FileName,
-                    ByteRangeWithinPart = LongRange.FromStartAndSize(
-                        x.DataStartPosition,
-                        x.AdditionalDataSize
-                    ),
-                    AesParams = x.GetAesParams(password),
-                    FileUncompressedSize = x.UncompressedSize,
-                    IsUncompressedSizeUnknown = x.IsUncompressedSizeUnknown,
-                    ReleaseDate = fileInfo.ReleaseDate,
-                    SniffedVideoExtension = VideoSignatureUtil.SniffMemberFromFirst16KB(
-                        first16KB,
-                        x.DataStartPosition,
-                        x.GetAesParams(password) is not null),
+                    var aesParams = x.GetAesParams(password);
+                    return new StoredFileSegment()
+                    {
+                        NzbFile = fileInfo.NzbFile,
+                        ArchiveSetId = archiveSetId,
+                        PartSize = ResolvePartSize(
+                            stream.Length,
+                            x.DataStartPosition,
+                            x.AdditionalDataSize),
+                        ArchiveName = archiveName,
+                        PartNumber = partNumber,
+                        PathWithinArchive = x.FileName,
+                        ByteRangeWithinPart = LongRange.FromStartAndSize(
+                            x.DataStartPosition,
+                            x.AdditionalDataSize
+                        ),
+                        AesParams = aesParams,
+                        FileUncompressedSize = x.UncompressedSize,
+                        IsUncompressedSizeUnknown = x.IsUncompressedSizeUnknown,
+                        ReleaseDate = fileInfo.ReleaseDate,
+                        SniffedVideoExtension = VideoSignatureUtil.SniffMemberFromFirst16KB(
+                            first16KB,
+                            x.DataStartPosition,
+                            aesParams is not null),
+                        // Only a stored member's first part begins with its media bytes.
+                        MediaHead = x.IsStored && !x.IsSplitBefore
+                            ? VideoSignatureUtil.MemberHeadFromFirst16KB(first16KB, x.DataStartPosition, aesParams)
+                            : null,
+                    };
                 }).ToArray(),
         };
     }
@@ -157,6 +165,9 @@ public class RarProcessor(
         public bool IsUncompressedSizeUnknown { get; init; }
 
         public string? SniffedVideoExtension { get; init; }
+
+        /// <summary>Opening media bytes when this part starts the member; see <see cref="VideoSignatureUtil.MemberHeadFromFirst16KB"/>.</summary>
+        public byte[]? MediaHead { get; init; }
     }
 
     public record PartNumber
