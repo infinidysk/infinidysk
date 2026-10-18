@@ -55,7 +55,7 @@ public sealed class OmittedSegmentImportTests : IAsyncLifetime
         const int partSize = 4096;
         var totalParts = omitted ? 4 : 2;
         var bytes = Enumerable.Range(0, partSize * totalParts).Select(index => (byte)(index % 251)).ToArray();
-        new byte[] { 0x1A, 0x45, 0xDF, 0xA3 }.CopyTo(bytes, 0);
+        Convert.FromHexString("1A45DFA38F42F281044282886D6174726F736B61").CopyTo(bytes, 0);
         var payloads = new Dictionary<string, byte[]>();
         var headers = new Dictionary<string, UsenetYencHeader>();
         var ranges = new Dictionary<string, LongRange>();
@@ -84,7 +84,7 @@ public sealed class OmittedSegmentImportTests : IAsyncLifetime
             new ConfigItem { ConfigName = ConfigKeys.ApiEnsureArticleExistenceCategories, ConfigValue = "other" },
             new ConfigItem { ConfigName = ConfigKeys.ApiArticleExistenceCheckMode, ConfigValue = "full" },
         ]);
-        Assert.Contains("other", config.GetMediaReadinessCategories());
+        Assert.True(config.ShouldCheckMediaReadiness("other"));
         await using var context = new DavDatabaseContext();
         var queueItem = new QueueItem
         {
