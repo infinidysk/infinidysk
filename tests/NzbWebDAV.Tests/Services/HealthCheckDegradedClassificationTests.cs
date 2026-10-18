@@ -1819,6 +1819,49 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task UrgentRepair_ReadDuringArrLookupDefersRemoveAndBlocklist()
+    {
+        ConfigureAutoRemove(threshold: 1, unlinkedOnly: true);
+        var segments = NewSegmentIds(3);
+        var (item, blobId) = await AddVideoFileAsync(
+            "read-during-lookup.mkv", segments, [10_000, 10_000, 10_000]);
+        item.ArrDownloadId = Guid.NewGuid();
+        item = await MakeUrgentAsync(item, qualifyingFailures: 1);
+        _failureTracker.RecordAttributedFailure(item.Id, segments[1]);
+        var libraryPath = Path.Join(_configRoot, "library", "read-during-lookup.strm");
+        await File.WriteAllTextAsync(libraryPath, $"http://localhost:3000/view/.ids/{item.Id}.mkv");
+        var clock = new ControllableTimeProvider(DateTimeOffset.UtcNow);
+        var activeReads = new ActiveReadRegistry();
+        var (service, _) = await NewServiceAsync(
+            NewFakeClient(segments, missing: []),
+            Par2RepairOutcome.NotRepaired,
+            timeProvider: clock,
+            activeReads: activeReads);
+        service.CreateDbContextOverride = () => new DavDatabaseContext(_options);
+        var arrClient = new BlockingLookupArrClient();
+        service.CreateRepairArrClientsOverride = () => [arrClient];
+
+        var repair = service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+        await arrClient.LookupStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        activeReads.RecordFileRead(item.Id, clock.GetUtcNow());
+        arrClient.ReleaseLookup.TrySetResult();
+        await repair.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(0, arrClient.RemoveCalls);
+        Assert.True(File.Exists(libraryPath));
+        var retained = ReloadItem(item.Id);
+        Assert.Equal(blobId, retained.FileBlobId);
+        Assert.Equal(DateTimeOffset.UnixEpoch, retained.NextHealthCheck);
+        Assert.Equal(1, retained.UrgentRepairFailures);
+        Assert.True(retained.HealthRepairPending);
+        var row = Assert.Single(GetHealthRows(item.Id));
+        Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+        Assert.StartsWith("Removal and replacement deferred after a recent playback read.", row.Message);
+        Assert.Empty(await service.SelectNextHealthCheckIdsAsync(
+            [], allowChecks: true, allowRepairs: true, maximumCount: 1, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task RoutineRepair_ReadHoldPreservesConcurrentUrgentQualification()
     {
         var segments = NewSegmentIds(3);
@@ -2247,6 +2290,37 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             File.Delete(externallyRemovedPath);
             cancellation.Cancel();
             return Task.FromResult(outcome);
+        }
+    }
+
+    private sealed class BlockingLookupArrClient() : ArrClient("http://radarr.test", "test-key")
+    {
+        public TaskCompletionSource LookupStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseLookup { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int RemoveCalls { get; private set; }
+
+        public override Task<List<ArrRootFolder>> GetRootFolders(CancellationToken ct = default) =>
+            Task.FromResult(new List<ArrRootFolder> { new() { Path = "/" } });
+
+        public override async Task<ArrMediaFileMatch?> FindMediaFileAsync(
+            string symlinkOrStrmPath,
+            CancellationToken ct = default)
+        {
+            LookupStarted.TrySetResult();
+            await ReleaseLookup.Task.WaitAsync(ct);
+            return new ArrMediaFileMatch(ArrMediaKind.Movie, FileId: 201, MediaIds: [301]);
+        }
+
+        public override Task<ArrRepairOutcome> RemoveAndBlocklist(
+            ArrMediaFileMatch mediaFile,
+            Guid downloadId,
+            Func<IReadOnlyList<string>, bool>? shouldRequestSearch = null,
+            CancellationToken ct = default)
+        {
+            RemoveCalls++;
+            return Task.FromResult(ArrRepairOutcome.RemoveAndBlocklistSucceeded);
         }
     }
 
