@@ -1,3 +1,5 @@
+using System.Collections;
+using System.Reflection;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.TestUtils;
 
@@ -147,6 +149,78 @@ public class UsenetBandwidthLimiterTests
         var waiting = limiter.AcquireAsync(10_000, CancellationToken.None).AsTask();
         limiter.UpdateLimit(10_000);
         await PumpUntilCompleted(waiting, time, TimeSpan.FromSeconds(2));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompletingWaiter_DoesNotWaitForRunningCancellationCallback(bool disableLimit)
+    {
+        var timeout = TimeSpan.FromSeconds(5);
+        var time = new ControllableTimeProvider();
+        var limiter = new UsenetBandwidthLimiter(time);
+        limiter.UpdateLimit(10_000);
+        await limiter.AcquireAsync(Burst(10_000), CancellationToken.None);
+        var chargedBefore = limiter.TotalChargedBytes;
+
+        var waiting = limiter.AcquireAsync(1, CancellationToken.None).AsTask();
+        Assert.False(waiting.IsCompleted);
+
+        var waitersField = typeof(UsenetBandwidthLimiter).GetField(
+            "_waiters", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Limiter waiter field was not found.");
+        var waiters = Assert.IsAssignableFrom<IEnumerable>(waitersField.GetValue(limiter));
+        var waiter = Assert.Single(waiters.Cast<object>());
+        var registrationField = waiter.GetType().GetField("Registration")
+            ?? throw new InvalidOperationException("Waiter registration field was not found.");
+
+        using var cancellation = new CancellationTokenSource();
+        using var releaseCallback = new ManualResetEventSlim(false);
+        var callbackStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = cancellation.Token.Register(() =>
+        {
+            callbackStarted.TrySetResult();
+            releaseCallback.Wait();
+        });
+        registrationField.SetValue(waiter, registration);
+
+        var cancellationTask = Task.Factory.StartNew(
+            () => cancellation.Cancel(),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        Task? terminalTask = null;
+
+        try
+        {
+            await callbackStarted.Task.WaitAsync(timeout);
+            terminalTask = Task.Factory.StartNew(
+                () =>
+                {
+                    if (disableLimit)
+                        limiter.UpdateLimit(0);
+                    else
+                        time.Advance(TimeSpan.FromMilliseconds(250));
+                },
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+
+            await terminalTask.WaitAsync(timeout);
+            await waiting.WaitAsync(timeout);
+
+            Assert.Equal(chargedBefore + (disableLimit ? 0 : 1), limiter.TotalChargedBytes);
+            Assert.Empty(waiters.Cast<object>());
+            Assert.False(time.HasScheduledTimer);
+        }
+        finally
+        {
+            releaseCallback.Set();
+            await cancellationTask.WaitAsync(timeout);
+            if (terminalTask is not null)
+                await terminalTask.WaitAsync(timeout);
+        }
     }
 
     private static int Burst(long bytesPerSecond) => (int)Math.Max(1, bytesPerSecond * 0.25);

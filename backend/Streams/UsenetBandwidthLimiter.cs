@@ -247,7 +247,8 @@ public sealed class UsenetBandwidthLimiter
 
         public void TryComplete()
         {
-            Registration.Dispose();
+            // Dispose would wait for a running Cancel callback that is blocked on _gate.
+            Registration.Unregister();
             Completion.TrySetResult();
         }
 
