@@ -148,7 +148,7 @@ Successful full-file playback and a successful background health check reset the
 count. The count resets when InfiniDysk restarts, so it is intentionally not a durable replacement for
 health checks.
 
-### Recent-read hold [since 1.6.3](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.3){ .nzbdav-since }
+### Recent-read hold [since 1.6.3](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.3){ .nzbdav-since } { #recent-read-hold }
 
 **Defer Removal After Reads** (`repair.read-hold-minutes`, default `15`, range `0`–`1440`) keeps a
 file available while it is being played. Before any automatic removal or replacement, InfiniDysk
