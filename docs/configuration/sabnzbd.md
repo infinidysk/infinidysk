@@ -43,6 +43,12 @@ and split-media outputs are checked against the opening bytes import already rea
 decrypted in memory for encrypted archives, so the check adds no Usenet reads.
 Filtered companion and sample files are excluded.
 
+The readiness read covers the categories listed in **Article health check
+categories**, plus `tv`, `movies`, `movie`, `series`, and `audio` while **Fail
+downloads without video or audio** is on. Other categories, such as custom
+`radarr` or `sonarr4k` categories, are not checked unless you add them to
+**Article health check categories**.
+
 A video file whose opening bytes match no known container, or a Matroska/WebM file
 whose header declares values ffmpeg refuses to open, fails the download instead of
 leaving Sonarr/Radarr waiting on an inconclusive sample warning. Members that start
