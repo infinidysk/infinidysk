@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models.Metrics;
 
 namespace NzbWebDAV.Services;
@@ -21,6 +22,7 @@ public class ActiveReadRegistry
     // constraint on the metrics flush.
     private readonly ConcurrentDictionary<string, Guid> _keyToId = new();
     private readonly ConcurrentDictionary<Guid, Entry> _entries = new();
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _recentFileReads = new();
 
     // Process-lifetime monotonic counter of every byte served downstream. The
     // broadcaster samples this on a fixed tick to compute a rolling rate, so
@@ -108,6 +110,23 @@ public class ActiveReadRegistry
     public long GetBytesRead(Guid id)
         => _entries.TryGetValue(id, out var entry) ? Interlocked.Read(ref entry.BytesRead) : 0;
 
+    public void RecordFileRead(Guid? davItemId) => RecordFileRead(davItemId, DateTimeOffset.UtcNow);
+
+    internal void RecordFileRead(Guid? davItemId, DateTimeOffset observedAt)
+    {
+        if (davItemId is not { } itemId || itemId == Guid.Empty)
+            return;
+
+        _recentFileReads.AddOrUpdate(
+            itemId,
+            static (_, at) => at,
+            static (_, previous, at) => previous >= at ? previous : at,
+            observedAt);
+    }
+
+    public DateTimeOffset? GetLastFileReadAt(Guid davItemId) =>
+        _recentFileReads.TryGetValue(davItemId, out var lastReadAt) ? lastReadAt : null;
+
     /// <summary>
     /// Update the user-facing metadata on an existing session. Used once the
     /// real filename/size are resolved from the dav store (the path passed to
@@ -145,6 +164,13 @@ public class ActiveReadRegistry
     // activity window in real time.
     internal IReadOnlyList<Entry> PruneExpired(DateTimeOffset now)
     {
+        var fileReadCutoff = now - TimeSpan.FromMinutes(ConfigManager.MaximumRepairReadHoldMinutes);
+        foreach (var observation in _recentFileReads)
+        {
+            if (observation.Value < fileReadCutoff)
+                _recentFileReads.TryRemove(observation);
+        }
+
         var cutoff = now - ActivityWindow;
         var expired = _entries
             .Where(kv => kv.Value.LastActivityAt < cutoff)

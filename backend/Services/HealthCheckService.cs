@@ -170,6 +170,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     private readonly TimeProvider _timeProvider;
     private readonly HealthWorkSchedulePolicy? _healthWorkSchedule;
     private readonly HealthCheckConnectionGate _healthCheckConnectionGate;
+    private readonly ActiveReadRegistry _activeReads;
     private readonly ConcurrentDictionary<Guid, InProgressHealthCheck> _inProgress = new();
     private const int RecentHealthCheckCapacity = 32;
     private readonly ConcurrentQueue<HealthCheckAttemptSnapshot> _recentHealthChecks = new();
@@ -277,7 +278,8 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         IDbContextFactory<DavDatabaseContext>? dbContextFactory = null,
         TimeProvider? timeProvider = null,
         HealthWorkSchedulePolicy? healthWorkSchedule = null,
-        ArrInstanceBackoff? arrBackoff = null
+        ArrInstanceBackoff? arrBackoff = null,
+        ActiveReadRegistry? activeReadRegistry = null
     )
     {
         _configManager = configManager;
@@ -292,6 +294,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         _repairPatchStore = repairPatchStore;
         _dbContextFactory = dbContextFactory;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _activeReads = activeReadRegistry ?? new ActiveReadRegistry();
         _healthWorkSchedule = healthWorkSchedule;
         _healthCheckConnectionGate = healthCheckConnectionGate;
 
@@ -3525,6 +3528,42 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     {
         try
         {
+            var readHold = _configManager.GetRepairReadHold();
+            var lastReadAt = _activeReads.GetLastFileReadAt(davItem.Id);
+            var repairNow = _timeProvider.GetUtcNow();
+            if (readHold > TimeSpan.Zero
+                && lastReadAt is { } observedReadAt
+                && observedReadAt + readHold > repairNow)
+            {
+                await using var mutationGate = await _failureTracker
+                    .AcquireMutationGateAsync(davItem.Id, ct)
+                    .ConfigureAwait(false);
+                if (await IsDurablyUrgentAsync(dbClient, davItem.Id, ct).ConfigureAwait(false))
+                    davItem.NextHealthCheck = DateTimeOffset.UnixEpoch;
+
+                var resumeAt = observedReadAt + readHold;
+                var retryAt = _repairRetryNotBefore.AddOrUpdate(
+                    davItem.Id,
+                    resumeAt,
+                    (_, current) => current >= resumeAt ? current : resumeAt);
+                davItem.LastHealthCheck = repairNow;
+                davItem.NextHealthCheck = NextHealthCheckAfterScheduleDeferral(
+                    davItem.NextHealthCheck, retryAt);
+                Log.Information(
+                    "Destructive health repair deferred for DavItem {DavItemId} until {RetryAt}. Reason: recent playback read.",
+                    davItem.Id,
+                    retryAt);
+                await RecordHealthResult(
+                    dbClient,
+                    davItem,
+                    HealthCheckResult.HealthResult.Unhealthy,
+                    HealthCheckResult.RepairAction.ActionNeeded,
+                    $"Removal and replacement deferred after a recent playback read. Earliest retry: {retryAt:u}.",
+                    ct,
+                    repairPending: true).ConfigureAwait(false);
+                return;
+            }
+
             // if the file pattern has been marked as ignored,
             // then don't bother trying to repair it. We can simply delete it.
             var blocklistedFiles = _configManager.GetBlocklistedFiles();

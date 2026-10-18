@@ -554,6 +554,10 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
                     RequireLongInRange(item.ConfigName, value, 1, 8);
                     break;
 
+                case ConfigKeys.RepairReadHoldMinutes:
+                    RequireLongInRange(item.ConfigName, value, 0, MaximumRepairReadHoldMinutes);
+                    break;
+
                 case ConfigKeys.ProwlarrSyncIntervalMinutes:
                     RequireLongInRange(item.ConfigName, value, 5, 10080);
                     break;
@@ -1638,6 +1642,20 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     {
         var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairPar2FailureCooldownHours));
         return int.TryParse(v, out var n) ? Math.Clamp(n, 1, 168) : 6;
+    }
+
+    public const int DefaultRepairReadHoldMinutes = 15;
+    public const int MaximumRepairReadHoldMinutes = 1440;
+
+    public TimeSpan GetRepairReadHold()
+    {
+        var configured = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairReadHoldMinutes));
+        var minutes = int.TryParse(configured, out var value)
+            && value >= 0
+            && value <= MaximumRepairReadHoldMinutes
+                ? value
+                : DefaultRepairReadHoldMinutes;
+        return TimeSpan.FromMinutes(minutes);
     }
 
     public string GetRepairPatchStorePath()

@@ -46,6 +46,41 @@ public sealed class HealthCheckSchedulingConfigTests
     }
 
     [Theory]
+    [InlineData(null, 15)]
+    [InlineData("", 15)]
+    [InlineData("0", 0)]
+    [InlineData("15", 15)]
+    [InlineData("1440", 1440)]
+    [InlineData("-1", 15)]
+    [InlineData("1441", 15)]
+    [InlineData("1.5", 15)]
+    [InlineData("invalid", 15)]
+    public void GetRepairReadHold_UsesDefaultBoundsAndSafeFallback(string? configured, int expectedMinutes)
+    {
+        var config = new ConfigManager();
+        if (configured is not null)
+        {
+            config.UpdateValues([
+                new ConfigItem { ConfigName = ConfigKeys.RepairReadHoldMinutes, ConfigValue = configured },
+            ]);
+        }
+
+        Assert.Equal(TimeSpan.FromMinutes(expectedMinutes), config.GetRepairReadHold());
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("1441")]
+    [InlineData("1.5")]
+    [InlineData("invalid")]
+    public void ValidateConfigItems_RejectsInvalidReadHold(string value)
+    {
+        Assert.Throws<ArgumentException>(() => ConfigManager.ValidateConfigItems([
+            new ConfigItem { ConfigName = ConfigKeys.RepairReadHoldMinutes, ConfigValue = value },
+        ]));
+    }
+
+    [Theory]
     [InlineData(ConfigKeys.RepairHealthcheckWorkers, "0")]
     [InlineData(ConfigKeys.RepairHealthcheckWorkers, "9")]
     public void ValidateConfigItems_RejectsSchedulingValuesOutsideRange(string key, string value)

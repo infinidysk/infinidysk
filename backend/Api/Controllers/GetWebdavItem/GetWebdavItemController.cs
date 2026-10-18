@@ -239,6 +239,9 @@ public class GetWebdavItemController(
                 await using var response = await GetWebdavItem(request, ct).ConfigureAwait(false);
                 if (response == Stream.Null)
                     return;
+                var davItemId =
+                    (HttpContext.Items["DavItem"] as NzbWebDAV.Database.Models.DavItem)?.Id;
+                activeReadRegistry.RecordFileRead(davItemId);
                 var effectiveStart = (long)(HttpContext.Items["effectiveRangeStart"] ?? 0L);
                 concurrentReadScope.UpdateStart(effectiveStart);
                 var rangeEnd = HttpContext.Items["effectiveRangeEnd"] as long?;
@@ -263,7 +266,11 @@ public class GetWebdavItemController(
                     readCts.CancelAfter(Timeout.InfiniteTimeSpan);
                     await CopyAndReportAsync(
                             response, Response.Body, sessionId, effectiveStart, traceRange,
-                            bytes => rangeBytesServed += bytes, readCts, ct)
+                            bytes =>
+                            {
+                                rangeBytesServed += bytes;
+                                activeReadRegistry.RecordFileRead(davItemId);
+                            }, readCts, ct)
                         .ConfigureAwait(false);
                     requestTiming?.TransferEnded();
                     FinishRange(sessionId, traceRange, ReadSession.EndReasonCode.Completed, rangeBytesServed);
