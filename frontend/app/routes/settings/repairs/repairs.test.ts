@@ -13,6 +13,7 @@ const baseConfig: Record<string, string> = {
   "repair.healthcheck-aging": "false",
   "repair.auto-remove-after-failures": "0",
   "repair.auto-remove-unlinked-only": "true",
+  "repair.read-hold-minutes": "15",
   "repair.par2-enabled": "false",
   "repair.par2-preferred-over-arr": "true",
   "repair.par2-max-missing-slices": "8",
@@ -47,6 +48,22 @@ describe("Repairs settings helpers", () => {
 
   it("accepts valid PAR2 numeric settings", () => {
     expect(isRepairsSettingsValid(baseConfig)).toBe(true);
+  });
+
+  it("validates and detects read-hold changes", () => {
+    expect(
+      isRepairsSettingsUpdated(baseConfig, { ...baseConfig, "repair.read-hold-minutes": "30" }),
+    ).toBe(true);
+    for (const value of ["0", "1440", ""]) {
+      expect(isRepairsSettingsValid({ ...baseConfig, "repair.read-hold-minutes": value })).toBe(
+        true,
+      );
+    }
+    for (const value of ["-1", "1441", "1.5", "invalid"]) {
+      expect(isRepairsSettingsValid({ ...baseConfig, "repair.read-hold-minutes": value })).toBe(
+        false,
+      );
+    }
   });
 
   it("detects and validates health scheduling changes", () => {

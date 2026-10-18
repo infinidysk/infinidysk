@@ -62,6 +62,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
     "Continuously monitor mounted media for health, reconstruct missing segments from PAR2 parity, and retain playable files with limited damage. Library Directory and enabled Radarr/Sonarr instances are only needed to replace linked library items.";
   const isRepairEnabled = parseConfigBoolean(config["repair.enable"]);
   const autoRemoveAfter = config["repair.auto-remove-after-failures"] ?? "0";
+  const readHoldMinutes = config["repair.read-hold-minutes"] ?? "15";
   const autoRemoveEnabled = isNonNegativeInteger(autoRemoveAfter) && Number(autoRemoveAfter) > 0;
   const healthcheckDepthIndex = getHealthCheckDepthIndex(
     config["repair.healthcheck-depth"] ?? "standard",
@@ -345,9 +346,40 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                 Wait for this many consecutive streaming playback failures before urgent repair
                 starts. Linked library items are removed and blocklisted through Radarr/Sonarr,
                 which then applies its failed-download redownload policy. Unlinked items are
-                removed. Set to 0 for immediate repair (default). With degraded damage tolerance
-                off, each missing or corrupt article padded over during playback counts as a
-                failure.
+                removed. Set to 0 to qualify for urgent repair immediately (default); removal and
+                replacement still wait for the read hold. With degraded damage tolerance off, each
+                missing or corrupt article padded over during playback counts as a failure.
+              </p>
+            </div>
+          </ManagedSetting>
+          <ManagedSetting configKey="repair.read-hold-minutes">
+            <div className="space-y-2">
+              <label
+                className="block text-sm font-medium text-base-content"
+                htmlFor="repair-read-hold-minutes-input"
+              >
+                Defer Removal After Reads (minutes)
+              </label>
+              <Input
+                className={`w-full max-w-48 ${readHoldMinutes !== "" && !isIntegerInRange(readHoldMinutes, 0, 1440) ? "input-error" : ""}`}
+                type="text"
+                id="repair-read-hold-minutes-input"
+                aria-describedby="repair-read-hold-minutes-help"
+                placeholder="15"
+                value={readHoldMinutes}
+                disabled={!isRepairEnabled}
+                onChange={(event) =>
+                  setNewConfig({ ...config, "repair.read-hold-minutes": event.target.value })
+                }
+              />
+              <p
+                className="text-[11px] leading-relaxed text-base-content/45"
+                id="repair-read-hold-minutes-help"
+              >
+                Keep a file available for this long after its last read before automatic removal or
+                replacement. PAR2 can still repair it first. Default 15; maximum 1440. Set to 0 to
+                disable the hold. Pauses or cache-only playback beyond this time are not protected.
+                Recent-read history resets when InfiniDysk restarts.
               </p>
             </div>
           </ManagedSetting>
@@ -727,6 +759,7 @@ export function isRepairsSettingsUpdated(
     config["repair.auto-remove-after-failures"] !==
       newConfig["repair.auto-remove-after-failures"] ||
     config["repair.auto-remove-unlinked-only"] !== newConfig["repair.auto-remove-unlinked-only"] ||
+    config["repair.read-hold-minutes"] !== newConfig["repair.read-hold-minutes"] ||
     config["repair.par2-enabled"] !== newConfig["repair.par2-enabled"] ||
     config["repair.par2-preferred-over-arr"] !== newConfig["repair.par2-preferred-over-arr"] ||
     config["repair.par2-max-missing-slices"] !== newConfig["repair.par2-max-missing-slices"] ||
@@ -774,6 +807,9 @@ export function isRepairsSettingsValid(newConfig: Record<string, string>) {
   const workersOk = workers === undefined || isIntegerInRange(workers, 1, 8);
   const autoRemoveOk =
     autoRemove === undefined || autoRemove === "" || isNonNegativeInteger(autoRemove);
+  const readHold = newConfig["repair.read-hold-minutes"];
+  const readHoldOk =
+    readHold === undefined || readHold === "" || isIntegerInRange(readHold, 0, 1440);
   const bytePercentOk =
     bytePercent === undefined || bytePercent === "" || isPositiveNumber(bytePercent);
   const par2Ok = par2NumericKeys.every((key) => {
@@ -788,6 +824,7 @@ export function isRepairsSettingsValid(newConfig: Record<string, string>) {
     concurrencyOk &&
     workersOk &&
     autoRemoveOk &&
+    readHoldOk &&
     bytePercentOk &&
     par2Ok &&
     degradedOk &&
