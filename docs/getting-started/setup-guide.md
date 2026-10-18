@@ -61,6 +61,17 @@ with `--rc-user` and `--rc-pass` and enter those credentials in the guide.
 
 See [Mounting WebDAV](../guides/mounting-webdav.md) for the complete Compose example.
 
+## Media-server playback authority
+
+The Review step also shows whether Plex, Emby, or Jellyfin is configured under
+**Settings → Media Servers**. This integration is optional: without media-server
+credentials, InfiniDysk continues to show transport-only reads. When configured,
+the media server supplies authoritative playing/paused state and viewer progress,
+while WebDAV/Usenet activity remains source-delivery telemetry.
+
+Tokens stay masked in the setup review. Add, replace, or test credentials from
+**Settings → Media Servers** rather than exposing them in the setup summary.
+
 ## Content ingestion
 
 Select one or more methods:

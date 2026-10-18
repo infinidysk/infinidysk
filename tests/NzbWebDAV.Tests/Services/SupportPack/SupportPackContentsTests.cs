@@ -109,6 +109,7 @@ public sealed class SupportPackContentsTests : IDisposable
             Assert.DoesNotContain(address, entry);
     }
 
+
     [Fact]
     public async Task Pack_ExplainsAnEmptyWarningLaneInsteadOfShippingAnEmptyFile()
     {
@@ -703,6 +704,25 @@ public sealed class SupportPackContentsTests : IDisposable
                 }),
             },
             new ConfigItem { ConfigName = ConfigKeys.UsenetSegmentCachePath, ConfigValue = "/tmp/sentinel-cache" },
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.MediaServersInstances,
+                ConfigValue = JsonSerializer.Serialize(new MediaServerConfig
+                {
+                    Instances =
+                    [
+                        new MediaServerInstance
+                        {
+                            Id = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                            Type = MediaServerType.Plex,
+                            Name = "Sentinel Plex",
+                            BaseUrl = "http://plex.sentinel.example",
+                            Token = "sentinel-media-token",
+                            Enabled = true,
+                        },
+                    ],
+                }),
+            },
             new ConfigItem { ConfigName = ConfigKeys.ApiKey, ConfigValue = "sentinel-api-key" },
             new ConfigItem { ConfigName = ConfigKeys.WebdavPass, ConfigValue = "sentinel-webdav" },
         ]);
@@ -710,6 +730,7 @@ public sealed class SupportPackContentsTests : IDisposable
         var logBuffer = new LogBufferSink(10);
         using var logger = new LoggerConfiguration().WriteTo.Sink(logBuffer).CreateLogger();
         logger.Information("Provider authentication failed for sentinel-user with sentinel-pass");
+        logger.Information("Media server authentication failed for sentinel-media-token");
         var entries = await ReadPackEntriesAsync(
             logBuffer,
             new WarningLogBuffer(new LogBufferSink(50)),
@@ -733,7 +754,49 @@ public sealed class SupportPackContentsTests : IDisposable
         {
             Assert.DoesNotContain("sentinel-user", content);
             Assert.DoesNotContain("sentinel-pass", content);
+            Assert.DoesNotContain("sentinel-media-token", content);
         }
+    }
+
+    [Fact]
+    public async Task Pack_RedactsShortConfiguredMediaServerTokenFromLogs()
+    {
+        const string shortToken = "q7!";
+        var configManager = new ConfigManager();
+        configManager.UpdateValues(
+        [
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.MediaServersInstances,
+                ConfigValue = JsonSerializer.Serialize(new MediaServerConfig
+                {
+                    Instances =
+                    [
+                        new MediaServerInstance
+                        {
+                            Id = Guid.NewGuid(),
+                            Type = MediaServerType.Plex,
+                            Name = "Short-token Plex",
+                            BaseUrl = "http://plex.test",
+                            Token = shortToken,
+                            Enabled = true,
+                        },
+                    ],
+                }),
+            },
+        ]);
+
+        var logBuffer = new LogBufferSink(10);
+        using var logger = new LoggerConfiguration().WriteTo.Sink(logBuffer).CreateLogger();
+        logger.Information("Media server authentication failed for {Token}", shortToken);
+
+        var entries = await ReadPackEntriesAsync(
+            logBuffer,
+            new WarningLogBuffer(new LogBufferSink(50)),
+            configManager: configManager);
+
+        Assert.DoesNotContain(shortToken, entries["logs/backend.log"], StringComparison.Ordinal);
+        Assert.Contains("[REDACTED]", entries["logs/backend.log"], StringComparison.Ordinal);
     }
 
     [Fact]

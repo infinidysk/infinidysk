@@ -22,6 +22,7 @@ export const NAV_FEATURE_IDS = [
   "settings.watchtower",
   "settings.warden",
   "settings.arrs",
+  "settings.media-servers",
   "settings.repairs",
   "settings.rclone",
   "settings.maintenance",

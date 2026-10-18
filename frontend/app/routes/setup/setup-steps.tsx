@@ -32,6 +32,7 @@ import {
   type SetupDraft,
 } from "./setup-model";
 import type { ManagedEnvMap } from "~/components/ui";
+import { parseMediaServerConfig } from "~/utils/media-server-config";
 
 export const SETUP_STEPS = [
   "Library type",
@@ -1004,6 +1005,9 @@ export function ReviewStep({
   const strategy = normalizeStrategy(draft.config["api.import-strategy"]);
   const baselineStrategy = normalizeStrategy(baseline["api.import-strategy"]);
   const rows = Object.entries(changes);
+  const enabledMediaServers = parseMediaServerConfig(
+    draft.config["media-servers.instances"],
+  ).Instances.filter((instance) => instance.Enabled);
   const restartRequired =
     baseline["usenet.segment-cache.enabled"] !== draft.config["usenet.segment-cache.enabled"];
   const envManaged = Object.keys(managedEnv).length > 0;
@@ -1043,6 +1047,31 @@ export function ReviewStep({
           )}
         </div>
       )}
+
+      <Alert
+        variant={enabledMediaServers.length > 0 ? "success" : "info"}
+        className="alert-soft items-start text-sm"
+      >
+        <Icon name={enabledMediaServers.length > 0 ? "live_tv" : "info"} className="!text-[20px]" />
+        <span>
+          {enabledMediaServers.length > 0 ? (
+            <>
+              {enabledMediaServers.length} enabled media server
+              {enabledMediaServers.length === 1 ? "" : "s"} will provide authoritative playback
+              state for Right now.
+            </>
+          ) : (
+            <>
+              Media-server playback authority is optional and is not configured. Right now will
+              still show InfiniDysk transport reads. You can add Plex, Emby, or Jellyfin later under{" "}
+              <a className="link font-medium" href={withUrlBase("/settings?tab=media-servers")}>
+                Media Servers
+              </a>
+              .
+            </>
+          )}
+        </span>
+      </Alert>
 
       {rows.length === 0 ? (
         <Alert variant="info" role="status" className="alert-soft text-sm">
@@ -1145,6 +1174,10 @@ function displayConfigValue(key: string, value: string): string {
     const count = config.RadarrInstances.length + config.SonarrInstances.length;
     return `${count} Arr instance${count === 1 ? "" : "s"}`;
   }
+  if (key === "media-servers.instances") {
+    const count = parseMediaServerConfig(value).Instances.length;
+    return `${count} media server${count === 1 ? "" : "s"}`;
+  }
   if (value === "true") return "Enabled";
   if (value === "false") return "Disabled";
   return value || "Not set";
@@ -1161,6 +1194,7 @@ function settingLabel(key: string): string {
     "rclone.pass": "Rclone RC password",
     "api.completed-downloads-dir": "Completed downloads directory",
     "general.base-url": "Base URL",
+    "media-servers.instances": "Media Servers",
     "arr.instances": "Arr connections",
     "backup.schedule-enabled": "Scheduled backups",
     "backup.schedule-time": "Backup time",
