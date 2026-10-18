@@ -123,16 +123,23 @@ public static class VideoSignatureUtil
 
         var slice = first16KB.AsSpan((int)dataStart);
         slice = slice[..Math.Min(slice.Length, MemberHeadLength)];
+        byte[] head;
         if (aesParams is null)
-            return slice.ToArray();
+        {
+            head = slice.ToArray();
+        }
+        else
+        {
+            var blocks = slice[..(slice.Length & ~15)];
+            if (blocks.IsEmpty)
+                return null;
 
-        var blocks = slice[..(slice.Length & ~15)];
-        if (blocks.IsEmpty)
-            return null;
+            using var aes = Aes.Create();
+            aes.Key = aesParams.Key;
+            head = aes.DecryptCbc(blocks, aesParams.Iv, PaddingMode.None);
+        }
 
-        using var aes = Aes.Create();
-        aes.Key = aesParams.Key;
-        return aes.DecryptCbc(blocks, aesParams.Iv, PaddingMode.None);
+        return LooksLikeArchiveMagic(head) ? null : head;
     }
 
     private static bool IsMpegTransportStream(ReadOnlySpan<byte> data)

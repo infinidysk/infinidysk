@@ -140,6 +140,15 @@ public class VideoSignatureUtilTests
         Assert.Equal(first16KB.AsSpan(100, head.Length).ToArray(), head);
     }
 
+    [Fact]
+    public void MemberHeadFromFirst16KB_NestedArchive_ReturnsNull()
+    {
+        var first16KB = new byte[VideoSignatureUtil.First16KBLength];
+        Rar4Magic.CopyTo(first16KB, 100);
+
+        Assert.Null(VideoSignatureUtil.MemberHeadFromFirst16KB(first16KB, 100, aesParams: null));
+    }
+
     [Theory]
     [InlineData(-1)]
     [InlineData(VideoSignatureUtil.First16KBLength)]
