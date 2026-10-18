@@ -16,7 +16,8 @@ Background health monitoring, PAR2 reconstruction, and replacement of unhealthy 
 | Health Check Workers [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since } | `repair.healthcheck-workers` | `1` | Library files checked at once (1–8). All workers share Health Check Concurrency; this setting never multiplies it |
 | Health Check Depth | `repair.healthcheck-depth` | `standard` | `quick` [since 1.4.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.4.0){ .nzbdav-since } / standard / enhanced / deep / complete. `quick` STATs only ~two dozen head/tail/stride segments per file regardless of size (bypassing the 8000-segment floor and the size/age curve) — a fast first pass that reliably tells an intact posting from one lost to takedown or retention. Small files may be fully sampled, but `quick` checks never run damage classification; pair them with a periodic deeper pass. |
 | Check older releases less thoroughly [since 0.8.0](https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0){ .nzbdav-since } | `repair.healthcheck-aging` | off | Aging taper |
-| Repair After Streaming Failures | `repair.auto-remove-after-failures` | `0` | Consecutive streaming failures before urgent repair; `0` = immediate repair. Failures below the threshold are counted in memory and reset when InfiniDysk restarts. Once the threshold is reached and the urgent repair is scheduled, that qualification is stored with the file and survives restarts; raising the threshold afterwards defers the repair again until the new threshold is met. |
+| Repair After Streaming Failures | `repair.auto-remove-after-failures` | `0` | Consecutive streaming failures before urgent repair; `0` = qualify for urgent repair immediately (removal and replacement still wait for the repair schedule and **Defer Removal After Reads**). Failures below the threshold are counted in memory and reset when InfiniDysk restarts. Once the threshold is reached and the urgent repair is scheduled, that qualification is stored with the file and survives restarts; raising the threshold afterwards defers the repair again until the new threshold is met. |
+| Defer Removal After Reads (minutes) [since 1.6.3](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.3){ .nzbdav-since } | `repair.read-hold-minutes` | `15` | Minutes (`0`–`1440`) a file stays available after its last observed read before automatic removal or replacement. `0` turns the hold off. See [Recent-read hold](#recent-read-hold). |
 | Auto-remove unlinked files only | `repair.auto-remove-unlinked-only` | on | At the threshold, linked items are removed and blocklisted through *Arr instead of force-deleted |
 | Degraded damage tolerance [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `repair.degraded-tolerance-enabled` | on | Keep slightly damaged videos playable instead of replacing the release. When off, every missing or corrupt article found during playback counts toward repair |
 | Track corrupt articles during playback [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since } | `repair.corruption-tracking-enabled` | on | Record streaming-confirmed corrupt articles, include them in health classification, and skip the retry storm on later reads. Only controls persistence; corruption still counts toward repair when tolerance is off |
@@ -147,6 +148,31 @@ Successful full-file playback and a successful background health check reset the
 count. The count resets when InfiniDysk restarts, so it is intentionally not a durable replacement for
 health checks.
 
+### Recent-read hold [since 1.6.3](https://github.com/infinidysk/infinidysk/releases/tag/v1.6.3){ .nzbdav-since }
+
+**Defer Removal After Reads** (`repair.read-hold-minutes`, default `15`, range `0`–`1440`) keeps a
+file available while it is being played. Before any automatic removal or replacement, InfiniDysk
+checks when the file was last read through WebDAV or the in-app player. If that read is more recent
+than the hold, the removal waits and the file is shown as **Action needed** until the hold expires.
+Each new read renews the deadline. Every path that points at the same library file (for example
+`/content` and `/.ids` aliases) shares one hold.
+
+- PAR2 reconstruction still runs first; the hold only delays removal and replacement.
+- Urgent repairs keep their urgent status while held and resume as urgent once the hold expires.
+- The same hold protects removals found by routine background health checks.
+- Set `0` to restore removal in the next repair slot, as in earlier releases.
+- Set it with `NZBDAV_CONFIG__REPAIR__READ_HOLD_MINUTES` for headless installs.
+
+Limits:
+
+- The hold is based on the last read InfiniDysk saw, not on the player's state. A pause, or
+  playback served entirely from a player or rclone cache, longer than the hold is not protected.
+- Read history and pending hold deadlines are kept in memory, so a backend restart clears them.
+  Urgent repair qualification is stored with the file and survives the restart.
+- Changes apply on the next repair attempt without a restart. A repair already waiting keeps its
+  current deadline; lowering or disabling the hold does not shorten it.
+- The hold cannot retract a \*Arr removal that already started before a new read arrived.
+
 ## Degraded damage tolerance [since 1.2.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.2.0){ .nzbdav-since }
 
 Degraded damage tolerance is on by default. With it off, playback still zero-fills short gaps
@@ -166,8 +192,10 @@ To replace a release as soon as one article is confirmed missing or corrupt:
 
 PAR2 reconstruction runs first when **PAR2 gap repair** is enabled and preferred; disable the
 preference to go straight to \*Arr. A background PAR2 repair that cannot rebuild the damage also
-queues an urgent replacement. "Immediately" means the next urgent health-queue slot, not the
-current read.
+queues an urgent replacement. "Immediately" means the file qualifies for urgent repair at once;
+removal and replacement still wait for the next urgent health-queue slot, the repair schedule, and
+the [recent-read hold](#recent-read-hold) (15 minutes after the last read by default). Set
+**Defer Removal After Reads** to `0` to replace in the next slot even during playback.
 
 Limits:
 
