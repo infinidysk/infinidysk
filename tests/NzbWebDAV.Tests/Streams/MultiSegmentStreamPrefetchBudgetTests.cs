@@ -215,17 +215,18 @@ public class MultiSegmentStreamPrefetchBudgetTests
             inFlightArticleBudget: budget);
         try
         {
-            for (var i = 0; i < 100 && budget.ThrottleEvents == 0; i++)
+            // ThrottleEvents increments before the waiter is enqueued; WaiterCount proves it queued.
+            for (var i = 0; i < 500 && budget.WaiterCount == 0; i++)
                 await Task.Delay(10);
-            Assert.True(budget.ThrottleEvents > 0, "Expected the producer to wait on the byte budget");
+            Assert.True(budget.WaiterCount > 0, "Expected the producer to wait on the byte budget");
 
             gate.SetIdle();
             held.Dispose();
-            await Task.Delay(150);
-            // Wait for the producer to observe idle demand and release its lease.
-            // A fixed delay races the continuation on busy CI workers.
-            for (var i = 0; i < 100 && budget.LeasedBytes != 0; i++)
+            // The waiter dequeues only after taking its lease, so both reaching zero means
+            // the producer leased and then released on idle demand.
+            for (var i = 0; i < 500 && (budget.WaiterCount != 0 || budget.LeasedBytes != 0); i++)
                 await Task.Delay(10);
+            Assert.Equal(0, budget.WaiterCount);
             Assert.Empty(client.RequestedSegmentIds);
             Assert.Equal(0, budget.LeasedBytes);
 
