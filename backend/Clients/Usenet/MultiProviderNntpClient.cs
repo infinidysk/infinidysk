@@ -1699,10 +1699,11 @@ public class MultiProviderNntpClient(
         if (segmentId is not { } id) return;
         AttachProviderGeneration(exception);
         if (ClassifyException(exception) != SegmentFetch.FetchStatus.Missing) return;
-        if (exception.TryGetCausingException<UsenetMismatchedArticleException>(out _))
-            return;
         var group = NormalizeStorageGroup(provider.StorageGroup);
         if (group.Length > 0) missingGroups.Add(group);
+        // Answers change over time (#1584), so a mismatch skips siblings for this walk only.
+        if (exception.TryGetCausingException<UsenetMismatchedArticleException>(out _))
+            return;
         MarkCachedMissing(id, provider, operation);
     }
 
