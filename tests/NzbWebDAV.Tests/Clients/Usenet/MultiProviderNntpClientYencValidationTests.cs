@@ -702,6 +702,7 @@ public sealed class MultiProviderNntpClientYencValidationTests
         var segments = new Dictionary<string, byte[]> { ["segment"] = [1, 2, 3] };
         var wrongPost = CreateClient(segments, partNumber: 557, totalParts: 931);
         var wrongSibling = CreateClient(segments, partNumber: 557, totalParts: 931);
+        var correctOtherGroup = CreateClient(segments, partNumber: 1, totalParts: 3);
         var cache = new ArticleMissNegativeCache(new ConfigManager());
         using var client = new MultiProviderNntpClient(
             [
@@ -709,15 +710,22 @@ public sealed class MultiProviderNntpClientYencValidationTests
                     wrongPost, host: "wrong.example", storageGroup: "shared"),
                 MultiProviderNntpClientTests.CreateProvider(
                     wrongSibling, host: "sibling.example", storageGroup: "shared"),
+                MultiProviderNntpClientTests.CreateProvider(
+                    correctOtherGroup,
+                    host: "other.example",
+                    storageGroup: "other",
+                    providerType: ProviderType.BackupOnly),
             ],
+            cascadeEnabled: () => true,
             articleMissCache: cache);
         using var validation = YencFileValidationContext.Begin(expectedTotalParts: 3);
 
         for (var walk = 1; walk <= 2; walk++)
         {
-            await Assert.ThrowsAsync<UsenetMismatchedArticleException>(
-                () => client.GetYencHeadersAsync("segment", CancellationToken.None));
+            var header = await client.GetYencHeadersAsync("segment", CancellationToken.None);
+            Assert.Equal(3, header.TotalParts);
             Assert.Equal(walk, wrongPost.BodyRequestCount + wrongSibling.BodyRequestCount);
+            Assert.Equal(walk, correctOtherGroup.BodyRequestCount);
         }
 
         Assert.Equal(0, cache.Entries);
