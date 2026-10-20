@@ -8,5 +8,5 @@
     "not_found_handling": "404-page"
   },
   "routes": [{ "pattern": "www.infinidysk.com", "custom_domain": true }],
-  "workers_dev": true
+  "workers_dev": false
 }
