@@ -9,7 +9,7 @@ on:
 
 concurrency:
   group: docs-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -37,26 +37,38 @@ jobs:
       - name: Build documentation
         run: zensical build --clean --strict
 
-      - name: Upload Pages artifact
+      - name: Upload site artifact
         if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
+          name: docs-site
           path: site
+          if-no-files-found: error
 
   deploy:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    permissions:
-      pages: write
-      id-token: write
+      name: cloudflare-docs
+      url: https://www.infinidysk.com/
     steps:
-      - name: Configure Pages
-        uses: actions/configure-pages@v6
+      - name: Checkout Wrangler config
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: wrangler.jsonc
+          sparse-checkout-cone-mode: false
 
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
+      - name: Download site artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: docs-site
+          path: site
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4"
+          command: deploy

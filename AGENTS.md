@@ -49,7 +49,7 @@ infinidysk/
 │   │   └── clients/         # backend-client.server.ts — server-side API calls
 │   ├── server/              # Express middleware (proxy, auth, websockets)
 │   └── server.ts            # Dev/prod server entry
-├── docs/                    # User-facing docs (Zensical sources; published to GitHub Pages)
+├── docs/                    # User-facing docs (Zensical sources; published to Cloudflare Workers)
 ├── zensical.toml            # Zensical site configuration
 ├── docs-requirements.txt    # Pinned Zensical build dependency
 ├── Dockerfile               # Multi-stage build (frontend + backend → runtime)
@@ -463,7 +463,7 @@ Skip this handoff if there are no local changes and nothing to push or PR. Do no
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `ci.yml` | PRs and pushes to `main` | Frontend lint/typecheck/build/tests + backend build/tests |
-| `docs.yml` | PRs and pushes to `main` | Zensical docs build (`zensical build --clean --strict`); deploys to GitHub Pages on `main` |
+| `docs.yml` | PRs and pushes to `main` | Zensical docs build (`zensical build --clean --strict`); deploys to Cloudflare Workers (`wrangler.jsonc`) on `main` |
 | `codeql.yml` | PRs, pushes to `main`, and weekly schedule | CodeQL security analysis for C#, TypeScript, and GitHub Actions |
 | `refresh-dev.yml` | Manual `workflow_dispatch` | Publishes `ghcr.io/.../infinidysk:dev`, builds Linux archives, creates/updates the rolling `dev` GitHub pre-release, and moves the git `dev` tag to that commit (unversioned snapshot); Discord announcement is LLM-summarized with raw-list fallback (`OPENAI_API_KEY` optional) |
 | `cut-prerelease.yml` | Manual `workflow_dispatch` | Creates numbered and rolling `rc` GitHub Pre-releases with Linux archives; pushes versioned RC tags to canonical and legacy GHCR and the rolling `:rc` tag to canonical GHCR (pre-release images are not published to Docker Hub); refreshes the rolling `dev` image on canonical GHCR and Docker Hub and the rolling `dev` pre-release with the RC's archives; moves git `rc` and `dev` tags (`dev` first, so `rc` is never ahead of `dev`); Discord announcement is LLM-summarized with raw-list fallback (`OPENAI_API_KEY` optional) |

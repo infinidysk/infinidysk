@@ -6,7 +6,7 @@ site_url = "https://www.infinidysk.com/"
 docs_dir = "docs"
 site_dir = "site"
 # Agent-only upstream spec dumps. Zensical 0.0.52 ignores this key; CI also
-# removes docs/reference before `zensical build` so the files stay off Pages.
+# removes docs/reference before `zensical build` so the files stay off the published site.
 exclude_docs = """
 reference/
 """
