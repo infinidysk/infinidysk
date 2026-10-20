@@ -2,6 +2,7 @@ using MemoryPack;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
@@ -11,6 +12,7 @@ using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
 using NzbWebDAV.Queue.FileAggregators;
 using NzbWebDAV.Queue.FileProcessors;
+using NzbWebDAV.Queue.PostProcessors;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using UsenetSharp.Models;
@@ -199,6 +201,40 @@ public class LazyRarProcessorTests
 
         Assert.NotNull(result);
         Assert.Equal(".mkv", result!.SniffedVideoExtension);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_ZeroFilledStoredMember_ReadinessRejectsFromCapturedHead()
+    {
+        var volumeBytes = BuildRar4SplitFirstVolume("movie.mkv", packedSize: 5_000, uncompressedSize: 9_000);
+        var continuationBytes = BuildRar4ContinuationVolume("movie.mkv", 4_000);
+        var first = FileInfoFor("vol.rar", "first@example.com", volumeBytes.Length, volumeBytes.Length);
+        var trailing = FileInfoFor(
+            "vol.r00",
+            "r00@example.com",
+            encodedBytes: 4_200,
+            fileSize: null,
+            first16KB: continuationBytes);
+        using var client = new MemoryServingNntpClient(new Dictionary<string, byte[]>
+        {
+            ["first@example.com"] = volumeBytes,
+            ["r00@example.com"] = continuationBytes,
+        });
+        var config = new ConfigManager();
+
+        var result = Assert.IsType<LazyRarProcessor.Result>(
+            await new LazyRarProcessor([first, trailing], client, password: null, CancellationToken.None)
+                .ProcessAsync());
+        Assert.Equal(VideoSignatureUtil.MemberHeadLength, result.MediaHead?.Length);
+        var targets = FinalMediaReadinessValidator.PlanTargets([result], "movies", "Job", config);
+        Assert.Equal("movie.mkv", Assert.Single(targets).Name);
+        var importBodyRequests = client.BodyRequestCount;
+
+        var error = await Assert.ThrowsAsync<NonRetryableDownloadException>(() =>
+            new FinalMediaReadinessValidator(client, config).ValidateAsync(targets, CancellationToken.None));
+
+        Assert.Contains("invalid media container header", error.Message);
+        Assert.Equal(importBodyRequests, client.BodyRequestCount);
     }
 
     [Fact]
@@ -777,6 +813,10 @@ public class LazyRarProcessorTests
         IReadOnlyDictionary<string, byte[]> segments,
         Func<string, Exception?>? bodyFailure = null) : NntpClient
     {
+        private int _bodyRequestCount;
+
+        public int BodyRequestCount => Volatile.Read(ref _bodyRequestCount);
+
         public override Task ConnectAsync(
             string host, int port, bool useSsl, CancellationToken cancellationToken) =>
             Task.CompletedTask;
@@ -803,6 +843,7 @@ public class LazyRarProcessorTests
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref _bodyRequestCount);
             var key = segmentId.ToString();
             if (bodyFailure?.Invoke(key) is { } failure) throw failure;
             if (!segments.TryGetValue(key, out var bytes))

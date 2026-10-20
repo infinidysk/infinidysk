@@ -77,6 +77,12 @@ public class SevenZipProcessor : BaseProcessor
                             first16KB,
                             x.ByteRangeWithinArchive.StartInclusive,
                             x.IsEncrypted),
+                    MediaHead = IsEmptyRegularFile(x)
+                        ? null
+                        : VideoSignatureUtil.MemberHeadFromFirst16KB(
+                            first16KB,
+                            x.ByteRangeWithinArchive.StartInclusive,
+                            x.AesParams),
                 }).ToList(),
             };
         }
@@ -284,5 +290,8 @@ public class SevenZipProcessor : BaseProcessor
         public required DavMultipartFile.Meta DavMultipartFileMeta { get; init; }
         public required DateTimeOffset ReleaseDate { get; init; }
         public string? SniffedVideoExtension { get; init; }
+
+        /// <summary>Opening media bytes; see <see cref="VideoSignatureUtil.MemberHeadFromFirst16KB"/>.</summary>
+        public byte[]? MediaHead { get; init; }
     }
 }

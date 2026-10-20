@@ -35,6 +35,27 @@ Queue capacity and admission limits are configured separately under
 [Queue](queue.md). The default user agent for retrieving NZBs, including
 matched `addurl` requests, is configured under [Indexers](indexers.md).
 
+## Rejecting unreadable media before completion
+
+In categories that get the final direct-media readiness read, archived and split outputs
+also get a header check before the download is reported completed. Stored RAR, 7z,
+and split-media outputs are checked against the opening bytes import already read,
+decrypted in memory for encrypted archives, so the check adds no Usenet reads.
+Filtered companion and sample files are excluded.
+
+The readiness read covers the categories listed in **Article health check
+categories**, plus `tv`, `movies`, `movie`, `series`, and `audio` while **Fail
+downloads without video or audio** is on. Other categories, such as custom
+`radarr` or `sonarr4k` categories, are not checked unless you add them to
+**Article health check categories**.
+
+A video file whose opening bytes match no known container, or a Matroska/WebM file
+whose header declares values ffmpeg refuses to open, fails the download instead of
+leaving Sonarr/Radarr waiting on an inconclusive sample warning. Members that start
+beyond the first 16 KiB of their volume, compressed members, and nested archives are
+not checked. These are header checks, not whole-file integrity or playback checks,
+and previously completed files are not revalidated.
+
 ## STRM sidecar cleanup [since 1.3.0](https://github.com/infinidysk/infinidysk/releases/tag/v1.3.0){ .nzbdav-since }
 
 Generated STRM files are deleted together with their content (history

@@ -147,6 +147,9 @@ public class LazyRarProcessor(
         }
 
         var aesParams = fileHeader.GetAesParams(password);
+        var mediaHead = fileHeader.IsSplitBefore
+            ? null
+            : VideoSignatureUtil.MemberHeadFromFirst16KB(first16KB, fileHeader.DataStartPosition, aesParams);
         if (fileHeader.IsEncrypted && aesParams is null)
         {
             Log.Information(
@@ -301,6 +304,7 @@ public class LazyRarProcessor(
             ReleaseDate = firstInfo.ReleaseDate,
             ArchiveName = GetArchiveName(firstInfo.FileName),
             SniffedVideoExtension = sniffedVideoExtension,
+            MediaHead = mediaHead,
         };
     }
 
@@ -632,5 +636,8 @@ public class LazyRarProcessor(
         public required DateTimeOffset ReleaseDate { get; init; }
         public required string ArchiveName { get; init; }
         public string? SniffedVideoExtension { get; init; }
+
+        /// <summary>Opening media bytes from the first volume; see <see cref="VideoSignatureUtil.MemberHeadFromFirst16KB"/>.</summary>
+        public byte[]? MediaHead { get; init; }
     }
 }

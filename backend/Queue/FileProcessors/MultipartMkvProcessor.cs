@@ -77,6 +77,9 @@ public class MultipartMkvProcessor : BaseProcessor
                        ?? sortedFileInfos.First().FileName,
             Parts = fileParts,
             ReleaseDate = sortedFileInfos.First().ReleaseDate,
+            MediaHead = partNumbers[0] == 1 && sortedFileInfos.First().First16KB is { } first16KB
+                ? VideoSignatureUtil.MemberHeadFromFirst16KB(first16KB, 0, aesParams: null)
+                : null,
         };
     }
 
@@ -85,5 +88,8 @@ public class MultipartMkvProcessor : BaseProcessor
         public required string Filename { get; init; }
         public required List<DavMultipartFile.FilePart> Parts { get; init; } = [];
         public required DateTimeOffset ReleaseDate { get; init; }
+
+        /// <summary>Opening media bytes of part 1, already fetched while identifying the files.</summary>
+        public byte[]? MediaHead { get; init; }
     }
 }
