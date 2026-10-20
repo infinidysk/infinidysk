@@ -12,7 +12,7 @@ WORKDIR /frontend
 # for root hosting (default, identical output to before this arg existed).
 # Namespaced to avoid picking up a stray URL_BASE from shared build
 # environments; the un-prefixed name is still honored as a fallback by the
-# build config. See docs/configuration/url-base.md.
+# build config. See https://www.infinidysk.com/configuration/url-base/.
 ARG NZBDAV_URL_BASE=""
 ENV NZBDAV_URL_BASE=${NZBDAV_URL_BASE}
 

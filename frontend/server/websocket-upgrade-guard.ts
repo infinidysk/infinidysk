@@ -16,7 +16,7 @@ export const websocketUpgradeGuard: RequestHandler = (req, res, _next) => {
       `Rejected plain HTTP ${req.method} on the WebSocket endpoint from ${client}; ` +
         "this endpoint only accepts WebSocket upgrade requests. If this came from the web UI, " +
         "the reverse proxy in front is not forwarding Upgrade/Connection headers " +
-        "(see docs/configuration/url-base.md)." +
+        "(see https://www.infinidysk.com/configuration/url-base/)." +
         (suppressed > 0 ? ` (+${suppressed} similar suppressed)` : ""),
     );
   }

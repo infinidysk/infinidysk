@@ -358,12 +358,11 @@ Vendored SharpCompress sources and tests are not part of the format gate.
 ### Required status checks
 
 Branch protection on `main` should require this **one aggregate CI check**, plus
-the independent documentation and CodeQL workflows:
+the independent CodeQL workflows:
 
 | Check name | Workflow |
 | --- | --- |
 | `CI / Required quality gate` | `.github/workflows/ci.yml` |
-| `Documentation / build` | `.github/workflows/docs.yml` |
 | `CodeQL / Analyze (actions)` | `.github/workflows/codeql.yml` |
 | `CodeQL / Analyze (csharp)` | `.github/workflows/codeql.yml` |
 | `CodeQL / Analyze (javascript-typescript)` | `.github/workflows/codeql.yml` |

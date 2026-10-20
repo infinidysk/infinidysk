@@ -54,7 +54,7 @@ the established daisyUI `night` application language.
 ## Evidence on Hand
 
 Product behavior and setup guidance are documented in `README.md`, `AGENTS.md`,
-and `docs/`. Existing operational UI patterns live under `frontend/app`, and the
+and [infinidysk/docs](https://github.com/infinidysk/docs). Existing operational UI patterns live under `frontend/app`, and the
 product logo is available in `frontend/public`.
 
 ## Product Principles

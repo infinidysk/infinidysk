@@ -32,20 +32,6 @@ updates:
           - "*"
     open-pull-requests-limit: 10
 
-  - package-ecosystem: pip
-    directory: /
-    schedule:
-      interval: monthly
-    cooldown:
-      default-days: 7
-    commit-message:
-      prefix: "fix(deps)"
-    groups:
-      docs-python:
-        patterns:
-          - "*"
-    open-pull-requests-limit: 5
-
   - package-ecosystem: npm
     directory: /frontend
     schedule:

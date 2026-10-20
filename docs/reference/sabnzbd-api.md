@@ -22,7 +22,7 @@ docs site.
 Compare `mode=` / `name=` / parameters / JSON shapes in this snapshot to:
 
 - `backend/Api/SabControllers/SabApiController.cs` (dispatch) and the matching controller folder
-- `docs/features/sab-api.md` (InfiniDysk subset and **intentional differences**)
+- [`docs/features/sab-api.md`](https://github.com/infinidysk/docs/blob/main/docs/features/sab-api.md) in infinidysk/docs (InfiniDysk subset and **intentional differences**)
 
 Treat differences documented in `docs/features/sab-api.md` as allowed. Do not
 annotate this snapshot with InfiniDysk support; keep this file as the upstream

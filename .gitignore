@@ -30,7 +30,6 @@ BenchmarkDotNet.Artifacts/
 # Documentation #
 #################
 
-/site/
 #######################
 # Local runtime state #
 #######################

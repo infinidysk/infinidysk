@@ -55,7 +55,7 @@ jobs:
                   ;;
                 .release-please-config.json|.release-please-manifest.json|AGENTS.md|CHANGELOG.md)
                   ;;
-                CONTRIBUTING.md|LICENSE|README.md|docs-requirements.txt|version.txt|zensical.toml)
+                CONTRIBUTING.md|LICENSE|README.md|version.txt)
                   ;;
                 *)
                   backend=true

@@ -70,7 +70,7 @@ function assertUrlBaseMatchesBuild(bakedUrlBase: unknown): void {
     `NZBDAV_URL_BASE mismatch: this build was compiled with ${JSON.stringify(bakedUrlBase)} ` +
       `but the runtime environment says ${JSON.stringify(URL_BASE)}. The two halves of the ` +
       `setting must match — rebuild with --build-arg NZBDAV_URL_BASE=${URL_BASE || '""'} or ` +
-      `set NZBDAV_URL_BASE=${bakedUrlBase || '""'} at runtime. See docs/configuration/url-base.md.`,
+      `set NZBDAV_URL_BASE=${bakedUrlBase || '""'} at runtime. See https://www.infinidysk.com/configuration/url-base/.`,
   );
   process.exit(1);
 }

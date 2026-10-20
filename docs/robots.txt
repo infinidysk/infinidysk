@@ -1,5 +1,0 @@
-User-agent: *
-Allow: /
-Disallow: /reference/
-
-Sitemap: https://www.infinidysk.com/sitemap.xml
