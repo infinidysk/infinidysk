@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.6.3](https://github.com/infinidysk/infinidysk/compare/v1.6.2...v1.6.3) (2026-10-21)
+
+
+### Bug Fixes
+
+* **deps:** Bump vite from 8.3.2 to 8.3.4 in /frontend ([#1727](https://github.com/infinidysk/infinidysk/issues/1727)) ([62c1458](https://github.com/infinidysk/infinidysk/commit/62c14587feac77d3ab630b960094e07e61ee067a))
+* **health:** keep recently played files available during automatic repair ([#1713](https://github.com/infinidysk/infinidysk/issues/1713)) ([4bef51e](https://github.com/infinidysk/infinidysk/commit/4bef51e7dca75fdb16ee1e174d20f07b0064aab3))
+* **usenet:** backup accounts in a storage group are no longer charged for an article already rejected from that group ([#1724](https://github.com/infinidysk/infinidysk/issues/1724)) ([a72e11d](https://github.com/infinidysk/infinidysk/commit/a72e11d7c74edef3e69e019ff3fc7f66c99f8c78))
+* **usenet:** unregister completed bandwidth waiters without blocking the limiter lock ([#1711](https://github.com/infinidysk/infinidysk/issues/1711)) ([18e902c](https://github.com/infinidysk/infinidysk/commit/18e902c344a13d8d4db70c63b01f3f6edc618e78))
+
 ## [1.6.2](https://github.com/infinidysk/infinidysk/compare/v1.6.1...v1.6.2) (2026-10-15)
 
 
