@@ -47,6 +47,8 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
     private const int MaxPersistenceBatchSize = 256;
     private const int MaxCleanupRounds = 8;
 
+    private static readonly AsyncLocal<bool> MarksSuppressed = new();
+
     private readonly ConfigManager _configManager;
     private readonly Func<DavDatabaseContext>? _contextFactory;
     private readonly ConcurrentDictionary<(long Generation, string Key), DateTimeOffset> _missingAt = new();
@@ -136,9 +138,22 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
         return false;
     }
 
+    /// <summary>
+    /// Stops <see cref="MarkMissing"/> from recording definitive misses, in memory or
+    /// persisted, for the current asynchronous flow. <see cref="IsMissing"/> is unaffected,
+    /// so cached misses are still honoured. Used by read-only NZB inspection, which must not
+    /// change how later imports or playback of the same articles behave.
+    /// </summary>
+    internal static IDisposable SuppressMarks()
+    {
+        var previous = MarksSuppressed.Value;
+        MarksSuppressed.Value = true;
+        return new MarkSuppressionScope(previous);
+    }
+
     public void MarkMissing(string key, long? generation = 0)
     {
-        if (generation is not { } evidenceGeneration) return;
+        if (generation is not { } evidenceGeneration || MarksSuppressed.Value) return;
         var now = DateTimeOffset.UtcNow;
         MarkMissingInMemory(evidenceGeneration, key, now);
         lock (_persistenceStateLock)
@@ -520,6 +535,11 @@ public sealed class ArticleMissNegativeCache : IHostedService, IDisposable
             return false;
         key = persistedKey[(separator + 1)..];
         return key.Length > 0;
+    }
+
+    private sealed class MarkSuppressionScope(bool previous) : IDisposable
+    {
+        public void Dispose() => MarksSuppressed.Value = previous;
     }
 
     private static async Task TrimPersistedAsync(

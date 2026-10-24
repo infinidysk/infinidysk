@@ -294,6 +294,8 @@ public class LazyRarProcessor(
             TotalFileSize = totalFileSize,
             Password = password,
             AesParams = aesParams,
+            IsEncrypted = fileHeader.IsEncrypted,
+            PasswordVerified = aesParams is not null && fileHeader.IsPasswordVerified(password),
             FirstPart = firstPart,
             PendingParts = pending.ToArray(),
             ResolvedTrailingParts = BuildResolvedTrailingParts(
@@ -625,6 +627,8 @@ public class LazyRarProcessor(
         public required long TotalFileSize { get; init; }
         public required string? Password { get; init; }
         public required AesParams? AesParams { get; init; }
+        public bool IsEncrypted { get; init; }
+        public bool PasswordVerified { get; init; }
         public required DavMultipartFile.FilePart FirstPart { get; init; }
         public required DavMultipartFile.PendingPart[] PendingParts { get; init; }
         // Non-null when import resolved every trailing volume; persisted non-lazy.
