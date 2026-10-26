@@ -353,7 +353,7 @@ public class QueueItemProcessor(
             // of the same release fail in milliseconds at the step-0 precheck instead of
             // re-verifying every article across all providers (issue #732).
             if (e.TryGetCausingException<UsenetArticleNotFoundException>(out var articleNotFound) &&
-                articleNotFound is not null)
+                articleNotFound is { InconclusiveReason: null })
             {
                 HealthCheckService.AddMissingSegmentIds(
                     [articleNotFound.SegmentId], articleNotFound.ProviderGeneration ?? 0);

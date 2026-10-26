@@ -10,6 +10,7 @@ using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Queue.DeobfuscationSteps._1.FetchFirstSegment;
 using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
+using NzbWebDAV.Services;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Tests.Clients.Usenet;
 using NzbWebDAV.Tests.Fakes;
@@ -138,6 +139,30 @@ public class FetchFirstSegmentsStepTests
         Assert.IsType<IOException>(ex.InnerException);
         Assert.Equal("provider blip", ex.InnerException!.Message);
         Assert.Contains("a.rar", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FetchFirstSegments_InconclusiveImportantMiss_IsRetryableAndNotCached(bool pipelined)
+    {
+        const long generation = 1;
+        var config = CreatePipeliningConfig(enabled: pipelined, depth: 4);
+        var segmentId = $"inconclusive-{Guid.NewGuid():N}@example.com";
+        using var client = new MissingPipelinedNntpClient(
+            definitivelyMissing: false,
+            articleException: new UsenetArticleNotFoundException(segmentId)
+            {
+                ProviderGeneration = generation,
+                InconclusiveReason = MultiProviderNntpClient.InconclusiveMissReason,
+            });
+
+        var ex = await Assert.ThrowsAsync<RetryableDownloadException>(() =>
+            FetchFirstSegmentsStep.FetchFirstSegments(
+                [CreateFile(segmentId, "\"a.rar\" yEnc")], client, config, CancellationToken.None));
+
+        Assert.Contains(MultiProviderNntpClient.InconclusiveMissReason, ex.Message);
+        HealthCheckService.CheckCachedMissingSegmentIds([segmentId], generation);
     }
 
     [Fact]
@@ -489,7 +514,9 @@ public class FetchFirstSegmentsStepTests
     private static byte[] RarPayload() =>
         [.. Rar4Magic, .. Enumerable.Repeat((byte)'x', 64)];
 
-    private sealed class MissingPipelinedNntpClient(bool definitivelyMissing) : NntpClient
+    private sealed class MissingPipelinedNntpClient(
+        bool definitivelyMissing,
+        UsenetArticleNotFoundException? articleException = null) : NntpClient
     {
         public int ArticleFetches { get; private set; }
         public int PipelinedResultsYielded { get; private set; }
@@ -526,7 +553,7 @@ public class FetchFirstSegmentsStepTests
             cancellationToken.ThrowIfCancellationRequested();
             ArticleFetches++;
             onConnectionReadyAgain?.Invoke(ArticleBodyResult.NotFound);
-            throw new UsenetArticleNotFoundException(segmentId.ToString());
+            throw articleException ?? new UsenetArticleNotFoundException(segmentId.ToString());
         }
 
         public override Task ConnectAsync(
