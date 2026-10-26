@@ -43,9 +43,6 @@ public class RemoveOrphanedFilesSchedulerService : BackgroundService
         };
     }
 
-    // Sleep in <=30m slices and re-check the wall clock, so a DST/NTP shift mid-wait can't fire
-    // the daily run early, twice, or not at all (a single Task.Delay(nextRun-now) would).
-    private static readonly TimeSpan MaxSleepSlice = TimeSpan.FromMinutes(30);
     private DateTime? _lastLoggedNextRun;
     private DateTime? _lastRun;
 
@@ -78,9 +75,8 @@ public class RemoveOrphanedFilesSchedulerService : BackgroundService
                 // is both in the future and strictly later than the last run we fired.
                 var lastRun = _lastRun ?? DateTime.MinValue;
                 var nextRun = todayRun > now && todayRun > lastRun ? todayRun : todayRun.AddDays(1);
-                var delay = nextRun - now;
 
-                // Only log when the target actually changes; we now wake every slice.
+                // Only log when the target actually changes.
                 if (_lastLoggedNextRun != nextRun)
                 {
                     Log.Information("RemoveOrphanedFilesScheduler: next run scheduled at {NextRun}", nextRun);
@@ -89,11 +85,8 @@ public class RemoveOrphanedFilesSchedulerService : BackgroundService
 
                 using var delayLinked = CancellationTokenSource
                     .CreateLinkedTokenSource(stoppingToken, reschedule.Token);
-                await Task.Delay(delay < MaxSleepSlice ? delay : MaxSleepSlice, delayLinked.Token)
+                await ScheduleUtil.DelayUntilAsync(nextRun, TimeProvider.System, delayLinked.Token)
                     .ConfigureAwait(false);
-
-                // Re-check against the current wall clock: if a slice woke us early, loop again.
-                if (DateTime.Now < nextRun) continue;
 
                 Log.Information("RemoveOrphanedFilesScheduler: running scheduled Remove Orphaned Files task");
                 var task = new RemoveUnlinkedFilesTask(
