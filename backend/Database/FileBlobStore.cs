@@ -15,6 +15,7 @@ namespace NzbWebDAV.Database;
 public sealed class FileBlobStore : IBlobStore, IDisposable
 {
     private const int CompressionLevel = 1;
+    private const int RawCompressionLevel = 3;
     private readonly Lock _lockObj = new();
     private readonly MemoryCache _metadataCache = new(new MemoryCacheOptions
     {
@@ -58,9 +59,12 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
         var committed = false;
         try
         {
+            // Raw blobs (NZB XML) are stored zstd-compressed; ReadBlob(Guid) sniffs the frame magic,
+            // so files written before this change (plain XML) stay readable.
             await using (var fileStream = OpenBlobWrite(tempPath))
+            await using (var compressionStream = new CompressionStream(fileStream, RawCompressionLevel))
             {
-                await stream.CopyToAsync(fileStream, cancellationToken).ConfigureAwait(false);
+                await stream.CopyToAsync(compressionStream, cancellationToken).ConfigureAwait(false);
             }
 
             CommitBlobWrite(blobPath, tempPath);
@@ -103,10 +107,38 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
         }
     }
 
+    /// <summary>
+    /// Opens a raw blob (NZB XML). Zstd-compressed blobs are decompressed into a seekable
+    /// <see cref="MemoryStream"/>, so callers see the same plain content as before compression.
+    /// </summary>
     public Stream? ReadBlob(Guid id)
+    {
+        var fileStream = OpenRawBlob(id);
+        if (fileStream == null) return null;
+        if (!IsZstdFrame(fileStream)) return fileStream;
+
+        using (fileStream)
+        using (var decompressionStream = new DecompressionStream(fileStream))
+        {
+            var memoryStream = new MemoryStream();
+            decompressionStream.CopyTo(memoryStream);
+            memoryStream.Position = 0;
+            return memoryStream;
+        }
+    }
+
+    private static FileStream? OpenRawBlob(Guid id)
     {
         var blobPath = GetBlobPath(id);
         return File.Exists(blobPath) ? File.OpenRead(blobPath) : null;
+    }
+
+    private static bool IsZstdFrame(FileStream stream)
+    {
+        Span<byte> magic = stackalloc byte[4];
+        var read = stream.ReadAtLeast(magic, magic.Length, throwOnEndOfStream: false);
+        stream.Position = 0;
+        return read == 4 && magic[0] == 0x28 && magic[1] == 0xB5 && magic[2] == 0x2F && magic[3] == 0xFD;
     }
 
     public bool Exists(Guid id)
@@ -139,7 +171,7 @@ public sealed class FileBlobStore : IBlobStore, IDisposable
     {
         if (_metadataCache.TryGetValue(id, out T? cached)) return cached;
 
-        var stream = ReadBlob(id);
+        var stream = OpenRawBlob(id);   // payloads are always zstd; decompressed below
         if (stream == null) return default;
         var blobPath = GetBlobPath(id);
         T? blob;

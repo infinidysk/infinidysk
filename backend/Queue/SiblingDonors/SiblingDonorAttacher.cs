@@ -6,7 +6,6 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models.Nzb;
 using Serilog;
-using ZstdSharp;
 
 namespace NzbWebDAV.Queue.SiblingDonors;
 
@@ -398,9 +397,9 @@ internal static class SiblingDonorAttacher
 
         try
         {
-            await using var decompression = new DecompressionStream(stream);
+            // BlobStore.ReadBlob returns the logical (already decompressed) payload bytes.
             return await MemoryPackSerializer
-                .DeserializeAsync<DavNzbFile>(decompression, cancellationToken: ct)
+                .DeserializeAsync<DavNzbFile>(stream, cancellationToken: ct)
                 .ConfigureAwait(false);
         }
 #pragma warning disable CA2016 // classify cancellation regardless of the ambient token
