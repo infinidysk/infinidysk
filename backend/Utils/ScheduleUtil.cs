@@ -17,7 +17,10 @@ internal static class ScheduleUtil
         {
             var remaining = localTarget - timeProvider.GetLocalNow().DateTime;
             if (remaining <= TimeSpan.Zero)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
                 return;
+            }
 
             var delay = remaining < MaxSleepSlice ? remaining : MaxSleepSlice;
             if (delay < MinSleep)
