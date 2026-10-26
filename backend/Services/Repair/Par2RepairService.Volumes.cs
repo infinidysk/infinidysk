@@ -48,7 +48,7 @@ public partial class Par2RepairService
                     ?? throw new MissingFilePayloadException(item, item.SubType);
                 foreach (var part in multipart.Metadata.FileParts)
                     AddPart(part.SegmentIds, part.SegmentByteRanges, part.SegmentByteRangesTrusted, part.VerificationProof);
-                foreach (var part in multipart.Metadata.PendingParts)
+                foreach (var part in multipart.Metadata.PendingParts ?? [])
                     AddPart(part.SegmentIds, null, false, part.VerificationProof);
                 break;
             default:

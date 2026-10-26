@@ -138,6 +138,26 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
         Assert.False(string.IsNullOrWhiteSpace((await ReadJobAsync()).FailureReason));
     }
 
+    [Fact]
+    public async Task LegacyNullPendingParts_StillRepairsMissingSegment()
+    {
+        var data = Data(4096 * 6, "legacy-null-pending");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length), [4]),
+        ], [1], DavItem.ItemSubType.MultipartFile);
+        var blobId = release.Item.FileBlobId!.Value;
+        var payload = await BlobStore.ReadBlob<DavMultipartFile>(blobId);
+        Assert.NotNull(payload);
+        // Blobs written before the lazy RAR fields deserialize PendingParts as null.
+        payload.Metadata.PendingParts = null!;
+        await BlobStore.WriteBlob(blobId, payload);
+        Assert.Null((await BlobStore.ReadBlob<DavMultipartFile>(blobId))!.Metadata.PendingParts);
+
+        Assert.Equal(Par2RepairOutcome.Repaired, await release.Service.TryPar2RepairAsync(
+            release.Item, [release.Files[0].Ids[4]], CancellationToken.None));
+        await AssertPatchAsync(release, 0, 4);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
