@@ -8,6 +8,9 @@ internal static class ScheduleUtil
     // Task.Delay truncates to whole milliseconds; a sub-millisecond remainder would otherwise spin.
     private static readonly TimeSpan MinSleep = TimeSpan.FromMilliseconds(1);
 
+    // Pause between attempts while another maintenance task holds BaseTask's shared slot.
+    internal static readonly TimeSpan BusyRetryDelay = TimeSpan.FromMinutes(5);
+
     public static async Task DelayUntilAsync(
         DateTime localTarget,
         TimeProvider timeProvider,
@@ -28,5 +31,18 @@ internal static class ScheduleUtil
 
             await Task.Delay(delay, timeProvider, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    // Stays on the caller's slot until tryExecute runs; recomputing from the clock would pick tomorrow.
+    public static async Task RetryWhileBusyAsync(
+        Func<Task<bool>> tryExecute,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        do
+        {
+            await Task.Delay(BusyRetryDelay, timeProvider, cancellationToken).ConfigureAwait(false);
+        }
+        while (!await tryExecute().ConfigureAwait(false));
     }
 }
