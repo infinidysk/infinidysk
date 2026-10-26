@@ -1927,6 +1927,16 @@ public class MultiProviderNntpClient(
     {
         var status = ClassifyException(exception);
         RecordFetch(metricsKey, status, durationMs, retries, workload, traceRange);
+        if (status == SegmentFetch.FetchStatus.Protocol)
+        {
+            ThrottledSegmentWarning.Write(
+                "nntp-protocol:" + metricsKey,
+                "Usenet protocol failure. ProviderKey={ProviderKey} Operation={Operation} Reason={Reason}",
+                metricsKey,
+                LatencyNames.ToWireName(operation),
+                RedactSegmentId(exception.Message, segmentId));
+        }
+
         if (status == SegmentFetch.FetchStatus.Other)
         {
             exception.TryGetCausingException<ArgumentException>(out var argumentException);
