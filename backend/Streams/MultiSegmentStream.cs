@@ -3127,6 +3127,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
     /// <summary>
     /// Waits for the head segment; once it has had no server response for the hedge delay while a
     /// later segment has already answered, races one duplicate fetch and keeps the first complete result.
+    /// Startup also races uniformly slow responses when a duplicate has spare fetch capacity.
     /// </summary>
     private async Task<SegmentDownloadResult> AwaitHeadSegmentAsync(
         Task<SegmentDownloadResult> head,
@@ -3146,7 +3147,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
             var issuedAt = Volatile.Read(ref _segmentIssuedAt[headIndex % _segmentIssuedAt.Length]);
             if (issuedAt == 0 || _cts.IsCancellationRequested) return await head.ConfigureAwait(false);
             var remaining = hedgeDelay - Stopwatch.GetElapsedTime(waitStarted);
-            if (remaining <= TimeSpan.Zero && Volatile.Read(ref _highestRespondedIndex) > headIndex)
+            if (remaining <= TimeSpan.Zero &&
+                (Volatile.Read(ref _highestRespondedIndex) > headIndex ||
+                 _deliveredSegments == 0 && _usenetClient.HasSpareFetchCapacity(_segmentIds.Span[headIndex], _cts.Token)))
                 break;
             await Task.WhenAny(head, Task.Delay(remaining > HedgePollInterval ? remaining : HedgePollInterval))
                 .ConfigureAwait(false);

@@ -16,6 +16,37 @@ namespace NzbWebDAV.Tests.Streams;
 [Collection(nameof(GlobalStreamTraceCollection))]
 public sealed class MultiSegmentStreamHedgeTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task BufferedStartup_AllResponsesPending_HedgesOnlyWithSpareCapacity(bool spareCapacity)
+    {
+        var (segments, ranges) = CreateSegments(8);
+        var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        using var stalled = new StalledArticleClient(inner, segments.Keys.ToArray()) { SpareCapacity = spareCapacity };
+        using var trace = new HedgeTraceCapture();
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        await using var stream = CreateStream(segments, stalled, cts.Token);
+        try
+        {
+            var first = new byte[SegmentSize];
+            var read = stream.ReadExactlyAsync(first).AsTask();
+            if (!spareCapacity)
+            {
+                await Task.WhenAny(read, Task.Delay(MultiSegmentStream.HedgeFloor * 2));
+                Assert.False(read.IsCompleted);
+                trace.AssertNoHedge();
+                stalled.Release();
+            }
+            await read.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(segments["seg-0"], first);
+            if (spareCapacity) trace.AssertHedge("seg-0", 0, HedgeOutcome.Duplicate);
+            Assert.Equal(spareCapacity ? 2 : 1, inner.BodyRequestCounts["seg-0"]);
+        }
+        finally { stalled.Release(); }
+    }
+
     [Fact]
     public async Task StalledHeadSegment_DuplicateFetchKeepsPlaybackMoving()
     {
@@ -634,6 +665,10 @@ public sealed class MultiSegmentStreamHedgeTests
         private int _failedCallbacks;
 
         public int FailedCallbacks => Volatile.Read(ref _failedCallbacks);
+
+        public bool SpareCapacity { get; init; } = true;
+
+        public override bool HasSpareFetchCapacity(SegmentId segmentId, CancellationToken cancellationToken) => SpareCapacity;
 
         /// <summary>Runs before each single-article body request with the 1-based request count for that id.</summary>
         public Func<string, int, Task>? BeforeSingleRequest { get; init; }
