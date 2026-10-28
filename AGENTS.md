@@ -151,6 +151,7 @@ InfiniDysk develops these libraries **in this repository** under `libs/` and con
 | SAB API obedience audit | `docs/reference/sabnzbd-api.md` (upstream 5.1 snapshot) + `backend/Api/SabControllers/` + [`docs/features/sab-api.md`](https://github.com/infinidysk/docs/blob/main/docs/features/sab-api.md) in infinidysk/docs (our subset) |
 | Admin/settings API | `backend/Api/Controllers/` |
 | WebDAV paths, streaming, archives | `backend/WebDav/`, `backend/Queue/`, `backend/Streams/` |
+| Watch catalog / catalog playback | `docs/reference/watch-catalog.md` + `docs/decisions/0003-watch-catalog-playback.md`, `backend/Services/Catalog/`, `frontend/app/routes/watch*`, `frontend/app/components/watch/` |
 | Usenet connections / providers | `backend/Clients/Usenet/`, `libs/UsenetSharp/` |
 | NNTP obedience audit | `docs/reference/rfc3977.md` (RFC 3977 snapshot) + `libs/UsenetSharp/` + `backend/Clients/Usenet/` |
 | yEnc native / bindings | `libs/rapidyenc/` (submodule), `libs/RapidYencSharp/`, `scripts/build-rapidyenc.sh` |

@@ -46,6 +46,12 @@ Please add feature requests and bug reports to the [issue tracker](https://githu
 - **Provider routing and limits** — Separate provider-wide and article-transfer connection budgets, reserve burstable metadata capacity, set priorities and data caps, then Auto-tune transfers from the UI.
 - **Container-aware gap handling** — Preserve MPEG-TS timing across missing article ranges to reduce playback desynchronization.
 
+### Catalog and playback
+
+- **[Watch catalog](docs/reference/watch-catalog.md)** — Browse TMDB/TVDB rows, search titles, and play a movie or episode without opening Search or Queue. Release selection reuses your indexers, verification, and failover; playback streams through the existing `/view` byte ranges.
+- **Compatibility HLS** — When a browser cannot decode the release directly, one continuous on-demand encoder serves six-second segments with a continuous timeline, so audio and video meet exactly at every boundary. Direct playback stays available as an explicit choice.
+- **Full-screen player** — Keyboard-driven OSD with seek rail, speed control, picture-in-picture, and a live playback-data panel for diagnosing stalls versus dropped frames.
+
 ### Search and playback readiness
 
 - **Built-in Newznab search** — Configure indexers, monitor API usage, search manually, and mount results.
