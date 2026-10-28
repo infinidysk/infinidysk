@@ -2608,7 +2608,9 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                     Incremental: true);
             }
 
+#pragma warning disable CA2000 // finally disposes untransferred buffers; success transfers ownership to DrainedSegment
             buffer = new PooledBufferStream(capacity);
+#pragma warning restore CA2000
             var traceRange = MultiProviderNntpClient.CurrentStreamTraceRange;
             var drainStarted = Stopwatch.GetTimestamp();
             await source.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
