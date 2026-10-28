@@ -18,7 +18,7 @@ internal class CryptKey3 : ICryptKey
 
     private readonly string _password;
 
-    public CryptKey3(string? password) => _password = password ?? string.Empty;
+    public CryptKey3(string? password) => _password = ICryptKey.LimitPassword(password);
 
     public ICryptoTransform Transformer(byte[] salt)
     {
