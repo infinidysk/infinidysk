@@ -84,6 +84,50 @@ public sealed class MultiSegmentStreamHedgeTests
         finally { stalled.Release(); }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RangeOnlyGeometry_RejectsDuplicateWithMismatchedDecodedLength(bool oversized)
+    {
+        var (segments, ranges) = CreateSegments(8);
+        var requests = 0;
+        var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges,
+            decodedStreamFactory: (key, bytes) =>
+                key == "seg-0" && Interlocked.Increment(ref requests) == 2
+                    ? new MemoryStream(oversized ? [.. bytes, 1] : bytes[..(bytes.Length / 2)], writable: false)
+                    : new MemoryStream(bytes, writable: false));
+        var duplicateRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var stalled = new StalledArticleClient(inner, segments.Keys.ToArray())
+        {
+            BeforeSingleRequest = (id, _) =>
+            {
+                if (id == "seg-0") duplicateRequested.TrySetResult();
+                return Task.CompletedTask;
+            },
+        };
+        using var trace = new HedgeTraceCapture();
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        await using var stream = MultiSegmentStream.Create(segments.Keys.ToArray().AsMemory(), stalled,
+            articleBufferSize: 40, estimatedSegmentSize: SegmentSize, failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true, cts.Token, fileName: "range-length.bin",
+            bodyPipelineBatchWidth: BatchWidth, expectedFirstSegmentRange: new LongRange(0, SegmentSize));
+        try
+        {
+            var actual = new byte[segments.Count * SegmentSize];
+            var read = stream.ReadExactlyAsync(actual).AsTask();
+            await duplicateRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.Delay(200);
+            Assert.False(read.IsCompleted);
+            trace.AssertHedge("seg-0", 0, HedgeOutcome.OriginalAfterDuplicateFailed);
+            stalled.Release();
+            await read.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(segments.Values.SelectMany(bytes => bytes), actual);
+            Assert.Equal(2, inner.BodyRequestCounts["seg-0"]);
+        }
+        finally { stalled.Release(); }
+    }
+
     [Fact]
     public async Task StalledHeadSegment_DuplicateFetchKeepsPlaybackMoving()
     {

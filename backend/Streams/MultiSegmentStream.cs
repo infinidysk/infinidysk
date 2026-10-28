@@ -2480,7 +2480,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         ArticleByteLease? existingLease = null,
         long? leasedEstimate = null,
         IIncrementalSegmentHandler? incremental = null,
-        bool reportShortDecode = true)
+        bool reportShortDecode = true,
+        bool validateDuplicateLength = false)
     {
         try
         {
@@ -2514,7 +2515,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
 
         return await DrainSegmentAsync(
                 source, segmentIndex, cancellationToken, existingLease, leasedEstimate, incremental,
-                reportShortDecode)
+                reportShortDecode, validateDuplicateLength)
             .ConfigureAwait(false);
     }
 
@@ -2543,7 +2544,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         ArticleByteLease? existingLease = null,
         long? leasedEstimate = null,
         IIncrementalSegmentHandler? incremental = null,
-        bool reportShortDecode = true)
+        bool reportShortDecode = true,
+        bool validateDuplicateLength = false)
     {
         ArticleByteLease? lease = existingLease;
         var ownsLease = existingLease is null;
@@ -2615,6 +2617,10 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 StreamStallKind.BodyDrain,
                 Stopwatch.GetElapsedTime(drainStarted));
             var drained = buffer.Length;
+            if (validateDuplicateLength && segmentIndex == 0 &&
+                !_expectedFirstSegmentRangeWasClippedAtFileEnd &&
+                _expectedFirstSegmentRange is { } duplicateRange && drained != duplicateRange.Count)
+                throw new InvalidDataException("Duplicate BODY decoded length does not match its trusted positioning range.");
             var shortPadded = false;
             if (segmentIndex == 0
                 && _expectedFirstSegmentRangeWasClippedAtFileEnd
@@ -3262,7 +3268,7 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         var drained = await ValidateAndDrainSegmentAsync(
 #pragma warning restore CA2000
                 response.Stream!, segmentIndex, cancellationToken, ArticleByteLease.Empty, estimate,
-                reportShortDecode: false)
+                reportShortDecode: false, validateDuplicateLength: true)
             .ConfigureAwait(false);
         return ToDownloadResult(drained, estimate, segmentId);
     }
