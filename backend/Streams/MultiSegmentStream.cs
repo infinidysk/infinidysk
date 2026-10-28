@@ -2657,14 +2657,14 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         }
         catch
         {
-            if (buffer is not null)
-                await buffer.DisposeAsync().ConfigureAwait(false);
             if (ownsLease)
                 lease?.Dispose();
             throw;
         }
         finally
         {
+            if (buffer is not null)
+                await buffer.DisposeAsync().ConfigureAwait(false);
             if (!sourceDisposeAttempted)
                 await source.DisposeAsync().ConfigureAwait(false);
         }
