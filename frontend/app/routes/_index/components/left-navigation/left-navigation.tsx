@@ -68,6 +68,7 @@ export function LeftNavigation({
   })).filter((group) => group.items.length > 0);
 
   const items: NavItem[] = [
+    { target: "/watch", icon: "live_tv", label: "Watch", featureId: "watch" },
     { target: "/overview", icon: "dashboard", label: "Overview", featureId: "overview" },
     { target: "/setup", icon: "checklist", label: "Setup Guide", featureId: "setup" },
     { target: "/queue", icon: "list_alt", label: "Queue", featureId: "queue" },

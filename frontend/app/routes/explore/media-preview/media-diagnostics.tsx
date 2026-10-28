@@ -15,14 +15,14 @@ import {
   formatTimeRanges,
   networkStateLabel,
   readyStateLabel,
-} from "./media-utils";
+} from "~/components/media-player/media-utils";
 import {
   describeTraceEvent,
   redactTraceEvents,
   summarizeTrace,
   type StreamTraceEvent,
 } from "./media-trace";
-import type { MediaPlayer } from "./use-media-player";
+import type { MediaPlayer } from "~/components/media-player/use-media-player";
 
 const TOPIC_ACTIVE_READS = "ar";
 const TOPIC_LIVE_STATS = "ls";

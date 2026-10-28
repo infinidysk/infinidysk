@@ -74,5 +74,11 @@ public class ProfileConfig
         Off = 0,
         Resolution = 1,
         ResolutionAndSource = 2,
+
+        /// <summary>
+        /// Catalog ordering: prefer 1080p and H.264, non-REMUX before REMUX, then the
+        /// smallest release, so a browser-direct stream starts from a compact encode.
+        /// </summary>
+        Web1080p = 3,
     }
 }

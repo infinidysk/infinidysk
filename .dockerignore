@@ -9,3 +9,7 @@ frontend/dist-node
 tests/
 libs/rapidyenc/build
 libs/RapidYencSharp/runtimes
+
+# localhost watch deployment
+/config
+/.env.watch

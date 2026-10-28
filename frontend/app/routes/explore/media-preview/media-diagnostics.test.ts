@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { buildDiagnosticsSnapshot, type MediaDiagnosticsProps } from "./media-diagnostics";
 import type { ActiveRead } from "~/clients/backend-client.server";
-import type { MediaPlayer } from "./use-media-player";
+import type { MediaPlayer } from "~/components/media-player/use-media-player";
 
 function fakePlayer(): MediaPlayer {
   return {
     status: "playing",
+    mode: "direct",
+    hlsAvailable: false,
+    activateCompatibilityMode: () => {},
     buffering: false,
     attempts: 1,
     maxAttempts: 3,

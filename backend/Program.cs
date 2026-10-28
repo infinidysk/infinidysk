@@ -16,6 +16,7 @@ using NzbWebDAV.Api.OpenApi;
 using NzbWebDAV.Api.SabControllers;
 using NzbWebDAV.Auth;
 using NzbWebDAV.Clients.Rclone;
+using NzbWebDAV.Clients.Metadata;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Config.Scheduling;
@@ -26,6 +27,7 @@ using NzbWebDAV.Logging;
 using NzbWebDAV.Middlewares;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
+using NzbWebDAV.Services.Catalog;
 using NzbWebDAV.Services.Diagnostics;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.Repair;
@@ -254,6 +256,33 @@ public sealed partial class Program
             });
             builder.Services.AddControllers(options =>
                 options.Filters.Add<ApiErrorContractFilter>());
+            // Catalog metadata clients: one pooled handler per provider, bounded timeout,
+            // and an identifying User-Agent, so no request path creates an HttpClient.
+            builder.Services.AddHttpClient(MetadataHttp.TmdbClientName, client =>
+            {
+                client.Timeout = MetadataHttp.RequestTimeout;
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(MetadataHttp.UserAgent);
+                client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+            });
+            builder.Services.AddHttpClient(MetadataHttp.TvdbClientName, client =>
+            {
+                client.Timeout = MetadataHttp.RequestTimeout;
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(MetadataHttp.UserAgent);
+                client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+            });
+            // The catalog resolver reads only the head of the play URL, so redirects must be
+            // observable instead of followed: it validates and rewrites the target itself.
+            builder.Services
+                .AddHttpClient(CatalogTranscodeService.PlaybackClientName, client =>
+                {
+                    client.Timeout = TimeSpan.FromSeconds(100);
+                    client.DefaultRequestHeaders.UserAgent.ParseAdd(MetadataHttp.UserAgent);
+                })
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+                {
+                    AllowAutoRedirect = false,
+                    ConnectTimeout = TimeSpan.FromSeconds(15),
+                });
             builder.Services.AddHttpContextAccessor();
             if (apiDocsEnabled)
                 builder.Services.AddOpenApi(AdminOpenApiExtensions.DocumentName, AdminOpenApiExtensions.Configure);
@@ -430,6 +459,16 @@ public sealed partial class Program
                 .AddSingleton<ExternalIdResolver>()
                 .AddSingleton<ImdbTitleResolver>()
                 .AddSingleton<SearchProfileService>()
+                .AddSingleton<TmdbClient>()
+                .AddSingleton<TvdbClient>()
+                .AddSingleton<CatalogService>()
+                .AddSingleton<CatalogPlaybackSessionStore>()
+                .AddSingleton<CatalogPlaybackService>()
+                .AddSingleton<IFFmpegRunner, FFmpegRunner>()
+                .AddSingleton(new CatalogTranscodeOptions())
+                .AddSingleton<CatalogTranscodeService>()
+                .AddSingleton<CatalogTranscodeCleanupService>()
+                .AddHostedService(sp => sp.GetRequiredService<CatalogTranscodeCleanupService>())
                 .AddSingleton<VariantResolver>()
                 .AddSingleton<MetricsWriter>()
                 .AddHostedService(sp => sp.GetRequiredService<MetricsWriter>())

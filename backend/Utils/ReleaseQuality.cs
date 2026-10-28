@@ -2,9 +2,9 @@ using System.Text.RegularExpressions;
 
 namespace NzbWebDAV.Utils;
 
-public readonly record struct ReleaseQualityRanks(int Resolution, int Source)
+public readonly record struct ReleaseQualityRanks(int Resolution, int Source, int Codec)
 {
-    public static readonly ReleaseQualityRanks Unknown = new(ResolutionUnknown, SourceUnknown);
+    public static readonly ReleaseQualityRanks Unknown = new(ResolutionUnknown, SourceUnknown, CodecUnknown);
 
     public const int Resolution4320 = 5;
     public const int Resolution2160 = 4;
@@ -21,6 +21,11 @@ public readonly record struct ReleaseQualityRanks(int Resolution, int Source)
     public const int SourceDvd = 1;
     public const int SourceUnknown = 0;
     public const int SourceCam = -1;
+
+    /// <summary>Codec ranks are ordered so a higher value is the browser-friendlier encode.</summary>
+    public const int CodecH264 = 2;
+    public const int CodecUnknown = 1;
+    public const int CodecOther = 0;
 }
 
 public static class ReleaseQuality
@@ -33,12 +38,19 @@ public static class ReleaseQuality
         @"(?<![A-Za-z0-9])(?:(?<remux>remux)|(?<bluray>blu[-.]?ray|bdrip|brrip)|(?<webdl>web[-.]?dl)|(?<webrip>webrip)|(?<hdtv>hdtv)|(?<dvd>dvdrip|dvd)|(?<cam>telesync|cam|ts))(?![A-Za-z0-9])",
         RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    private static readonly Regex CodecRegex = new(
+        @"(?<![A-Za-z0-9])(?:(?<h264>x264|h264|h\.264|avc)|(?<other>x265|h265|h\.265|hevc|av1|vp9|xvid|divx))(?![A-Za-z0-9])",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     public static ReleaseQualityRanks Parse(string? title)
     {
         if (string.IsNullOrWhiteSpace(title)) return ReleaseQualityRanks.Unknown;
 
         var normalized = title.Replace('_', '.');
-        return new ReleaseQualityRanks(ParseResolution(normalized), ParseSource(normalized));
+        return new ReleaseQualityRanks(
+            ParseResolution(normalized),
+            ParseSource(normalized),
+            ParseCodec(normalized));
     }
 
     private static int ParseResolution(string title)
@@ -51,6 +63,18 @@ public static class ReleaseQuality
         if (match.Groups["hd"].Success) return ReleaseQualityRanks.Resolution720;
         if (match.Groups["sd"].Success) return ReleaseQualityRanks.ResolutionSd;
         return ReleaseQualityRanks.ResolutionUnknown;
+    }
+
+    /// <summary>
+    /// H.264 is the codec every browser decodes without transcoding, so it outranks an
+    /// unknown codec, which in turn outranks a known-but-incompatible one.
+    /// </summary>
+    private static int ParseCodec(string title)
+    {
+        var match = CodecRegex.Match(title);
+        if (!match.Success) return ReleaseQualityRanks.CodecUnknown;
+        if (match.Groups["h264"].Success) return ReleaseQualityRanks.CodecH264;
+        return ReleaseQualityRanks.CodecOther;
     }
 
     private static int ParseSource(string title)

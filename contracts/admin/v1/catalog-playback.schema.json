@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/catalog-playback.schema.json",
+  "title": "Admin catalog playback success",
+  "type": "object",
+  "required": ["status", "playbackId", "directUrl", "hlsUrl", "releaseTitle"],
+  "additionalProperties": false,
+  "properties": {
+    "status": { "const": true },
+    "error": { "type": ["string", "null"] },
+    "playbackId": { "type": "string", "format": "uuid" },
+    "directUrl": { "type": "string", "minLength": 1 },
+    "hlsUrl": { "type": "string", "minLength": 1 },
+    "releaseTitle": { "type": "string" }
+  }
+}

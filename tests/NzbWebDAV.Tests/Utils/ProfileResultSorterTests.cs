@@ -93,6 +93,48 @@ public class ProfileResultSorterTests
         Assert.Equal("Movie.2024.2160p.WEB-DL", merged[1].Title);
     }
 
+    [Fact]
+    public void Sort_Web1080p_PrefersCompactH264AndFallsBackByResolution()
+    {
+        var items = new[]
+        {
+            new Release("Movie.2024.720p.WEB-DL.x264", Grabs: 900, Size: 1, Posted: DateTimeOffset.UnixEpoch),
+            new Release("Movie.2024.2160p.WEB-DL.x264", Grabs: 800, Size: 2, Posted: DateTimeOffset.UnixEpoch),
+            new Release("Movie.2024.1080p.WEB-DL.HEVC", Grabs: 700, Size: 3, Posted: DateTimeOffset.UnixEpoch),
+            new Release("Movie.2024.1080p.REMUX.x264", Grabs: 600, Size: 40, Posted: DateTimeOffset.UnixEpoch),
+            new Release("Movie.2024.1080p.WEB-DL.x264-LARGE", Grabs: 500, Size: 12, Posted: DateTimeOffset.UnixEpoch),
+            new Release("Movie.2024.1080p.WEB-DL.x264-SMALL", Grabs: 1, Size: 8, Posted: DateTimeOffset.UnixEpoch),
+        };
+
+        var sorted = Sort(items, ProfileConfig.QualitySortMode.Web1080p);
+
+        Assert.Equal(
+            new[]
+            {
+                "Movie.2024.1080p.WEB-DL.x264-SMALL",
+                "Movie.2024.1080p.WEB-DL.x264-LARGE",
+                "Movie.2024.1080p.REMUX.x264",
+                "Movie.2024.1080p.WEB-DL.HEVC",
+                "Movie.2024.2160p.WEB-DL.x264",
+                "Movie.2024.720p.WEB-DL.x264",
+            },
+            sorted.Select(x => x.Title));
+
+        // Grabs only break ties inside a tier, and only when the indexer prefers downloads.
+        var preferred = Sort(items, ProfileConfig.QualitySortMode.Web1080p, preferDownloaded: true);
+        Assert.Equal(
+            new[]
+            {
+                "Movie.2024.1080p.WEB-DL.x264-LARGE",
+                "Movie.2024.1080p.WEB-DL.x264-SMALL",
+                "Movie.2024.1080p.REMUX.x264",
+                "Movie.2024.1080p.WEB-DL.HEVC",
+                "Movie.2024.2160p.WEB-DL.x264",
+                "Movie.2024.720p.WEB-DL.x264",
+            },
+            preferred.Select(x => x.Title));
+    }
+
     private static List<Release> Sort(
         IEnumerable<Release> items,
         ProfileConfig.QualitySortMode mode,

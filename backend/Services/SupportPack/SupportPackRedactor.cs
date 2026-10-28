@@ -18,6 +18,9 @@ internal sealed partial class SupportPackRedactor
     [
         ConfigKeys.ApiKey,
         ConfigKeys.ApiStrmKey,
+        ConfigKeys.CatalogProfileToken,
+        ConfigKeys.MetadataTmdbReadToken,
+        ConfigKeys.MetadataTvdbApiKey,
         ConfigKeys.RclonePass,
         ConfigKeys.WebdavPass,
         ConfigKeys.WatchtowerProfileToken,

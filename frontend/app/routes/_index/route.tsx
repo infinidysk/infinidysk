@@ -1,7 +1,7 @@
 import { redirect } from "react-router";
 
 export function loader() {
-  return redirect("/overview");
+  return redirect("/watch");
 }
 
 export function action() {

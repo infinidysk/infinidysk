@@ -41,6 +41,8 @@ export async function loader({ request }: Route.LoaderArgs) {
   // Single-fetch navigation/revalidation uses internal `.data` URLs
   // (e.g. /login.data), so strip that suffix before the layout check.
   const path = new URL(request.url).pathname.replace(/\.data$/, "");
+  // The catalog is its own full-width surface: no admin sidebar, top nav, or banners.
+  const isWatchRoute = path === "/watch" || path.startsWith("/watch/");
   if (path === "/login" || path === "/onboarding") {
     return {
       useLayout: false,
@@ -70,7 +72,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const serviceProvider = getServiceProvider();
 
   return {
-    useLayout: true,
+    useLayout: !isWatchRoute,
     // Baked into images published to the deprecated ghcr.io/nzbdav/nzbdav path.
     isLegacyImage: process.env["NZBDAV_LEGACY_IMAGE"] === "true",
     isResetAdminPasswordSet: resetAdminPasswordSet,
@@ -209,13 +211,16 @@ export default function App({ loaderData }: Route.ComponentProps) {
     );
   }
 
+  if (!hideShell) {
+    // Catalog routes: shell-free, but still gated so a disabled feature cannot be reached.
+    return <ServiceProviderGate serviceProvider={serviceProvider}>{outlet}</ServiceProviderGate>;
+  }
+
   return (
     <>
-      {hideShell && (
-        <div className="px-4 pt-4">
-          <ResetAdminPasswordBanner isResetAdminPasswordSet={isResetAdminPasswordSet ?? false} />
-        </div>
-      )}
+      <div className="px-4 pt-4">
+        <ResetAdminPasswordBanner isResetAdminPasswordSet={isResetAdminPasswordSet ?? false} />
+      </div>
       {outlet}
     </>
   );

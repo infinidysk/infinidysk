@@ -43,6 +43,27 @@ public class ReleaseQualityTests
         Assert.Equal(expected, ReleaseQuality.Parse(title).Source);
     }
 
+    [Theory]
+    [InlineData("Movie.1080p.WEB-DL.x264", ReleaseQualityRanks.CodecH264)]
+    [InlineData("Movie.1080p.WEB-DL.H264", ReleaseQualityRanks.CodecH264)]
+    [InlineData("Movie.1080p.WEB-DL.h.264", ReleaseQualityRanks.CodecH264)]
+    [InlineData("Movie.1080p.WEB-DL.AVC", ReleaseQualityRanks.CodecH264)]
+    [InlineData("Movie.1080p.WEB-DL.x265", ReleaseQualityRanks.CodecOther)]
+    [InlineData("Movie.1080p.WEB-DL.H265", ReleaseQualityRanks.CodecOther)]
+    [InlineData("Movie.1080p.WEB-DL.H.265", ReleaseQualityRanks.CodecOther)]
+    [InlineData("Movie.1080p.WEB-DL.HEVC", ReleaseQualityRanks.CodecOther)]
+    [InlineData("Movie.1080p.WEB-DL.AV1", ReleaseQualityRanks.CodecOther)]
+    [InlineData("Movie.1080p.WEB-DL.VP9", ReleaseQualityRanks.CodecOther)]
+    [InlineData("Movie.1080p.WEB-DL.XviD", ReleaseQualityRanks.CodecOther)]
+    [InlineData("Movie.1080p.WEB-DL.DivX", ReleaseQualityRanks.CodecOther)]
+    [InlineData("Movie.1080p.WEB-DL", ReleaseQualityRanks.CodecUnknown)]
+    [InlineData("Movie.1080p.WEB-DL.H264X", ReleaseQualityRanks.CodecUnknown)]
+    [InlineData("Movie.1080p.WEB-DL.x264GROUP", ReleaseQualityRanks.CodecUnknown)]
+    public void Parse_RecognizesCodecTokens(string title, int expected)
+    {
+        Assert.Equal(expected, ReleaseQuality.Parse(title).Codec);
+    }
+
     [Fact]
     public void Parse_IsCaseAndPunctuationInsensitive()
     {

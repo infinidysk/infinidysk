@@ -230,6 +230,11 @@ public static class ConfigKeys
     public const string IndexersInstances = "indexers.instances";
     public const string ProfilesInstances = "profiles.instances";
 
+    // catalog / metadata
+    public const string CatalogProfileToken = "catalog.profile-token";
+    public const string MetadataTmdbReadToken = "metadata.tmdb-read-token";
+    public const string MetadataTvdbApiKey = "metadata.tvdb-api-key";
+
     // prowlarr
     public const string ProwlarrUrl = "prowlarr.url";
     public const string ProwlarrApiKey = "prowlarr.api-key";

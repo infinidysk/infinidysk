@@ -1,9 +1,11 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿﻿using System.Globalization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using NzbWebDAV.Api.Errors;
 using NzbWebDAV.Auth;
 using NzbWebDAV.Config;
+using NzbWebDAV.Exceptions;
 using Serilog;
 
 namespace NzbWebDAV.Api.Controllers;
@@ -40,6 +42,25 @@ public abstract class BaseApiController : ControllerBase
             {
                 Status = false,
                 Error = e.Message
+            });
+        }
+        catch (CatalogException e)
+        {
+            // Nothing can be written once a streamed response has started; returning
+            // EmptyResult keeps the byte stream intact instead of corrupting it.
+            if (HttpContext.Response.HasStarted)
+                return new EmptyResult();
+
+            if (e.RetryAfter is { } retryAfter)
+            {
+                Response.Headers.RetryAfter = ((int)Math.Ceiling(retryAfter.TotalSeconds))
+                    .ToString(CultureInfo.InvariantCulture);
+            }
+
+            return StatusCode(e.StatusCode, new BaseApiResponse()
+            {
+                Status = false,
+                Error = e.SafeMessage
             });
         }
         catch (Exception e) when (e is BadHttpRequestException or ArgumentException)

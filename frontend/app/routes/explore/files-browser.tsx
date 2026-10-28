@@ -50,7 +50,7 @@ import {
 } from "./files-state";
 import { getIcon, isPlayableMedia } from "~/utils/file-kind";
 import { MediaPreview } from "./media-preview/media-preview";
-import { appendQueryParam } from "./media-preview/media-utils";
+import { appendQueryParam } from "~/components/media-player/media-utils";
 import styles from "./files-browser.module.css";
 
 type Props = {

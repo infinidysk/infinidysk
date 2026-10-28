@@ -118,6 +118,353 @@
         ],
         "type": "object"
       },
+      "CatalogEpisodeDto": {
+        "properties": {
+          "airDate": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "episodeNumber": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "overview": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "runtimeMinutes": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "null",
+              "string"
+            ]
+          },
+          "seasonNumber": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "stillUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CatalogHomeResponse": {
+        "properties": {
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogRowDto"
+            },
+            "type": "array"
+          },
+          "status": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "CatalogPlaybackResponse": {
+        "properties": {
+          "directUrl": {
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "hlsUrl": {
+            "type": "string"
+          },
+          "playbackId": {
+            "type": "string"
+          },
+          "releaseTitle": {
+            "type": "string"
+          },
+          "status": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "CatalogRowDto": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogSummaryDto"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "CatalogSearchResponse": {
+        "properties": {
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "hasMore": {
+            "type": "boolean"
+          },
+          "page": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogSummaryDto"
+            },
+            "type": "array"
+          },
+          "status": {
+            "type": "boolean"
+          },
+          "totalPages": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CatalogSeasonDto": {
+        "properties": {
+          "episodeCount": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "seasonNumber": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CatalogSummaryDto": {
+        "properties": {
+          "backdropUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "overview": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "posterUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "rating": {
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "tmdbId": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "type": {
+            "type": "string"
+          },
+          "year": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CatalogTitleDto": {
+        "properties": {
+          "backdropUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "genres": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "overview": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "posterUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "rating": {
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ]
+          },
+          "runtimeMinutes": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "null",
+              "string"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "tmdbId": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "type": {
+            "type": "string"
+          },
+          "year": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CatalogTitleResponse": {
+        "properties": {
+          "episodes": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogEpisodeDto"
+            },
+            "type": "array"
+          },
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "seasons": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogSeasonDto"
+            },
+            "type": "array"
+          },
+          "selectedSeason": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "type": "boolean"
+          },
+          "title": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CatalogTitleDto"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
       "CategoryMapEntry": {
         "properties": {
           "action": {
@@ -2104,6 +2451,568 @@
         "summary": "Browse Files",
         "tags": [
           "BrowseFiles"
+        ]
+      }
+    },
+    "/api/catalog/home": {
+      "get": {
+        "operationId": "get-api-catalog-home",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogHomeResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogHomeResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogHomeResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad request."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unexpected server error. Detail is sanitized; use traceId."
+          }
+        },
+        "summary": "Catalog Home",
+        "tags": [
+          "CatalogHome"
+        ]
+      }
+    },
+    "/api/catalog/playback": {
+      "post": {
+        "operationId": "post-api-catalog-playback",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogPlaybackResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogPlaybackResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogPlaybackResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad request."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unexpected server error. Detail is sanitized; use traceId."
+          }
+        },
+        "summary": "Catalog Playback",
+        "tags": [
+          "CatalogPlayback"
+        ]
+      }
+    },
+    "/api/catalog/playback/{sessionId}/playlist.m3u8": {
+      "get": {
+        "operationId": "get-api-catalog-playback-sessionId-playlist.m3u8",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad request."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unexpected server error. Detail is sanitized; use traceId."
+          }
+        },
+        "summary": "Catalog Playback Manifest",
+        "tags": [
+          "CatalogPlaybackManifest"
+        ]
+      }
+    },
+    "/api/catalog/playback/{sessionId}/segments/{index}.ts": {
+      "get": {
+        "operationId": "get-api-catalog-playback-sessionId-segments-index-.ts",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad request."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unexpected server error. Detail is sanitized; use traceId."
+          }
+        },
+        "summary": "Catalog Playback Segment",
+        "tags": [
+          "CatalogPlaybackSegment"
+        ]
+      }
+    },
+    "/api/catalog/search": {
+      "get": {
+        "operationId": "get-api-catalog-search",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogSearchResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogSearchResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogSearchResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad request."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unexpected server error. Detail is sanitized; use traceId."
+          }
+        },
+        "summary": "Catalog Search",
+        "tags": [
+          "CatalogSearch"
+        ]
+      }
+    },
+    "/api/catalog/titles/{type}/{tmdbId}": {
+      "get": {
+        "operationId": "get-api-catalog-titles-type--tmdbId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "tmdbId",
+            "required": true,
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogTitleResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogTitleResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogTitleResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad request."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unexpected server error. Detail is sanitized; use traceId."
+          }
+        },
+        "summary": "Catalog Title",
+        "tags": [
+          "CatalogTitle"
         ]
       }
     },
@@ -13123,6 +14032,24 @@
     },
     {
       "name": "ClearHealthCheckHistory"
+    },
+    {
+      "name": "CatalogHome"
+    },
+    {
+      "name": "CatalogSearch"
+    },
+    {
+      "name": "CatalogTitle"
+    },
+    {
+      "name": "CatalogPlayback"
+    },
+    {
+      "name": "CatalogPlaybackManifest"
+    },
+    {
+      "name": "CatalogPlaybackSegment"
     },
     {
       "name": "BrowseFiles"

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/catalog-home.schema.json",
+  "title": "Admin catalog home success",
+  "type": "object",
+  "required": ["status", "rows"],
+  "additionalProperties": false,
+  "properties": {
+    "status": { "const": true },
+    "error": { "type": ["string", "null"] },
+    "rows": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/row" }
+    }
+  },
+  "$defs": {
+    "row": {
+      "type": "object",
+      "required": ["id", "title", "items"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "items": { "type": "array", "items": { "$ref": "#/$defs/summary" } }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "type",
+        "tmdbId",
+        "title",
+        "year",
+        "overview",
+        "rating",
+        "posterUrl",
+        "backdropUrl"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "enum": ["movie", "series"] },
+        "tmdbId": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "year": { "type": ["integer", "null"] },
+        "overview": { "type": ["string", "null"] },
+        "rating": { "type": ["number", "null"] },
+        "posterUrl": { "type": ["string", "null"] },
+        "backdropUrl": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

@@ -29,7 +29,7 @@ type ProfilesSettingsProps = {
 };
 
 type FallbackMode = "Off" | "Title" | "Broad";
-type QualitySortMode = "Off" | "Resolution" | "ResolutionAndSource";
+type QualitySortMode = "Off" | "Resolution" | "ResolutionAndSource" | "Web1080p";
 
 interface Profile {
   Token: string;
@@ -447,6 +447,9 @@ function ProfileForm({ profile, index, availableIndexers, onChange, onRemove }: 
             <option value="Resolution">Resolution — prefer 2160p, then 1080p, 720p, SD</option>
             <option value="ResolutionAndSource">
               Resolution + source — resolution first, then Remux/BluRay/WEB-DL/...
+            </option>
+            <option value="Web1080p">
+              Web1080p — prefer 1080p H.264, then smaller non-REMUX releases
             </option>
           </Select>
           <p className="mb-0 mt-1 text-[11px] leading-relaxed text-base-content/45">

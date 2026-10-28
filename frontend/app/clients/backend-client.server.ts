@@ -7,6 +7,12 @@ import {
 } from "./files-contract";
 import { getFrontendRuntimeConfig } from "../../server/runtime-config";
 import { adminApi } from "~/clients/admin-operations";
+import {
+  catalogHomeSchema,
+  catalogSearchResponseSchema,
+  catalogTitleResponseSchema,
+  type CatalogTitleType,
+} from "~/clients/catalog-contract";
 import { toStreamTracingStatus, type StreamTracingStatus } from "~/utils/stream-tracing-status";
 
 export type { StreamTracingStatus };
@@ -308,6 +314,43 @@ async function call<T = Record<string, unknown>>(
 }
 
 class BackendClient {
+  public async getCatalogHome(signal?: AbortSignal) {
+    return await call(
+      adminApi.catalogHome,
+      "Could not load the catalog",
+      { method: "GET", ...(signal ? { signal } : {}) },
+      catalogHomeSchema,
+    );
+  }
+
+  public async searchCatalog(query: string, page: number, signal?: AbortSignal) {
+    const parameters = new URLSearchParams({ q: query, page: String(page) });
+    return await call(
+      `${adminApi.catalogSearch}?${parameters}`,
+      "Could not search the catalog",
+      { method: "GET", ...(signal ? { signal } : {}) },
+      catalogSearchResponseSchema,
+    );
+  }
+
+  public async getCatalogTitle(
+    type: CatalogTitleType,
+    tmdbId: number,
+    season?: number,
+    signal?: AbortSignal,
+  ) {
+    const path = adminApi.catalogTitle
+      .replace("{type}", type)
+      .replace("{tmdbId}", String(tmdbId));
+    const query = season === undefined ? "" : `?${new URLSearchParams({ season: String(season) })}`;
+    return await call(
+      `${path}${query}`,
+      "Could not load the title",
+      { method: "GET", ...(signal ? { signal } : {}) },
+      catalogTitleResponseSchema,
+    );
+  }
+
   public async browseFiles(parameters: URLSearchParams, signal: AbortSignal) {
     return call(
       `${adminApi.browseFiles}?${parameters}`,

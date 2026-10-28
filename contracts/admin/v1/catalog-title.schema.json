@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/catalog-title.schema.json",
+  "title": "Admin catalog title details success",
+  "type": "object",
+  "required": ["status", "title", "seasons", "episodes", "selectedSeason"],
+  "additionalProperties": false,
+  "properties": {
+    "status": { "const": true },
+    "error": { "type": ["string", "null"] },
+    "title": {
+      "type": ["object", "null"],
+      "required": [
+        "type",
+        "tmdbId",
+        "title",
+        "year",
+        "overview",
+        "rating",
+        "runtimeMinutes",
+        "genres",
+        "posterUrl",
+        "backdropUrl"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "enum": ["movie", "series"] },
+        "tmdbId": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "year": { "type": ["integer", "null"] },
+        "overview": { "type": ["string", "null"] },
+        "rating": { "type": ["number", "null"] },
+        "runtimeMinutes": { "type": ["integer", "null"] },
+        "genres": { "type": "array", "items": { "type": "string" } },
+        "posterUrl": { "type": ["string", "null"] },
+        "backdropUrl": { "type": ["string", "null"] }
+      }
+    },
+    "seasons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["seasonNumber", "name", "episodeCount"],
+        "additionalProperties": false,
+        "properties": {
+          "seasonNumber": { "type": "integer" },
+          "name": { "type": "string" },
+          "episodeCount": { "type": "integer" }
+        }
+      }
+    },
+    "episodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "seasonNumber",
+          "episodeNumber",
+          "name",
+          "overview",
+          "airDate",
+          "runtimeMinutes",
+          "stillUrl"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "seasonNumber": { "type": "integer" },
+          "episodeNumber": { "type": "integer" },
+          "name": { "type": "string" },
+          "overview": { "type": ["string", "null"] },
+          "airDate": { "type": ["string", "null"] },
+          "runtimeMinutes": { "type": ["integer", "null"] },
+          "stillUrl": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "selectedSeason": { "type": ["integer", "null"] }
+  }
+}

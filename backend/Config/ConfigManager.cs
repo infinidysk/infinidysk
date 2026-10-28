@@ -2119,6 +2119,24 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
         return StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.WatchtowerProfileToken)) ?? "";
     }
 
+    /// <summary>TMDB v3 read access token used by the catalog metadata client. Null when unset.</summary>
+    public string? GetTmdbReadToken()
+    {
+        return StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.MetadataTmdbReadToken));
+    }
+
+    /// <summary>TVDB v4 API key used for episode metadata. Null when unset (episodes fall back to TMDB).</summary>
+    public string? GetTvdbApiKey()
+    {
+        return StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.MetadataTvdbApiKey));
+    }
+
+    /// <summary>Token of the search profile the catalog submits playback searches against.</summary>
+    public string? GetCatalogProfileToken()
+    {
+        return StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.CatalogProfileToken));
+    }
+
     public string GetWatchtowerRanking()
     {
         var v = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.WatchtowerRanking));

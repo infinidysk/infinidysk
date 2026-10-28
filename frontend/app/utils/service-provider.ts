@@ -1,6 +1,7 @@
 import type { SettingsTab } from "~/navigation/settings-tabs";
 
 export const NAV_FEATURE_IDS = [
+  "watch",
   "overview",
   "setup",
   "queue",

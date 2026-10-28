@@ -1,0 +1,61 @@
+# Localhost-only "Netflix-style" catalog deployment.
+#
+# Every credential is interpolated from the environment (NEWSDEMON_ENV file plus
+# .env.watch), so this file never contains a secret. Start it with
+# ./scripts/start-watch.sh, which validates the variables and the profile token.
+services:
+  infinidysk:
+    build: .
+    image: infinidysk-watch:local
+    container_name: infinidysk-watch
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -fsSL http://localhost:3000/healthz > /dev/null || exit 1
+      interval: 30s
+      retries: 3
+      start_period: 60s
+      timeout: 5s
+    ports:
+      # Localhost only: this deployment is never exposed to the LAN.
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - ${NEWSDEMON_ENV}
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: ${TZ:-Etc/UTC}
+      SECURE_COOKIES: "false"
+
+      # Usenet provider. Type 1 = Pooled.
+      NZBDAV_CONFIG__USENET__PROVIDERS: >-
+        {"Providers":[{"Type":1,"Host":"news.newsdemon.com","Port":563,"UseSsl":true,
+        "User":"${USENET_USER}","Pass":"${USENET_PASS}","MaxConnections":20,
+        "MaxTransferConnections":16,"Priority":0,"Nickname":"NewsDemon"}]}
+
+      # Single indexer. The filter never ranks by grabs, so the profile's own
+      # compact-release ordering (QualitySort: Web1080p) decides playback order.
+      NZBDAV_CONFIG__INDEXERS__INSTANCES: >-
+        {"Indexers":[{"Name":"NZBGeek","Url":"https://api.nzbgeek.info","ApiKey":"${NZBGEEK_KEY}",
+        "Enabled":true,"EnableStrictMatching":true,
+        "Filter":{"Enabled":true,"SkipPassworded":true,"PreferDownloaded":false}}]}
+
+      # Search profile the catalog submits playback lookups against.
+      NZBDAV_CONFIG__PROFILES__INSTANCES: >-
+        {"Profiles":[{"Token":"${WATCH_PROFILE_TOKEN}","Name":"Web Catalog",
+        "IndexerNames":["NZBGeek"],"EnabledAdapters":["json"],"QualitySort":"Web1080p",
+        "MovieFallback":"Title","TvFallback":"Title",
+        "MovieFallbackMinResults":1,"TvFallbackMinResults":1}]}
+
+      NZBDAV_CONFIG__CATALOG__PROFILE_TOKEN: ${WATCH_PROFILE_TOKEN}
+      NZBDAV_CONFIG__METADATA__TMDB_READ_TOKEN: ${TMDB_READ_TOKEN}
+      NZBDAV_CONFIG__METADATA__TVDB_API_KEY: ${TVDB_API_KEY}
+
+      # Streaming reuse: a seekable segment cache and the playback watchdog help
+      # direct /view playback; compatibility mode transcodes on demand.
+      NZBDAV_CONFIG__USENET__SEGMENT_CACHE__ENABLED: "true"
+      NZBDAV_CONFIG__USENET__SEGMENT_CACHE__MAX_GB: "4"
+      NZBDAV_CONFIG__PLAY__WATCHDOG_ENABLED: "true"
+    volumes:
+      - ./config:/config

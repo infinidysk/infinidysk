@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/catalog-search.schema.json",
+  "title": "Admin catalog search success",
+  "type": "object",
+  "required": ["status", "page", "totalPages", "hasMore", "results"],
+  "additionalProperties": false,
+  "properties": {
+    "status": { "const": true },
+    "error": { "type": ["string", "null"] },
+    "page": { "type": "integer", "minimum": 1 },
+    "totalPages": { "type": "integer" },
+    "hasMore": { "type": "boolean" },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "tmdbId",
+          "title",
+          "year",
+          "overview",
+          "rating",
+          "posterUrl",
+          "backdropUrl"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "enum": ["movie", "series"] },
+          "tmdbId": { "type": "integer", "minimum": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "year": { "type": ["integer", "null"] },
+          "overview": { "type": ["string", "null"] },
+          "rating": { "type": ["number", "null"] },
+          "posterUrl": { "type": ["string", "null"] },
+          "backdropUrl": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}
