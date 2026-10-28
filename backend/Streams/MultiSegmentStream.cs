@@ -3133,7 +3133,8 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
         Task<SegmentDownloadResult> head,
         int headIndex)
     {
-        if (_knownMissingSegmentIndices?.Contains(headIndex) == true ||
+        if (!CanVerifyDuplicateLength(headIndex) ||
+            _knownMissingSegmentIndices?.Contains(headIndex) == true ||
             DownloadWorkloadClassifier.Classify(_cts.Token) != DownloadWorkload.Streaming)
         {
             return await head.ConfigureAwait(false);
@@ -3238,6 +3239,11 @@ public class MultiSegmentStream : FastReadOnlyNonSeekableStream, ISegmentIssuePr
                 (int)Stopwatch.GetElapsedTime(raceStarted).TotalMilliseconds);
         }
     }
+
+    // A replacement must have a length established independently of the duplicate body.
+    private bool CanVerifyDuplicateLength(int segmentIndex) =>
+        (segmentIndex == 0 && _expectedFirstSegmentRange is not null) ||
+        (!IsClippedAtFileEnd(segmentIndex) && _segmentSizes.TryGetExactSize(segmentIndex, out _));
 
     private async Task<SegmentDownloadResult> HedgeSegmentAsync(int segmentIndex, CancellationToken cancellationToken)
     {

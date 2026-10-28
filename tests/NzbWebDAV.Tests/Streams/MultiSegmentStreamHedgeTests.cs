@@ -47,6 +47,43 @@ public sealed class MultiSegmentStreamHedgeTests
         finally { stalled.Release(); }
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task UnknownSegmentLength_DoesNotRaceShorterDuplicate(int headIndex)
+    {
+        var (segments, ranges) = CreateSegments(8);
+        var id = $"seg-{headIndex}";
+        var requests = 0;
+        var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges,
+            decodedStreamFactory: (key, bytes) =>
+                key == id && Interlocked.Increment(ref requests) > 1
+                    ? new MemoryStream(bytes[..(bytes.Length / 2)], writable: false)
+                    : new MemoryStream(bytes, writable: false));
+        using var stalled = new StalledArticleClient(inner,
+            headIndex == 0 ? segments.Keys.ToArray() : [id]);
+        using var trace = new HedgeTraceCapture();
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        await using var stream = MultiSegmentStream.Create(segments.Keys.ToArray().AsMemory(), stalled,
+            articleBufferSize: 40, estimatedSegmentSize: SegmentSize, failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true, cts.Token, fileName: "unknown-length.bin",
+            bodyPipelineBatchWidth: BatchWidth);
+        try
+        {
+            var actual = new byte[segments.Count * SegmentSize];
+            var read = stream.ReadExactlyAsync(actual).AsTask();
+            await Task.WhenAny(read, Task.Delay(MultiSegmentStream.HedgeFloor * 2));
+            Assert.False(read.IsCompleted);
+            trace.AssertNoHedge();
+            stalled.Release();
+            await read.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(segments.Values.SelectMany(bytes => bytes), actual);
+            Assert.Equal(1, inner.BodyRequestCounts[id]);
+        }
+        finally { stalled.Release(); }
+    }
+
     [Fact]
     public async Task StalledHeadSegment_DuplicateFetchKeepsPlaybackMoving()
     {
@@ -70,6 +107,7 @@ public sealed class MultiSegmentStreamHedgeTests
             usePipelinedBodyRequests: true,
             cts.Token,
             fileName: "hedge.bin",
+            exactSegmentSizes: Enumerable.Repeat((long)segmentSize, segments.Count).ToArray(),
             bodyPipelineBatchWidth: 4);
         try
         {
@@ -117,6 +155,7 @@ public sealed class MultiSegmentStreamHedgeTests
             usePipelinedBodyRequests: true,
             cts.Token,
             fileName: "hedge.bin",
+            exactSegmentSizes: Enumerable.Repeat((long)segmentSize, segments.Count).ToArray(),
             bodyPipelineBatchWidth: 4);
 
         var buffer = new byte[segments.Count * segmentSize];
