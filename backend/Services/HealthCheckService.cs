@@ -3392,7 +3392,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     internal static async Task<ArrUnlinkedFileVerdict> ClassifyUnlinkedFileAsync(
         IEnumerable<ArrClient> arrClients,
         Guid downloadId,
-        string fileName,
+        string contentRelativePath,
         DateTimeOffset utcNow,
         ArrInstanceBackoff? arrBackoff,
         CancellationToken ct)
@@ -3407,10 +3407,11 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             {
                 var history = await arrClient.GetDownloadHistoryAsync(downloadId, ct).ConfigureAwait(false);
                 arrBackoff?.RecordSuccess(arrClient.Host);
-                var fileImport = ArrUnlinkedDownloadClassifier.FindFileImport(history.Records, fileName);
+                var fileImport = ArrUnlinkedDownloadClassifier.FindFileImport(history.Records, contentRelativePath);
                 if (fileImport is null)
                 {
-                    var verdict = ArrUnlinkedDownloadClassifier.ClassifyWithoutFileImport(history, utcNow);
+                    var verdict = ArrUnlinkedDownloadClassifier.ClassifyWithoutFileImport(
+                        history, contentRelativePath, utcNow);
                     if (verdict != ArrUnlinkedFileVerdict.Unknown)
                         return verdict;
                     continue;
@@ -3723,7 +3724,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     var verdict = await ClassifyUnlinkedFileAsync(
                         CreateRepairArrClientsOverride?.Invoke() ?? _configManager.GetArrConfig().GetArrClients().ToArray(),
                         unlinkedDownloadId,
-                        davItem.Name,
+                        CreateStrmFilesPostProcessor.GetPathRelativeToContentRoot(davItem.Path),
                         _timeProvider.GetUtcNow(),
                         _arrBackoff,
                         ct).ConfigureAwait(false);

@@ -6,7 +6,7 @@ namespace NzbWebDAV.Tests.Clients;
 
 public class ArrUnlinkedDownloadClassifierTests
 {
-    private const string FileName = "episode-a.mkv";
+    private const string RelativePath = "tv/job/episode-a.mkv";
     private const string ImportedPath = "/tv/Series/Season 01/Series - S01E01.mkv";
     private static readonly DateTimeOffset ImportedAt = new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
     private static readonly DateTimeOffset Now = ImportedAt.AddDays(7);
@@ -30,14 +30,16 @@ public class ArrUnlinkedDownloadClassifierTests
     }
 
     [Theory]
-    [InlineData("/dl/job/episode-a.mkv", true)]
-    [InlineData("/dl/job/episode-a.mkv.strm", true)]
-    [InlineData("C:\\dl\\job\\episode-a.mkv", true)]
-    [InlineData("/dl/job/episode-a (2).mkv", false)]
-    [InlineData("/dl/job/Episode-A.mkv", false)]
-    public void FindFileImport_MatchesDroppedFileNameExactly(string droppedPath, bool matches)
+    [InlineData("/dl/tv/job/episode-a.mkv", true)]
+    [InlineData("/strm/tv/job/episode-a.mkv.strm", true)]
+    [InlineData("C:\\dl\\tv\\job\\episode-a.mkv", true)]
+    [InlineData("/dl/tv/job/Sample/episode-a.mkv", false)]
+    [InlineData("/dl/tv/other-job/episode-a.mkv", false)]
+    [InlineData("/dl/tv/job/episode-a (2).mkv", false)]
+    [InlineData("/dl/tv/job/Episode-A.mkv", false)]
+    public void FindFileImport_MatchesTheDownloadRelativePathExactly(string droppedPath, bool matches)
     {
-        var found = ArrUnlinkedDownloadClassifier.FindFileImport([Import(droppedPath)], FileName);
+        var found = ArrUnlinkedDownloadClassifier.FindFileImport([Import(droppedPath)], RelativePath);
 
         Assert.Equal(matches, found is not null);
     }
@@ -72,26 +74,51 @@ public class ArrUnlinkedDownloadClassifierTests
     {
         var verdict = ArrUnlinkedDownloadClassifier.ClassifyWithoutFileImport(
             History(Grab(), new ArrHistoryRecord { EventType = 4, Date = ImportedAt }),
+            RelativePath,
             Now);
 
         Assert.Equal(ArrUnlinkedFileVerdict.DownloadFailed, verdict);
     }
 
     [Fact]
+    public void RecentDownloadFailure_IsUnknownWhileARetryMayStillImport()
+    {
+        var verdict = ArrUnlinkedDownloadClassifier.ClassifyWithoutFileImport(
+            History(Grab(), new ArrHistoryRecord { EventType = 4, Date = ImportedAt }),
+            RelativePath,
+            ImportedAt.AddHours(1));
+
+        Assert.Equal(ArrUnlinkedFileVerdict.Unknown, verdict);
+    }
+
+    [Fact]
     public void SettledImportOfASiblingFile_IsNotImported()
     {
         var verdict = ArrUnlinkedDownloadClassifier.ClassifyWithoutFileImport(
-            History(Grab(), Import("/dl/job/episode-a (2).mkv")),
+            History(Grab(), Import("/dl/tv/job/episode-a (2).mkv")),
+            RelativePath,
             Now);
 
         Assert.Equal(ArrUnlinkedFileVerdict.NotImported, verdict);
     }
 
     [Fact]
+    public void ImportOfTheSameFileNameAtAnotherPath_IsUnknown()
+    {
+        var verdict = ArrUnlinkedDownloadClassifier.ClassifyWithoutFileImport(
+            History(Grab(), Import("/dl/tv/job/Sample/episode-a.mkv")),
+            RelativePath,
+            Now);
+
+        Assert.Equal(ArrUnlinkedFileVerdict.Unknown, verdict);
+    }
+
+    [Fact]
     public void UnsettledImportOfASiblingFile_IsUnknown()
     {
         var verdict = ArrUnlinkedDownloadClassifier.ClassifyWithoutFileImport(
-            History(Grab(), Import("/dl/job/episode-a (2).mkv")),
+            History(Grab(), Import("/dl/tv/job/episode-a (2).mkv")),
+            RelativePath,
             ImportedAt.AddHours(1));
 
         Assert.Equal(ArrUnlinkedFileVerdict.Unknown, verdict);
@@ -102,6 +129,7 @@ public class ArrUnlinkedDownloadClassifierTests
     {
         var verdict = ArrUnlinkedDownloadClassifier.ClassifyWithoutFileImport(
             History(Grab(), Import(droppedPath: null)),
+            RelativePath,
             Now);
 
         Assert.Equal(ArrUnlinkedFileVerdict.Unknown, verdict);
@@ -112,7 +140,7 @@ public class ArrUnlinkedDownloadClassifierTests
     {
         Assert.Equal(
             ArrUnlinkedFileVerdict.Unknown,
-            ArrUnlinkedDownloadClassifier.ClassifyWithoutFileImport(History(Grab()), Now));
+            ArrUnlinkedDownloadClassifier.ClassifyWithoutFileImport(History(Grab()), RelativePath, Now));
     }
 
     [Fact]
@@ -120,7 +148,7 @@ public class ArrUnlinkedDownloadClassifierTests
     {
         Assert.Equal(
             ArrUnlinkedFileVerdict.Unknown,
-            ArrUnlinkedDownloadClassifier.ClassifyWithoutFileImport(History(), Now));
+            ArrUnlinkedDownloadClassifier.ClassifyWithoutFileImport(History(), RelativePath, Now));
     }
 
     [Fact]
@@ -131,7 +159,7 @@ public class ArrUnlinkedDownloadClassifierTests
 
         Assert.Equal(
             ArrUnlinkedFileVerdict.Unknown,
-            ArrUnlinkedDownloadClassifier.ClassifyWithoutFileImport(history, Now));
+            ArrUnlinkedDownloadClassifier.ClassifyWithoutFileImport(history, RelativePath, Now));
     }
 
     private static ArrHistory History(params ArrHistoryRecord[] records) =>

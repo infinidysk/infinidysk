@@ -19,6 +19,7 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Queue.PostProcessors;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.Repair;
@@ -664,7 +665,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         item.ArrDownloadId = Guid.NewGuid();
         await _context.SaveChangesAsync();
         var (service, _) = await NewServiceAsync(NewFakeClient(segments, missing: [0]), par2Outcome: false);
-        var arrClient = new SupersededHistoryArrClient(item.ArrDownloadId.Value, item.Name, arrReachable);
+        var arrClient = new SupersededHistoryArrClient(item.ArrDownloadId.Value, item.Path, arrReachable);
         service.CreateRepairArrClientsOverride = () => [arrClient];
 
         await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
@@ -2324,7 +2325,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         }
     }
 
-    private sealed class SupersededHistoryArrClient(Guid downloadId, string fileName, bool reachable)
+    private sealed class SupersededHistoryArrClient(Guid downloadId, string davPath, bool reachable)
         : ArrClient("http://sonarr.test", "test-key")
     {
         private static readonly DateTimeOffset ImportedAt = DateTimeOffset.UtcNow.AddDays(-3);
@@ -2346,7 +2347,8 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
                         EpisodeId = 7,
                         Data = new ArrHistoryData
                         {
-                            DroppedPath = $"/mnt/completed/tv/job/{fileName}",
+                            DroppedPath = "/mnt/completed/" +
+                                CreateStrmFilesPostProcessor.GetPathRelativeToContentRoot(davPath),
                             ImportedPath = "/tv/Series/Season 01/Episode.mkv",
                         },
                     },

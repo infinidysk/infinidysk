@@ -27,16 +27,26 @@ public static class ArrUnlinkedDownloadClassifier
     internal static readonly TimeSpan ImportSettleTime = TimeSpan.FromDays(1);
 
     /// <summary>
-    /// The latest import of <paramref name="fileName"/> from this download, matched by the dropped
-    /// path's file name (the symlink, or its generated <c>.strm</c> sidecar).
+    /// The latest import of the file at <paramref name="contentRelativePath"/> (category/job/...)
+    /// from this download, matched against the dropped symlink or its generated <c>.strm</c> sidecar.
     /// </summary>
-    public static ArrHistoryRecord? FindFileImport(IEnumerable<ArrHistoryRecord> downloadHistory, string fileName) =>
-        downloadHistory
-            .Where(record => record.EventType == DownloadFolderImported && IsImportOf(record, fileName))
+    public static ArrHistoryRecord? FindFileImport(
+        IEnumerable<ArrHistoryRecord> downloadHistory,
+        string contentRelativePath)
+    {
+        var suffix = "/" + Normalize(contentRelativePath).TrimStart('/');
+        return downloadHistory
+            .Where(record => record.EventType == DownloadFolderImported && GetDroppedPath(record) is { } dropped &&
+                             (dropped.EndsWith(suffix, StringComparison.Ordinal) ||
+                              dropped.EndsWith(suffix + ".strm", StringComparison.Ordinal)))
             .MaxBy(record => record.Date);
+    }
 
     /// <summary>Classifies a download whose history has no import of this file.</summary>
-    public static ArrUnlinkedFileVerdict ClassifyWithoutFileImport(ArrHistory downloadHistory, DateTimeOffset utcNow)
+    public static ArrUnlinkedFileVerdict ClassifyWithoutFileImport(
+        ArrHistory downloadHistory,
+        string contentRelativePath,
+        DateTimeOffset utcNow)
     {
         var records = downloadHistory.Records;
         // Absence of an import is only proof when Arr returned the complete history.
@@ -46,13 +56,21 @@ public static class ArrUnlinkedDownloadClassifier
         var imports = records.Where(record => record.EventType == DownloadFolderImported).ToList();
         if (imports.Count == 0)
         {
-            return records.Any(record => record.EventType == DownloadFailed)
+            // A retry of the same download gets a day to import before the failure counts.
+            var lastFailure = records.Where(record => record.EventType == DownloadFailed)
+                .Select(record => (DateTimeOffset?)record.Date)
+                .Max();
+            return lastFailure + ImportSettleTime <= utcNow
                 ? ArrUnlinkedFileVerdict.DownloadFailed
                 : ArrUnlinkedFileVerdict.Unknown;
         }
 
-        // Without a dropped path on every import, this file may be among them.
-        if (imports.Any(record => string.IsNullOrEmpty(record.Data?.DroppedPath)))
+        // Without a dropped path on every import, this file may be among them; an import of the
+        // same file name at an unexpected path may also be this file.
+        var fileName = Path.GetFileName(Normalize(contentRelativePath));
+        if (imports.Any(record => GetDroppedPath(record) is not { } dropped ||
+                                  Path.GetFileName(dropped) == fileName ||
+                                  Path.GetFileName(dropped) == fileName + ".strm"))
             return ArrUnlinkedFileVerdict.Unknown;
 
         return imports.Max(record => record.Date) + ImportSettleTime <= utcNow
@@ -75,12 +93,10 @@ public static class ArrUnlinkedDownloadClassifier
             IsSamePath(importedPath, deletion.SourceTitle));
     }
 
-    private static bool IsImportOf(ArrHistoryRecord record, string fileName)
-    {
-        var droppedName = Path.GetFileName(record.Data?.DroppedPath?.Replace('\\', '/'));
-        return string.Equals(droppedName, fileName, StringComparison.Ordinal) ||
-               string.Equals(droppedName, fileName + ".strm", StringComparison.Ordinal);
-    }
+    private static string? GetDroppedPath(ArrHistoryRecord record) =>
+        string.IsNullOrEmpty(record.Data?.DroppedPath) ? null : Normalize(record.Data.DroppedPath);
+
+    private static string Normalize(string path) => path.Replace('\\', '/');
 
     // Arr records the deleted file's path relative to the series/movie folder, or in full.
     private static bool IsSamePath(string importedPath, string? deletedPath)
