@@ -636,6 +636,46 @@ public class RadarrSonarrClientTests
     }
 
     [Fact]
+    public async Task DownloadHistory_RequestsEveryEventForTheDownload()
+    {
+        var downloadId = Guid.NewGuid();
+        using var httpClient = new HttpClient(CreateHandler(
+            ($"GET /api/v3/history?downloadId={downloadId:D}&page=1&pageSize=250&sortKey=date&sortDirection=descending",
+                JsonResponse("""{"records":[{"eventType":"downloadFailed"}],"totalRecords":1}"""))));
+        var client = new TestSonarrClient(httpClient);
+
+        var history = await client.GetDownloadHistoryAsync(downloadId);
+
+        Assert.Equal(4, Assert.Single(history.Records).EventType);
+    }
+
+    [Fact]
+    public async Task SonarrFileDeletionHistory_IsScopedToTheImportedEpisode()
+    {
+        using var httpClient = new HttpClient(CreateHandler(
+            ("GET /api/v3/history?episodeId=301&eventType=5&page=1&pageSize=50&sortKey=date&sortDirection=descending",
+                JsonResponse("""{"records":[{"sourceTitle":"Season 01/episode.mkv","data":{"reason":"Upgrade"}}],"totalRecords":1}"""))));
+        var client = new TestSonarrClient(httpClient);
+
+        var history = await client.GetFileDeletionHistoryAsync(new ArrHistoryRecord { EpisodeId = 301, MovieId = 101 });
+
+        Assert.Equal("Upgrade", Assert.Single(history.Records).Data!.Reason);
+    }
+
+    [Fact]
+    public async Task RadarrFileDeletionHistory_IsScopedToTheImportedMovie()
+    {
+        using var httpClient = new HttpClient(CreateHandler(
+            ("GET /api/v3/history?movieId=101&eventType=6&page=1&pageSize=50&sortKey=date&sortDirection=descending",
+                JsonResponse("""{"records":[{"sourceTitle":"/movies/Movie/movie.mkv","data":{"reason":"Upgrade"}}],"totalRecords":1}"""))));
+        var client = new TestRadarrClient(httpClient);
+
+        var history = await client.GetFileDeletionHistoryAsync(new ArrHistoryRecord { EpisodeId = 301, MovieId = 101 });
+
+        Assert.Equal("/movies/Movie/movie.mkv", Assert.Single(history.Records).SourceTitle);
+    }
+
+    [Fact]
     public async Task CollectMediaImportHistoryAsync_HonorsCancellationToken()
     {
         using var httpClient = new HttpClient(new HangUntilCancelledHandler());

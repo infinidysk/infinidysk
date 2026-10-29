@@ -81,6 +81,20 @@ public class ArrClient(string host, string apiKey)
         CancellationToken ct = default) =>
         throw new InvalidOperationException();
 
+    internal const int DownloadHistoryPageSize = 250;
+
+    /// <summary>Every history event Arr recorded for one download (grab, imports, failure).</summary>
+    public virtual Task<ArrHistory> GetDownloadHistoryAsync(Guid downloadId, CancellationToken ct = default) =>
+        Get<ArrHistory>(
+            $"/history?downloadId={downloadId:D}&page=1&pageSize={DownloadHistoryPageSize}&sortKey=date&sortDirection=descending",
+            ct);
+
+    /// <summary>Media-file deletion events for the media item an import record belongs to.</summary>
+    public virtual Task<ArrHistory> GetFileDeletionHistoryAsync(
+        ArrHistoryRecord importRecord,
+        CancellationToken ct = default) =>
+        Task.FromResult(new ArrHistory());
+
     internal const int MediaImportHistoryPageSize = 50;
     internal const int MediaImportHistoryMaxPages = 10;
 

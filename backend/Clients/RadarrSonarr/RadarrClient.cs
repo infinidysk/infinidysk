@@ -184,6 +184,15 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
             ct);
     }
 
+    public override Task<ArrHistory> GetFileDeletionHistoryAsync(
+        ArrHistoryRecord importRecord,
+        CancellationToken ct = default) =>
+        importRecord.MovieId is { } movieId
+            ? Get<ArrHistory>(
+                $"/history?movieId={movieId}&eventType=6&page=1&pageSize=50&sortKey=date&sortDirection=descending",
+                ct)
+            : Task.FromResult(new ArrHistory());
+
     private sealed record MovieFileIds(int MovieFileId, int MovieId);
 
     private async Task<MovieFileIds?> GetMovieFileIds(string symlinkOrStrmPath, CancellationToken ct)

@@ -19,6 +19,7 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Queue.PostProcessors;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.Repair;
@@ -652,6 +653,37 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.False(persisted.HealthRepairPending);
         Assert.Empty(await service.SelectNextHealthCheckIdsAsync(
             [], allowChecks: true, allowRepairs: true, maximumCount: 1, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnlinkedFile_RemovedOnlyWhenArrConfirmsUpgradeReplacedIt(bool arrReachable)
+    {
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync("unlinked.mkv", segments, [10_000, 10_000, 10_000]);
+        item.ArrDownloadId = Guid.NewGuid();
+        await _context.SaveChangesAsync();
+        var (service, _) = await NewServiceAsync(NewFakeClient(segments, missing: [0]), par2Outcome: false);
+        var arrClient = new SupersededHistoryArrClient(item.ArrDownloadId.Value, item.Path, arrReachable);
+        service.CreateRepairArrClientsOverride = () => [arrClient];
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        _context.ChangeTracker.Clear();
+        if (arrReachable)
+        {
+            Assert.Equal(HealthCheckResult.RepairAction.Deleted, row.RepairStatus);
+            Assert.Contains("replaced its import with an upgrade", row.Message, StringComparison.Ordinal);
+            Assert.False(await _context.Items.AnyAsync(candidate => candidate.Id == item.Id));
+        }
+        else
+        {
+            Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+            Assert.Contains("No corresponding imported symlink", row.Message, StringComparison.Ordinal);
+            Assert.True(await _context.Items.AnyAsync(candidate => candidate.Id == item.Id));
+        }
     }
 
     [Theory]
@@ -2291,6 +2323,55 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             cancellation.Cancel();
             return Task.FromResult(outcome);
         }
+    }
+
+    private sealed class SupersededHistoryArrClient(Guid downloadId, string davPath, bool reachable)
+        : ArrClient("http://sonarr.test", "test-key")
+    {
+        private static readonly DateTimeOffset ImportedAt = DateTimeOffset.UtcNow.AddDays(-3);
+
+        public override Task<ArrHistory> GetDownloadHistoryAsync(Guid id, CancellationToken ct = default)
+        {
+            if (!reachable)
+                throw new HttpRequestException("connection refused");
+            Assert.Equal(downloadId, id);
+            return Task.FromResult(new ArrHistory
+            {
+                TotalRecords = 1,
+                Records =
+                [
+                    new ArrHistoryRecord
+                    {
+                        EventType = 3,
+                        Date = ImportedAt,
+                        EpisodeId = 7,
+                        Data = new ArrHistoryData
+                        {
+                            DroppedPath = "/mnt/completed/" +
+                                CreateStrmFilesPostProcessor.GetPathRelativeToContentRoot(davPath),
+                            ImportedPath = "/tv/Series/Season 01/Episode.mkv",
+                        },
+                    },
+                ],
+            });
+        }
+
+        public override Task<ArrHistory> GetFileDeletionHistoryAsync(
+            ArrHistoryRecord importRecord,
+            CancellationToken ct = default) =>
+            Task.FromResult(new ArrHistory
+            {
+                TotalRecords = 1,
+                Records =
+                [
+                    new ArrHistoryRecord
+                    {
+                        Date = ImportedAt.AddDays(1),
+                        SourceTitle = "Season 01/Episode.mkv",
+                        Data = new ArrHistoryData { Reason = "Upgrade" },
+                    },
+                ],
+            });
     }
 
     private sealed class BlockingLookupArrClient() : ArrClient("http://radarr.test", "test-key")
