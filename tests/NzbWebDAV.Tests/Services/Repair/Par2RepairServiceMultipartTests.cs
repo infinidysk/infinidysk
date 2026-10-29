@@ -326,6 +326,73 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
         Assert.Equal(Par2RepairOutcome.Repaired, await release.Service.TryPar2RepairAsync(release.Item, [id], CancellationToken.None));
     }
 
+    [Theory]
+    [InlineData(Par2RepairJob.RepairJobState.Infeasible, Par2RepairOutcome.NotRepaired)]
+    [InlineData(Par2RepairJob.RepairJobState.Failed, Par2RepairOutcome.DeferredBusy)]
+    public async Task InlineContention_UsesLatestInfeasibleResultButPreservesIdleRetry(
+        Par2RepairJob.RepairJobState jobState,
+        Par2RepairOutcome expected)
+    {
+        var data = Data(4096 * 6, "prior-infeasible");
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _root).BuildAsync([
+            new("volume.rar", data, Sizes(data.Length), [4]),
+        ], [1], DavItem.ItemSubType.MultipartFile);
+        var segmentId = release.Files[0].Ids[4];
+        var now = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        var latest = new Par2RepairJob
+        {
+            Id = Guid.NewGuid(),
+            DavItemId = release.Item.Id,
+            Path = release.Item.Path,
+            State = jobState,
+            CreatedAt = now.AddDays(-3),
+            NextAttemptAt = now.AddDays(-2),
+            Attempts = 1,
+            MissingSegmentIds = [segmentId],
+        };
+        await using (var context = new DavDatabaseContext())
+        {
+            context.Par2RepairJobs.AddRange(new Par2RepairJob
+            {
+                Id = Guid.NewGuid(),
+                DavItemId = release.Item.Id,
+                Path = release.Item.Path,
+                State = Par2RepairJob.RepairJobState.Infeasible,
+                CreatedAt = now.AddDays(-4),
+                Attempts = 1,
+                MissingSegmentIds = [segmentId],
+            }, latest);
+            await context.SaveChangesAsync();
+        }
+
+        var hold = await release.Service.HoldAdmissionForTestsAsync(CancellationToken.None);
+        try
+        {
+            Assert.Equal(expected, await release.Service.TryPar2RepairAsync(
+                release.Item, [segmentId], CancellationToken.None));
+            Assert.Equal(0, release.Fake.BodyRequestCount);
+            Assert.Equal(1, release.Service.GetDiagnosticSnapshot().AdmissionActive);
+            await using var context = new DavDatabaseContext();
+            var stored = await context.Par2RepairJobs.SingleAsync(job => job.Id == latest.Id);
+            Assert.Equal(jobState, stored.State);
+            Assert.Equal(1, stored.Attempts);
+            Assert.Equal(latest.NextAttemptAt, stored.NextAttemptAt);
+            Assert.Equal(2, await context.Par2RepairJobs.CountAsync());
+        }
+        finally
+        {
+            await hold.DisposeAsync();
+        }
+
+        Assert.Equal(Par2RepairOutcome.Repaired,
+            await release.Service.TryPar2RepairAsync(release.Item, [segmentId], CancellationToken.None));
+        await AssertPatchAsync(release, 0, 4);
+        await using var completedContext = new DavDatabaseContext();
+        var completed = await completedContext.Par2RepairJobs.SingleAsync(job => job.Id == latest.Id);
+        Assert.Equal(2, completed.Attempts);
+        Assert.Equal(Par2RepairJob.RepairJobState.Succeeded, completed.State);
+    }
+
     [Fact]
     public async Task HoldAdmission_SurvivesServiceDisposalWhileHeld()
     {
@@ -791,6 +858,8 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
         try
         {
             await entered.Task.WaitAsync(ownerCancellation.Token);
+            Assert.True(release.Service.HasActiveRepairFlight(release.Item.Id));
+            Assert.False(release.Service.HasActiveRepairFlight(other.Id));
             using var waiterCancellation = new CancellationTokenSource();
             var waiter = release.Service.TryPar2RepairAsync(other, ids, waiterCancellation.Token);
             var sameItem = release.Service.TryPar2RepairAsync(release.Item, ids, ownerCancellation.Token);
@@ -804,6 +873,7 @@ public sealed class Par2RepairServiceMultipartTests : IAsyncLifetime
                 Assert.False(await context.Par2RepairJobs.AnyAsync(job => job.DavItemId == other.Id));
             proceed.TrySetResult();
             Assert.Equal(Par2RepairOutcome.Repaired, await owner);
+            Assert.False(release.Service.HasActiveRepairFlight(release.Item.Id));
             Assert.Equal(Par2RepairOutcome.Repaired, await release.Service.TryPar2RepairAsync(other, ids, ownerCancellation.Token));
             Assert.Equal(0, release.Service.GetDiagnosticSnapshot().AdmissionActive);
         }
