@@ -987,7 +987,7 @@ public sealed class HealthCheckCoordinatorTests
     [Fact]
     public async Task RefillWorkerSlots_BusyPar2AdmitsOnlyKnownInfeasibleRepairs()
     {
-        using var harness = new Harness(workers: 3, fullySplit: false);
+        using var harness = new Harness(workers: 4, fullySplit: false);
         await using var connection = await harness.ConfigureEmptyDatabaseAsync();
         harness.Config.UpdateValues([
             new ConfigItem
@@ -1005,11 +1005,12 @@ public sealed class HealthCheckCoordinatorTests
         var pending = NewCandidate("pending.mkv", harness.TimeProvider.GetUtcNow().AddDays(1));
         pending.HealthRepairPending = true;
         var unknown = NewCandidate("unattempted.mkv", DateTimeOffset.UnixEpoch);
+        var active = NewCandidate("active-flight.mkv", DateTimeOffset.UnixEpoch);
         var routine = NewCandidate("routine.mkv", null);
         await using (var context = harness.Service.CreateDbContextOverride!())
         {
-            context.Items.AddRange(urgent, pending, unknown, routine);
-            foreach (var candidate in new[] { urgent, pending })
+            context.Items.AddRange(urgent, pending, unknown, active, routine);
+            foreach (var candidate in new[] { urgent, pending, active })
             {
                 context.Par2RepairJobs.Add(new Par2RepairJob
                 {
@@ -1025,6 +1026,9 @@ public sealed class HealthCheckCoordinatorTests
             }
             await context.SaveChangesAsync();
         }
+        // Workers are not started, so the queued flight stays active for the whole test.
+        await harness.Par2.EnqueueAsync(active, ["active-flight@test"]);
+        Assert.True(harness.Par2.HasActiveRepairFlight(active.Id));
 
         var blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         harness.Service.ProcessCandidateOverride = (_, token) => blocker.Task.WaitAsync(token);
@@ -1039,6 +1043,7 @@ public sealed class HealthCheckCoordinatorTests
             Assert.Contains(pending.Id, harness.Service.InProgressHealthCheckIds);
             Assert.Contains(routine.Id, harness.Service.InProgressHealthCheckIds);
             Assert.DoesNotContain(unknown.Id, harness.Service.InProgressHealthCheckIds);
+            Assert.DoesNotContain(active.Id, harness.Service.InProgressHealthCheckIds);
         }
         finally
         {
@@ -1116,6 +1121,12 @@ public sealed class HealthCheckCoordinatorTests
         : GetActiveHealthChecksController(dbClient, service)
     {
         protected override bool RequiresAuthentication => false;
+    }
+
+    private sealed class DelegatingContextFactory(Func<DavDatabaseContext> create)
+        : IDbContextFactory<DavDatabaseContext>
+    {
+        public DavDatabaseContext CreateDbContext() => create();
     }
 
     private sealed class Harness : IDisposable
@@ -1207,7 +1218,11 @@ public sealed class HealthCheckCoordinatorTests
                 new QueueItemSourceTracker(),
                 BenchmarkGate,
                 healthCheckConnectionGate: _gate);
-            Par2 = new Par2RepairService(Config, _usenet, _patchStore);
+            Par2 = new Par2RepairService(
+                Config,
+                _usenet,
+                _patchStore,
+                new DelegatingContextFactory(() => Service?.CreateDbContextOverride?.Invoke() ?? new DavDatabaseContext()));
             Service = new HealthCheckService(
                 Config,
                 _usenet,

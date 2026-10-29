@@ -764,14 +764,26 @@ public partial class Par2RepairService : BackgroundService
                 admitted = await _repairAdmission.WaitAsync(0, ct).ConfigureAwait(false);
                 if (!admitted)
                 {
-                    await using var dbContext = CreateContext();
-                    var lastState = await dbContext.Par2RepairJobs
-                        .AsNoTracking()
-                        .Where(job => job.DavItemId == davItem.Id)
-                        .OrderByDescending(job => job.CreatedAt)
-                        .Select(job => (Par2RepairJob.RepairJobState?)job.State)
-                        .FirstOrDefaultAsync(ct)
-                        .ConfigureAwait(false);
+                    Par2RepairJob.RepairJobState? lastState;
+                    try
+                    {
+                        await using var dbContext = CreateContext();
+                        lastState = await dbContext.Par2RepairJobs
+                            .AsNoTracking()
+                            .Where(job => job.DavItemId == davItem.Id)
+                            .OrderByDescending(job => job.CreatedAt)
+                            .Select(job => (Par2RepairJob.RepairJobState?)job.State)
+                            .FirstOrDefaultAsync(ct)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception e) when (!e.IsCancellationException(ct) && e is not OutOfMemoryException)
+                    {
+                        Log.Warning(
+                            "Could not read the previous PAR2 result for {Path}; deferring repair. Reason: {Reason}",
+                            davItem.Path, e.Message);
+                        Log.Debug(e, "PAR2 previous-result lookup failure stack");
+                        lastState = null;
+                    }
                     var outcome = lastState == Par2RepairJob.RepairJobState.Infeasible
                         ? Par2RepairOutcome.NotRepaired
                         : Par2RepairOutcome.DeferredBusy;
