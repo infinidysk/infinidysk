@@ -25,7 +25,15 @@ vi.mock("~/utils/shared-websocket", () => ({
 }));
 
 vi.mock("./components/health-table/health-table", () => ({
-  HealthTable: () => <div data-testid="health-table" />,
+  HealthTable: ({ onStop }: { onStop?: (davItemId: string) => void }) => (
+    <div data-testid="health-table">
+      {onStop && (
+        <button type="button" onClick={() => onStop("queue-0")}>
+          Stop check
+        </button>
+      )}
+    </div>
+  ),
 }));
 
 vi.mock("./components/health-stats/health-stats", () => ({
@@ -169,6 +177,41 @@ function mockActionResponse(response: Response | Error) {
     return response instanceof Error ? Promise.reject(response) : Promise.resolve(response);
   });
 }
+
+describe("Health stop active check", () => {
+  it("stops a running check and revalidates the page", async () => {
+    mockActionResponse(jsonResponse({ status: true }));
+    renderHealth();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Stop check" }));
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/stop-health-check?davItemId=queue-0", {
+      method: "POST",
+    });
+    expect((await screen.findByRole("status")).textContent).toContain("Stopped.");
+    expect(revalidateMock).toHaveBeenCalledOnce();
+  });
+
+  it("shows the backend reason when the check already finished", async () => {
+    mockActionResponse(
+      jsonResponse({ status: false, error: "This health check is no longer running." }, 404),
+    );
+    renderHealth();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Stop check" }));
+
+    expect((await screen.findByRole("status")).textContent).toContain(
+      "This health check is no longer running.",
+    );
+    expect(revalidateMock).not.toHaveBeenCalled();
+  });
+
+  it("hides stop for read-only users", () => {
+    isReadOnlyMock.mockReturnValue(true);
+    renderHealth();
+    expect(screen.queryByRole("button", { name: "Stop check" })).toBeNull();
+  });
+});
 
 describe("Health action-needed re-check", () => {
   it("previews and confirms deletion even when background repairs are disabled", async () => {

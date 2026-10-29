@@ -141,6 +141,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [requeueingActionNeeded, setRequeueingActionNeeded] = useState(false);
   const [requeueFeedback, setRequeueFeedback] = useState<RequeueFeedback | null>(null);
+  const [stoppingIds, setStoppingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [historyStats, setHistoryStats] = useState(loaderData.historyStats);
   const [historyItems, setHistoryItems] = useState(loaderData.historyItems);
   const [historyTotalCount, setHistoryTotalCount] = useState(loaderData.historyTotalCount);
@@ -451,6 +452,42 @@ export default function Health({ loaderData }: Route.ComponentProps) {
     [revalidator],
   );
 
+  const onStopHealthCheck = useCallback(
+    async (davItemId: string) => {
+      setStoppingIds((ids) => new Set(ids).add(davItemId));
+      setRequeueFeedback(null);
+      try {
+        const response = await fetch(
+          withUrlBase(`/api/stop-health-check?${new URLSearchParams({ davItemId })}`),
+          { method: "POST" },
+        );
+        if (!response.ok) {
+          const body = (await response.json().catch(() => null)) as { error?: string } | null;
+          setRequeueFeedback({
+            variant: "danger",
+            message: body?.error || "Could not stop the health check.",
+          });
+          return;
+        }
+        setQueueState((x) => completeHealthCheck(x, davItemId));
+        setRequeueFeedback({
+          variant: "success",
+          message: "Stopped. The next check for this file is deferred by a day.",
+        });
+        void revalidator.revalidate();
+      } catch {
+        setRequeueFeedback({ variant: "danger", message: "Could not stop the health check." });
+      } finally {
+        setStoppingIds((ids) => {
+          const next = new Set(ids);
+          next.delete(davItemId);
+          return next;
+        });
+      }
+    },
+    [revalidator],
+  );
+
   const onWebsocketMessage = useCallback(
     (topic: string, message: string) => {
       if (topic == topicNames.healthItemStatus) onHealthItemStatus(message);
@@ -622,6 +659,12 @@ export default function Health({ loaderData }: Route.ComponentProps) {
       <HealthTable
         isEnabled={isEnabled}
         healthCheckItems={getVisibleHealthCheckItems(queueItems)}
+        stoppingIds={stoppingIds}
+        onStop={
+          isEnabled && !isReadOnly
+            ? (davItemId: string) => void onStopHealthCheck(davItemId)
+            : undefined
+        }
       />
       <HealthHistoryTable
         items={historyItems}

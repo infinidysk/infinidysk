@@ -53,4 +53,36 @@ describe("HealthTable", () => {
     expect(markup.match(/Repairing for 12m/g)).toHaveLength(2);
     expect(markup).toContain("not a countdown");
   });
+
+  it("offers stop only on active rows when a stop handler is provided", () => {
+    const items = [
+      {
+        id: "active",
+        name: "active.mkv",
+        path: "/content/active.mkv",
+        releaseDate: null,
+        lastHealthCheck: null,
+        nextHealthCheck: null,
+        countsTowardUncheckedCount: true,
+        progress: 10,
+      },
+      {
+        id: "queued",
+        name: "queued.mkv",
+        path: "/content/queued.mkv",
+        releaseDate: null,
+        lastHealthCheck: null,
+        nextHealthCheck: null,
+        countsTowardUncheckedCount: true,
+      },
+    ];
+    const withStop = renderToStaticMarkup(
+      <HealthTable isEnabled healthCheckItems={items} onStop={() => {}} />,
+    );
+    const withoutStop = renderToStaticMarkup(<HealthTable isEnabled healthCheckItems={items} />);
+
+    expect(withStop.match(/aria-label="Stop health check for active.mkv"/g)).toHaveLength(2);
+    expect(withStop).not.toContain("Stop health check for queued.mkv");
+    expect(withoutStop).not.toContain("Stop health check");
+  });
 });

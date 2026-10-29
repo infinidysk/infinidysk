@@ -1,12 +1,14 @@
 import type { ReactNode } from "react";
 import type { HealthCheckQueueItem } from "~/clients/backend-client.server";
 import { Truncate } from "~/components/truncate/truncate";
-import { Badge, Icon } from "~/components/ui";
+import { Badge, Button, Icon, PortalTooltip } from "~/components/ui";
 import { withUrlBase } from "~/utils/url-base";
 
 export type HealthTableProps = {
   isEnabled: boolean;
   healthCheckItems: HealthCheckQueueItem[];
+  onStop?: ((davItemId: string) => void) | undefined;
+  stoppingIds?: ReadonlySet<string>;
 };
 
 const desktopHeaderClass =
@@ -14,7 +16,12 @@ const desktopHeaderClass =
 const desktopCellClass =
   "hidden min-[900px]:table-cell max-w-[160px] whitespace-nowrap px-1 py-3 text-center align-middle font-mono text-xs tabular-nums text-base-content/70";
 
-export function HealthTable({ isEnabled, healthCheckItems }: HealthTableProps) {
+export function HealthTable({
+  isEnabled,
+  healthCheckItems,
+  onStop,
+  stoppingIds,
+}: HealthTableProps) {
   return (
     <section className="card w-full border border-base-content/10 bg-base-100 shadow-sm">
       <div className="card-body gap-0 p-0">
@@ -87,6 +94,13 @@ export function HealthTable({ isEnabled, healthCheckItems }: HealthTableProps) {
                             }
                             {...(item.progress != null ? { item } : {})}
                           />
+                          {item.progress != null && onStop && (
+                            <StopButton
+                              item={item}
+                              onStop={onStop}
+                              stopping={stoppingIds?.has(item.id) ?? false}
+                            />
+                          )}
                         </div>
                       </div>
                     </td>
@@ -94,7 +108,16 @@ export function HealthTable({ isEnabled, healthCheckItems }: HealthTableProps) {
                     <td className={desktopCellClass}>{formatAge(item.lastHealthCheck, "Never")}</td>
                     <td className={`${desktopCellClass} pr-4 md:pr-6`}>
                       {item.progress != null ? (
-                        <ActiveBadge item={item} />
+                        <div className="inline-flex items-center gap-1">
+                          <ActiveBadge item={item} />
+                          {onStop && (
+                            <StopButton
+                              item={item}
+                              onStop={onStop}
+                              stopping={stoppingIds?.has(item.id) ?? false}
+                            />
+                          )}
+                        </div>
                       ) : (
                         formatWhen(item.nextHealthCheck, "ASAP")
                       )}
@@ -143,6 +166,31 @@ function MetaChip({
         <span className="font-mono tabular-nums text-base-content/70">{value}</span>
       )}
     </span>
+  );
+}
+
+function StopButton({
+  item,
+  onStop,
+  stopping,
+}: {
+  item: HealthCheckQueueItem;
+  onStop: (davItemId: string) => void;
+  stopping: boolean;
+}) {
+  return (
+    <PortalTooltip content="Stop and defer the next check by a day">
+      <Button
+        variant="ghost"
+        size="xsmall"
+        className="btn-square hover:text-error max-sm:size-11"
+        onClick={() => onStop(item.id)}
+        disabled={stopping}
+        aria-label={`Stop health check for ${item.name}`}
+      >
+        <Icon name="stop_circle" className="!text-[18px]" />
+      </Button>
+    </PortalTooltip>
   );
 }
 
