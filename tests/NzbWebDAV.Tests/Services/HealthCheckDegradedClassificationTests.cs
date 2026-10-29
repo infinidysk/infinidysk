@@ -83,6 +83,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
                 ConfigValue = JsonSerializer.Serialize(new UsenetProviderConfig()),
             },
             new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "true" },
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" },
             new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = "true" },
             new ConfigItem
             {

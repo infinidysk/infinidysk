@@ -27,6 +27,7 @@ public sealed class DavNzbFileCorruptionRecordTests : IAsyncLifetime
         _config.UpdateValues(
         [
             new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "true" },
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" },
         ]);
         return Task.CompletedTask;
     }

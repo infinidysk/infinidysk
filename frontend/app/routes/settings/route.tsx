@@ -188,7 +188,7 @@ const defaultConfig = {
   "repair.healthcheck-aging": "false",
   "repair.auto-remove-after-failures": "0",
   "repair.auto-remove-unlinked-only": "true",
-  "repair.par2-enabled": "true",
+  "repair.par2-enabled": "false",
   "repair.par2-preferred-over-arr": "true",
   "repair.par2-max-missing-slices": "8",
   "repair.par2-max-release-gb": "16",
