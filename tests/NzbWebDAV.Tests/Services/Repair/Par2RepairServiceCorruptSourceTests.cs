@@ -509,6 +509,25 @@ public sealed class Par2RepairServiceCorruptSourceTests : IAsyncLifetime
         Assert.True(release.Fake.BodyRequestCounts.Count >= segments, "every untrusted article header must be probed");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UntrustedRanges_DeadVolume_StopsProbingAtFirstAdjacentMissingPair(bool lastArticlePresent)
+    {
+        const int segments = 40;
+        var fileData = PatternBytes(SliceSize * segments, 0x7C);
+        var missing = Enumerable.Range(0, lastArticlePresent ? segments - 1 : segments).ToArray();
+        await using var release = await new Par2RepairTestReleaseBuilder(_config, _configRoot).BuildAsync(
+            [new("target.bin", fileData, EqualSegments(segments), missing)], [0u], trustedRanges: false);
+
+        var ok = await release.Service.TryPar2RepairAsync(
+            release.Item, [release.ContentSegmentIds[0]], CancellationToken.None);
+
+        Assert.Equal(Par2RepairOutcome.NotRepaired, ok);
+        var probed = release.ContentSegmentIds.Count(id => release.Fake.BodyRequestCounts.ContainsKey(id));
+        Assert.InRange(probed, 1, 6);
+    }
+
     [Fact]
     public async Task NonuniformArticles_MissingSmallArticlesInOneSlice_StayWithinSliceCap()
     {

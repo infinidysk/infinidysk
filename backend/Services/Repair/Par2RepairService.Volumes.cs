@@ -262,6 +262,7 @@ public partial class Par2RepairService
             .OrderBy(index => index == 0 ? 0 : index == file.Segments.Count - 1 ? 1 : 2)
             .ToArray();
         var concurrency = Math.Max(1, Math.Min(reads.FetchGate.CurrentCount, indices.Length));
+        var indexed = file.GetSegmentByteRangeIndex();
         foreach (var window in indices.Chunk(concurrency))
         {
             ct.ThrowIfCancellationRequested();
@@ -309,10 +310,20 @@ public partial class Par2RepairService
                 reads.Observations[file] = observation;
                 return observation;
             }
+
+            // Adjacent unavailable articles without exact ranges make range resolution fail, so stop probing.
+            if (window.Any(index => Unresolvable(index) && (Unresolvable(index - 1) || Unresolvable(index + 1))))
+                break;
         }
         var unavailable = new NzbFileObservation(null, null);
         reads.Observations[file] = unavailable;
         return unavailable;
+
+        bool Unresolvable(int index) =>
+            index >= 0 && index < file.Segments.Count
+            && reads.UnavailableIds.Contains(file.Segments[index].MessageId)
+            && !payload.TrustedRanges.ContainsKey(file.Segments[index].MessageId)
+            && !(indexed.IsTrusted && indexed.Ranges is not null);
     }
 
     private async Task<HeaderProbeResult> FetchHeaderObservationAsync(string id, RepairReadContext reads, CancellationToken ct)
@@ -328,7 +339,6 @@ public partial class Par2RepairService
         }
         catch (Exception exception) when (exception is UsenetArticleNotFoundException or UsenetCorruptArticleException or InvalidDataException or EndOfStreamException)
         {
-            HealthCheckActivity.Report();
             return new HeaderProbeResult(id, null, true, exception is UsenetArticleNotFoundException);
         }
         finally { reads.FetchGate.Release(); }
@@ -362,7 +372,13 @@ public partial class Par2RepairService
                 var id = file.Segments[index].MessageId;
                 if (evidence[index] is not null && !reads.Headers.ContainsKey(id)) continue;
                 var header = await ReadHeaderCoreAsync(id, reads, ct, identity: true).ConfigureAwait(false);
-                if (header is null) continue;
+                if (header is null)
+                {
+                    // CompleteVolumeRanges rejects this pair anyway; fail before probing the rest of a dead volume.
+                    if (index > 0 && evidence[index] is null && evidence[index - 1] is null)
+                        throw new InvalidDataException("Adjacent unavailable articles have ambiguous volume boundaries.");
+                    continue;
+                }
                 if (header.FileSize != length || header.TotalParts != evidence.Length || header.PartNumber != index + 1
                     || header.PartOffset < 0 || header.PartSize <= 0)
                     throw new InvalidDataException("yEnc length, part count, or article order conflicts with the posted volume.");
@@ -423,7 +439,6 @@ public partial class Par2RepairService
                 }
                 catch (Exception exception) when (IsUnavailableArticle(exception))
                 {
-                    HealthCheckActivity.Report();
                     reads.NoteUnavailable(id, exception);
                     break;
                 }
