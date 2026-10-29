@@ -72,6 +72,18 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
                 },
             };
         }
+        if (route == "api/stop-health-check")
+        {
+            operation.Parameters ??= [];
+            operation.Parameters.Add(new OpenApiParameter
+            {
+                Name = "davItemId",
+                In = ParameterLocation.Query,
+                Required = true,
+                Description = "Stop the running health check or repair for this file and defer its next check by a day.",
+                Schema = new OpenApiSchema { Type = JsonSchemaType.String, Format = "uuid" },
+            });
+        }
         if (route == "api/requeue-action-needed-health-checks")
         {
             operation.Parameters ??= [];

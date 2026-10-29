@@ -48,6 +48,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     internal static readonly TimeSpan HealthCheckInactivityLimit = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan HealthCheckStallDeferral = TimeSpan.FromDays(1);
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _repairRetryNotBefore = new();
+    private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _stopRequests = new();
 
     // Repeated remove-and-blocklist repairs for the same library path in a short window indicate
     // a replacement loop (Arr keeps re-grabbing a release repair keeps rejecting, issue #732).
@@ -210,6 +211,15 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 var snapshot = entry.Value.GetDiagnosticSnapshot(now);
                 return new ActiveHealthCheckProgress(entry.Value.Progress, snapshot.Phase, snapshot.PhaseStartedAtUtc);
             });
+    }
+
+    /// <summary>Stops a running health check or repair and defers it like a stalled attempt.</summary>
+    public async Task<bool> StopHealthCheckAsync(Guid davItemId)
+    {
+        if (!_stopRequests.TryGetValue(davItemId, out var stop)) return false;
+        try { await stop.CancelAsync().ConfigureAwait(false); }
+        catch (ObjectDisposedException) { return false; }
+        return true;
     }
 
     public enum FileRecheckOutcome { Queued, AlreadyQueued, AlreadyRunning, NotFound, Unsupported, Disabled }
@@ -1241,7 +1251,9 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
     )
     {
         using var stalled = new CancellationTokenSource(HealthCheckInactivityLimit, _timeProvider);
-        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct, stalled.Token);
+        using var stop = new CancellationTokenSource();
+        _stopRequests[davItem.Id] = stop;
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct, stalled.Token, stop.Token);
         HealthCheckActivity.Current = () =>
         {
             try { stalled.CancelAfter(HealthCheckInactivityLimit); }
@@ -1254,7 +1266,7 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         {
             await PerformHealthCheckAttempt(davItem, dbClient, concurrency, attempt.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (stalled.IsCancellationRequested && !ct.IsCancellationRequested)
+        catch (OperationCanceledException) when ((stalled.IsCancellationRequested || stop.IsCancellationRequested) && !ct.IsCancellationRequested)
         {
             CompleteHealthProgress(davItem.Id);
             var now = _timeProvider.GetUtcNow();
@@ -1270,9 +1282,16 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                     .SetProperty(item => item.NextHealthCheck, item =>
                         item.NextHealthCheck == DateTimeOffset.UnixEpoch ? DateTimeOffset.UnixEpoch : (DateTimeOffset?)next), ct)
                 .ConfigureAwait(false);
-            Log.Warning(
-                "Health check for {Path} made no progress for {Limit}. Deferred next check to {NextCheck}.",
-                davItem.Path, HealthCheckInactivityLimit, next);
+            if (stop.IsCancellationRequested)
+                Log.Information("Health check for {Path} was stopped. Deferred next check to {NextCheck}.", davItem.Path, next);
+            else
+                Log.Warning(
+                    "Health check for {Path} made no progress for {Limit}. Deferred next check to {NextCheck}.",
+                    davItem.Path, HealthCheckInactivityLimit, next);
+        }
+        finally
+        {
+            _stopRequests.TryRemove(new KeyValuePair<Guid, CancellationTokenSource>(davItem.Id, stop));
         }
     }
 
