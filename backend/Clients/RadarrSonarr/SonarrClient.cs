@@ -217,6 +217,15 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
             ct);
     }
 
+    public override Task<ArrHistory> GetFileDeletionHistoryAsync(
+        ArrHistoryRecord importRecord,
+        CancellationToken ct = default) =>
+        importRecord.EpisodeId is { } episodeId
+            ? Get<ArrHistory>(
+                $"/history?episodeId={episodeId}&eventType=5&page=1&pageSize=50&sortKey=date&sortDirection=descending",
+                ct)
+            : Task.FromResult(new ArrHistory());
+
     private async Task<int?> GetEpisodeFileId(string symlinkOrStrmPath, CancellationToken ct)
     {
         var cacheKey = (Host, symlinkOrStrmPath);

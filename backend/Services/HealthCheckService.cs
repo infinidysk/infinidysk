@@ -3385,6 +3385,56 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         return new ArrLinkedRepairResult(ArrLinkedRepairDecision.DeferNoMatchingMediaItem);
     }
 
+    /// <summary>
+    /// Asks each Arr instance whether its history proves an unlinked file is no longer wanted.
+    /// The first proof wins; unreachable instances and incomplete answers leave the verdict Unknown.
+    /// </summary>
+    internal static async Task<ArrUnlinkedFileVerdict> ClassifyUnlinkedFileAsync(
+        IEnumerable<ArrClient> arrClients,
+        Guid downloadId,
+        string fileName,
+        DateTimeOffset utcNow,
+        ArrInstanceBackoff? arrBackoff,
+        CancellationToken ct)
+    {
+        foreach (var arrClient in arrClients)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (arrBackoff?.IsInBackoff(arrClient.Host) == true)
+                continue;
+
+            try
+            {
+                var history = await arrClient.GetDownloadHistoryAsync(downloadId, ct).ConfigureAwait(false);
+                arrBackoff?.RecordSuccess(arrClient.Host);
+                var fileImport = ArrUnlinkedDownloadClassifier.FindFileImport(history.Records, fileName);
+                if (fileImport is null)
+                {
+                    var verdict = ArrUnlinkedDownloadClassifier.ClassifyWithoutFileImport(history, utcNow);
+                    if (verdict != ArrUnlinkedFileVerdict.Unknown)
+                        return verdict;
+                    continue;
+                }
+
+                var deletions = await arrClient.GetFileDeletionHistoryAsync(fileImport, ct).ConfigureAwait(false);
+                if (ArrUnlinkedDownloadClassifier.IsSupersededByUpgrade(fileImport, deletions.Records))
+                    return ArrUnlinkedFileVerdict.Superseded;
+            }
+            catch (Exception e) when (!ct.IsCancellationRequested &&
+                                      e is HttpRequestException or TaskCanceledException or InvalidOperationException
+                                          or InvalidDataException or System.Text.Json.JsonException)
+            {
+                arrBackoff?.RecordFailure(arrClient.Host, e);
+                LogArrRepairFailure(
+                    e,
+                    "Health-check repair: could not query Arr download history on {Host}",
+                    arrClient.Host);
+            }
+        }
+
+        return ArrUnlinkedFileVerdict.Unknown;
+    }
+
     private static void LogArrRepairFailure(Exception exception, string messageTemplate, string host)
     {
         if (exception.TryGetCausingException<HttpRequestException>(out var httpException) &&
@@ -3665,6 +3715,56 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
 
             if (linkDisposition == LibraryLinkRepairDisposition.DeferMissingLink)
             {
+                // A missing link alone is not proof, but Arr history can be: the import was
+                // replaced by an upgrade, the download failed, or Arr imported a sibling file.
+                if (libraryDir != null &&
+                    (davItem.ArrDownloadId ?? davItem.NzbBlobId ?? davItem.HistoryItemId) is { } unlinkedDownloadId)
+                {
+                    var verdict = await ClassifyUnlinkedFileAsync(
+                        CreateRepairArrClientsOverride?.Invoke() ?? _configManager.GetArrConfig().GetArrClients().ToArray(),
+                        unlinkedDownloadId,
+                        davItem.Name,
+                        _timeProvider.GetUtcNow(),
+                        _arrBackoff,
+                        ct).ConfigureAwait(false);
+                    if (verdict != ArrUnlinkedFileVerdict.Unknown)
+                    {
+                        if (GetReadHoldUntil() is { } unlinkedHoldUntil)
+                        {
+                            await DeferForRecentReadAsync(unlinkedHoldUntil).ConfigureAwait(false);
+                            return;
+                        }
+
+                        var arrReason = verdict switch
+                        {
+                            ArrUnlinkedFileVerdict.Superseded => "Radarr/Sonarr replaced its import with an upgrade",
+                            ArrUnlinkedFileVerdict.DownloadFailed => "Radarr/Sonarr marked its download as failed",
+                            _ => "Radarr/Sonarr imported a different file from the same download",
+                        };
+                        DeletionAuditLog.Record(
+                            "health-repair",
+                            davItem,
+                            $"health validation failed; not library linked and {arrReason}");
+                        Log.Information(
+                            "Removed unlinked {Path} after it failed health validation. Reason: {Reason}.",
+                            davItem.Path,
+                            arrReason);
+                        RemoveDavItemWithGeneratedSidecars(dbClient, davItem);
+                        _failureTracker.ClearFailure(davItem.Id);
+                        await RecordHealthResult(
+                            dbClient, davItem,
+                            HealthCheckResult.HealthResult.Unhealthy,
+                            HealthCheckResult.RepairAction.Deleted,
+                            string.Join(" ", [
+                                "File failed health validation.",
+                                "No imported symlink or .strm file links to it,",
+                                $"and {arrReason}.",
+                                "Deleted the unused webdav-file."
+                            ]), ct).ConfigureAwait(false);
+                        return;
+                    }
+                }
+
                 var utcNow = DateTimeOffset.UtcNow;
                 davItem.LastHealthCheck = utcNow;
                 davItem.NextHealthCheck = utcNow + TimeSpan.FromDays(1);
