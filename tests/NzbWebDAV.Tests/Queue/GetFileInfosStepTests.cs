@@ -655,10 +655,15 @@ public class GetFileInfosStepTests
             },
         };
 
+        var firstSource = picks[0].Info.NameSource;
+        var secondSource = picks[1].Info.NameSource;
+
         GetFileInfosStep.RepairRarGroupNames(picks);
 
         Assert.Equal(par2Name, picks[0].Info.FileName);
         Assert.Equal(repaired ? "archive.part02.rar" : "scrambled.part02.rar", picks[1].Info.FileName);
+        Assert.Equal(firstSource, picks[0].Info.NameSource);
+        Assert.Equal(repaired ? GetFileInfosStep.FileNameSources.YencHeader : secondSource, picks[1].Info.NameSource);
     }
 
     [Theory]

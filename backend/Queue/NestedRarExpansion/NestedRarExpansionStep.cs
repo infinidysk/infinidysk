@@ -234,7 +234,10 @@ public static class NestedRarExpansionStep
                     header.GetAesParams(password),
                     header.UncompressedSize,
                     releaseDate,
-                    header.IsUncompressedSizeUnknown);
+                    header.IsUncompressedSizeUnknown,
+                    header.IsEncrypted,
+                    header.IsPasswordVerified(password),
+                    sorted[0].NestingDepth + 1);
                 expanded.AddRange(mapped);
             }
 
