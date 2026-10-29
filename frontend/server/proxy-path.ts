@@ -19,6 +19,7 @@ const READ_ONLY_DENIED_POST_PATHS = new Set([
   "/api/setup-wizard/skip",
   "/api/requeue-action-needed-health-checks",
   "/api/trigger-health-check",
+  "/api/stop-health-check",
 ]);
 
 function normalizedApiPath(pathname: string): string | null {

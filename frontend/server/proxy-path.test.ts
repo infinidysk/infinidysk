@@ -97,6 +97,7 @@ describe("isReadOnlyDeniedBackendMutation", () => {
     "/api/trigger-health-check",
     "/api/trigger-health-check/run",
     "/api/trigger-health-check%2Frun",
+    "/api/stop-health-check",
   ])("blocks read-only POST access to %s", (path) => {
     expect(isReadOnlyDeniedBackendMutation("POST", path)).toBe(true);
   });

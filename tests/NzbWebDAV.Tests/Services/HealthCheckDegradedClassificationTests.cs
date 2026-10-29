@@ -323,6 +323,146 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task StopHealthCheck_CancelsRunningRepairAndDefersRetry()
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" },
+        ]);
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, [10_000, 10_000, 10_000]);
+        item.HealthRepairPending = true;
+        await _context.SaveChangesAsync();
+        var now = new DateTimeOffset(2026, 9, 16, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new ControllableTimeProvider(now);
+        var (service, par2) = await NewServiceAsync(
+            NewFakeClient(segments, missing: [0, 1, 2]), Par2RepairOutcome.NotRepaired, timeProvider);
+        service.CreateDbContextOverride = () => new DavDatabaseContext(_options);
+        par2.Hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.NotRunning, await service.StopHealthCheckAsync(item.Id));
+
+        var check = service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+        await par2.Hang.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.Stopped, await service.StopHealthCheckAsync(item.Id));
+        await check.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Empty(GetHealthRows(item.Id));
+        var reloaded = ReloadItem(item.Id);
+        Assert.True(reloaded.HealthRepairPending);
+        Assert.Equal(now + TimeSpan.FromDays(1), reloaded.NextHealthCheck);
+        Assert.Empty(await service.SelectNextHealthCheckIdsAsync(
+            [], allowChecks: true, allowRepairs: true, maximumCount: 1, CancellationToken.None));
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.NotRunning, await service.StopHealthCheckAsync(item.Id));
+    }
+
+    [Fact]
+    public async Task StopHealthCheck_ReturnsOnlyAfterTheWorkerLeavesTheActiveList()
+    {
+        var (service, item, attemptReturned, workerTail) = await StartBlockedRepairWorkerAsync();
+
+        var stop = service.StopHealthCheckAsync(item.Id);
+        await attemptReturned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(stop.IsCompleted);
+        Assert.Single(service.GetActiveHealthCheckProgress());
+
+        workerTail.SetResult();
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.Stopped, await stop.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Empty(service.GetActiveHealthCheckProgress());
+        await service.ReapCompletedWorkersAsync();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StopHealthCheck_ReportsStoppingWhenTheWorkerOutlivesTheWait(bool requestAborted)
+    {
+        var (service, item, attemptReturned, workerTail) = await StartBlockedRepairWorkerAsync();
+        service.StopWorkerExitWait = TimeSpan.FromMilliseconds(50);
+
+        var outcome = await service.StopHealthCheckAsync(item.Id, new CancellationToken(requestAborted))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.Stopping, outcome);
+        Assert.Single(service.GetActiveHealthCheckProgress());
+        await attemptReturned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        workerTail.SetResult();
+        await service.ReapCompletedWorkersAsync().WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    private async Task<(HealthCheckService Service, DavItem Item, TaskCompletionSource AttemptReturned, TaskCompletionSource WorkerTail)>
+        StartBlockedRepairWorkerAsync()
+    {
+        // Workers only start with an enabled provider; NewServiceAsync then swaps in the fake client.
+        var providers = new UsenetProviderConfig();
+        providers.Providers.Add(new UsenetProviderConfig.ConnectionDetails
+        {
+            ProviderId = Guid.NewGuid(),
+            Type = ProviderType.BackupOnly,
+            Host = "provider.example",
+            Port = 563,
+            UseSsl = true,
+            User = "user",
+            Pass = "pass",
+            MaxConnections = 1,
+        });
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" },
+            new ConfigItem { ConfigName = ConfigKeys.UsenetProviders, ConfigValue = JsonSerializer.Serialize(providers) },
+        ]);
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, [10_000, 10_000, 10_000]);
+        var (service, par2) = await NewServiceAsync(
+            NewFakeClient(segments, missing: [0, 1, 2]), Par2RepairOutcome.NotRepaired);
+        service.CreateDbContextOverride = () => new DavDatabaseContext(_options);
+        par2.Hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var attemptReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var workerTail = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        service.SelectCandidateOverride = (_, _, _) => Task.FromResult<Guid?>(item.Id);
+        service.ProcessCandidateOverride = async (_, ct) =>
+        {
+            await service.PerformHealthCheck(item, _dbClient, concurrency: 4, ct);
+            attemptReturned.SetResult();
+            await workerTail.Task;
+        };
+        Assert.Equal(HealthCheckRefillOutcome.Started, await service.RefillWorkerSlotsAsync(CancellationToken.None));
+        await par2.Hang.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        return (service, item, attemptReturned, workerTail);
+    }
+
+    [Fact]
+    public async Task StopHealthCheck_DefersRepairFlaggedUrgentByStreamingDuringAttempt()
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" },
+        ]);
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, [10_000, 10_000, 10_000]);
+        var now = new DateTimeOffset(2026, 9, 16, 12, 0, 0, TimeSpan.Zero);
+        var (service, par2) = await NewServiceAsync(
+            NewFakeClient(segments, missing: [0, 1, 2]), Par2RepairOutcome.NotRepaired,
+            new ControllableTimeProvider(now));
+        service.CreateDbContextOverride = () => new DavDatabaseContext(_options);
+        par2.Hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var check = service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+        await par2.Hang.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await using (var streaming = new DavDatabaseContext(_options))
+            await streaming.Items.Where(x => x.Id == item.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.NextHealthCheck, DateTimeOffset.UnixEpoch));
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.Stopped, await service.StopHealthCheckAsync(item.Id));
+        await check.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(DateTimeOffset.UnixEpoch, ReloadItem(item.Id).NextHealthCheck);
+        Assert.Empty(await service.SelectNextHealthCheckIdsAsync(
+            [], allowChecks: true, allowRepairs: true, maximumCount: 1, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task InactivityLimit_DoesNotAbortRepairThatKeepsProgressingPastAnHour()
     {
         _configManager.UpdateValues(

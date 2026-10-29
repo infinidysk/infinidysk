@@ -10526,6 +10526,95 @@
         ]
       }
     },
+    "/api/stop-health-check": {
+      "post": {
+        "operationId": "post-api-stop-health-check",
+        "parameters": [
+          {
+            "description": "Stop the running health check or repair for this file and defer its next check by a day.",
+            "in": "query",
+            "name": "davItemId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stopped. The check has left the active list."
+          },
+          "202": {
+            "description": "Stop requested. The check is still finishing and will leave the active list shortly."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad request."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unexpected server error. Detail is sanitized; use traceId."
+          }
+        },
+        "summary": "Stop Health Check",
+        "tags": [
+          "StopHealthCheck"
+        ]
+      }
+    },
     "/api/test-arr-connection": {
       "get": {
         "operationId": "get-api-test-arr-connection",
@@ -12970,6 +13059,9 @@
     },
     {
       "name": "TestArrConnection"
+    },
+    {
+      "name": "StopHealthCheck"
     },
     {
       "name": "SkipSetupWizard"
