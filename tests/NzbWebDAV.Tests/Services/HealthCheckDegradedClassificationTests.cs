@@ -357,6 +357,36 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task StopHealthCheck_DefersRepairFlaggedUrgentByStreamingDuringAttempt()
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" },
+        ]);
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, [10_000, 10_000, 10_000]);
+        var now = new DateTimeOffset(2026, 9, 16, 12, 0, 0, TimeSpan.Zero);
+        var (service, par2) = await NewServiceAsync(
+            NewFakeClient(segments, missing: [0, 1, 2]), Par2RepairOutcome.NotRepaired,
+            new ControllableTimeProvider(now));
+        service.CreateDbContextOverride = () => new DavDatabaseContext(_options);
+        par2.Hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var check = service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+        await par2.Hang.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await using (var streaming = new DavDatabaseContext(_options))
+            await streaming.Items.Where(x => x.Id == item.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.NextHealthCheck, DateTimeOffset.UnixEpoch));
+        Assert.True(await service.StopHealthCheckAsync(item.Id));
+        await check.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(DateTimeOffset.UnixEpoch, ReloadItem(item.Id).NextHealthCheck);
+        Assert.Empty(await service.SelectNextHealthCheckIdsAsync(
+            [], allowChecks: true, allowRepairs: true, maximumCount: 1, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task InactivityLimit_DoesNotAbortRepairThatKeepsProgressingPastAnHour()
     {
         _configManager.UpdateValues(

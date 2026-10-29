@@ -472,7 +472,8 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         setQueueState((x) => completeHealthCheck(x, davItemId));
         setRequeueFeedback({
           variant: "success",
-          message: "Stopped. The next check for this file is deferred by a day.",
+          message:
+            "Stopped. The next check for this file is deferred by a day. For repairs, a restart clears this deferral.",
         });
         void revalidator.revalidate();
       } catch {

@@ -25,8 +25,17 @@ vi.mock("~/utils/shared-websocket", () => ({
 }));
 
 vi.mock("./components/health-table/health-table", () => ({
-  HealthTable: ({ onStop }: { onStop?: (davItemId: string) => void }) => (
+  HealthTable: ({
+    healthCheckItems,
+    onStop,
+  }: {
+    healthCheckItems: { id: string }[];
+    onStop?: (davItemId: string) => void;
+  }) => (
     <div data-testid="health-table">
+      {healthCheckItems.map((item) => (
+        <div key={item.id}>{item.id}</div>
+      ))}
       {onStop && (
         <button type="button" onClick={() => onStop("queue-0")}>
           Stop check
@@ -182,6 +191,7 @@ describe("Health stop active check", () => {
   it("stops a running check and revalidates the page", async () => {
     mockActionResponse(jsonResponse({ status: true }));
     renderHealth();
+    expect(screen.getByText("queue-0")).toBeTruthy();
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Stop check" }));
 
@@ -189,6 +199,7 @@ describe("Health stop active check", () => {
       method: "POST",
     });
     expect((await screen.findByRole("status")).textContent).toContain("Stopped.");
+    expect(screen.queryByText("queue-0")).toBeNull();
     expect(revalidateMock).toHaveBeenCalledOnce();
   });
 

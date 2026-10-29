@@ -179,7 +179,7 @@ function StopButton({
   stopping: boolean;
 }) {
   return (
-    <PortalTooltip content="Stop and defer the next check by a day">
+    <PortalTooltip content="Stop and defer the next check by a day. For repairs, a restart clears this deferral.">
       <Button
         variant="ghost"
         size="xsmall"

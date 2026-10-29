@@ -1271,8 +1271,15 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             CompleteHealthProgress(davItem.Id);
             var now = _timeProvider.GetUtcNow();
             var next = now + HealthCheckStallDeferral;
+            // Hold the streaming gate so a stop also defers an urgent flag written during the attempt.
+            await using var mutationGate = await _failureTracker
+                .AcquireMutationGateAsync(davItem.Id, CancellationToken.None)
+                .ConfigureAwait(false);
             // ponytail: repair deferrals are in-memory, so a restart retries timed-out repairs immediately.
-            if (davItem.NextHealthCheck == DateTimeOffset.UnixEpoch || davItem.HealthRepairPending)
+            if (davItem.NextHealthCheck == DateTimeOffset.UnixEpoch
+                || davItem.HealthRepairPending
+                || (stop.IsCancellationRequested
+                    && await IsDurablyUrgentAsync(dbClient, davItem.Id, ct).ConfigureAwait(false)))
                 _repairRetryNotBefore[davItem.Id] = next;
             // Keep the urgent sentinel (including one set by streaming during this attempt) so the retry stays urgent.
             await dbClient.Ctx.Items

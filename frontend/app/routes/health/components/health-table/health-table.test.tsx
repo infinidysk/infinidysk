@@ -85,4 +85,32 @@ describe("HealthTable", () => {
     expect(withStop).not.toContain("Stop health check for queued.mkv");
     expect(withoutStop).not.toContain("Stop health check");
   });
+
+  it("disables the stop control while its stop request is pending", () => {
+    const markup = renderToStaticMarkup(
+      <HealthTable
+        isEnabled
+        healthCheckItems={[
+          {
+            id: "active",
+            name: "active.mkv",
+            path: "/content/active.mkv",
+            releaseDate: null,
+            lastHealthCheck: null,
+            nextHealthCheck: null,
+            countsTowardUncheckedCount: true,
+            progress: 10,
+          },
+        ]}
+        onStop={() => {}}
+        stoppingIds={new Set(["active"])}
+      />,
+    );
+
+    const buttons = markup.match(
+      /<button[^>]*aria-label="Stop health check for active\.mkv"[^>]*>/g,
+    );
+    expect(buttons).toHaveLength(2);
+    for (const button of buttons ?? []) expect(button).toContain('disabled=""');
+  });
 });
