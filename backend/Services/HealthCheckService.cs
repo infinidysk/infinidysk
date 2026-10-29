@@ -213,19 +213,22 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             });
     }
 
-    /// <summary>Stops a running health check or repair and defers it like a stalled attempt.</summary>
-    public async Task<bool> StopHealthCheckAsync(Guid davItemId, CancellationToken ct = default)
-    {
-        if (!_stopRequests.TryGetValue(davItemId, out var stop)) return false;
-        try { await stop.CancelAsync().ConfigureAwait(false); }
-        catch (ObjectDisposedException) { return false; }
-        // Wait until the worker leaves the active list, so the UI's next poll cannot show it again.
-        if (_inProgress.TryGetValue(davItemId, out var worker) && worker.ProcessingTask is { } exit)
-            await exit.WaitAsync(StopWorkerExitWait, ct).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        return true;
-    }
+    public enum StopHealthCheckOutcome { NotRunning, Stopped, Stopping }
 
-    private static readonly TimeSpan StopWorkerExitWait = TimeSpan.FromSeconds(10);
+    internal TimeSpan StopWorkerExitWait { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>Stops a running health check or repair and defers it like a stalled attempt.</summary>
+    public async Task<StopHealthCheckOutcome> StopHealthCheckAsync(Guid davItemId, CancellationToken ct = default)
+    {
+        if (!_stopRequests.TryGetValue(davItemId, out var stop)) return StopHealthCheckOutcome.NotRunning;
+        try { await stop.CancelAsync().ConfigureAwait(false); }
+        catch (ObjectDisposedException) { return StopHealthCheckOutcome.NotRunning; }
+        if (!_inProgress.TryGetValue(davItemId, out var worker) || worker.ProcessingTask is not { } exit)
+            return StopHealthCheckOutcome.Stopped;
+        // Report Stopped only once the worker has left the active list, so the next poll cannot show it again.
+        await exit.WaitAsync(StopWorkerExitWait, ct).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        return exit.IsCompleted ? StopHealthCheckOutcome.Stopped : StopHealthCheckOutcome.Stopping;
+    }
 
     public enum FileRecheckOutcome { Queued, AlreadyQueued, AlreadyRunning, NotFound, Unsupported, Disabled }
 

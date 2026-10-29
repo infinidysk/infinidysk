@@ -10543,7 +10543,10 @@
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "Stopped. The check has left the active list."
+          },
+          "202": {
+            "description": "Stop requested. The check is still finishing and will leave the active list shortly."
           },
           "400": {
             "content": {

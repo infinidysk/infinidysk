@@ -340,11 +340,11 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             NewFakeClient(segments, missing: [0, 1, 2]), Par2RepairOutcome.NotRepaired, timeProvider);
         service.CreateDbContextOverride = () => new DavDatabaseContext(_options);
         par2.Hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        Assert.False(await service.StopHealthCheckAsync(item.Id));
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.NotRunning, await service.StopHealthCheckAsync(item.Id));
 
         var check = service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
         await par2.Hang.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.True(await service.StopHealthCheckAsync(item.Id));
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.Stopped, await service.StopHealthCheckAsync(item.Id));
         await check.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Empty(GetHealthRows(item.Id));
@@ -353,11 +353,45 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         Assert.Equal(now + TimeSpan.FromDays(1), reloaded.NextHealthCheck);
         Assert.Empty(await service.SelectNextHealthCheckIdsAsync(
             [], allowChecks: true, allowRepairs: true, maximumCount: 1, CancellationToken.None));
-        Assert.False(await service.StopHealthCheckAsync(item.Id));
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.NotRunning, await service.StopHealthCheckAsync(item.Id));
     }
 
     [Fact]
     public async Task StopHealthCheck_ReturnsOnlyAfterTheWorkerLeavesTheActiveList()
+    {
+        var (service, item, attemptReturned, workerTail) = await StartBlockedRepairWorkerAsync();
+
+        var stop = service.StopHealthCheckAsync(item.Id);
+        await attemptReturned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(stop.IsCompleted);
+        Assert.Single(service.GetActiveHealthCheckProgress());
+
+        workerTail.SetResult();
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.Stopped, await stop.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Empty(service.GetActiveHealthCheckProgress());
+        await service.ReapCompletedWorkersAsync();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StopHealthCheck_ReportsStoppingWhenTheWorkerOutlivesTheWait(bool requestAborted)
+    {
+        var (service, item, attemptReturned, workerTail) = await StartBlockedRepairWorkerAsync();
+        service.StopWorkerExitWait = TimeSpan.FromMilliseconds(50);
+
+        var outcome = await service.StopHealthCheckAsync(item.Id, new CancellationToken(requestAborted))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.Stopping, outcome);
+        Assert.Single(service.GetActiveHealthCheckProgress());
+        await attemptReturned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        workerTail.SetResult();
+        await service.ReapCompletedWorkersAsync().WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    private async Task<(HealthCheckService Service, DavItem Item, TaskCompletionSource AttemptReturned, TaskCompletionSource WorkerTail)>
+        StartBlockedRepairWorkerAsync()
     {
         // Workers only start with an enabled provider; NewServiceAsync then swaps in the fake client.
         var providers = new UsenetProviderConfig();
@@ -395,16 +429,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         };
         Assert.Equal(HealthCheckRefillOutcome.Started, await service.RefillWorkerSlotsAsync(CancellationToken.None));
         await par2.Hang.Task.WaitAsync(TimeSpan.FromSeconds(10));
-
-        var stop = service.StopHealthCheckAsync(item.Id);
-        await attemptReturned.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.False(stop.IsCompleted);
-        Assert.Single(service.GetActiveHealthCheckProgress());
-
-        workerTail.SetResult();
-        Assert.True(await stop.WaitAsync(TimeSpan.FromSeconds(10)));
-        Assert.Empty(service.GetActiveHealthCheckProgress());
-        await service.ReapCompletedWorkersAsync();
+        return (service, item, attemptReturned, workerTail);
     }
 
     [Fact]
@@ -429,7 +454,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         await using (var streaming = new DavDatabaseContext(_options))
             await streaming.Items.Where(x => x.Id == item.Id)
                 .ExecuteUpdateAsync(s => s.SetProperty(x => x.NextHealthCheck, DateTimeOffset.UnixEpoch));
-        Assert.True(await service.StopHealthCheckAsync(item.Id));
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.Stopped, await service.StopHealthCheckAsync(item.Id));
         await check.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal(DateTimeOffset.UnixEpoch, ReloadItem(item.Id).NextHealthCheck);

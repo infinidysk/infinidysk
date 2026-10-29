@@ -209,6 +209,17 @@ describe("Health stop active check", () => {
     expect(revalidateMock).toHaveBeenCalledOnce();
   });
 
+  it("keeps the row while a slow stop is still finishing", async () => {
+    mockActionResponse(jsonResponse({ status: true }, 202));
+    renderHealth();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Stop check" }));
+
+    expect((await screen.findByRole("status")).textContent).toContain("still finishing");
+    expect(screen.getByText("queue-0")).toBeTruthy();
+    expect(revalidateMock).toHaveBeenCalledOnce();
+  });
+
   it("keeps stop disabled while the request is pending", async () => {
     let resolveStop: (response: Response) => void = () => {};
     fetchMock.mockImplementation((input: unknown) => {

@@ -47,7 +47,7 @@ const PAGE_SIZE_OPTIONS = [25, 50, 100, 250] as const;
 const DEFAULT_PAGE_SIZE = 25;
 
 type RequeueFeedback = {
-  variant: "success" | "danger";
+  variant: "success" | "info" | "danger";
   message: string;
 };
 
@@ -469,6 +469,15 @@ export default function Health({ loaderData }: Route.ComponentProps) {
           });
           return;
         }
+        if (response.status === 202) {
+          setRequeueFeedback({
+            variant: "info",
+            message:
+              "Stop requested. The check is still finishing and will leave the list shortly; its next check is deferred by a day.",
+          });
+          void revalidator.revalidate();
+          return;
+        }
         setQueueState((x) => completeHealthCheck(x, davItemId));
         setRequeueFeedback({
           variant: "success",
@@ -546,7 +555,13 @@ export default function Health({ loaderData }: Route.ComponentProps) {
           aria-live="polite"
         >
           <Icon
-            name={requeueFeedback.variant === "success" ? "check_circle" : "error"}
+            name={
+              requeueFeedback.variant === "success"
+                ? "check_circle"
+                : requeueFeedback.variant === "info"
+                  ? "info"
+                  : "error"
+            }
             className="shrink-0 !text-[20px]"
           />
           <span>{requeueFeedback.message}</span>

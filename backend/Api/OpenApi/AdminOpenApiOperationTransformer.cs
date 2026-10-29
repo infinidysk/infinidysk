@@ -83,6 +83,8 @@ internal sealed class AdminOpenApiOperationTransformer : IOpenApiOperationTransf
                 Description = "Stop the running health check or repair for this file and defer its next check by a day.",
                 Schema = new OpenApiSchema { Type = JsonSchemaType.String, Format = "uuid" },
             });
+            operation.Responses["200"] = new OpenApiResponse { Description = "Stopped. The check has left the active list." };
+            operation.Responses["202"] = new OpenApiResponse { Description = "Stop requested. The check is still finishing and will leave the active list shortly." };
         }
         if (route == "api/requeue-action-needed-health-checks")
         {
