@@ -16,6 +16,118 @@ namespace NzbWebDAV.Tests.Streams;
 [Collection(nameof(GlobalStreamTraceCollection))]
 public sealed class MultiSegmentStreamHedgeTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task BufferedStartup_AllResponsesPending_HedgesOnlyWithSpareCapacity(bool spareCapacity)
+    {
+        var (segments, ranges) = CreateSegments(8);
+        var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges);
+        using var stalled = new StalledArticleClient(inner, segments.Keys.ToArray()) { SpareCapacity = spareCapacity };
+        using var trace = new HedgeTraceCapture();
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        await using var stream = CreateStream(segments, stalled, cts.Token);
+        try
+        {
+            var first = new byte[SegmentSize];
+            var read = stream.ReadExactlyAsync(first).AsTask();
+            if (!spareCapacity)
+            {
+                await Task.WhenAny(read, Task.Delay(MultiSegmentStream.HedgeFloor * 2));
+                Assert.False(read.IsCompleted);
+                trace.AssertNoHedge();
+                stalled.Release();
+            }
+            await read.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(segments["seg-0"], first);
+            if (spareCapacity) trace.AssertHedge("seg-0", 0, HedgeOutcome.Duplicate);
+            Assert.Equal(spareCapacity ? 2 : 1, inner.BodyRequestCounts["seg-0"]);
+        }
+        finally { stalled.Release(); }
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task UnknownSegmentLength_DoesNotRaceShorterDuplicate(int headIndex)
+    {
+        var (segments, ranges) = CreateSegments(8);
+        var id = $"seg-{headIndex}";
+        var requests = 0;
+        var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges,
+            decodedStreamFactory: (key, bytes) =>
+                key == id && Interlocked.Increment(ref requests) > 1
+                    ? new MemoryStream(bytes[..(bytes.Length / 2)], writable: false)
+                    : new MemoryStream(bytes, writable: false));
+        using var stalled = new StalledArticleClient(inner,
+            headIndex == 0 ? segments.Keys.ToArray() : [id]);
+        using var trace = new HedgeTraceCapture();
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        await using var stream = MultiSegmentStream.Create(segments.Keys.ToArray().AsMemory(), stalled,
+            articleBufferSize: 40, estimatedSegmentSize: SegmentSize, failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true, cts.Token, fileName: "unknown-length.bin",
+            bodyPipelineBatchWidth: BatchWidth);
+        try
+        {
+            var actual = new byte[segments.Count * SegmentSize];
+            var read = stream.ReadExactlyAsync(actual).AsTask();
+            await Task.WhenAny(read, Task.Delay(MultiSegmentStream.HedgeFloor * 2));
+            Assert.False(read.IsCompleted);
+            trace.AssertNoHedge();
+            stalled.Release();
+            await read.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(segments.Values.SelectMany(bytes => bytes), actual);
+            Assert.Equal(1, inner.BodyRequestCounts[id]);
+        }
+        finally { stalled.Release(); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RangeOnlyGeometry_RejectsDuplicateWithMismatchedDecodedLength(bool oversized)
+    {
+        var (segments, ranges) = CreateSegments(8);
+        var requests = 0;
+        var inner = new FakeNntpClient(segments, useCachedYencStreams: true, segmentRanges: ranges,
+            decodedStreamFactory: (key, bytes) =>
+                key == "seg-0" && Interlocked.Increment(ref requests) == 2
+                    ? new MemoryStream(oversized ? [.. bytes, 1] : bytes[..(bytes.Length / 2)], writable: false)
+                    : new MemoryStream(bytes, writable: false));
+        var duplicateRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var stalled = new StalledArticleClient(inner, segments.Keys.ToArray())
+        {
+            BeforeSingleRequest = (id, _) =>
+            {
+                if (id == "seg-0") duplicateRequested.TrySetResult();
+                return Task.CompletedTask;
+            },
+        };
+        using var trace = new HedgeTraceCapture();
+        using var cts = new CancellationTokenSource();
+        using var priority = cts.Token.SetContext(new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        await using var stream = MultiSegmentStream.Create(segments.Keys.ToArray().AsMemory(), stalled,
+            articleBufferSize: 40, estimatedSegmentSize: SegmentSize, failFastOnFirstSegment: false,
+            usePipelinedBodyRequests: true, cts.Token, fileName: "range-length.bin",
+            bodyPipelineBatchWidth: BatchWidth, expectedFirstSegmentRange: new LongRange(0, SegmentSize));
+        try
+        {
+            var actual = new byte[segments.Count * SegmentSize];
+            var read = stream.ReadExactlyAsync(actual).AsTask();
+            await duplicateRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.Delay(200);
+            Assert.False(read.IsCompleted);
+            trace.AssertHedge("seg-0", 0, HedgeOutcome.OriginalAfterDuplicateFailed);
+            stalled.Release();
+            await read.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(segments.Values.SelectMany(bytes => bytes), actual);
+            Assert.Equal(2, inner.BodyRequestCounts["seg-0"]);
+        }
+        finally { stalled.Release(); }
+    }
+
     [Fact]
     public async Task StalledHeadSegment_DuplicateFetchKeepsPlaybackMoving()
     {
@@ -39,6 +151,7 @@ public sealed class MultiSegmentStreamHedgeTests
             usePipelinedBodyRequests: true,
             cts.Token,
             fileName: "hedge.bin",
+            exactSegmentSizes: Enumerable.Repeat((long)segmentSize, segments.Count).ToArray(),
             bodyPipelineBatchWidth: 4);
         try
         {
@@ -86,6 +199,7 @@ public sealed class MultiSegmentStreamHedgeTests
             usePipelinedBodyRequests: true,
             cts.Token,
             fileName: "hedge.bin",
+            exactSegmentSizes: Enumerable.Repeat((long)segmentSize, segments.Count).ToArray(),
             bodyPipelineBatchWidth: 4);
 
         var buffer = new byte[segments.Count * segmentSize];
@@ -634,6 +748,10 @@ public sealed class MultiSegmentStreamHedgeTests
         private int _failedCallbacks;
 
         public int FailedCallbacks => Volatile.Read(ref _failedCallbacks);
+
+        public bool SpareCapacity { get; init; } = true;
+
+        public override bool HasSpareFetchCapacity(SegmentId segmentId, CancellationToken cancellationToken) => SpareCapacity;
 
         /// <summary>Runs before each single-article body request with the 1-based request count for that id.</summary>
         public Func<string, int, Task>? BeforeSingleRequest { get; init; }
