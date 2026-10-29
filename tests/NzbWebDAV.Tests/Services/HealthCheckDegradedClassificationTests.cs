@@ -1105,6 +1105,26 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Par2Unset_DefaultsOff_AndMakesNoPar2Request()
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "" },
+        ]);
+        var segments = NewSegmentIds(6);
+        var sizes = new long[] { 10_000, 10_000, 50, 10_000, 10_000, 10_000 };
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingHoles: [2]);
+        var fake = NewFakeClient(segments, missing: [2]);
+        _failureTracker.RecordFailure(item.Id);
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: true);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        Assert.Empty(par2.Requests);
+    }
+
+    [Fact]
     public async Task LinkedFile_WithoutEnabledArr_IsLeftInPlace()
     {
         _configManager.UpdateValues(

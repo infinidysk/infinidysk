@@ -419,7 +419,7 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
             </p>
           )}
           <ManagedSetting configKey="repair.par2-enabled">
-            <Tooltip content="Reconstructs missing segments from PAR2 parity data in the background. Enabled by default. Disable on CPU-constrained hosts or to limit provider bandwidth (repairs read the full recovery set once, up to the release-size cap).">
+            <Tooltip content="Reconstructs missing segments from PAR2 parity data in the background. Disabled by default. Enable on hosts with spare CPU and provider bandwidth (repairs read the full recovery set once, up to the release-size cap).">
               <Toggle
                 id="par2-repair-enabled-checkbox"
                 className="cursor-pointer gap-2 p-0"
