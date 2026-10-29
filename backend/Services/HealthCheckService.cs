@@ -456,12 +456,10 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
                 }
 
                 var availableSlots = _configManager.GetHealthCheckWorkers() - _inProgress.Count;
-                var repairsOpen = admission.RepairsOpen
-                    && (!ShouldAttemptPar2Repair() || _par2RepairService.CanAcceptInlineRepair);
                 var candidateIds = await SelectNextHealthCheckIdsAsync(
                         reservedIds,
                         admission.ChecksOpen,
-                        repairsOpen,
+                        admission.RepairsOpen,
                         availableSlots,
                         ct)
                     .ConfigureAwait(false);
@@ -548,6 +546,20 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
         if (activeIds.Count > 0)
             queue = queue.Where(item => !activeIds.Contains(item.Id));
 
+        var par2Busy = allowRepairs
+            && ShouldAttemptPar2Repair()
+            && !_par2RepairService.CanAcceptInlineRepair;
+        if (par2Busy)
+        {
+            queue = queue.Where(item =>
+                (item.NextHealthCheck != DateTimeOffset.UnixEpoch && !item.HealthRepairPending)
+                || dbContext.Par2RepairJobs
+                    .Where(job => job.DavItemId == item.Id)
+                    .OrderByDescending(job => job.CreatedAt)
+                    .Select(job => (Par2RepairJob.RepairJobState?)job.State)
+                    .FirstOrDefault() == Par2RepairJob.RepairJobState.Infeasible);
+        }
+
         var selected = new List<Guid>(maximumCount);
         await foreach (var item in queue
             .AsAsyncEnumerable()
@@ -561,6 +573,8 @@ public class HealthCheckService : BackgroundService, IHealthCheckQuiescence
             }
             var isRepair = item.NextHealthCheck == DateTimeOffset.UnixEpoch
                 || item.HealthRepairPending;
+            if (par2Busy && isRepair && _par2RepairService.HasActiveRepairFlight(item.Id))
+                continue;
             if ((allowRepairs && isRepair)
                 || (allowChecks && !isRepair && FilenameUtil.IsHealthCheckCandidate(item.Name)))
             {

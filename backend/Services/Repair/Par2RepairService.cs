@@ -764,8 +764,19 @@ public partial class Par2RepairService : BackgroundService
                 admitted = await _repairAdmission.WaitAsync(0, ct).ConfigureAwait(false);
                 if (!admitted)
                 {
-                    flight.Completion.TrySetResult(Par2RepairOutcome.DeferredBusy);
-                    return Par2RepairOutcome.DeferredBusy;
+                    await using var dbContext = CreateContext();
+                    var lastState = await dbContext.Par2RepairJobs
+                        .AsNoTracking()
+                        .Where(job => job.DavItemId == davItem.Id)
+                        .OrderByDescending(job => job.CreatedAt)
+                        .Select(job => (Par2RepairJob.RepairJobState?)job.State)
+                        .FirstOrDefaultAsync(ct)
+                        .ConfigureAwait(false);
+                    var outcome = lastState == Par2RepairJob.RepairJobState.Infeasible
+                        ? Par2RepairOutcome.NotRepaired
+                        : Par2RepairOutcome.DeferredBusy;
+                    flight.Completion.TrySetResult(outcome);
+                    return outcome;
                 }
             }
             else
@@ -1506,6 +1517,9 @@ public partial class Par2RepairService : BackgroundService
         !_disposeRequested
         && Volatile.Read(ref _admissionActive) == 0
         && Volatile.Read(ref _admissionWaiters) == 0;
+
+    internal bool HasActiveRepairFlight(Guid davItemId) =>
+        _repairFlights.TryGetValue(davItemId, out var flight) && !flight.Task.IsCompleted;
 
     private void BeginRepairDiagnostics(string path)
     {

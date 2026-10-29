@@ -984,6 +984,70 @@ public sealed class HealthCheckCoordinatorTests
         }
     }
 
+    [Fact]
+    public async Task RefillWorkerSlots_BusyPar2AdmitsOnlyKnownInfeasibleRepairs()
+    {
+        using var harness = new Harness(workers: 3, fullySplit: false);
+        await using var connection = await harness.ConfigureEmptyDatabaseAsync();
+        harness.Config.UpdateValues([
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.RepairPar2Enabled,
+                ConfigValue = "true",
+            },
+            new ConfigItem
+            {
+                ConfigName = ConfigKeys.RepairPar2PreferredOverArr,
+                ConfigValue = "true",
+            },
+        ]);
+        var urgent = NewCandidate("urgent.mkv", DateTimeOffset.UnixEpoch);
+        var pending = NewCandidate("pending.mkv", harness.TimeProvider.GetUtcNow().AddDays(1));
+        pending.HealthRepairPending = true;
+        var unknown = NewCandidate("unattempted.mkv", DateTimeOffset.UnixEpoch);
+        var routine = NewCandidate("routine.mkv", null);
+        await using (var context = harness.Service.CreateDbContextOverride!())
+        {
+            context.Items.AddRange(urgent, pending, unknown, routine);
+            foreach (var candidate in new[] { urgent, pending })
+            {
+                context.Par2RepairJobs.Add(new Par2RepairJob
+                {
+                    Id = Guid.NewGuid(),
+                    DavItemId = candidate.Id,
+                    Path = candidate.Path,
+                    State = Par2RepairJob.RepairJobState.Infeasible,
+                    CreatedAt = harness.TimeProvider.GetUtcNow().AddDays(-3),
+                    NextAttemptAt = harness.TimeProvider.GetUtcNow().AddDays(-2),
+                    Attempts = 1,
+                    MissingSegmentIds = [],
+                });
+            }
+            await context.SaveChangesAsync();
+        }
+
+        var blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Service.ProcessCandidateOverride = (_, token) => blocker.Task.WaitAsync(token);
+        await using var hold = await harness.Par2.HoldAdmissionForTestsAsync(CancellationToken.None);
+        try
+        {
+            Assert.False(harness.Par2.CanAcceptInlineRepair);
+            Assert.Equal(HealthCheckRefillOutcome.Started,
+                await harness.Service.RefillWorkerSlotsAsync(CancellationToken.None));
+            Assert.Equal(3, harness.Service.InProgressHealthCheckIds.Count);
+            Assert.Contains(urgent.Id, harness.Service.InProgressHealthCheckIds);
+            Assert.Contains(pending.Id, harness.Service.InProgressHealthCheckIds);
+            Assert.Contains(routine.Id, harness.Service.InProgressHealthCheckIds);
+            Assert.DoesNotContain(unknown.Id, harness.Service.InProgressHealthCheckIds);
+        }
+        finally
+        {
+            blocker.TrySetResult();
+            await ReapUntilAsync(harness.Service,
+                () => harness.Service.InProgressHealthCheckIds.Count == 0);
+        }
+    }
+
     private static async Task ReapUntilAsync(
         HealthCheckService service,
         Func<bool> condition)
@@ -1066,6 +1130,7 @@ public sealed class HealthCheckCoordinatorTests
 
         public ConfigManager Config { get; }
         public HealthCheckService Service { get; }
+        public Par2RepairService Par2 { get; }
         public BenchmarkGate BenchmarkGate { get; }
         public HealthWorkSchedulePolicy HealthSchedule { get; }
         public HealthCheckConnectionGate ConnectionGate => _gate;
@@ -1142,6 +1207,7 @@ public sealed class HealthCheckCoordinatorTests
                 new QueueItemSourceTracker(),
                 BenchmarkGate,
                 healthCheckConnectionGate: _gate);
+            Par2 = new Par2RepairService(Config, _usenet, _patchStore);
             Service = new HealthCheckService(
                 Config,
                 _usenet,
@@ -1149,7 +1215,7 @@ public sealed class HealthCheckCoordinatorTests
                 BenchmarkGate,
                 new StreamingFailureTracker(),
                 _queueManager,
-                new Par2RepairService(Config, _usenet, _patchStore),
+                Par2,
                 _patchStore,
                 new ArrReplacementSearchBudget(),
                 _gate,
@@ -1261,6 +1327,7 @@ public sealed class HealthCheckCoordinatorTests
         public void Dispose()
         {
             Service.Dispose();
+            Par2.Dispose();
             _queueManager.Dispose();
             _gate.Dispose();
             _usenet.Dispose();
