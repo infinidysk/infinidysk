@@ -28,6 +28,84 @@ public sealed class FileBlobStoreTests : IDisposable
         try { Directory.Delete(_configRoot, recursive: true); } catch (IOException) { /* best effort */ }
     }
 
+    private string BlobPath(Guid id)
+    {
+        var hex = id.ToString("N");
+        return Path.Join(_configRoot, "blobs", hex[..2], hex.Substring(2, 2), id.ToString());
+    }
+
+    // Raw WriteBlob(Stream) compresses, so on-disk corruption is planted directly.
+    private void PlantBlobFile(Guid id, byte[] bytes)
+    {
+        var path = BlobPath(id);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, bytes);
+    }
+
+    private static async Task<byte[]> ReadAllAsync(Stream? stream)
+    {
+        Assert.NotNull(stream);
+        await using (stream)
+        {
+            using var buffer = new MemoryStream();
+            await stream!.CopyToAsync(buffer);
+            return buffer.ToArray();
+        }
+    }
+
+    [Fact]
+    public async Task WriteBlob_StoresStreamZstdCompressed_AndReadReturnsOriginalBytes()
+    {
+        var id = Guid.NewGuid();
+        var nzb = System.Text.Encoding.UTF8.GetBytes(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?><nzb><file><segments>" +
+            string.Concat(Enumerable.Range(0, 200).Select(i =>
+                $"<segment bytes=\"768000\" number=\"{i + 1}\">part{i}of200.abcdef@example.com</segment>")) +
+            "</segments></file></nzb>");
+
+        await _store.WriteBlob(id, new MemoryStream(nzb));
+
+        var onDisk = await File.ReadAllBytesAsync(BlobPath(id));
+        Assert.Equal(new byte[] { 0x28, 0xB5, 0x2F, 0xFD }, onDisk[..4]);
+        Assert.True(onDisk.Length < nzb.Length / 2, $"expected compression, got {onDisk.Length} of {nzb.Length} bytes");
+        Assert.Equal(nzb, await ReadAllAsync(_store.ReadBlob(id)));
+    }
+
+    [Fact]
+    public async Task ReadBlob_ReturnsLegacyUncompressedBlobUnchanged()
+    {
+        var id = Guid.NewGuid();
+        var legacy = "<?xml version=\"1.0\"?><nzb />"u8.ToArray();
+        PlantBlobFile(id, legacy);
+
+        Assert.Equal(legacy, await ReadAllAsync(_store.ReadBlob(id)));
+    }
+
+    [Fact]
+    public async Task ReadBlob_DecompressesZstdBlob_IntoSeekableStream()
+    {
+        var id = Guid.NewGuid();
+        var original = "<?xml version=\"1.0\"?><nzb><file subject=\"zstd\" /></nzb>"u8.ToArray();
+        using (var compressor = new Compressor())
+            PlantBlobFile(id, compressor.Wrap(original).ToArray());
+
+        await using var stream = _store.ReadBlob(id);
+        Assert.NotNull(stream);
+        Assert.True(stream!.CanSeek);
+        Assert.Equal(original.Length, stream.Length);
+        Assert.Equal(original, await ReadAllAsync(stream));
+    }
+
+    [Fact]
+    public async Task ReadBlob_ShorterThanZstdMagic_IsReturnedUnchanged()
+    {
+        var id = Guid.NewGuid();
+        byte[] tiny = [0x28, 0xB5];
+        PlantBlobFile(id, tiny);
+
+        Assert.Equal(tiny, await ReadAllAsync(_store.ReadBlob(id)));
+    }
+
     [Fact]
     public async Task WriteReadDelete_RoundTripsStreamBytes()
     {
@@ -88,7 +166,7 @@ public sealed class FileBlobStoreTests : IDisposable
     public async Task ReadBlobOfT_ThrowsCorrupted_WhenBlobFileIsEmpty()
     {
         var id = Guid.NewGuid();
-        await _store.WriteBlob(id, new MemoryStream());
+        PlantBlobFile(id, []);
 
         var ex = await Assert.ThrowsAsync<CorruptedBlobPayloadException>(
             () => _store.ReadBlob<DavNzbFile>(id));
@@ -102,7 +180,7 @@ public sealed class FileBlobStoreTests : IDisposable
     public async Task ReadBlobOfT_ThrowsCorrupted_WhenDataIsNotValidZstd()
     {
         var id = Guid.NewGuid();
-        await _store.WriteBlob(id, new MemoryStream([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]));
+        PlantBlobFile(id, [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
 
         var ex = await Assert.ThrowsAsync<CorruptedBlobPayloadException>(
             () => _store.ReadBlob<DavNzbFile>(id));
@@ -126,7 +204,7 @@ public sealed class FileBlobStoreTests : IDisposable
             await MemoryPackSerializer.SerializeAsync(compressionStream, original);
         var fullBytes = compressed.ToArray();
         var truncated = fullBytes[..(fullBytes.Length / 2)];
-        await _store.WriteBlob(id, new MemoryStream(truncated));
+        PlantBlobFile(id, truncated);
 
         var ex = await Assert.ThrowsAsync<CorruptedBlobPayloadException>(
             () => _store.ReadBlob<DavNzbFile>(id));
@@ -139,7 +217,7 @@ public sealed class FileBlobStoreTests : IDisposable
     public async Task ReadBlobOfT_DoesNotCache_AfterCorruptedRead()
     {
         var id = Guid.NewGuid();
-        await _store.WriteBlob(id, new MemoryStream());
+        PlantBlobFile(id, []);
 
         await Assert.ThrowsAsync<CorruptedBlobPayloadException>(() => _store.ReadBlob<DavNzbFile>(id));
 
