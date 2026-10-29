@@ -473,7 +473,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
           setRequeueFeedback({
             variant: "info",
             message:
-              "Stop requested. The check is still finishing and will leave the list shortly; its next check is deferred by a day.",
+              "Stop requested. The check was still finishing when the request returned; its next check is deferred by a day.",
           });
           void revalidator.revalidate();
           return;
