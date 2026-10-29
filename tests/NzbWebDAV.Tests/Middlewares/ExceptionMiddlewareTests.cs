@@ -1098,7 +1098,7 @@ public class ExceptionMiddlewareTests
 
         Assert.Null(configManager.GetRepairDisabledReason());
         Assert.True(configManager.IsRepairJobEnabled());
-        Assert.True(configManager.IsPar2RepairEnabled());
+        Assert.False(configManager.IsPar2RepairEnabled());
     }
 
     [Fact]

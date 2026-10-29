@@ -1562,7 +1562,7 @@ public class ConfigManager : IConfigReader, IConfigUpdater, IConfigChangeSource
     {
         if (!IsBackgroundRepairsMasterEnabled()) return false;
         var par2Value = StringUtil.EmptyToNull(GetConfigValue(ConfigKeys.RepairPar2Enabled));
-        return par2Value == null || bool.Parse(par2Value);
+        return par2Value != null && bool.Parse(par2Value);
     }
 
     public bool IsDegradedToleranceEnabled()
