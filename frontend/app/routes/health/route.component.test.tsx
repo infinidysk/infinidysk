@@ -28,16 +28,22 @@ vi.mock("./components/health-table/health-table", () => ({
   HealthTable: ({
     healthCheckItems,
     onStop,
+    stoppingIds,
   }: {
     healthCheckItems: { id: string }[];
     onStop?: (davItemId: string) => void;
+    stoppingIds?: ReadonlySet<string>;
   }) => (
     <div data-testid="health-table">
       {healthCheckItems.map((item) => (
         <div key={item.id}>{item.id}</div>
       ))}
       {onStop && (
-        <button type="button" onClick={() => onStop("queue-0")}>
+        <button
+          type="button"
+          disabled={stoppingIds?.has("queue-0") ?? false}
+          onClick={() => onStop("queue-0")}
+        >
           Stop check
         </button>
       )}
@@ -201,6 +207,25 @@ describe("Health stop active check", () => {
     expect((await screen.findByRole("status")).textContent).toContain("Stopped.");
     expect(screen.queryByText("queue-0")).toBeNull();
     expect(revalidateMock).toHaveBeenCalledOnce();
+  });
+
+  it("keeps stop disabled while the request is pending", async () => {
+    let resolveStop: (response: Response) => void = () => {};
+    fetchMock.mockImplementation((input: unknown) => {
+      if (String(input).includes("/api/get-active-health-checks"))
+        return Promise.resolve(jsonResponse({ items: [] }));
+      return new Promise<Response>((resolve) => (resolveStop = resolve));
+    });
+    renderHealth();
+    const stop = screen.getByRole("button", { name: "Stop check" });
+
+    await userEvent.setup().click(stop);
+
+    expect((stop as HTMLButtonElement).disabled).toBe(true);
+    resolveStop(
+      jsonResponse({ status: false, error: "This health check is no longer running." }, 404),
+    );
+    await waitFor(() => expect((stop as HTMLButtonElement).disabled).toBe(false));
   });
 
   it("shows the backend reason when the check already finished", async () => {
