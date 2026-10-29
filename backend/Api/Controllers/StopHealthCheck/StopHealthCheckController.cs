@@ -12,7 +12,7 @@ public class StopHealthCheckController(HealthCheckService healthCheckService) : 
         if (!Guid.TryParse(HttpContext.Request.Query["davItemId"], out var davItemId))
             return BadRequest(new BaseApiResponse { Status = false, Error = "Invalid davItemId parameter." });
 
-        if (!await healthCheckService.StopHealthCheckAsync(davItemId).ConfigureAwait(false))
+        if (!await healthCheckService.StopHealthCheckAsync(davItemId, HttpContext.RequestAborted).ConfigureAwait(false))
             return NotFound(new BaseApiResponse { Status = false, Error = "This health check is no longer running." });
 
         return Ok(new BaseApiResponse { Status = true });

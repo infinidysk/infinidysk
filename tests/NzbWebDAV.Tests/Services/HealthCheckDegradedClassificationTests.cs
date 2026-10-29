@@ -357,6 +357,57 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task StopHealthCheck_ReturnsOnlyAfterTheWorkerLeavesTheActiveList()
+    {
+        // Workers only start with an enabled provider; NewServiceAsync then swaps in the fake client.
+        var providers = new UsenetProviderConfig();
+        providers.Providers.Add(new UsenetProviderConfig.ConnectionDetails
+        {
+            ProviderId = Guid.NewGuid(),
+            Type = ProviderType.BackupOnly,
+            Host = "provider.example",
+            Port = 563,
+            UseSsl = true,
+            User = "user",
+            Pass = "pass",
+            MaxConnections = 1,
+        });
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" },
+            new ConfigItem { ConfigName = ConfigKeys.UsenetProviders, ConfigValue = JsonSerializer.Serialize(providers) },
+        ]);
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, [10_000, 10_000, 10_000]);
+        var (service, par2) = await NewServiceAsync(
+            NewFakeClient(segments, missing: [0, 1, 2]), Par2RepairOutcome.NotRepaired);
+        service.CreateDbContextOverride = () => new DavDatabaseContext(_options);
+        par2.Hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var attemptReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var workerTail = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        service.SelectCandidateOverride = (_, _, _) => Task.FromResult<Guid?>(item.Id);
+        service.ProcessCandidateOverride = async (_, ct) =>
+        {
+            await service.PerformHealthCheck(item, _dbClient, concurrency: 4, ct);
+            attemptReturned.SetResult();
+            await workerTail.Task;
+        };
+        Assert.Equal(HealthCheckRefillOutcome.Started, await service.RefillWorkerSlotsAsync(CancellationToken.None));
+        await par2.Hang.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var stop = service.StopHealthCheckAsync(item.Id);
+        await attemptReturned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(stop.IsCompleted);
+        Assert.Single(service.GetActiveHealthCheckProgress());
+
+        workerTail.SetResult();
+        Assert.True(await stop.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Empty(service.GetActiveHealthCheckProgress());
+        await service.ReapCompletedWorkersAsync();
+    }
+
+    [Fact]
     public async Task StopHealthCheck_DefersRepairFlaggedUrgentByStreamingDuringAttempt()
     {
         _configManager.UpdateValues(
