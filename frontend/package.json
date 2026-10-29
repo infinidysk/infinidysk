@@ -40,7 +40,7 @@
     "express-rate-limit": "^8.7.1",
     "http-proxy-middleware": "^4.1.1",
     "isbot": "^5.2.2",
-    "material-symbols": "^0.48.0",
+    "material-symbols": "^0.48.1",
     "mime-types": "^3.0.2",
     "openid-client": "^6.8.8",
     "picocolors": "^1.1.1",
@@ -79,8 +79,8 @@
     "tailwindcss": "^4.2.1",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.71.2",
-    "vite": "^8.3.4",
+    "typescript-eslint": "^8.72.0",
+    "vite": "^8.3.5",
     "vitest": "^5.0.1"
   },
   "overrides": {
