@@ -1,5 +1,7 @@
 ﻿using System.Runtime.CompilerServices;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Streams;
@@ -54,10 +56,17 @@ public class BaseNntpClient : NntpClient
                 UsenetBandwidthLimiter.Current?.AcquireAsync(bytes, ct) ?? ValueTask.CompletedTask
             : null,
             PayloadBytesObserver = payloadBytesObserver,
+            CancellationDrainTimeoutResolver = GetPlaybackDrainTimeout,
         }))
     {
         ReadTimeout = readTimeout ?? TimeSpan.FromSeconds(30);
     }
+
+    // Keep cheap drains reusable, but do not spend seconds draining abandoned playback.
+    // Queue and maintenance operations retain the library's normal drain policy.
+    internal static TimeSpan? GetPlaybackDrainTimeout(CancellationToken token) =>
+        DownloadWorkloadClassifier.Classify(token) == DownloadWorkload.Streaming
+            ? TimeSpan.FromMilliseconds(250) : null;
 
     /// <summary>Test seam for injecting a scripted underlying client.</summary>
     internal BaseNntpClient(IUsenetClient client)

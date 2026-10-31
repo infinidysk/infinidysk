@@ -115,7 +115,7 @@ public partial class UsenetClient
         }
 
         // Bound the drain so a hostile payload cannot pin the connection.
-        var drainFailure = await TryDrainBodyAsync().ConfigureAwait(false);
+        var drainFailure = await TryDrainBodyAsync(CancellationToken.None).ConfigureAwait(false);
         if (drainFailure != null)
         {
             RecordConnectionFailure(drainFailure);
