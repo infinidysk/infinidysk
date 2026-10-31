@@ -213,8 +213,12 @@ public partial class UsenetClient
         DecodedBodyReadStream decodedStream,
         bool releaseCommandLock = true,
         CoalescedReadTimeout? sharedReadTimeout = null,
+        CancellationDrainBudget? sharedDrainBudget = null,
         CancellationToken callerCancellationToken = default)
     {
+        using var ownedDrainBudget = sharedDrainBudget is null
+            ? new CancellationDrainBudget(_options.GetCancellationDrainTimeout(callerCancellationToken)) : null;
+        var drainBudget = sharedDrainBudget ?? ownedDrainBudget!;
         Exception? failure = null;
         var connectionReusable = true;
         CoalescedReadTimeout? ownedReadTimeout = null;
@@ -253,7 +257,7 @@ public partial class UsenetClient
             }
             else
             {
-                var drainFailure = await TryDrainBodyAsync().ConfigureAwait(false);
+                var drainFailure = await TryDrainBodyAsync(drainBudget.Token).ConfigureAwait(false);
                 if (drainFailure != null)
                 {
                     connectionReusable = false;
@@ -336,6 +340,7 @@ public partial class UsenetClient
         ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken callerCancellationToken)
     {
+        using var drainBudget = new CancellationDrainBudget(_options.GetCancellationDrainTimeout(callerCancellationToken));
         Exception? failure = null;
         var pendingObservedBytes = 0;
         try
@@ -457,7 +462,7 @@ public partial class UsenetClient
             }
             else
             {
-                var drainFailure = await TryDrainBodyAsync().ConfigureAwait(false);
+                var drainFailure = await TryDrainBodyAsync(drainBudget.Token).ConfigureAwait(false);
                 if (drainFailure != null)
                 {
                     RecordConnectionFailure(drainFailure);
@@ -493,12 +498,12 @@ public partial class UsenetClient
         }
     }
 
-    private async Task<Exception?> TryDrainBodyAsync()
+    private async Task<Exception?> TryDrainBodyAsync(CancellationToken drainToken = default)
     {
         var pendingObservedBytes = 0;
         try
         {
-            using var drainCts = CreateOperationTokenSource(CancellationToken.None);
+            using var drainCts = CreateOperationTokenSource(drainToken);
             using var readTimeout = new CoalescedReadTimeout(_options.ReadTimeout, _timeProvider, drainCts.Token);
             long drainedBytes = 0;
             var pendingCharge = 0;

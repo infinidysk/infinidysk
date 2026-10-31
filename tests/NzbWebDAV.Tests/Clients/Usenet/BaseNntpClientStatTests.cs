@@ -1,4 +1,6 @@
 using NzbWebDAV.Clients.Usenet;
+using NzbWebDAV.Clients.Usenet.Contexts;
+using NzbWebDAV.Clients.Usenet.Concurrency;
 using NzbWebDAV.Exceptions;
 using UsenetSharp.Clients;
 using UsenetSharp.Models;
@@ -7,6 +9,23 @@ namespace NzbWebDAV.Tests.Clients.Usenet;
 
 public class BaseNntpClientStatTests
 {
+    [Theory]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    public void PlaybackDrainLimit_ExcludesQueueAndMaintenance(bool queue, bool maintenance, bool limited)
+    {
+        using var cts = new CancellationTokenSource();
+        using var priority = CancellationTokenContext.SetContext(cts.Token,
+            new DownloadPriorityContext { Priority = SemaphorePriority.High });
+        using var queueContext = CancellationTokenContext.SetContext(cts.Token, queue ? new QueueDownloadContext { GetFanOutConcurrency = () => 1 } : null);
+        using var maintenanceContext = CancellationTokenContext.SetContext(cts.Token,
+            maintenance ? MaintenanceDownloadContext.Instance : null);
+        Assert.Equal(limited ? TimeSpan.FromMilliseconds(250) : (TimeSpan?)null,
+            BaseNntpClient.GetPlaybackDrainTimeout(cts.Token));
+        Assert.Null(BaseNntpClient.GetPlaybackDrainTimeout(CancellationToken.None));
+    }
+
     [Fact]
     public async Task StatAsync_With223_ReturnsExistsResponse()
     {

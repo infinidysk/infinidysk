@@ -276,6 +276,7 @@ public partial class UsenetClient
         ArticleBodyCompletionHandler? onConnectionReadyAgain,
         CancellationToken callerCancellationToken)
     {
+        using var drainBudget = new CancellationDrainBudget(_options.GetCancellationDrainTimeout(callerCancellationToken));
         Exception? failure = null;
         var completionResult = ArticleBodyResult.Retrieved;
         string? completionReason = null;
@@ -342,7 +343,8 @@ public partial class UsenetClient
                         decodedStream: decodedStream,
                         releaseCommandLock: false,
                         sharedReadTimeout: sharedReadTimeout,
-                        callerCancellationToken: callerCancellationToken)
+                        callerCancellationToken: callerCancellationToken,
+                        sharedDrainBudget: drainBudget)
                     .ConfigureAwait(false);
                 if (bodyReadResult.Failure == null)
                 {
@@ -376,7 +378,7 @@ public partial class UsenetClient
                 }
 
                 var drainFailure = await TryDrainPipelinedBodiesAsync(
-                        segmentIds.Length - nextResponseIndex)
+                        segmentIds.Length - nextResponseIndex, cancelledByCaller ? drainBudget.Token : CancellationToken.None)
                     .ConfigureAwait(false);
                 if (drainFailure != null)
                 {
@@ -410,7 +412,7 @@ public partial class UsenetClient
             else
             {
                 var drainFailure = await TryDrainPipelinedBodiesAsync(
-                        segmentIds.Length - nextResponseIndex)
+                        segmentIds.Length - nextResponseIndex, drainBudget.Token)
                     .ConfigureAwait(false);
                 if (drainFailure != null)
                 {
@@ -458,20 +460,20 @@ public partial class UsenetClient
             ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
-    private async Task<Exception?> TryDrainPipelinedBodiesAsync(int responseCount)
+    private async Task<Exception?> TryDrainPipelinedBodiesAsync(int responseCount, CancellationToken drainToken)
     {
         try
         {
             for (var index = 0; index < responseCount; index++)
             {
-                using var operationCts = CreateOperationTokenSource(CancellationToken.None);
+                using var operationCts = CreateOperationTokenSource(drainToken);
                 var response = await ReadLineAsync(operationCts.Token).ConfigureAwait(false);
                 var responseCode = ParseResponseCode(response);
                 if (responseCode != (int)UsenetResponseType.ArticleRetrievedBodyFollows)
                 {
                     if (IsMultiLineCode(responseCode))
                     {
-                        var unexpectedDrain = await TryDrainBodyAsync().ConfigureAwait(false);
+                        var unexpectedDrain = await TryDrainBodyAsync(drainToken).ConfigureAwait(false);
                         if (unexpectedDrain != null)
                         {
                             return unexpectedDrain;
@@ -481,7 +483,7 @@ public partial class UsenetClient
                     continue;
                 }
 
-                var bodyFailure = await TryDrainBodyAsync().ConfigureAwait(false);
+                var bodyFailure = await TryDrainBodyAsync(drainToken).ConfigureAwait(false);
                 if (bodyFailure != null)
                 {
                     return bodyFailure;
