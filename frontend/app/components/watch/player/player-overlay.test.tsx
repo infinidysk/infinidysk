@@ -122,6 +122,26 @@ describe("PlayerOverlay", () => {
     expect(shell.getAttribute("data-osd")).toBe("visible");
   });
 
+  it("hides the pointer with the chrome and restores it on movement", () => {
+    vi.useFakeTimers();
+    const { container, media } = renderOverlay();
+    const shell = container.querySelector("[data-osd]")!;
+
+    media.setPaused(false);
+    media.emit("play");
+    // Paused or playing with visible chrome: the pointer is still needed.
+    expect(shell.className).not.toContain("cursor-none");
+
+    act(() => {
+      vi.advanceTimersByTime(2600);
+    });
+    expect(shell.getAttribute("data-osd")).toBe("hidden");
+    expect(shell.className).toContain("cursor-none");
+
+    fireEvent.pointerMove(shell);
+    expect(shell.className).not.toContain("cursor-none");
+  });
+
   it("shows playback data on demand", () => {
     renderOverlay();
 

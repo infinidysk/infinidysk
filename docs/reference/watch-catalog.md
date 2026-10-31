@@ -145,6 +145,10 @@ Chrome is text-shadow only — no translucent fills or backdrop blur. Measured o
 host, painting translucent bands over 1080p video cost 9–11 dropped frames per 20 s;
 identical chrome with fills removed dropped 0.
 
+The pointer is part of the chrome: `cursor-none` is applied to the player shell whenever
+the chrome is hidden, so the cursor disappears after the idle delay — in fullscreen
+too — and returns on pointer movement.
+
 Keyboard: space/k play, arrows/j/l seek, up/down volume, m mute, f fullscreen, 0–9
 jump, i playback data, Escape dismisses menu → exits fullscreen → closes.
 

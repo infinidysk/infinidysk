@@ -332,11 +332,15 @@ export function PlayerOverlay({ player, title, releaseTitle, onClose }: PlayerOv
   const volume = ui.muted ? 0 : ui.volume;
   const modeLabel = player.mode === "hls" ? "Direct stream" : "Compatibility mode";
 
+  // The pointer belongs to the chrome, so it disappears with it. A fullscreen player that
+  // leaves the cursor parked over the video is the artifact viewers notice first.
   return (
     <div
       ref={shellRef}
       data-osd={chromeVisible ? "visible" : "hidden"}
-      className="fixed inset-0 z-[100] overflow-hidden bg-black text-white"
+      className={`fixed inset-0 z-[100] overflow-hidden bg-black text-white ${
+        chromeVisible ? "" : "cursor-none"
+      }`}
       onPointerMove={bump}
       onPointerDown={bump}
     >
