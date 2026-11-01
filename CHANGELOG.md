@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.7.0](https://github.com/infinidysk/infinidysk/compare/v1.6.3...v1.7.0) (2026-10-29)
+
+
+### Features
+
+* **health:** stop a running health check or repair from the Health page ([#1753](https://github.com/infinidysk/infinidysk/issues/1753)) ([02e9b21](https://github.com/infinidysk/infinidysk/commit/02e9b21e320e722f83224d632853a27c2a44adf3))
+
+
+### Bug Fixes
+
+* **deps:** Bump body-parser from 2.3.0 to 2.4.0 in /frontend ([#1742](https://github.com/infinidysk/infinidysk/issues/1742)) ([a77b5ff](https://github.com/infinidysk/infinidysk/commit/a77b5ffb36a09f3de5f33e53a0a2cdc54ca13222))
+* **deps:** Bump fast-uri from 3.1.8 to 3.1.9 in /frontend ([#1743](https://github.com/infinidysk/infinidysk/issues/1743)) ([ff0f4d3](https://github.com/infinidysk/infinidysk/commit/ff0f4d36391d5de58ba7ac3c87194e861bf556f9))
+* **deps:** Bump github/codeql-action ([#1758](https://github.com/infinidysk/infinidysk/issues/1758)) ([0ac3c86](https://github.com/infinidysk/infinidysk/commit/0ac3c8685f0b951fff2f6b3dfbaa2b3b93f70522))
+* **deps:** Bump ip-address from 10.7.2 to 10.7.5 in /frontend ([#1744](https://github.com/infinidysk/infinidysk/issues/1744)) ([6fac334](https://github.com/infinidysk/infinidysk/commit/6fac33411bcc87b06bbadd543778eeea5e007c36))
+* **deps:** Bump the github-actions group across 1 directory with 2 updates ([#1722](https://github.com/infinidysk/infinidysk/issues/1722)) ([4dd62f6](https://github.com/infinidysk/infinidysk/commit/4dd62f669fdd287308f03091c8bbdf1f1c3c0124))
+* **deps:** Bump the npm-minor-and-patch group ([#1757](https://github.com/infinidysk/infinidysk/issues/1757)) ([2dc8b53](https://github.com/infinidysk/infinidysk/commit/2dc8b5338a06d217159c1a0092365ad6620954b9))
+* **deps:** Bump the npm-minor-and-patch group across 1 directory with 15 updates ([#1736](https://github.com/infinidysk/infinidysk/issues/1736)) ([af69ab9](https://github.com/infinidysk/infinidysk/commit/af69ab9a3db5d96d3e8e3a6e51b9b655fe237235))
+* **deps:** Bump the nuget-minor-and-patch group with 1 update ([#1756](https://github.com/infinidysk/infinidysk/issues/1756)) ([11de8f1](https://github.com/infinidysk/infinidysk/commit/11de8f190c5df5bb0684a508660e42ccd73ff1b7))
+* **deps:** Bump the nuget-minor-and-patch group with 11 updates ([#1737](https://github.com/infinidysk/infinidysk/issues/1737)) ([635eb22](https://github.com/infinidysk/infinidysk/commit/635eb22a5c2d586ffdb40b14fc07c91857533dff))
+* **deps:** Bump the react-router group in /frontend with 5 updates ([#1755](https://github.com/infinidysk/infinidysk/issues/1755)) ([10e0f7a](https://github.com/infinidysk/infinidysk/commit/10e0f7af802f01bf6f50c2920ba658747f0f1129))
+* **deps:** Bump xunit.runner.visualstudio from 3.1.5 to 4.0.1 ([#1723](https://github.com/infinidysk/infinidysk/issues/1723)) ([b7f3299](https://github.com/infinidysk/infinidysk/commit/b7f3299c7a8d9a7073efc76518c0011046b8382f))
+* **health:** files PAR2 cannot repair are no longer stuck behind other PAR2 repairs ([#1761](https://github.com/infinidysk/infinidysk/issues/1761)) ([afa599d](https://github.com/infinidysk/infinidysk/commit/afa599d255bc9c0751a4b3ceccaf2d91d75382e1))
+* **health:** files replaced by Sonarr/Radarr upgrades no longer pile up as "Not library linked" ([#1754](https://github.com/infinidysk/infinidysk/issues/1754)) ([b1578be](https://github.com/infinidysk/infinidysk/commit/b1578be2038e97692d4c53b16c5ae2ba4c894d31))
+* **health:** PAR2 background repair is now off by default ([#1762](https://github.com/infinidysk/infinidysk/issues/1762)) ([d8169d4](https://github.com/infinidysk/infinidysk/commit/d8169d47771aa4b9e2720aa0d915dd385b7e2fa5))
+* **health:** stop PAR2 identity probing of dead volumes with untrusted ranges ([#1752](https://github.com/infinidysk/infinidysk/issues/1752)) ([6000cd4](https://github.com/infinidysk/infinidysk/commit/6000cd49edcd5e209567c3b4a559b746e9e0ddd6))
+* **health:** treat null pending multipart parts as empty during PAR2 repair ([#1740](https://github.com/infinidysk/infinidysk/issues/1740)) ([933b800](https://github.com/infinidysk/infinidysk/commit/933b800c57b6749abe93c1d55087d874530acdd7))
+* **queue:** do not record inconclusive article misses as missing evidence ([#1745](https://github.com/infinidysk/infinidysk/issues/1745)) ([1db170a](https://github.com/infinidysk/infinidysk/commit/1db170a7be78a620bb9877a433bb9eea2fcac5ef))
+* retry a busy daily maintenance slot in place instead of skipping to tomorrow ([#1747](https://github.com/infinidysk/infinidysk/issues/1747)) ([d46bf6e](https://github.com/infinidysk/infinidysk/commit/d46bf6ee74b45e90a6d5d50d1686294083a5685f))
+* scheduled orphan cleanup and database backups no longer skip nights ([#1738](https://github.com/infinidysk/infinidysk/issues/1738)) ([ce51abc](https://github.com/infinidysk/infinidysk/commit/ce51abc223622c53d3e4c62623e12283b4035c6e))
+* **sharpcompress:** truncate RAR passwords to 127 characters before key derivation ([#1751](https://github.com/infinidysk/infinidysk/issues/1751)) ([db347c7](https://github.com/infinidysk/infinidysk/commit/db347c75c4a32d4d029f2dfcd8839e83a8f47eff))
+* **usenet:** warn with the reason when a segment fetch is classified as protocol ([#1746](https://github.com/infinidysk/infinidysk/issues/1746)) ([9a14f4d](https://github.com/infinidysk/infinidysk/commit/9a14f4dae4589e15c60d50ebb57dc4c7d66be03c))
+
 ## [1.6.3](https://github.com/infinidysk/infinidysk/compare/v1.6.2...v1.6.3) (2026-10-21)
 
 
