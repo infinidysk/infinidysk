@@ -1,3 +1,6 @@
+> [!WARNING]
+> **This is the `v1` branch: InfiniDysk 1.x in maintenance mode.** It gets bug fixes only. InfiniDysk 2.0 is a rewrite developed on [`main`](https://github.com/infinidysk/infinidysk/tree/main) and ships as a separate image. 1.x keeps `ghcr.io/infinidysk/infinidysk`. Details in [#1748](https://github.com/infinidysk/infinidysk/issues/1748).
+
 > [!IMPORTANT] 
 > InfiniDysk is designed as a drop-in replacement and upgrade from `nzbdav-dev/nzbdav v0.6.4`. Follow the [migration guide](https://www.infinidysk.com/getting-started/migration/) before switching an existing installation.
 >
@@ -22,9 +25,9 @@
 <img width="1024" height="601" alt="InfiniDysk overview dashboard" src="docs/assets/overview.png" />
 
 <p align="center">
-  <a href="https://github.com/infinidysk/infinidysk/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/infinidysk/infinidysk" /></a>
+  <a href="https://github.com/infinidysk/infinidysk/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/infinidysk/infinidysk?filter=v1.*" /></a>
   <a href="https://github.com/infinidysk/infinidysk/pkgs/container/infinidysk"><img alt="Docker image" src="https://img.shields.io/badge/ghcr.io-infinidysk%2Finfinidysk-blue?logo=docker&logoColor=white" /></a>
-  <a href="https://github.com/infinidysk/infinidysk/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/infinidysk/infinidysk/ci.yml?branch=main&label=CI" /></a>
+  <a href="https://github.com/infinidysk/infinidysk/actions/workflows/v1-ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/infinidysk/infinidysk/v1-ci.yml?branch=v1&label=CI" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/infinidysk/infinidysk" /></a>
 </p>
 
