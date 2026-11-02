@@ -11,8 +11,7 @@ contended end-to-end acquisition. `BeginAndCommitClosedCircuit` must report
 BenchmarkDotNet timing runs stay manual: they are sensitive to runner
 contention and hardware, and timing comparisons never block pull requests.
 Deterministic transport and SAB API fields from the report harnesses **are**
-compared in CI (see `.github/workflows/ci.yml` and
-`.github/workflows/performance.yml`).
+compared in CI (see `.github/workflows/v1-ci.yml`).
 
 Run BenchmarkDotNet from the repository root:
 
@@ -203,19 +202,14 @@ database (same setup as the SAB limit-zero tests) with a fixed 50-queue /
    against `backend.Benchmarks/Baselines/*.json`. An intentional
    transport-contract or query-shape change must update the baseline JSON in
    the same PR.
-2. **Scheduled envelopes:** `.github/workflows/performance.yml` runs each
-   report 3× on a cron / `workflow_dispatch` and fails when the median misses
-   a floored 3× envelope. Dispatch the workflow with `rebaseline: true` to
-   write new baselines and open (never merge) a PR. Locally:
+2. **Timing envelopes (manual):** there is no scheduled timing run on `v1`.
+   Run each report locally and compare it, or write new baselines:
 
 ```bash
 python3 scripts/check-performance-baseline.py \
   --candidates /tmp/streaming.json \
   --write-baseline backend.Benchmarks/Baselines/streaming-baseline.json
 ```
-
-`GITHUB_TOKEN`-created re-baseline PRs do not trigger `pull_request` CI;
-close/reopen or push to run checks.
 
 ## Scenario → meaning
 

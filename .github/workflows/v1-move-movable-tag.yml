@@ -1,4 +1,4 @@
-name: Move movable tag
+name: v1 Move movable tag
 
 on:
   workflow_call:
@@ -11,6 +11,11 @@ on:
         description: Commit SHA or git ref to point the movable tag at
         required: true
         type: string
+      allow_failure:
+        description: Keep the run green if GitHub refuses the move (move the tag by hand instead)
+        required: false
+        type: boolean
+        default: false
     outputs:
       previous_sha:
         description: SHA the movable tag pointed at before this move (empty if the tag did not exist)
@@ -30,6 +35,7 @@ jobs:
     steps:
       - name: Recreate movable tag
         id: move
+        continue-on-error: ${{ inputs.allow_failure }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ inputs.tag_name }}

@@ -1,14 +1,12 @@
-name: CodeQL
+name: v1 CodeQL
 
 on:
   push:
     branches:
-      - main
+      - v1
   pull_request:
     branches:
-      - main
-  schedule:
-    - cron: "0 6 * * 1"
+      - v1
 
 concurrency:
   group: codeql-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

@@ -305,7 +305,7 @@ They must not import another route feature. Shared code must not import
 
 Pilot mutation testing covers a small set of streaming, queue, Usenet, and
 frontend client/auth files listed in `quality/mutation-baseline.json`. Scores
-are informational until two consecutive main runs look stable; they are not
+are informational until two consecutive `v1` runs look stable; they are not
 part of the required quality gate.
 
 ```bash
@@ -315,7 +315,7 @@ cd tests/NzbWebDAV.Tests && dotnet stryker
 cd ../../frontend && npm exec stryker -- run
 ```
 
-Full scoped runs: **Actions → Mutation → Run workflow**. PR CI mutates only
+Full scoped runs are local (above). PR CI mutates only
 changed pilot files (complete files, not just changed lines) and compares
 each file to its committed baseline − 5pp. Do not commit `StrykerOutput/`,
 HTML reports, or `frontend/reports/stryker-incremental.json`.
@@ -357,24 +357,24 @@ Vendored SharpCompress sources and tests are not part of the format gate.
 
 ### Required status checks
 
-Branch protection on `main` should require this **one aggregate CI check**, plus
+Branch protection on `v1` should require this **one aggregate CI check**, plus
 the independent CodeQL workflows:
 
 | Check name | Workflow |
 | --- | --- |
-| `CI / Required quality gate` | `.github/workflows/ci.yml` |
-| `CodeQL / Analyze (actions)` | `.github/workflows/codeql.yml` |
-| `CodeQL / Analyze (csharp)` | `.github/workflows/codeql.yml` |
-| `CodeQL / Analyze (javascript-typescript)` | `.github/workflows/codeql.yml` |
+| `v1 CI / Required quality gate` | `.github/workflows/v1-ci.yml` |
+| `v1 CodeQL / Analyze (actions)` | `.github/workflows/v1-codeql.yml` |
+| `v1 CodeQL / Analyze (csharp)` | `.github/workflows/v1-codeql.yml` |
+| `v1 CodeQL / Analyze (javascript-typescript)` | `.github/workflows/v1-codeql.yml` |
 
-`CI / Required quality gate` succeeds only when `frontend`, `backend`,
+`v1 CI / Required quality gate` succeeds only when `frontend`, `backend`,
 `postgres-migrations`, `macos-yenc`, `alpine-yenc`, `quality-ratchets`, and
 `contracts` succeed. `docker-runtime-smoke` may be skipped when the runtime image inputs
-did not change, or on pushes to `main`. Coverage-upload jobs are not required
+did not change, or on pushes to `v1`. Coverage-upload jobs are not required
 (forks omit those artifacts).
 
 Configuring those names as required checks is a repository-admin action. Enable
-it after `CI / Required quality gate` has succeeded at least once on `main`.
+it after `v1 CI / Required quality gate` has succeeded at least once on `v1`.
 Also require the branch to be up to date, at least one approval, a code-owner
 review, stale-approval dismissal, conversation resolution, and no force-push or
 branch deletion. Limit bypass to designated maintainers.

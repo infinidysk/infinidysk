@@ -1,10 +1,10 @@
-name: CI
+name: v1 CI
 
 on:
   pull_request:
   push:
     branches:
-      - main
+      - v1
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -233,7 +233,7 @@ jobs:
       # once under the warnings-as-errors analyzer gate. Parallel runtime/test
       # jobs may then disable analyzers without reducing static-analysis coverage.
       # Deterministic streaming/SAB reports are compared in this job; timing
-      # comparisons stay off the PR path (see performance.yml).
+      # comparisons stay off CI.
       - name: Build solution (warning gate)
         run: >
           dotnet build NzbWebDAV.sln -c Release --no-restore
