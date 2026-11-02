@@ -1,0 +1,20 @@
+[package]
+name = "infinidysk-core"
+description = "Ids, byte ranges, file metadata and the versioned metadata blob format"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+aes.workspace = true
+postcard.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+zstd.workspace = true
+
+[lints]
+workspace = true

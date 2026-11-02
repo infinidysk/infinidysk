@@ -1,0 +1,9 @@
+schema = 1
+name = "ViperNews"
+website = "https://www.vipernews.com"
+backbone = "vipernews"
+port = 563
+
+[[servers]]
+hostname = "news.vipernews.com"
+region = "NL"

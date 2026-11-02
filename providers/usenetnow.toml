@@ -1,0 +1,9 @@
+schema = 1
+name = "UsenetNow"
+website = "https://usenetnow.net"
+backbone = "netnews"
+port = 563
+
+[[servers]]
+hostname = "usnews.usenetnow.net"
+region = "US"

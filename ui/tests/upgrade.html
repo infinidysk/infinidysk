@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Upgrade gate regression</title>
+<div id="root"></div>
+<pre id="result">Running</pre>
+<script type="module">
+  import { act, createElement } from "react";
+  import { createRoot } from "react-dom/client";
+  import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const originalFetch = globalThis.fetch;
+  const check = (condition, message) => {
+    if (!condition) throw new Error(message);
+  };
+  let state = "none";
+  let failing = false;
+  globalThis.fetch = async (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/v1/upgrade/status") {
+      return Response.json(
+        failing ? { error: "Temporary status failure" } : { state, error: null, progress: null },
+        { status: failing ? 503 : 200 },
+      );
+    }
+    check(url.pathname === "/api/v1/auth", `Unexpected request: ${url.pathname}`);
+    return Response.json({ required: false, setup_required: false, user: null });
+  };
+
+  try {
+    const { Gate } = await import("/src/auth.tsx");
+    for (const cached of ["done", "none", null]) {
+      state = cached ?? "none";
+      failing = cached === null;
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+      });
+      if (cached) client.setQueryData(["upgrade"], { state, error: null, progress: null });
+      const root = createRoot(document.getElementById("root"));
+      const settle = async (action) => act(async () => {
+        await action();
+        await new Promise(resolve => setTimeout(resolve, 50));
+      });
+      try {
+        await settle(() => root.render(createElement(QueryClientProvider, { client },
+          createElement(Gate, null, createElement("input", { id: "unsaved", defaultValue: "Draft" })),
+        )));
+        await settle(() => client.invalidateQueries());
+        const input = document.getElementById("unsaved");
+        if (cached) {
+          check(input, `${cached}: app did not render`);
+          input.value = "Unsaved change";
+          failing = true;
+          await settle(() => client.invalidateQueries({ queryKey: ["upgrade"] }));
+          const query = client.getQueryState(["upgrade"]);
+          check(query.status === "error" && query.data.state === cached, `${cached}: refetch did not fail with cached data`);
+          check(document.getElementById("unsaved") === input, `${cached}: failed refetch unmounted the app`);
+          check(input.value === "Unsaved change", `${cached}: unsaved input was lost`);
+        } else {
+          check(!input, "Unknown status must not open the app");
+          check(document.querySelector('[role="alert"]')?.textContent.includes("Temporary status failure"), "Initial failure was not shown");
+        }
+        failing = false;
+        await settle(() => client.invalidateQueries({ queryKey: ["upgrade"] }));
+        await settle(() => client.invalidateQueries({ queryKey: ["auth"] }));
+        check(document.getElementById("unsaved"), `${cached}: successful refetch did not recover`);
+        if (cached) check(document.getElementById("unsaved") === input, `${cached}: recovery replaced the app`);
+      } finally {
+        await act(async () => root.unmount());
+        client.clear();
+      }
+    }
+    document.getElementById("result").textContent = "PASS";
+  } catch (error) {
+    document.getElementById("result").textContent = `FAIL: ${error.message}`;
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+  }
+</script>
+</html>

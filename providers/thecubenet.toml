@@ -1,0 +1,13 @@
+schema = 1
+name = "theCubeNet"
+website = "https://thecubenet.com"
+backbone = "usenetexpress"
+port = 563
+
+[[servers]]
+hostname = "news.thecubenet.com"
+region = "US"
+
+[[servers]]
+hostname = "europe.thecubenet.com"
+region = "NL"

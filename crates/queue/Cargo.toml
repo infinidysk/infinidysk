@@ -1,0 +1,34 @@
+[package]
+name = "infinidysk-queue"
+description = "Import pipeline: NZB parsing, archive and PAR2 processing, queue items"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+bytes.workspace = true
+flate2.workspace = true
+futures-util = { workspace = true, features = ["std"] }
+infinidysk-archive.workspace = true
+infinidysk-core.workspace = true
+infinidysk-db.workspace = true
+infinidysk-nntp.workspace = true
+infinidysk-par2.workspace = true
+quick-xml.workspace = true
+regex.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tracing.workspace = true
+
+[dev-dependencies]
+infinidysk-testkit.workspace = true
+infinidysk-yenc.workspace = true
+sqlx.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

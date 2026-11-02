@@ -1,0 +1,13 @@
+schema = 1
+name = "Blocknews"
+website = "https://blocknews.net"
+backbone = "netnews"
+port = 563
+
+[[servers]]
+hostname = "usnews.blocknews.net"
+region = "US"
+
+[[servers]]
+hostname = "eunews.blocknews.net"
+region = "NL"

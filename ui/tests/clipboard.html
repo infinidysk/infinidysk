@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Clipboard regression</title>
+<div role="dialog"><button id="trigger">Copy fixture</button></div>
+<pre id="result">Running</pre>
+<script type="module">
+  import { copyText } from "/src/settings.ts";
+
+  async function copyText_preserves_modern_copy_and_cleans_up_legacy_copy() {
+    const original = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const command = document.execCommand;
+    const prompt = window.prompt;
+    const trigger = document.getElementById("trigger");
+    const text = "clipboard-fixture";
+    const check = (condition) => {
+      if (!condition) throw new Error("Clipboard assertion failed");
+    };
+    let written;
+    let prompted = 0;
+    let mode = "success";
+    try {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: async (value) => { written = value; } },
+      });
+      document.execCommand = () => { throw new Error("Unexpected legacy copy"); };
+      await copyText(text);
+      check(written === text);
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+      document.execCommand = (name) => {
+        const node = document.activeElement;
+        check(name === "copy" && node instanceof HTMLTextAreaElement);
+        check(node.parentElement === trigger.parentElement);
+        check(node.value === text && node.selectionStart === 0 && node.selectionEnd === text.length);
+        if (mode === "throw") throw new Error("Blocked fixture");
+        return mode === "success";
+      };
+      window.prompt = (message, value) => {
+        check(message === "Copy text" && value === text);
+        check(document.querySelectorAll("textarea").length === 0);
+        prompted += 1;
+        return null;
+      };
+      trigger.focus();
+      for (const outcome of ["success", "false", "throw"]) {
+        mode = outcome;
+        let rejected = false;
+        try { await copyText(text); } catch (error) {
+          rejected = true;
+          check(error.message === "Automatic copying was blocked by the browser");
+        }
+        check(rejected === (outcome !== "success"));
+        check(document.activeElement === trigger);
+        check(document.querySelectorAll("textarea").length === 0);
+      }
+      check(prompted === 2);
+    } finally {
+      if (original) Object.defineProperty(navigator, "clipboard", original);
+      else delete navigator.clipboard;
+      document.execCommand = command;
+      window.prompt = prompt;
+    }
+  }
+  try {
+    await copyText_preserves_modern_copy_and_cleans_up_legacy_copy();
+    document.getElementById("result").textContent = "PASS";
+  } catch {
+    document.getElementById("result").textContent = "FAIL";
+  }
+</script>
+</html>

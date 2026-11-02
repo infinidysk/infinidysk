@@ -1,22 +1,58 @@
 version: 2
-
 updates:
-  - package-ecosystem: nuget
+  - package-ecosystem: cargo
     directory: /
     schedule:
       interval: monthly
     cooldown:
       default-days: 7
     commit-message:
-      prefix: "fix(deps)"
+      prefix: fix(deps)
     groups:
-      nuget-minor-and-patch:
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
+      cargo-minor-patch:
+        update-types: [minor, patch]
     open-pull-requests-limit: 10
+
+  - package-ecosystem: npm
+    directory: /ui
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: fix(deps)
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: build(docker)
+    groups:
+      docker:
+        patterns: ["*"]
+
+  - package-ecosystem: rust-toolchain
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: build(deps)
+
+  - package-ecosystem: gitsubmodule
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: fix(yenc)
 
   - package-ecosystem: github-actions
     directory: /
@@ -25,36 +61,8 @@ updates:
     cooldown:
       default-days: 7
     commit-message:
-      prefix: "fix(deps)"
+      prefix: chore(deps)
     groups:
       github-actions:
-        patterns:
-          - "*"
-    open-pull-requests-limit: 10
-
-  - package-ecosystem: npm
-    directory: /frontend
-    schedule:
-      interval: monthly
-    cooldown:
-      default-days: 7
-    commit-message:
-      prefix: "fix(deps)"
-    groups:
-      react-router:
-        patterns:
-          - "react-router"
-          - "@react-router/*"
-        update-types:
-          - minor
-          - patch
-      npm-minor-and-patch:
-        patterns:
-          - "*"
-        exclude-patterns:
-          - "react-router"
-          - "@react-router/*"
-        update-types:
-          - minor
-          - patch
+        patterns: ["*"]
     open-pull-requests-limit: 10

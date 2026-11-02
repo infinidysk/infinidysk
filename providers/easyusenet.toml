@@ -1,0 +1,17 @@
+schema = 1
+name = "Easyusenet"
+website = "https://www.easyusenet.com"
+# EU reader is on Abavia's network; the US reader shares a subnet and greeting with XS News.
+backbone = "abavia"
+port = 563
+
+[[servers]]
+hostname = "reader.easyusenet.com"
+
+[[servers]]
+hostname = "us.reader.easyusenet.com"
+region = "US"
+
+[[servers]]
+hostname = "eu.reader.easyusenet.com"
+region = "NL"

@@ -1,0 +1,28 @@
+[package]
+name = "infinidysk-stream"
+description = "Seekable byte streams over Usenet segments with ordered prefetch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+bytes.workspace = true
+crc32fast.workspace = true
+futures-util = { workspace = true, features = ["std"] }
+infinidysk-core.workspace = true
+infinidysk-nntp.workspace = true
+nix = { workspace = true, features = ["fs"] }
+quick_cache.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "rt", "sync", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+infinidysk-testkit.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "test-util"] }
+
+[lints]
+workspace = true

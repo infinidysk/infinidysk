@@ -1,0 +1,27 @@
+schema = 1
+name = "Easynews"
+website = "https://www.easynews.com"
+backbone = "omicron"
+port = 563
+
+[[servers]]
+hostname = "secure.news.easynews.com"
+
+[[servers]]
+hostname = "news.easynews.com"
+
+[[servers]]
+hostname = "secure-us.news.easynews.com"
+region = "US"
+
+[[servers]]
+hostname = "secure-eu.news.easynews.com"
+region = "NL"
+
+[[servers]]
+hostname = "news.us.easynews.com"
+region = "US"
+
+[[servers]]
+hostname = "news.eu.easynews.com"
+region = "NL"

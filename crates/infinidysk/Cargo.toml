@@ -1,0 +1,56 @@
+[package]
+name = "infinidysk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+argon2.workspace = true
+axum = { workspace = true, features = ["form", "http1", "json", "multipart", "query", "tokio"] }
+base64.workspace = true
+hmac.workspace = true
+infinidysk-arr.workspace = true
+infinidysk-core.workspace = true
+futures-util.workspace = true
+infinidysk-db.workspace = true
+infinidysk-health.workspace = true
+infinidysk-import.workspace = true
+infinidysk-nntp.workspace = true
+infinidysk-queue.workspace = true
+infinidysk-stream.workspace = true
+infinidysk-vfs.workspace = true
+infinidysk-webdav.workspace = true
+jiff.workspace = true
+percent-encoding.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+rust-embed.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-util = { workspace = true, features = ["io"] }
+tower.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+utoipa.workspace = true
+uuid.workspace = true
+zip.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+infinidysk-fuse.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+infinidysk-testkit.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "rt"] }
+tower.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,38 @@
+schema = 1
+name = "Frugal Usenet"
+website = "https://www.frugalusenet.com"
+backbone = "netnews"
+port = 563
+
+[[servers]]
+hostname = "news.frugalusenet.com"
+region = "US"
+
+[[servers]]
+hostname = "newswest.frugalusenet.com"
+region = "US"
+
+[[servers]]
+hostname = "eunews.frugalusenet.com"
+region = "NL"
+
+[[servers]]
+hostname = "afnews.frugalusenet.com"
+region = "ZA"
+
+[[servers]]
+hostname = "asnews.frugalusenet.com"
+region = "JP"
+
+[[servers]]
+hostname = "aunews.frugalusenet.com"
+region = "AU"
+
+[[servers]]
+hostname = "sanews.frugalusenet.com"
+region = "BR"
+
+[[servers]]
+hostname = "bonus.frugalusenet.com"
+region = "NL"
+backbone = "usenetfarm"

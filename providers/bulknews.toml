@@ -1,0 +1,9 @@
+schema = 1
+name = "Bulknews"
+website = "https://www.bulknews.eu"
+backbone = "abavia"
+port = 563
+
+[[servers]]
+hostname = "news.bulknews.eu"
+region = "NL"

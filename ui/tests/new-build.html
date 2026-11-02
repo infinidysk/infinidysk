@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Build detection regression</title>
+<div id="root"></div>
+<pre id="result">Running</pre>
+<script type="module">
+  import { act, createElement } from "react";
+  import { createRoot } from "react-dom/client";
+  import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+  import { MemoryRouter } from "react-router";
+
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const key = "infinidysk.reloaded-for";
+  const saved = sessionStorage.getItem(key);
+  const entry = "/assets/index-current.js";
+  const client = new QueryClient();
+  const root = createRoot(document.getElementById("root"));
+  const check = (condition, message) => {
+    if (!condition) throw new Error(message);
+  };
+
+  try {
+    document.head.insertAdjacentHTML("afterbegin", `
+      <script type="module" src="chrome-extension://fixture/detector.js"><\/script>
+      <script type="module" src="/assets/unrelated.js"><\/script>
+      <script type="module" src="${entry}"><\/script>
+    `);
+    check(document.querySelector('script[type="module"][src]').getAttribute("src")
+      === "chrome-extension://fixture/detector.js", "Extension must precede the app entry");
+    const { NewBuild } = await import("/src/layout.tsx");
+    sessionStorage.setItem(key, entry);
+    client.setQueryData(["status"], { ui_entry: entry });
+    await act(async () => root.render(createElement(QueryClientProvider, { client },
+      createElement(MemoryRouter, null, createElement(NewBuild)),
+    )));
+    check(!document.querySelector('[data-slot="alert"]'), "Extension caused a false update warning");
+    check(sessionStorage.getItem(key) === null, "Matching build did not clear the reload marker");
+
+    const next = "/assets/index-next.js";
+    sessionStorage.setItem(key, next);
+    await act(async () => {
+      client.setQueryData(["status"], { ui_entry: next });
+      await new Promise(resolve => setTimeout(resolve, 50));
+    });
+    check(document.querySelector('[data-slot="alert"]')?.textContent.includes("infinidysk was updated"),
+      "A genuine build mismatch must still warn");
+    document.getElementById("result").textContent = "PASS";
+  } catch (error) {
+    document.getElementById("result").textContent = `FAIL: ${error.message}`;
+  } finally {
+    await act(async () => root.unmount());
+    client.clear();
+    if (saved === null) sessionStorage.removeItem(key);
+    else sessionStorage.setItem(key, saved);
+    delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+  }
+</script>
+</html>

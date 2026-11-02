@@ -1,2026 +1,650 @@
 # Changelog
 
-## [1.7.0](https://github.com/infinidysk/infinidysk/compare/v1.6.3...v1.7.0) (2026-10-29)
+## [2.0.0-alpha.17](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.16...v2.0.0-alpha.17) (2026-11-02)
+
+
+### Bug Fixes
+
+* **stream:** keep disk cache writes the startup scan used to delete ([9243333](https://github.com/infinidysk/infinidysk-rs/commit/924333348db4dbae583e9018c59d6a9bccabf491))
+* **stream:** keep reading the disk cache after its directory link changes ([a62c59a](https://github.com/infinidysk/infinidysk-rs/commit/a62c59a102f0d76458bfca5f7504e2b1364b6be4))
+* **stream:** stop a reopened disk cache deleting writes still in progress ([3f0d9e0](https://github.com/infinidysk/infinidysk-rs/commit/3f0d9e01b3a68657b5bb36c4c709d1f2026e52d3))
+
+## [2.0.0-alpha.16](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.15...v2.0.0-alpha.16) (2026-11-02)
 
 
 ### Features
 
-* **health:** stop a running health check or repair from the Health page ([#1753](https://github.com/infinidysk/infinidysk/issues/1753)) ([02e9b21](https://github.com/infinidysk/infinidysk/commit/02e9b21e320e722f83224d632853a27c2a44adf3))
+* **docker:** containers report healthy only once the mount and database are ready ([#48](https://github.com/infinidysk/infinidysk-rs/issues/48)) ([8368b59](https://github.com/infinidysk/infinidysk-rs/commit/8368b59d9bce057d2cf501ceb6cd854cb0d26122))
 
 
 ### Bug Fixes
 
-* **deps:** Bump body-parser from 2.3.0 to 2.4.0 in /frontend ([#1742](https://github.com/infinidysk/infinidysk/issues/1742)) ([a77b5ff](https://github.com/infinidysk/infinidysk/commit/a77b5ffb36a09f3de5f33e53a0a2cdc54ca13222))
-* **deps:** Bump fast-uri from 3.1.8 to 3.1.9 in /frontend ([#1743](https://github.com/infinidysk/infinidysk/issues/1743)) ([ff0f4d3](https://github.com/infinidysk/infinidysk/commit/ff0f4d36391d5de58ba7ac3c87194e861bf556f9))
-* **deps:** Bump github/codeql-action ([#1758](https://github.com/infinidysk/infinidysk/issues/1758)) ([0ac3c86](https://github.com/infinidysk/infinidysk/commit/0ac3c8685f0b951fff2f6b3dfbaa2b3b93f70522))
-* **deps:** Bump ip-address from 10.7.2 to 10.7.5 in /frontend ([#1744](https://github.com/infinidysk/infinidysk/issues/1744)) ([6fac334](https://github.com/infinidysk/infinidysk/commit/6fac33411bcc87b06bbadd543778eeea5e007c36))
-* **deps:** Bump the github-actions group across 1 directory with 2 updates ([#1722](https://github.com/infinidysk/infinidysk/issues/1722)) ([4dd62f6](https://github.com/infinidysk/infinidysk/commit/4dd62f669fdd287308f03091c8bbdf1f1c3c0124))
-* **deps:** Bump the npm-minor-and-patch group ([#1757](https://github.com/infinidysk/infinidysk/issues/1757)) ([2dc8b53](https://github.com/infinidysk/infinidysk/commit/2dc8b5338a06d217159c1a0092365ad6620954b9))
-* **deps:** Bump the npm-minor-and-patch group across 1 directory with 15 updates ([#1736](https://github.com/infinidysk/infinidysk/issues/1736)) ([af69ab9](https://github.com/infinidysk/infinidysk/commit/af69ab9a3db5d96d3e8e3a6e51b9b655fe237235))
-* **deps:** Bump the nuget-minor-and-patch group with 1 update ([#1756](https://github.com/infinidysk/infinidysk/issues/1756)) ([11de8f1](https://github.com/infinidysk/infinidysk/commit/11de8f190c5df5bb0684a508660e42ccd73ff1b7))
-* **deps:** Bump the nuget-minor-and-patch group with 11 updates ([#1737](https://github.com/infinidysk/infinidysk/issues/1737)) ([635eb22](https://github.com/infinidysk/infinidysk/commit/635eb22a5c2d586ffdb40b14fc07c91857533dff))
-* **deps:** Bump the react-router group in /frontend with 5 updates ([#1755](https://github.com/infinidysk/infinidysk/issues/1755)) ([10e0f7a](https://github.com/infinidysk/infinidysk/commit/10e0f7af802f01bf6f50c2920ba658747f0f1129))
-* **deps:** Bump xunit.runner.visualstudio from 3.1.5 to 4.0.1 ([#1723](https://github.com/infinidysk/infinidysk/issues/1723)) ([b7f3299](https://github.com/infinidysk/infinidysk/commit/b7f3299c7a8d9a7073efc76518c0011046b8382f))
-* **health:** files PAR2 cannot repair are no longer stuck behind other PAR2 repairs ([#1761](https://github.com/infinidysk/infinidysk/issues/1761)) ([afa599d](https://github.com/infinidysk/infinidysk/commit/afa599d255bc9c0751a4b3ceccaf2d91d75382e1))
-* **health:** files replaced by Sonarr/Radarr upgrades no longer pile up as "Not library linked" ([#1754](https://github.com/infinidysk/infinidysk/issues/1754)) ([b1578be](https://github.com/infinidysk/infinidysk/commit/b1578be2038e97692d4c53b16c5ae2ba4c894d31))
-* **health:** PAR2 background repair is now off by default ([#1762](https://github.com/infinidysk/infinidysk/issues/1762)) ([d8169d4](https://github.com/infinidysk/infinidysk/commit/d8169d47771aa4b9e2720aa0d915dd385b7e2fa5))
-* **health:** stop PAR2 identity probing of dead volumes with untrusted ranges ([#1752](https://github.com/infinidysk/infinidysk/issues/1752)) ([6000cd4](https://github.com/infinidysk/infinidysk/commit/6000cd49edcd5e209567c3b4a559b746e9e0ddd6))
-* **health:** treat null pending multipart parts as empty during PAR2 repair ([#1740](https://github.com/infinidysk/infinidysk/issues/1740)) ([933b800](https://github.com/infinidysk/infinidysk/commit/933b800c57b6749abe93c1d55087d874530acdd7))
-* **queue:** do not record inconclusive article misses as missing evidence ([#1745](https://github.com/infinidysk/infinidysk/issues/1745)) ([1db170a](https://github.com/infinidysk/infinidysk/commit/1db170a7be78a620bb9877a433bb9eea2fcac5ef))
-* retry a busy daily maintenance slot in place instead of skipping to tomorrow ([#1747](https://github.com/infinidysk/infinidysk/issues/1747)) ([d46bf6e](https://github.com/infinidysk/infinidysk/commit/d46bf6ee74b45e90a6d5d50d1686294083a5685f))
-* scheduled orphan cleanup and database backups no longer skip nights ([#1738](https://github.com/infinidysk/infinidysk/issues/1738)) ([ce51abc](https://github.com/infinidysk/infinidysk/commit/ce51abc223622c53d3e4c62623e12283b4035c6e))
-* **sharpcompress:** truncate RAR passwords to 127 characters before key derivation ([#1751](https://github.com/infinidysk/infinidysk/issues/1751)) ([db347c7](https://github.com/infinidysk/infinidysk/commit/db347c75c4a32d4d029f2dfcd8839e83a8f47eff))
-* **usenet:** warn with the reason when a segment fetch is classified as protocol ([#1746](https://github.com/infinidysk/infinidysk/issues/1746)) ([9a14f4d](https://github.com/infinidysk/infinidysk/commit/9a14f4dae4589e15c60d50ebb57dc4c7d66be03c))
+* **ui:** ignore extension scripts when checking for updates ([fb2dcc1](https://github.com/infinidysk/infinidysk-rs/commit/fb2dcc1da9773028914fa1b069b7825228a4955f))
+* **ui:** keep activity visible beside large spikes ([eecf334](https://github.com/infinidysk/infinidysk-rs/commit/eecf334155ce4993ae5e1cbca4f08807d5acff32))
+* **ui:** keep the read position bar at a fixed width ([2431234](https://github.com/infinidysk/infinidysk-rs/commit/243123497d33fafa591a0e354386aa2424d272f2))
+* **ui:** show playback in green and health checks in blue on the activity graph ([f49b3f8](https://github.com/infinidysk/infinidysk-rs/commit/f49b3f8aa627d5c4b1c8abdb06c5280dfb8b0009))
 
-## [1.6.3](https://github.com/infinidysk/infinidysk/compare/v1.6.2...v1.6.3) (2026-10-21)
+## [2.0.0-alpha.15](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.14...v2.0.0-alpha.15) (2026-11-01)
+
+
+### Features
+
+* **api:** check provider logins and report each provider's connection state ([e25ad95](https://github.com/infinidysk/infinidysk-rs/commit/e25ad95c051ef2450e0509efc60d8cb59e1538a8))
+* **api:** search and filter health and import history ([87b59e4](https://github.com/infinidysk/infinidysk-rs/commit/87b59e4bb7002b5aa08696107df5723b1dd7a834))
+* **health:** repair through Lidarr and Whisparr ([c3f6db2](https://github.com/infinidysk/infinidysk-rs/commit/c3f6db23b1e51d2bbdaf8eb9766e62a21996fc9a))
+* **ui:** explain each health state on the Health page ([cf90a90](https://github.com/infinidysk/infinidysk-rs/commit/cf90a90d78be819fb70dd24a5034da174d771245))
+* **ui:** search and filter import and health history ([2b18ba6](https://github.com/infinidysk/infinidysk-rs/commit/2b18ba680936fb4449c5e47a0fd3164e7779777e))
+* **ui:** show which providers serve each read in progress ([ffc7669](https://github.com/infinidysk/infinidysk-rs/commit/ffc7669a2542180be7653cdc9a66bed0d5f014e6))
+* **ui:** test provider connections and show their state ([0e510e4](https://github.com/infinidysk/infinidysk-rs/commit/0e510e4c16377a36a1e224637ad1bb094593cba4))
 
 
 ### Bug Fixes
 
-* **deps:** Bump vite from 8.3.2 to 8.3.4 in /frontend ([#1727](https://github.com/infinidysk/infinidysk/issues/1727)) ([62c1458](https://github.com/infinidysk/infinidysk/commit/62c14587feac77d3ab630b960094e07e61ee067a))
-* **health:** keep recently played files available during automatic repair ([#1713](https://github.com/infinidysk/infinidysk/issues/1713)) ([4bef51e](https://github.com/infinidysk/infinidysk/commit/4bef51e7dca75fdb16ee1e174d20f07b0064aab3))
-* **usenet:** backup accounts in a storage group are no longer charged for an article already rejected from that group ([#1724](https://github.com/infinidysk/infinidysk/issues/1724)) ([a72e11d](https://github.com/infinidysk/infinidysk/commit/a72e11d7c74edef3e69e019ff3fc7f66c99f8c78))
-* **usenet:** unregister completed bandwidth waiters without blocking the limiter lock ([#1711](https://github.com/infinidysk/infinidysk/issues/1711)) ([18e902c](https://github.com/infinidysk/infinidysk/commit/18e902c344a13d8d4db70c63b01f3f6edc618e78))
+* **deps:** bump the cargo-minor-patch group with 3 updates ([#45](https://github.com/infinidysk/infinidysk-rs/issues/45)) ([b23c2dd](https://github.com/infinidysk/infinidysk-rs/commit/b23c2dd25a2993c15df5912adb3cb41a6531c275))
+* **health:** check ebooks instead of ignoring them ([3100e75](https://github.com/infinidysk/infinidysk-rs/commit/3100e75793a0af68c9d0d5ffc6a938dda21e95f0))
+* **import:** check imported files with recorded misses right away ([334741e](https://github.com/infinidysk/infinidysk-rs/commit/334741eef10b280cee82a749b8495dde1fc270d6))
+* **ui:** align overview read rows and drop the activity chart's y-axis ([db215a9](https://github.com/infinidysk/infinidysk-rs/commit/db215a9d117b8114d01d244c2c468eece0dce5ca))
+* **ui:** bigger tap targets for slider thumbs, Advanced settings and inline links ([0bdb789](https://github.com/infinidysk/infinidysk-rs/commit/0bdb78952206c0778ad92bf54a11349bd76ec489))
+* **ui:** call the stats library card Library and make provider settings a button ([aca696f](https://github.com/infinidysk/infinidysk-rs/commit/aca696f7fd582ad8573678bfc24d9c075a410d67))
+* **ui:** clearer provider name and Arr download-client hints ([32fd40b](https://github.com/infinidysk/infinidysk-rs/commit/32fd40b01e0d0df520736caa88197fc7c7a46fdc))
+* **ui:** fill the system card grid and give the mount path room on phones ([cb00690](https://github.com/infinidysk/infinidysk-rs/commit/cb00690290841ac61b2277e1320efb36d3e4b942))
+* **ui:** full-width editor sheets on phones and an explicit provider pick ([a55c292](https://github.com/infinidysk/infinidysk-rs/commit/a55c2926c940da99ca919efbe5f9cdff8f9e7bcf))
+* **ui:** name 1.x STRM links plainly and hide the notice when unused ([c114291](https://github.com/infinidysk/infinidysk-rs/commit/c114291e8d60874289616420fb61ceeecad9efa8))
+* **ui:** one split button to start read traces ([089f733](https://github.com/infinidysk/infinidysk-rs/commit/089f7332822f7588ffebe84eb996c7dc278aa6fe))
+* **ui:** readable maintenance errors, relative run times and why Run now is off ([2b61706](https://github.com/infinidysk/infinidysk-rs/commit/2b61706c4de785644a0df31a18fd8f1a5376656e))
+* **ui:** show a dash for empty explorer cells and explain a missing import time ([23f7c5b](https://github.com/infinidysk/infinidysk-rs/commit/23f7c5bd1e15bef85ca5b84b5bad4e1c0182b0ca))
+* **ui:** show provider misses as warnings on stats ([f61e50d](https://github.com/infinidysk/infinidysk-rs/commit/f61e50d74f1c49e79b2493dd9b6875d6d9124595))
+* **ui:** show which performance settings the environment sets ([eb5fd6f](https://github.com/infinidysk/infinidysk-rs/commit/eb5fd6f80ed1186db78d52970160e567c72bd9bb))
+* **ui:** stop the update banner from reloading every page ([481b7dc](https://github.com/infinidysk/infinidysk-rs/commit/481b7dce285127a280f7cf3ea200f59be9ca064e))
+* **ui:** tidy phone layouts on overview, providers and explorer ([f5a4130](https://github.com/infinidysk/infinidysk-rs/commit/f5a4130b88033aa3c4c953fd0dc5c3b852f4ea48))
+* **ui:** type delete to run unlinked-file removal by hand ([045ffdd](https://github.com/infinidysk/infinidysk-rs/commit/045ffdd66ebed083b6271f565d81e4cf0319deda))
 
-## [1.6.2](https://github.com/infinidysk/infinidysk/compare/v1.6.1...v1.6.2) (2026-10-15)
+## [2.0.0-alpha.14](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.13...v2.0.0-alpha.14) (2026-11-01)
+
+
+### Features
+
+* **ui:** show disk cache use and health on the System page ([c1ed06b](https://github.com/infinidysk/infinidysk-rs/commit/c1ed06bd4e13c139c102c1af360c8a15f08d9e3c))
+* **ui:** show release notes from the System page ([1c525cc](https://github.com/infinidysk/infinidysk-rs/commit/1c525ccc5d3a1c3cb9dfd6b2627e015505f35855))
 
 
 ### Bug Fixes
 
-* **health:** initialize the playback repair trigger before serving requests ([#1705](https://github.com/infinidysk/infinidysk/issues/1705)) ([18a0c4b](https://github.com/infinidysk/infinidysk/commit/18a0c4bf0448ddf02c329ac12a613fcce8b33caf))
+* **api:** let empty folders of categories no longer offered be removed ([86f0c14](https://github.com/infinidysk/infinidysk-rs/commit/86f0c1471458be7148bcbc601ff5387043bf3161))
+* **ui:** color the wordmark on the sign-in and setup screens ([76e197e](https://github.com/infinidysk/infinidysk-rs/commit/76e197ec8fe3bde98a92ce0301bf71ff9376ba92))
+* **ui:** keep unsaved settings when saved settings change underneath ([d2451de](https://github.com/infinidysk/infinidysk-rs/commit/d2451de9b9c09ece0a51509a12eaf0596bd03320))
+* **ui:** reload open tabs onto a new version after an upgrade ([8d16445](https://github.com/infinidysk/infinidysk-rs/commit/8d164459dd775c1d39e623adfb7f64c72a96bdd2))
+* **ui:** show the release folder for obfuscated file names ([b36123d](https://github.com/infinidysk/infinidysk-rs/commit/b36123dc9ae709b34d2a0f7e493ce735f1c855f9))
+* **ui:** tuck reader process ids behind an info tip ([22f8a02](https://github.com/infinidysk/infinidysk-rs/commit/22f8a02bb8c46b964d16b242217b4a2961e16bad))
 
-## [1.6.1](https://github.com/infinidysk/infinidysk/compare/v1.6.0...v1.6.1) (2026-10-12)
+## [2.0.0-alpha.13](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.12...v2.0.0-alpha.13) (2026-11-01)
+
+
+### Features
+
+* **import:** serve upgrade progress while importing C# data ([0ef0f27](https://github.com/infinidysk/infinidysk-rs/commit/0ef0f27f4b5307d798bce780cc60d97be1f55049))
 
 
 ### Bug Fixes
 
-* **deps:** Bump advanced-security/component-detection-dependency-submission-action ([#1682](https://github.com/infinidysk/infinidysk/issues/1682)) ([6d21118](https://github.com/infinidysk/infinidysk/commit/6d21118d4136f95784bd0743bee2e511abb671fe))
-* **deps:** Bump dotnet-stryker from 4.16.0 to 5.0.0 ([#1480](https://github.com/infinidysk/infinidysk/issues/1480)) ([a914b40](https://github.com/infinidysk/infinidysk/commit/a914b4092173632852f2a2aa80204e9d1c21253f))
-* **deps:** Bump NUnit from 4.6.1 to 5.0.0 ([#1644](https://github.com/infinidysk/infinidysk/issues/1644)) ([a13d490](https://github.com/infinidysk/infinidysk/commit/a13d49088fc8534c97364badab0f38f538331750))
-* **deps:** Bump the npm-minor-and-patch group ([#1681](https://github.com/infinidysk/infinidysk/issues/1681)) ([a3c3a8b](https://github.com/infinidysk/infinidysk/commit/a3c3a8b9f3f28a6be3673e12b7eb74da4111c56c))
-* **deps:** Bump the nuget-minor-and-patch group with 2 updates ([#1683](https://github.com/infinidysk/infinidysk/issues/1683)) ([45f35b5](https://github.com/infinidysk/infinidysk/commit/45f35b5b300181e3df483ddb542c0bdf0b59b072))
-* **deps:** Bump the react-router group across 1 directory with 5 updates ([#1531](https://github.com/infinidysk/infinidysk/issues/1531)) ([0d75b5d](https://github.com/infinidysk/infinidysk/commit/0d75b5d15c40c35cae092797877bc735afb94bb9))
-* **deps:** Bump xunit.v3 from 3.2.2 to 4.0.1 ([#1534](https://github.com/infinidysk/infinidysk/issues/1534)) ([8eea89a](https://github.com/infinidysk/infinidysk/commit/8eea89a20e5af9d05bdaa283d1b3e99d60e5ae86))
-* **deps:** Bump zensical from 0.0.66 to 0.0.67 in the docs-python group ([#1680](https://github.com/infinidysk/infinidysk/issues/1680)) ([c1df5ae](https://github.com/infinidysk/infinidysk/commit/c1df5ae6882c6bb21a5fef0b7fd89d6f3bb5fc99))
-* **health:** PAR2 repair no longer fails on multi-volume releases with an identity byte-limit error ([#1694](https://github.com/infinidysk/infinidysk/issues/1694)) ([f5bc20b](https://github.com/infinidysk/infinidysk/commit/f5bc20b93ac6f106bf3d4d7dcc1bd89e9e95883d))
-* **queue:** indexer watermark files no longer fail imports with 'Rar signature not found' on some providers ([#1679](https://github.com/infinidysk/infinidysk/issues/1679)) ([e1130a0](https://github.com/infinidysk/infinidysk/commit/e1130a0129fa4ffb479a0fa226b696cc575706fe))
-* **queue:** preserve first-volume header ordering for stored RAR files ([#1688](https://github.com/infinidysk/infinidysk/issues/1688)) ([206b9ad](https://github.com/infinidysk/infinidysk/commit/206b9ad7e0f48c3a9147a3c88def368d23298919))
-* **usenet:** keep backup-only providers demand-only with no warm floor ([#1687](https://github.com/infinidysk/infinidysk/issues/1687)) ([41a1475](https://github.com/infinidysk/infinidysk/commit/41a1475f0784b138b76e508939233e552c875d7c))
-* **webdav:** re-reading a range with filled holes no longer aborts or returns 404 ([#1698](https://github.com/infinidysk/infinidysk/issues/1698)) ([fa96956](https://github.com/infinidysk/infinidysk/commit/fa969560b350dd1599737e80521aab88aa462d64))
-* **webdav:** recognize strm links under the configured base url path prefix ([#1692](https://github.com/infinidysk/infinidysk/issues/1692)) ([48715c5](https://github.com/infinidysk/infinidysk/commit/48715c5157b3902db9e00aa37a4ebb8a15cc7887))
+* **api:** check the public image registry for newer releases ([b1c4a29](https://github.com/infinidysk/infinidysk-rs/commit/b1c4a29ca6d07f8bab6e125585e5cce7dc1beed7))
+* **import:** upgraded installs bring back files with an extra listed article ([#41](https://github.com/infinidysk/infinidysk-rs/issues/41)) ([8c9c71d](https://github.com/infinidysk/infinidysk-rs/commit/8c9c71d7f807773069c20d65a5826593faee077e))
+* **ui:** preserve the app when upgrade status refresh fails ([7fcbd4c](https://github.com/infinidysk/infinidysk-rs/commit/7fcbd4cb5b0dd340d0a3960ce7cde7ca98787038))
 
 
 ### Performance Improvements
 
-* **webdav:** fetch the rest of a seek range while the first article downloads ([#1697](https://github.com/infinidysk/infinidysk/issues/1697)) ([2f9f45a](https://github.com/infinidysk/infinidysk/commit/2f9f45a04d231f1ef931a835d6a189c4cf2b65f1)), closes [#1677](https://github.com/infinidysk/infinidysk/issues/1677)
+* **import:** reuse matching measured volume geometry ([#43](https://github.com/infinidysk/infinidysk-rs/issues/43)) ([ef945ae](https://github.com/infinidysk/infinidysk-rs/commit/ef945ae75d745898883a0ea48118c8490dbdeb4c))
 
-
-### UX
-
-* **health:** label active phases as elapsed time with a spinner ([#1699](https://github.com/infinidysk/infinidysk/issues/1699)) ([585b7d6](https://github.com/infinidysk/infinidysk/commit/585b7d6b46e66325dc9a1f7f86733f89d3fdf8fc))
-
-## [1.6.0](https://github.com/infinidysk/infinidysk/compare/v1.5.1...v1.6.0) (2026-10-09)
-
-
-### Features
-
-* **api:** support pack filename shows the InfiniDysk version that generated it ([#1609](https://github.com/infinidysk/infinidysk/issues/1609)) ([0f1e775](https://github.com/infinidysk/infinidysk/commit/0f1e775bbffacdc3f0f805edbc67600fb13fccbf))
-* **ui:** manage files in compact tree and list views with health filters ([#1546](https://github.com/infinidysk/infinidysk/issues/1546)) ([d83a6c1](https://github.com/infinidysk/infinidysk/commit/d83a6c10e5f5c7102930c8d947e136d8db500711))
-* **webdav:** stream traces separate connection, permit, and failed-attempt waits per request ([#1661](https://github.com/infinidysk/infinidysk/issues/1661)) ([738a87c](https://github.com/infinidysk/infinidysk/commit/738a87cd966b6db15d87c7199da30d8a1be8b7e2))
-* **webdav:** stream traces show what each playback stall was waiting on ([#1674](https://github.com/infinidysk/infinidysk/issues/1674)) ([9fd1869](https://github.com/infinidysk/infinidysk/commit/9fd1869d6d35876f71541de222383ef9dc511636))
+## [2.0.0-alpha.12](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.11...v2.0.0-alpha.12) (2026-11-01)
 
 
 ### Bug Fixes
 
-* **arr:** Sonarr repairs no longer resolve to a different series whose folder name shares a prefix ([#1620](https://github.com/infinidysk/infinidysk/issues/1620)) ([c4a4229](https://github.com/infinidysk/infinidysk/commit/c4a422939288bd5d523b2886f405838ded98ae5e))
-* **arr:** stop false "Imports are taking longer than expected" alerts ([#1673](https://github.com/infinidysk/infinidysk/issues/1673)) ([34a32e2](https://github.com/infinidysk/infinidysk/commit/34a32e2abad8a8f23b0f2b7d03ce5d9232e0e55f))
-* **db:** recheck pending history cleanup under the SQLite write lock ([#1599](https://github.com/infinidysk/infinidysk/issues/1599)) ([e3f079d](https://github.com/infinidysk/infinidysk/commit/e3f079d2ac937d4deb3eab4097ae2ec7a53fa80a))
-* **deps:** Bump brace-expansion from 2.1.4 to 2.1.7 in /frontend ([#1603](https://github.com/infinidysk/infinidysk/issues/1603)) ([de57eb3](https://github.com/infinidysk/infinidysk/commit/de57eb3f12a07fed14ff1306a3e6a434dad2ca78))
-* **deps:** Bump github/codeql-action ([#1629](https://github.com/infinidysk/infinidysk/issues/1629)) ([3544821](https://github.com/infinidysk/infinidysk/commit/3544821965cf2c5cb8d4d27cfe3c628eafc70223))
-* **deps:** Bump ip-address from 10.4.0 to 10.7.2 in /frontend ([#1596](https://github.com/infinidysk/infinidysk/issues/1596)) ([be46762](https://github.com/infinidysk/infinidysk/commit/be46762a65c69f7c4a41c52ff83b15adaa906f4b))
-* **deps:** Bump proxy-addr from 2.0.7 to 2.0.8 in /frontend ([#1647](https://github.com/infinidysk/infinidysk/issues/1647)) ([a03cd96](https://github.com/infinidysk/infinidysk/commit/a03cd96e4ff4fb1f224c359e975a02ddedac174a))
-* **deps:** Bump source-map-js from 1.2.1 to 1.2.2 in /frontend ([#1648](https://github.com/infinidysk/infinidysk/issues/1648)) ([44428f2](https://github.com/infinidysk/infinidysk/commit/44428f2a76fc50b9dd2ea6e49543f61ed2b3ee33))
-* **deps:** Bump the npm-minor-and-patch group across 1 directory with 8 updates ([#1601](https://github.com/infinidysk/infinidysk/issues/1601)) ([aec5115](https://github.com/infinidysk/infinidysk/commit/aec511538fb6e3ccc4d6abc74d5f69292dfb5745))
-* **deps:** Bump the npm-minor-and-patch group across 1 directory with 9 updates ([#1642](https://github.com/infinidysk/infinidysk/issues/1642)) ([1709f13](https://github.com/infinidysk/infinidysk/commit/1709f1385702967b5d6a6f44c0c0a3160908615b))
-* **deps:** Bump the nuget-minor-and-patch group with 1 update ([#1602](https://github.com/infinidysk/infinidysk/issues/1602)) ([edb7aa4](https://github.com/infinidysk/infinidysk/commit/edb7aa475cd38c35f4f158a58bde0a5e59c82168))
-* **deps:** Bump zensical from 0.0.62 to 0.0.64 in the docs-python group ([#1600](https://github.com/infinidysk/infinidysk/issues/1600)) ([8064d1e](https://github.com/infinidysk/infinidysk/commit/8064d1e029d8bb5561e2ce6b259d3ab4026d2e47))
-* **deps:** Bump zensical from 0.0.64 to 0.0.65 in the docs-python group ([#1626](https://github.com/infinidysk/infinidysk/issues/1626)) ([0ad6d23](https://github.com/infinidysk/infinidysk/commit/0ad6d23b82c1a578da68831febf7a1f343a1a96c))
-* **deps:** Bump zensical from 0.0.65 to 0.0.66 in the docs-python group ([#1641](https://github.com/infinidysk/infinidysk/issues/1641)) ([a388993](https://github.com/infinidysk/infinidysk/commit/a3889933ca1ec87917c72ffb1f4c624d204eec90))
-* **health:** health checks no longer appear stuck at 0% for hours on dead releases ([#1611](https://github.com/infinidysk/infinidysk/issues/1611)) ([8927443](https://github.com/infinidysk/infinidysk/commit/89274437e7396804e7d2a3419e14927b045e02c8))
-* **health:** replace releases that break during playback instead of keeping them as damaged ([#1631](https://github.com/infinidysk/infinidysk/issues/1631)) ([e250e47](https://github.com/infinidysk/infinidysk/commit/e250e478d3876486c52dafb93127e0387b3064fc))
-* **nntp:** playback and imports no longer stall when a provider refuses extra connections ([#1623](https://github.com/infinidysk/infinidysk/issues/1623)) ([5b5260e](https://github.com/infinidysk/infinidysk/commit/5b5260eb60ca8ac3385fbed865dcc8fe433ac4b9))
-* **nntp:** skip reconnect pacing when the caller cancels a read ([#1658](https://github.com/infinidysk/infinidysk/issues/1658)) ([6f8a40c](https://github.com/infinidysk/infinidysk/commit/6f8a40c6b654d02a23aa02b73c11b99935e6fb8a))
-* **nntp:** treat 481 "maximum connections per user" as a connection limit ([#1668](https://github.com/infinidysk/infinidysk/issues/1668)) ([c50c2f9](https://github.com/infinidysk/infinidysk/commit/c50c2f9644c7b81b1de3a1e1520e3d6b76216d1b))
-* **queue:** fail over when a provider returns another post's first segment ([87a6f87](https://github.com/infinidysk/infinidysk/commit/87a6f87a37597fe88fb5f7c9cae81f7c03be2fa1))
-* **queue:** imported files keep their Usenet post date when Queue Pipelining is enabled ([#1637](https://github.com/infinidysk/infinidysk/issues/1637)) ([036cbea](https://github.com/infinidysk/infinidysk/commit/036cbeaeeb15aac187a60e6256be6bf447dd3d22))
-* **queue:** preserve playback for NZBs with omitted interior parts ([#1594](https://github.com/infinidysk/infinidysk/issues/1594)) ([b3396fe](https://github.com/infinidysk/infinidysk/commit/b3396fe8ca57a0023cf9275638c77b91bc0e338b))
-* **queue:** skip unavailable optional first-segment metadata ([#1625](https://github.com/infinidysk/infinidysk/issues/1625)) ([b9604a2](https://github.com/infinidysk/infinidysk/commit/b9604a2321d71266a1d641d322fc8c78dcdd325c))
-* **ui:** reserve scrollbar gutter in media preview to stop resize loop ([#1672](https://github.com/infinidysk/infinidysk/issues/1672)) ([ec9f606](https://github.com/infinidysk/infinidysk/commit/ec9f606a05be873d7218539fb9b31a09b08fc971))
-* **usenet:** classify corrupt decoded bodies as health-neutral discards ([#1678](https://github.com/infinidysk/infinidysk/issues/1678)) ([ffca62a](https://github.com/infinidysk/infinidysk/commit/ffca62ae745762fb926ba3da350b3d154818b57b))
-* **usenet:** distinguish connection-open failures from local admission waits ([#1619](https://github.com/infinidysk/infinidysk/issues/1619)) ([7f46bc3](https://github.com/infinidysk/infinidysk/commit/7f46bc3fc11e066676caaaa54b5e41490416b1d3))
-* **usenet:** playback no longer stalls when read-ahead fallbacks hold every failover slot ([#1657](https://github.com/infinidysk/infinidysk/issues/1657)) ([279ead3](https://github.com/infinidysk/infinidysk/commit/279ead31f991d1addc45b763cfc0d70fbb5b997c))
-* **usenet:** share DATE liveness validation for probes and keepalives ([#1665](https://github.com/infinidysk/infinidysk/issues/1665)) ([1a5276a](https://github.com/infinidysk/infinidysk/commit/1a5276aa5752980f118181919f4032f24a4543a5))
-* **webdav:** bound view response copies and handle length overruns ([#1592](https://github.com/infinidysk/infinidysk/issues/1592)) ([d79c480](https://github.com/infinidysk/infinidysk/commit/d79c480e6f165df1a81b8ae77121c59464bc1ff4))
-* **webdav:** open full read-ahead window after the first segment is read ([#1653](https://github.com/infinidysk/infinidysk/issues/1653)) ([f830550](https://github.com/infinidysk/infinidysk/commit/f83055055b1504ecc68ade5be0f7af1ab0da969a))
-* **webdav:** seeking near the end of some files no longer fails ([#1656](https://github.com/infinidysk/infinidysk/issues/1656)) ([4cdc4a0](https://github.com/infinidysk/infinidysk/commit/4cdc4a02553a97c3771b438a7c3c8ec08f7478c0))
+* **import:** upgrades carry over archive files with wrong sizes in their posts again ([#37](https://github.com/infinidysk/infinidysk-rs/issues/37)) ([a716d92](https://github.com/infinidysk/infinidysk-rs/commit/a716d92bfa98338e795f34b8d4a3a00ee9e8a251))
+* **import:** upgrades no longer hide a missing article in archive volumes that match an earlier volume's size ([#40](https://github.com/infinidysk/infinidysk-rs/issues/40)) ([f62bc65](https://github.com/infinidysk/infinidysk-rs/commit/f62bc653fde1b319134780533831c3a6e0a6cf92))
+* **stream:** hedge pending responses when the preferred provider has spare capacity ([#38](https://github.com/infinidysk/infinidysk-rs/issues/38)) ([d3dd3dc](https://github.com/infinidysk/infinidysk-rs/commit/d3dd3dc2a23b7e6cf78a38f22c7ce02855c0331f))
+
+## [2.0.0-alpha.11](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.10...v2.0.0-alpha.11) (2026-10-31)
+
+
+### Bug Fixes
+
+* **import:** restore more skipped upgrade files and correct log ownership ([#34](https://github.com/infinidysk/infinidysk-rs/issues/34)) ([a49f118](https://github.com/infinidysk/infinidysk-rs/commit/a49f1186db0d71e850fd7211236cb70d02b9dd2a))
+
+## [2.0.0-alpha.10](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.9...v2.0.0-alpha.10) (2026-10-31)
+
+
+### Features
+
+* **health:** count a 100% import as the first health check ([c25aaf1](https://github.com/infinidysk/infinidysk-rs/commit/c25aaf1c1e6180e9560be6522673fa60899027ec))
+* **import:** note that WebDAV deletes stop working after upgrading from a writable C# setup ([ed445ac](https://github.com/infinidysk/infinidysk-rs/commit/ed445ac8f3e9df28e19c17fe5b9c012e7e437dbb))
+* **ui:** explain what the health sample size covers ([3ed8e04](https://github.com/infinidysk/infinidysk-rs/commit/3ed8e0436c39c36cf09c0c22afd62b2e939c6c4c))
+
+
+### Bug Fixes
+
+* **auth:** accept the admin username in any case, as 1.x did ([24d6753](https://github.com/infinidysk/infinidysk-rs/commit/24d67534e6f68a9995c43c67a759c9eee2a3c140))
+* **queue:** posts with wrong yEnc file sizes now import, and upgrades bring back files they skipped ([#33](https://github.com/infinidysk/infinidysk-rs/issues/33)) ([63d7b6e](https://github.com/infinidysk/infinidysk-rs/commit/63d7b6e21375ef6160296a8b31a718c37e5277a4))
+
+## [2.0.0-alpha.9](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.8...v2.0.0-alpha.9) (2026-10-30)
+
+
+### Features
+
+* **api:** say which setting a validation error is about ([305e364](https://github.com/infinidysk/infinidysk-rs/commit/305e3642f71eb591422139a433b2b729f3c5ad22))
+* **ui:** add a Stats page and show what needs attention on Overview ([5be5f01](https://github.com/infinidysk/infinidysk-rs/commit/5be5f01bc3ed91136d59ac4d700f5c8abccfd3bd))
+* **ui:** color dysk in the sidebar wordmark ([923a712](https://github.com/infinidysk/infinidysk-rs/commit/923a7129be4c8b3be3c59b8a389a089812a5dcfa))
+* **ui:** edit providers in a side sheet ([4e2ce95](https://github.com/infinidysk/infinidysk-rs/commit/4e2ce95435fbff309262eb59e3724716ca45f2f6))
+* **ui:** lay settings out as grouped panels ([16b94bf](https://github.com/infinidysk/infinidysk-rs/commit/16b94bf9412e56186e3dd60ffc68e328de8cfc0f))
+* **ui:** manage Arr instances in a list and side sheet ([9ca51f4](https://github.com/infinidysk/infinidysk-rs/commit/9ca51f424607524d76ee9b496074b66954fb3320))
+* **ui:** merge Admin API and Authentication into Access ([601d5d0](https://github.com/infinidysk/infinidysk-rs/commit/601d5d092a941e4938217c4d35e14b1926c061a6))
+* **ui:** move Support to the System page ([6ad8c2c](https://github.com/infinidysk/infinidysk-rs/commit/6ad8c2c5bfda5c450f692c11780d712e01113177))
+* **ui:** move the download speed limit to Performance ([8fdfb8e](https://github.com/infinidysk/infinidysk-rs/commit/8fdfb8e8705badae3e1381d44554e7e5889c0fe9))
+* **ui:** show connection details on WebDAV, Download client and Mount ([703f418](https://github.com/infinidysk/infinidysk-rs/commit/703f4186dac7ddc48ed85915e24118c1b91be5f1))
+* **ui:** split Library settings from Imports ([ab4b2a6](https://github.com/infinidysk/infinidysk-rs/commit/ab4b2a635024e7de0ef28aafba1bdc823f9027a6))
+* **ui:** switch experiments on and off in Settings ([deceb03](https://github.com/infinidysk/infinidysk-rs/commit/deceb039a8a2d62028949d090a2e2145e25917a4))
+* **ui:** tidy provider row and header actions ([a65951a](https://github.com/infinidysk/infinidysk-rs/commit/a65951abf4034c584d8628cbf9c2ebab68b2e3e9))
+
+
+### Bug Fixes
+
+* **archive:** key RAR archives with the first 127 password characters ([134eda9](https://github.com/infinidysk/infinidysk-rs/commit/134eda965e295937b700530d161c0763f2ca6822))
+* **deps:** bump crc32fast ([#31](https://github.com/infinidysk/infinidysk-rs/issues/31)) ([382d341](https://github.com/infinidysk/infinidysk-rs/commit/382d341757fb6fc1ee7f329309273f39f2552803))
+* **stream:** keep win-floor out of analysis reads ([d348590](https://github.com/infinidysk/infinidysk-rs/commit/d34859096bab68848e84ad32a359195f8b27bd93))
+* **stream:** stop speculative fetches past bounded read ranges ([9ab5f10](https://github.com/infinidysk/infinidysk-rs/commit/9ab5f10fe0b5092873dcd89358d2f0322af5878f))
+* **ui:** fit explorer, queue and logs on phones; tidy stats and health empty states ([40b29b6](https://github.com/infinidysk/infinidysk-rs/commit/40b29b6f0a61f1265c90a24d6bc250f8809a24ea))
+* **ui:** fit tables on phones and follow the design system on queue, explorer, health, system and stats ([8f8b3d7](https://github.com/infinidysk/infinidysk-rs/commit/8f8b3d7c8b98d37bf250d386e15fea627f914ca4))
+* **ui:** fix settings copy and placeholders ([ac5f273](https://github.com/infinidysk/infinidysk-rs/commit/ac5f2735c071d032e771e7116504250a7bfc27fe))
+* **ui:** format sizes the same way on Performance ([54193ae](https://github.com/infinidysk/infinidysk-rs/commit/54193aeba06081395f11f8a46f087dba13dedc00))
+* **ui:** give icon-only buttons tooltips and specific names ([84bd40a](https://github.com/infinidysk/infinidysk-rs/commit/84bd40a075c6e68d233903a5f740abc3256baefc))
+* **ui:** harden settings forms ([10be9ee](https://github.com/infinidysk/infinidysk-rs/commit/10be9ee672dcd52ee0d1ba3253e973b77d1c27e7))
+* **ui:** keep text on the type scale ([4d04e07](https://github.com/infinidysk/infinidysk-rs/commit/4d04e0715448d851bfff2880d3022fd6c0a0c944))
+* **ui:** keep the live status in the sidebar footer ([d387920](https://github.com/infinidysk/infinidysk-rs/commit/d38792072ab1d0a8fee18a6dd1c69b843bbcd425))
+* **ui:** link the health-checks-off notice to health settings ([ac171f6](https://github.com/infinidysk/infinidysk-rs/commit/ac171f6589b2abeba61c665655d430c6460e3581))
+* **ui:** make preset cards one radio group ([69c2d20](https://github.com/infinidysk/infinidysk-rs/commit/69c2d20a480afdd9e4bbc0d5b6de2a4158d3154c))
+* **ui:** make sign-in errors, focus and button contrast accessible ([e6bbc19](https://github.com/infinidysk/infinidysk-rs/commit/e6bbc19c3b023cc8d2f3ee47448bb8b8b0f9582e))
+* **ui:** mobile menu scrolls and closes on every navigation ([402d9e1](https://github.com/infinidysk/infinidysk-rs/commit/402d9e1237b60238191bbfeae63a7c38ce35f54e))
+* **ui:** page titles, skip link and screen-reader labels in the shell ([de3e393](https://github.com/infinidysk/infinidysk-rs/commit/de3e393f89bbb630df989e1289fa3cc8cd142cf5))
+* **ui:** put the WebDAV password beside its label ([a242960](https://github.com/infinidysk/infinidysk-rs/commit/a2429607b6c6bd86e36bd63636638c8f745ace4f))
+* **ui:** readable warning and success text in light theme ([20f0e7c](https://github.com/infinidysk/infinidysk-rs/commit/20f0e7c1c5bfde478cd58a938fb55847bcf2cbe9))
+* **ui:** rename Report 1970 file dates to Disable file timestamps ([4c2b064](https://github.com/infinidysk/infinidysk-rs/commit/4c2b0643d086d6132769bb27bd74d4a7208d776f))
+* **ui:** shorten settings hints ([0888ab9](https://github.com/infinidysk/infinidysk-rs/commit/0888ab92b3cce6659c3b7f491f52a8bc621bb5c6))
+* **ui:** show maintenance run reasons ([818ea08](https://github.com/infinidysk/infinidysk-rs/commit/818ea08548a92aa42c24a1af1ee84a8e4f852133))
+* **ui:** show recent reads ten at a time ([85b5e1b](https://github.com/infinidysk/infinidysk-rs/commit/85b5e1b158b9463c262572359f7b0bc97d28cab8))
+* **ui:** show server validation errors on their field ([8060418](https://github.com/infinidysk/infinidysk-rs/commit/80604188f989d4fd175b2885aa00316f2b651802))
+* **ui:** show the provider speed test as a row button ([414f145](https://github.com/infinidysk/infinidysk-rs/commit/414f145876c1fbd077eb8d8202f17392020faecc))
+* **ui:** use the Advanced settings toggle in Performance ([70a5ada](https://github.com/infinidysk/infinidysk-rs/commit/70a5adadf7c7a1cdd67f051e6c413cc0406cefc6))
 
 
 ### Performance Improvements
 
-* **api:** resolve filtered tree directories with one descendant scan ([#1671](https://github.com/infinidysk/infinidysk/issues/1671)) ([9838c46](https://github.com/infinidysk/infinidysk/commit/9838c462f0ce8e895757d2d7ab49728002029c99))
-* **queue:** faster seeking and smoother playback in multi-volume RAR releases ([#1636](https://github.com/infinidysk/infinidysk/issues/1636)) ([40595d9](https://github.com/infinidysk/infinidysk/commit/40595d9b28162922f4e49f7f42598b5453b3ac1b))
-* **queue:** imports with queue pipelining enabled no longer download archive headers twice ([#1622](https://github.com/infinidysk/infinidysk/issues/1622)) ([b0df768](https://github.com/infinidysk/infinidysk/commit/b0df768bc6e173d7d8e7cd953bde59dd093eb537))
-* **queue:** RAR releases stream faster after the first volume ([#1634](https://github.com/infinidysk/infinidysk/issues/1634)) ([85de0cf](https://github.com/infinidysk/infinidysk/commit/85de0cfeef600669ee7920b4b453e5289ba8bbc0))
-* **usenet:** multi-volume imports no longer stall on throttled reconnects ([#1621](https://github.com/infinidysk/infinidysk/issues/1621)) ([b010c99](https://github.com/infinidysk/infinidysk/commit/b010c990cffb47689823f8ab4f17f4648e946f4e))
-* **webdav:** disable thread-pool unfair semaphore spinning to cut streaming CPU ([#1614](https://github.com/infinidysk/infinidysk/issues/1614)) ([e406258](https://github.com/infinidysk/infinidysk/commit/e40625863ba81f6324f82bc36876d78e6187279d))
-* **webdav:** memory returns to idle after playback stops ([#1617](https://github.com/infinidysk/infinidysk/issues/1617)) ([37fba57](https://github.com/infinidysk/infinidysk/commit/37fba5713a13d890b655d91006ad1c8f70dd31a9))
-* **webdav:** new streams and seeks use less memory while ramping up ([#1618](https://github.com/infinidysk/infinidysk/issues/1618)) ([f399e97](https://github.com/infinidysk/infinidysk/commit/f399e9713ba9a661b15ccc09d741e83023872185))
-* **webdav:** PAR2-verified files now stream at full speed ([#1664](https://github.com/infinidysk/infinidysk/issues/1664)) ([4d5fc59](https://github.com/infinidysk/infinidysk/commit/4d5fc595b6d62c114ee03eae3f8be6523272a085))
-* **webdav:** pause prefetch when shared streams have no readers ([#1675](https://github.com/infinidysk/infinidysk/issues/1675)) ([b73f56a](https://github.com/infinidysk/infinidysk/commit/b73f56a7adc4228169b8d5a4443b7baa52f29c51))
-* **webdav:** playback keeps moving when one article is slow to arrive ([#1660](https://github.com/infinidysk/infinidysk/issues/1660)) ([4bbffc2](https://github.com/infinidysk/infinidysk/commit/4bbffc23817e456de24e1b52c4585bc0a3e6e875))
-* **webdav:** releases with very large articles start playing faster and use less memory ([#1635](https://github.com/infinidysk/infinidysk/issues/1635)) ([c7d0da7](https://github.com/infinidysk/infinidysk/commit/c7d0da7869ef846b18e93268848e70d3c6d11816))
-* **webdav:** seeks and playback starts no longer wait on one slow first article ([#1670](https://github.com/infinidysk/infinidysk/issues/1670)) ([54934ff](https://github.com/infinidysk/infinidysk/commit/54934ffb7a73e9eef4fbb59877ce4aa963202218))
-* **webdav:** smoother playback across multi-volume archive boundaries ([#1659](https://github.com/infinidysk/infinidysk/issues/1659)) ([f9db281](https://github.com/infinidysk/infinidysk/commit/f9db281a4bc57f53baf1578bb0df2e12bdb0754a))
-* **webdav:** smoother playback across RAR volume boundaries ([#1630](https://github.com/infinidysk/infinidysk/issues/1630)) ([13b1bee](https://github.com/infinidysk/infinidysk/commit/13b1bee823d8fd5e745dcf09903edf769cbb315e))
-* **webdav:** smoother playback with far shorter stalls between Usenet articles ([#1638](https://github.com/infinidysk/infinidysk/issues/1638)) ([6260e1d](https://github.com/infinidysk/infinidysk/commit/6260e1dda5b7418fa47a5517c9824c7728cf615b))
-* **webdav:** smoother playback with fewer stalls while streaming ([#1606](https://github.com/infinidysk/infinidysk/issues/1606)) ([31c837f](https://github.com/infinidysk/infinidysk/commit/31c837fa08c04495de2a2201813199b5dce0326e))
+* **nntp:** add pipe-weight experiment that charges large articles more download slots ([7976f72](https://github.com/infinidysk/infinidysk-rs/commit/7976f7286282340796c0bc4d64a9f0e3d40ae2c7))
+* **nntp:** charge large playback articles one download slot per MB ([2d9e717](https://github.com/infinidysk/infinidysk-rs/commit/2d9e71747ee554676ffb9f024dff50b2939c75cf))
+* **ui:** load app pages on demand so sign-in renders first ([396f6ad](https://github.com/infinidysk/infinidysk-rs/commit/396f6ade272afc547a34fdb3301360e928bdbe59))
+
+## [2.0.0-alpha.8](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.7...v2.0.0-alpha.8) (2026-10-27)
 
 
-### UX
+### Features
 
-* **ui:** cleaner import queue with labelled bulk actions and mobile-friendly rows ([#1649](https://github.com/infinidysk/infinidysk/issues/1649)) ([799ab83](https://github.com/infinidysk/infinidysk/commit/799ab83d51968f75bf8141166ae755d2b3177d53))
-* **ui:** cleaner, mobile-friendly health page ([#1650](https://github.com/infinidysk/infinidysk/issues/1650)) ([e114301](https://github.com/infinidysk/infinidysk/commit/e114301a84c85bf53e16367663a27cd26ea867ee))
-
-## [1.5.1](https://github.com/infinidysk/infinidysk/compare/v1.5.0...v1.5.1) (2026-09-27)
+* **mount:** optional 1970 file dates to match rclone --no-modtime mounts ([df80059](https://github.com/infinidysk/infinidysk-rs/commit/df80059bb3bde85474f4271a0d6f859a22c44b57))
 
 
 ### Bug Fixes
 
-* **db:** database backups no longer include metrics history ([#1589](https://github.com/infinidysk/infinidysk/issues/1589)) ([190eace](https://github.com/infinidysk/infinidysk/commit/190eace08a758f9af3cdcddfa38e429e99e9e479))
-* **deps:** Bump github/codeql-action in the github-actions group ([#1569](https://github.com/infinidysk/infinidysk/issues/1569)) ([ad86990](https://github.com/infinidysk/infinidysk/commit/ad86990931fad0a1233c98a97167a67b2aaab949))
-* **deps:** Bump the nuget-minor-and-patch group with 1 update ([#1568](https://github.com/infinidysk/infinidysk/issues/1568)) ([90b2713](https://github.com/infinidysk/infinidysk/commit/90b27138af36e26beafe17e324e015fc2b426925))
-* **health:** Health page no longer reports previously scanned files as awaiting their initial scan ([#1577](https://github.com/infinidysk/infinidysk/issues/1577)) ([12a3415](https://github.com/infinidysk/infinidysk/commit/12a34153ec3cefca240119d32959209c1e344b81))
-* **health:** stay idle when no usenet provider is enabled ([#1573](https://github.com/infinidysk/infinidysk/issues/1573)) ([8f67a44](https://github.com/infinidysk/infinidysk/commit/8f67a442bfe0db110d5972894cccb5ec6f9ca920))
-* **metrics:** Overview Backup rescues counts a retried provider once per rescued article ([#1576](https://github.com/infinidysk/infinidysk/issues/1576)) ([48d772f](https://github.com/infinidysk/infinidysk/commit/48d772fdb827c4274472a6a396c8b39cfed5a068))
-* **ui:** mark backup providers on the Overview Providers card ([#1579](https://github.com/infinidysk/infinidysk/issues/1579)) ([abb18af](https://github.com/infinidysk/infinidysk/commit/abb18afd6b152e005274621f67af2bbc6356a2ca))
-* **usenet:** slower provider handshakes no longer trip the provider circuit under default settings ([#1578](https://github.com/infinidysk/infinidysk/issues/1578)) ([58eeecc](https://github.com/infinidysk/infinidysk/commit/58eeecc41958574057bee64ed9275a721179a558))
+* **api:** show why an Arr rejected a request ([eae6f72](https://github.com/infinidysk/infinidysk-rs/commit/eae6f723b6c393104408a409416f67bba1394398))
+* **mount:** answer GETATTR on an open file from its handle ([#27](https://github.com/infinidysk/infinidysk-rs/issues/27)) ([8a8dbb3](https://github.com/infinidysk/infinidysk-rs/commit/8a8dbb3ac187a59095df70671cd69da3bf051cde))
+* **mount:** keep the FUSE session at error when RUST_LOG is set ([9d0bbd5](https://github.com/infinidysk/infinidysk-rs/commit/9d0bbd54d25519b3c9a250fec2684c1ed209d09c))
+* **stream:** stream progress only for the two segments read next ([#28](https://github.com/infinidysk/infinidysk-rs/issues/28)) ([18a20b7](https://github.com/infinidysk/infinidysk-rs/commit/18a20b763cb77764915f743fe2a15205bfc7808d))
 
 
 ### Performance Improvements
 
-* **usenet:** report payload bytes per chunk instead of per line ([#1580](https://github.com/infinidysk/infinidysk/issues/1580)) ([e6761e5](https://github.com/infinidysk/infinidysk/commit/e6761e57cc452ebf73783bb908d9f76330acc539))
+* **db:** skip the idle-connection ping before SQLite queries ([8ea2b97](https://github.com/infinidysk/infinidysk-rs/commit/8ea2b971a731117d8ae388f06b6b3053139aeb36))
+* **mount:** read kernel requests without a blocking-pool hop when running as root ([47b1fbe](https://github.com/infinidysk/infinidysk-rs/commit/47b1fbe24629682e492557c90c4e002eb2d3e534))
+* **mount:** stop revalidating fixed directories every second ([7a4ab81](https://github.com/infinidysk/infinidysk-rs/commit/7a4ab81c159645aa8f4b42601c91c7ac2621ef5b))
+* **nntp:** share decoded bodies with the memory cache instead of copying them ([c3afc1d](https://github.com/infinidysk/infinidysk-rs/commit/c3afc1d678d71b67b7e7ba5641387c943a0c5bd4))
+* **queue:** parse PAR2 index articles once as they arrive ([b2dfef8](https://github.com/infinidysk/infinidysk-rs/commit/b2dfef8f9e78ebc9d89ceedc297a32d8409038af))
+* reopen files without re-reading their metadata ([0352afb](https://github.com/infinidysk/infinidysk-rs/commit/0352afb8b9d9104a787c414edb7c8a3e3c9a5707))
+* **stream:** skip a body copy on each disk cache write and hit ([b606490](https://github.com/infinidysk/infinidysk-rs/commit/b6064907c277d3a09144b49a4ee0e3b0bb06edf4))
 
-## [1.5.0](https://github.com/infinidysk/infinidysk/compare/v1.4.5...v1.5.0) (2026-09-25)
-
-
-### Features
-
-* **ui:** Activity chart shows import downloads separately from maintenance ([#1535](https://github.com/infinidysk/infinidysk/issues/1535)) ([ae7da05](https://github.com/infinidysk/infinidysk/commit/ae7da05c38c4623d1ccdae6eb79679d2a6bf5c82))
-* **ui:** peak download now shows the true 1-second maximum and no longer shrinks when widening the time range ([#1536](https://github.com/infinidysk/infinidysk/issues/1536)) ([5b6a969](https://github.com/infinidysk/infinidysk/commit/5b6a969ace140ced0539b198f7cd219f1bb0bdb4))
-* **ui:** show provider bytes fetched on the overview activity card ([#1528](https://github.com/infinidysk/infinidysk/issues/1528)) ([70a122f](https://github.com/infinidysk/infinidysk/commit/70a122f2f7954e50497f8c6288b91fadcb789696))
-* **ui:** warn when a provider repeatedly blocks missing-article checks ([#1551](https://github.com/infinidysk/infinidysk/issues/1551)) ([612fcdb](https://github.com/infinidysk/infinidysk/commit/612fcdb995be1c3e41a70d0da31cfc9be29de8b2))
-
-
-### Bug Fixes
-
-* **api:** hide full numeric-only IPv6 addresses in support packs ([#1524](https://github.com/infinidysk/infinidysk/issues/1524)) ([181a8ae](https://github.com/infinidysk/infinidysk/commit/181a8aec2b666ec55e63d8cad6d3c32b1cd2b4dc))
-* **arr:** Arr and Prowlarr connections work with Docker hostnames behind a proxy and report timeouts clearly ([#1537](https://github.com/infinidysk/infinidysk/issues/1537)) ([d480668](https://github.com/infinidysk/infinidysk/commit/d4806683c050c8702d6fee5646e8e18090549a27))
-* **arr:** Arr Health no longer shows instances offline with 'database is locked' on large installs ([#1556](https://github.com/infinidysk/infinidysk/issues/1556)) ([916b1e5](https://github.com/infinidysk/infinidysk/commit/916b1e5be7dc390eeebbc06a3be4126495a047d4))
-* **auth:** keep API keys and URL tokens out of frontend request logs ([#1526](https://github.com/infinidysk/infinidysk/issues/1526)) ([bfc7f20](https://github.com/infinidysk/infinidysk/commit/bfc7f2030cba9148c15f4bb9206b4f52b81dabf5))
-* **deps:** Bump the npm-minor-and-patch group across 1 directory with 13 updates ([#1532](https://github.com/infinidysk/infinidysk/issues/1532)) ([f478af7](https://github.com/infinidysk/infinidysk/commit/f478af794abe3275a9e3078733ca7edc2d52576b))
-* **deps:** Bump the nuget-minor-and-patch group with 9 updates ([#1533](https://github.com/infinidysk/infinidysk/issues/1533)) ([ded1d4e](https://github.com/infinidysk/infinidysk/commit/ded1d4e0734edf4d4daab46df07d619f440efe3c))
-* **deps:** Bump zensical from 0.0.61 to 0.0.62 in the docs-python group ([#1530](https://github.com/infinidysk/infinidysk/issues/1530)) ([e71d7d1](https://github.com/infinidysk/infinidysk/commit/e71d7d1316a61647609f9ace1da8a32fb078fd8e))
-* **metrics:** retain historical statistics across backend restarts ([#1525](https://github.com/infinidysk/infinidysk/issues/1525)) ([cd638ce](https://github.com/infinidysk/infinidysk/commit/cd638ce1245f22357b7f66e9c68bcc56ea7f705f))
-* **nntp:** releases with obfuscated yEnc headers play instead of hanging and being removed ([#1548](https://github.com/infinidysk/infinidysk/issues/1548)) ([a40a071](https://github.com/infinidysk/infinidysk/commit/a40a07159467a286ac8291b80c492e3e0949b80a))
-* **queue:** keep replacement uploads within the configured queue limit ([#1527](https://github.com/infinidysk/infinidysk/issues/1527)) ([d8aaf2d](https://github.com/infinidysk/infinidysk/commit/d8aaf2d2e58970b9eda8606ea93f33ab8ba27e3f))
-* **ui:** connect expanded provider speed paths through zero ([#1554](https://github.com/infinidysk/infinidysk/issues/1554)) ([4a50932](https://github.com/infinidysk/infinidysk/commit/4a50932365bc75bd46157b41b91cecb71c4f3a33))
-* **ui:** connect sparse provider throughput graph to zero baseline ([#1553](https://github.com/infinidysk/infinidysk/issues/1553)) ([a533693](https://github.com/infinidysk/infinidysk/commit/a533693a4e3f4f290c8e66176dbcf748ffb100c5))
-* **ui:** hide all-clear alert indicator ([#1549](https://github.com/infinidysk/infinidysk/issues/1549)) ([401c8c3](https://github.com/infinidysk/infinidysk/commit/401c8c3d404d1560476ac466f159cb99b3a6485e))
-* **ui:** identify active media reads with parent folder names ([#1562](https://github.com/infinidysk/infinidysk/issues/1562)) ([b81c13f](https://github.com/infinidysk/infinidysk/commit/b81c13f4d23c65033fdd39922aa6ff5880a94b02))
-* **ui:** lock live read card height above the scrollport ([#1563](https://github.com/infinidysk/infinidysk/issues/1563)) ([d64e7f9](https://github.com/infinidysk/infinidysk/commit/d64e7f933a22950187a7b0766c3cf76b441602f9))
-* **ui:** make overlapping and low-volume activity easier to inspect ([#1538](https://github.com/infinidysk/infinidysk/issues/1538)) ([d4a1be8](https://github.com/infinidysk/infinidysk/commit/d4a1be83a2bc1428a44ece8916501173bf0a4323))
-* **ui:** queue remembers your per-page size after leaving and returning to the page ([#1564](https://github.com/infinidysk/infinidysk/issues/1564)) ([b7c341d](https://github.com/infinidysk/infinidysk/commit/b7c341d08beb040353188b96cfbd74b8f258d910))
-* **ui:** size the Right now card to its live reads instead of the first snapshot ([#1558](https://github.com/infinidysk/infinidysk/issues/1558)) ([671f422](https://github.com/infinidysk/infinidysk/commit/671f42295a58cace2005ec8a44b2a60a44e1200b))
-* **usenet:** disabled providers no longer keep connections open or send keep-alives ([#1542](https://github.com/infinidysk/infinidysk/issues/1542)) ([6c742f5](https://github.com/infinidysk/infinidysk/commit/6c742f517ecea0ba32277bec482a6a50db5a7698))
-* **usenet:** files are no longer reported missing or sent for repair while a provider is temporarily unavailable ([#1550](https://github.com/infinidysk/infinidysk/issues/1550)) ([59cc144](https://github.com/infinidysk/infinidysk/commit/59cc1441104bb29e2c9e56e1f0f02243d9944958))
-* **usenet:** keep fewer idle warm connections open per provider by default ([#1561](https://github.com/infinidysk/infinidysk/issues/1561)) ([313acc3](https://github.com/infinidysk/infinidysk/commit/313acc34374e59b939753bbb00a68c9b4468ee9f))
-* **usenet:** providers that time out during background connection warming are paused until they recover ([#1555](https://github.com/infinidysk/infinidysk/issues/1555)) ([aca5770](https://github.com/infinidysk/infinidysk/commit/aca5770e69a40040e56e08652a0ffb2df64873ac))
-* **usenet:** show accurate provider peak and active-average speeds ([#1540](https://github.com/infinidysk/infinidysk/issues/1540)) ([b5e7d26](https://github.com/infinidysk/infinidysk/commit/b5e7d26ac6f49c20857c3a48385c3d07807ac17d))
-* **usenet:** slow background warm-up connections no longer trip a healthy provider's circuit breaker ([#1560](https://github.com/infinidysk/infinidysk/issues/1560)) ([cf39766](https://github.com/infinidysk/infinidysk/commit/cf3976678030e1ac214c1cb7b4d1d21f1dac8003))
-
-## [1.4.5](https://github.com/infinidysk/infinidysk/compare/v1.4.4...v1.4.5) (2026-09-23)
-
-
-### Bug Fixes
-
-* **usenet:** prevent abandoned reads from disabling healthy providers ([#1521](https://github.com/infinidysk/infinidysk/issues/1521)) ([894da90](https://github.com/infinidysk/infinidysk/commit/894da90604a24505988f8a78805469961815d4e3))
-
-## [1.4.4](https://github.com/infinidysk/infinidysk/compare/v1.4.3...v1.4.4) (2026-09-22)
-
-
-### Bug Fixes
-
-* **db:** remove metrics integrity scans from startup ([#1512](https://github.com/infinidysk/infinidysk/issues/1512)) ([eb76ecf](https://github.com/infinidysk/infinidysk/commit/eb76ecf4434da790a72bcb773411ba8556ee4dae))
-* **health:** prevent health alerts timing out on large histories ([#1518](https://github.com/infinidysk/infinidysk/issues/1518)) ([37173d3](https://github.com/infinidysk/infinidysk/commit/37173d36ebf2ec6b4738d260d7d4f43804fa302d))
-* **queue:** add nested archive context to media validation failures ([#1516](https://github.com/infinidysk/infinidysk/issues/1516)) ([fb68a84](https://github.com/infinidysk/infinidysk/commit/fb68a8481ec818d394a6213ba2a8dfc057b3c1df))
-* **queue:** import logs now explain why PAR2-verified recovery was unavailable for mismatched yEnc articles ([#1519](https://github.com/infinidysk/infinidysk/issues/1519)) ([57bc644](https://github.com/infinidysk/infinidysk/commit/57bc644042d354cf1ed156aae7d1b1da56c862c0))
-* **usenet:** prevent playback and queue stalls after missing articles ([#1514](https://github.com/infinidysk/infinidysk/issues/1514)) ([aeed8ab](https://github.com/infinidysk/infinidysk/commit/aeed8abf7b6a896337ea3b0a081c8f08241a5d3d))
-
-## [1.4.3](https://github.com/infinidysk/infinidysk/compare/v1.4.2...v1.4.3) (2026-09-20)
+## [2.0.0-alpha.7](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.6...v2.0.0-alpha.7) (2026-10-26)
 
 
 ### Features
 
-* **health:** add actions to resolve attention items and clarify health statistics ([#1484](https://github.com/infinidysk/infinidysk/issues/1484)) ([5b395b4](https://github.com/infinidysk/infinidysk/commit/5b395b4680635ee99037674f19bf501ea898fdfe))
-* **health:** separate active attention items from repair history ([#1463](https://github.com/infinidysk/infinidysk/issues/1463)) ([68f4d2b](https://github.com/infinidysk/infinidysk/commit/68f4d2b63f276675cc2e53ebc30a0fc3c21e6ae6))
-* **support:** identify stalled playback and repeated health checks in support packs ([#1482](https://github.com/infinidysk/infinidysk/issues/1482)) ([873d317](https://github.com/infinidysk/infinidysk/commit/873d317d4ecfcb6d67cf390065960debd2942ee1))
+* **ui:** show warm provider connections in the sidebar ([5c6686f](https://github.com/infinidysk/infinidysk-rs/commit/5c6686fc57ea282d94709d581f5bcfe4921a0bb1))
 
 
 ### Bug Fixes
 
-* **auth:** hash the WEBDAV_PASSWORD env value once, not per request ([#1438](https://github.com/infinidysk/infinidysk/issues/1438)) ([6ae4c24](https://github.com/infinidysk/infinidysk/commit/6ae4c24050ed29b0298c43285c0031f520be51c9))
-* **deps:** Bump github/codeql-action in the github-actions group ([#1478](https://github.com/infinidysk/infinidysk/issues/1478)) ([d542ca5](https://github.com/infinidysk/infinidysk/commit/d542ca55b872bd22ed9e8615797c56d5b609acc8))
-* **deps:** Bump zensical from 0.0.59 to 0.0.61 in the docs-python group ([#1476](https://github.com/infinidysk/infinidysk/issues/1476)) ([5b6d6ff](https://github.com/infinidysk/infinidysk/commit/5b6d6ff188b74881fe52d61eecbae97686450348))
-* **health:** explain blocked removals and omit file extensions from searches ([#1490](https://github.com/infinidysk/infinidysk/issues/1490)) ([e9f2734](https://github.com/infinidysk/infinidysk/commit/e9f2734558d7f88a0536826eaa33f7b10a48f5f8))
-* **health:** flag unlinked files and allow needs-attention removal with read-only WebDAV ([#1494](https://github.com/infinidysk/infinidysk/issues/1494)) ([d907cbc](https://github.com/infinidysk/infinidysk/commit/d907cbc076d84bf7fff37961f5eb73fa2db444ba))
-* **health:** include history-linked files in routine checks ([#1466](https://github.com/infinidysk/infinidysk/issues/1466)) ([d55e941](https://github.com/infinidysk/infinidysk/commit/d55e941e7bdfcdf150c919282d49bf78578a2749))
-* **health:** keep running health checks visible after starting a full scan ([#1481](https://github.com/infinidysk/infinidysk/issues/1481)) ([ab7652a](https://github.com/infinidysk/infinidysk/commit/ab7652a06c5cd74e4a1bcbd7b26a66847506eb54))
-* **health:** prevent cancellation leaving old files behind after successful Arr repairs ([#1503](https://github.com/infinidysk/infinidysk/issues/1503)) ([272d575](https://github.com/infinidysk/infinidysk/commit/272d57543205b22c79ab601bad9b7d9712d12a53))
-* **health:** start orphan cleanup retry budget after contention ([#1464](https://github.com/infinidysk/infinidysk/issues/1464)) ([6d255ae](https://github.com/infinidysk/infinidysk/commit/6d255aebdfa2469a8998d156131682b2ee6032e3))
-* **health:** urgent streaming repairs keep their failure count across restarts ([#1496](https://github.com/infinidysk/infinidysk/issues/1496)) ([a60e759](https://github.com/infinidysk/infinidysk/commit/a60e759ded0debcfb0e44d45a01050067ad72836))
-* **metrics:** quarantine a corrupt metrics database and back off failed flushes ([#1435](https://github.com/infinidysk/infinidysk/issues/1435)) ([5093dd0](https://github.com/infinidysk/infinidysk/commit/5093dd0e7bb57c50e7d87f820ac197d17063bf67))
-* **nntp:** handle late connection factory cancellation without stacks ([#1473](https://github.com/infinidysk/infinidysk/issues/1473)) ([13acf51](https://github.com/infinidysk/infinidysk/commit/13acf519e3b9b45a8115d521820459c0d8fbf275))
-* **nntp:** normalize pooled capacity by configured connection limits ([#1491](https://github.com/infinidysk/infinidysk/issues/1491)) ([570975f](https://github.com/infinidysk/infinidysk/commit/570975f53b67888d6625aac3e9f23140bf201322))
-* **queue:** bypass packed range lookup for empty 7z members ([#1505](https://github.com/infinidysk/infinidysk/issues/1505)) ([5ac8313](https://github.com/infinidysk/infinidysk/commit/5ac83133f363ec5bf422b6e3b8d0cb85afd5b68b))
-* **queue:** classify unsupported 7z compression before packed range lookup ([#1468](https://github.com/infinidysk/infinidysk/issues/1468)) ([f9354d4](https://github.com/infinidysk/infinidysk/commit/f9354d46816cf39ae9475ca3532894eb2f5b6f23))
-* **queue:** explain intentional archive compression rejection ([#1470](https://github.com/infinidysk/infinidysk/issues/1470)) ([efd1368](https://github.com/infinidysk/infinidysk/commit/efd1368241e5105cfc28cbaf100fae783c987214))
-* **queue:** filter sample-directory videos without sibling-size comparisons ([#1475](https://github.com/infinidysk/infinidysk/issues/1475)) ([f76d460](https://github.com/infinidysk/infinidysk/commit/f76d46077de21011e80261ff5c7774b4a9095451))
-* **queue:** import RAR releases with individually scrambled volume names ([#1469](https://github.com/infinidysk/infinidysk/issues/1469)) ([eac163b](https://github.com/infinidysk/infinidysk/commit/eac163b6104733218342e4fb687fba1aa258a238))
-* **ui:** clarify Activity totals and make support easier to find ([#1485](https://github.com/infinidysk/infinidysk/issues/1485)) ([eaba97a](https://github.com/infinidysk/infinidysk/commit/eaba97a0a91d93b64a55205558fefb0ea3464a45))
-* **ui:** explain degraded Arr warnings directly on overview ([#1504](https://github.com/infinidysk/infinidysk/issues/1504)) ([23d6593](https://github.com/infinidysk/infinidysk/commit/23d6593646b835b80d31700ef18a94882bf14ffd))
-* **ui:** make health alerts and playback failures easier to inspect ([#1499](https://github.com/infinidysk/infinidysk/issues/1499)) ([0d0d7b6](https://github.com/infinidysk/infinidysk/commit/0d0d7b6e1f5e8de4ff6027ca5065d22f61428c86))
-* **ui:** size error breakdown segments outside tooltip wrappers ([#1498](https://github.com/infinidysk/infinidysk/issues/1498)) ([d04075a](https://github.com/infinidysk/infinidysk/commit/d04075a6915f94c0848be0d94d1f72b73befd251))
-* **ui:** surface alerts across pages and simplify navigation ([#1508](https://github.com/infinidysk/infinidysk/issues/1508)) ([55f4aed](https://github.com/infinidysk/infinidysk/commit/55f4aed8a564e42181a9ed7c765cd871501efb23))
-* **usenet:** include protocol reasons and open timings in breaker logs ([#1465](https://github.com/infinidysk/infinidysk/issues/1465)) ([de34a6c](https://github.com/infinidysk/infinidysk/commit/de34a6c3fb97acd19dcae22a310cc3059e8c538a))
-* **usenet:** prevent healthy providers being skipped while connections queue ([#1495](https://github.com/infinidysk/infinidysk/issues/1495)) ([ec275c1](https://github.com/infinidysk/infinidysk/commit/ec275c1e7c89966a53f79a88ef7c506612fdd884))
-* **usenet:** prevent playback stalls when a provider's transfer slots are stuck ([#1489](https://github.com/infinidysk/infinidysk/issues/1489)) ([7a81faa](https://github.com/infinidysk/infinidysk/commit/7a81faa9838f01b974c13bb3aa1658105eadfb5a))
-* **usenet:** prevent queued connection waits from stalling provider failover ([#1506](https://github.com/infinidysk/infinidysk/issues/1506)) ([b8fe4c4](https://github.com/infinidysk/infinidysk/commit/b8fe4c4a43b2193260efb29abc2999971adff2fd))
-* **usenet:** release stalled transfers when playback is cancelled ([#1472](https://github.com/infinidysk/infinidysk/issues/1472)) ([9d0793e](https://github.com/infinidysk/infinidysk/commit/9d0793e149e136a051bb875cdf845db340a676db))
-* **webdav:** range requests after a flaky header probe no longer return bytes from the wrong offset ([#1455](https://github.com/infinidysk/infinidysk/issues/1455)) ([0868917](https://github.com/infinidysk/infinidysk/commit/08689171eaa270ffb20b013a2e8ef76ae883e062))
-* **webdav:** reduce unnecessary range read-ahead and improve seek diagnostics ([#1487](https://github.com/infinidysk/infinidysk/issues/1487)) ([1b11254](https://github.com/infinidysk/infinidysk/commit/1b11254d3ad03ffe123527df0b38689f6aa5ccaf))
+* **mount:** allow group members to unlink completed symlinks ([329f7e2](https://github.com/infinidysk/infinidysk-rs/commit/329f7e2f9019dee20cb3041282d7d2d172d2ed61))
+* **mount:** stop FUSE reads stalling forever behind a busy-reader probe ([b430775](https://github.com/infinidysk/infinidysk-rs/commit/b4307755854b3c2a2425ca60019eb188f1c0cd15))
+* **nntp:** log what a provider replied when it sends an unexpected response ([bccc511](https://github.com/infinidysk/infinidysk-rs/commit/bccc511a5d80a646ed0a180ac507adcf31589c3e))
+* **nntp:** retain connection headroom during background requests ([206c817](https://github.com/infinidysk/infinidysk-rs/commit/206c8176adfccea79eae89dacabbe41e700262ad))
+* **queue:** group old-style RAR volumes past .r99 with their set ([adae9cc](https://github.com/infinidysk/infinidysk-rs/commit/adae9cc2e0932f2125b2759900ee3a9826eab575))
+* **queue:** import files whose NZB lists a part twice ([0471e1a](https://github.com/infinidysk/infinidysk-rs/commit/0471e1a6541daba1451d0bbd2786e2a60bc21703))
+* **queue:** stop the article check at the first missing segment of a media file ([2c9922b](https://github.com/infinidysk/infinidysk-rs/commit/2c9922b36d403a4d12b0017707c137cc157ca68f))
+* **queue:** time out STRM directory checks and writes during handoff ([4b7c0e2](https://github.com/infinidysk/infinidysk-rs/commit/4b7c0e229a105fab7a70aa26ba1756c63dfb1c6c))
+* **ui:** copy keys and stream links on plain-HTTP LAN addresses ([95c1e44](https://github.com/infinidysk/infinidysk-rs/commit/95c1e44640216ed625f37aa3e18505d33c513a94))
 
-
-### UX
-
-* **ui:** group live overview metrics in the active reads card ([#1486](https://github.com/infinidysk/infinidysk/issues/1486)) ([3e89fb2](https://github.com/infinidysk/infinidysk/commit/3e89fb2c8c64c59fe9ce85c51db72b228f8dd5fc))
-
-## [1.4.2](https://github.com/infinidysk/infinidysk/compare/v1.4.1...v1.4.2) (2026-09-17)
-
-
-### Bug Fixes
-
-* **db:** startup vacuum runs when enabled through NZBDAV_CONFIG__DB__IS_STARTUP_VACUUM_ENABLED ([#1450](https://github.com/infinidysk/infinidysk/issues/1450)) ([b0a5404](https://github.com/infinidysk/infinidysk/commit/b0a5404a04a9a0a0442d5d390cffae1e7f348cfc))
-* **health:** clear stale pending repairs when recording deferred results ([#1462](https://github.com/infinidysk/infinidysk/issues/1462)) ([e51ffd8](https://github.com/infinidysk/infinidysk/commit/e51ffd8cbe78948c33910f7f6b11abcce85e72cb))
-* **health:** prevent provider timeouts from triggering repair or blocklisting ([#1457](https://github.com/infinidysk/infinidysk/issues/1457)) ([447c2bd](https://github.com/infinidysk/infinidysk/commit/447c2bd094834d0192ef79a06485af91d9b04e29))
-* **health:** require a pure definitive-miss provider walk before treating a segment as missing ([9d34565](https://github.com/infinidysk/infinidysk/commit/9d345657d59952064c0b28bdf164516908e14116))
-* **health:** show a complete health overview breakdown totaling 100% ([#1458](https://github.com/infinidysk/infinidysk/issues/1458)) ([207758e](https://github.com/infinidysk/infinidysk/commit/207758e85df4a81550f3bda56c74db9b330345f1))
-* **queue:** group shuffled first RAR volumes with matching continuations ([8bc3a18](https://github.com/infinidysk/infinidysk/commit/8bc3a183c3feb1aad7671caeb30203e76588f703))
-* **queue:** lazy RAR mounting no longer drops extra files hidden behind the first archive member ([#1453](https://github.com/infinidysk/infinidysk/issues/1453)) ([55f9b5c](https://github.com/infinidysk/infinidysk/commit/55f9b5ce044aad98a506c6d1bdeae24bce800a44))
-* **queue:** season packs with repeated RAR/7z volume numbers import as separate archives ([#1452](https://github.com/infinidysk/infinidysk/issues/1452)) ([9b4739b](https://github.com/infinidysk/infinidysk/commit/9b4739b4ce55314943db7c0c2145136621338cb5))
-* **usenet:** allow imports when yEnc headers omit the total count ([#1460](https://github.com/infinidysk/infinidysk/issues/1460)) ([70e9d86](https://github.com/infinidysk/infinidysk/commit/70e9d8610791305fe45fd408c94fc7958c474d87))
-* **usenet:** log per-provider yenc rejection diagnostics ([#1459](https://github.com/infinidysk/infinidysk/issues/1459)) ([2e0b576](https://github.com/infinidysk/infinidysk/commit/2e0b5764f91b63c3fc570f83a7dd782576a9864d))
-* **usenet:** provider data caps count all BODY traffic and survive resets, restarts and metrics cleanup ([#1454](https://github.com/infinidysk/infinidysk/issues/1454)) ([0d68d67](https://github.com/infinidysk/infinidysk/commit/0d68d67325a561636d594e4cf817cf0f9109634b))
-* **usenet:** recover imports with conflicting yEnc metadata using PAR2-verified reads ([#1461](https://github.com/infinidysk/infinidysk/issues/1461)) ([ef5d503](https://github.com/infinidysk/infinidysk/commit/ef5d503c60c8996310bb28e17e2e91ebcf874910))
-* **usenet:** verify conflicting yEnc metadata against persisted PAR2 proofs ([692a67f](https://github.com/infinidysk/infinidysk/commit/692a67f0f7278a6b2d684e3b53ea0bdf73d0518d))
-
-## [1.4.1](https://github.com/infinidysk/infinidysk/compare/v1.4.0...v1.4.1) (2026-09-16)
-
-
-### Bug Fixes
-
-* **auth:** direct sign-in works again when Base URL points to a reverse proxy ([#1443](https://github.com/infinidysk/infinidysk/issues/1443)) ([72a9bdb](https://github.com/infinidysk/infinidysk/commit/72a9bdb0d18e68bd662ca1fd4ab540d370ac2fb5))
-* **ui:** restore logout when a direct GET request is used ([#1445](https://github.com/infinidysk/infinidysk/issues/1445)) ([3ef8667](https://github.com/infinidysk/infinidysk/commit/3ef8667b9efeb83bc7b53558cd795e8f2fa2bf8f))
-
-## [1.4.0](https://github.com/infinidysk/infinidysk/compare/v1.3.0...v1.4.0) (2026-09-15)
+## [2.0.0-alpha.6](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.5...v2.0.0-alpha.6) (2026-10-25)
 
 
 ### Features
 
-* **auth:** sign in behind a reverse proxy via gui configuration ([#1420](https://github.com/infinidysk/infinidysk/issues/1420)) ([fbad2f0](https://github.com/infinidysk/infinidysk/commit/fbad2f0cdcc6f6b21d5671e779ddbbdb9a0f4365))
-* **health:** add a "quick" health-check depth ([#1410](https://github.com/infinidysk/infinidysk/issues/1410)) ([89ee934](https://github.com/infinidysk/infinidysk/commit/89ee9344d55d35035b052d15df196dbf36602b85))
-* **health:** PAR2 repair now fixes missing articles inside RAR releases ([#1348](https://github.com/infinidysk/infinidysk/issues/1348)) ([5c7bf79](https://github.com/infinidysk/infinidysk/commit/5c7bf7912307fbc76a02a0c06e55441bcf1a67d0))
-* **ui:** activity chart separates client playback reads from app-triggered reads ([#1340](https://github.com/infinidysk/infinidysk/issues/1340)) ([79ad0ef](https://github.com/infinidysk/infinidysk/commit/79ad0ef29fda9f2e72f286350e1a66cb45844ad8))
-* **ui:** make health check depth adjustable ([#1426](https://github.com/infinidysk/infinidysk/issues/1426)) ([9c315ac](https://github.com/infinidysk/infinidysk/commit/9c315acc71618b4bccb56dfe0724c6db23f471bb))
-* **usenet:** benchmark configured provider limits above 50 connections ([#1360](https://github.com/infinidysk/infinidysk/issues/1360)) ([63bde75](https://github.com/infinidysk/infinidysk/commit/63bde757cbec76584324cf5ede9c27d775aefb0f))
+* **api:** warn when a read stalls and add stall details to live status ([c2d934e](https://github.com/infinidysk/infinidysk-rs/commit/c2d934eb43ffb1d96014da6be19da6b91ac9c087))
+* **mount:** report the effective kernel FUSE limits and queue ([e7c0eba](https://github.com/infinidysk/infinidysk-rs/commit/e7c0eba0a3ac052a21b31de50db12986a6b5f76f))
+* **nntp:** show what each busy provider connection is waiting for ([af75117](https://github.com/infinidysk/infinidysk-rs/commit/af7511795f1da287261f22172a21b0f4cbca4efe))
+* **stream:** show which stage each waiting read is stuck in ([2e8014e](https://github.com/infinidysk/infinidysk-rs/commit/2e8014eae4ec1e3f1dc2efe6367541b961d62220))
+* **ui:** restart from settings to apply startup-only changes ([2279cf1](https://github.com/infinidysk/infinidysk-rs/commit/2279cf1bb274549cbdca22e8d76f785da57ef4ef))
 
 
 ### Bug Fixes
 
-* **arr:** retain WebDAV items when Arr repair only partially completes ([#1381](https://github.com/infinidysk/infinidysk/issues/1381)) ([75420e9](https://github.com/infinidysk/infinidysk/commit/75420e92cbea9435d9c6d7ce1f2201f27b64c4b7))
-* **arr:** stop re-importing uploads rejected by queue rules ([#1380](https://github.com/infinidysk/infinidysk/issues/1380)) ([95e9598](https://github.com/infinidysk/infinidysk/commit/95e9598bf8c6ba777a5a58a32e6b5f09b720ba15))
-* **auth:** recover from rejected login action origins ([#1401](https://github.com/infinidysk/infinidysk/issues/1401)) ([7895e06](https://github.com/infinidysk/infinidysk/commit/7895e06415f865acefeaec68a379edeafea7a374))
-* **auth:** sign in works again behind a reverse proxy ([#1406](https://github.com/infinidysk/infinidysk/issues/1406)) ([ee0bbbd](https://github.com/infinidysk/infinidysk/commit/ee0bbbd1e4eeeba154fb3c61e4814b61161408b1))
-* **ci:** anchor prerelease notes to latest stable release ([#1402](https://github.com/infinidysk/infinidysk/issues/1402)) ([bf640d2](https://github.com/infinidysk/infinidysk/commit/bf640d2800d4d50570938f1e259e558032383179))
-* **db:** let orphan cleanup continue through temporary locks ([#1408](https://github.com/infinidysk/infinidysk/issues/1408)) ([9c163ff](https://github.com/infinidysk/infinidysk/commit/9c163ff568b309714f96b0d2b1538dfd49556ad7))
-* **deps:** Bump advanced-security/component-detection-dependency-submission-action ([#1395](https://github.com/infinidysk/infinidysk/issues/1395)) ([a35ffe2](https://github.com/infinidysk/infinidysk/commit/a35ffe24ac6a9850d4813936fb7210c78268f992))
-* **deps:** Bump js-yaml and @redocly/openapi-core in /frontend ([#1397](https://github.com/infinidysk/infinidysk/issues/1397)) ([5fe0a8d](https://github.com/infinidysk/infinidysk/commit/5fe0a8dc0c367740a7ef52037fe69ebe5d993f60))
-* **deps:** Bump Scalar.AspNetCore from 2.17.1 to 2.17.2 ([#1339](https://github.com/infinidysk/infinidysk/issues/1339)) ([e3737c6](https://github.com/infinidysk/infinidysk/commit/e3737c6a45d2cf5d3ab07eb32907b4cb461ff582))
-* **deps:** Bump the npm-minor-and-patch group ([#1392](https://github.com/infinidysk/infinidysk/issues/1392)) ([b78fa73](https://github.com/infinidysk/infinidysk/commit/b78fa73da05704ab590da14abe92dd8d1e9d379c))
-* **deps:** Bump the npm-minor-and-patch group ([#1422](https://github.com/infinidysk/infinidysk/issues/1422)) ([bfb2074](https://github.com/infinidysk/infinidysk/commit/bfb2074ab46d9e4c4019c8ce5774e7de0037cfd7))
-* **deps:** Bump the npm-minor-and-patch group across 1 directory with 4 updates ([#1341](https://github.com/infinidysk/infinidysk/issues/1341)) ([4e32bb6](https://github.com/infinidysk/infinidysk/commit/4e32bb6b5368ca533efc4a96ad73c19355c53b84))
-* **deps:** Bump the nuget-minor-and-patch group with 1 update ([#1423](https://github.com/infinidysk/infinidysk/issues/1423)) ([de1d6b0](https://github.com/infinidysk/infinidysk/commit/de1d6b09f3c369924b19b233b2d73e75cf483875))
-* **deps:** Bump the react-router group across 1 directory with 5 updates ([#1337](https://github.com/infinidysk/infinidysk/issues/1337)) ([11c2c02](https://github.com/infinidysk/infinidysk/commit/11c2c027d465664806a0aebc6c013a8cd6a3efbf))
-* **deps:** Bump zensical from 0.0.57 to 0.0.59 in the docs-python group ([#1391](https://github.com/infinidysk/infinidysk/issues/1391)) ([1a98063](https://github.com/infinidysk/infinidysk/commit/1a98063c5f76aeefda74014cd1a99c2212feac45))
-* **docker:** ship the musl rapidyenc native in the Alpine image ([#1370](https://github.com/infinidysk/infinidysk/issues/1370)) ([5275648](https://github.com/infinidysk/infinidysk/commit/52756484649bfe974397e45dec012871af284ada))
-* **health:** defer contended PAR2 repairs ([#1383](https://github.com/infinidysk/infinidysk/issues/1383)) ([4bc4a21](https://github.com/infinidysk/infinidysk/commit/4bc4a212cb7e11fd71799989cb4191256283a644))
-* **health:** preserve urgent repairs across concurrent checks ([#1407](https://github.com/infinidysk/infinidysk/issues/1407)) ([33ebeef](https://github.com/infinidysk/infinidysk/commit/33ebeefd5504753038de7b20fc931dbef6789031))
-* **health:** prevent false repairs when stored segment alternatives are available ([#1373](https://github.com/infinidysk/infinidysk/issues/1373)) ([6fb47d9](https://github.com/infinidysk/infinidysk/commit/6fb47d9fa94700a02880a2d6a4ece535708f2aaf))
-* **metrics:** count shared-stream pump fetches as client reads ([#1350](https://github.com/infinidysk/infinidysk/issues/1350)) ([581833f](https://github.com/infinidysk/infinidysk/commit/581833f81d0e36035d27727201f97b98f7144d9e))
-* **nntp:** bound fresh connection acquisition ([#1409](https://github.com/infinidysk/infinidysk/issues/1409)) ([f912daa](https://github.com/infinidysk/infinidysk/commit/f912daa81d93e120ce1c214096943bc7baea878b))
-* **nntp:** keep playback working when a provider returns the wrong post ([#1357](https://github.com/infinidysk/infinidysk/issues/1357)) ([b4ede00](https://github.com/infinidysk/infinidysk/commit/b4ede004a35d47b966b3b4480167a47b9eaf9625))
-* **queue:** allow reviewed cleanup of large orphan backlogs ([#1352](https://github.com/infinidysk/infinidysk/issues/1352)) ([b5bf01e](https://github.com/infinidysk/infinidysk/commit/b5bf01efc8364de4a8b3479fc69e4a368a225e02))
-* **queue:** import independent RAR and 7z archive sets separately ([#1382](https://github.com/infinidysk/infinidysk/issues/1382)) ([c9250ba](https://github.com/infinidysk/infinidysk/commit/c9250bac749ed0c70522f6091225ee194dd74a23))
-* **queue:** preserve jobs and retry delays during concurrent queue changes ([#1399](https://github.com/infinidysk/infinidysk/issues/1399)) ([8ddebd9](https://github.com/infinidysk/infinidysk/commit/8ddebd99efd860b66f452a7dac976b8fd68902d9))
-* **sab:** accept duplicate segment fallbacks and keep validation errors bounded ([#1400](https://github.com/infinidysk/infinidysk/issues/1400)) ([11d587b](https://github.com/infinidysk/infinidysk/commit/11d587beb8523ed4ca95d04369dc59b4bff2871a))
-* **sab:** Sonarr/Radarr no longer loop on "Download doesn't contain intermediate path" after a job folder is removed ([#1347](https://github.com/infinidysk/infinidysk/issues/1347)) ([295c4cc](https://github.com/infinidysk/infinidysk/commit/295c4cc9eb0106a3efef7cc3ec7331ef2bbdeabb))
-* **ui:** match app read legend to the activity chart ([#1355](https://github.com/infinidysk/infinidysk/issues/1355)) ([2240674](https://github.com/infinidysk/infinidysk/commit/22406748e80a958e4808bdcf6607bea7f1b8846d))
-* **ui:** move public Base URL into General settings ([#1411](https://github.com/infinidysk/infinidysk/issues/1411)) ([82d5501](https://github.com/infinidysk/infinidysk/commit/82d55019bcb29900b7924edbafd800e92cde47e8))
-* **ui:** render app activity reads with a solid line ([#1349](https://github.com/infinidysk/infinidysk/issues/1349)) ([56f9d4e](https://github.com/infinidysk/infinidysk/commit/56f9d4e5535b8e371004ca15a2988b456e3151f3))
-* **usenet:** prevent stale provider misses from blocking imports ([#1403](https://github.com/infinidysk/infinidysk/issues/1403)) ([303b7a7](https://github.com/infinidysk/infinidysk/commit/303b7a781f60f13ad3e3af89aeb9741cffdbd39e))
-* **usenet:** speed tests use articles available from the selected provider ([#1361](https://github.com/infinidysk/infinidysk/issues/1361)) ([699e0ca](https://github.com/infinidysk/infinidysk/commit/699e0ca95ca9c196bd81314b3a8cf3cc2a0f159a))
-* **usenet:** verify retrievable articles before marking releases dead ([#1404](https://github.com/infinidysk/infinidysk/issues/1404)) ([4a4fe71](https://github.com/infinidysk/infinidysk/commit/4a4fe715bbfd84301df5c110df371a47cd6085e1))
-* **webdav:** make /view HEAD requests metadata-only ([#1405](https://github.com/infinidysk/infinidysk/issues/1405)) ([c2be9fb](https://github.com/infinidysk/infinidysk/commit/c2be9fb5ca696a740331b163bae4338d13b90dba))
-
-
-### Performance Improvements
-
-* **health:** reduce redundant PAR2 repair work ([#1385](https://github.com/infinidysk/infinidysk/issues/1385)) ([9f72826](https://github.com/infinidysk/infinidysk/commit/9f72826d782e00332a0fed06b27b0a3259f7995c))
-
-## [1.3.0](https://github.com/infinidysk/infinidysk/compare/v1.2.7...v1.3.0) (2026-09-04)
-
-
-### Features
-
-* **health:** clean up mounts whose streaming payloads are missing ([#1218](https://github.com/infinidysk/infinidysk/issues/1218)) ([aa83ef3](https://github.com/infinidysk/infinidysk/commit/aa83ef32662d84bdb59cdce41bcbe7f7ea72c5f0))
-* **health:** expose segment-buffer eviction causes and throttle forced GC ([#1230](https://github.com/infinidysk/infinidysk/issues/1230)) ([cbd87e5](https://github.com/infinidysk/infinidysk/commit/cbd87e5b4e760e0c274af4bd08962229b251bd4d))
-* **health:** parallel health checks with shared connection gate and queue coexistence ([#1208](https://github.com/infinidysk/infinidysk/issues/1208)) ([b42ac42](https://github.com/infinidysk/infinidysk/commit/b42ac422a62ae20e60b65a2b356a4b723a3dc9da))
-* **health:** re-check action-needed files from Health history ([#1336](https://github.com/infinidysk/infinidysk/issues/1336)) ([2043c96](https://github.com/infinidysk/infinidysk/commit/2043c96906fa3c44f01eb93daec7a83f744b9077))
-* **health:** re-run health checks across the whole library from Settings → Maintenance ([#1203](https://github.com/infinidysk/infinidysk/issues/1203)) ([bb54a92](https://github.com/infinidysk/infinidysk/commit/bb54a92b77c6147eb547685e5f75b96ef8f089b9))
-* **health:** turn on background repairs by default ([#1284](https://github.com/infinidysk/infinidysk/issues/1284)) ([c3229c2](https://github.com/infinidysk/infinidysk/commit/c3229c2a386e4bb678e85956aeb444788e87bbda))
-* **nntp:** split transfer and metadata connection budgets ([#1207](https://github.com/infinidysk/infinidysk/issues/1207)) ([39e04c1](https://github.com/infinidysk/infinidysk/commit/39e04c126377be0e025c3838c0fdcc1433884506))
-* **queue:** name a lone imported video after its release folder ([#1149](https://github.com/infinidysk/infinidysk/issues/1149)) ([c7530c0](https://github.com/infinidysk/infinidysk/commit/c7530c0bd265852329f49d71fd5ccdea09970a73))
-* **scheduling:** schedule health checks, repairs, and queue downloads by time of day ([#1153](https://github.com/infinidysk/infinidysk/issues/1153)) ([5e6a3ff](https://github.com/infinidysk/infinidysk/commit/5e6a3ff0d82187739adad227a543bbaa2128a006))
-* **ui:** guide first-run setup for Plex, Emby, and Jellyfin ([#1306](https://github.com/infinidysk/infinidysk/issues/1306)) ([b31a220](https://github.com/infinidysk/infinidysk/commit/b31a22080f7615b4abf96f918ad90438563840e8))
-* **ui:** inspect each provider's speed history from Overview ([#1151](https://github.com/infinidysk/infinidysk/issues/1151)) ([ea6ce14](https://github.com/infinidysk/infinidysk/commit/ea6ce1428910217442c8c10d69d5f621b5138bd8))
-* **ui:** setup wizard always suggests rclone RC notifications for symlink installs ([#1320](https://github.com/infinidysk/infinidysk/issues/1320)) ([502995d](https://github.com/infinidysk/infinidysk/commit/502995dd8308a83a18b14c9b855a6061690ad987))
-* **ui:** show active queue jobs and history in one list ([#1286](https://github.com/infinidysk/infinidysk/issues/1286)) ([e6b2e21](https://github.com/infinidysk/infinidysk/commit/e6b2e21285a0e7c19c4910c1e3d2935f2f66e851))
-* **ui:** warn when rclone streams through port 3000 ([#1328](https://github.com/infinidysk/infinidysk/issues/1328)) ([eae59a5](https://github.com/infinidysk/infinidysk/commit/eae59a5593fbdb1f3d83297cd3d300d699acb8bb))
-* **ui:** warn when Segment Cache duplicates rclone VFS read-ahead ([#1319](https://github.com/infinidysk/infinidysk/issues/1319)) ([eebc880](https://github.com/infinidysk/infinidysk/commit/eebc88029b6ee101c1475f0da2e906309999229b))
-* **usenet:** add memory ownership telemetry ([#1295](https://github.com/infinidysk/infinidysk/issues/1295)) ([04cac95](https://github.com/infinidysk/infinidysk/commit/04cac95850c342b0b7ad7a86b918a6cdf5767f40))
-* **usenet:** cap total Usenet download bandwidth ([#1152](https://github.com/infinidysk/infinidysk/issues/1152)) ([ecd2193](https://github.com/infinidysk/infinidysk/commit/ecd21933df54c52f9eba93251ad48919ff6e6e4e))
-* **usenet:** improve batching for short and medium range reads (opt-in) ([#1292](https://github.com/infinidysk/infinidysk/issues/1292)) ([21a499f](https://github.com/infinidysk/infinidysk/commit/21a499f5932641250ae30dd706a3cf17c85bf35f))
-* **usenet:** leftover segment-cache files are cleaned up on startup when the cache is disabled ([#1321](https://github.com/infinidysk/infinidysk/issues/1321)) ([a9c69f8](https://github.com/infinidysk/infinidysk/commit/a9c69f830580f7095d2ffd53a76ad6d6982b7c9f))
-* **usenet:** let long reads expand provider connections faster ([#1324](https://github.com/infinidysk/infinidysk/issues/1324)) ([9044421](https://github.com/infinidysk/infinidysk/commit/9044421ecaef71048dff09626b86afe02b4a2b7a))
-* **usenet:** let segment cache writes run behind playback ([#1325](https://github.com/infinidysk/infinidysk/issues/1325)) ([5cd2aee](https://github.com/infinidysk/infinidysk/commit/5cd2aee3b70622a380ec4cd94a209ec300559523))
-* **usenet:** make provider circuit-breaker cooldowns configurable ([#1118](https://github.com/infinidysk/infinidysk/issues/1118)) ([56e9415](https://github.com/infinidysk/infinidysk/commit/56e941593bb1313b2ac9757016cfe972d249084c))
-* **usenet:** measure production pipelined cache bypass before the warm-read fix ([#1288](https://github.com/infinidysk/infinidysk/issues/1288)) ([a3a0d7b](https://github.com/infinidysk/infinidysk/commit/a3a0d7bf877cf65d6a86a0db4ca52edc48a8648d))
-* **usenet:** segment cache is off by default for new installs; existing installs keep their current behavior ([#1322](https://github.com/infinidysk/infinidysk/issues/1322)) ([d0d18c0](https://github.com/infinidysk/infinidysk/commit/d0d18c02a672fec7c131dff6b0af80398a655a07))
-* **usenet:** warm provider connections when long reads start ([#1330](https://github.com/infinidysk/infinidysk/issues/1330)) ([83a431c](https://github.com/infinidysk/infinidysk/commit/83a431cdfc21adcdb5322fd78c834688d13142d9))
-
-
-### Bug Fixes
-
-* **api:** reject invalid Warden source uploads with 400 and count UTF-8 bytes ([#1274](https://github.com/infinidysk/infinidysk/issues/1274)) ([08f5567](https://github.com/infinidysk/infinidysk/commit/08f5567271644c3044dc339922fc980cdc8e8c73))
-* **arr:** prevent overlapping Watchtower cycles after a timeout ([#1278](https://github.com/infinidysk/infinidysk/issues/1278)) ([28a9eba](https://github.com/infinidysk/infinidysk/commit/28a9ebad42149933a770e488f4fd36dbc518f631))
-* **arr:** reject oversized Newznab and Watchtower list responses instead of parsing them unbounded ([#1279](https://github.com/infinidysk/infinidysk/issues/1279)) ([b9be02e](https://github.com/infinidysk/infinidysk/commit/b9be02eb3db846f3a6504af92bd93c6d9817c1a6))
-* **db:** container no longer dumps a stack trace per file when local streaming metadata is corrupt ([#1297](https://github.com/infinidysk/infinidysk/issues/1297)) ([cd9b120](https://github.com/infinidysk/infinidysk/commit/cd9b1205c1c8b312c3e0a14540dfa249d6ebd201))
-* **db:** retry backup directory initialization in the scheduler ([#1269](https://github.com/infinidysk/infinidysk/issues/1269)) ([32b07bf](https://github.com/infinidysk/infinidysk/commit/32b07bfb5aef4f836ffc498a87744a19e66bf7cf))
-* **db:** skip a maintenance sweep instead of stopping the host when SQLite is busy ([#1268](https://github.com/infinidysk/infinidysk/issues/1268)) ([f846184](https://github.com/infinidysk/infinidysk/commit/f84618478024a399b0d844c3b16dce1ef621ca07))
-* **deps:** Bump fast-uri from 3.1.5 to 3.1.7 in /frontend ([#1312](https://github.com/infinidysk/infinidysk/issues/1312)) ([219ac28](https://github.com/infinidysk/infinidysk/commit/219ac28b808483c0e6e11cb6f9fbf5cc86385b16))
-* **deps:** Bump github/codeql-action in the github-actions group ([#1256](https://github.com/infinidysk/infinidysk/issues/1256)) ([79a4861](https://github.com/infinidysk/infinidysk/commit/79a486147b178877292d8fd08363fd4117092a25))
-* **deps:** Bump github/codeql-action in the github-actions group ([#1315](https://github.com/infinidysk/infinidysk/issues/1315)) ([99ec38c](https://github.com/infinidysk/infinidysk/commit/99ec38cc56c39ddf645076066c42d54843f2ed4a))
-* **deps:** Bump qs from 6.15.3 to 6.16.0 in /frontend ([#1316](https://github.com/infinidysk/infinidysk/issues/1316)) ([51bc1b5](https://github.com/infinidysk/infinidysk/commit/51bc1b5cd6bc500a31d3e7ec72e73910e87714dd))
-* **deps:** Bump the npm-minor-and-patch group ([#1254](https://github.com/infinidysk/infinidysk/issues/1254)) ([23c7ba8](https://github.com/infinidysk/infinidysk/commit/23c7ba8e0ae753888e402c178aa73c102fbc028e))
-* **deps:** Bump the npm-minor-and-patch group ([#1313](https://github.com/infinidysk/infinidysk/issues/1313)) ([484dafc](https://github.com/infinidysk/infinidysk/commit/484dafc57eb084bcd4afc8b62b05a5d96339909b))
-* **deps:** Bump the nuget-minor-and-patch group with 2 updates ([#1314](https://github.com/infinidysk/infinidysk/issues/1314)) ([a0377e5](https://github.com/infinidysk/infinidysk/commit/a0377e5ccdf3681a070a5879a6418ec263764a6f))
-* **deps:** Bump the nuget-minor-and-patch group with 3 updates ([#1255](https://github.com/infinidysk/infinidysk/issues/1255)) ([f8ede69](https://github.com/infinidysk/infinidysk/commit/f8ede696fd27e6e6c26c7d15748ca85a180d17ae))
-* **deps:** Bump zensical from 0.0.56 to 0.0.57 in the docs-python group ([#1253](https://github.com/infinidysk/infinidysk/issues/1253)) ([c9c5b97](https://github.com/infinidysk/infinidysk/commit/c9c5b97d81758ec4e7f55e79a7f85ea371a21efe))
-* **health:** clarify Library Directory requirements ([#1302](https://github.com/infinidysk/infinidysk/issues/1302)) ([8843fb7](https://github.com/infinidysk/infinidysk/commit/8843fb778df74ea1ef8e3c9ae032d669076713c9))
-* **health:** keep prune and unlinked-file cleanup running if progress reporting fails ([#1272](https://github.com/infinidysk/infinidysk/issues/1272)) ([d62d57e](https://github.com/infinidysk/infinidysk/commit/d62d57eb33f0661b6ac2e6d7cebad504f7da5e80))
-* **health:** recover libraries downloaded before 1.3.0 ([#1335](https://github.com/infinidysk/infinidysk/issues/1335)) ([528eca5](https://github.com/infinidysk/infinidysk/commit/528eca5f2fc2ba362441848c02cb024c994336fe))
-* **health:** recover PAR2 repair after transient patch catalog load failures ([#1277](https://github.com/infinidysk/infinidysk/issues/1277)) ([f7a27f3](https://github.com/infinidysk/infinidysk/commit/f7a27f395a05bc3e76191b038425483e2a0f10bd))
-* **health:** repair Arr-linked files after SAB history cleanup ([#1282](https://github.com/infinidysk/infinidysk/issues/1282)) ([e5cf9c9](https://github.com/infinidysk/infinidysk/commit/e5cf9c9295cca9c81da7f21a5afc4d6975e3d9a0))
-* **health:** stop deleting linked files after inconclusive Arr lookups ([#1229](https://github.com/infinidysk/infinidysk/issues/1229)) ([997eb59](https://github.com/infinidysk/infinidysk/commit/997eb59b2c2b1a270c6f1bc3e2db3a60986c10b1)), closes [#1221](https://github.com/infinidysk/infinidysk/issues/1221)
-* **hosting:** backend exits nonzero after a hosted background service crashes ([#1273](https://github.com/infinidysk/infinidysk/issues/1273)) ([8990114](https://github.com/infinidysk/infinidysk/commit/899011478f4bbe5fa6867a4fde6e667f1a86ecbf))
-* **nntp:** keep streaming when an article-completion observer throws ([#1275](https://github.com/infinidysk/infinidysk/issues/1275)) ([6cc3ee1](https://github.com/infinidysk/infinidysk/commit/6cc3ee122028c14537df804e37854d2c894d5750))
-* **queue:** restart instead of serving a dead queue after processor failure ([#1287](https://github.com/infinidysk/infinidysk/issues/1287)) ([cb77327](https://github.com/infinidysk/infinidysk/commit/cb77327fd26e80bf61e64b1b5edc12e0d6135251))
-* **rclone:** improve mount recommendations and RC connection tests ([#1311](https://github.com/infinidysk/infinidysk/issues/1311)) ([efca97d](https://github.com/infinidysk/infinidysk/commit/efca97d333bf984fc7bc5ddb5a06dc34d705178c))
-* **sab:** deleting a queue item that is failing at the same moment no longer returns HTTP 500 ([#1309](https://github.com/infinidysk/infinidysk/issues/1309)) ([71a52c8](https://github.com/infinidysk/infinidysk/commit/71a52c878a0634c3eb72a2ea95ce498b3101795a))
-* **ui:** align streaming bandwidth input width ([#1260](https://github.com/infinidysk/infinidysk/issues/1260)) ([ec10a5a](https://github.com/infinidysk/infinidysk/commit/ec10a5a9e4cb4d2acebfa8195d7d121e1775c2ef))
-* **ui:** compact idle Right now, keep Arr Health on-screen, and tooltip the rename setting ([#1265](https://github.com/infinidysk/infinidysk/issues/1265)) ([5e89125](https://github.com/infinidysk/infinidysk/commit/5e89125aac14701b68b1681e940e6a197c0b2500))
-* **ui:** keep Arr Health last-import tooltip inside the dashboard ([#1283](https://github.com/infinidysk/infinidysk/issues/1283)) ([d62a8b5](https://github.com/infinidysk/infinidysk/commit/d62a8b516c584e95dec96a638aaf81968dcdfb87))
-* **ui:** keep existing installs on overview ([#1333](https://github.com/infinidysk/infinidysk/issues/1333)) ([2329c0d](https://github.com/infinidysk/infinidysk/commit/2329c0d9603015fb105cda92c5d5e503ae4d3304))
-* **ui:** keep overview stats and help text usable on phones ([#1259](https://github.com/infinidysk/infinidysk/issues/1259)) ([f9439ff](https://github.com/infinidysk/infinidysk/commit/f9439ffdaee011e0304ca3e25a923664087f6b7d))
-* **ui:** per-provider MB/s chart stays continuous when there is no traffic ([#1228](https://github.com/infinidysk/infinidysk/issues/1228)) ([012168b](https://github.com/infinidysk/infinidysk/commit/012168bf005d4a0ee21fd8bc32409a246e117880))
-* **ui:** prevent malformed websocket traffic from stopping the frontend ([#1280](https://github.com/infinidysk/infinidysk/issues/1280)) ([80d28df](https://github.com/infinidysk/infinidysk/commit/80d28df2bbdd28671a579e239550c135dd7fee73))
-* **ui:** reject a missing frontend/backend API key before the UI starts listening ([#1270](https://github.com/infinidysk/infinidysk/issues/1270)) ([f55a3fc](https://github.com/infinidysk/infinidysk/commit/f55a3fcf56fffeeca69f4cccc8815bbf89bead87))
-* **ui:** remove experimental tag from container-aware gap fill ([#1307](https://github.com/infinidysk/infinidysk/issues/1307)) ([412fc69](https://github.com/infinidysk/infinidysk/commit/412fc6988cbefa622d410577d8794bd6a7deda56))
-* **ui:** repair settings remain saved after refresh ([#1301](https://github.com/infinidysk/infinidysk/issues/1301)) ([381c512](https://github.com/infinidysk/infinidysk/commit/381c512a9bf05d8b5936f623aa5b352f1228eb0c))
-* **ui:** show a clear error and exit when the frontend port is already in use ([#1276](https://github.com/infinidysk/infinidysk/issues/1276)) ([60b5518](https://github.com/infinidysk/infinidysk/commit/60b5518f8adaf368004e86d6d1296bf08d047b71))
-* **ui:** stabilize the overview dashboard layout ([#1257](https://github.com/infinidysk/infinidysk/issues/1257)) ([2e72fe9](https://github.com/infinidysk/infinidysk/commit/2e72fe941f414026e5ef2468f2e3c2196f78948f))
-* **ui:** stop Arr Health table from showing a phantom horizontal scrollbar ([#1267](https://github.com/infinidysk/infinidysk/issues/1267)) ([81008cc](https://github.com/infinidysk/infinidysk/commit/81008cce69cbcf98454e582463a60933dab6a455))
-* **usenet:** harden timeout connection lifecycle ([#1224](https://github.com/infinidysk/infinidysk/issues/1224)) ([72f4d79](https://github.com/infinidysk/infinidysk/commit/72f4d7912f4d19dcc6cac279dfc54aafdcb16fbd))
-* **usenet:** keep pooling and config updates running if a telemetry observer throws ([#1271](https://github.com/infinidysk/infinidysk/issues/1271)) ([ba5ae40](https://github.com/infinidysk/infinidysk/commit/ba5ae406cd27e9c5bef6ad2bf70e9ddd99f8c5f1))
-* **usenet:** preserve streaming priority and release every pipelined batch resource ([#1291](https://github.com/infinidysk/infinidysk/issues/1291)) ([a2c1151](https://github.com/infinidysk/infinidysk/commit/a2c11515f3cb98f0721793098d500dfdc1d7c5b2))
-* **usenet:** warm rereads no longer re-download cached pipelined segments ([#1289](https://github.com/infinidysk/infinidysk/issues/1289)) ([368a7da](https://github.com/infinidysk/infinidysk/commit/368a7da7eba93cdf0e41a206bdd3a51f3ec0c9ef))
-* **webdav:** directory listings no longer fail with HTTP 500 when a filename contains XML-invalid characters ([#1310](https://github.com/infinidysk/infinidysk/issues/1310)) ([1dfdcaa](https://github.com/infinidysk/infinidysk/commit/1dfdcaa79d9769607e1a31ee74d40309af50b70e))
-* **webdav:** prevent PostgreSQL listing failures without buffering directories ([#1332](https://github.com/infinidysk/infinidysk/issues/1332)) ([dd7cc42](https://github.com/infinidysk/infinidysk/commit/dd7cc4283aab69f4ea2cb6b89ed538b7cd5faaac))
-* **webdav:** stop healthy playback triggering stalled-stream warnings ([#1334](https://github.com/infinidysk/infinidysk/issues/1334)) ([b01c0bd](https://github.com/infinidysk/infinidysk/commit/b01c0bd9d6ce97b08be6377558536372a3e5a222))
-
-
-### Performance Improvements
-
-* **health:** background health checks scan large libraries much faster ([#1303](https://github.com/infinidysk/infinidysk/issues/1303)) ([d8dce34](https://github.com/infinidysk/infinidysk/commit/d8dce34ae1c53e1b995279a549cd2e4174e092da))
-* **queue:** fail dead NZBs after one probe instead of scanning every article ([#1148](https://github.com/infinidysk/infinidysk/issues/1148)) ([23bcf61](https://github.com/infinidysk/infinidysk/commit/23bcf61b6e3b1ff52c1db8bd4529a845cb94c355))
-* **usenet:** default segment buffer retention to capacity ([#1299](https://github.com/infinidysk/infinidysk/issues/1299)) ([51c0ed8](https://github.com/infinidysk/infinidysk/commit/51c0ed8fa35a678a715aa1877d2bff792aa64dee))
-* **webdav:** start ranged playback without waiting for the full first article ([#1290](https://github.com/infinidysk/infinidysk/issues/1290)) ([d3e5815](https://github.com/infinidysk/infinidysk/commit/d3e58153f93cae9840861b04e6d3e1c55abda667))
-
-
-### UX
-
-* **ui:** move health-check and repair windows onto the background repairs card ([#1285](https://github.com/infinidysk/infinidysk/issues/1285)) ([463a023](https://github.com/infinidysk/infinidysk/commit/463a0231a68deb1cdd7440a6574d017f40b11613))
-
-## [1.2.7](https://github.com/infinidysk/infinidysk/compare/v1.2.6...v1.2.7) (2026-08-28)
-
-
-### Bug Fixes
-
-* **deps:** Bump the npm-minor-and-patch group ([#1202](https://github.com/infinidysk/infinidysk/issues/1202)) ([de13c67](https://github.com/infinidysk/infinidysk/commit/de13c67b5e8365bd8ab82750c511481da4058862))
-* **deps:** Bump zensical from 0.0.55 to 0.0.56 in the docs-python group ([#1201](https://github.com/infinidysk/infinidysk/issues/1201)) ([d5c2f23](https://github.com/infinidysk/infinidysk/commit/d5c2f23bac1f3c8b909ff7cf511003b5dc24bad3))
-* **health:** classify persistently missing streaming payloads as orphaned ([#1215](https://github.com/infinidysk/infinidysk/issues/1215)) ([70323ff](https://github.com/infinidysk/infinidysk/commit/70323fffaacb128d691bf24bebb6726dec27b034))
-* **health:** verify PAR2 slices before applying the damage cap ([#1213](https://github.com/infinidysk/infinidysk/issues/1213)) ([017eb23](https://github.com/infinidysk/infinidysk/commit/017eb23dc69381065d7549c47f9cad607117d1f1))
-* **queue:** accept NZBs with up to 1,302,083 segments ([#1220](https://github.com/infinidysk/infinidysk/issues/1220)) ([a7b0256](https://github.com/infinidysk/infinidysk/commit/a7b0256f4edce6a7fd0e6b091b3d1bbd977912ea))
-* **queue:** busy database no longer marks completed downloads as failed ([#1197](https://github.com/infinidysk/infinidysk/issues/1197)) ([63b3ddd](https://github.com/infinidysk/infinidysk/commit/63b3ddd93658b729cdccd940c6bada395ab3c886)), closes [#1180](https://github.com/infinidysk/infinidysk/issues/1180)
-* **queue:** cancelled imports no longer keep parsing huge NZB files ([#1192](https://github.com/infinidysk/infinidysk/issues/1192)) ([946637d](https://github.com/infinidysk/infinidysk/commit/946637d42226638887fea0195f66bd80cbb5f7a4))
-* **queue:** deleting or pausing a stuck download no longer hangs forever ([#1198](https://github.com/infinidysk/infinidysk/issues/1198)) ([4df9040](https://github.com/infinidysk/infinidysk/commit/4df9040c03f25a15896f119a1f8904b0247a199a))
-* **queue:** failed imports no longer leave orphaned STRM files on disk ([#1196](https://github.com/infinidysk/infinidysk/issues/1196)) ([80cf116](https://github.com/infinidysk/infinidysk/commit/80cf11666ef2e41726d45174c0332894ea8b9ef7))
-* **queue:** stop reprocessing releases that already failed health validation ([#1216](https://github.com/infinidysk/infinidysk/issues/1216)) ([a08b848](https://github.com/infinidysk/infinidysk/commit/a08b8484ce5b279d7f311634c90d9c5a4ab60cd7))
-* **sab:** oversize NZBs and stalled indexer fetches are rejected before they fill the disk ([#1195](https://github.com/infinidysk/infinidysk/issues/1195)) ([133cd42](https://github.com/infinidysk/infinidysk/commit/133cd4277042e78cf2bbb3b607204429b9c89b66))
-* **ui:** align the admin UI with daisyUI defaults and accessible controls ([#1206](https://github.com/infinidysk/infinidysk/issues/1206)) ([b34f994](https://github.com/infinidysk/infinidysk/commit/b34f994e416104c5b90b22146924bc87b23d57b0))
-* **webdav:** play multipart RARs with unrelated trailing volumes ([#1212](https://github.com/infinidysk/infinidysk/issues/1212)) ([65bc6d7](https://github.com/infinidysk/infinidysk/commit/65bc6d7c5943b0e2e63c7ae9b6171488a260c0ae))
-* **webdav:** stop counting healthy streaming playback as slow WebDAV requests ([#1204](https://github.com/infinidysk/infinidysk/issues/1204)) ([150d185](https://github.com/infinidysk/infinidysk/commit/150d185931220f0330f0edf60eee784a28602f17))
-
-## [1.2.6](https://github.com/infinidysk/infinidysk/compare/v1.2.5...v1.2.6) (2026-08-26)
-
-
-### Features
-
-* **sab:** include client user agent in authentication rejection warnings ([#1179](https://github.com/infinidysk/infinidysk/issues/1179)) ([8848ad5](https://github.com/infinidysk/infinidysk/commit/8848ad517623cf892d6c464d6fb817ef35f9a523))
-
-
-### Bug Fixes
-
-* **queue:** large imports of missing or corrupt Usenet articles no longer grind the server ([#1188](https://github.com/infinidysk/infinidysk/issues/1188)) ([544aa6c](https://github.com/infinidysk/infinidysk/commit/544aa6ce180c27f2fc85cb0134bc07857d343216))
-* **queue:** large NZBs up to 256 MiB no longer rejected during import ([#1177](https://github.com/infinidysk/infinidysk/issues/1177)) ([3328f03](https://github.com/infinidysk/infinidysk/commit/3328f0304c0ca378bbb247b480ca22fa6ac033cb))
-* **queue:** leftover STRM files are cleaned up and samples in Sample folders no longer get mounted ([#1169](https://github.com/infinidysk/infinidysk/issues/1169)) ([87993e1](https://github.com/infinidysk/infinidysk/commit/87993e17a1bec27feefd4ee046aaf09536b69040))
-* **queue:** restore a single import strategy instead of dual symlink and STRM outputs ([#1171](https://github.com/infinidysk/infinidysk/issues/1171)) ([144cac9](https://github.com/infinidysk/infinidysk/commit/144cac947fa32290d540d7d6be2e33837af12983))
-* **ui:** overview stats stay a compact bar on tablets and wrap 3-wide on phones ([#1163](https://github.com/infinidysk/infinidysk/issues/1163)) ([09130e2](https://github.com/infinidysk/infinidysk/commit/09130e2b8d37449b4e7c47118ebd4b1e6b62dd72))
-* **usenet:** missing-article playback no longer freezes all streams and imports ([#1199](https://github.com/infinidysk/infinidysk/issues/1199)) ([497de64](https://github.com/infinidysk/infinidysk/commit/497de64282027ba854e2e1386277149f737f8015))
-
-
-### Chores
-
-* **release:** force next release to 1.2.6 ([#1194](https://github.com/infinidysk/infinidysk/issues/1194)) ([f559135](https://github.com/infinidysk/infinidysk/commit/f55913539b35247bbb60ebc9d3cb68646e99f32e))
-
-## [1.2.5](https://github.com/infinidysk/infinidysk/compare/v1.2.4...v1.2.5) (2026-08-25)
-
-
-### Features
-
-* **queue:** create symlink and STRM outputs together ([#1146](https://github.com/infinidysk/infinidysk/issues/1146)) ([c888279](https://github.com/infinidysk/infinidysk/commit/c88827999fec100a03c4f212c04b4415322e4e29))
-* **ui:** make Overview easier to scan and recover when stats fail to load ([#1135](https://github.com/infinidysk/infinidysk/issues/1135)) ([3e8d70d](https://github.com/infinidysk/infinidysk/commit/3e8d70dce9947dab4ede10292e05d3e40687cec9))
-
-
-### Bug Fixes
-
-* **arr:** prevent completed downloads waiting indefinitely for import ([#1138](https://github.com/infinidysk/infinidysk/issues/1138)) ([72fb79d](https://github.com/infinidysk/infinidysk/commit/72fb79dd5876710b44bbfe2d7d4e6b6c656699e6))
-* **deps:** Bump zensical from 0.0.54 to 0.0.55 in the docs-python group ([#1155](https://github.com/infinidysk/infinidysk/issues/1155)) ([9556699](https://github.com/infinidysk/infinidysk/commit/95566994c68b7f302bb2499e56416688d567bf3d))
-* **health:** enable health checks and PAR2 repair without Radarr or Sonarr ([#1139](https://github.com/infinidysk/infinidysk/issues/1139)) ([34750c3](https://github.com/infinidysk/infinidysk/commit/34750c3dfc561d55c4bbee44867dec3aec60c4d5))
-* **queue:** NZBs with long Usenet subjects no longer rejected during import ([#1160](https://github.com/infinidysk/infinidysk/issues/1160)) ([d98be41](https://github.com/infinidysk/infinidysk/commit/d98be418345d1bcaf36d8bdf3d35bc098e3323cc))
-* **repair:** wait for PAR2 recovery before removing failed playback ([#1143](https://github.com/infinidysk/infinidysk/issues/1143)) ([eb10439](https://github.com/infinidysk/infinidysk/commit/eb104392d08161de7a61f3606b9908de5ddde6a5))
-* **ui:** connections counter no longer flashes a spinner on the queue page ([#1154](https://github.com/infinidysk/infinidysk/issues/1154)) ([9edff32](https://github.com/infinidysk/infinidysk/commit/9edff32ab7fedebb6c4cf11121b42825b9ca18ae))
-* **ui:** live file reads are now full-width rows in the Overview stack ([#1162](https://github.com/infinidysk/infinidysk/issues/1162)) ([400a99f](https://github.com/infinidysk/infinidysk/commit/400a99fef921f4a5e4e25dd9cb6e3a4adaa29b62))
-* **usenet:** STAT of missing articles no longer logs unclassified cache-cleanup failures ([#1159](https://github.com/infinidysk/infinidysk/issues/1159)) ([5f568d8](https://github.com/infinidysk/infinidysk/commit/5f568d85450948adeb2a2ce050542f778c95f41d))
-* **usenet:** stop skipping through incomplete files after every missing article ([#1158](https://github.com/infinidysk/infinidysk/issues/1158)) ([02df429](https://github.com/infinidysk/infinidysk/commit/02df429ac15b87c85a2b98a0b39ef66aa5e7bcde))
-* **webdav:** resume lazy RAR playback from tail seeks ([#1136](https://github.com/infinidysk/infinidysk/issues/1136)) ([0605978](https://github.com/infinidysk/infinidysk/commit/06059782fe30ad92934f8c155e091a115858518d))
-
-
-### Chores
-
-* force next release to 1.2.5 ([#1147](https://github.com/infinidysk/infinidysk/issues/1147)) ([0c5d56b](https://github.com/infinidysk/infinidysk/commit/0c5d56b86684e525a4870ae1f6d8a1cac582e5e2))
-
-## [1.2.4](https://github.com/infinidysk/infinidysk/compare/v1.2.3...v1.2.4) (2026-08-23)
-
-
-### Bug Fixes
-
-* **arr:** prevent automatic replacement search loops ([#1132](https://github.com/infinidysk/infinidysk/issues/1132)) ([a5dc24e](https://github.com/infinidysk/infinidysk/commit/a5dc24eeb0d6a3102e020b75dc95f136a06c9e30))
-* **db:** allow orphan cleanup with PostgreSQL ([#1133](https://github.com/infinidysk/infinidysk/issues/1133)) ([c59ba20](https://github.com/infinidysk/infinidysk/commit/c59ba20ee571bfe58195d69aea998bcad3186728))
-* **health:** PAR2 repair no longer exhausts memory or blocks retries after a crash ([#1124](https://github.com/infinidysk/infinidysk/issues/1124)) ([b4804ea](https://github.com/infinidysk/infinidysk/commit/b4804eadebc8e5e64921b067e621a807b27a13a5))
-* **health:** prevent health checks crashing on oversized metadata ([#1123](https://github.com/infinidysk/infinidysk/issues/1123)) ([12cb9a9](https://github.com/infinidysk/infinidysk/commit/12cb9a95e2da24e227abe77dee879ebe0f4593f8))
-* **nntp:** recover providers faster from shared network failures ([#1116](https://github.com/infinidysk/infinidysk/issues/1116)) ([06df9c6](https://github.com/infinidysk/infinidysk/commit/06df9c623c820a612196cf884405a5d932801b90))
-* **queue:** delete STRM files with removed history items ([#1122](https://github.com/infinidysk/infinidysk/issues/1122)) ([12d1172](https://github.com/infinidysk/infinidysk/commit/12d1172696f8718cad57f226c584f60b33cbf3fc))
-* stabilize streaming and queue watchdog cancellation ([#1129](https://github.com/infinidysk/infinidysk/issues/1129)) ([047b34f](https://github.com/infinidysk/infinidysk/commit/047b34fcd284e8dc45d2cf67faae5ac0b94a6a2e))
-* **streams:** Article RAM waits no longer inflate during playback ([#1126](https://github.com/infinidysk/infinidysk/issues/1126)) ([89bccfb](https://github.com/infinidysk/infinidysk/commit/89bccfb6807b0bb219140c9abaf7ac9e8df662c3))
-* **ui:** hide Stable/Dev label in the version dropdown on mobile ([#1125](https://github.com/infinidysk/infinidysk/issues/1125)) ([51c200a](https://github.com/infinidysk/infinidysk/commit/51c200ab437c821baea5f4a300316b1faf4a6441))
-* **ui:** Mount button on Search page now adds releases ([#1112](https://github.com/infinidysk/infinidysk/issues/1112)) ([71500fe](https://github.com/infinidysk/infinidysk/commit/71500fe918b3f815d7cd3fbb5f3aade1eb3d7ee7))
-* **ui:** pin Overview Right now above widgets on stacked layouts ([#1117](https://github.com/infinidysk/infinidysk/issues/1117)) ([ed0dd0a](https://github.com/infinidysk/infinidysk/commit/ed0dd0ac350fdfb44f4ca327187b68156fea3731))
-* **ui:** remove scrollbar from header connection status ([#1115](https://github.com/infinidysk/infinidysk/issues/1115)) ([9879d4b](https://github.com/infinidysk/infinidysk/commit/9879d4bd3ee707532cde5eb1618823559bfeb9fe))
-* **usenet:** retain context for unclassified fetch failures ([#1113](https://github.com/infinidysk/infinidysk/issues/1113)) ([ef76529](https://github.com/infinidysk/infinidysk/commit/ef76529787c8ea630c042064191c2db34404cc22))
-* **usenet:** scale auto article budget beyond 512 MiB ([#1130](https://github.com/infinidysk/infinidysk/issues/1130)) ([c887505](https://github.com/infinidysk/infinidysk/commit/c8875051367c00b48313f395722e391c1542dd26))
-
-## [1.2.3](https://github.com/infinidysk/infinidysk/compare/v1.2.2...v1.2.3) (2026-08-22)
-
-
-### Features
-
-* **search:** reject wrong-year movies and optionally sort profile results by quality ([#1107](https://github.com/infinidysk/infinidysk/issues/1107)) ([15c16dd](https://github.com/infinidysk/infinidysk/commit/15c16dd0f3b4ae4c9423028d37b68e7136511217))
-* **stremio:** make Search Profiles work as a first-class AIOStreams addon ([#1108](https://github.com/infinidysk/infinidysk/issues/1108)) ([9b7780e](https://github.com/infinidysk/infinidysk/commit/9b7780e7c432a73b412a961ab7dcecb809762b70))
-
-
-### Bug Fixes
-
-* **db:** PostgreSQL installs no longer log timestamp errors ([#1102](https://github.com/infinidysk/infinidysk/issues/1102)) ([1142009](https://github.com/infinidysk/infinidysk/commit/11420096b3c0e0c527aab30b55918a61aa5daac5))
-* **db:** upgrades no longer fail on a pre-existing health-check index ([#1106](https://github.com/infinidysk/infinidysk/issues/1106)) ([44749d8](https://github.com/infinidysk/infinidysk/commit/44749d80bf31deb87e2788b5700cc17c73670f8a))
-* **sab:** initialize addurl timeout before HTTP clients ([#1105](https://github.com/infinidysk/infinidysk/issues/1105)) ([8c9940a](https://github.com/infinidysk/infinidysk/commit/8c9940ac42562895a6c6f1534c70ce0fb37c3691))
-* **ui:** show connections warm-pool hint ([#1109](https://github.com/infinidysk/infinidysk/issues/1109)) ([7103fe6](https://github.com/infinidysk/infinidysk/commit/7103fe6e99a268703776babcc4ab8bd4ec7d2c7d))
-
-
-### Chores
-
-* **release:** force v1.2.3 patch release ([#1110](https://github.com/infinidysk/infinidysk/issues/1110)) ([ff8fee7](https://github.com/infinidysk/infinidysk/commit/ff8fee7167ae052e96dcb22da2e192019bcb8a9a))
-
-## [1.2.2](https://github.com/infinidysk/infinidysk/compare/v1.2.1...v1.2.2) (2026-08-22)
-
-
-### Bug Fixes
-
-* **deps:** Bump the npm-minor-and-patch group ([#1099](https://github.com/infinidysk/infinidysk/issues/1099)) ([04a52c5](https://github.com/infinidysk/infinidysk/commit/04a52c579c4cf1c25d6a73534700f2493cf25179))
-* **deps:** Bump the nuget-minor-and-patch group with 1 update ([#1100](https://github.com/infinidysk/infinidysk/issues/1100)) ([ffd1069](https://github.com/infinidysk/infinidysk/commit/ffd1069fb8e53b9515d4892e4169143f695fd28f))
-* **queue:** large NZBs no longer rejected with too many segments during import ([#1097](https://github.com/infinidysk/infinidysk/issues/1097)) ([43fc6d3](https://github.com/infinidysk/infinidysk/commit/43fc6d3737abd4f853dc48ddc2bb0a3e43b9f1b6))
-
-## [1.2.1](https://github.com/infinidysk/infinidysk/compare/v1.2.0...v1.2.1) (2026-08-21)
-
-
-### Bug Fixes
-
-* **api:** suppress EF Core per-query command logs ([#1095](https://github.com/infinidysk/infinidysk/issues/1095)) ([8b63233](https://github.com/infinidysk/infinidysk/commit/8b63233aedabfc18d07558ffab602f019505b12b))
-* **api:** suppress EF Core per-query command logs ([#1095](https://github.com/infinidysk/infinidysk/issues/1095)) ([405a22f](https://github.com/infinidysk/infinidysk/commit/405a22f0b47fa187849fd1f771cd02c14d3eddbb))
-* **auth:** keep UI sessions working after upgrades ([#1092](https://github.com/infinidysk/infinidysk/issues/1092)) ([dae1b29](https://github.com/infinidysk/infinidysk/commit/dae1b2959ac074c660c5476071e852dddd3548f2))
-* **db:** remove EF Core startup warnings ([#1096](https://github.com/infinidysk/infinidysk/issues/1096)) ([616c71d](https://github.com/infinidysk/infinidysk/commit/616c71d5e591501f03d6eaf287088c2fea9cbeee))
-* **ui:** provider cards show warm connection counts ([#1093](https://github.com/infinidysk/infinidysk/issues/1093)) ([79f34d0](https://github.com/infinidysk/infinidysk/commit/79f34d0f5c46bbdbf3b043b13612812f921435b0))
-
-## [1.2.0](https://github.com/infinidysk/infinidysk/compare/v1.1.2...v1.2.0) (2026-08-21)
-
-
-### Features
-
-* **api:** add opt-in interactive admin API reference ([#1010](https://github.com/infinidysk/infinidysk/issues/1010)) ([1925e8c](https://github.com/infinidysk/infinidysk/commit/1925e8c9f1917fb85faf2a9f505309ca470e5750))
-* **api:** admin errors return ProblemDetails operators can match to logs ([#1067](https://github.com/infinidysk/infinidysk/issues/1067)) ([e252f12](https://github.com/infinidysk/infinidysk/commit/e252f1276c9ad78bfdaa1396d8cfd7035570dc20))
-* **api:** versioned admin API contract keeps the UI in sync with backend routes ([#1069](https://github.com/infinidysk/infinidysk/issues/1069)) ([abc4c0c](https://github.com/infinidysk/infinidysk/commit/abc4c0c53bae26d5f943c0ec19422f87a2fe6911))
-* **arr:** show Sonarr/Radarr import health on the Overview dashboard ([#1054](https://github.com/infinidysk/infinidysk/issues/1054)) ([3e7cb83](https://github.com/infinidysk/infinidysk/commit/3e7cb83fcd7f995b425b938ad49c03281c0fb379))
-* **db:** optional PostgreSQL support for the main database ([#1013](https://github.com/infinidysk/infinidysk/issues/1013)) ([5099666](https://github.com/infinidysk/infinidysk/commit/509966689ce6e95e3671d3c4f3f3e8abe940bdd6))
-* **health:** add on-demand GC memory diagnostics ([#1005](https://github.com/infinidysk/infinidysk/issues/1005)) ([5f52db8](https://github.com/infinidysk/infinidysk/commit/5f52db85bfe79676adc5b6d85b953935cdd6a825))
-* **health:** expose Prometheus metrics for streaming and providers ([#1009](https://github.com/infinidysk/infinidysk/issues/1009)) ([d38b04f](https://github.com/infinidysk/infinidysk/commit/d38b04fc3bdac80251d3024c26ac2d054eaf6040))
-* **health:** health checks skip non-media files (images, subtitles, NFOs) ([#1001](https://github.com/infinidysk/infinidysk/issues/1001)) ([039eab9](https://github.com/infinidysk/infinidysk/commit/039eab9b35b76eddc6fb7c4d2257158a1f185e67))
-* **health:** keep known degraded gaps off Usenet providers ([#1055](https://github.com/infinidysk/infinidysk/issues/1055)) ([be76ffc](https://github.com/infinidysk/infinidysk/commit/be76ffcd72fd879c9c3803b3a931e7b6c82754d7))
-* **health:** keep slightly damaged videos playable instead of replacing the whole release ([#1035](https://github.com/infinidysk/infinidysk/issues/1035)) ([914a5d8](https://github.com/infinidysk/infinidysk/commit/914a5d85fa375b0f251bde1128962f754e1f6f31))
-* **health:** re-check library health after changing Usenet providers ([#1015](https://github.com/infinidysk/infinidysk/issues/1015)) ([11d14dc](https://github.com/infinidysk/infinidysk/commit/11d14dc3a73cf76c9863d2803bb23fbff0d9abe4))
-* **health:** repair missing articles in the background using PAR2 recovery data ([#1032](https://github.com/infinidysk/infinidysk/issues/1032)) ([a125fe2](https://github.com/infinidysk/infinidysk/commit/a125fe2332b7c52e3cd5d8747ed27c836809f6cd))
-* **health:** replace releases with unplayable corrupt data instead of serving silent gaps ([#1050](https://github.com/infinidysk/infinidysk/issues/1050)) ([45d8a9f](https://github.com/infinidysk/infinidysk/commit/45d8a9fc7bd7932d5d3561b6a897b066d013ba3b))
-* **health:** show deleted and repaired NZBs in the health UI ([#1004](https://github.com/infinidysk/infinidysk/issues/1004)) ([c7606de](https://github.com/infinidysk/infinidysk/commit/c7606de24610f140d736890b929fcd81bc99b275))
-* **queue:** audio-only NZBs now import instead of being rejected ([#1002](https://github.com/infinidysk/infinidysk/issues/1002)) ([4449bb2](https://github.com/infinidysk/infinidysk/commit/4449bb2774b4c85f54436dd9239e2337da3332c5))
-* **queue:** keep NZB uploads accessible while queue is active ([#1008](https://github.com/infinidysk/infinidysk/issues/1008)) ([6daf2d7](https://github.com/infinidysk/infinidysk/commit/6daf2d7cdd0aea950420af0183a453fe92476d51))
-* **queue:** recover missing articles using equivalent segments from other copies of the same release ([#1039](https://github.com/infinidysk/infinidysk/issues/1039)) ([4b36207](https://github.com/infinidysk/infinidysk/commit/4b3620700d68b3ca3eb00717026b9b089145e935))
-* **queue:** reorder waiting jobs with up/down controls ([#1007](https://github.com/infinidysk/infinidysk/issues/1007)) ([f3359ba](https://github.com/infinidysk/infinidysk/commit/f3359ba586052ecd1992e6d5e8caa0f1188635d2))
-* **ui:** choose the category when uploading NZBs from the queue page ([#1049](https://github.com/infinidysk/infinidysk/issues/1049)) ([5430cd1](https://github.com/infinidysk/infinidysk/commit/5430cd1dd0303f39da66a8ba0a3759f7ab8016af))
-* **ui:** search, filter, and sort queue and history ([#1006](https://github.com/infinidysk/infinidysk/issues/1006)) ([6683b9f](https://github.com/infinidysk/infinidysk/commit/6683b9f51ddc68e1711f25d505a38f05893afa43))
-* **usenet:** concurrent readers of the same file share one Usenet stream ([#1046](https://github.com/infinidysk/infinidysk/issues/1046)) ([df945d9](https://github.com/infinidysk/infinidysk/commit/df945d915ee95e30dead17f6797bb6f8750f7cbc))
-* **usenet:** preserve confirmed article misses across restarts ([#1028](https://github.com/infinidysk/infinidysk/issues/1028)) ([5689c90](https://github.com/infinidysk/infinidysk/commit/5689c902fa79f6f949ee76021b621a8589e88f16))
-* **usenet:** separate queue pipelining from streaming playback controls and add a configurable batch width ([#1030](https://github.com/infinidysk/infinidysk/issues/1030)) ([c1bf58c](https://github.com/infinidysk/infinidysk/commit/c1bf58c66e82d3a9e415b6ffd29509aa375901a6))
-
-
-### Bug Fixes
-
-* **api:** HTTP clients time out and the process shuts down within 5 seconds ([#1066](https://github.com/infinidysk/infinidysk/issues/1066)) ([c02c689](https://github.com/infinidysk/infinidysk/commit/c02c68924a55c45ebf31a5d0c2c6522d582c96b7))
-* **arr:** parse string event types in history responses ([#1056](https://github.com/infinidysk/infinidysk/issues/1056)) ([49a4e7a](https://github.com/infinidysk/infinidysk/commit/49a4e7ad26d795c22232313110fa69e9683301fc))
-* **db:** repair lowercase GUIDs so cleanup and file lookup stop missing rows ([#1076](https://github.com/infinidysk/infinidysk/issues/1076)) ([f70d191](https://github.com/infinidysk/infinidysk/commit/f70d1916642ee4152240a11e54924e1bc0d02db7))
-* **deps:** Bump github/codeql-action in the github-actions group ([#1079](https://github.com/infinidysk/infinidysk/issues/1079)) ([a62a9e8](https://github.com/infinidysk/infinidysk/commit/a62a9e82982bc271f290fffad366fc73c3c5a953))
-* **deps:** Bump the npm-minor-and-patch group ([#1078](https://github.com/infinidysk/infinidysk/issues/1078)) ([e840ae6](https://github.com/infinidysk/infinidysk/commit/e840ae62d459094fe014b0b3136d7ee887cc90aa))
-* **deps:** Bump the nuget-minor-and-patch group with 6 updates ([#1080](https://github.com/infinidysk/infinidysk/issues/1080)) ([52a2272](https://github.com/infinidysk/infinidysk/commit/52a227278518f742033e68f3fcdbde3abbbf8f3a))
-* **deps:** Bump zensical from 0.0.53 to 0.0.54 in the docs-python group ([#1077](https://github.com/infinidysk/infinidysk/issues/1077)) ([1f9f45b](https://github.com/infinidysk/infinidysk/commit/1f9f45b54e5fb34fab62170f51fe1fe4480e6b62))
-* **docker:** fail startup when the config directory is missing or unwritable ([#1058](https://github.com/infinidysk/infinidysk/issues/1058)) ([702565f](https://github.com/infinidysk/infinidysk/commit/702565f66914bbbf69f2dd96614202b5c22e6a06))
-* **health:** background health scans start correctly on dev and rc ([#1044](https://github.com/infinidysk/infinidysk/issues/1044)) ([be770a2](https://github.com/infinidysk/infinidysk/commit/be770a26b1fa0cfb833cfc492daef0a952f196d6))
-* **health:** Health page no longer shows a stuck initial scan pending banner ([#1085](https://github.com/infinidysk/infinidysk/issues/1085)) ([5c4a0ac](https://github.com/infinidysk/infinidysk/commit/5c4a0aca8f8c9524c39ef14c0d8d947925f45a2c))
-* **health:** PAR2 repair reconstructs files when source articles are corrupt ([#1060](https://github.com/infinidysk/infinidysk/issues/1060)) ([dc892bc](https://github.com/infinidysk/infinidysk/commit/dc892bce6c69d4c8b3c9b0523e20da3934aecfa1))
-* **nntp:** providers no longer benched for minutes by brief network hiccups ([#1018](https://github.com/infinidysk/infinidysk/issues/1018)) ([a3867e3](https://github.com/infinidysk/infinidysk/commit/a3867e31542f5eb7c81672884f38ffb1c71c68a5))
-* **queue:** stop grinding remaining RAR volumes after a header timeout ([#1059](https://github.com/infinidysk/infinidysk/issues/1059)) ([ef17d38](https://github.com/infinidysk/infinidysk/commit/ef17d38a7e45f09b6e29ecbf2de2a9fd4b761723))
-* resolve medium-severity CodeQL quality warnings ([#1081](https://github.com/infinidysk/infinidysk/issues/1081)) ([66f99d1](https://github.com/infinidysk/infinidysk/commit/66f99d1fd8a0c194b1dc942168b2807e5aac7639))
-* **sab:** queue and history panels no longer fail with server errors on PostgreSQL ([#1088](https://github.com/infinidysk/infinidysk/issues/1088)) ([678d429](https://github.com/infinidysk/infinidysk/commit/678d4298f317180ab7695ab977fc729ab3487f52))
-* **streams:** seeking and article retries no longer stall when Article RAM is full ([#1053](https://github.com/infinidysk/infinidysk/issues/1053)) ([d53ba5e](https://github.com/infinidysk/infinidysk/commit/d53ba5e37ae7dd009d6a666f3e675850017e01f7))
-* **ui:** play files from the web UI over plain HTTP ([#1037](https://github.com/infinidysk/infinidysk/issues/1037)) ([86a4468](https://github.com/infinidysk/infinidysk/commit/86a446869f7841dfab60171cbf53179d588e67df))
-* **ui:** queue provider labels no longer flicker during download progress ([#1016](https://github.com/infinidysk/infinidysk/issues/1016)) ([f062a04](https://github.com/infinidysk/infinidysk/commit/f062a04940af276bef03958cf30ea2fcbfb316a3))
-* **usenet:** log a single warning when a Usenet article is missing on every provider ([#1061](https://github.com/infinidysk/infinidysk/issues/1061)) ([9458ae5](https://github.com/infinidysk/infinidysk/commit/9458ae5eb7c629c2e8e254c723a8f3fcbcc44fb7))
-* **webdav:** paused or trickling clients no longer wedge all streaming ([#1052](https://github.com/infinidysk/infinidysk/issues/1052)) ([ad2a7ee](https://github.com/infinidysk/infinidysk/commit/ad2a7eebfd1898d2a5dc77def54fe5da0f28f580))
-* **webdav:** repair files that cannot seek through missing tail articles ([#1014](https://github.com/infinidysk/infinidysk/issues/1014)) ([9f544eb](https://github.com/infinidysk/infinidysk/commit/9f544ebfc0a3189d62fc1780adc1b90b14201ae0))
-* **webdav:** serve tail seeks from lazy RAR volumes ([#1087](https://github.com/infinidysk/infinidysk/issues/1087)) ([a529699](https://github.com/infinidysk/infinidysk/commit/a529699edcdfccd111e6175cd2a367dd92725b08))
-* **webdav:** serve the WebDAV README through the UI port and freeze HTTP contracts ([#1072](https://github.com/infinidysk/infinidysk/issues/1072)) ([8c16695](https://github.com/infinidysk/infinidysk/commit/8c16695e9e99c3ff27e1f0b3468d4e5592604861))
-
-
-### Performance Improvements
-
-* **nntp:** decode yEnc body data in buffered batches ([#1082](https://github.com/infinidysk/infinidysk/issues/1082)) ([104beec](https://github.com/infinidysk/infinidysk/commit/104beec1493cb966900461ce160c345bce0e592e))
-* **queue:** keep playback smooth during import bursts by parsing RAR/7z archive headers asynchronously ([#1040](https://github.com/infinidysk/infinidysk/issues/1040)) ([48013a2](https://github.com/infinidysk/infinidysk/commit/48013a2e9255d1bebac4a03d2e5f65afa3879394))
-* **streams:** lower streaming memory use with bounded 256 KB segment buffers ([#1042](https://github.com/infinidysk/infinidysk/issues/1042)) ([fb498be](https://github.com/infinidysk/infinidysk/commit/fb498beaf18f9d3b772554aedefc520254954695))
-* **usenet:** accelerate playback starts and sustained streaming ([#1029](https://github.com/infinidysk/infinidysk/issues/1029)) ([84274ca](https://github.com/infinidysk/infinidysk/commit/84274ca952a4fa0b9bb61bd2ce5122d10b5787c8))
-
-
-### Refactors
-
-* **api:** keep queue and WebDAV independent of admin API controllers ([#1070](https://github.com/infinidysk/infinidysk/issues/1070)) ([54c6afd](https://github.com/infinidysk/infinidysk/commit/54c6afd7ccc19686ffe92d3d65680ea89624bf52))
-
-## [1.1.2](https://github.com/infinidysk/infinidysk/compare/v1.1.1...v1.1.2) (2026-08-15)
-
-
-### Bug Fixes
-
-* **auth:** reset admin password via RESET_ADMIN_PASSWORD environment variable ([#998](https://github.com/infinidysk/infinidysk/issues/998)) ([d39d7e2](https://github.com/infinidysk/infinidysk/commit/d39d7e23a145c466e68ad0a36e6e6e832bee8c7b))
-* **deps:** Bump the npm-minor-and-patch group ([#994](https://github.com/infinidysk/infinidysk/issues/994)) ([589e6bf](https://github.com/infinidysk/infinidysk/commit/589e6bfa28b05edae79a3c8d45fa169fd43b8190))
-* **repair:** streaming failure repair now shows when Background Repairs must be enabled ([#999](https://github.com/infinidysk/infinidysk/issues/999)) ([394d85d](https://github.com/infinidysk/infinidysk/commit/394d85d552391b3f21d10aabd1c13cddf33b1099))
-* **ui:** delete Explore items whose names contain percent sequences ([#995](https://github.com/infinidysk/infinidysk/issues/995)) ([ac7af97](https://github.com/infinidysk/infinidysk/commit/ac7af97901990bd680385e47f8d806d898649138))
-
-## [1.1.1](https://github.com/infinidysk/infinidysk/compare/v1.1.0...v1.1.1) (2026-08-14)
-
-
-### Bug Fixes
-
-* default NZB retrieve User-Agent to SABnzbd/5.1.0 ([#986](https://github.com/infinidysk/infinidysk/issues/986)) ([c932811](https://github.com/infinidysk/infinidysk/commit/c9328112f921e4101b263af80d05bbececd9eb08))
-* **deps:** Bump the npm-minor-and-patch group ([#993](https://github.com/infinidysk/infinidysk/issues/993)) ([22c5d46](https://github.com/infinidysk/infinidysk/commit/22c5d463801015ef0ff9062784a4db841e018487))
-* **deps:** Bump zensical from 0.0.52 to 0.0.53 in the docs-python group ([#992](https://github.com/infinidysk/infinidysk/issues/992)) ([8680e6f](https://github.com/infinidysk/infinidysk/commit/8680e6fad42193def08446ec05561a7e41e8a1ec))
-* **health:** orphan cleanup no longer treats imported files as missing when Library Directory is the mount ([#991](https://github.com/infinidysk/infinidysk/issues/991)) ([49b58e1](https://github.com/infinidysk/infinidysk/commit/49b58e1eae1db7888fc040f1981d21c07b17465c))
-* **queue:** stalled downloads now fail so Sonarr can re-grab them ([#989](https://github.com/infinidysk/infinidysk/issues/989)) ([a10a45f](https://github.com/infinidysk/infinidysk/commit/a10a45fab2dc019e8977810f883dd640a208b2ca))
-* **ui:** maintenance task status no longer bleeds between Remove Orphaned Files and Prune Completed History ([#983](https://github.com/infinidysk/infinidysk/issues/983)) ([e89d6ca](https://github.com/infinidysk/infinidysk/commit/e89d6ca14e21c4bb08c66599f58b2c5a5e1234de))
-* **webdav:** /ready no longer returns 4XX instead of the readiness status ([#982](https://github.com/infinidysk/infinidysk/issues/982)) ([3650c60](https://github.com/infinidysk/infinidysk/commit/3650c6015ffe36017a3b3bfcacc4a3dd6f623a18))
-
-## [1.1.0](https://github.com/infinidysk/infinidysk/compare/v1.0.1...v1.1.0) (2026-08-13)
-
-
-### Features
-
-* **ci:** add rolling dev release with archives to Refresh :dev workflow ([#945](https://github.com/infinidysk/infinidysk/issues/945)) ([c30aa25](https://github.com/infinidysk/infinidysk/commit/c30aa25cf5669178469d3083f13dae7132368691))
-* **db:** limit metrics database growth on high-throughput hosts ([#932](https://github.com/infinidysk/infinidysk/issues/932)) ([0167bb2](https://github.com/infinidysk/infinidysk/commit/0167bb2d8f3f5a3e1b40563fb4c663783913822c))
-* **indexers:** Prowlarr-managed indexers (pull) ([#944](https://github.com/infinidysk/infinidysk/issues/944)) ([de7fb55](https://github.com/infinidysk/infinidysk/commit/de7fb5561fdd630b0ad06d51ed5423d83aa124f2))
-* **queue:** automatically recover queue items that stop making progress ([#934](https://github.com/infinidysk/infinidysk/issues/934)) ([2989216](https://github.com/infinidysk/infinidysk/commit/2989216fc2f3173f70837fc8cb1882853e21256e))
-* **queue:** bulk pause, retry, category, and clear actions on queue and history ([#939](https://github.com/infinidysk/infinidysk/issues/939)) ([de09c02](https://github.com/infinidysk/infinidysk/commit/de09c02964af62e95abd59add0b17ff1cd0c8530))
-* **queue:** normalize obfuscated video filenames so Radarr/Sonarr can import them ([#937](https://github.com/infinidysk/infinidysk/issues/937)) ([e5e4ee4](https://github.com/infinidysk/infinidysk/commit/e5e4ee437c5d1df65a24f658e8ca2d158af63900))
-* **sab:** show remaining time and speed for Sonarr/Radarr downloads ([#981](https://github.com/infinidysk/infinidysk/issues/981)) ([ff725b1](https://github.com/infinidysk/infinidysk/commit/ff725b18492ede2883c760331e16814e7508a994))
-* **sab:** support server_stats and warnings so mobile SAB clients can connect ([#935](https://github.com/infinidysk/infinidysk/issues/935)) ([63bcf6f](https://github.com/infinidysk/infinidysk/commit/63bcf6ffbd2f5f760e32ff13025a80f6d3c4970b))
-* **ui:** play media in-app from Files with auto-resume and playback diagnostics ([#947](https://github.com/infinidysk/infinidysk/issues/947)) ([c82bcfb](https://github.com/infinidysk/infinidysk/commit/c82bcfbde33b4e3c1bac2043ba5d4bd1177de6aa))
-* **webdav:** allow clearing completed-symlinks via WebDAV delete and a new maintenance task ([#930](https://github.com/infinidysk/infinidysk/issues/930)) ([b6211eb](https://github.com/infinidysk/infinidysk/commit/b6211ebd0f8e51de26874d303e9fbfa48041321f))
-
-
-### Bug Fixes
-
-* **api:** let request-abort cancellation escape play handler and pre-verify ([f63fd03](https://github.com/infinidysk/infinidysk/commit/f63fd032f92d1c82414561dff48cfd9a7efa2609))
-* **api:** resolve CodeQL path-injection and user-controlled-bypass findings ([#917](https://github.com/infinidysk/infinidysk/issues/917)) ([0a469d6](https://github.com/infinidysk/infinidysk/commit/0a469d69a42f6763ddc9fe0e0aacb759880597c0))
-* **arr:** reliably trigger Sonarr/Radarr replacement searches after repairing unplayable files ([#925](https://github.com/infinidysk/infinidysk/issues/925)) ([4631184](https://github.com/infinidysk/infinidysk/commit/463118448267a5a4bc0a58367b76ec068b5e1f3c))
-* **ci:** attach only stable-named archives to the rolling dev release ([#959](https://github.com/infinidysk/infinidysk/issues/959)) ([a24f78b](https://github.com/infinidysk/infinidysk/commit/a24f78b5d9d37d838d53ec319e7ccf45e1f6a900))
-* **db:** all-time bandwidth totals no longer shrink when old metrics are pruned ([#928](https://github.com/infinidysk/infinidysk/issues/928)) ([3b9d271](https://github.com/infinidysk/infinidysk/commit/3b9d2716db307b8feda6a8f8e2460959fd101a72))
-* **db:** corrupt database now gets clear recovery guidance instead of endless stack traces ([#943](https://github.com/infinidysk/infinidysk/issues/943)) ([87cd91b](https://github.com/infinidysk/infinidysk/commit/87cd91b5a2be6ebcc42070ba4e047538379c3857))
-* **db:** log a clear ownership error instead of crash-looping with exit 134 when config files are unreadable ([#958](https://github.com/infinidysk/infinidysk/issues/958)) ([f9f2ca6](https://github.com/infinidysk/infinidysk/commit/f9f2ca6ff6d0e745ec1468dd9608db6db32a8a09))
-* **deps:** Bump daisyui in /frontend in the npm-minor-and-patch group ([#904](https://github.com/infinidysk/infinidysk/issues/904)) ([7d20c7d](https://github.com/infinidysk/infinidysk/commit/7d20c7d61eff3aa869606ebe57ba580a13bf16c2))
-* **deps:** Bump github/codeql-action in the github-actions group ([#962](https://github.com/infinidysk/infinidysk/issues/962)) ([ae4bbea](https://github.com/infinidysk/infinidysk/commit/ae4bbeac1575b99be379c17108e4a6d3c8387bc9))
-* **deps:** Bump the npm-minor-and-patch group ([#960](https://github.com/infinidysk/infinidysk/issues/960)) ([90903c7](https://github.com/infinidysk/infinidysk/commit/90903c7080775f5b114d29ebf99df66defbbfac6))
-* dispose HttpRequestMessage instances in Arr and Rclone clients ([2b9fea5](https://github.com/infinidysk/infinidysk/commit/2b9fea56f87c939afcafe9239fd9df519d10b70a))
-* **explore:** deleting files from Explore now keeps history, caches, and symlinks consistent ([#940](https://github.com/infinidysk/infinidysk/issues/940)) ([afdfc35](https://github.com/infinidysk/infinidysk/commit/afdfc3543953ee1a9669b80f2a04a22f12db72ad))
-* guard nullable dereferences flagged by code quality analysis ([fee498a](https://github.com/infinidysk/infinidysk/commit/fee498a97b9b6011e5a89ef475fbd57cb1b29d11))
-* let shutdown cancellation escape per-item service loops ([855d842](https://github.com/infinidysk/infinidysk/commit/855d84208b882b59dc52fccc501947cd1748b101))
-* **par2:** propagate cancellation instead of returning partial parse ([8e42832](https://github.com/infinidysk/infinidysk/commit/8e42832dae52a7073a2965653efcc3a3d7a5a26c))
-* prevent integer overflow before double conversion in sampling math ([dcb95b2](https://github.com/infinidysk/infinidysk/commit/dcb95b2f39b4caac8784a9f45af05d4494bbd1d6))
-* prevent Path.Combine from silently dropping base directories ([4490098](https://github.com/infinidysk/infinidysk/commit/4490098fee4c9116fa5d973faf8f2a44e2d53869))
-* **queue:** mount every episode from season packs of split video files ([#977](https://github.com/infinidysk/infinidysk/issues/977)) ([7f7f0ad](https://github.com/infinidysk/infinidysk/commit/7f7f0adf9742848b7a97428f5f1c7d3e7ddfe46e))
-* **queue:** queue items no longer stall and cancel at 50% on obfuscated releases ([#974](https://github.com/infinidysk/infinidysk/issues/974)) ([4c2657f](https://github.com/infinidysk/infinidysk/commit/4c2657fb4a80ee87bd3f2b122f218f6f1402d8bd))
-* **queue:** season packs with per-episode par2 files now get correct episode filenames ([#941](https://github.com/infinidysk/infinidysk/issues/941)) ([4c1a605](https://github.com/infinidysk/infinidysk/commit/4c1a6056ec940044c0e6f304a1b26438d1c7069b))
-* **rclone:** mounts no longer show stale files after a temporary rclone outage ([#923](https://github.com/infinidysk/infinidysk/issues/923)) ([ecd06ab](https://github.com/infinidysk/infinidysk/commit/ecd06ab51101136d50b9bef2ed4fbf36afd055c1))
-* resolve code-quality findings — resource leaks, null safety, and cancellation handling ([32ba80e](https://github.com/infinidysk/infinidysk/commit/32ba80eae99cffdd5b7d69e17ede0ee6d3ea743f))
-* **sab:** queue and history no longer return empty when clients send limit=0 ([#924](https://github.com/infinidysk/infinidysk/issues/924)) ([d4b90cc](https://github.com/infinidysk/infinidysk/commit/d4b90cca6fea83f81b7aa57999e3df690cccfd90))
-* **sab:** return 400 for malformed nzo_ids in history requests ([#921](https://github.com/infinidysk/infinidysk/issues/921)) ([21df339](https://github.com/infinidysk/infinidysk/commit/21df339abf14fc2a0a0c2b06b93223f4fc7b6c86))
-* **sharpcompress:** resolve CodeQL findings in zstd unsafe code and buffer pool tests ([#920](https://github.com/infinidysk/infinidysk/issues/920)) ([2ad35b6](https://github.com/infinidysk/infinidysk/commit/2ad35b6645bb00f4e3f20f3b5999fc563e50da35))
-* **sharpcompress:** stop 7z archives with empty files crashing processing ([#952](https://github.com/infinidysk/infinidysk/issues/952)) ([4c4a3d9](https://github.com/infinidysk/infinidysk/commit/4c4a3d92a0e13755f4b80082a5fb3b24df9e16e2)), closes [#948](https://github.com/infinidysk/infinidysk/issues/948)
-* simplify constant conditions and redundant LINQ in queue and Arr clients ([91f4b6f](https://github.com/infinidysk/infinidysk/commit/91f4b6fc7a86a2faedb76d0e0daa43baeceda584))
-* **support:** support pack fields now use consistent camelCase names ([#903](https://github.com/infinidysk/infinidysk/issues/903)) ([4a39e11](https://github.com/infinidysk/infinidysk/commit/4a39e11716df0221a8f6003e6da3dee521c0f193))
-* **ui:** accept empty-string dropdown values and normalize empty categories ([#972](https://github.com/infinidysk/infinidysk/issues/972)) ([9d187ee](https://github.com/infinidysk/infinidysk/commit/9d187ee5b2d0d5ab83c66e5374ed9ca9c8c60a9f)), closes [#970](https://github.com/infinidysk/infinidysk/issues/970)
-* **ui:** plain HTTP requests to /ws now get a clean 426 and a proxy hint instead of a stack trace ([#957](https://github.com/infinidysk/infinidysk/issues/957)) ([cab5f4c](https://github.com/infinidysk/infinidysk/commit/cab5f4c3251c9816542b6be44c8d984bebc7acec))
-* **ui:** player checks the source before reporting a file as unplayable; missing payloads no longer 500 or trigger repair ([#963](https://github.com/infinidysk/infinidysk/issues/963)) ([1102737](https://github.com/infinidysk/infinidysk/commit/11027372492777449acb4a60736cf06c89042b4f))
-* **ui:** player now says which codec your browser is missing instead of blaming the file type ([#955](https://github.com/infinidysk/infinidysk/issues/955)) ([3f7a0f2](https://github.com/infinidysk/infinidysk/commit/3f7a0f23ecbdec4c3a469fcf6560b35b6c922c66))
-* **ui:** show the real error instead of looping "Connecting to InfiniDysk" when a page fails to load ([#975](https://github.com/infinidysk/infinidysk/issues/975)) ([663b6f1](https://github.com/infinidysk/infinidysk/commit/663b6f1ae7f1ee1c1a28b9378d75eee6ba8a072a))
-* **usenet:** providers stop flapping at 60-second cooldowns when health checks run ([#885](https://github.com/infinidysk/infinidysk/issues/885)) ([e779551](https://github.com/infinidysk/infinidysk/commit/e779551bcd96669c463cf116ad8b34122114a09d)), closes [#881](https://github.com/infinidysk/infinidysk/issues/881)
-* **usenet:** stop 502 connection-limit retry loops by learning the provider's real connection cap ([#916](https://github.com/infinidysk/infinidysk/issues/916)) ([e0c8a1b](https://github.com/infinidysk/infinidysk/commit/e0c8a1b777a96c61b3dc882a43f3fe0a95cd3dc0))
-* **usenet:** stop prefetch batch size from flapping during bursty reads ([#933](https://github.com/infinidysk/infinidysk/issues/933)) ([c353999](https://github.com/infinidysk/infinidysk/commit/c3539993eb6a0dd9f4556b71822c0f2170231bb3))
-* **watchtower:** propagate caller cancellation in episode enumeration ([24f2d07](https://github.com/infinidysk/infinidysk/commit/24f2d07bf8ad0e8912b7c1a0526cb810e22f23e6))
-* **webdav:** directory listings no longer appear empty in rclone v1.74+ ([#927](https://github.com/infinidysk/infinidysk/issues/927)) ([e2e744e](https://github.com/infinidysk/infinidysk/commit/e2e744e574123f44a57ea6e82345e3a3b9642671))
-* **webdav:** return valid HTTP-date timestamps for virtual .ids directories ([#967](https://github.com/infinidysk/infinidysk/issues/967)) ([e9014aa](https://github.com/infinidysk/infinidysk/commit/e9014aa6a75891f610ad138259212ade370170ef)), closes [#965](https://github.com/infinidysk/infinidysk/issues/965)
-* **webdav:** Sonarr/Radarr imports no longer fail with "Permission denied" on default settings ([#961](https://github.com/infinidysk/infinidysk/issues/961)) ([f2ab8f0](https://github.com/infinidysk/infinidysk/commit/f2ab8f0f656baff038e4cbfc76e2d222c422580c))
-* **webdav:** stop duplicate missing-article warnings for filenames with accented characters ([#926](https://github.com/infinidysk/infinidysk/issues/926)) ([6c4d998](https://github.com/infinidysk/infinidysk/commit/6c4d99812f45e0f6d63cc25e31dfe374f7816c5d))
-* **webdav:** streams that end early no longer trigger unhandled Kestrel errors ([#968](https://github.com/infinidysk/infinidysk/issues/968)) ([d76189a](https://github.com/infinidysk/infinidysk/commit/d76189adb135e5a7e62f373d9504d89900a23cff))
-* **webdav:** write-stall watchdog timeouts no longer mislabeled as backend read deadlines in logs ([#951](https://github.com/infinidysk/infinidysk/issues/951)) ([49e2a8a](https://github.com/infinidysk/infinidysk/commit/49e2a8a8b2655b06674bd030e8baaa7ffaf6609d))
-
-## [1.0.1](https://github.com/infinidysk/infinidysk/compare/v1.0.0...v1.0.1) (2026-08-09)
-
-
-### Features
-
-* **queue:** allow up to 10 concurrent queue downloads ([#879](https://github.com/infinidysk/infinidysk/issues/879)) ([46cf29d](https://github.com/infinidysk/infinidysk/commit/46cf29d9c6eb96a52bccf7074f5c341ec577dc83))
-
-
-### Bug Fixes
-
-* **build:** attach legacy nzbdav-named release archives for DUMB compat ([#877](https://github.com/infinidysk/infinidysk/issues/877)) ([b8c3ba0](https://github.com/infinidysk/infinidysk/commit/b8c3ba0ae31a8bfe5eec6fbeeba3e4dd2a9fc125))
-* **deps:** Bump the npm-minor-and-patch group ([#875](https://github.com/infinidysk/infinidysk/issues/875)) ([2e1ea34](https://github.com/infinidysk/infinidysk/commit/2e1ea34006a8b257950fcd6f5d0307402c5e41d1))
-* **streaming:** Article RAM no longer stays pinned at the cap after scrubbing ([#876](https://github.com/infinidysk/infinidysk/issues/876)) ([b2617d2](https://github.com/infinidysk/infinidysk/commit/b2617d2e26338cf9768adadc6663cddce7b707f3))
-* **ui:** normalize provider usage join keys to MetricsKey form ([#871](https://github.com/infinidysk/infinidysk/issues/871)) ([a45f622](https://github.com/infinidysk/infinidysk/commit/a45f622c3cd6fff0d0e9853af94a305c727cf953))
-* **usenet:** fetch errors now show their real cause instead of "Other (unclassified)" ([#878](https://github.com/infinidysk/infinidysk/issues/878)) ([45d27cf](https://github.com/infinidysk/infinidysk/commit/45d27cfda76728d445365bf160ed11f6b2dc1d98))
-
-
-### Chores
-
-* force patch release 1.0.1 ([#880](https://github.com/infinidysk/infinidysk/issues/880)) ([2b3b466](https://github.com/infinidysk/infinidysk/commit/2b3b466e3f7eadc83621a82bb1c3560f724483d1))
-
-## [1.0.0](https://github.com/infinidysk/infinidysk/compare/v0.10.0...v1.0.0) (2026-08-07)
-
-
-### ⚠ BREAKING CHANGES
-
-* **build:** GitHub release asset filenames and rolling rc download URLs now use the infinidysk- prefix instead of nzbdav-.
-* the canonical container image moved to ghcr.io/infinidysk/infinidysk (mirror: docker.io/infinidysk/infinidysk). The old ghcr.io/nzbdav/nzbdav path keeps receiving releases during a transition period and old tags stay pullable, but operators should switch the image name; /config and all settings carry over unchanged.
-
-### Features
-
-* **docker:** dual-publish images to the legacy ghcr.io/nzbdav/nzbdav namespace ([#826](https://github.com/infinidysk/infinidysk/issues/826)) ([f0f6d75](https://github.com/infinidysk/infinidysk/commit/f0f6d75d55193285483ec5a508e69587e077586b))
-* rename project to InfiniDysk ([#828](https://github.com/infinidysk/infinidysk/issues/828)) ([a932924](https://github.com/infinidysk/infinidysk/commit/a93292470149ec463ba06ed2aea0016c3fde6255))
-
-
-### Bug Fixes
-
-* **build:** keep dev images on the dev update track ([#845](https://github.com/infinidysk/infinidysk/issues/845)) ([5554750](https://github.com/infinidysk/infinidysk/commit/5554750bc868967f2f273a48a5d8ba8514ad4e85))
-* **build:** rename release archives to infinidysk ([#833](https://github.com/infinidysk/infinidysk/issues/833)) ([7025741](https://github.com/infinidysk/infinidysk/commit/7025741b5ba0ba10407516572d7ea3f0d4a86fda))
-* **deps:** Bump the github-actions group with 3 updates ([#838](https://github.com/infinidysk/infinidysk/issues/838)) ([a53e4e6](https://github.com/infinidysk/infinidysk/commit/a53e4e62482a91399b9344096f6c63262eee08df))
-* **deps:** Bump the npm-minor-and-patch group ([#837](https://github.com/infinidysk/infinidysk/issues/837)) ([dc14fc2](https://github.com/infinidysk/infinidysk/commit/dc14fc2e16967314484367fb08cef366c2ef1b94))
-* **deps:** Bump the npm-minor-and-patch group ([#867](https://github.com/infinidysk/infinidysk/issues/867)) ([07a8eac](https://github.com/infinidysk/infinidysk/commit/07a8eacd8feb89ccb2bb9067fcbc5b0e26d26059))
-* **deps:** Bump zensical from 0.0.51 to 0.0.52 in the docs-python group ([#866](https://github.com/infinidysk/infinidysk/issues/866)) ([94eb76d](https://github.com/infinidysk/infinidysk/commit/94eb76d1b8c906bc567dec51a11e316cca2861d0))
-* **docker:** publish dev images with release candidates ([#834](https://github.com/infinidysk/infinidysk/issues/834)) ([26a449e](https://github.com/infinidysk/infinidysk/commit/26a449e1de43b75e92b004bd58cbb1ab276e40cb))
-* **health:** stalled library checks release provider resources ([#844](https://github.com/infinidysk/infinidysk/issues/844)) ([53fe5f6](https://github.com/infinidysk/infinidysk/commit/53fe5f6c48ab82a10d52099cedd962aafe385814))
-* **nntp:** slow providers stay sidelined for their full cooldown ([#842](https://github.com/infinidysk/infinidysk/issues/842)) ([42aefdd](https://github.com/infinidysk/infinidysk/commit/42aefdd4793e152d8f6356ecf5a7e99a8c068674))
-* **sab:** prevent unsafe backup paths and play redirects ([#847](https://github.com/infinidysk/infinidysk/issues/847)) ([731c31e](https://github.com/infinidysk/infinidysk/commit/731c31e9fae478ba7032c8a83f68b2d1d2cee923))
-* **streaming:** reserve article memory before download admission ([#843](https://github.com/infinidysk/infinidysk/issues/843)) ([03d5378](https://github.com/infinidysk/infinidysk/commit/03d5378595c34fad2d4426c9d58bb6e1b88e2ae3))
-* **ui:** explain unavailable stale explore links ([#846](https://github.com/infinidysk/infinidysk/issues/846)) ([5f13efa](https://github.com/infinidysk/infinidysk/commit/5f13efa7ccdaa02671aeb96d2e36b0ae99d91628))
-* **ui:** join provider usage stats by identity during cascade reorder ([#869](https://github.com/infinidysk/infinidysk/issues/869)) ([ed8de9d](https://github.com/infinidysk/infinidysk/commit/ed8de9db4cc33be6b15663bb48c545cf767d95bc))
-
-## [0.10.0](https://github.com/nzbdav/nzbdav/compare/v0.9.5...v0.10.0) (2026-08-05)
-
-
-### ⚠ BREAKING CHANGES
-
-* **migration:** anyone on a pre-release :dev image with an existing /config/usenet-migration.db must delete that disposable file once so the squashed migration history can apply cleanly. Mounted content is unaffected.
-* **auth:** The migration removes duplicate admin rows, retaining the earliest account, before enforcing the single-admin invariant. Back up /config before upgrading.
-
-### Features
-
-* **auth:** sign in with OIDC and mapped access roles ([#749](https://github.com/nzbdav/nzbdav/issues/749)) ([eb72813](https://github.com/nzbdav/nzbdav/commit/eb728135b392c04fc864a6537c4457a62962cfc7))
-* **ci:** download ready-to-run Linux builds from each release ([#814](https://github.com/nzbdav/nzbdav/issues/814)) ([a0a258e](https://github.com/nzbdav/nzbdav/commit/a0a258e49f833fbf485ecae8bee765b3883c95c9))
-* **health:** detect stuck streaming readiness ([#755](https://github.com/nzbdav/nzbdav/issues/755)) ([e58db3b](https://github.com/nzbdav/nzbdav/commit/e58db3b5c1c1749ad550173efbc8bb239534cc69))
-* introduce InfiniDysk pre-move branding ([#810](https://github.com/nzbdav/nzbdav/issues/810)) ([15490a6](https://github.com/nzbdav/nzbdav/commit/15490a656015a24e252445030cee143112aee85c))
-* **migration:** guided Altmount to NzbDAV migration wizard ([#717](https://github.com/nzbdav/nzbdav/issues/717)) ([1bf94bd](https://github.com/nzbdav/nzbdav/commit/1bf94bd3a88f7c7b0de9f3c9265e10fc44c8990f))
-* **queue:** stop sample videos being imported by Sonarr and Radarr ([#801](https://github.com/nzbdav/nzbdav/issues/801)) ([e8764fa](https://github.com/nzbdav/nzbdav/commit/e8764fac9895b2c029dea890f209e01121fa2153))
-* **ui:** add service provider supportUrl and powered-by footer ([#778](https://github.com/nzbdav/nzbdav/issues/778)) ([1b6b4d6](https://github.com/nzbdav/nzbdav/commit/1b6b4d60f1d4de9ee0ffa5834a43f095c9da0b0c))
-* **ui:** compare per-provider download speeds on Overview ([#750](https://github.com/nzbdav/nzbdav/issues/750)) ([b4d5f16](https://github.com/nzbdav/nzbdav/commit/b4d5f16edae3c33a3498a3848beab3969634a1fb))
-* **ui:** let hosting providers disable specific features ([#772](https://github.com/nzbdav/nzbdav/issues/772)) ([a4124ab](https://github.com/nzbdav/nzbdav/commit/a4124ab326f26e5fbd81cbe6a092fb33cfb4aa1b))
-* **ui:** native URL_BASE support for sub-path hosting ([#818](https://github.com/nzbdav/nzbdav/issues/818)) ([caeeb47](https://github.com/nzbdav/nzbdav/commit/caeeb474092fa79ca5199ac745d5b54859027522))
-* **ui:** streamline Usenet provider cards ([#752](https://github.com/nzbdav/nzbdav/issues/752)) ([c977ce1](https://github.com/nzbdav/nzbdav/commit/c977ce185b23cd05b486ddc6878734855185937d))
-* **usenet:** enable container-aware gap fill by default ([#820](https://github.com/nzbdav/nzbdav/issues/820)) ([cf46860](https://github.com/nzbdav/nzbdav/commit/cf468605edd70845e9eaca5481def6e6a9b084b8))
-* **usenet:** prevent playback desync and add experimental container-aware gap fill ([#802](https://github.com/nzbdav/nzbdav/issues/802)) ([9a8152b](https://github.com/nzbdav/nzbdav/commit/9a8152bf0d46aca0d510f3cff1149dd84bd39c3b))
-* **webdav:** downloads and streams from .ids links use the real filename instead of an id ([#816](https://github.com/nzbdav/nzbdav/issues/816)) ([48cdb05](https://github.com/nzbdav/nzbdav/commit/48cdb050ad36a484e79d4dd46e8dfba0bf4f6d23))
-
-
-### Bug Fixes
-
-* **api:** resolve saved keys for indexer connection tests ([#819](https://github.com/nzbdav/nzbdav/issues/819)) ([8bc4d06](https://github.com/nzbdav/nzbdav/commit/8bc4d06998f1e5b7a671650b7421b573c3f58f36))
-* **assets:** preserve InfiniDysk images as binary files ([#812](https://github.com/nzbdav/nzbdav/issues/812)) ([52328f6](https://github.com/nzbdav/nzbdav/commit/52328f65cd4cb1a342d14584ea41244f05219134))
-* **auth:** prevent concurrent onboarding from creating multiple admins ([#740](https://github.com/nzbdav/nzbdav/issues/740)) ([22913ef](https://github.com/nzbdav/nzbdav/commit/22913efdb1a26a2f5306ec2824b41bbfd2a941a0))
-* **build:** declare backend rapidyenc project reference ([#797](https://github.com/nzbdav/nzbdav/issues/797)) ([bb7c1c9](https://github.com/nzbdav/nzbdav/commit/bb7c1c9c04ed09010fd4c66c6f0d3f9d6dc5f2ad))
-* **build:** restore DUMB startup after rapidyenc vendoring ([#796](https://github.com/nzbdav/nzbdav/issues/796)) ([eb54fc3](https://github.com/nzbdav/nzbdav/commit/eb54fc3061ad86f81bd5dcf933bd7e937130e3a6))
-* **deps:** Bump docker/login-action in the github-actions group ([#792](https://github.com/nzbdav/nzbdav/issues/792)) ([8086f3a](https://github.com/nzbdav/nzbdav/commit/8086f3adc2fb8f3d731694dfe7d3f72f9ee33900))
-* **deps:** Bump ip-address from 10.2.0 to 10.4.0 in /frontend ([#804](https://github.com/nzbdav/nzbdav/issues/804)) ([b8c37c9](https://github.com/nzbdav/nzbdav/commit/b8c37c9cabf991147bf05d6da3f39003706f678a))
-* **deps:** Bump jsdom from 29.1.1 to 30.0.0 in /frontend ([#790](https://github.com/nzbdav/nzbdav/issues/790)) ([af8aa7b](https://github.com/nzbdav/nzbdav/commit/af8aa7bb578d6e88a6f9c9eabf021f2226ce6bee))
-* **deps:** Bump the npm-minor-and-patch group ([#789](https://github.com/nzbdav/nzbdav/issues/789)) ([da9dc48](https://github.com/nzbdav/nzbdav/commit/da9dc487f19374bb1da3d55a3eb29900e9b56100))
-* **deps:** Bump the nuget-minor-and-patch group with 1 update ([#791](https://github.com/nzbdav/nzbdav/issues/791)) ([53397e9](https://github.com/nzbdav/nzbdav/commit/53397e95b1424be311c5248573839b61ddc8a1b6))
-* **deps:** npm audit fix ([ddea118](https://github.com/nzbdav/nzbdav/commit/ddea1180430bdf8b88882120956085547947d51c))
-* **nntp:** initialize rapidyenc dispatch before concurrent Usenet work ([#793](https://github.com/nzbdav/nzbdav/issues/793)) ([3e0b2da](https://github.com/nzbdav/nzbdav/commit/3e0b2dac6329e266ea162e8ab69db86208dfbea0))
-* **nntp:** recover circuit-tripped providers automatically ([#811](https://github.com/nzbdav/nzbdav/issues/811)) ([d0887ba](https://github.com/nzbdav/nzbdav/commit/d0887ba9027a03023652c87ab7c5eaafa5f4023f))
-* **nntp:** return the connection when a body is left unread ([#785](https://github.com/nzbdav/nzbdav/issues/785)) ([8140153](https://github.com/nzbdav/nzbdav/commit/81401539bf60001706cb8ec1288e7a5f9fcbbdd5))
-* post-merge follow-ups — stale dashboard stats, faster provider failover, safer feature gating and import seeking ([#779](https://github.com/nzbdav/nzbdav/issues/779)) ([993c49d](https://github.com/nzbdav/nzbdav/commit/993c49de8d9059bb8711ab303f8bc4d7bff26355))
-* **ui:** compare :dev images against the movable dev tag ([#803](https://github.com/nzbdav/nzbdav/issues/803)) ([afd8686](https://github.com/nzbdav/nzbdav/commit/afd8686aaa177a96f81eef1dd759222426c59f17))
-* **ui:** selection ticks, swallowed clicks, and a hidden menu in the file browser ([#775](https://github.com/nzbdav/nzbdav/issues/775)) ([b68ec3d](https://github.com/nzbdav/nzbdav/commit/b68ec3d38eafd53f4740cfe4a4344a3b5906c735))
-* **usenet:** keep provider usage totals across restarts on env-only configs ([#795](https://github.com/nzbdav/nzbdav/issues/795)) ([551d8e5](https://github.com/nzbdav/nzbdav/commit/551d8e5fb6b8266e1656dbd48cb44728fa173414))
-* **usenet:** prevent unreachable providers from stalling concurrent requests ([#771](https://github.com/nzbdav/nzbdav/issues/771)) ([152cf90](https://github.com/nzbdav/nzbdav/commit/152cf9060938f9ca6276828ade11db7983731df2))
-
-
-### Performance Improvements
-
-* background cache load, websocket coalescing, queue admission, sampled existence checks, and stream bridge cleanup ([#780](https://github.com/nzbdav/nzbdav/issues/780)) ([9c8541e](https://github.com/nzbdav/nzbdav/commit/9c8541ee0de33856ec7849667b99c341bf80e94b))
-* **queue:** validate persisted segment offsets for cold-start seeking ([#774](https://github.com/nzbdav/nzbdav/issues/774)) ([37d6146](https://github.com/nzbdav/nzbdav/commit/37d6146355c008094d751df2cfd017dac6e02083))
-* **websocket:** skip live-stat serialization when no browser client is subscribed ([#773](https://github.com/nzbdav/nzbdav/issues/773)) ([29fc6a6](https://github.com/nzbdav/nzbdav/commit/29fc6a6f1b6491d5ef69bb0c000ec234ff953e3b))
+* **deps:** bump the cargo-minor-patch group with 2 updates ([#23](https://github.com/infinidysk/infinidysk-rs/issues/23)) ([3c3177a](https://github.com/infinidysk/infinidysk-rs/commit/3c3177aa76f79ee8597ac47469fca4d07e89e26a))
+* **deps:** bump the npm-minor-patch group in /ui with 6 updates ([#24](https://github.com/infinidysk/infinidysk-rs/issues/24)) ([5ea22cf](https://github.com/infinidysk/infinidysk-rs/commit/5ea22cf97c2575dbb4da7d01c4f44eb9ba92375a))
+* **deps:** update ctutils to 0.4.4 for RUSTSEC-2026-0385 ([0b8287f](https://github.com/infinidysk/infinidysk-rs/commit/0b8287fea6c74947112d7ecddd19dec9bd594bda))
+* **import:** refuse C# installs older than v1.3.0 before reading their schema ([341cfb1](https://github.com/infinidysk/infinidysk-rs/commit/341cfb1f3209daa3d4691f16dc8181af395623ee))
+* **stream:** never let a blocked read wait on the read-ahead budget ([dfff4d1](https://github.com/infinidysk/infinidysk-rs/commit/dfff4d10e508e69cad713b0036ef3913a8ea0411))
+* **stream:** warn about misaligned segments once a minute per file ([ff4a9ea](https://github.com/infinidysk/infinidysk-rs/commit/ff4a9ea27b7c75f4ec05b05f11b0a7b07b151302))
+* **ui:** make settings usable on touch and guard unsaved changes ([c0d31a0](https://github.com/infinidysk/infinidysk-rs/commit/c0d31a02027d6c157a1e9b868742e02a19b2477c))
 
 
 ### Build System
 
-* SharpCompress library now developed in-tree ([#786](https://github.com/nzbdav/nzbdav/issues/786)) ([a5fca67](https://github.com/nzbdav/nzbdav/commit/a5fca672d201e2944158688de428017227e5f25b))
-* **usenet:** vendor UsenetSharp and RapidYencSharp with rapidyenc submodule ([#787](https://github.com/nzbdav/nzbdav/issues/787)) ([ecaca2e](https://github.com/nzbdav/nzbdav/commit/ecaca2e02e56526f74599d865f3d719c16c07bee)), closes [#770](https://github.com/nzbdav/nzbdav/issues/770)
+* **deps:** bump rust-toolchain from 1.99.0 to 1.99.1 ([#22](https://github.com/infinidysk/infinidysk-rs/issues/22)) ([a65b7d3](https://github.com/infinidysk/infinidysk-rs/commit/a65b7d3ff07a16c8a331890acee0ac8e1362579c))
 
-## [0.9.5](https://github.com/nzbdav/nzbdav/compare/v0.9.4...v0.9.5) (2026-08-02)
-
-
-### Features
-
-* **ui:** add header user avatar menu for logout ([#742](https://github.com/nzbdav/nzbdav/issues/742)) ([08e3a9a](https://github.com/nzbdav/nzbdav/commit/08e3a9a43a3a35215fc56f450ce749cabc72735a))
-
-
-### Bug Fixes
-
-* **arr:** blocklist grabbed history during repairs ([#745](https://github.com/nzbdav/nzbdav/issues/745)) ([533b0b7](https://github.com/nzbdav/nzbdav/commit/533b0b73b99c17d5d0f203ca75a3a5d5fb2762a8))
-* **deps:** Bump the github-actions group with 2 updates ([#744](https://github.com/nzbdav/nzbdav/issues/744)) ([7045a45](https://github.com/nzbdav/nzbdav/commit/7045a458e58e7e6de5516f48923e9124e74828b3))
-* **deps:** Bump the npm-minor-and-patch group ([#743](https://github.com/nzbdav/nzbdav/issues/743)) ([99fba04](https://github.com/nzbdav/nzbdav/commit/99fba041033b4f5ade33bdf15126887e35628cd3))
-* **health:** keep initial scan progress accurate ([#739](https://github.com/nzbdav/nzbdav/issues/739)) ([e9a66b3](https://github.com/nzbdav/nzbdav/commit/e9a66b36da611885cf9f3764b6eacdbe1013c933))
-* **ui:** close header dropdowns when clicking outside ([3c77ed3](https://github.com/nzbdav/nzbdav/commit/3c77ed34e751f353efed9cd55c38d3c810995b76))
-* **ui:** close other header dropdowns when opening one ([8657fba](https://github.com/nzbdav/nzbdav/commit/8657fba02840e65108472e6edc624ae120d8aa5f))
-* **ui:** toggle header dropdowns closed on second click ([9068060](https://github.com/nzbdav/nzbdav/commit/9068060fc6f8f58efda7d9a5db0f159e079023a0))
-* **usenet:** release the article body fetched during playback verification ([#746](https://github.com/nzbdav/nzbdav/issues/746)) ([8de2202](https://github.com/nzbdav/nzbdav/commit/8de2202371641a89dca10fdfbc98aac7fbb4a2f7))
-
-## [0.9.4](https://github.com/nzbdav/nzbdav/compare/v0.9.3...v0.9.4) (2026-07-31)
+## [2.0.0-alpha.5](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.4...v2.0.0-alpha.5) (2026-10-23)
 
 
 ### Features
 
-* **ui:** simplify overview activity and optional indexer widgets ([#733](https://github.com/nzbdav/nzbdav/issues/733)) ([5a90728](https://github.com/nzbdav/nzbdav/commit/5a90728830054093bbc7fba5095c9b0d83386dff))
+* **health:** remove dead library links and have the Arr search again ([3c42a83](https://github.com/infinidysk/infinidysk-rs/commit/3c42a834bcdcee63733c7abf731f620b60e718b6))
+* **health:** repair migrated files that have no download through the Arr that links them ([37ab952](https://github.com/infinidysk/infinidysk-rs/commit/37ab952a03436f1fa25f2087b940a239b1fa2acc))
+* **ui:** mark service restarts in the logs ([91db0c2](https://github.com/infinidysk/infinidysk-rs/commit/91db0c25c16d1817bcdf17bacdb2d9e455f8b6a8))
+* **ui:** show queue and action-needed counts in the sidebar nav ([8f35a8f](https://github.com/infinidysk/infinidysk-rs/commit/8f35a8ff6c220cd12e211a4ea5d5315ca6a8a195))
 
 
 ### Bug Fixes
 
-* **health:** stop endless re-grab loops when imports succeed before repair ([#737](https://github.com/nzbdav/nzbdav/issues/737)) ([1918388](https://github.com/nzbdav/nzbdav/commit/1918388336582995daed9913fff849d6dca58142))
-* **ui:** preserve overview widget spacing ([#735](https://github.com/nzbdav/nzbdav/issues/735)) ([3af547b](https://github.com/nzbdav/nzbdav/commit/3af547b14ee8d295293b68b8318b0e52e33ed970))
+* **api:** record owners of earlier imports as soon as the Arr is reachable ([f628994](https://github.com/infinidysk/infinidysk-rs/commit/f62899444241dab426e042797a93a2a71bb33c47))
+* **health:** a renamed file no longer counts as replaced ([226ffcb](https://github.com/infinidysk/infinidysk-rs/commit/226ffcb7e8e7994001c55981251085fcfe32bdc5))
+* **health:** never delete a migrated file before its Arrs were asked ([7918a36](https://github.com/infinidysk/infinidysk-rs/commit/7918a36e90b7ca8b6cbac444fbcd89a109febc28))
+* **import:** bring back skipped migrated files the library still links to ([41a1b8f](https://github.com/infinidysk/infinidysk-rs/commit/41a1b8fb16038ed3df31e301f32dd99029af0ffd))
+* **import:** carry over migrated files whose C# segment list lacks an article ([45e9790](https://github.com/infinidysk/infinidysk-rs/commit/45e97908793374dcac2f608c09ba3c5e4f390df8))
+* **import:** find the Arr download of migrated files so broken ones get replaced ([5ff3860](https://github.com/infinidysk/infinidysk-rs/commit/5ff38609b6aaeec019c77f8669da474555b3bb27))
+* **import:** keep broken migrated files for review instead of deleting them ([8515207](https://github.com/infinidysk/infinidysk-rs/commit/8515207dae52df1f1e0ad0c8557c5d018f67f704))
+* **import:** keep broken unowned files for review on installs already migrated from C# ([d9502c3](https://github.com/infinidysk/infinidysk-rs/commit/d9502c34b48723d6e3429cc862501a0f857ba367))
+* **import:** list every file the C# import left out ([acc12dd](https://github.com/infinidysk/infinidysk-rs/commit/acc12dda5bead3a86b818a73ea417f9d4dab33a2))
+* **import:** recognise library links into the C# mount folder when the mount moved ([7e4477a](https://github.com/infinidysk/infinidysk-rs/commit/7e4477aa0cf3afceb484c284a80696c1b4037e3f))
+* **mount:** keep out-of-order kernel reads from resetting the read-ahead ([43bfda5](https://github.com/infinidysk/infinidysk-rs/commit/43bfda5092215f3b074c15adbe8c1ed0b0ffdb10))
+* **nntp:** an article the NZB never listed counts as missing ([16e70d6](https://github.com/infinidysk/infinidysk-rs/commit/16e70d67371765ccc738ee2269790670cd0e062b))
+* **ui:** reword the setting for broken files not imported by an Arr ([eb269bd](https://github.com/infinidysk/infinidysk-rs/commit/eb269bdbac37b1862cf00b3d92f765a47a596267))
+* **ui:** say nothing to reclaim when compacting a database is skipped ([e556f3b](https://github.com/infinidysk/infinidysk-rs/commit/e556f3b447bda8f984dd6ba6547fbd89263ba14e))
+* **ui:** show the maintenance window in the server's time zone ([92ec7b7](https://github.com/infinidysk/infinidysk-rs/commit/92ec7b79a7f671683b94dc47296e7665b80a87c7))
 
-## [0.9.3](https://github.com/nzbdav/nzbdav/compare/v0.9.2...v0.9.3) (2026-07-31)
-
-
-### Bug Fixes
-
-* **health:** blocklist failed releases before Arr replacement searches ([#727](https://github.com/nzbdav/nzbdav/issues/727)) ([3623e82](https://github.com/nzbdav/nzbdav/commit/3623e82e5b5c9d24af630b8ab5f7f95b532eb25d))
-* **health:** prevent repair deleting files after inconclusive lookups ([#728](https://github.com/nzbdav/nzbdav/issues/728)) ([d4e224c](https://github.com/nzbdav/nzbdav/commit/d4e224c4aa9428f761d4e784587508fa74a416e9))
-* **nntp:** fail over immediately after streaming timeouts ([#725](https://github.com/nzbdav/nzbdav/issues/725)) ([1ef5589](https://github.com/nzbdav/nzbdav/commit/1ef558957252cb870ab8bab61adbafea501d8029))
-
-## [0.9.2](https://github.com/nzbdav/nzbdav/compare/v0.9.1...v0.9.2) (2026-07-30)
+## [2.0.0-alpha.4](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.3...v2.0.0-alpha.4) (2026-10-23)
 
 
 ### Features
 
-* **ui:** pause overview live updates while editing layout ([#722](https://github.com/nzbdav/nzbdav/issues/722)) ([891b469](https://github.com/nzbdav/nzbdav/commit/891b469e5821664fe45fc955357e1579bd35c179))
+* **api:** remove unlinked files as a scheduled maintenance job ([a053e12](https://github.com/infinidysk/infinidysk-rs/commit/a053e124476474759d4e58f28d5f6c670a55f3f4))
+* **db:** compact the databases in the maintenance window ([6b63569](https://github.com/infinidysk/infinidysk-rs/commit/6b635696dc07246cff0452201d154e8c279fab1a))
+* **import:** carry over the C# unlinked-file cleanup schedule ([532b0ab](https://github.com/infinidysk/infinidysk-rs/commit/532b0abc699b4bdc29b6c8ed6005f89a602f6c1e))
+* **import:** carry the C# download limit over ([9fa0d2d](https://github.com/infinidysk/infinidysk-rs/commit/9fa0d2d3cdd121736d7f4d85187269a5bb391300))
+* **nntp:** cap total download speed from providers ([cf4bfd4](https://github.com/infinidysk/infinidysk-rs/commit/cf4bfd4ada92cd0c1bf58d1001878cfad6efe88e))
+* **ui:** download limit under Settings &gt; Network ([e35a7cc](https://github.com/infinidysk/infinidysk-rs/commit/e35a7cc149fcaebfbe408a3b0a1b92fe5c0f06bf))
+* **ui:** explain stalls in the recent reads table ([54b8827](https://github.com/infinidysk/infinidysk-rs/commit/54b88273c05e2add20bedde880e9da760fa4e781))
+* **ui:** list Maintenance under System in settings ([e444763](https://github.com/infinidysk/infinidysk-rs/commit/e4447639c6a6362bcf06db46edffe40875e3214e))
+* **ui:** maintenance page with remove unlinked files ([9f1fd9c](https://github.com/infinidysk/infinidysk-rs/commit/9f1fd9c65c56978cd942cf0f9b307f8961f6b9da))
+* **ui:** move live activity to the middle of the sidebar and shorten the version label ([db34c37](https://github.com/infinidysk/infinidysk-rs/commit/db34c3718a3f16998c64b9671545bd595d3411d9))
 
 
 ### Bug Fixes
 
-* **metrics:** Overview Backup rescues no longer counts same-provider retries ([#714](https://github.com/nzbdav/nzbdav/issues/714)) ([283b9c1](https://github.com/nzbdav/nzbdav/commit/283b9c16137868da1fd33fccd4a3ae190d71cf09))
-* **nntp:** stop connection-count thrash and disposed-pool warning spam after recovery ([#719](https://github.com/nzbdav/nzbdav/issues/719)) ([2391204](https://github.com/nzbdav/nzbdav/commit/2391204e093e9c93fd54407cf7b71db3bc2e9f1c))
-* **streaming:** prioritize playback, adapt prefetch, and improve support diagnostics ([#707](https://github.com/nzbdav/nzbdav/issues/707)) ([ab21cda](https://github.com/nzbdav/nzbdav/commit/ab21cdab10e04412d7ed7a3d3ac6a5b35871e858))
-* **ui:** make stream tracing banner Turn off button readable ([#720](https://github.com/nzbdav/nzbdav/issues/720)) ([4bb6d4d](https://github.com/nzbdav/nzbdav/commit/4bb6d4d080df0c80e7c5ff5c0f91ac0c490b0ce1))
-* **ui:** persist usenet provider settings when saving from the provider modal ([#711](https://github.com/nzbdav/nzbdav/issues/711)) ([5c85de8](https://github.com/nzbdav/nzbdav/commit/5c85de87c9c2e946586f2b9e4495da3a20718b50))
-
-## [0.9.1](https://github.com/nzbdav/nzbdav/compare/v0.9.0...v0.9.1) (2026-07-28)
-
-
-### Features
-
-* **health:** add discard action and retained stream-trace UI status ([aeffee5](https://github.com/nzbdav/nzbdav/commit/aeffee59987109dd11d10f1bbd82a268da76d621)), closes [#685](https://github.com/nzbdav/nzbdav/issues/685)
-* **health:** support packs report peak CPU during playback, not just an idle snapshot ([#689](https://github.com/nzbdav/nzbdav/issues/689)) ([6b312ab](https://github.com/nzbdav/nzbdav/commit/6b312ab83d8e3d6c7fd829d0083c5506bbbe7632)), closes [#679](https://github.com/nzbdav/nzbdav/issues/679)
-* **health:** support packs show CPU, memory and per-stage playback stalls ([#678](https://github.com/nzbdav/nzbdav/issues/678)) ([0aae628](https://github.com/nzbdav/nzbdav/commit/0aae628ae365e3e3d31179225bce24caace82e7a))
-* **ui:** capture stream traces from the UI without restarting the container ([#676](https://github.com/nzbdav/nzbdav/issues/676)) ([769b1cc](https://github.com/nzbdav/nzbdav/commit/769b1cc20604610f1e3c58cb36e158d859580e23))
-* **ui:** confirm before turning off stream tracing so captured traces are not lost ([#688](https://github.com/nzbdav/nzbdav/issues/688)) ([b9fa452](https://github.com/nzbdav/nzbdav/commit/b9fa45231b44781b26621947d663d8581804b487))
-* **usenet:** size queue connections as a share of the provider pool ([#698](https://github.com/nzbdav/nzbdav/issues/698)) ([b0eff0b](https://github.com/nzbdav/nzbdav/commit/b0eff0bc6ece4a261cfebabffc472b6d6c3c2dcb))
-
-
-### Bug Fixes
-
-* **api:** support packs keep streaming warnings instead of filling with Watchtower noise ([#675](https://github.com/nzbdav/nzbdav/issues/675)) ([f3f6347](https://github.com/nzbdav/nzbdav/commit/f3f63478070744cd1bb394da663f213283947fe0))
-* **arr:** aggregate stuck-queue removals into one Warning per release ([3c9a59f](https://github.com/nzbdav/nzbdav/commit/3c9a59f0accb9c6cde79a37d71f8ce83711cebfe)), closes [#684](https://github.com/nzbdav/nzbdav/issues/684)
-* **db:** backend no longer starts against a stale schema or hangs on a stale migration lock ([#701](https://github.com/nzbdav/nzbdav/issues/701)) ([6e15ddc](https://github.com/nzbdav/nzbdav/commit/6e15ddcc09c67ef92e2d5e4162debe4850450c8a))
-* **deps:** Bump actions/setup-python in the github-actions group ([#694](https://github.com/nzbdav/nzbdav/issues/694)) ([dab9146](https://github.com/nzbdav/nzbdav/commit/dab91469441c37ba3da4459ce6a00cdb78200895))
-* **deps:** Bump the npm-minor-and-patch group ([7121949](https://github.com/nzbdav/nzbdav/commit/71219491f051c3f9f2e3501326b240f8eff16d92))
-* **deps:** Bump the npm-minor-and-patch group in /frontend with 3 updates ([563562c](https://github.com/nzbdav/nzbdav/commit/563562cbc68e91a98c0257df70706845bd1cff98))
-* **health:** attribute range stalls to the range that started the fetch ([2fb1dfb](https://github.com/nzbdav/nzbdav/commit/2fb1dfb63c44fcd55833585fd878bcd825a7e653)), closes [#683](https://github.com/nzbdav/nzbdav/issues/683)
-* **health:** keep diagnostics faithful under write storms, circuit misses, and scrubbing ([588c462](https://github.com/nzbdav/nzbdav/commit/588c4627a12cb1226d2f49346bdc2c948a0658c2))
-* **health:** keep stream traces after recording stops for support packs ([155bde3](https://github.com/nzbdav/nzbdav/commit/155bde393a88d6d6ab6f899d2f776a4c16b4d7c8)), closes [#685](https://github.com/nzbdav/nzbdav/issues/685)
-* **health:** keep the RangeEnd trace event when a read fails before the range opens ([a8b4f14](https://github.com/nzbdav/nzbdav/commit/a8b4f1466ce10fb2e2ba342c726d32aca4b71d95)), closes [#683](https://github.com/nzbdav/nzbdav/issues/683)
-* **nntp:** stop a missing article from resetting an open provider circuit breaker ([c5f686a](https://github.com/nzbdav/nzbdav/commit/c5f686a79a6da67bda4a4c5adc899361c3935b8e)), closes [#682](https://github.com/nzbdav/nzbdav/issues/682)
-* **test:** isolate Arr warning assertions from parallel Serilog noise ([954ce1f](https://github.com/nzbdav/nzbdav/commit/954ce1f637b1a3de6870855be2a36da1b21b5a02)), closes [#684](https://github.com/nzbdav/nzbdav/issues/684) [#685](https://github.com/nzbdav/nzbdav/issues/685)
-* **ui:** anchor activity chart articles runs to leading and trailing zeros ([409297b](https://github.com/nzbdav/nzbdav/commit/409297b8d797ec011325863b366300a5140b7f40))
-* **ui:** hide activity chart articles line when idle ([7d43ca4](https://github.com/nzbdav/nzbdav/commit/7d43ca4c696725d577cb2547cf02c5d2ed52d914))
-* **ui:** left-align developer stream tracing controls on Support settings ([#708](https://github.com/nzbdav/nzbdav/issues/708)) ([5947656](https://github.com/nzbdav/nzbdav/commit/59476563b8080b0581ec055cbd2b0ec3d650fff1))
-* **ui:** skip zero buckets on activity chart articles line ([1aa70ba](https://github.com/nzbdav/nzbdav/commit/1aa70ba4f44ab993dc1586a98c82d77909124a9e))
-* **ui:** Test Conn shows failure reasons and works with saved Arr/rclone credentials ([0e3c649](https://github.com/nzbdav/nzbdav/commit/0e3c649d853ffac7f315469d5151f6c3b67f7ab0))
-* **ui:** Test Conn works with saved Arr/rclone credentials and shows failure reasons ([e3751bb](https://github.com/nzbdav/nzbdav/commit/e3751bb8b8c0789be133f6bb562eb222992c932f))
-* **usenet:** prefer the configured primary over larger idle backup pools ([#697](https://github.com/nzbdav/nzbdav/issues/697)) ([6fc0d7a](https://github.com/nzbdav/nzbdav/commit/6fc0d7a4d415fdfe129e99c38378f9fef64770f7))
-* **webdav:** metadata-writing clients no longer flood logs against the read-only mount ([#687](https://github.com/nzbdav/nzbdav/issues/687)) ([af18a69](https://github.com/nzbdav/nzbdav/commit/af18a6918956b7b22b1f5de0441ff42e50786aa6))
-* **webdav:** tell WebDAV clients why a deep directory listing was refused ([#702](https://github.com/nzbdav/nzbdav/issues/702)) ([49f6ddc](https://github.com/nzbdav/nzbdav/commit/49f6ddcfd0f58cad81c12433404a7afd6f25c6cc))
-* **webdav:** throttle read-only write rejections per mount instead of per directory ([eaa9423](https://github.com/nzbdav/nzbdav/commit/eaa9423e1ea2b2ea2855749aa7ada52dcb370423)), closes [#680](https://github.com/nzbdav/nzbdav/issues/680)
+* **api:** give maintenance schemas unique names and query paging params ([b7b34fe](https://github.com/infinidysk/infinidysk-rs/commit/b7b34fe52843439b0353c58d90e24c41d8f194e6))
+* **db:** pause background writes while compacting the database ([206d5bb](https://github.com/infinidysk/infinidysk-rs/commit/206d5bbe810a3ee2b05e126abd9ca21b57c4955b))
+* **health:** catch articles that decode but belong to another part of the file ([5a6c3a6](https://github.com/infinidysk/infinidysk-rs/commit/5a6c3a612e233cd455d5c3d79727c5f1c3a57091))
+* **ui:** clearer maintenance job description and schedule toggle ([0bd2a33](https://github.com/infinidysk/infinidysk-rs/commit/0bd2a3379ce8ed16ba2290693b164be112108cd2))
+* **ui:** connections in use never exceeds the connection limit ([cefd487](https://github.com/infinidysk/infinidysk-rs/commit/cefd487fa3918b6eebb3f758b518353f44b2c0e7))
 
 
 ### Performance Improvements
 
-* **webdav:** lower memory use while streaming large files ([#690](https://github.com/nzbdav/nzbdav/issues/690)) ([5857d0b](https://github.com/nzbdav/nzbdav/commit/5857d0b6d22b8500a838063ee4dc9dbe3eb77ba2))
-
-## [0.9.0](https://github.com/nzbdav/nzbdav/compare/v0.8.1...v0.9.0) (2026-07-26)
-
-
-### ⚠ BREAKING CHANGES
-
-* **usenet:** allow trusted providers and indexers with invalid TLS certificates ([#566](https://github.com/nzbdav/nzbdav/issues/566))
-
-### Features
-
-* **config:** configure all Settings via authoritative NZBDAV_CONFIG environment variables ([#590](https://github.com/nzbdav/nzbdav/issues/590)) ([f80d123](https://github.com/nzbdav/nzbdav/commit/f80d123c74fc262c1e1ee1abffe61dbbd7088186))
-* **health:** download redacted support packs from Settings ([#610](https://github.com/nzbdav/nzbdav/issues/610)) ([ff6e143](https://github.com/nzbdav/nzbdav/commit/ff6e14360ee76732bd0ce6d3cde960ff5d71eaeb))
-* **queue:** process multiple NZB downloads at once ([#591](https://github.com/nzbdav/nzbdav/issues/591)) ([fc4ae06](https://github.com/nzbdav/nzbdav/commit/fc4ae06b2104f7419af87b33063f3be8214dd709))
-* **sab:** let Sonarr and Radarr pause, resume, and set a speed limit ([#648](https://github.com/nzbdav/nzbdav/issues/648)) ([d84e90c](https://github.com/nzbdav/nzbdav/commit/d84e90cb934b43639987d73558a322e8a77cf9d9))
-* **ui:** group usenet providers by storage group with type-colored cards ([#652](https://github.com/nzbdav/nzbdav/issues/652)) ([18f99ea](https://github.com/nzbdav/nzbdav/commit/18f99eab1cf9af92d763dddcbab81ff9ac044f67))
-* **ui:** identify the client on 4xx/5xx request-log lines ([#551](https://github.com/nzbdav/nzbdav/issues/551)) ([56cdf82](https://github.com/nzbdav/nzbdav/commit/56cdf82cc30845b670c5257b92e9c12b7475b93a))
-* **ui:** improve usenet provider settings and storage group suggestions ([#655](https://github.com/nzbdav/nzbdav/issues/655)) ([63adeec](https://github.com/nzbdav/nzbdav/commit/63adeec5d5aa10b50b03fc61c2f2a31279f2d024))
-* **usenet:** allow trusted providers and indexers with invalid TLS certificates ([#566](https://github.com/nzbdav/nzbdav/issues/566)) ([1f26282](https://github.com/nzbdav/nzbdav/commit/1f26282a90dbe0536f114b3f710332ebe72ad607))
-* **usenet:** stop re-probing providers that already reported an article missing ([#649](https://github.com/nzbdav/nzbdav/issues/649)) ([7103abe](https://github.com/nzbdav/nzbdav/commit/7103abef31371310037ed529b9b6fa99df82473a))
-
-
-### Bug Fixes
-
-* **arr:** stop hung Radarr or Sonarr hosts from blocking shutdown and monitoring ([#619](https://github.com/nzbdav/nzbdav/issues/619)) ([2071127](https://github.com/nzbdav/nzbdav/commit/207112781000f3791c2e93f164d9161af74ae55b))
-* **arr:** treat stale Arr cache 404s as misses during remove-and-search ([#624](https://github.com/nzbdav/nzbdav/issues/624)) ([d4909f2](https://github.com/nzbdav/nzbdav/commit/d4909f2d8583bf14c9c36b3bc7006f5c4d436775))
-* **config:** reject unknown NZBDAV_CONFIG JSON properties ([#626](https://github.com/nzbdav/nzbdav/issues/626)) ([25a4f31](https://github.com/nzbdav/nzbdav/commit/25a4f313ee94ae6d0fb22e8eecbed3537eff9f13))
-* **db:** deny unsafe SQLite operations during restore import ([#615](https://github.com/nzbdav/nzbdav/issues/615)) ([3495793](https://github.com/nzbdav/nzbdav/commit/34957937f90426fbe4c7cda06e74f2f7b065f2b4))
-* **db:** prevent oversized backups from exhausting disk or memory during restore ([#616](https://github.com/nzbdav/nzbdav/issues/616)) ([fc7563c](https://github.com/nzbdav/nzbdav/commit/fc7563c4989041d1140c3cc657577678c77db598))
-* **deps:** bump NzbDav.UsenetSharp to 3.3.0 ([#661](https://github.com/nzbdav/nzbdav/issues/661)) ([137764a](https://github.com/nzbdav/nzbdav/commit/137764aec2fb716530c81d934724bc046956e3d8))
-* **deps:** bump react-router packages to 8.3.0 ([#632](https://github.com/nzbdav/nzbdav/issues/632)) ([e69a8f3](https://github.com/nzbdav/nzbdav/commit/e69a8f316026149c1d47a6f5861d55d05df05ca6))
-* **deps:** bump the github-actions group across 1 directory with 3 updates ([#565](https://github.com/nzbdav/nzbdav/issues/565)) ([a6d87be](https://github.com/nzbdav/nzbdav/commit/a6d87bea666bd7c09cb63ada10fe3247b859983e))
-* **deps:** Bump the github-actions group with 2 updates ([#631](https://github.com/nzbdav/nzbdav/issues/631)) ([4d176e2](https://github.com/nzbdav/nzbdav/commit/4d176e2d0dd6d305681368a8c6c5b1988f1a37a2))
-* **deps:** Bump the npm-minor-and-patch group ([#630](https://github.com/nzbdav/nzbdav/issues/630)) ([bc74707](https://github.com/nzbdav/nzbdav/commit/bc74707fb34709f7996da27396095cca7cc8d0fa))
-* **deps:** Bump the nuget-minor-and-patch group with 2 updates ([#564](https://github.com/nzbdav/nzbdav/issues/564)) ([116cfe4](https://github.com/nzbdav/nzbdav/commit/116cfe4169c25f797a3e20ad06a068fbf2067ae5))
-* **deps:** bump ws in /frontend in the npm-minor-and-patch group ([#563](https://github.com/nzbdav/nzbdav/issues/563)) ([f493f53](https://github.com/nzbdav/nzbdav/commit/f493f538fb8d8b9087fec7b571a165858b11268b))
-* **deps:** Bump zensical from 0.0.50 to 0.0.51 in the docs-python group ([#629](https://github.com/nzbdav/nzbdav/issues/629)) ([cf1a4bc](https://github.com/nzbdav/nzbdav/commit/cf1a4bc43365e2879eb57b70c728c36a298b0d1b))
-* **deps:** npm audit fix ([b81f937](https://github.com/nzbdav/nzbdav/commit/b81f937f0316bf549fad80a7f9c86deb997a8e5a))
-* **health:** allow urgent repairs for files still linked to SAB history ([#571](https://github.com/nzbdav/nzbdav/issues/571)) ([3ef8449](https://github.com/nzbdav/nzbdav/commit/3ef8449ca3d6b72de32f8e478dcf51cce8d48c5e)), closes [#568](https://github.com/nzbdav/nzbdav/issues/568)
-* **health:** defer unexpected item failures to prevent queue starvation ([#606](https://github.com/nzbdav/nzbdav/issues/606)) ([4947b43](https://github.com/nzbdav/nzbdav/commit/4947b43959d4e18aa971305498360c3593faabd9))
-* **health:** delay streaming repairs until failure threshold ([#621](https://github.com/nzbdav/nzbdav/issues/621)) ([a16b4fb](https://github.com/nzbdav/nzbdav/commit/a16b4fb7efc51af79c048a85e3356d503fc793eb))
-* **nntp:** route pooled requests by free capacity ([#611](https://github.com/nzbdav/nzbdav/issues/611)) ([cb5d9cd](https://github.com/nzbdav/nzbdav/commit/cb5d9cd8340d69d49f2e28f236614ab801fd04e7))
-* **nntp:** stop provider selection spending the half-open probe slot ([#549](https://github.com/nzbdav/nzbdav/issues/549)) ([69755e7](https://github.com/nzbdav/nzbdav/commit/69755e7f00adc125a2aab0d4f71f407d76a9a810))
-* **queue:** consume the awaken signal outside an unreachable catch ([#625](https://github.com/nzbdav/nzbdav/issues/625)) ([85e6364](https://github.com/nzbdav/nzbdav/commit/85e636497047f85e306cbec3628ca32db2c92f34))
-* **queue:** container no longer boot-loops on startup while restoring search play links ([#666](https://github.com/nzbdav/nzbdav/issues/666)) ([42e8891](https://github.com/nzbdav/nzbdav/commit/42e88911e107fab6cf9718fdfbc1580b7bd0fd34))
-* **queue:** drop stranded TMP_LINKED_FILES_UNIQUE before rebuilding linked-id table ([#662](https://github.com/nzbdav/nzbdav/issues/662)) ([d9e4420](https://github.com/nzbdav/nzbdav/commit/d9e4420d4949a3617c77c3d4887c1d482f65af06))
-* **queue:** make queue and WebDAV requests fail safely ([#608](https://github.com/nzbdav/nzbdav/issues/608)) ([b7fb6cb](https://github.com/nzbdav/nzbdav/commit/b7fb6cba232502b8b82d256ecff48148f807411a))
-* **queue:** prevent concurrent worker starvation ([#607](https://github.com/nzbdav/nzbdav/issues/607)) ([9223dce](https://github.com/nzbdav/nzbdav/commit/9223dce8d672530d668be7859011831bbe682c84))
-* **rclone:** log RC timeouts and connection failures without stack dumps ([#603](https://github.com/nzbdav/nzbdav/issues/603)) ([d16c2d1](https://github.com/nzbdav/nzbdav/commit/d16c2d1f0524060d39c4d12d5c35135dd249fc5b))
-* restore preview and attachments on bug report logs field ([0e3a062](https://github.com/nzbdav/nzbdav/commit/0e3a062892f84d91a826505af2c2a1942370a3d3))
-* **search:** bound NZB response and cache memory ([#614](https://github.com/nzbdav/nzbdav/issues/614)) ([4335d47](https://github.com/nzbdav/nzbdav/commit/4335d478f51f744db7f8485f81a06aa2cded9b30))
-* **test:** remove native yEnc dependency from prefetch budget tests ([#609](https://github.com/nzbdav/nzbdav/issues/609)) ([452e845](https://github.com/nzbdav/nzbdav/commit/452e845a07ca8ac62921b6009d1b841335ea0533))
-* **ui:** abort proxied transfers whose backend response ended incomplete ([#642](https://github.com/nzbdav/nzbdav/issues/642)) ([163f722](https://github.com/nzbdav/nzbdav/commit/163f72299df86601e3253d5b043e34b883ace44c))
-* **ui:** color overview charts only when activity occurs ([#659](https://github.com/nzbdav/nzbdav/issues/659)) ([4124ac0](https://github.com/nzbdav/nzbdav/commit/4124ac08539053d4046bc4e743a1e48d86522fcf))
-* **ui:** keep auto-tune confidence tooltip inside the provider modal ([#561](https://github.com/nzbdav/nzbdav/issues/561)) ([9b28633](https://github.com/nzbdav/nzbdav/commit/9b28633d7a97d1d4bd7415dd3727511d3ca281bc))
-* **ui:** keep first-in-card settings tooltips from clipping ([#669](https://github.com/nzbdav/nzbdav/issues/669)) ([50020f3](https://github.com/nzbdav/nzbdav/commit/50020f3cb9319b3f20c4e461e9b0c0fb9d665537))
-* **ui:** keep history failed status tooltips above table rows ([#644](https://github.com/nzbdav/nzbdav/issues/644)) ([4c3de8d](https://github.com/nzbdav/nzbdav/commit/4c3de8d36f75562f930d2530a77f5a45cc5134d0))
-* **ui:** keep queue and history totals live over websocket ([#654](https://github.com/nzbdav/nzbdav/issues/654)) ([afbd5c8](https://github.com/nzbdav/nzbdav/commit/afbd5c8f8769d14dce94fe6e3e0e56dbd70ece37))
-* **ui:** keep Test Connection available when editing Usenet providers ([#554](https://github.com/nzbdav/nzbdav/issues/554)) ([f939c97](https://github.com/nzbdav/nzbdav/commit/f939c97291f738cdb3f409a793e8931cd442c911)), closes [#553](https://github.com/nzbdav/nzbdav/issues/553)
-* **ui:** prefill provider port and max connections defaults ([#643](https://github.com/nzbdav/nzbdav/issues/643)) ([6e52aee](https://github.com/nzbdav/nzbdav/commit/6e52aee54a7203d46ae40cd1adae57028bb9d765))
-* **ui:** prevent queue category badges from wrapping ([#597](https://github.com/nzbdav/nzbdav/issues/597)) ([6a9002d](https://github.com/nzbdav/nzbdav/commit/6a9002d6d4d0210c1b15e241cd0c6721d579a23b))
-* **ui:** recover failed uploads and preserve encoded Explore paths ([#605](https://github.com/nzbdav/nzbdav/issues/605)) ([f3af128](https://github.com/nzbdav/nzbdav/commit/f3af128e239f4d7a7fd1b1a56cc7e5fc45818b06))
-* **ui:** restore frontend startup after compression-filter ESM import failure ([#600](https://github.com/nzbdav/nzbdav/issues/600)) ([eec0df9](https://github.com/nzbdav/nzbdav/commit/eec0df984410df25fae515dcf7fe0e5cde661f14))
-* **ui:** show provider outages at their true time scale ([#657](https://github.com/nzbdav/nzbdav/issues/657)) ([af21c94](https://github.com/nzbdav/nzbdav/commit/af21c94e86722106016ecbb80dfd6c30c94abce0))
-* **ui:** stop daisyUI navbar 50% split from clipping header controls ([#656](https://github.com/nzbdav/nzbdav/issues/656)) ([71229b0](https://github.com/nzbdav/nzbdav/commit/71229b001841e58f75a2f99a19799cff5d955651))
-* **ui:** stop dumping BackendUnavailableError stacks when the API is unreachable ([#645](https://github.com/nzbdav/nzbdav/issues/645)) ([48a8ac1](https://github.com/nzbdav/nzbdav/commit/48a8ac138de392b2ea5db10e3de2fb4354311b97))
-* **ui:** stop MaxListenersExceededWarning spam when refreshing the UI ([#598](https://github.com/nzbdav/nzbdav/issues/598)) ([25f7015](https://github.com/nzbdav/nzbdav/commit/25f7015487af3e0b794f9b8b597619f1ce7403ef))
-* **usenet:** call the protected base overload when disposing streams ([#668](https://github.com/nzbdav/nzbdav/issues/668)) ([26c0ac7](https://github.com/nzbdav/nzbdav/commit/26c0ac74d23d929752118562b9b9862a51305574))
-* **usenet:** prevent container OOM from unbounded WebDAV article buffers ([#651](https://github.com/nzbdav/nzbdav/issues/651)) ([754de39](https://github.com/nzbdav/nzbdav/commit/754de394a0f383d429f67afff7aa26a53d3438b6))
-* **usenet:** show real Usenet failure reasons instead of opaque status 9 ([#646](https://github.com/nzbdav/nzbdav/issues/646)) ([68203d1](https://github.com/nzbdav/nzbdav/commit/68203d1228596f7b559fde717e3a283a5675eef1))
-* **usenet:** stop cascade from pinning busy primaries and inflating article latency ([#650](https://github.com/nzbdav/nzbdav/issues/650)) ([3bd52a4](https://github.com/nzbdav/nzbdav/commit/3bd52a4582a807d77ede5fb7fc666622a0ebc4e8))
-* **usenet:** stop playback corrupting halfway through a file when a segment fails ([#640](https://github.com/nzbdav/nzbdav/issues/640)) ([d7c467c](https://github.com/nzbdav/nzbdav/commit/d7c467c0a6537f9573e32a5f34fc8840cfb69594))
-* **usenet:** streaming no longer wedges until restart after a corrupt article ([#663](https://github.com/nzbdav/nzbdav/issues/663)) ([3c9ecf9](https://github.com/nzbdav/nzbdav/commit/3c9ecf9b76edb465e81f7ad54c164e0e5d971503))
-* **utils:** make Linux library scanning argv-safe and record-safe ([#612](https://github.com/nzbdav/nzbdav/issues/612)) ([bba1643](https://github.com/nzbdav/nzbdav/commit/bba164325bc1d1b2558346269e5cf7e3f47e163d))
-* **warden:** cap decompressed source bytes and record length ([#617](https://github.com/nzbdav/nzbdav/issues/617)) ([dc6dab4](https://github.com/nzbdav/nzbdav/commit/dc6dab48243276b22a239935273b137c92cbfbbe))
-* **warden:** keep the previous dead-release source if a refresh is interrupted ([#618](https://github.com/nzbdav/nzbdav/issues/618)) ([190938c](https://github.com/nzbdav/nzbdav/commit/190938ccaead6f93094146d6619f95d446f85cca))
-* **webdav:** emit true GMT for getlastmodified and Last-Modified ([#558](https://github.com/nzbdav/nzbdav/issues/558)) ([31a5acc](https://github.com/nzbdav/nzbdav/commit/31a5acce776e7e5003f845b5e32fb3db726fd051))
-* **webdav:** fail stuck Usenet reads quickly instead of wedging rclone ([#647](https://github.com/nzbdav/nzbdav/issues/647)) ([2cd129e](https://github.com/nzbdav/nzbdav/commit/2cd129efab5a212ec9570b40830e1bdefd85cb79))
-* **webdav:** ignore malformed Range headers on GET/HEAD ([#557](https://github.com/nzbdav/nzbdav/issues/557)) ([45b7e3b](https://github.com/nzbdav/nzbdav/commit/45b7e3b531a5ee698bf8410c34eddd9961dc0a65))
-* **webdav:** stop cancelled directory scans from flooding logs ([#599](https://github.com/nzbdav/nzbdav/issues/599)) ([b1722a3](https://github.com/nzbdav/nzbdav/commit/b1722a3c86263a6e579884b4575245556974510b))
-* **webdav:** stop multi-part downloads playing back with silent gaps ([#641](https://github.com/nzbdav/nzbdav/issues/641)) ([4f927df](https://github.com/nzbdav/nzbdav/commit/4f927dff5d77309df98f7e05935c8a519a010235))
-* **websocket:** drop oldest events for slow clients ([#604](https://github.com/nzbdav/nzbdav/issues/604)) ([f68d77f](https://github.com/nzbdav/nzbdav/commit/f68d77f5563867854d9f296b88474e0ca101b528))
-
-
-### UX
-
-* **ui:** clarify WebDAV settings with grouped layout cards ([#593](https://github.com/nzbdav/nzbdav/issues/593)) ([6d58d0b](https://github.com/nzbdav/nzbdav/commit/6d58d0bf98bdebf262e5a2a3a2c90345f21fda0a))
-* **ui:** use green toggles with tooltips for boolean settings ([#653](https://github.com/nzbdav/nzbdav/issues/653)) ([b9e6fc4](https://github.com/nzbdav/nzbdav/commit/b9e6fc4969c22087fe4e4e0c2f75485efeef3c32))
-* **ui:** use NzbDAV casing on pre-server-ready splash ([#592](https://github.com/nzbdav/nzbdav/issues/592)) ([f473b37](https://github.com/nzbdav/nzbdav/commit/f473b37574e8e460a0baf253d5f4498af77c0927))
-
-## [0.8.1](https://github.com/nzbdav/nzbdav/compare/v0.8.0...v0.8.1) (2026-07-21)
-
-
-### Features
-
-* **ui:** add 35 GB and 50 GB options to the Usenet speed test ([54de9e4](https://github.com/nzbdav/nzbdav/commit/54de9e40b8b5401efb07c964d7f538bfb3d43a8e))
-* **ui:** add 35 GB and 50 GB speed-test data budgets ([f65f7cd](https://github.com/nzbdav/nzbdav/commit/f65f7cdcfdfd1ed96ff74038ef5bd6279ad33d34))
-* **ui:** add retry button for failed history items ([78de4b1](https://github.com/nzbdav/nzbdav/commit/78de4b158f10722da59257e0c967e6f101e2a9e3))
-* **ui:** retry failed history items from the queue page ([76b2c89](https://github.com/nzbdav/nzbdav/commit/76b2c89efbc46d4a169be862e3bbce6c0ae72b26))
-* **ui:** show queue totals and selectable page sizes ([906cf72](https://github.com/nzbdav/nzbdav/commit/906cf72ea012dec2a23d8b437c5ae123b8ba5ef4))
-* **ui:** show queue totals and selectable page sizes on the Queue page ([8a54639](https://github.com/nzbdav/nzbdav/commit/8a546399e8a72b6354a7b796263f9dbf0ef8de0d))
-
-
-### Bug Fixes
-
-* **nntp:** tighten handshake timeout filters and Test Connection logs ([c3aae89](https://github.com/nzbdav/nzbdav/commit/c3aae89c0ec23e544134cdde65ecafacf6953aca))
-* **nntp:** timed-out provider handshakes report as connect or login failures ([f5eea1e](https://github.com/nzbdav/nzbdav/commit/f5eea1ef760c956a02c0f07094244d66b62c29c7))
-* **nntp:** type handshake timeouts as connect or login failures ([a9c8e2f](https://github.com/nzbdav/nzbdav/commit/a9c8e2fc54c1ac32a37172bab87bac27eb4435fd))
-* **queue:** stop advertising huge sentinel sizes for multipart RAR files ([3a74b4d](https://github.com/nzbdav/nzbdav/commit/3a74b4d765ab8ebbd17479d5ef3f57374d4f0a0f))
-* **queue:** stop advertising Int64.MaxValue as multipart RAR FileSize ([e5eb704](https://github.com/nzbdav/nzbdav/commit/e5eb70410a82e40160ad7c71699d500853f25dc7))
-* **ui:** always show live/max on usenet provider connection tiles ([#547](https://github.com/nzbdav/nzbdav/issues/547)) ([e3cd265](https://github.com/nzbdav/nzbdav/commit/e3cd2653f187083ae10158cd5e0205accf0e7c9e))
-* **ui:** Apply recommendation populates Max Connections and pipelining depth ([73a6a28](https://github.com/nzbdav/nzbdav/commit/73a6a28d28d5e541db4f736bebe159674f7188ae))
-* **ui:** keep short provider circuit trips visible on Outages spark ([17720ca](https://github.com/nzbdav/nzbdav/commit/17720cadd0c1328c95fe3ae953d83bea9a87fdf5)), closes [#526](https://github.com/nzbdav/nzbdav/issues/526)
-* **ui:** keep speed-test Apply recommendation from resetting the form ([dbb82d5](https://github.com/nzbdav/nzbdav/commit/dbb82d5102ca04528636b5e2b77604c16450f992))
-* **ui:** Outages sparkline no longer hides brief provider circuit trips ([524dd24](https://github.com/nzbdav/nzbdav/commit/524dd247ce578820c5c3338cfcc96ff952e9db88))
-* **usenet:** log yEnc CRC mismatches without stack dumps ([53fda2f](https://github.com/nzbdav/nzbdav/commit/53fda2faa281d313b7fd0fa403f5a8bc98b32333))
-* **usenet:** stop dumping stacks for known yEnc CRC mismatches ([d2b2e1a](https://github.com/nzbdav/nzbdav/commit/d2b2e1a3748a0fb3e2bad6d7724fba32d338a313))
-* **webdav:** heal underestimated multipart volume lengths ([57089a5](https://github.com/nzbdav/nzbdav/commit/57089a5e3405e0fa3686602688eb40772ec7fad2))
-* **webdav:** prevent multipart playback failures from understated volume sizes ([3b42112](https://github.com/nzbdav/nzbdav/commit/3b421128d03e15721bb567dd8313bf7d40915c29))
-
-
-### Documentation
-
-* add since-version pills for 0.8.0 features ([075a0ac](https://github.com/nzbdav/nzbdav/commit/075a0ac9b4f0f19bd9ceca8b92d5faef1c188cdd))
-* **docker:** explain how to change the published port ([7527c09](https://github.com/nzbdav/nzbdav/commit/7527c0944b66bf084f392575d490ad6b873f217a))
-* **docker:** explain port mapping and listener overrides ([29b7393](https://github.com/nzbdav/nzbdav/commit/29b73931e196e4e21d5529dd679afd52f009b079))
-* forbid agents from merging pull requests ([6114927](https://github.com/nzbdav/nzbdav/commit/611492746fbedd8beada84494333f1408745d24c))
-* migrate Discord invite and document July 21 transition ([a955a6e](https://github.com/nzbdav/nzbdav/commit/a955a6e0b74d7f28a34ac66a6e290fb5596c450b))
-* point community Discord at the new server ([20ef599](https://github.com/nzbdav/nzbdav/commit/20ef5998073e970be1a7d3c57978147630952333))
-* show when features shipped with since-version pills ([3764bd9](https://github.com/nzbdav/nzbdav/commit/3764bd916f7e59090320e52b9c5520304c2ff1ec))
+* **db:** keep query planner statistics fresh ([910ceea](https://github.com/infinidysk/infinidysk-rs/commit/910ceea501a28110cac5907577a131fdd6b1518b))
+* **mount:** cap max playback read-ahead memory at 2000 MB ([8f32731](https://github.com/infinidysk/infinidysk-rs/commit/8f327313f78d44961eedf588e14f471c4383fad3))
+* **mount:** size preset read-ahead memory for 5, 10 and 20 streams ([13e200a](https://github.com/infinidysk/infinidysk-rs/commit/13e200ac57f4cd9f51e48a45441c91c0c7f52034))
 
 
 ### Refactors
 
-* **health:** resolve depth to an enum instead of a sentinel double ([faf441a](https://github.com/nzbdav/nzbdav/commit/faf441a28a88ed216934997f332a24107277f598))
-* **health:** resolve depth to an enum instead of a sentinel double ([3ebbb01](https://github.com/nzbdav/nzbdav/commit/3ebbb016abced73f679cb0a48364858ab96135e4))
+* **health:** call broken files no Arr imported "unowned" ([277392a](https://github.com/infinidysk/infinidysk-rs/commit/277392a91f1de8b2165497bf25f05b7e49a21803))
 
-## [0.8.0](https://github.com/nzbdav/nzbdav/compare/v0.7.25...v0.8.0) (2026-07-20)
+## [2.0.0-alpha.3](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.2...v2.0.0-alpha.3) (2026-10-22)
+
+
+### Features
+
+* **queue:** show import progress and time left ([04bbdaf](https://github.com/infinidysk/infinidysk-rs/commit/04bbdafa741b0115e7ee61eec206cbd63716baf3))
+
+
+### Bug Fixes
+
+* **health:** judge a segment by the message-id playback reads ([071bc50](https://github.com/infinidysk/infinidysk-rs/commit/071bc50ad8e31a0c77b9f4a1c34c81516820b739))
+* **mount:** serve modified times in whole seconds ([140449a](https://github.com/infinidysk/infinidysk-rs/commit/140449a30601ea6ae8168e8043f5137bb75b3dd7))
+* **queue:** blame the NZB, not the providers, when it lacks a file's first segment ([712ae3d](https://github.com/infinidysk/infinidysk-rs/commit/712ae3d582e909f55b1c720f4495540eb5a0c9e7))
+* **queue:** fail NZBs that lack segments without downloading the whole file ([e335620](https://github.com/infinidysk/infinidysk-rs/commit/e335620e49863269f611b8355763f55703d7899c))
+* **queue:** import obfuscated RAR sets listed out of order ([2ab7f58](https://github.com/infinidysk/infinidysk-rs/commit/2ab7f58f5fc33ffd517ece3d4aa25c0ca79639af))
+* **queue:** leave out an incomplete non-media RAR member instead of failing the job ([747b33b](https://github.com/infinidysk/infinidysk-rs/commit/747b33b893d71cf8c12bfa9ddb7e212a8d3609c5))
+* **queue:** wait out the retry backoff when a job's result cannot be written ([01fda5a](https://github.com/infinidysk/infinidysk-rs/commit/01fda5abcda7517af9739c1148fe3f6a4fb65a26))
+* **sab:** accept the speedlimit command and ignore it ([3a6f299](https://github.com/infinidysk/infinidysk-rs/commit/3a6f299f8074409946293169bf5d31fbcb008a35))
+* **stream:** report a corrupt segment even after the reader streamed past it ([604b33d](https://github.com/infinidysk/infinidysk-rs/commit/604b33d8d61f9cf7f76d2abba6890b63eb6f88ca))
+* **ui:** keep the explorer video player inside its window ([82e8fe2](https://github.com/infinidysk/infinidysk-rs/commit/82e8fe27bc14ff79bf9456473c3458e597c1246c))
+
+
+### Performance Improvements
+
+* **queue:** parse, hash and compress NZBs off the async runtime ([70629e9](https://github.com/infinidysk/infinidysk-rs/commit/70629e9c0b7da3256d4eadfb82910a091369465b))
+
+## [2.0.0-alpha.2](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.1...v2.0.0-alpha.2) (2026-10-22)
+
+
+### Bug Fixes
+
+* **import:** read C# times in the container's time zone ([9bffcec](https://github.com/infinidysk/infinidysk-rs/commit/9bffcecfeca8a1b2fe6f9cbea5d42e53d20d66a8))
+* **stream:** hedge a slow last segment ([0590cac](https://github.com/infinidysk/infinidysk-rs/commit/0590cac4732589d73551bf4fbc5f63e4aeafdd58))
+
+
+### Performance Improvements
+
+* **nntp:** send hedges only to idle connections ([8f5484a](https://github.com/infinidysk/infinidysk-rs/commit/8f5484aad62545170c483f9ae11f8c4be92bac00))
+* **stream:** read 60 MB ahead by default ([e87dfc0](https://github.com/infinidysk/infinidysk-rs/commit/e87dfc07b68c57fd17ea2543d71e10765b438269))
+
+## [2.0.0-alpha.1](https://github.com/infinidysk/infinidysk-rs/compare/v2.0.0-alpha.0...v2.0.0-alpha.1) (2026-10-21)
 
 
 ### ⚠ BREAKING CHANGES
 
-* **db:** adds a database migration; back up /config before upgrading.
+* **db:** databases created by earlier pre-releases no longer open. Back up the config directory (database, -wal and metrics files), then start with a new database.
 
 ### Features
 
-* **db:** search links keep working after restarts and have a configurable lifetime ([#452](https://github.com/nzbdav/nzbdav/issues/452)) ([f186b38](https://github.com/nzbdav/nzbdav/commit/f186b38be4338360771edfe247a2cf7198d6818e))
-* gzip NZB ingest, nested RAR extraction, SAB API conformance, provider outage history, and CRC-verified downloads ([#467](https://github.com/nzbdav/nzbdav/issues/467)) ([095825d](https://github.com/nzbdav/nzbdav/commit/095825d3cc7f0464bd6b1eafa70d02bd92f3ef98))
-* **health:** make the aging taper opt-in and validate the depth setting ([00c97d4](https://github.com/nzbdav/nzbdav/commit/00c97d42dda54609ebf9b0e706ab34d3d3c403ff))
-* **health:** smooth out stat cliff bug, add aging function ([d73a568](https://github.com/nzbdav/nzbdav/commit/d73a568f25c505e9711f373badbc4c4498b0d1b5))
-* **nntp:** allow disabling yEnc CRC validation via USENET_DISABLE_CRC_VALIDATION ([e0d10aa](https://github.com/nzbdav/nzbdav/commit/e0d10aa2605f034869885f68e9b1ac38e35dbb0e))
-* **nntp:** fail fast with a logged yEnc native self-test at startup ([ec48e9d](https://github.com/nzbdav/nzbdav/commit/ec48e9d2b879c8cff3c5115f32d570acd923056c))
-* **nntp:** speed up health checks and import existence probes with pipelined STAT ([#472](https://github.com/nzbdav/nzbdav/issues/472)) ([b0a93b8](https://github.com/nzbdav/nzbdav/commit/b0a93b8040c4b537b42d927d29ff9950ee8629d5)), closes [#60](https://github.com/nzbdav/nzbdav/issues/60)
-* **queue:** adopt NzbDav.SharpCompress for RAR and 7z metadata parsing ([#466](https://github.com/nzbdav/nzbdav/issues/466)) ([fd1bd62](https://github.com/nzbdav/nzbdav/commit/fd1bd62e7ce87b4c66689c7ad3f7256f1cf02643))
-* **queue:** allow moving queue items to the top ([#473](https://github.com/nzbdav/nzbdav/issues/473)) ([1d63c96](https://github.com/nzbdav/nzbdav/commit/1d63c96d90d98133c2f6df231a10c0127da8de39))
-* **repairs:** smooth out stat cliff bug, add aging function ([6012990](https://github.com/nzbdav/nzbdav/commit/60129902894549ee4679bb94a29758bae268adda))
-* **sab:** allow addurl fetches from trusted private hosts ([e7c27e7](https://github.com/nzbdav/nzbdav/commit/e7c27e7c1b06fc388b3184c0a9b817208df92fee)), closes [#433](https://github.com/nzbdav/nzbdav/issues/433)
-* **sab:** allow NZB grabs from LAN indexers like Prowlarr and NZBHydra2 ([57bfe8b](https://github.com/nzbdav/nzbdav/commit/57bfe8b07c94e99ab74998ef6551a948c9aa8b4e))
-* **ui:** reset Overview statistics (all or per provider) from Maintenance settings ([#444](https://github.com/nzbdav/nzbdav/issues/444)) ([97e1dfe](https://github.com/nzbdav/nzbdav/commit/97e1dfe8693e331f858a1be99b0bf1b54cf5a6d5))
-* **ui:** show client identity on Active Reads ([#469](https://github.com/nzbdav/nzbdav/issues/469)) ([4fdb772](https://github.com/nzbdav/nzbdav/commit/4fdb77258da0b3e521e86e224633ffa2d64e2c4f))
+* **api:** add DB-backed settings with an authoritative env overlay, catalog providers and arr instances ([f2cc1c2](https://github.com/infinidysk/infinidysk-rs/commit/f2cc1c2715042d26d470139f508897d34f24bf68))
+* **api:** add per-file read history, most-read files and workload split ([7b2e733](https://github.com/infinidysk/infinidysk-rs/commit/7b2e733fc791ae71e75ac291b18ff2526bf4ff30))
+* **api:** add provider speed test and pipeline auto-tune ([0ca4c0d](https://github.com/infinidysk/infinidysk-rs/commit/0ca4c0d2bd2c70839c3835556bbb7ab853722d97))
+* **api:** add public URL setting under network ([07859b8](https://github.com/infinidysk/infinidysk-rs/commit/07859b8063290768ab7f7e385bce03a7effaccef))
+* **api:** add read, import, health and cache trends and usage by app to the overview ([62ae570](https://github.com/infinidysk/infinidysk-rs/commit/62ae5700e6f725bdd87b1cfb06ca19abbc1db359))
+* **api:** admin API with OpenAPI document and live settings ([8388929](https://github.com/infinidysk/infinidysk-rs/commit/83889290f9108bcb4f8144e585fcee47aaa0e6b5))
+* **api:** discover which Arr download clients point at this installation ([e85bbe6](https://github.com/infinidysk/infinidysk-rs/commit/e85bbe66640a4e29f358cdffc69f590c6bd6d18f))
+* **api:** download queued and finished NZBs and retry failed jobs from the queue page ([bc78444](https://github.com/infinidysk/infinidysk-rs/commit/bc7844460032d098e5a94fd0e2dfc14402b48b3f))
+* **api:** explorer API with signed player links ([aced729](https://github.com/infinidysk/infinidysk-rs/commit/aced7298375c51d8f5817acafe35fd3af253625c))
+* **api:** export redacted traces for bug reports ([2439503](https://github.com/infinidysk/infinidysk-rs/commit/2439503a6e877b05a7dfa07e09211d2fcdb683b5))
+* **api:** keep logs across restarts ([6084a64](https://github.com/infinidysk/infinidysk-rs/commit/6084a64a9105eaa6f9fd858ab74dd9a8478f8ca0))
+* **api:** list rejected releases and report stuck counts on queued jobs ([62e54bd](https://github.com/infinidysk/infinidysk-rs/commit/62e54bd043c4a9e8bf2f8767ff212647d838a138))
+* **api:** live updates over server-sent events ([d1b72cc](https://github.com/infinidysk/infinidysk-rs/commit/d1b72cc359649f8e9785169e9921c623e692916e))
+* **api:** provider download quotas with monthly or block resets, and a timed speed test ([9bd788c](https://github.com/infinidysk/infinidysk-rs/commit/9bd788c407b3e4d6922d483bcc82e7bd598a1ebe))
+* **api:** record usage metrics with live samples, overview history and Prometheus export ([c5559ec](https://github.com/infinidysk/infinidysk-rs/commit/c5559ec8713b595562cc8c3570419503f4eb253b))
+* **api:** report container CPU and memory in live metrics ([9e54070](https://github.com/infinidysk/infinidysk-rs/commit/9e54070c7ba8f39566bbf81ada52e16058210b7a))
+* **api:** reveal stored API and download keys in settings ([7632acc](https://github.com/infinidysk/infinidysk-rs/commit/7632acc5f967dd090276267688f47dd1496d1275))
+* **api:** richer overview metrics with per-provider series, records, catalogue and live minute totals ([33ef72b](https://github.com/infinidysk/infinidysk-rs/commit/33ef72b53c1777b68ca5aa981c55c494080811a1))
+* **api:** run the server with the SAB API and WebDAV on one port, the queue worker and the FUSE mount ([928aa63](https://github.com/infinidysk/infinidysk-rs/commit/928aa632e160d2dbe6b9c73cefcec8f955ef29de))
+* **api:** toggle read tracing and download traces ([f35b08e](https://github.com/infinidysk/infinidysk-rs/commit/f35b08e43edb9eb6390af0d0caf6d7114c9de379))
+* **api:** trust local network ranges as reverse proxies by default ([2a692c0](https://github.com/infinidysk/infinidysk-rs/commit/2a692c0aa15ee0225f600e06bbfa1fbea849441b))
+* **api:** upload NZBs into a category through the admin API ([4f02113](https://github.com/infinidysk/infinidysk-rs/commit/4f02113bf1b4c4c26b2d1e7c5b266f8dd5912be0))
+* **archive:** add a sans-I/O RAR4/RAR5 header scanner that maps members to byte ranges ([2766c66](https://github.com/infinidysk/infinidysk-rs/commit/2766c6642453fab4343d8543797255cc04745bc4))
+* **archive:** read 7z headers, including LZMA-encoded ones, and map stored members to byte ranges ([54d909f](https://github.com/infinidysk/infinidysk-rs/commit/54d909f28a23014cfb5261bed9747f349b1e0901))
+* **arr:** clear stuck imports from Arr queues ([ba6c3fe](https://github.com/infinidysk/infinidysk-rs/commit/ba6c3fe201548cec6e0e29e51bfb4cbdb95477d3))
+* **arr:** reconcile owned files against each Arr's library daily ([909b2e6](https://github.com/infinidysk/infinidysk-rs/commit/909b2e60175a6ecacd60f894e8864f993bb48889))
+* **arr:** record owners of earlier imports from each Arr's history ([296ed62](https://github.com/infinidysk/infinidysk-rs/commit/296ed62644c284d202eb8a9fafb716133f5dfa85))
+* **arr:** register webhooks and delete items their Arr deleted ([f6a0976](https://github.com/infinidysk/infinidysk-rs/commit/f6a097676ec79d24da6ab6cc0a1d27516d207772))
+* **auth:** admin account with argon2id, signed session cookies and an admin API key ([f4092cf](https://github.com/infinidysk/infinidysk-rs/commit/f4092cf26e97ff864999aae13f7917ba27ed0d9b))
+* **auth:** let sign-in be required always, off for local addresses, or off ([1ab8f93](https://github.com/infinidysk/infinidysk-rs/commit/1ab8f931d060b6bb8dc205ace4785c4c7d6307e5))
+* **core:** add item ids, file metadata and the versioned zstd blob format ([97813f9](https://github.com/infinidysk/infinidysk-rs/commit/97813f9c48720b1ea3deb6eccae2080b1cc958eb))
+* **db:** add SQLite and PostgreSQL storage for items, blobs and config ([6d0174b](https://github.com/infinidysk/infinidysk-rs/commit/6d0174b3321473edae2f92f6b4c4ce9d40f69602))
+* **db:** add the metrics store with minute, hour and lifetime rollups ([bc408cc](https://github.com/infinidysk/infinidysk-rs/commit/bc408cc921d3b31cfc18a9f9d13778acf48a018e))
+* **db:** broadcast queue, history and health changes ([149b40f](https://github.com/infinidysk/infinidysk-rs/commit/149b40f7f1e79ca35321bb972fd1943ab390b1d7))
+* **db:** health check schedule and results ([893bb4d](https://github.com/infinidysk/infinidysk-rs/commit/893bb4d97b692e09ce102f837e70327fa55372d1))
+* **db:** keep unreferenced NZBs for a retention window and prune old history ([f468df1](https://github.com/infinidysk/infinidysk-rs/commit/f468df1c1ac7ce33b8c9d6d84a808873bde4ceae))
+* **db:** list recent health check results ([77dde54](https://github.com/infinidysk/infinidysk-rs/commit/77dde54ed6030edd3711a88233c148af9c2c6c81))
+* **db:** paged, filtered file queries for the explorer ([913862d](https://github.com/infinidysk/infinidysk-rs/commit/913862d1f98fb43812497c20ce89c7ebf6aed1e0))
+* **db:** query id shards, completed download dirs and remove queued jobs ([2ff1943](https://github.com/infinidysk/infinidysk-rs/commit/2ff19431f48a7bcfbd21b3867caa661d58e859ab))
+* **db:** record which item each finished read was of ([46b3560](https://github.com/infinidysk/infinidysk-rs/commit/46b3560ffb91189504bdee5976e875a408732ba8))
+* **db:** squash migrations into one initial schema ([5dfb260](https://github.com/infinidysk/infinidysk-rs/commit/5dfb26010941546a04a4e92b0d5b008f1de9b474))
+* **db:** store queue and history ([b7585eb](https://github.com/infinidysk/infinidysk-rs/commit/b7585eb873cebda688be634a43e89b0dc827f3b0))
+* **db:** store the single admin login in accounts ([d212af1](https://github.com/infinidysk/infinidysk-rs/commit/d212af16e34a7893f3b0231a7f0b85ab3bf9c956))
+* **health:** analyze media with ffprobe and repair broken MP4 containers ([f2f2d5e](https://github.com/infinidysk/infinidysk-rs/commit/f2f2d5e87c9dcb49fab3619d982692eebe327f22))
+* **health:** choose the check sample size with a slider ([f8b6fe7](https://github.com/infinidysk/infinidysk-rs/commit/f8b6fe7c976d360ad0f37b90f4e34f32d74e8abd))
+* **health:** find the Arr that imported a STRM handoff ([ce39c04](https://github.com/infinidysk/infinidysk-rs/commit/ce39c04f02acf60c079146c8155030451c973782))
+* **health:** report playback damage, hide replaced files and retry with 503 ([96a42f1](https://github.com/infinidysk/infinidysk-rs/commit/96a42f1e384fef3ce754d0d869fde182053f2823))
+* **health:** share a durable per-media search limit ([ad40175](https://github.com/infinidysk/infinidysk-rs/commit/ad4017522d12c39858773aa49573d48f85f9fa11))
+* **health:** show the check schedule and link checked files to the explorer ([175932f](https://github.com/infinidysk/infinidysk-rs/commit/175932f8753da0b67731384fa18bf152deb7843d))
+* **health:** STAT health checks with Sonarr/Radarr repair ([0305f9d](https://github.com/infinidysk/infinidysk-rs/commit/0305f9dd906e3633323790f4aa083186d77bc45e))
+* **health:** two-strike checks, damage classification and Arr replacement ([afc3862](https://github.com/infinidysk/infinidysk-rs/commit/afc3862063aba486e585e3ba0e5430d4fca206a4))
+* **import:** accept C# admin and WebDAV passwords at the first sign-in ([894d69d](https://github.com/infinidysk/infinidysk-rs/commit/894d69dcdaa136a2336265219f92901ced530641))
+* **import:** carry a C# install's library, history and settings over on first boot ([e396fb8](https://github.com/infinidysk/infinidysk-rs/commit/e396fb86d82f292d17611cfcc5748775f1779b8b))
+* **import:** carry C#'s STRM setup over and keep its STRM links playing ([db6dbe0](https://github.com/infinidysk/infinidysk-rs/commit/db6dbe018126d75fddaad83c0941f0a843c65dd8))
+* **import:** convert the library when the import strategy, STRM key, public URL or mount changes ([a13015d](https://github.com/infinidysk/infinidysk-rs/commit/a13015d902f4bcaac0bdecfa648dbe6d0a8960d4))
+* **import:** keep Arrs waiting when the upgrade from C# fails ([1c8d406](https://github.com/infinidysk/infinidysk-rs/commit/1c8d406c1d1d3aa17f7ace0bae9bb08b0429d45a))
+* **import:** map C# settings onto ours in the upgrade report ([6415982](https://github.com/infinidysk/infinidysk-rs/commit/6415982da0e0d54b419d904a4b5776df8865f32b))
+* **import:** report what importing a C# /config would carry over ([ff64ded](https://github.com/infinidysk/infinidysk-rs/commit/ff64ded8f1e695d25587bc6856a5b099cee16ea8))
+* **mount:** log FUSE requests and mount lifecycle ([8208933](https://github.com/infinidysk/infinidysk-rs/commit/820893310b5721c6ea414b6b1c365c54a5822efa))
+* **mount:** mount the tree read-only over FUSE with remount backoff and kernel tuning ([8ef1eff](https://github.com/infinidysk/infinidysk-rs/commit/8ef1eff60ace8a27cf52d8eac6e52e64e66f85e7))
+* **mount:** name FUSE readers by process, pid and uid/gid ([e08c550](https://github.com/infinidysk/infinidysk-rs/commit/e08c550eafb95f697e659789e643eb70b7a5632c))
+* **nntp:** add community-maintained provider catalog compiled from providers/*.toml ([4f8562c](https://github.com/infinidysk/infinidysk-rs/commit/4f8562cc3fbec64ec2e612e2234de94f247b0a2b))
+* **nntp:** add Easyusenet and more provider servers to the catalog ([ffe6eca](https://github.com/infinidysk/infinidysk-rs/commit/ffe6eca739ae4f2b5936a6c5de781a199cd57c52))
+* **nntp:** add implicit TLS, pipelined BODY and zero-copy streaming decode ([5a44715](https://github.com/infinidysk/infinidysk-rs/commit/5a447155e7ada2d8397974691c450eddf1caec68))
+* **nntp:** add missing provider servers to the catalog ([47a13a1](https://github.com/infinidysk/infinidysk-rs/commit/47a13a1e6ae48c761e1451968ac594b042325f50))
+* **nntp:** add pipelined per-provider connection pool with global download permits ([7370caa](https://github.com/infinidysk/infinidysk-rs/commit/7370caaf16f4ceecc0aa95bd3824a90a8c7ec9de))
+* **nntp:** add pipelined STAT and a keepalive warm connection floor ([c50587a](https://github.com/infinidysk/infinidysk-rs/commit/c50587adc17d18388222af68d6fd13b3bd77d2d2))
+* **nntp:** count breaker trips and provider rescues, trace reply latency and decode ([97fda95](https://github.com/infinidysk/infinidysk-rs/commit/97fda9596a454ba90af7864d30eb388fad41f866))
+* **nntp:** count provider requests and trace segment fetches ([b13ffb0](https://github.com/infinidysk/infinidysk-rs/commit/b13ffb0d20acf827064eaffbf9c0467fa888ef15))
+* **nntp:** fail over across providers with per-provider circuit breakers and connection-limit throttling ([9506ed2](https://github.com/infinidysk/infinidysk-rs/commit/9506ed2c42541e90b5f85a816093bd000d64460e))
+* **nntp:** fetch and decode yEnc article bodies over one connection ([8e91ff0](https://github.com/infinidysk/infinidysk-rs/commit/8e91ff006ba0931a4d6693313cd715471b2df761))
+* **nntp:** let diagnostics take a provider exclusively and yield to playback ([b0e3696](https://github.com/infinidysk/infinidysk-rs/commit/b0e369663dc4843a44da208a0f5710cd9a9cb29b))
+* **nntp:** log provider outages and connection limits once as warnings ([337b6bf](https://github.com/infinidysk/infinidysk-rs/commit/337b6bf1aa831e697a6025c0213ea9cb9c5c8378))
+* **nntp:** meter provider downloads and skip providers whose quota is used up ([37bfa08](https://github.com/infinidysk/infinidysk-rs/commit/37bfa081e8399985069c63e4420ad0fdbbd5100e))
+* **nntp:** open connections ahead of demand with prewarm ([0f11843](https://github.com/infinidysk/infinidysk-rs/commit/0f11843decbd4c4112d28d691de7d8599974cdae))
+* **nntp:** route by provider priority levels and skip missed backbones ([59b3c70](https://github.com/infinidysk/infinidysk-rs/commit/59b3c70c78df4c2a57541ee7f12bd8f2bde4e7c3))
+* **nntp:** skip providers that recently lacked an article ([4ae340e](https://github.com/infinidysk/infinidysk-rs/commit/4ae340ea3852dab4495ede1c0a23063fc8829a9b))
+* **par2:** read PAR2 file descriptions and slice checksums from partial files and verify slices ([2332d96](https://github.com/infinidysk/infinidysk-rs/commit/2332d96a4bbb498bf8ef9626c90142515550edee))
+* **queue:** count imports and health check results since start ([0de7c93](https://github.com/infinidysk/infinidysk-rs/commit/0de7c93d4efa8deaf1b1165d468a55f711b69b46))
+* **queue:** expand stored archives nested inside archives ([769ac15](https://github.com/infinidysk/infinidysk-rs/commit/769ac15cf7264b513cc06cf1be7b69b176b3d32e))
+* **queue:** fail full disc releases in video categories ([0966e12](https://github.com/infinidysk/infinidysk-rs/commit/0966e1258790ab6fb56882a8a73428389a07a29c))
+* **queue:** fail releases with missing or invalid media and enforce the owning Arr's media type ([f3d6dcf](https://github.com/infinidysk/infinidysk-rs/commit/f3d6dcf739c16a3c2e84e0bce9829584a1e794b3))
+* **queue:** hand jobs off as STRM files in STRM mode ([0c53e51](https://github.com/infinidysk/infinidysk-rs/commit/0c53e516f996bfbc53cba993b198da24ad09f87b))
+* **queue:** import and stream AES-encrypted RAR and 7z members ([cb1b56d](https://github.com/infinidysk/infinidysk-rs/commit/cb1b56d6f61b2033bfd454863bb8550e166f5edf))
+* **queue:** import queued NZBs into /content with PAR2 names, archive members and STAT sampling ([34a0a28](https://github.com/infinidysk/infinidysk-rs/commit/34a0a284716e6677203a340f04ee02d9dacf6a9f))
+* **queue:** import two jobs at once and drop results of jobs removed mid-import ([f5549ab](https://github.com/infinidysk/infinidysk-rs/commit/f5549abd533624f4c80e7e543c8f4bbf118d2866))
+* **queue:** name obfuscated files after their release folder ([86fb11e](https://github.com/infinidysk/infinidysk-rs/commit/86fb11e0101f2540958af771205387b113772626))
+* **queue:** parse NZBs with SABnzbd's acceptance rules, including gzip and namespaced files ([382d2a7](https://github.com/infinidysk/infinidysk-rs/commit/382d2a7a68039cfa23fa939ae901879f07911161))
+* **queue:** pause the queue or single jobs, configure concurrency and back off retries ([b709cc8](https://github.com/infinidysk/infinidysk-rs/commit/b709cc81e8992a655f2b1db1bff63ba78571fd81))
+* **queue:** requeue imports that stall and fail them on the third stall ([d55db62](https://github.com/infinidysk/infinidysk-rs/commit/d55db622bd1813e51129c9f4452a833643df68d3))
+* **queue:** return the queued job for a duplicate NZB and record refused NZBs as failed ([141d3fb](https://github.com/infinidysk/infinidysk-rs/commit/141d3fbc6691e71847635c45f0dc258753b1bf80))
+* **queue:** store Windows-safe file and folder names ([fb77634](https://github.com/infinidysk/infinidysk-rs/commit/fb77634a459862f3e603f19de12ee131a3b5f139))
+* **sab:** add NZBs by URL with mode=addurl ([2d8d515](https://github.com/infinidysk/infinidysk-rs/commit/2d8d515131f5ff6963a858764cbc2f17b4ba472b))
+* **sab:** identify as SABnzbd when fetching NZBs ([354de13](https://github.com/infinidysk/infinidysk-rs/commit/354de1329cec1a6f50b1ac65f1a582473040e94f))
+* **sab:** retry failed jobs from their stored NZB ([78e31b1](https://github.com/infinidysk/infinidysk-rs/commit/78e31b10dd2974c23208656239b1cb0b14ba9b86))
+* **sab:** serve the SABnzbd API for adding NZBs, queue and history ([0fd706b](https://github.com/infinidysk/infinidysk-rs/commit/0fd706b3594d154e65c6534c6be17f66eb95f073))
+* **sab:** tell owning Arrs about finished jobs ([0b5301d](https://github.com/infinidysk/infinidysk-rs/commit/0b5301da3fe5d4be56819c00b4f12396c2e4b964))
+* **stream:** add a shared segment cache and performance settings ([6f161b5](https://github.com/infinidysk/infinidysk-rs/commit/6f161b5789d8e41d60684e6e912570a4be56c6b9))
+* **stream:** add seekable segment reader with ordered prefetch ([b6136ff](https://github.com/infinidysk/infinidysk-rs/commit/b6136ff09643eb7b6e1e70bbcfb02f13e3462e31))
+* **stream:** bound decoded bytes in flight with a shared in-order budget ([b182f16](https://github.com/infinidysk/infinidysk-rs/commit/b182f16db650290da9fca4301051d35db7a2b137))
+* **stream:** fill missing MPEG-TS segments with null packets ([d181da0](https://github.com/infinidysk/infinidysk-rs/commit/d181da02f1446223bcc7cd9852207cf51f069c29))
+* **stream:** stop playback past too much missing data ([d19df78](https://github.com/infinidysk/infinidysk-rs/commit/d19df781036f7a2e6308ee6d4019c0e5974e1b3e))
+* **stream:** trace read-ahead window, connection queueing, hedge wins and drained replies ([75f4110](https://github.com/infinidysk/infinidysk-rs/commit/75f41107f38319e1a90b3c57ac603798343cc0be))
+* **ui:** add a performance settings page ([5e366d2](https://github.com/infinidysk/infinidysk-rs/commit/5e366d2906907187df92b922908f2cfee4ec03f9))
+* **ui:** add Network settings with trusted proxies ([fd7f832](https://github.com/infinidysk/infinidysk-rs/commit/fd7f832f09eadb46e11cf1aa95354ef146591d78))
+* **ui:** add NZBs from the queue page with a chosen category ([2f8a77e](https://github.com/infinidysk/infinidysk-rs/commit/2f8a77e8c6c0b18221e263f9c5d427f4223a68c6))
+* **ui:** add provider and settings screens ([9b7bbdf](https://github.com/infinidysk/infinidysk-rs/commit/9b7bbdff80a91dc8fc1be901277b36a9987d757a))
+* **ui:** add provider speed test and auto-tune pipeline actions ([20cee2e](https://github.com/infinidysk/infinidysk-rs/commit/20cee2ef231083196ffe886f94825e724978b5a2))
+* **ui:** add sign-in requirement to Settings &gt; Authentication ([7d19457](https://github.com/infinidysk/infinidysk-rs/commit/7d194579a9286c4bd713f1e16b7b6a14d66db727))
+* **ui:** add sign-in, queue, history and health screens ([3dde553](https://github.com/infinidysk/infinidysk-rs/commit/3dde553032637418b3a8dc9dd8f619000d295423))
+* **ui:** add Sportarr instances, move providers under settings as NNTP Providers and settings below system ([f5ca148](https://github.com/infinidysk/infinidysk-rs/commit/f5ca14845df520c19287ea85484c9030f76093b4))
+* **ui:** add the overview dashboard, Prometheus toggle and trace export ([120f586](https://github.com/infinidysk/infinidysk-rs/commit/120f5867fb85d2591cc3a4f7c755656097064584))
+* **ui:** chip input for download client categories ([d1abf21](https://github.com/infinidysk/infinidysk-rs/commit/d1abf215174f95f25105e39e063cb6134b3f2ebc))
+* **ui:** choose between symlinks and STRM files on the Imports page ([922ee60](https://github.com/infinidysk/infinidysk-rs/commit/922ee6029229fc8d48d828147a29350a5ba74da6))
+* **ui:** collapse subtitle tracks into one media line ([aa72376](https://github.com/infinidysk/infinidysk-rs/commit/aa723767737cde0dc28758ffe8cae02d4233d921))
+* **ui:** confirm the admin password during first-time setup ([a0ffd6b](https://github.com/infinidysk/infinidysk-rs/commit/a0ffd6bda113b67b90916a76eeab69c47157c91e))
+* **ui:** download a support pack from Settings &gt; Support ([50f01c5](https://github.com/infinidysk/infinidysk-rs/commit/50f01c5f2c1f88a3503e1ce4ca2711328e67e544))
+* **ui:** edit extra blocked filename patterns in import settings ([99aa1a9](https://github.com/infinidysk/infinidysk-rs/commit/99aa1a92c87d053c073fb668b3e53b35d7203f22))
+* **ui:** filter the Explorer by encryption and show it in file details ([53f86b9](https://github.com/infinidysk/infinidysk-rs/commit/53f86b925486be705aefbdcded94aadeb88504c7))
+* **ui:** group repeated reads of a file into one playback row ([f43890c](https://github.com/infinidysk/infinidysk-rs/commit/f43890ccc5c0c224454f83e881ffe8016cc72285))
+* **ui:** group settings into platform, automation and system sections and rename account to authentication ([7ed9cd5](https://github.com/infinidysk/infinidysk-rs/commit/7ed9cd500659863534108cad34edfd7fe8eff9b7))
+* **ui:** health monitoring settings, state filters and needs-attention list ([69650ef](https://github.com/infinidysk/infinidysk-rs/commit/69650ef5ebcf2838fbe219bb2a3bfe7a1f8b24a5))
+* **ui:** hide system folders in the explorer tree behind a toggle ([8beb323](https://github.com/infinidysk/infinidysk-rs/commit/8beb323b25ad1cad34b29f79c8d3848539374042))
+* **ui:** in-browser player with recovery and playback diagnostics ([03e97a6](https://github.com/infinidysk/infinidysk-rs/commit/03e97a6285f1abecb0f28dc347b1e50586999930))
+* **ui:** library explorer with tree, filters, details and removal preview ([066d097](https://github.com/infinidysk/infinidysk-rs/commit/066d09752e61fccc82acbceb4952a03318957a5f))
+* **ui:** link completed queue jobs to their files in the explorer ([ebb9506](https://github.com/infinidysk/infinidysk-rs/commit/ebb9506bfc2c2a7441cc843d6b501d3e28200309))
+* **ui:** list overview providers in failover order ([aef2c72](https://github.com/infinidysk/infinidysk-rs/commit/aef2c728473ce4a91e569b8714e9c2cda155089b))
+* **ui:** mute release details after the year in item names ([41421a1](https://github.com/infinidysk/infinidysk-rs/commit/41421a182ac622f7eb7ee92f28a308480fe90c0e))
+* **ui:** pause and resume the queue and jobs, set import concurrency ([ce968b3](https://github.com/infinidysk/infinidysk-rs/commit/ce968b3b9d93d4469c9fa7d474248e9695196277))
+* **ui:** preview and follow library conversions from the Imports page ([9344473](https://github.com/infinidysk/infinidysk-rs/commit/93444730bce260180445d443b9da7cb031c9aad5))
+* **ui:** provider quota settings, usage bars, usage reset and timed test progress ([e443c88](https://github.com/infinidysk/infinidysk-rs/commit/e443c88059edd319a397b2529db9b056287d00ad))
+* **ui:** redesign the overview dashboard with activity, provider, rescue, record and catalogue panels ([6a32933](https://github.com/infinidysk/infinidysk-rs/commit/6a32933a7b346eddb7e69058da6be4d71fd46bc8))
+* **ui:** replace the logo with a simpler vector mark ([2009428](https://github.com/infinidysk/infinidysk-rs/commit/200942852f764f982ccee1ce09d441c112a1926f))
+* **ui:** restyle with shadcn and the logo palette ([b58c09c](https://github.com/infinidysk/infinidysk-rs/commit/b58c09cb11f40ad7f571c768c5be7aba77e16df3))
+* **ui:** rework overview layout, chart controls and stat hierarchy ([02c349a](https://github.com/infinidysk/infinidysk-rs/commit/02c349aa8d62af73f311852883fa0cebc9944f4d))
+* **ui:** say on the health page when routine checks are off ([23a2370](https://github.com/infinidysk/infinidysk-rs/commit/23a23702393bd33878b0ff44e915ce21732a319e))
+* **ui:** serve the embedded web UI ([05be499](https://github.com/infinidysk/infinidysk-rs/commit/05be499ea9c8c53fd2750ed6c19b6afd4b808190))
+* **ui:** show container CPU and memory on the System page ([29c60e4](https://github.com/infinidysk/infinidysk-rs/commit/29c60e4337e9c27898084cf396b643c1fc4e7021))
+* **ui:** show each Arr's SABnzbd clients and whether they point here ([16d1a25](https://github.com/infinidysk/infinidysk-rs/commit/16d1a25d66792f03aafa64792efc0faf83784f80))
+* **ui:** show history below the queue and drop the history page ([8650959](https://github.com/infinidysk/infinidysk-rs/commit/8650959176e672f2c2fd51c2bfe25f413390e9fa))
+* **ui:** show import errors in a details dialog and quiet queue rows ([ce14517](https://github.com/infinidysk/infinidysk-rs/commit/ce14517333b2b756ca5b5bdc8564a6a0f1711824))
+* **ui:** show media analysis and broken containers in the explorer ([86c2fc3](https://github.com/infinidysk/infinidysk-rs/commit/86c2fc322d25f240799fdfbdc0d2251e5aee7171))
+* **ui:** show mount status and recent logs ([750d559](https://github.com/infinidysk/infinidysk-rs/commit/750d55906849f786ac364099e44cdeafb55a0ac8))
+* **ui:** show shared backbones and failover order on the providers page ([3d6985e](https://github.com/infinidysk/infinidysk-rs/commit/3d6985ec2507cf445d649826798bb62b60587748))
+* **ui:** show streaming quality, provider tail latency, workload cost and read history ([4ef84b5](https://github.com/infinidysk/infinidysk-rs/commit/4ef84b5f302e8bc60f7dbb31b0f6f3a7a05a9ea6))
+* **ui:** show the segment cache budget on the memory bar ([0a60ff0](https://github.com/infinidysk/infinidysk-rs/commit/0a60ff034c61b12f5ff454f644eed25eaf128396))
+* **ui:** show trends, usage by app, rejected releases, stall counts and import durations ([156e28c](https://github.com/infinidysk/infinidysk-rs/commit/156e28c1e09158e3fa7db58ac93f613d418d731a))
+* **ui:** show version and live activity in the sidebar ([f7599f8](https://github.com/infinidysk/infinidysk-rs/commit/f7599f820cf34bb063e3ba8d989188783ccb6353))
+* **ui:** show when a newer build is available on main ([9b29f42](https://github.com/infinidysk/infinidysk-rs/commit/9b29f424f64c8f1a4dac541c4059f9d2d01bbe7c))
+* **ui:** split segment cache from app memory on the System page ([fbef5ad](https://github.com/infinidysk/infinidysk-rs/commit/fbef5ad37c58f7b7124ccd1152ef79bb2c5f05b7))
+* **ui:** split settings into a page per category ([dab0fbb](https://github.com/infinidysk/infinidysk-rs/commit/dab0fbb3468dbe1ae2c9dd131b0252ef14188033))
+* **ui:** test an Arr connection from Settings &gt; Arr instances ([7cc14e0](https://github.com/infinidysk/infinidysk-rs/commit/7cc14e0181d8ef4651878c6245fdcd52f683c10c))
+* **ui:** trace reads and show where playback stalled ([a0fb803](https://github.com/infinidysk/infinidysk-rs/commit/a0fb80399f679d1cc0cd3629a4e5447c4a3a1116))
+* **ui:** view the C# import report again from Settings &gt; Support ([9136d4a](https://github.com/infinidysk/infinidysk-rs/commit/9136d4a38fd0561f03fcf73669a064d92aaa0fdc))
+* **vfs:** list open reads and trace them on demand ([2214698](https://github.com/infinidysk/infinidysk-rs/commit/221469846c65b034422d8aef22d236db4c37d2e3))
+* **vfs:** serve /content, /.ids, /completed-symlinks and /nzbs with multipart readers ([b638aa5](https://github.com/infinidysk/infinidysk-rs/commit/b638aa53a1b6dc75fed8613d3051bd3c735ec365))
+* **webdav:** serve the tree over WebDAV and /view with ranges, Basic auth and NZB drop-in ([a479346](https://github.com/infinidysk/infinidysk-rs/commit/a47934638186d1b6fafc96ce098e0c465fd177cf))
+* **webdav:** show the client address in read history ([3232f32](https://github.com/infinidysk/infinidysk-rs/commit/3232f3213de8bd3642039af7cc0f35fd8e47e76a))
+* **yenc:** add incremental decode that stops at yEnc control lines and the NNTP terminator ([4739e20](https://github.com/infinidysk/infinidysk-rs/commit/4739e20247655c438f9e4c244fdecb2800dfd522))
+* **yenc:** add rapidyenc-backed yEnc decode, encode and CRC32 crate ([c8b9928](https://github.com/infinidysk/infinidysk-rs/commit/c8b99281acc3e0b566f27f555af746a3e158f9b0))
 
 
 ### Bug Fixes
 
-* **ci:** restore issue forms by removing empty title fields ([#475](https://github.com/nzbdav/nzbdav/issues/475)) ([2bd2305](https://github.com/nzbdav/nzbdav/commit/2bd2305574d965f17821f8682f08ac9c8030cab6))
-* **deps:** bump NzbDav.SharpCompress to 0.53.1 with bounded 7z recursion ([bf4b436](https://github.com/nzbdav/nzbdav/commit/bf4b43606e00d8a9d7dbf426fa0e70adae3fbeb8))
-* **deps:** bump NzbDav.UsenetSharp to 3.1.3 for musl rapidyenc ([f009c9b](https://github.com/nzbdav/nzbdav/commit/f009c9b6479169f3dc5f32f1fe9813bc719fd1dc))
-* **deps:** bump SharpCompress so deep 7z coder chains fail safely ([cb71c15](https://github.com/nzbdav/nzbdav/commit/cb71c151e2171f404176ab7b206eb83c3a97c9b2))
-* **deps:** bump UsenetSharp so Alpine images get musl-native yEnc decode ([eeff02b](https://github.com/nzbdav/nzbdav/commit/eeff02bcf6e510739142b8bddd8bbb2c2c0426a0))
-* **deps:** resolve merge keeping UsenetSharp 3.1.3 and SharpCompress 0.53.1 ([d16405d](https://github.com/nzbdav/nzbdav/commit/d16405d0a1652ee4a78a678f9527fdc1cd99ba4e))
-* **docker:** container shutdown logs the backend exit code and fatal signal ([49a6473](https://github.com/nzbdav/nzbdav/commit/49a647325d8fb540536f2ad37d5ea2c09ade516f))
-* **docker:** log the backend exit code and fatal signal when the container shuts down ([edee229](https://github.com/nzbdav/nzbdav/commit/edee229fe6639a2907f8df37663c4bda28697aa9))
-* **health:** log NNTP transport timeouts as human-readable warnings ([#481](https://github.com/nzbdav/nzbdav/issues/481)) ([2e83a8c](https://github.com/nzbdav/nzbdav/commit/2e83a8c6b7e611b145e8a76e79d9a02092f28808))
-* **health:** resolve the depth setting regardless of casing ([742ea97](https://github.com/nzbdav/nzbdav/commit/742ea97b9eea0b64aa21811e178cdbeca307abbd))
-* **nntp:** connection permit release no longer throws from download callbacks ([95b18c0](https://github.com/nzbdav/nzbdav/commit/95b18c0bbfeb4fb0a4e0890849d70bf2cc44cd08))
-* **nntp:** fail fast on broken yEnc natives and catch Alpine decode crashes in CI ([c9c42eb](https://github.com/nzbdav/nzbdav/commit/c9c42eb5801a6f59ba271faa96709c3e50728d8c))
-* **nntp:** health checks and import probes stay fast when NNTP pipelining is on ([2b7d462](https://github.com/nzbdav/nzbdav/commit/2b7d462e30d27bb4a849dfe5a7ce580547e8cb86))
-* **nntp:** health checks no longer fail when a pipelined STAT session dies mid-sweep ([#476](https://github.com/nzbdav/nzbdav/issues/476)) ([97db88a](https://github.com/nzbdav/nzbdav/commit/97db88a2523024326d24c51c221939add38f788d))
-* **nntp:** keep health and import existence checks on concurrent STAT ([91704be](https://github.com/nzbdav/nzbdav/commit/91704bec7033a3b20b298d00276a65b66ea0e72d))
-* **nntp:** make connection-permit release safe inside completion callbacks ([a691499](https://github.com/nzbdav/nzbdav/commit/a6914994b537b7b47621ee91daff8b54d3ccd643))
-* **nntp:** only log provider recovery when the circuit actually opened ([5b33db1](https://github.com/nzbdav/nzbdav/commit/5b33db18bc82b34b023dfdba3b66efbca52f572c))
-* **nntp:** only log provider recovery when the circuit actually opened ([48e79d7](https://github.com/nzbdav/nzbdav/commit/48e79d7f8919a533b52472e6eb5283c30622c06f))
-* **nntp:** stop Progress wrappers racing pipelined STAT fallback reports ([#483](https://github.com/nzbdav/nzbdav/issues/483)) ([75c02cd](https://github.com/nzbdav/nzbdav/commit/75c02cd365aa68cdf7d4a16fc2643aee587945aa))
-* **nntp:** stop providers getting stuck in the probing state ([6150de7](https://github.com/nzbdav/nzbdav/commit/6150de71e2ced9b6f394910f25d1ec659206a23a))
-* **nntp:** stop providers getting stuck in the probing state ([0de9ace](https://github.com/nzbdav/nzbdav/commit/0de9aced5368e81e3ac9c65dea7d968643eef366))
-* **queue:** import obfuscated multi-volume RAR sets with duplicate subjects or incomplete volumes ([#471](https://github.com/nzbdav/nzbdav/issues/471)) ([4148813](https://github.com/nzbdav/nzbdav/commit/41488135b809802511eae8beae2b193c097b3fa3))
-* **queue:** progress broadcasts can no longer crash the backend from a timer callback ([016f6e0](https://github.com/nzbdav/nzbdav/commit/016f6e04c99d7fb1a24cd0703c0c8465c0aad494))
-* **queue:** queue processing starts only after the web host is healthy ([015ffdd](https://github.com/nzbdav/nzbdav/commit/015ffdddc27465e5de84ffcbb9dce41702020fbd))
-* **queue:** queue progress updates no longer crash the backend on a bad callback ([9fc3841](https://github.com/nzbdav/nzbdav/commit/9fc384167f9ad3eebdc17ce534298c2a43b2f13e))
-* **queue:** removing a blocklisted file no longer crashes the queue ([#446](https://github.com/nzbdav/nzbdav/issues/446)) ([97f0ebe](https://github.com/nzbdav/nzbdav/commit/97f0ebe63acf66f89dbfd30e2dfce5e81148e254))
-* **queue:** start queue processing only after the web host is serving ([8bd9240](https://github.com/nzbdav/nzbdav/commit/8bd924047b09e0119da72633ab0e0e4cc61e7ba5))
-* **ui:** keep live updates connected across backend websocket relay drops ([9f8e809](https://github.com/nzbdav/nzbdav/commit/9f8e809b312d3d4cfd03f2af090e5d6df2334811)), closes [#515](https://github.com/nzbdav/nzbdav/issues/515)
-* **ui:** live Overview and Queue updates no longer stall until refresh ([4499595](https://github.com/nzbdav/nzbdav/commit/44995954d66e74fb502baab7a0ac08c3e2657ca1))
-* **ui:** remove MaxListenersExceededWarning noise from container logs ([2b0afac](https://github.com/nzbdav/nzbdav/commit/2b0afac782bb683fba93115dce33cba823ae6260))
-* **ui:** stop stacking proxy timeout listeners on keep-alive sockets ([6fa0dda](https://github.com/nzbdav/nzbdav/commit/6fa0dda7b3c7715d2b60495951143d24b2ca8f00))
-* **ui:** stop the read sessions panel overflowing at full width ([ddd36be](https://github.com/nzbdav/nzbdav/commit/ddd36be9f6617ba2ee78a67ddf1c9e03e1ae8143))
-* **ui:** stop the read sessions panel overflowing at full width ([dfcfef0](https://github.com/nzbdav/nzbdav/commit/dfcfef042490274eb2214cd69a16f8d57d42ebc0))
-* **webdav:** clamp a /view range end past the file so response headers stay valid ([#447](https://github.com/nzbdav/nzbdav/issues/447)) ([92bdd81](https://github.com/nzbdav/nzbdav/commit/92bdd819a2d4f5711a9426053b28efef680b6d83))
-* **webdav:** treat corrupt Lazy RAR as permanent miss and schedule repair ([#484](https://github.com/nzbdav/nzbdav/issues/484)) ([318b8f7](https://github.com/nzbdav/nzbdav/commit/318b8f7db87c8473cc662488f58b4ab6b2ae9a45))
+* **api:** check for newer releases instead of newer commits on main ([1ca624f](https://github.com/infinidysk/infinidysk-rs/commit/1ca624fed3ef755db52b41e1097321fca3333cd1))
+* **api:** count only failures the caller sees as errors ([479e234](https://github.com/infinidysk/infinidysk-rs/commit/479e2342dbde6136414824037da05682b55834dd))
+* **api:** decimal performance presets that keep at least the previous byte budgets ([338e982](https://github.com/infinidysk/infinidysk-rs/commit/338e982f31abeffd77c6ebd582a3b061bd086d4b))
+* **api:** group read usage by the app's first word ([#15](https://github.com/infinidysk/infinidysk-rs/issues/15)) ([ad4964d](https://github.com/infinidysk/infinidysk-rs/commit/ad4964df3dc7ac7361a17b582f13fe338e4821ef))
+* **api:** load library folders saved before they gained an Arr path ([349803c](https://github.com/infinidysk/infinidysk-rs/commit/349803c74dca9f53d4d1c6a9be4b2d81c855cdd2))
+* **api:** no trailing dot on links converted from STRM files for extensionless items ([cfd9948](https://github.com/infinidysk/infinidysk-rs/commit/cfd9948ecefef06c2a82b0bd9dd248045d0b7e33))
+* **api:** read the player filter of /reads from the query string ([dbb4998](https://github.com/infinidysk/infinidysk-rs/commit/dbb49983d5f7e49d03d42066ae7f4909a2012d47))
+* **api:** say the server keeps no copy of a support pack ([0015264](https://github.com/infinidysk/infinidysk-rs/commit/0015264243b1840b5888e6afb34bb0ce1345f950))
+* **api:** start with defaults instead of failing on an out-of-range stored setting ([25fd6eb](https://github.com/infinidysk/infinidysk-rs/commit/25fd6eb4e39f97287bee4dd9a8cfaaf731bf45fa))
+* **api:** write the support pack generated_at as an RFC 3339 time ([495ad31](https://github.com/infinidysk/infinidysk-rs/commit/495ad31b15811ed0872caf13e8e3f373c6fbc8eb))
+* **arr:** reconcile only after the first discovery found each Arr's clients ([b5db573](https://github.com/infinidysk/infinidysk-rs/commit/b5db573fd9614d1134587f1d0bbdbbb84beadcf5))
+* **auth:** say the username or password is wrong when sign-in fails ([9810fb4](https://github.com/infinidysk/infinidysk-rs/commit/9810fb4bb0e0ccdbeefa6f7b375614e49383679f))
+* **db:** delete a job folder emptied through its subfolders ([794a4f3](https://github.com/infinidysk/infinidysk-rs/commit/794a4f3b9cedeb5188e28a98aec090b8811b8f79))
+* **db:** delete job folders left empty when their last file is deleted ([f139331](https://github.com/infinidysk/infinidysk-rs/commit/f139331e69b219585527b474b0b9109704d8e503))
+* **db:** keep metrics stores that fail migration and quarantine corrupt ones ([9c11cfb](https://github.com/infinidysk/infinidysk-rs/commit/9c11cfb4566428474d32695960397ee14cbc3ce4))
+* **deps:** update rustls to 0.23.46 for RUSTSEC-2026-0346..0349 ([4553728](https://github.com/infinidysk/infinidysk-rs/commit/4553728a6e07eee04af2401d6935c809fe27017f))
+* **deps:** update rustls-webpki and webpki-roots for distrusted CA advisories ([d978bd1](https://github.com/infinidysk/infinidysk-rs/commit/d978bd1d410bf23a6ada3c7f66e26b8e7cffcc83))
+* **health:** keep items when an Arr reports a file missing from disk ([afb4115](https://github.com/infinidysk/infinidysk-rs/commit/afb411546fdc37cddfa53c5bd15e02b728d418ce))
+* **health:** keep repair owner lookup working after SAB history deletion ([79379db](https://github.com/infinidysk/infinidysk-rs/commit/79379db84fc1c10950b2d736495d66adb349381a))
+* **health:** never replace a file while it is being watched ([8916e5a](https://github.com/infinidysk/infinidysk-rs/commit/8916e5a242bf9c6575a9cc44e81ded326b91ef75))
+* **health:** one failing file no longer stops health checks for the library ([96b704a](https://github.com/infinidysk/infinidysk-rs/commit/96b704ab677c4193e406ecf70a5479d313402bea))
+* **health:** repair migrated files whose download history is gone ([a924fda](https://github.com/infinidysk/infinidysk-rs/commit/a924fda34a79aa1e88bc2c313d986f381c6e7e37))
+* **import:** accept a library folder that holds the mount or STRM directory ([639b1ac](https://github.com/infinidysk/infinidysk-rs/commit/639b1ac0e7db2160647bef25be01a00c2e48371a))
+* **import:** bring C# health checks scheduled years out within 90 days ([dc8c4ef](https://github.com/infinidysk/infinidysk-rs/commit/dc8c4efd4361e9b591df12ae36d930b42e28a05b))
+* **import:** carry over C# downloads with an empty category or unknown size ([4a2519f](https://github.com/infinidysk/infinidysk-rs/commit/4a2519f9b1780feacf66962cfcf551aa46902148))
+* **import:** carry over C# quota usage and storage-group backbones ([8da8a96](https://github.com/infinidysk/infinidysk-rs/commit/8da8a96f5e62c2f0ab4598a79a986a73280f9d17))
+* **mount:** date fixed directories from server start instead of 1970 ([d99456a](https://github.com/infinidysk/infinidysk-rs/commit/d99456a7e411d1966d29331af0cca2f737b1018c))
+* **mount:** give fixed folders a constant date instead of server start ([4c0e77d](https://github.com/infinidysk/infinidysk-rs/commit/4c0e77d8f645658eb57bcb69b240e4cc2cf55e6c))
+* **mount:** keep FUSE reads in order and survive panics and kills ([6b5aaee](https://github.com/infinidysk/infinidysk-rs/commit/6b5aaee34e1da8e486c8d9c7e490c28cf1ef4aec))
+* **mount:** let Arr apps import links from the FUSE mount ([0d04db8](https://github.com/infinidysk/infinidysk-rs/commit/0d04db8b6e523ffb0549a2584b496d4db7f46a8c))
+* **mount:** measure first byte from the first read, not from open ([d4540c0](https://github.com/infinidysk/infinidysk-rs/commit/d4540c0cdf4ef675ceb63c28d33ccd3c5a643631))
+* **mount:** warn when FUSE readahead can't be raised in Docker ([a4194e4](https://github.com/infinidysk/infinidysk-rs/commit/a4194e4faaba2fcaa5ed88779cbfbe532dc1349a))
+* **mount:** warn when the mount is not visible outside the container ([a5370e4](https://github.com/infinidysk/infinidysk-rs/commit/a5370e4428b20a88d3cbab751861e95300f0e71d))
+* **nntp:** a STAT success no longer resets the breaker back-off ([0bc42ff](https://github.com/infinidysk/infinidysk-rs/commit/0bc42ff9408d48b1dc5d2c56ffb827bb5666f657))
+* **nntp:** count a dropped provider connection as one failure ([3f2e0fb](https://github.com/infinidysk/infinidysk-rs/commit/3f2e0fb191f7c0e2d8db39cf047f377e0023f818))
+* **nntp:** fail over to the next provider when a stream read times out ([fb0bafe](https://github.com/infinidysk/infinidysk-rs/commit/fb0bafefc5104fecbb03495928af9f6e65f350fb))
+* **nntp:** fail over when a provider serves the wrong part of a post ([99e5e76](https://github.com/infinidysk/infinidysk-rs/commit/99e5e76c37e172e5b7225cb8a56cb8179e1b478e))
+* **nntp:** probe a tripped provider once its cooldown ends ([211afd8](https://github.com/infinidysk/infinidysk-rs/commit/211afd8a949a9339ed35dd3ab1b2174d698d370c))
+* **nntp:** report unavailable rather than corrupt when a provider was skipped ([6cfe1e5](https://github.com/infinidysk/infinidysk-rs/commit/6cfe1e58019b06de01313fd1f8fedf3ef488d2ba))
+* **nntp:** requests that finish after a trip no longer close the breaker ([371b393](https://github.com/infinidysk/infinidysk-rs/commit/371b393f90def09525df531d496f0630778890bd))
+* **nntp:** stop hung new connections from stalling playback ([fb67417](https://github.com/infinidysk/infinidysk-rs/commit/fb67417d57d38cb56fdd4eaeb5812ae14792e46d))
+* **nntp:** stream reads give up after 30 s without a download slot ([3804962](https://github.com/infinidysk/infinidysk-rs/commit/3804962d4bc668f1effa9107d05959a3f53cacce))
+* **queue:** cap each import at 16 provider requests across all steps ([af72ba3](https://github.com/infinidysk/infinidysk-rs/commit/af72ba38aa499d9f3eec7e33d6462b8db5849e4f))
+* **queue:** fail over when a provider serves the wrong article during import ([3cfc3e2](https://github.com/infinidysk/infinidysk-rs/commit/3cfc3e2b0d8183abfcc5b8c66e8eb51a44a1f75f))
+* **queue:** one crashing import no longer stops the queue ([d3a827a](https://github.com/infinidysk/infinidysk-rs/commit/d3a827ad2de4764a88837a23b0eb4bb2f3014e75))
+* **queue:** rename every file of packs that carry one PAR2 set per file ([4f4e333](https://github.com/infinidysk/infinidysk-rs/commit/4f4e33359583ec9d3b964f3c61f8068b4e540367))
+* **sab:** create category folders up front so Arr path checks pass ([6e93912](https://github.com/infinidysk/infinidysk-rs/commit/6e93912a5a6168cd736c98f397100512318fbdfd))
+* **sab:** match parameter and NZB file field names case-insensitively ([ea15513](https://github.com/infinidysk/infinidysk-rs/commit/ea155133912c81b1cccf102f662da556cea1dce2))
+* **stream:** keep disk cache recency across restarts ([ca07837](https://github.com/infinidysk/infinidysk-rs/commit/ca07837cfb90cbe6b43b55239bcd4dc308378a6f))
+* **stream:** stamp body progress at arrival and allow per-reader experiment switches ([2bbbba1](https://github.com/infinidysk/infinidysk-rs/commit/2bbbba118f718527fcab6471f612f064ef1c11c5))
+* **ui:** align overview tile trends and show short read times in seconds ([134d60d](https://github.com/infinidysk/infinidysk-rs/commit/134d60df17ad1d2e03bba01ce739c034f49776aa))
+* **ui:** allow picking NZB files on iOS ([a3ce004](https://github.com/infinidysk/infinidysk-rs/commit/a3ce0043ffc1157c8d8bc48607d151cc111ffc1d))
+* **ui:** clarify the read-ahead hint ([7b8757c](https://github.com/infinidysk/infinidysk-rs/commit/7b8757c06576ec3c799fda21afd77fab0bee0f8f))
+* **ui:** drop decimals from overview activity totals ([a696c3e](https://github.com/infinidysk/infinidysk-rs/commit/a696c3e6be4f696df5f248bd67434e55d76aba81))
+* **ui:** fit provider settings on mobile and name slider thumbs ([dba17bf](https://github.com/infinidysk/infinidysk-rs/commit/dba17bf0863e8f63d6b28bb4cff664d7483c693d))
+* **ui:** fit the player to the window and warn about undecodable audio ([8f38d67](https://github.com/infinidysk/infinidysk-rs/commit/8f38d6755fd237345eb4799da35b9732262208dc))
+* **ui:** focus the username field on the sign-in page ([848de2b](https://github.com/infinidysk/infinidysk-rs/commit/848de2b4a01f5fea1d25c7e0f3ca5095eefa31f8))
+* **ui:** format sub-millisecond first bytes and single stalls in read history ([e277b39](https://github.com/infinidysk/infinidysk-rs/commit/e277b39291b217031c1ef5b957a0ba3ad124d6b3))
+* **ui:** give settings section headers their own tier ([54729ed](https://github.com/infinidysk/infinidysk-rs/commit/54729ed7346129e637e80b8d2e9be52aa586cfe7))
+* **ui:** indent the orphan action under auto-repair ([c19415b](https://github.com/infinidysk/infinidysk-rs/commit/c19415b8e751afd40f983c091af1f69f04bfcbe2))
+* **ui:** mute release details in overview file names ([#14](https://github.com/infinidysk/infinidysk-rs/issues/14)) ([efe973f](https://github.com/infinidysk/infinidysk-rs/commit/efe973f2fce3e403d83643bdf870e6ce0fcc7b52))
+* **ui:** open the player on plain-HTTP LAN addresses ([a046a14](https://github.com/infinidysk/infinidysk-rs/commit/a046a14af608b5a8a0aa76869aff1633c9c5be74))
+* **ui:** pluralize held reconciliation counts ([91847b2](https://github.com/infinidysk/infinidysk-rs/commit/91847b2a1656da8f20e9aa5a48c7e85dc1061bc9))
+* **ui:** put Add Arr instance at the top like Add provider ([d9cf641](https://github.com/infinidysk/infinidysk-rs/commit/d9cf64149a0d09b9f257bded7b03a6ea6d2f0bf2))
+* **ui:** queue page no longer crashes when the default category is empty ([cbe3de1](https://github.com/infinidysk/infinidysk-rs/commit/cbe3de13bcf1b4ab45442d1c6c973098b4194d7f))
+* **ui:** rename the providers settings link to Providers ([db6c2ac](https://github.com/infinidysk/infinidysk-rs/commit/db6c2accbfe254703bf15089c74f8705055d6102))
+* **ui:** scroll a new Arr instance fully into view ([98bd85e](https://github.com/infinidysk/infinidysk-rs/commit/98bd85e8713f3b74f95a1cc317f5f005b4820892))
+* **ui:** scroll dialogs that are taller than the window ([7bea98e](https://github.com/infinidysk/infinidysk-rs/commit/7bea98ec023a80d72743b5e425edb5ffe18cbd95))
+* **ui:** scroll to the file details card when it opens in Explorer ([102d4c1](https://github.com/infinidysk/infinidysk-rs/commit/102d4c1d0877f702ec7a41e0eab8869f41a26f00))
+* **ui:** show an error with a reload button instead of a blank page ([4c32b1b](https://github.com/infinidysk/infinidysk-rs/commit/4c32b1b73248be4c9a821df2fa260a2e47f76180))
+* **ui:** show sizes, speeds and tuning in decimal MB and GB ([d7504a2](https://github.com/infinidysk/infinidysk-rs/commit/d7504a2621fe22ba505d8f2d0cd7f9a2dcbae29d))
+* **ui:** show the hostname, port, TLS and backbone a provider profile sets ([070fe58](https://github.com/infinidysk/infinidysk-rs/commit/070fe5859218671803e6d868e7121fee34d48a0a))
+* **ui:** show the orphan action only while auto-repair is on ([017c029](https://github.com/infinidysk/infinidysk-rs/commit/017c029ce19c25ef22c16e2219e4cc8942d6bfec))
+* **ui:** stop asking to convert a library that needs no changes ([188954a](https://github.com/infinidysk/infinidysk-rs/commit/188954ae086edda35ac31cabdc39fc44775554fc))
+* **ui:** stop library conversion buttons from saving settings ([0494d4c](https://github.com/infinidysk/infinidysk-rs/commit/0494d4c47b5afb52c352b6e727791272930dc7e7))
+* **ui:** wrap page header actions on narrow screens ([31a5235](https://github.com/infinidysk/infinidysk-rs/commit/31a523502ae75c8f4cb42d5ccd3947e71e34e2b3))
 
 
 ### Performance Improvements
 
-* **queue:** cap import pipelining depth to bound first-segment memory ([b690fa8](https://github.com/nzbdav/nzbdav/commit/b690fa8508094a4fe0d3b6691dd9f53a7c524645))
-* **queue:** limit first-segment import pipelining to reduce memory spikes ([42f0273](https://github.com/nzbdav/nzbdav/commit/42f02737458459fb5850324613610462afc03c8c))
-
-
-### Documentation
-
-* add migration paths from nzbdav-dev and community forks ([96ff4c9](https://github.com/nzbdav/nzbdav/commit/96ff4c91f25f1a67cfce8a76003125f43f5b2179))
-* align Effort scale with Size (XS–XL) ([87ea0b9](https://github.com/nzbdav/nzbdav/commit/87ea0b92b92401c78f6eb359dd75b566139af6a2))
-* clarify homepage legal-use disclaimer for public domain content ([1edf4c4](https://github.com/nzbdav/nzbdav/commit/1edf4c4d67b7a5f2bc6b700f784af0999f9a5ff9))
-* document current issue triage and milestone practice ([25546bd](https://github.com/nzbdav/nzbdav/commit/25546bde44eee6f03d78310359d0651f2e282992))
-* document current issue triage and milestone practice ([568b471](https://github.com/nzbdav/nzbdav/commit/568b4719ee58a9e17710c1cd4ef51cb5e501c2a3))
-* document latest vs lts Docker image tags in README ([#458](https://github.com/nzbdav/nzbdav/issues/458)) ([46a62ec](https://github.com/nzbdav/nzbdav/commit/46a62ec81fc313867edd73c5fa2e73394345adec))
-* feature Discord invite in community and footer socials ([258ad3f](https://github.com/nzbdav/nzbdav/commit/258ad3f53f594e65ceca33ac655e1e59005d44ed))
-* hide Made with Zensical footer credit ([13c6a7b](https://github.com/nzbdav/nzbdav/commit/13c6a7b36a4e949bb6bf09a0d5cf0ed7c25b0324))
-* note NzbDAV as a fully supported DUMB core module ([776f10e](https://github.com/nzbdav/nzbdav/commit/776f10edf7a579e9e5c9df7aaf7f22bf0ad73e7a))
-* note same-origin /ws WebSocket requirement for reverse proxies ([a4168e7](https://github.com/nzbdav/nzbdav/commit/a4168e75d70540ded5dcd5c56b6dd6f05e5279c0))
-* rebuild nzbdav.com as a branded product docs site ([2d1a6f7](https://github.com/nzbdav/nzbdav/commit/2d1a6f703b4ae694fb15a1552ccc684ec3e385b2))
-* rebuild nzbdav.com site with branded guides and settings reference ([64a215d](https://github.com/nzbdav/nzbdav/commit/64a215d5cbffbd8cfd4817db9a2b5c5f2f1579e5))
-* require breaking commits for migrations and breaking changes ([de96b56](https://github.com/nzbdav/nzbdav/commit/de96b563ed64ff37a9ada498e7298e658fd5d822))
-* require human-friendly log events for stack dumps ([9b69c8f](https://github.com/nzbdav/nzbdav/commit/9b69c8f20b8f0d7a9cb48aab96ccb2d18955ed19))
-* **ui:** shrink homepage hero screenshot so it dominates less ([ddcc7c4](https://github.com/nzbdav/nzbdav/commit/ddcc7c48bedc059370fa2f430f3d961420a2c7d6))
-* **ui:** use product logo in header and mid-size the hero screenshot ([5fec824](https://github.com/nzbdav/nzbdav/commit/5fec8241896c408ddfd665dc1bb240d6e9efe7d0))
-* **ui:** use README product screenshot as the homepage hero ([37bdb9d](https://github.com/nzbdav/nzbdav/commit/37bdb9d4dfe4d9c9f52b2b13846d23f188376997))
-* use Issue Priority/Effort fields instead of labels ([a04f392](https://github.com/nzbdav/nzbdav/commit/a04f39204ad73a16bbfc6632dbb749f9ab808850))
-* use NzbDAV casing, add alternatives comparison, shrink badges ([c2db122](https://github.com/nzbdav/nzbdav/commit/c2db122840990f360f86b1fb4aec40a08867b364))
-* use NZBDav Ecosystem project fields for Priority and Effort ([a5786ba](https://github.com/nzbdav/nzbdav/commit/a5786ba97a226140a4944b87ef5ef3362e61b8df))
-
-## [0.7.25](https://github.com/nzbdav/nzbdav/compare/v0.7.24...v0.7.25) (2026-07-17)
-
-
-### Features
-
-* **ui:** modernize speed-test panel and raise data budget options ([853c4cd](https://github.com/nzbdav/nzbdav/commit/853c4cdab24dc5f7f81afc740803a61804d04b5c))
-
-
-### Bug Fixes
-
-* **usenet:** keep long speed tests alive past proxy timeouts ([aeca1cf](https://github.com/nzbdav/nzbdav/commit/aeca1cfa07638ec06b86ad20a37c01de5a7a8049))
-* **usenet:** prefer healthy large files for speed-test corpus ([745a82a](https://github.com/nzbdav/nzbdav/commit/745a82ad335ac03fbd669046f39617388eb07171))
-* **usenet:** recover speed-test rates when the byte budget finishes in warmup ([ef4ff24](https://github.com/nzbdav/nzbdav/commit/ef4ff24a9ad5549e9be00d690cfb0b5f36858881))
-* **usenet:** rename speed-test MbPerSec fields to MegaBytesPerSec ([643d278](https://github.com/nzbdav/nzbdav/commit/643d27863da9ba1451d6272360d97d0a922d726f))
-* **usenet:** reserve speed-test budget for pipelining recommendations ([7ca4c0b](https://github.com/nzbdav/nzbdav/commit/7ca4c0b564f2d00df4bc49c2b97364fa63e086b1))
-* **usenet:** score speed-test confidence from knee region and confirm runs ([7445ef0](https://github.com/nzbdav/nzbdav/commit/7445ef07ad09f781aaa8ff7fa1ef254fcc33c21f))
-* **usenet:** speed test keeps budget for pipelining and fits results in the provider modal ([1d32148](https://github.com/nzbdav/nzbdav/commit/1d321487092c3f6493e1fe03191e3a91d1e70282))
-* **usenet:** speed test no longer reports low confidence on fast connections ([b66f375](https://github.com/nzbdav/nzbdav/commit/b66f375530e457d2e6ad08dfca449682f8d3f27b))
-* **usenet:** speed test uses MB correctly and survives long 20 GB runs ([69bf34e](https://github.com/nzbdav/nzbdav/commit/69bf34e9f6c5bfe2e176ace298c048a5499bcdfd))
-* **usenet:** stop speed-test cancel from poisoning NNTP sockets ([ede637e](https://github.com/nzbdav/nzbdav/commit/ede637e191f1ade24a10e42c711771b85b815d03))
-* **usenet:** stop verify-at-N from reporting 0 MB/s on fast lines ([0ed20cb](https://github.com/nzbdav/nzbdav/commit/0ed20cbbd07c54b2818e6ca7f6f9f60a02386da2))
-* **usenet:** Verify at N connections no longer reports 0 MB/s on fast lines ([62a94c9](https://github.com/nzbdav/nzbdav/commit/62a94c9b52c3b2770955ae2eba1605ef03b843ed))
-
-
-### UX
-
-* **usenet:** clarify speed-test rates vs total data used ([#440](https://github.com/nzbdav/nzbdav/issues/440)) ([a954e4d](https://github.com/nzbdav/nzbdav/commit/a954e4d446fbd26a23b18ac8cf3e627c7bea3a4f))
-
-## [0.7.24](https://github.com/nzbdav/nzbdav/compare/v0.7.23...v0.7.24) (2026-07-17)
-
-
-### Bug Fixes
-
-* **deps:** bump the github-actions group across 1 directory with 2 updates ([5290539](https://github.com/nzbdav/nzbdav/commit/5290539c65da4ab9c30abd23653d10f8cac90afd))
-* **deps:** bump the github-actions group across 1 directory with 2 updates ([c3bf15d](https://github.com/nzbdav/nzbdav/commit/c3bf15d18ead06776becd31aef0a3c17fc29d578))
-* **queue:** abort first-segment checks early when an important file is missing ([63404fa](https://github.com/nzbdav/nzbdav/commit/63404fa71a64c750bd04d6a92ad57039d52174fa))
-* **queue:** fail dead NZBs as soon as the first missing RAR is confirmed ([4288fc1](https://github.com/nzbdav/nzbdav/commit/4288fc16e70f359de2bc5d0579a0ef31c8d28a7e))
-* **sab:** replace existing queue item on addfile name collision ([b3ab0fb](https://github.com/nzbdav/nzbdav/commit/b3ab0fb835de17c03c36c6b7a6d6bcc4ff837749))
-* **sab:** Sonarr re-adds no longer fail when the previous NZB is still in the queue ([1e98dde](https://github.com/nzbdav/nzbdav/commit/1e98dde58c6e8ea94275c50ad7119ee165d75ee6))
-
-
-### CI/CD Pipeline
-
-* keep the git `dev` tag in sync with the `dev` container image ([c26c774](https://github.com/nzbdav/nzbdav/commit/c26c774f315ac343801afd870216398a05138960))
-* move git dev tag with pre-release and release image publishes ([5a51cef](https://github.com/nzbdav/nzbdav/commit/5a51cef879f5ddc54837c8795db2267a01de59a8))
-
-## [0.7.23](https://github.com/nzbdav/nzbdav/compare/v0.7.22...v0.7.23) (2026-07-17)
-
-
-### Bug Fixes
-
-* **deps:** bump zensical from 0.0.47 to 0.0.50 in the docs-python group ([f4dc57f](https://github.com/nzbdav/nzbdav/commit/f4dc57f2ea98c70adec8727981d2a0c3bcc16841))
-* **deps:** bump zensical from 0.0.47 to 0.0.50 in the docs-python group ([c75ef53](https://github.com/nzbdav/nzbdav/commit/c75ef53e17ac46054dd18efd8f82c2aedab78592))
-* **nntp:** fail DMCA'd NZBs faster when NNTP pipelining is enabled ([d081b0c](https://github.com/nzbdav/nzbdav/commit/d081b0cd202fa1449c6a90450222709e2f9532d8))
-* **nntp:** skip rescue re-verification for definitively missing pipelined articles ([0e18d7d](https://github.com/nzbdav/nzbdav/commit/0e18d7d7f45a308cbf91adf94248e036dd37f16b))
-* **queue:** keep Remove Orphaned Files elapsed timer visible ([51ff5d5](https://github.com/nzbdav/nzbdav/commit/51ff5d53e8cd012b9228da006a82c2693696d5a6))
-* **queue:** keep Remove Orphaned Files progress updating during quiet phases ([8cc4fa7](https://github.com/nzbdav/nzbdav/commit/8cc4fa7cc8dfcb75207280a8409593e5842bef70))
-* **queue:** queue no longer waits a full minute before retrying after provider errors ([3c3c7cf](https://github.com/nzbdav/nzbdav/commit/3c3c7cf655731a360a96dfe39416e31478a0501a))
-* **queue:** remember missing first segments so retries and re-grabs fail fast ([1b11756](https://github.com/nzbdav/nzbdav/commit/1b11756fab2ddb80df2ebd96e65107c8a3679314))
-* **queue:** Remove Orphaned Files elapsed timer no longer flashes ([3387d78](https://github.com/nzbdav/nzbdav/commit/3387d785c3366df6628b55277dd85e03618c0b0a))
-* **queue:** Remove Orphaned Files no longer looks frozen mid-scan ([0ec15f7](https://github.com/nzbdav/nzbdav/commit/0ec15f7a72261f102938f184ca5c01a7fd9499b6))
-* **queue:** Remove Orphaned Files no longer scans the linked-id table per row ([eec6ea8](https://github.com/nzbdav/nzbdav/commit/eec6ea87ea507b21f4e65ef968e8b587247746d3))
-* **queue:** restore Remove Orphaned Files linked-id index seeks ([92ee261](https://github.com/nzbdav/nzbdav/commit/92ee2610080342ffc18299b75b690dea50e57707))
-* **queue:** wake queue when a retry pause expires instead of sleeping a full minute ([6edcf31](https://github.com/nzbdav/nzbdav/commit/6edcf31a51308dd625fcb1d303bd46575d8fdc75))
-* **usenet:** produce stable speed test recommendations ([55d7b1c](https://github.com/nzbdav/nzbdav/commit/55d7b1c7b4877bf4e415c1368b347494c2742fa8))
-* **usenet:** stabilize speed test recommendations ([65ef8a8](https://github.com/nzbdav/nzbdav/commit/65ef8a8801383b59a33d04a34921c71e273a2bb2))
-* **webdav:** keep encrypted archive playback running when parts end early ([b007036](https://github.com/nzbdav/nzbdav/commit/b00703648f82359b018bfbe9e41668828b9204c5))
-* **webdav:** preserve offsets when encrypted parts end early ([be17df5](https://github.com/nzbdav/nzbdav/commit/be17df5b0f227714f49b25eabb910ee42dd93b5e))
-
-
-### Chores
-
-* **ci:** update dev image tag on releases ([d5267ba](https://github.com/nzbdav/nzbdav/commit/d5267bad48be31582e8f1772b1892dc3d54e55e4))
-* **docs:** expand release-please changelog sections and commit types ([ae52ea2](https://github.com/nzbdav/nzbdav/commit/ae52ea203be09de007469503f90546c5c19e80d9))
-* **docs:** expand release-please changelog sections and commit types ([66edecc](https://github.com/nzbdav/nzbdav/commit/66edecc80fd84e3267745256c213cebf2d78a632))
-* update release-please config ([eb945a5](https://github.com/nzbdav/nzbdav/commit/eb945a5bad2153beabb911e8941da97681da1bef))
-
-
-### UX
-
-* **ui:** modernize maintenance, backup, and usenet settings pages ([d64f15d](https://github.com/nzbdav/nzbdav/commit/d64f15dd2b405d3c0469b85fa75afe9bc8da7844))
-
-## [0.7.22](https://github.com/nzbdav/nzbdav/compare/v0.7.21...v0.7.22) (2026-07-16)
-
-
-### Features
-
-* **api:** add opt-in stream trace buffer with dump endpoints ([2994423](https://github.com/nzbdav/nzbdav/commit/2994423199a8b937615d8a618f278824953a1f66))
-* **api:** opt-in playback stream tracing for debugging seek and zero-fill issues ([2a8d1a0](https://github.com/nzbdav/nzbdav/commit/2a8d1a04e1fe62c0f2fa2ec05014b4cb7990aa37))
-* **docs:** add Zensical site config and GitHub Pages workflow ([a1b7c07](https://github.com/nzbdav/nzbdav/commit/a1b7c07f55049754f5755319035046058cfafb29))
-* **docs:** publish project documentation with Zensical on GitHub Pages ([81f28c5](https://github.com/nzbdav/nzbdav/commit/81f28c55b4402d64f2f1460c56f2125db49e6dc2))
-* **nntp:** emit segment, failover, seek, and zero-fill trace events ([31ab618](https://github.com/nzbdav/nzbdav/commit/31ab618056db10d734f0a8554feee0217c6b4411))
-* **ui:** modernize health schedule table and overview chrome ([d26ebf4](https://github.com/nzbdav/nzbdav/commit/d26ebf4e358b3b3dbc66aaf7198cd1d8a485c1c8))
-* **ui:** modernize the health schedule table ([397cdfe](https://github.com/nzbdav/nzbdav/commit/397cdfe6c27dafd20c7960e18106dd1ba1237f06))
-* **ui:** restore Overview activity chart hover tooltip and sparse errors ([04b1ae8](https://github.com/nzbdav/nzbdav/commit/04b1ae896d6cdd4e8ea88f2145891c0abf97f2d0))
-* **ui:** show copyable session id on live reads panel ([5807c4d](https://github.com/nzbdav/nzbdav/commit/5807c4d059059b6c2f3aae799dab2f4632a3fa13))
-* **ui:** show error trends per provider on the overview scoreboard ([69fd8be](https://github.com/nzbdav/nzbdav/commit/69fd8be57dfc156e8c6feb7e643ba07e604b66ed))
-* **ui:** show per-provider error sparkline on overview ([b789d08](https://github.com/nzbdav/nzbdav/commit/b789d08e8b76c82aae15c708bf3183391fa95bc0))
-* **ui:** show per-provider retry sparkline on overview ([15f88cd](https://github.com/nzbdav/nzbdav/commit/15f88cd6ab57452574cde9e05076d3a81d443da3))
-* **ui:** show provider download speed on the activity chart ([78980bc](https://github.com/nzbdav/nzbdav/commit/78980bcc69e0dba50b4b84f4b0274ad4627ae138))
-* **ui:** show provider download throughput on the activity chart ([9c148f5](https://github.com/nzbdav/nzbdav/commit/9c148f5a64b74bc5786ccb8e7fa076e0bdb93175))
-* **ui:** show retry trends per provider on the overview scoreboard ([a37708e](https://github.com/nzbdav/nzbdav/commit/a37708ea0418ebd82dd665dd4507ae4a5b4c874a))
-* **webdav:** trace range lifecycle and enrich terminal read sessions ([86a60c7](https://github.com/nzbdav/nzbdav/commit/86a60c7b2c827395656dd097cbe7b51b07ff342d))
-
-
-### Bug Fixes
-
-* **api:** backup download no longer fails with a browser network error ([d4efd8a](https://github.com/nzbdav/nzbdav/commit/d4efd8ac7cd11a9910365c4f73ba60b5ff47b645))
-* **api:** stream backup downloads without Kestrel sync-I/O abort ([116fa75](https://github.com/nzbdav/nzbdav/commit/116fa75fc9e74bb07b2bfc78068c7cc3db9c1f31))
-* **config:** reject control characters in Usenet provider Host/User/Pass ([5dab024](https://github.com/nzbdav/nzbdav/commit/5dab024db93e67f7eedd2aa7ffb01859a18009b4)), closes [#392](https://github.com/nzbdav/nzbdav/issues/392)
-* **db:** database upgrade no longer stalls on the Metrics database step ([011f43f](https://github.com/nzbdav/nzbdav/commit/011f43f96dca8ad4800117bca7df9b24472c494b))
-* **db:** prevent metrics migration startup stalls ([b0a038f](https://github.com/nzbdav/nzbdav/commit/b0a038f78af02a5a6ab5f8e49ee75f878e1cb68f))
-* **nntp:** fail non-yEnc size probes with a clear NonRetryable error ([5b1be7a](https://github.com/nzbdav/nzbdav/commit/5b1be7a87cad8d42a78a895a4cbec7e5e12157f3)), closes [#395](https://github.com/nzbdav/nzbdav/issues/395)
-* **nntp:** harden STAT classification, auth, and provider validation from protocol audit ([96277d5](https://github.com/nzbdav/nzbdav/commit/96277d5badf9ec57c409b75f59af0f1e2974cf0b))
-* **nntp:** seeking during playback no longer falsely trips the provider circuit breaker ([eb06cdd](https://github.com/nzbdav/nzbdav/commit/eb06cddabec36ea61a07c6234bd8368017ff9123))
-* **nntp:** skip AUTHINFO when provider credentials are empty ([497d4a9](https://github.com/nzbdav/nzbdav/commit/497d4a984b4686c2fa2a75824a2fcb91c596b402)), closes [#391](https://github.com/nzbdav/nzbdav/issues/391)
-* **nntp:** skip circuit breaker on seek-abort NotRetrieved ([be652c1](https://github.com/nzbdav/nzbdav/commit/be652c17a63feb317b05360932606e3eb0610b1d))
-* **nntp:** treat connection-level STAT codes as retryable, not article verdicts ([66aded6](https://github.com/nzbdav/nzbdav/commit/66aded6b5aca976ab07717bd2aecec1502d73b2c)), closes [#390](https://github.com/nzbdav/nzbdav/issues/390)
-* **nntp:** warn when provider credentials are used without TLS ([1ac5005](https://github.com/nzbdav/nzbdav/commit/1ac500516d29a524a743db70142189bd1b4753eb)), closes [#394](https://github.com/nzbdav/nzbdav/issues/394)
-* **queue:** honor PAR2 async enumerator cancellation ([b1fd594](https://github.com/nzbdav/nzbdav/commit/b1fd5940bb8fa52f04145647b05aea4f25ee3e2d))
-* **queue:** stop PAR2 scans when enumeration is cancelled ([d2e7a20](https://github.com/nzbdav/nzbdav/commit/d2e7a20d66f0688fffe5fecce4112dfd4ac0863c))
-* **ui:** detect updates for main-&lt;sha&gt; builds via version-embedded SHA ([96291bd](https://github.com/nzbdav/nzbdav/commit/96291bd7ab7447ad8518b92c5676b36d939dcced))
-* **ui:** detect updates for main-&lt;sha&gt; builds via version-embedded SHA ([0a52085](https://github.com/nzbdav/nzbdav/commit/0a5208591678e68a20593dfddba4eab5dba99435))
-* **ui:** fold download rate into the activity articles legend ([def8004](https://github.com/nzbdav/nzbdav/commit/def8004dcd2284ea59d2115fd1e4b809ac1b7484))
-* **ui:** give Overview live stats an elevated border and surface ([f65ba62](https://github.com/nzbdav/nzbdav/commit/f65ba62f4c4b6483f4da7de48f0a459784abe126))
-* **ui:** Overview live-stat row is visible against the page background ([1ea11fc](https://github.com/nzbdav/nzbdav/commit/1ea11fc7baa0e26dad8a91cdadde97c34978a991))
-* **ui:** restore Overview heatmap week mode class for typecheck ([e0d41e7](https://github.com/nzbdav/nzbdav/commit/e0d41e7f44bfa1891d54459c5fe3f4e9fc0f1930))
-* **ui:** show download speed on the activity articles legend ([1e536a4](https://github.com/nzbdav/nzbdav/commit/1e536a41af1c94213d6fc30f38c4a482327e11c2))
-* **webdav:** abort incomplete streaming responses ([67b4272](https://github.com/nzbdav/nzbdav/commit/67b4272ec00348a4e3af475ea599a3d8e0dc27fd))
-* **webdav:** remove spurious Content-Length mismatch errors when playback hits missing articles ([4c57ef1](https://github.com/nzbdav/nzbdav/commit/4c57ef1d4b6260ff37de70065a481f5dc35d2c4c))
-* **webdav:** stop broken files from flooding logs and Usenet traffic ([7331053](https://github.com/nzbdav/nzbdav/commit/73310530879d24454bde8bf7331897f2bb01b100))
-* **webdav:** stop repeated zero-fill fetch storms ([b90ac0f](https://github.com/nzbdav/nzbdav/commit/b90ac0f84463e8bfe8cbfa26d05c5f514f7dea75))
-
-## [0.7.21](https://github.com/nzbdav/nzbdav/compare/v0.7.20...v0.7.21) (2026-07-15)
-
-
-### Features
-
-* **ui:** show provider circuit breaker status on overview ([73366e9](https://github.com/nzbdav/nzbdav/commit/73366e935d9e2ddec807506178e2f81299433a4a))
-* **ui:** show provider circuit breaker status on overview ([b430a3b](https://github.com/nzbdav/nzbdav/commit/b430a3bd07c3624951f33cee1e96fc8e5f5dde06)), closes [#162](https://github.com/nzbdav/nzbdav/issues/162)
-
-
-### Bug Fixes
-
-* **auth:** raise password verification cache size for Basic Auth retry bursts ([d5d0e4d](https://github.com/nzbdav/nzbdav/commit/d5d0e4d7b0423fb0791d367181421992bf6f8700))
-* **auth:** raise password verification cache size for Basic Auth retry bursts ([8a6fc1c](https://github.com/nzbdav/nzbdav/commit/8a6fc1ca4641e6083ee2a3ecd2f9bcc230f399e9)), closes [#162](https://github.com/nzbdav/nzbdav/issues/162)
-* drain WithConcurrencyAsync running tasks on early exit ([a9c276b](https://github.com/nzbdav/nzbdav/commit/a9c276bd8d371288996979db07e2177c1dbec06d))
-* drain WithConcurrencyAsync running tasks on early exit ([319c656](https://github.com/nzbdav/nzbdav/commit/319c656c5b0362e0de4c76d8619b724195ff70e6))
-* **usenet:** fix boot-loop timeout for stats data migrations for incoming nzbdavex users ([e0eef52](https://github.com/nzbdav/nzbdav/commit/e0eef52039b821a6b41345db2cdade1379811788))
-* **usenet:** move legacy metrics remap off the blocking startup path ([f0101c7](https://github.com/nzbdav/nzbdav/commit/f0101c7fafa76d3b789b4f75a1db2c05c317e071))
-
-## [0.7.20](https://github.com/nzbdav/nzbdav/compare/v0.7.19...v0.7.20) (2026-07-15)
-
-
-### Bug Fixes
-
-* **auth:** use fixed-time comparison for websocket API key auth ([5a94f18](https://github.com/nzbdav/nzbdav/commit/5a94f18482e5ddd1b37a4892cfe847a3400c1045))
-* **config:** clamp streaming-priority and harden numeric getters ([43cc7d0](https://github.com/nzbdav/nzbdav/commit/43cc7d04bde7c3d5ee9704533304537993e4a248))
-* **config:** validate usenet providers to prevent MaxConnections boot-loop ([5cabda4](https://github.com/nzbdav/nzbdav/commit/5cabda4339a4e3987f87735e95e212b1acd850d3))
-* **metrics:** do not record STAT/HEAD/DATE successes as Missing ([4a004ce](https://github.com/nzbdav/nzbdav/commit/4a004ce11296df07b83742bc1d58248bfbc67231))
-* **nntp:** wake queued waiters when PrioritizedSemaphore max increases ([5d486ef](https://github.com/nzbdav/nzbdav/commit/5d486ef837b5d8a9752ec60f8f3fc7e3114038a3))
-* **queue:** back off on persistent loop errors and honor shutdown idle ([7df775e](https://github.com/nzbdav/nzbdav/commit/7df775e788e3742113b412a61b7602129fd6e9a4))
-* **queue:** cap ArticleCachingNntpClient cache-dir delete retries ([8405e1f](https://github.com/nzbdav/nzbdav/commit/8405e1f9f3b0d2eb19b1cb2aeefc5050c2401b1b))
-* **queue:** harden Remove Orphaned Files empty-dir sweep ([37d5766](https://github.com/nzbdav/nzbdav/commit/37d57667c3bddc3ff788fafd4d2546f7d54c85ba))
-* **queue:** harden Remove Orphaned Files empty-dir sweep ([43994a5](https://github.com/nzbdav/nzbdav/commit/43994a59d7d9996314653e14e1cefe030e2e9c79))
-
-## [0.7.19](https://github.com/nzbdav/nzbdav/compare/v0.7.18...v0.7.19) (2026-07-15)
-
-
-### Features
-
-* **api:** retention pruning for on-disk nzb backups ([ecf064a](https://github.com/nzbdav/nzbdav/commit/ecf064a409672acb173066c4ff5a8f23005135c4))
-* **health:** auto-remove files after repeated streaming failures ([5f6c2a3](https://github.com/nzbdav/nzbdav/commit/5f6c2a31c125f611d0507dc5029a3847496f0fb3))
-* **health:** auto-remove files after repeated streaming failures ([23f9479](https://github.com/nzbdav/nzbdav/commit/23f9479059cdf8f3b05c38080bbaac9145225705))
-* **health:** deletion audit log for DavItem removals ([b5efa7d](https://github.com/nzbdav/nzbdav/commit/b5efa7d0bbf15cf12268cd55c6645c44dcb81049))
-* **health:** structured audit log for all dav item deletions ([470f99d](https://github.com/nzbdav/nzbdav/commit/470f99defe8bfa84bf2b28123af4648999cdaadf))
-* **nntp:** configurable idle connection timeout ([efb6fca](https://github.com/nzbdav/nzbdav/commit/efb6fcaddd1db40816f141e38d24809a2e2f25fa))
-* **nntp:** idle timeout and range prefetch cap ([#59](https://github.com/nzbdav/nzbdav/issues/59)) ([8155e54](https://github.com/nzbdav/nzbdav/commit/8155e5402ee7a2663a330a835ba3a95974c9fe8e))
-* **queue:** blocklist unpack decoy files by default ([c563a4e](https://github.com/nzbdav/nzbdav/commit/c563a4e4150a3cdcc26a326cb72890358ed58db8))
-* **queue:** prefer PAR2 UniFileN unicode filenames when present ([8d43c8f](https://github.com/nzbdav/nzbdav/commit/8d43c8fd3f8d770494c585d7c92273afd75d0351))
-* **queue:** prefer PAR2 UniFileN unicode filenames when present ([a475d1e](https://github.com/nzbdav/nzbdav/commit/a475d1eccb58f355ed087116fc01209efcd94b17))
-* **queue:** recreate-strm-files maintenance task ([6930113](https://github.com/nzbdav/nzbdav/commit/69301134629ed459d562bb34aa8bec6ad4302d00))
-* **queue:** recreate-strm-files maintenance task ([d0e1763](https://github.com/nzbdav/nzbdav/commit/d0e176336765d86e1187fefec04b7b9e47ee3b5f))
-* **queue:** setting to fail jobs when non-video files have missing articles ([a735293](https://github.com/nzbdav/nzbdav/commit/a73529317172bf073465e5621b26963d0aad96fe))
-* **queue:** setting to fail jobs when non-video files have missing articles ([ddceddb](https://github.com/nzbdav/nzbdav/commit/ddceddb921099915e485c5e58b5ade5794c5236a))
-* **queue:** try duplicate nzb segment message-ids as ordered fallbacks ([dc264b7](https://github.com/nzbdav/nzbdav/commit/dc264b786dbc711b5d2b6382528ab2fe49804dd5))
-* **queue:** try duplicate nzb segment message-ids as ordered fallbacks ([a55d85c](https://github.com/nzbdav/nzbdav/commit/a55d85c5130498e8c5a75fe6af0d8ed7faabb813))
-* **webdav:** maintenance task to rename windows-invalid dav paths ([7a01d8c](https://github.com/nzbdav/nzbdav/commit/7a01d8c79c435ccf63ae5cf58305527a84354a0f))
-* **webdav:** maintenance task to rename windows-invalid dav paths ([a7e839d](https://github.com/nzbdav/nzbdav/commit/a7e839dd88fab4b6091f078df6a8ca9f444a23aa))
-* **webdav:** per-segment streaming timeout with fast failover ([7ba0682](https://github.com/nzbdav/nzbdav/commit/7ba0682e6094548f7fe4184044d0a312ce7d9376))
-* **webdav:** per-segment streaming timeout with fast failover ([82d5b99](https://github.com/nzbdav/nzbdav/commit/82d5b997848e6ca704d83e37b8140a7ebd3466e0))
-
-
-### Bug Fixes
-
-* **api:** correct whitespace formatting in NzbBackupRetentionService ([d418429](https://github.com/nzbdav/nzbdav/commit/d418429fd1216e76bf3c2bf6766da46520c4cab5))
-* **api:** skip unpack decoy videos in profiles play selection ([125c46c](https://github.com/nzbdav/nzbdav/commit/125c46ca11e82b0cb13e26119ee1f8278b12c126))
-* **api:** skip unpack decoy videos in profiles play selection ([ff7cf12](https://github.com/nzbdav/nzbdav/commit/ff7cf12149830b5450a73c5d5fd2f709876709bc))
-* **auth:** invalidate webdav sessions when credentials change ([051c47e](https://github.com/nzbdav/nzbdav/commit/051c47e8c4fcffef9656adccf29e36240a98c085))
-* **auth:** invalidate webdav sessions when credentials change ([3437fd6](https://github.com/nzbdav/nzbdav/commit/3437fd6d066dce649987bfff32d6d502c30e7e10))
-* **db:** mark SegmentFallbackIds NotMapped for EF ([1920293](https://github.com/nzbdav/nzbdav/commit/19202932b1127102742f2063c0dd79fb1e152381))
-* **db:** NZB blob name cleanup and backup retention ([#83](https://github.com/nzbdav/nzbdav/issues/83)) ([0c1c26e](https://github.com/nzbdav/nzbdav/commit/0c1c26ef76ce39bcbdd2c923992304161d06727a))
-* **db:** remove orphaned nzb name rows when blobs are cleaned up ([b2b281c](https://github.com/nzbdav/nzbdav/commit/b2b281ca502350ed1a98ed588e7b36b838513f00))
-* **health:** align StreamingFailureTracker method names with callers ([77e3e67](https://github.com/nzbdav/nzbdav/commit/77e3e67618814cd16765db651401b7804b11d143))
-* **health:** complete streaming failure tracker wiring ([15e8f61](https://github.com/nzbdav/nzbdav/commit/15e8f61935286396cb788c81879956a48ddc5468))
-* **health:** hide deleted providers from overview stats ([a56c5ad](https://github.com/nzbdav/nzbdav/commit/a56c5ad9fc6895d8a082fa5c47741d29d65e2c65))
-* **health:** hide deleted providers from overview stats ([166a832](https://github.com/nzbdav/nzbdav/commit/166a8327db20c136780f7b759274eadc15ee1073))
-* **health:** remove duplicate dav-cleanup audit log block ([e8197ed](https://github.com/nzbdav/nzbdav/commit/e8197edc88c266b85995b742d5cf49de76f39311))
-* **nntp:** add connect/auth timeout and dispose failed handshakes ([2b0020b](https://github.com/nzbdav/nzbdav/commit/2b0020bb70f9ff4cf9ad8b88b4d6d6da8227a610))
-* **nntp:** add connect/auth timeout and dispose failed handshakes ([7f613b7](https://github.com/nzbdav/nzbdav/commit/7f613b706f69f40046a4d9241793df48b09a02a1))
-* **nntp:** count exhausted streaming timeouts toward the breaker ([c139846](https://github.com/nzbdav/nzbdav/commit/c13984690a243bbea8c0587f42fb58cb6123a132))
-* **nntp:** count exhausted streaming timeouts toward the breaker ([667dd5a](https://github.com/nzbdav/nzbdav/commit/667dd5a0e2f40fc7ba0f8a199e851deb63899d1a))
-* **nntp:** gate individual stat/head requests through prioritized semaphore ([394a1d5](https://github.com/nzbdav/nzbdav/commit/394a1d59b563153eec80cfe5c72a274d8319897a))
-* **nntp:** gate individual STAT/HEAD through prioritized semaphore ([fd5e04a](https://github.com/nzbdav/nzbdav/commit/fd5e04aa86cfbeb033b3e2517c20ee6be031ddba))
-* **queue:** accept split-rar sets with colliding header volume numbers ([705d7c2](https://github.com/nzbdav/nzbdav/commit/705d7c29e43002feeaae07cf62520c71ddecaf22))
-* **queue:** accept split-RAR sets with colliding header volume numbers ([35666aa](https://github.com/nzbdav/nzbdav/commit/35666aa5570d671fd4084ad0335a218ae0d191dc))
-* **queue:** create strm files for all video items of a job ([7ac0492](https://github.com/nzbdav/nzbdav/commit/7ac04925f44ff026c263abd169c3d05e4fd91428))
-* **queue:** create STRM files for all video items of a job ([2a0c60f](https://github.com/nzbdav/nzbdav/commit/2a0c60f5374d52406b3606d63a4a2588aaabfb52))
-* **queue:** decode utf-8 par2 filenames correctly for cjk releases ([53c502f](https://github.com/nzbdav/nzbdav/commit/53c502fccb185c87abe98163cb40e84a9588c138))
-* **queue:** decode UTF-8 PAR2 filenames for CJK releases ([9ad9fbe](https://github.com/nzbdav/nzbdav/commit/9ad9fbe141f252ebbbb53de14dfb6bfde70d71fb))
-* **queue:** dedupe and order NZB segments by number at parse time ([ff90c9d](https://github.com/nzbdav/nzbdav/commit/ff90c9d8a99460bfb8f42a1644a9089b535f2261))
-* **queue:** dedupe and order nzb segments by segment number at parse time ([b9b960b](https://github.com/nzbdav/nzbdav/commit/b9b960b60b0169370524a0668979936061af58b1))
-* **sab:** avoid per-slot provider snapshots for queued items ([ca761ee](https://github.com/nzbdav/nzbdav/commit/ca761eee92452bab0e2b56c6ce7fd62c64eda4eb))
-* **sab:** avoid per-slot provider snapshots for queued items in mode=queue ([78b9276](https://github.com/nzbdav/nzbdav/commit/78b9276cc64068032b2bff5b9039497dfd9b3dd0))
-* **sab:** avoid per-slot provider snapshots for queued items in mode=queue ([1118465](https://github.com/nzbdav/nzbdav/commit/111846537bc33d5d0888d2a00cae134e65ad8270))
-* **ui:** stack queue provider usage one per line ([6b5d297](https://github.com/nzbdav/nzbdav/commit/6b5d297ac5c0a4546a6dd93c183fbd28dd8c52eb))
-* **ui:** stack queue provider usage one per line ([bc1d3ee](https://github.com/nzbdav/nzbdav/commit/bc1d3eefc4e2f0a11d2166de1ccd11b876515cfd))
-* **webdav:** cap segment prefetch at http range end ([e67cb37](https://github.com/nzbdav/nzbdav/commit/e67cb37d2da3fc3d9c5ba507af4d486fd1a8bafe))
-* **webdav:** fall back to slow seek when fast-seek body read fails ([e8a0202](https://github.com/nzbdav/nzbdav/commit/e8a0202d68bee375f50fe757633bc771d311a446))
-* **webdav:** fall back to slow seek when fast-seek body read fails ([3a2a910](https://github.com/nzbdav/nzbdav/commit/3a2a910eb16d56f01c339acb34c843e2853ef5fa))
-* **webdav:** sanitize dav path components for windows-invalid names ([27161ba](https://github.com/nzbdav/nzbdav/commit/27161baa981846f3e2fb630101b2c0aaf5a933b3))
-* **webdav:** sanitize Dav path components for Windows-invalid names ([1d2beaa](https://github.com/nzbdav/nzbdav/commit/1d2beaae1d51e67b25136c4a99df16ad76ed8a09))
-
-## [0.7.18](https://github.com/nzbdav/nzbdav/compare/v0.7.17...v0.7.18) (2026-07-14)
-
-
-### Features
-
-* **api:** add database backup endpoints ([ba8b32c](https://github.com/nzbdav/nzbdav/commit/ba8b32c71b43ef88f74c51653c95e1ea17203eb2))
-* **db:** add backup store with manifests and retention pruning ([bfc0a18](https://github.com/nzbdav/nzbdav/commit/bfc0a18a94140c2b16417017cf373cf0adaf25e9))
-* **db:** add database backup task and daily scheduler ([7daa01d](https://github.com/nzbdav/nzbdav/commit/7daa01d70a4f30307f0d2faaf440748acff4c349))
-* **db:** add sqlite .sql dump and import utilities ([61442b1](https://github.com/nzbdav/nzbdav/commit/61442b1f3a031083c37d4ff820be29ecdf83bb94))
-* **db:** integrated database backup and restore ([ef4da2e](https://github.com/nzbdav/nzbdav/commit/ef4da2e8dbf0b5096cb5cca9455be6d4089051bb))
-* **db:** stage guided restore and swap databases during maintenance ([9777b08](https://github.com/nzbdav/nzbdav/commit/9777b086b24e8dc004ea6895b738724b02983f08))
-* **docker:** restart loop for staged database restores ([71fc260](https://github.com/nzbdav/nzbdav/commit/71fc26057470bc1f001b587a6923477d5ab6ca1b))
-* make ThreadPool limits configurable ([00f1a4a](https://github.com/nzbdav/nzbdav/commit/00f1a4ac7a9eb5a0de091a5788dc1a97b4fc5d3f))
-* make ThreadPool limits configurable via env vars ([b8e8a98](https://github.com/nzbdav/nzbdav/commit/b8e8a98ccae09d59ec69fc7bcfbbf277cd9ddad9))
-* **ui:** add backup and restore settings tab ([06d218e](https://github.com/nzbdav/nzbdav/commit/06d218ef33628e8a697d104c14744a05200d0ab1))
-* **ui:** notify non-release builds of new commits on main ([85b5f22](https://github.com/nzbdav/nzbdav/commit/85b5f22e7a3b7cf5731cf4b2c750f5856ae48d05))
-* **ui:** notify stale source and dev builds ([00daa25](https://github.com/nzbdav/nzbdav/commit/00daa25353b1331dd48e80bceb1ca4aa3a6565f2))
-* **websocket:** add bounded outbound backpressure ([5c8b6b5](https://github.com/nzbdav/nzbdav/commit/5c8b6b56bac4424d6b2c13fdb566df2676232a08))
-* **websocket:** add bounded outbound backpressure ([4758436](https://github.com/nzbdav/nzbdav/commit/4758436cf9850d7e40dbda447a86a9c913018be0))
-
-
-### Bug Fixes
-
-* **deps:** bump the github-actions group with 4 updates ([b60361f](https://github.com/nzbdav/nzbdav/commit/b60361f0e49ccebbe3091cf9551eccd08a8ba841))
-* **ui:** check main source clones for new commits ([992489d](https://github.com/nzbdav/nzbdav/commit/992489df12a97c27d253f8524bae900e853a82c6))
-* **webdav:** clamp infinite-depth PROPFIND to depth 1 ([9b9638f](https://github.com/nzbdav/nzbdav/commit/9b9638f7f52e6632b435912a8127a01267fe2d7c))
-
-
-### Performance Improvements
-
-* **webdav:** stream and order directory listings from SQL ([425b9cc](https://github.com/nzbdav/nzbdav/commit/425b9ccfe4764ba6512d4468c7e3b54b73597cd3)), closes [#238](https://github.com/nzbdav/nzbdav/issues/238)
-* **webdav:** stream and order large directory listings ([478a243](https://github.com/nzbdav/nzbdav/commit/478a2435d76afdd94adfdaf98fa3711da7261991))
-
-## [0.7.17](https://github.com/nzbdav/nzbdav/compare/v0.7.16...v0.7.17) (2026-07-14)
-
-
-### Bug Fixes
-
-* **auth:** harden frontend session key and cookie settings ([d1833b4](https://github.com/nzbdav/nzbdav/commit/d1833b4c5cd410e7efe4f24834a30a1eb0f702f8)), closes [#219](https://github.com/nzbdav/nzbdav/issues/219)
-* **db:** delete DavItems batches by stored Id text to survive casing mismatch ([e89e920](https://github.com/nzbdav/nzbdav/commit/e89e920775d5d04f12d0b516a5ce458ce2dc7e9e))
-* **db:** don't read ConfigItems before migrations on fresh databases ([e89426a](https://github.com/nzbdav/nzbdav/commit/e89426ac670571181988e66ca092a4e4e6e116f6))
-* **db:** drain seeded empty dirs before asserting zero removals ([ffb36af](https://github.com/nzbdav/nzbdav/commit/ffb36af5044ebd6f6a1a04608e17886c38c946b3))
-* **deps:** bump react-router packages to 8.2.0 ([bff957d](https://github.com/nzbdav/nzbdav/commit/bff957da77939f285e2a039b493d772f144e7cf1))
-* fresh-database startup crash and Remove Orphaned Files stuck in Running ([5cad058](https://github.com/nzbdav/nzbdav/commit/5cad058284ef15faecbc73d13cdfee156d27cd9a))
-* **nntp:** log known transport failures without stack dumps ([ba80566](https://github.com/nzbdav/nzbdav/commit/ba805662d2308a5f5c8779cda1f373c71f3df3b5))
-* **nntp:** log known transport failures without stack dumps ([47930e2](https://github.com/nzbdav/nzbdav/commit/47930e2d705980afbad2f350deff996498b8b816))
-* **nntp:** route pipelined queue fetches through per-segment failover ([884b0d0](https://github.com/nzbdav/nzbdav/commit/884b0d06b6f98d436de648405c3ffa52e65c7c59))
-* **nntp:** route pipelined queue fetches through per-segment failover ([0b3a566](https://github.com/nzbdav/nzbdav/commit/0b3a5660fb1b04f9d79a8c7c5a3812f0dfb2c808))
-* **nntp:** stop invalid segment-id loops with 404 + repair ([0c89f9c](https://github.com/nzbdav/nzbdav/commit/0c89f9cf55689cd869100c998b10dd3c02075c47))
-* **nntp:** stop invalid segment-id loops with 404 + repair ([4d6d5f2](https://github.com/nzbdav/nzbdav/commit/4d6d5f240c112c405104ccbe9ea7b1b76990dde2))
-* **queue:** resolve metrics keys to hosts in live provider websocket ([4f27658](https://github.com/nzbdav/nzbdav/commit/4f27658e6bd9c0f8593395711e72d254b0880993))
-* RemoveUnlinkedFilesTask CI failures (Guid casing + dash pipefail) ([db3abd8](https://github.com/nzbdav/nzbdav/commit/db3abd810ad1e3f5dabce8678aeb16ecce0c42a6))
-* SSR build ignoring custom server entry under Vite 8 ([81877c4](https://github.com/nzbdav/nzbdav/commit/81877c4319de7bb7c442d6356cdd5e1a0f82210b))
-* **ui:** add .js extension to proxy-path import for Node ESM ([83d5612](https://github.com/nzbdav/nzbdav/commit/83d56122a4414be7a0d7d56f00e42f7cbdaafca9))
-* **ui:** add frontend websocket hub heartbeat ([96766da](https://github.com/nzbdav/nzbdav/commit/96766dad75986ae99c1ca57397f0e659248ce9cd)), closes [#225](https://github.com/nzbdav/nzbdav/issues/225)
-* **ui:** add security response headers for admin UI ([a42292a](https://github.com/nzbdav/nzbdav/commit/a42292a7cbfa728ee59dde52ae8cf76adb602c1f)), closes [#215](https://github.com/nzbdav/nzbdav/issues/215)
-* **ui:** allow editing provider Already Used offset ([cce1b92](https://github.com/nzbdav/nzbdav/commit/cce1b920252ba0ac3807c63b77ef867e0a4f780d)), closes [#256](https://github.com/nzbdav/nzbdav/issues/256)
-* **ui:** bound frontend websocket subscriptions and payload ([247c60d](https://github.com/nzbdav/nzbdav/commit/247c60de6fa6e5f235c1d9ee6ed37e4a33fa06b2)), closes [#220](https://github.com/nzbdav/nzbdav/issues/220)
-* **ui:** derive Remove Orphaned Files running state from user-initiated runs ([9aa543a](https://github.com/nzbdav/nzbdav/commit/9aa543aa586a200c2c9fed6dd2c8147051f456af))
-* **ui:** disable Link prefetch on explore directory links ([abc48f7](https://github.com/nzbdav/nzbdav/commit/abc48f7e42838a9e031f0751d675e653cef9b794)), closes [#135](https://github.com/nzbdav/nzbdav/issues/135)
-* **ui:** disable X-Powered-By on SSR sub-app ([b8fdc9a](https://github.com/nzbdav/nzbdav/commit/b8fdc9ad5bf69fbcb1d8ad3553d95723a8511d5b)), closes [#221](https://github.com/nzbdav/nzbdav/issues/221)
-* **ui:** frontend audit and UX batch ([9ecc16e](https://github.com/nzbdav/nzbdav/commit/9ecc16e05d430c0af7ce2eecc6b78e4ba982acb4))
-* **ui:** harden provider id generation and duplicate-host rendering ([2547e67](https://github.com/nzbdav/nzbdav/commit/2547e672f4517eeba8a6c4c94115fb3d034974d5))
-* **ui:** omit NZB file accept filter on iOS ([09970d4](https://github.com/nzbdav/nzbdav/commit/09970d4d5671c3145a0fc034836c3c7e6ce48494)), closes [#140](https://github.com/nzbdav/nzbdav/issues/140)
-* **ui:** quiet expected BackendUnavailableError noise during startup grace ([86da280](https://github.com/nzbdav/nzbdav/commit/86da2804d9a95250f1857479d835aed61cd7822d))
-* **ui:** quiet expected BackendUnavailableError noise during startup grace ([5865305](https://github.com/nzbdav/nzbdav/commit/5865305854f7b8b3fb4aed22e74ea499200fc68d))
-* **ui:** resolve frontend startup crash from extensionless proxy-path import ([6eaf10d](https://github.com/nzbdav/nzbdav/commit/6eaf10d84d920c43a7c1ba347d99478e92ac6ed6))
-* **ui:** revalidate root loader when crossing login layout boundary ([b85f6c8](https://github.com/nzbdav/nzbdav/commit/b85f6c8263924f9f9bfdcb52c5308890c9cccf4a)), closes [#226](https://github.com/nzbdav/nzbdav/issues/226)
-* **ui:** self-host Inter and drop Google Fonts CDN ([0ad667c](https://github.com/nzbdav/nzbdav/commit/0ad667ce4bfab295693b84522dd9d04a770f84a0)), closes [#222](https://github.com/nzbdav/nzbdav/issues/222)
-* **ui:** share one multiplexed WebSocket per browser tab ([57bc4a8](https://github.com/nzbdav/nzbdav/commit/57bc4a877819729a2956ef153eae5d35bc31f215)), closes [#224](https://github.com/nzbdav/nzbdav/issues/224)
-* **ui:** skip root config revalidation on routine mutations ([9b8c257](https://github.com/nzbdav/nzbdav/commit/9b8c257996204cf80ab462af60ae9fb65769fb6f)), closes [#226](https://github.com/nzbdav/nzbdav/issues/226)
-* **ui:** strip iOS accept attribute after mount to avoid hydration mismatch ([5be48a5](https://github.com/nzbdav/nzbdav/commit/5be48a5f9ff48937b8f1d138af6fbbf4d4a3814c)), closes [#140](https://github.com/nzbdav/nzbdav/issues/140)
-* **ui:** use discover=none instead of prefetch=none on explore links ([eb54c8a](https://github.com/nzbdav/nzbdav/commit/eb54c8a475405abf51d6ae7c1458b102162d917c)), closes [#135](https://github.com/nzbdav/nzbdav/issues/135)
-* **usenet:** key provider usage metrics by ProviderId ([192a047](https://github.com/nzbdav/nzbdav/commit/192a047c7a61133200062a5d336588e08dcf8731))
-* **usenet:** key provider usage metrics by ProviderId ([f6f20b3](https://github.com/nzbdav/nzbdav/commit/f6f20b37f4f0c3b00631b4ecaebd0bed89eaee2a))
-* **webdav:** dequeue dav cleanup items with lowercase guid ids ([92f5ca6](https://github.com/nzbdav/nzbdav/commit/92f5ca61fe0836b166de34916515cd31655a2c71))
-* **webdav:** drop pipefail dependency from Linux library scan ([5ef3490](https://github.com/nzbdav/nzbdav/commit/5ef3490bbb80f9037d9228581c6dec4a8f313d9a))
-* **webdav:** guarantee RemoveUnlinkedFiles terminates and reject concurrent runs ([064e70b](https://github.com/nzbdav/nzbdav/commit/064e70b1e016fd27d05928d82b3a77de46b7e269))
-* **webdav:** handle lowercase GUIDs in DAV cleanup queue ([a2eea70](https://github.com/nzbdav/nzbdav/commit/a2eea70427be42ab93176b8c232b2e60296d56ba))
-
-## [0.7.16](https://github.com/nzbdav/nzbdav/compare/v0.7.15...v0.7.16) (2026-07-13)
-
-
-### Features
-
-* **ui:** add 1h Overview activity window ([a5aefe7](https://github.com/nzbdav/nzbdav/commit/a5aefe777bfdff8969623ab2a4bd431e49e1216b))
-* **ui:** Overview 1h window and queue/nav polish ([976d090](https://github.com/nzbdav/nzbdav/commit/976d09033a79646e635e42c6d7674d74ccde0ab0))
-
-
-### Bug Fixes
-
-* **api:** compare profile tokens in constant time ([7ed50fa](https://github.com/nzbdav/nzbdav/commit/7ed50fa44eedd45696f48006135d316b6e27b19d))
-* **api:** compare profile tokens in constant time ([22245ba](https://github.com/nzbdav/nzbdav/commit/22245ba00dd4f9a37dfff49908fb5719af226e19))
-* **api:** validate forwarded headers and sanitize proxy ([ac84f98](https://github.com/nzbdav/nzbdav/commit/ac84f9899b40f365073c41549e23e368c767cf2b))
-* **api:** validate forwarded headers and sanitize proxy ([1efa170](https://github.com/nzbdav/nzbdav/commit/1efa170d584271cd4ff020f2963e40f78dd96ac3))
-* **auth:** close username-enumeration timing oracle ([d31e0bf](https://github.com/nzbdav/nzbdav/commit/d31e0bfbc8583c7f4c84b1bcc985d0dbb45fba6c))
-* **auth:** close username-enumeration timing oracle ([6562cb1](https://github.com/nzbdav/nzbdav/commit/6562cb16267f94cd570f64963cf4aa787fc4e994))
-* **auth:** hmac-key password verification cache ([83f7f20](https://github.com/nzbdav/nzbdav/commit/83f7f20e4fbadbabbff1c6758ebc4a7f6afe7616))
-* **auth:** hmac-key password verification cache ([89610fa](https://github.com/nzbdav/nzbdav/commit/89610fa3ba617059713d62a818e8ddc1818b9c15))
-* **db:** return not-found for non-guid /.ids lookups ([4f3311e](https://github.com/nzbdav/nzbdav/commit/4f3311ee102e9310ca44b6a960800f706ddaac1a))
-* **health:** fix organized-links cache key and parse skips ([a7281fb](https://github.com/nzbdav/nzbdav/commit/a7281fb3bda090cf60ca34f626dd1576db711a2b))
-* **health:** floor NextHealthCheck to avoid hot-loops ([ce639d9](https://github.com/nzbdav/nzbdav/commit/ce639d908997296fd2a7994dd393bf80e52608e0))
-* **nntp:** drain replaced clients before disposal ([39dcaa3](https://github.com/nzbdav/nzbdav/commit/39dcaa31f01a88f6a534173b88151bcec6816a67))
-* **nntp:** drain replaced clients before disposal ([4700def](https://github.com/nzbdav/nzbdav/commit/4700def013a35a8fafac1b564c3cec79a92951ea))
-* **nntp:** drain test hook inline without background loop ([772d77d](https://github.com/nzbdav/nzbdav/commit/772d77db03ac47d588dca860e89bbbc5cf244412))
-* repair-path link cache, health hot-loops, and pool WS flood ([3aaae33](https://github.com/nzbdav/nzbdav/commit/3aaae3398a74a9e003ce403f566df30831850490))
-* **sab:** cap unbounded history responses ([1b2abd9](https://github.com/nzbdav/nzbdav/commit/1b2abd979ca68fe99effe8e3e7d87a118dea7512))
-* **sab:** cap unbounded history responses ([a619da0](https://github.com/nzbdav/nzbdav/commit/a619da096b69c0423d88d8c85dd17f4d56fc23ad))
-* **sab:** clamp negative history limits to zero ([9e87e4b](https://github.com/nzbdav/nzbdav/commit/9e87e4b18d34bd824f90710be9abfaa49fe27eb8))
-* **ui:** include proxy-path in node typecheck project ([7c7f05b](https://github.com/nzbdav/nzbdav/commit/7c7f05bc7c808b9f0d0a472908a884109ec73c22))
-* **ui:** keep top-nav version label on one line ([ca268e1](https://github.com/nzbdav/nzbdav/commit/ca268e175c529ed69d8cc6c95635b4acc893743d))
-* **ui:** match proxy allowlist on path segment boundaries ([35ea307](https://github.com/nzbdav/nzbdav/commit/35ea307177040632e3b6fa2372cb4d4309ad3859))
-* **ui:** match proxy allowlist on path segment boundaries ([026d018](https://github.com/nzbdav/nzbdav/commit/026d0184fbdc2119888794a52863146d9645b0c1))
-* **ui:** safe-decode credential rate-limiter path check ([ed0440b](https://github.com/nzbdav/nzbdav/commit/ed0440b99c22ad5ef3157424883ca8c8fefa72f2))
-* **ui:** safe-decode paths in proxy auth and compression ([7e1d588](https://github.com/nzbdav/nzbdav/commit/7e1d5886fb487a2a3bb1c5ba6c2e40a56b26272f))
-* **ui:** safe-decode paths in proxy auth and compression ([9e51abc](https://github.com/nzbdav/nzbdav/commit/9e51abc8d8bdbb50a11dbaa21e6ae53f9cca9191))
-* **ui:** stop counting provider misses as Overview errors ([c79010d](https://github.com/nzbdav/nzbdav/commit/c79010dda4310f7fe6cde60708f0b1eef62ab4b6))
-* **ui:** stop counting provider misses as Overview errors ([3484d21](https://github.com/nzbdav/nzbdav/commit/3484d210cd54b10ee19bf0bf8426911a72cea69c))
-* **ui:** stop idle providers overflowing the queue Provider column ([48359cd](https://github.com/nzbdav/nzbdav/commit/48359cd52aa542f94ca8405ff9f7a9af3ec76255))
-* **usenet:** coalesce connection-pool websocket updates ([4743ff0](https://github.com/nzbdav/nzbdav/commit/4743ff07785b6632aa9b1e55dff73cdb8e874ad1))
-* **webdav:** clear partial range outs on parse failure ([8967564](https://github.com/nzbdav/nzbdav/commit/8967564c21de9e55cc4d5214a91c95ab23356084))
-* **webdav:** handle malformed and unsatisfiable /view ranges ([ea83312](https://github.com/nzbdav/nzbdav/commit/ea83312722d6210666163f1abf445ff230297775))
-* **webdav:** handle malformed and unsatisfiable /view ranges ([0b4da71](https://github.com/nzbdav/nzbdav/commit/0b4da7188aeb81d3ecab0347c499b8b0ee3648a5))
-
-## [0.7.15](https://github.com/nzbdav/nzbdav/compare/v0.7.14...v0.7.15) (2026-07-13)
-
-
-### Bug Fixes
-
-* **ui:** add .js extension to startup-grace import for node esm ([e60eb6f](https://github.com/nzbdav/nzbdav/commit/e60eb6f62947ec6a2d1b7048133ae2b5167bcd36))
-
-## [0.7.14](https://github.com/nzbdav/nzbdav/compare/v0.7.13...v0.7.14) (2026-07-13)
-
-
-### Bug Fixes
-
-* **ui:** avoid .server import in root ErrorBoundary ([e9984e6](https://github.com/nzbdav/nzbdav/commit/e9984e6145db5461371c47e1c19426b3a1ac27e1))
-* **ui:** unblock release Docker build and gate CI on frontend build ([c1af9a3](https://github.com/nzbdav/nzbdav/commit/c1af9a35ef9081d6086222cd614d62c6e5e7c081))
-
-## [0.7.13](https://github.com/nzbdav/nzbdav/compare/v0.7.12...v0.7.13) (2026-07-13)
-
-
-### Bug Fixes
-
-* **nntp:** latch circuit breaker trips and log once per trip ([4d42193](https://github.com/nzbdav/nzbdav/commit/4d421936edffb385c1d083fdf016a65d61e18b13))
-* **nntp:** pace concurrent connection establishment per provider ([7d130e1](https://github.com/nzbdav/nzbdav/commit/7d130e18c283908d8bf32c26bc67767301d07b00))
-* **ui:** drop hardcoded v prefix from displayed app version ([ab9f00d](https://github.com/nzbdav/nzbdav/commit/ab9f00d1e04b28c527a1ae4bdbfea803582efac1))
-* **ui:** quiet expected startup noise on no-migration restarts ([748abcd](https://github.com/nzbdav/nzbdav/commit/748abcd41ecd5686666a7c8ad3ec4b4042779be7))
-* **ui:** quiet expected startup noise on no-migration restarts ([ae7a43b](https://github.com/nzbdav/nzbdav/commit/ae7a43bdcb7bd423d42d3364cfd7e5a8b84495bb))
-* **ui:** restore shell scrolling and polish header/settings ([2ff591e](https://github.com/nzbdav/nzbdav/commit/2ff591e30270047e0e8b35a6f6e61c8501a242a3))
-* **ui:** restore top-nav logout menu item styling ([037de3e](https://github.com/nzbdav/nzbdav/commit/037de3efb2c178f4aa32f28b933b377f124d0448))
-
-## [0.7.12](https://github.com/nzbdav/nzbdav/compare/v0.7.11...v0.7.12) (2026-07-13)
-
-
-### Bug Fixes
-
-* **db:** tolerate pre-existing IX_DavItems_Path index during migration ([2d3cdbe](https://github.com/nzbdav/nzbdav/commit/2d3cdbe0001c4dd9d203c581b2eefaa5518435ff))
-* **db:** tolerate pre-existing IX_DavItems_Path index during migration ([9536f27](https://github.com/nzbdav/nzbdav/commit/9536f273255639f7ed490d6fbe31be75c8216eae))
-
-## [0.7.11](https://github.com/nzbdav/nzbdav/compare/v0.7.10...v0.7.11) (2026-07-13)
-
-
-### Features
-
-* **db:** periodic PRAGMA optimize and WAL checkpoint maintenance ([792bb38](https://github.com/nzbdav/nzbdav/commit/792bb3868b2cad019502fbd15b0af9205bcf5707))
-* **ui:** adopt daisyUI theme tokens and shared UI primitives ([3b8b03d](https://github.com/nzbdav/nzbdav/commit/3b8b03d467283f05947d9856099a355dea83a5a2))
-* **ui:** daisyUI 5 frontend refresh ([ba040db](https://github.com/nzbdav/nzbdav/commit/ba040db260acb74de66ec36839d812ce2935217f))
-* **ui:** migrate logs, watchdog, and watchtower activity pages to daisyUI ([1d97a2f](https://github.com/nzbdav/nzbdav/commit/1d97a2f1fccdd4e8b8b3b2808312cf5485cf5ce8))
-* **ui:** migrate overview, queue, explore, health, and search to daisyUI ([78e059a](https://github.com/nzbdav/nzbdav/commit/78e059ad6483cf91486a7208f079668810f45b5e))
-* **ui:** rebuild app shell with full-width navbar and settings submenu ([a1e9bc6](https://github.com/nzbdav/nzbdav/commit/a1e9bc66b6bcb0e7d54ebcd647c76b0025b1b77f))
-* **ui:** redesign settings and auth flows with shared daisyUI layout ([77e3ff5](https://github.com/nzbdav/nzbdav/commit/77e3ff523f50ce0b6acff1e0bc67e945b3eceb21))
-
-
-### Bug Fixes
-
-* **auth:** accept configured api key on admin /api endpoints ([b576c91](https://github.com/nzbdav/nzbdav/commit/b576c91ebafc11f198221dfc401bc72f14fee8ea)), closes [#242](https://github.com/nzbdav/nzbdav/issues/242)
-* **config:** validate config updates and drop stale usenet.host cache-clear key ([f8b6116](https://github.com/nzbdav/nzbdav/commit/f8b61164fc2a668831fcfeed3b71499dad53349a)), closes [#245](https://github.com/nzbdav/nzbdav/issues/245) [#240](https://github.com/nzbdav/nzbdav/issues/240)
-* **db:** bring main database pragmas up to metrics parity ([231c704](https://github.com/nzbdav/nzbdav/commit/231c7049fcb9394e20f745c59b0960463d8cb8b4))
-* **db:** make DavItems path rebuild incremental and index-driven ([53cecab](https://github.com/nzbdav/nzbdav/commit/53cecab87d6d035663746c4bdbacd5176df6ebb1))
-* **db:** set busy_timeout on metrics connections ([cda51c1](https://github.com/nzbdav/nzbdav/commit/cda51c1303fd294ac0c6037da90948d31f9feb64))
-* **db:** silence websocket warnings during database migration ([#270](https://github.com/nzbdav/nzbdav/issues/270)) ([e9e1329](https://github.com/nzbdav/nzbdav/commit/e9e13295f5da8671f6d962703802549c699e51da))
-* **db:** SQLite performance and slow migration path rebuild ([d66b0f5](https://github.com/nzbdav/nzbdav/commit/d66b0f52bfc20cd59117ddec752f862056dca0bc))
-* **health:** treat NNTP 451 as missing during health checks ([dc407bc](https://github.com/nzbdav/nzbdav/commit/dc407bc59f48687792d78059439427d68eb13329))
-* **health:** treat NNTP 451 as missing during health checks ([1decfa9](https://github.com/nzbdav/nzbdav/commit/1decfa94a1073d7697da5e4ad4118f324772796f))
-* **ui:** encode category with URLSearchParams in backend client ([546dacd](https://github.com/nzbdav/nzbdav/commit/546dacda3e020100dc7f86f75377deb52d6b0028)), closes [#223](https://github.com/nzbdav/nzbdav/issues/223)
-* **ui:** move connection stats to header ([b9f8ff0](https://github.com/nzbdav/nzbdav/commit/b9f8ff0718fdd91b86bf226456dbfd173388e8fe))
-* **ui:** restore button pointer cursor and unify provider actions ([34504f3](https://github.com/nzbdav/nzbdav/commit/34504f3317e5b1d4c7385e0fe6a1a31203c12c53))
-
-
-### Performance Improvements
-
-* **usenet:** cache yEnc headers on the streaming path ([7da84de](https://github.com/nzbdav/nzbdav/commit/7da84de81052a904a70103e03f20b8d3b8ec798d)), closes [#243](https://github.com/nzbdav/nzbdav/issues/243)
-* **webdav:** resolve persisted paths with one indexed query ([5fc77c0](https://github.com/nzbdav/nzbdav/commit/5fc77c033b35b70014672ca64d697c7bc299cc8f)), closes [#237](https://github.com/nzbdav/nzbdav/issues/237)
-
-## [0.7.10](https://github.com/nzbdav/nzbdav/compare/v0.7.9...v0.7.10) (2026-07-13)
-
-
-### Features
-
-* **api:** prefer subtitle-bearing releases during playback failover ([#263](https://github.com/nzbdav/nzbdav/issues/263)) ([2e57b7e](https://github.com/nzbdav/nzbdav/commit/2e57b7eeaf9bdb92d5f64c5c22adfaa3ced70318))
-* **api:** sync exclude-filter patterns from remote URLs ([#267](https://github.com/nzbdav/nzbdav/issues/267)) ([87c78cd](https://github.com/nzbdav/nzbdav/commit/87c78cdb34ca0e77672e21a05e0a3d2d83230123))
-* **db:** live progress UI for long database migrations ([#269](https://github.com/nzbdav/nzbdav/issues/269)) ([e3bf777](https://github.com/nzbdav/nzbdav/commit/e3bf77725e5a4ebc9b26dac8bbd07236a5eaddcb))
-* **nntp:** auto and per-stream max download connections ([#265](https://github.com/nzbdav/nzbdav/issues/265)) ([80e3f6e](https://github.com/nzbdav/nzbdav/commit/80e3f6ea2911607f63ff2cd79c22b01442fb29e9))
-
-
-### Bug Fixes
-
-* **ui:** use amber warning styles when a new version is available ([75d53cb](https://github.com/nzbdav/nzbdav/commit/75d53cbd6355dc6a9b2621df00c6c90ef24ee017))
-
-## [0.7.9](https://github.com/nzbdav/nzbdav/compare/v0.7.8...v0.7.9) (2026-07-13)
-
-
-### Bug Fixes
-
-* **usenet:** include file path in missing-article zero-fill warnings ([#251](https://github.com/nzbdav/nzbdav/issues/251)) ([9591d36](https://github.com/nzbdav/nzbdav/commit/9591d36f9c44095489e0f68cdfbcccc6a3402453))
-
-## [0.7.8](https://github.com/nzbdav/nzbdav/compare/v0.7.7...v0.7.8) (2026-07-12)
-
-
-### Features
-
-* **ui:** restyle sidebar version display as bordered status card ([e043b84](https://github.com/nzbdav/nzbdav/commit/e043b8433391e428df23dcced76717a569e97c62))
-* **ui:** sort providers in Usenet settings by type and priority ([#249](https://github.com/nzbdav/nzbdav/issues/249)) ([cf2ccb1](https://github.com/nzbdav/nzbdav/commit/cf2ccb1624ac96b5ace7f3c9fa3d16168dc395e0)), closes [#246](https://github.com/nzbdav/nzbdav/issues/246)
-* **usenet:** skip same StorageGroup providers after article 430 ([#250](https://github.com/nzbdav/nzbdav/issues/250)) ([cc1113f](https://github.com/nzbdav/nzbdav/commit/cc1113f77db50f765656226c2b12129fc83674a8)), closes [#244](https://github.com/nzbdav/nzbdav/issues/244)
-
-## [0.7.7](https://github.com/nzbdav/nzbdav/compare/v0.7.6...v0.7.7) (2026-07-12)
-
-
-### Bug Fixes
-
-* **queue:** heal lazy RAR volume size underestimates ([#211](https://github.com/nzbdav/nzbdav/issues/211)) ([eaa4cf6](https://github.com/nzbdav/nzbdav/commit/eaa4cf66c5260bcc22545ddf5a701bff389471d1)), closes [#168](https://github.com/nzbdav/nzbdav/issues/168)
-
-## [0.7.6](https://github.com/nzbdav/nzbdav/compare/v0.7.5...v0.7.6) (2026-07-12)
-
-
-### Features
-
-* **ui:** show sidebar notice when a newer release is available ([b9e3702](https://github.com/nzbdav/nzbdav/commit/b9e370251e3a5b9237288685c62c04ea57bda30e))
-
-
-### Bug Fixes
-
-* **db:** parameterize RemoveUnlinkedFilesTask raw SQL ([#198](https://github.com/nzbdav/nzbdav/issues/198)) ([b2871f9](https://github.com/nzbdav/nzbdav/commit/b2871f9d5762e5e394b82209820323ce371c7fcb)), closes [#186](https://github.com/nzbdav/nzbdav/issues/186)
-* **ui:** remove dead /p/ proxy prefix from allowlists ([#201](https://github.com/nzbdav/nzbdav/issues/201)) ([bb7b4f9](https://github.com/nzbdav/nzbdav/commit/bb7b4f95b9274465096813e34d562e9de327a2ff)), closes [#182](https://github.com/nzbdav/nzbdav/issues/182)
-* **webdav:** dedupe mid-read failure logs and include User-Agent ([af25f7c](https://github.com/nzbdav/nzbdav/commit/af25f7c537afe61d53cc7e7db12b0e5882f2c8e2))
-
-## [0.7.5](https://github.com/nzbdav/nzbdav/compare/v0.7.4...v0.7.5) (2026-07-12)
-
-
-### Bug Fixes
-
-* harden RemoveOrphanedFilesScheduler against disposal race and DST clock skew ([#175](https://github.com/nzbdav/nzbdav/issues/175)) ([1f87b28](https://github.com/nzbdav/nzbdav/commit/1f87b28827ccbdd9a160f2e5b12cf43efc89368d))
-* **health:** isolate arr failures in repair and skip empty root paths ([#176](https://github.com/nzbdav/nzbdav/issues/176)) ([e52e9cf](https://github.com/nzbdav/nzbdav/commit/e52e9cf6bbc3e6d4c38774fe94c9108d24e18238))
-* **ui:** keep login page outside the app shell ([36efa4a](https://github.com/nzbdav/nzbdav/commit/36efa4abfdec8dab5470ac009c47ac0349e527e3))
-
-## [0.7.4](https://github.com/nzbdav/nzbdav/compare/v0.7.3...v0.7.4) (2026-07-12)
-
-
-### Features
-
-* **ui:** remind users to speed-test before enabling NNTP pipelining ([8eb61e0](https://github.com/nzbdav/nzbdav/commit/8eb61e0d2d38c203be7bf1566a9449f031b6fc94))
-
-
-### Bug Fixes
-
-* **sab:** adopt elfhosted addfile nzbname + JSON converter fallback ([#164](https://github.com/nzbdav/nzbdav/issues/164)) ([3fe3d7a](https://github.com/nzbdav/nzbdav/commit/3fe3d7ab7874f7c49f34a783bf073d187a8f4cfa))
-* **ui:** adopt elfhosted healthz, ErrorBoundary, unhandledRejection hardening ([#166](https://github.com/nzbdav/nzbdav/issues/166)) ([578c77b](https://github.com/nzbdav/nzbdav/commit/578c77b99fc9e4ce8df30a909d00a1b6111f2f31))
-* **ui:** keep Overview route free of .server imports ([aec1426](https://github.com/nzbdav/nzbdav/commit/aec142635e1153b1f959fee58e3a1347697b57fb))
-* **usenet:** resolve masked passwords for speed test and connection test ([#173](https://github.com/nzbdav/nzbdav/issues/173)) ([dc8d89a](https://github.com/nzbdav/nzbdav/commit/dc8d89a45d3d042e7ec5ed8f01249f1d603e08a2))
-* **webdav:** adopt elfhosted PROPFIND resourcetype XElement clone ([#165](https://github.com/nzbdav/nzbdav/issues/165)) ([13220c1](https://github.com/nzbdav/nzbdav/commit/13220c1e399481caf0bee9f4f2aa5ec66cfd1038))
-* **webdav:** harden RemoveUnlinkedFiles against partial library scans ([#172](https://github.com/nzbdav/nzbdav/issues/172)) ([bb38192](https://github.com/nzbdav/nzbdav/commit/bb38192201a8879063629ad46b4c079e4ac2b03f))
-* **webdav:** log RAR header parse failures without stack dumps ([bedd22a](https://github.com/nzbdav/nzbdav/commit/bedd22a39bf6fd4599e419b0b8ae0518137b0055))
-
-
-### Performance Improvements
-
-* **ui:** speed up Overview with sectioned stats and 24h rollups ([#174](https://github.com/nzbdav/nzbdav/issues/174)) ([d3bc59a](https://github.com/nzbdav/nzbdav/commit/d3bc59acff8d0f7ecb0abbd60162cea400b3de4a))
-
-## [0.7.3](https://github.com/nzbdav/nzbdav/compare/v0.7.2...v0.7.3) (2026-07-12)
-
-
-### Features
-
-* adopt Pukabyte fork repair, queue, and logging fixes ([#156](https://github.com/nzbdav/nzbdav/issues/156)) ([4b39e20](https://github.com/nzbdav/nzbdav/commit/4b39e206575dd6741d1dc30e4826f5e531414ea2))
-* **db:** adopt elfhosted SAB history retention ([#159](https://github.com/nzbdav/nzbdav/issues/159)) ([0a6b46e](https://github.com/nzbdav/nzbdav/commit/0a6b46efc8399e2942b80017250ffac087cc002e))
-* **health:** adopt elfhosted health-check retention and reset ([#78](https://github.com/nzbdav/nzbdav/issues/78)) ([#157](https://github.com/nzbdav/nzbdav/issues/157)) ([e7aadf0](https://github.com/nzbdav/nzbdav/commit/e7aadf0853cf2969cee4cabe5afa847d58ea3a0d))
-* **sab:** expose history completed timestamp in API and UI ([#153](https://github.com/nzbdav/nzbdav/issues/153)) ([37ce880](https://github.com/nzbdav/nzbdav/commit/37ce88095fa593e5190dcf0f5c2d4e553ce60983)), closes [#66](https://github.com/nzbdav/nzbdav/issues/66)
-* **ui:** hyperlink history job names to explore folders ([#152](https://github.com/nzbdav/nzbdav/issues/152)) ([0f2f9d7](https://github.com/nzbdav/nzbdav/commit/0f2f9d7bc72d3ea335a6a708ed29a1c8ff524198)), closes [#72](https://github.com/nzbdav/nzbdav/issues/72)
-
-
-### Bug Fixes
-
-* **db:** adopt elfhosted read-only SQLite PRAGMA hardening ([#161](https://github.com/nzbdav/nzbdav/issues/161)) ([a0f3502](https://github.com/nzbdav/nzbdav/commit/a0f3502f267c3097563606a9af43d9b9d77aa86b))
-* **db:** repair empty categories and harden explore paths ([#155](https://github.com/nzbdav/nzbdav/issues/155)) ([04b841b](https://github.com/nzbdav/nzbdav/commit/04b841b8dd6b9f73083f3f3a64407ac5f10d8ff1)), closes [#48](https://github.com/nzbdav/nzbdav/issues/48) [#94](https://github.com/nzbdav/nzbdav/issues/94)
-* **ui:** return 405 for POST requests to index route ([#148](https://github.com/nzbdav/nzbdav/issues/148)) ([0c3f304](https://github.com/nzbdav/nzbdav/commit/0c3f304de2f9fd8ecdb2a199553e63b8d82fc833)), closes [#100](https://github.com/nzbdav/nzbdav/issues/100)
-* **usenet:** log host/port on test-connection failures ([#150](https://github.com/nzbdav/nzbdav/issues/150)) ([6a5de27](https://github.com/nzbdav/nzbdav/commit/6a5de27ab5153d21e0bed32597c55623c1b395b3)), closes [#57](https://github.com/nzbdav/nzbdav/issues/57)
-* **webdav:** guard empty extension in PathUtil.ReplaceExtension ([#151](https://github.com/nzbdav/nzbdav/issues/151)) ([e699567](https://github.com/nzbdav/nzbdav/commit/e6995670b1030379e4c501868a0d884f188136ce)), closes [#50](https://github.com/nzbdav/nzbdav/issues/50)
-
-## [0.7.2](https://github.com/nzbdav/nzbdav/compare/v0.7.1...v0.7.2) (2026-07-11)
-
-
-### Bug Fixes
-
-* **nntp:** route pipelined fetches through UsenetSharp batch API ([e019278](https://github.com/nzbdav/nzbdav/commit/e019278061daacc7736f5e9dfa7192e70dbcf882))
-
-## [0.7.1](https://github.com/nzbdav/nzbdav/compare/v0.7.0...v0.7.1) (2026-07-11)
-
-
-### Bug Fixes
-
-* **metrics:** restore live telemetry after upgrades ([48e4bea](https://github.com/nzbdav/nzbdav/commit/48e4bea57520403fde2cd9c3646f22190abd9287))
-* **ui:** avoid duplicate version prefix ([8db7c72](https://github.com/nzbdav/nzbdav/commit/8db7c72e697d3c14b3157a0c0beb6d6cf1bc650a))
-
-## [0.7.0](https://github.com/nzbdav/nzbdav/compare/v0.6.14...v0.7.0) (2026-07-11)
-
-
-### ⚠ BREAKING CHANGES
-
-* Introduces new persistence schemas and operational configuration for the 0.7 release line.
-
-### Features
-
-* add proactive Usenet discovery and playback resilience ([97f9baa](https://github.com/nzbdav/nzbdav/commit/97f9baa4eed66802cecfabce4bd68e8caa3f3960))
-* **ui:** expose observability and discovery workflows ([e4300e9](https://github.com/nzbdav/nzbdav/commit/e4300e9c3738f561b4a3e0bd6257ae81faa61a42))
-
-## [0.6.14](https://github.com/nzbdav/nzbdav/compare/v0.6.13...v0.6.14) (2026-07-11)
-
-
-### Features
-
-* **ui:** add pipelined article request toggle ([ae929f6](https://github.com/nzbdav/nzbdav/commit/ae929f6d45a99882b4caf1ae739e2f178f80f3b2))
-* **webdav:** allow disabling pipelined article requests ([823735e](https://github.com/nzbdav/nzbdav/commit/823735e746a5b11cf5cb4616fe66aaeb9c81cd37))
-
-
-### Bug Fixes
-
-* **deps:** bump UsenetSharp to 2.0.2 ([6723e43](https://github.com/nzbdav/nzbdav/commit/6723e432c9859608b1a2ac3d551cf246059a43ec))
-* **nntp:** retry clean article misses on primary provider ([2168830](https://github.com/nzbdav/nzbdav/commit/21688302a325ff9e1e6677a6b7137790a36bcb84))
-
-## [0.6.13](https://github.com/nzbdav/nzbdav/compare/v0.6.12...v0.6.13) (2026-07-11)
-
-
-### Bug Fixes
-
-* **deps:** bump UsenetSharp 1.2.4 ([c6e9e92](https://github.com/nzbdav/nzbdav/commit/c6e9e92633c469f29489267961c1f3eaecc7fad6))
-* **deps:** bump UsenetSharp to 2.0.0 ([a0a285e](https://github.com/nzbdav/nzbdav/commit/a0a285ec624766a319e776d00f22eba0adc5e032))
-* **deps:** bump UsenetSharp to 2.0.1 ([b65cfd1](https://github.com/nzbdav/nzbdav/commit/b65cfd112e5abaff4fb9601269c3804df918932d))
-* **nntp:** stop reusing connections poisoned by cancellation ([c9ccaf6](https://github.com/nzbdav/nzbdav/commit/c9ccaf6f38f2c1d7ac8f97bb7c8074d3a072b9d1))
-
-## [0.6.12](https://github.com/nzbdav/nzbdav/compare/v0.6.11...v0.6.12) (2026-07-10)
-
-
-### Bug Fixes
-
-* **nntp:** treat unexpected responses as retryable connection failures ([68b4a01](https://github.com/nzbdav/nzbdav/commit/68b4a01d135e2209802f6f79a9964e102621317d))
-* **webdav:** log human-readable errors for known download failures ([4e9967f](https://github.com/nzbdav/nzbdav/commit/4e9967f33dcee07d4ea5ce6af19c99dd59569fc9))
-
-## [0.6.11](https://github.com/nzbdav/nzbdav/compare/v0.6.10...v0.6.11) (2026-07-10)
-
-
-### Bug Fixes
-
-* **ui:** build custom server with Vite environments ([39dc559](https://github.com/nzbdav/nzbdav/commit/39dc55912b3f9a056805e967fa4c29f2b2899c56))
-
-## [0.6.10](https://github.com/nzbdav/nzbdav/compare/v0.6.9...v0.6.10) (2026-07-10)
-
-
-### Bug Fixes
-
-* **deps:** consume UsenetSharp from NuGet.org ([bfe8586](https://github.com/nzbdav/nzbdav/commit/bfe8586aac02444cc732334593f42835b02d6f8a))
-* **docker:** image contents ([e67542f](https://github.com/nzbdav/nzbdav/commit/e67542f9f012dfa802562590dcfcca178ef503e7))
-
-## [0.6.9](https://github.com/nzbdav/nzbdav/compare/v0.6.8...v0.6.9) (2026-07-10)
-
-
-### Features
-
-* modernize console logging ([ad3f3ba](https://github.com/nzbdav/nzbdav/commit/ad3f3baebc2fab5b945429256323c5e8be90ad7e))
-* **ui:** add tailwind design foundation ([2a4f4f4](https://github.com/nzbdav/nzbdav/commit/2a4f4f44a5c15e84a50eddb61b9a9cea4e977b80))
-* **ui:** restyle application shell ([d91d211](https://github.com/nzbdav/nzbdav/commit/d91d211d4373dd2c98c94b712010f4cf40a32fd1))
-* **ui:** restyle authentication screens ([7ad644b](https://github.com/nzbdav/nzbdav/commit/7ad644b43d3339d150a9b22a9de25ab40db6339f))
-* **ui:** restyle explore and health views ([bb7a07c](https://github.com/nzbdav/nzbdav/commit/bb7a07c0c33f2c49661bbc437ddee7dc5f5cd3ef))
-* **ui:** restyle queue interface ([b924989](https://github.com/nzbdav/nzbdav/commit/b92498957606d8849098a1d66eb0cbf741c6b806))
-* **ui:** restyle settings interface ([cdac26e](https://github.com/nzbdav/nzbdav/commit/cdac26e332690573742bd7f5cc3e73dafc327a9f))
-
-
-### Bug Fixes
-
-* **ci:** publish only v-prefixed release tags ([55329a6](https://github.com/nzbdav/nzbdav/commit/55329a6c76cb3a09c2dc4268fdc48571bfd6fcfc))
-* **deps:** Bump @types/node from 25.9.5 to 26.1.0 in /frontend ([#24](https://github.com/nzbdav/nzbdav/issues/24)) ([e9d7620](https://github.com/nzbdav/nzbdav/commit/e9d7620e0fbca372fd56aaab1db469a206b9dd69))
-* **deps:** Bump http-proxy-middleware from 3.0.7 to 4.1.1 in /frontend ([#26](https://github.com/nzbdav/nzbdav/issues/26)) ([849bbf4](https://github.com/nzbdav/nzbdav/commit/849bbf4247327812d1540596bcdf6dfdc268c073))
-* **deps:** bump SharpCompress from 0.39.0 to 0.49.1 ([f0a1788](https://github.com/nzbdav/nzbdav/commit/f0a1788a946ff1599c160de522c2cb58fed893e3))
-* **deps:** Bump typescript from 5.9.3 to 6.0.3 in /frontend ([#20](https://github.com/nzbdav/nzbdav/issues/20)) ([2584aa9](https://github.com/nzbdav/nzbdav/commit/2584aa961f0595bedd8d668715620fe4057ccc9e))
-* **ui:** handle unavailable WebDAV directories ([ae29142](https://github.com/nzbdav/nzbdav/commit/ae2914211fda737cae065af4f1e378844f0f6f43))
-
-## [0.6.8](https://github.com/nzbdav/nzbdav/compare/v0.6.7...v0.6.8) (2026-07-10)
-
-
-### Features
-
-* **usenet:** consume chunked decoded-body API ([d0996d3](https://github.com/nzbdav/nzbdav/commit/d0996d31822c15752144aff2f306f360c60e21a2))
-* **usenet:** keep paused streaming connections warm longer ([fe7a779](https://github.com/nzbdav/nzbdav/commit/fe7a7790624bd1e7f8a7384b22062e8199035b5b))
-* **usenet:** pipeline segment BODY requests ([b911d06](https://github.com/nzbdav/nzbdav/commit/b911d06e17d4199a1f9b1c8fcfa23cf0dedc7f2a))
-* **webdav:** persist segment ranges for arithmetic seeks ([c22650e](https://github.com/nzbdav/nzbdav/commit/c22650ed03c81f1dc1ead42c15ecd1c5cb58c6f9))
-
-
-### Bug Fixes
-
-* **api:** mask stored credentials in config responses ([8dfedb2](https://github.com/nzbdav/nzbdav/commit/8dfedb28a6a1c727946522267019c0088ad61c5f))
-* **api:** stop returning raw exception messages ([0e2accd](https://github.com/nzbdav/nzbdav/commit/0e2accd3da421d30347be6f434d4fcc248e5dcab))
-* **arr:** contain monitoring loop failures ([9d7aed2](https://github.com/nzbdav/nzbdav/commit/9d7aed25de87176b87166638440242e476d031bc))
-* **arr:** return parent directories in root-first order ([e76531b](https://github.com/nzbdav/nzbdav/commit/e76531bca4ebc639c5c8de67a28e07300a3aa23e))
-* **auth:** cache successful WebDAV password checks ([ba60894](https://github.com/nzbdav/nzbdav/commit/ba608945aabc8c77172442476ddfcad7bbe4a6f8))
-* **auth:** compare API and download keys in constant time ([a6541e4](https://github.com/nzbdav/nzbdav/commit/a6541e4cbff9e832e8d1010fb848209328a057f6))
-* **auth:** preserve sessions across development reloads ([d293df1](https://github.com/nzbdav/nzbdav/commit/d293df1b995a41c10584a5f22abcf3a8bc592f87))
-* **backend:** enable server garbage collection ([1169b00](https://github.com/nzbdav/nzbdav/commit/1169b007723c61cdfd2703e431c94be0e9d0a119))
-* **backend:** respect configured logging level ([afc72d3](https://github.com/nzbdav/nzbdav/commit/afc72d3d686a6d98a688d4c68f7be4d269098999))
-* **ci:** deploy Docker images when release-please creates a release ([01eb27a](https://github.com/nzbdav/nzbdav/commit/01eb27ad61b66c292ce9a0df8c1fcca85122d367))
-* **ci:** drop unsupported configfile test flag ([943863c](https://github.com/nzbdav/nzbdav/commit/943863c69275a6dc8d2b656241929cdf5b95adc0))
-* **config:** cache parsed structured settings ([1a5e70b](https://github.com/nzbdav/nzbdav/commit/1a5e70bbf881f449e701bfd6d2ca5f8fc1836b8a))
-* **db:** cache deserialized streaming metadata ([3eec4c0](https://github.com/nzbdav/nzbdav/commit/3eec4c05e0b79ef3a3ea291b5e0d2e63a368552a))
-* **db:** disable tracking for read-only queries ([1d70198](https://github.com/nzbdav/nzbdav/commit/1d70198815ab6516b4f07b5896cf79bf21bb0c34))
-* **db:** enable WAL and busy timeout ([56cac83](https://github.com/nzbdav/nzbdav/commit/56cac83a005b666f934645c7835f1711ea958960))
-* **deps:** bump react-router packages to 8.1.0 ([a7fb1d2](https://github.com/nzbdav/nzbdav/commit/a7fb1d2e186302f0b4003aec971658793cc2689c))
-* **deps:** bump UsenetSharp to 1.2.2 ([3c24411](https://github.com/nzbdav/nzbdav/commit/3c2441120823a71c2e457062929967b4956235e3))
-* **docker:** propagate child process exit codes ([be67ea8](https://github.com/nzbdav/nzbdav/commit/be67ea8974a2ff27365c4283c54fdd120732801c))
-* harden security-sensitive request handling ([1e0f2dc](https://github.com/nzbdav/nzbdav/commit/1e0f2dc3ee637d8603c94da7271e1932922fd1e2))
-* **health:** bound the missing segment cache ([cdbc614](https://github.com/nzbdav/nzbdav/commit/cdbc61481f202dcaf133a915ce3a14f1962d684d))
-* **nntp:** close pipelined transfer lifecycle gaps ([27ccc31](https://github.com/nzbdav/nzbdav/commit/27ccc31abdc818ae95b46cc9ba326ea8e6a3c6dd))
-* **queue:** start queue processing at startup ([3b6904f](https://github.com/nzbdav/nzbdav/commit/3b6904f3e51fb9be7babc5bc3ef454746b572ac9))
-* **sab:** guard addurl fetches against SSRF ([6249dc4](https://github.com/nzbdav/nzbdav/commit/6249dc47152a56478cceba252684d9f8e7d56567))
-* **sab:** make history delete idempotent for missing ids ([#36](https://github.com/nzbdav/nzbdav/issues/36)) ([e16b7c5](https://github.com/nzbdav/nzbdav/commit/e16b7c543e6c8c7444965798c3a693001167a5bb))
-* **sab:** retry history delete save when rows vanish concurrently ([1b9bf1e](https://github.com/nzbdav/nzbdav/commit/1b9bf1e28162ccf13809474de8bd649411f5c584))
-* **sab:** validate category before backup paths ([f56812a](https://github.com/nzbdav/nzbdav/commit/f56812a1dc04984ba75b261fb6b991e321da6675))
-* **ui:** guard backend websocket parsing ([7e65ff9](https://github.com/nzbdav/nzbdav/commit/7e65ff90462f810439effe4fca4c2c068bd34d1b))
-* **ui:** improve standalone frontend status ([b47ebde](https://github.com/nzbdav/nzbdav/commit/b47ebdef341c3f721bd1711d14d7c34f6f267d3e))
-* **ui:** replace incompatible queue dropzone ([6b5dc08](https://github.com/nzbdav/nzbdav/commit/6b5dc08721a3b5f4518edaeff6470674a7c09369))
-* **usenet:** skip websocket encoding without subscribers ([e837451](https://github.com/nzbdav/nzbdav/commit/e837451b6492dc19db909f541efa4a16334043c7))
-* **webdav:** decrypt AES streams in 256 KiB runs ([6b4f867](https://github.com/nzbdav/nzbdav/commit/6b4f867664a7dc54298c39b269a923f552f23577))
-* **webdav:** discard seek prefixes in 64 KiB chunks ([c649dea](https://github.com/nzbdav/nzbdav/commit/c649dea5720ad009771eb5455b388f7fd4532271))
-* **webdav:** enforce seek and stream lifecycle contracts ([c390134](https://github.com/nzbdav/nzbdav/commit/c390134875dee5d285979cbacfc0283c29a8218d))
-* **webdav:** honor construction cancellation token in CancellableStream reads ([452227b](https://github.com/nzbdav/nzbdav/commit/452227bb6c63fac6683c22d9346baf787b197ede))
-* **webdav:** pool the response copy buffer ([5997260](https://github.com/nzbdav/nzbdav/commit/5997260c8abffd8f334b3dcd79d02ff67ce71895))
-* **webdav:** preserve prefetch on small forward seeks ([79f14a4](https://github.com/nzbdav/nzbdav/commit/79f14a41ea00337bfa6557d49d7942331046bf0b))
-* **webdav:** serve correct suffix byte ranges ([34a5530](https://github.com/nzbdav/nzbdav/commit/34a55302267ba1cee6ba82ec0d88dd564bfbaa89))
-* **webdav:** surface segment producer failures ([9610dc5](https://github.com/nzbdav/nzbdav/commit/9610dc517363dedf37372cae994fd516d7b2ae59))
-* **webdav:** throw when stream reads are cancelled ([5e4cb9a](https://github.com/nzbdav/nzbdav/commit/5e4cb9aedcdc86ac0a4e1d76d604f44a457a6519))
-
-## [0.6.7](https://github.com/nzbdav/nzbdav/compare/v0.6.6...v0.6.7) (2026-07-10)
-
-
-### Bug Fixes
-
-* **ci:** quote pre-release job if for Dependabot parser ([c0f3f48](https://github.com/nzbdav/nzbdav/commit/c0f3f4800eac8b31868987df84a3ce5374c72673))
-* **deps:** align react-router packages and group Dependabot updates ([71d4490](https://github.com/nzbdav/nzbdav/commit/71d4490286b2c8245bc774cc1024c36a4e083c23))
-* **deps:** bump the github-actions group with 3 updates ([#33](https://github.com/nzbdav/nzbdav/issues/33)) ([f4ce334](https://github.com/nzbdav/nzbdav/commit/f4ce334cb59fd56c9d0f4edb503d48e33215ff2c))
-* **deps:** Bump the nuget-minor-and-patch group with 3 updates ([#34](https://github.com/nzbdav/nzbdav/issues/34)) ([4f3864c](https://github.com/nzbdav/nzbdav/commit/4f3864c416fa9e0992d781c96bad9a1d750b27c3))
-* **deps:** configure Dependabot auth for UsenetSharp NuGet feed ([0b676c2](https://github.com/nzbdav/nzbdav/commit/0b676c22723e2d4aacf6cc03090425c7c85167da))
-* **docker:** publish dev tag from pre-release workflow ([409c6ee](https://github.com/nzbdav/nzbdav/commit/409c6ee12dbbfddd6df80ba4156c6e91c246bbd6))
-* **docker:** use vMAJOR and vMAJOR.MINOR rolling tags ([9fd3fb6](https://github.com/nzbdav/nzbdav/commit/9fd3fb63db3c7160d5889e081d957b102b0aa1c1))
-
-## [0.6.6](https://github.com/nzbdav/nzbdav/compare/v0.6.5...v0.6.6) (2026-07-10)
-
-
-### Bug Fixes
-
-* **ci:** add self-managed dependency submission with NuGet auth ([b35b856](https://github.com/nzbdav/nzbdav/commit/b35b856f58685ebb1eda9cfb16f15ab404d6d2b8))
-* **ci:** deploy Docker images on release published event ([c9f8207](https://github.com/nzbdav/nzbdav/commit/c9f8207c95abb41f6ab413a85d0d755dcc3d3f07))
-* **ci:** quote pre-release image tag for Dependabot parser ([0066a1f](https://github.com/nzbdav/nzbdav/commit/0066a1f07db64de69c7c8044fdd80b64b84f3169))
-* **deps:** remove invalid GITHUB_TOKEN from Dependabot registry config ([d5bb833](https://github.com/nzbdav/nzbdav/commit/d5bb833b23683858c211e230375d3f1f415e540e))
-* **ui:** emit node build output to dist-node only ([507bb66](https://github.com/nzbdav/nzbdav/commit/507bb66b60c0d810b3570133620a6a39e4397643))
-
-## [0.6.5](https://github.com/hoivikaj/nzbdav/compare/v0.6.4...v0.6.5) (2026-07-10)
-
-
-### Features
-
-* add backend support for scheduling the RemoveOrphanedFiles task. ([ffcdcfd](https://github.com/hoivikaj/nzbdav/commit/ffcdcfd4e25d1ced7648bef29e0a3d246c419410))
-* add NZB backup settings to frontend. ([55260d4](https://github.com/hoivikaj/nzbdav/commit/55260d41d00722b3881b4eeea5d5d07e86d5704b))
-* add ui setting to schedule the RemoveOrphanedFiles task. ([807573b](https://github.com/hoivikaj/nzbdav/commit/807573bd7411afcb22731e9a40dc0c8f519b2f95))
-* allow exporting nzb from history table. ([7928d4b](https://github.com/hoivikaj/nzbdav/commit/7928d4b1fb5fc785828b4a7b211d5c62b37b6243))
-* backup incoming nzbs to configured directory when enabled. ([c2b3692](https://github.com/hoivikaj/nzbdav/commit/c2b369229ae7ebd0bd3bfaa14c99f939d93c241e))
-* index QueueItems table by category and filename. ([9116bfc](https://github.com/hoivikaj/nzbdav/commit/9116bfc93407dc867206f16f644f7201591ff0e1))
-* organize /nzbs webdav dir by category. ([404d418](https://github.com/hoivikaj/nzbdav/commit/404d418a8a0a9d1465c1115b87a8506a5b9d56de))
-* support the TZ (timezone) env variable. ([cfe0298](https://github.com/hoivikaj/nzbdav/commit/cfe02980593b07dd7800a2ce42cdfcd1765cdd20))
-
-
-### Bug Fixes
-
-* Allow special characters for filename-passwords ([#308](https://github.com/hoivikaj/nzbdav/issues/308)) ([df8b845](https://github.com/hoivikaj/nzbdav/commit/df8b84515f7b134485c4a07143413de2c1fe2e40))
-* compatability issues with NZBDonkey ([#316](https://github.com/hoivikaj/nzbdav/issues/316)) ([b2d0f2a](https://github.com/hoivikaj/nzbdav/commit/b2d0f2a4c6b48cca688bdffb91ba1b71a3fb1b84))
-* **deps:** bump @tailwindcss/vite from 4.1.11 to 4.2.1 in /frontend ([#330](https://github.com/hoivikaj/nzbdav/issues/330)) ([3389627](https://github.com/hoivikaj/nzbdav/commit/3389627c98a50370d580d614ebb0f0874d507219))
-* **deps:** bump @types/express-serve-static-core ([#347](https://github.com/hoivikaj/nzbdav/issues/347)) ([95f8953](https://github.com/hoivikaj/nzbdav/commit/95f89533f1ed3f16a4c862f3e67f83d6b6ddf401))
-* **deps:** bump @types/node from 20.19.10 to 25.4.0 in /frontend ([#328](https://github.com/hoivikaj/nzbdav/issues/328)) ([7239021](https://github.com/hoivikaj/nzbdav/commit/72390216d65380230fff1b0c091ec677e892a223))
-* **deps:** bump @types/node from 25.4.0 to 25.5.0 in /frontend ([#381](https://github.com/hoivikaj/nzbdav/issues/381)) ([680e80d](https://github.com/hoivikaj/nzbdav/commit/680e80df44d4a86a6c896e25c54762159fd69741))
-* **deps:** bump actions/checkout from 4 to 6 ([#317](https://github.com/hoivikaj/nzbdav/issues/317)) ([b41042e](https://github.com/hoivikaj/nzbdav/commit/b41042ea66aeb30859674e9885f15143fe8545c7))
-* **deps:** bump bootstrap from 5.3.7 to 5.3.8 in /frontend ([#329](https://github.com/hoivikaj/nzbdav/issues/329)) ([1790518](https://github.com/hoivikaj/nzbdav/commit/17905189d379ae0d8ed0e2934d3acde7e3009785))
-* **deps:** bump cross-env from 7.0.3 to 10.1.0 in /frontend ([#336](https://github.com/hoivikaj/nzbdav/issues/336)) ([b8d6693](https://github.com/hoivikaj/nzbdav/commit/b8d6693225e819127bb40063f335c8ab7a4f5ca0))
-* **deps:** bump docker/login-action from 3 to 4 ([#321](https://github.com/hoivikaj/nzbdav/issues/321)) ([12094ea](https://github.com/hoivikaj/nzbdav/commit/12094ea4e4797799981155ac801d9730ddf824db))
-* **deps:** bump express and @types/express in /frontend ([#324](https://github.com/hoivikaj/nzbdav/issues/324)) ([1539ce5](https://github.com/hoivikaj/nzbdav/commit/1539ce5d50ac53f1ca39a65166d17ed80fb295e1))
-* **deps:** bump isbot from 5.1.29 to 5.1.35 in /frontend ([#322](https://github.com/hoivikaj/nzbdav/issues/322)) ([2d0d069](https://github.com/hoivikaj/nzbdav/commit/2d0d0694ecc060134810e7c2d4bbb07aaa94a74f))
-* **deps:** bump isbot from 5.1.35 to 5.1.36 in /frontend ([#349](https://github.com/hoivikaj/nzbdav/issues/349)) ([0619772](https://github.com/hoivikaj/nzbdav/commit/06197726fd2be0695027e5a7ca1ecf8c55d21586))
-* **deps:** bump isbot from 5.1.36 to 5.1.37 in /frontend ([#379](https://github.com/hoivikaj/nzbdav/issues/379)) ([b054f42](https://github.com/hoivikaj/nzbdav/commit/b054f42a8e2b715f94995b5e37763f8c0d9651f7))
-* **deps:** Bump Microsoft.AspNetCore.OpenApi from 10.0.1 to 10.0.4 ([#332](https://github.com/hoivikaj/nzbdav/issues/332)) ([7e0cfd6](https://github.com/hoivikaj/nzbdav/commit/7e0cfd6acada37b2b2de8961eae9d095a97f8417))
-* **deps:** Bump Microsoft.EntityFrameworkCore.Design from 10.0.1 to 10.0.4 ([#334](https://github.com/hoivikaj/nzbdav/issues/334)) ([88fa597](https://github.com/hoivikaj/nzbdav/commit/88fa5976bda674e98d2bf57802fbddeb721abaaa))
-* **deps:** Bump Microsoft.EntityFrameworkCore.Sqlite from 10.0.1 to 10.0.4 ([#338](https://github.com/hoivikaj/nzbdav/issues/338)) ([e19d72c](https://github.com/hoivikaj/nzbdav/commit/e19d72cd42b9ea302fc6e5dae32ea0e2652f1094))
-* **deps:** bump mime-types from 3.0.1 to 3.0.2 in /frontend ([#323](https://github.com/hoivikaj/nzbdav/issues/323)) ([8866951](https://github.com/hoivikaj/nzbdav/commit/88669514ff6ff279647cd8f92f23ae9f3aa908a4))
-* **deps:** bump react-dropzone from 14.3.8 to 15.0.0 in /frontend ([#348](https://github.com/hoivikaj/nzbdav/issues/348)) ([ab24e15](https://github.com/hoivikaj/nzbdav/commit/ab24e15c3b8ec3cda5c07c2943adbf1fadd1c52c))
-* **deps:** bump tailwindcss from 4.1.11 to 4.2.1 in /frontend ([#335](https://github.com/hoivikaj/nzbdav/issues/335)) ([2a62a41](https://github.com/hoivikaj/nzbdav/commit/2a62a41e8b3b094f69bbb687bec775776530435b))
-* **deps:** Bump the dotnet group with 3 updates ([#395](https://github.com/hoivikaj/nzbdav/issues/395)) ([aae1e43](https://github.com/hoivikaj/nzbdav/commit/aae1e4367bb70f7a0a517779f453680c1e06c2bb))
-* **deps:** bump the github-actions group across 1 directory with 2 updates ([75f7dfb](https://github.com/hoivikaj/nzbdav/commit/75f7dfb16815ed25cc57dcde0c5cb615ae70ebaa))
-* **deps:** bump the github-actions group across 1 directory with 2 updates ([2f4d6c3](https://github.com/hoivikaj/nzbdav/commit/2f4d6c3263a9b8f0f5218b0948d79e208e397ff4))
-* **deps:** bump the github-actions group with 3 updates ([#350](https://github.com/hoivikaj/nzbdav/issues/350)) ([e017ca9](https://github.com/hoivikaj/nzbdav/commit/e017ca9d868b624b3686789772f28790a18532ee))
-* **deps:** bump the react group in /frontend with 2 updates ([#394](https://github.com/hoivikaj/nzbdav/issues/394)) ([5ce46bc](https://github.com/hoivikaj/nzbdav/commit/5ce46bc74b0cf671a91987f92aca96c5830d4615))
-* **deps:** bump the react group in /frontend with 4 updates ([#346](https://github.com/hoivikaj/nzbdav/issues/346)) ([46a8a7b](https://github.com/hoivikaj/nzbdav/commit/46a8a7bc605033c8bf64bc159f9337425044b292))
-* **deps:** bump the react-router group in /frontend with 5 updates ([#345](https://github.com/hoivikaj/nzbdav/issues/345)) ([83833f4](https://github.com/hoivikaj/nzbdav/commit/83833f4e35cacc7010368a9b0935d1ed6945b58f))
-* **deps:** bump the react-router group in /frontend with 5 updates ([#372](https://github.com/hoivikaj/nzbdav/issues/372)) ([27d4cea](https://github.com/hoivikaj/nzbdav/commit/27d4cea5790d92bc6f965e3dfdb3c50f9dad207a))
-* **deps:** bump the tailwindcss group in /frontend with 2 updates ([#374](https://github.com/hoivikaj/nzbdav/issues/374)) ([2f1c0f8](https://github.com/hoivikaj/nzbdav/commit/2f1c0f8bf480d7d49dfdadcafba47e7e6f7ce948))
-* **deps:** bump tsx from 4.20.3 to 4.21.0 in /frontend ([#326](https://github.com/hoivikaj/nzbdav/issues/326)) ([71974ec](https://github.com/hoivikaj/nzbdav/commit/71974eca1762fb72f5f9ecad181b33a8dacb413f))
-* **deps:** bump typescript from 5.9.2 to 5.9.3 in /frontend ([#325](https://github.com/hoivikaj/nzbdav/issues/325)) ([1c692a6](https://github.com/hoivikaj/nzbdav/commit/1c692a66364cce5112f2c66bff55ec9ce400ba13))
-* **deps:** bump vite from 6.3.5 to 7.3.1 in /frontend ([#337](https://github.com/hoivikaj/nzbdav/issues/337)) ([0f8eea6](https://github.com/hoivikaj/nzbdav/commit/0f8eea6db59d16a3aeaf4b611e8c6b8d94b77e00))
-* **deps:** bump vite from 7.3.1 to 8.0.3 in /frontend in the vite group ([#375](https://github.com/hoivikaj/nzbdav/issues/375)) ([2efc0c2](https://github.com/hoivikaj/nzbdav/commit/2efc0c24ae2672afe5644a0186dbc1ebad710419))
-* **deps:** bump vite-tsconfig-paths from 5.1.4 to 6.1.1 in /frontend ([#341](https://github.com/hoivikaj/nzbdav/issues/341)) ([c396ad3](https://github.com/hoivikaj/nzbdav/commit/c396ad34a826ea1cc37cf2d29e30466031eb79be))
-* **deps:** bump ws from 8.18.3 to 8.19.0 in /frontend ([#342](https://github.com/hoivikaj/nzbdav/issues/342)) ([f2fa35d](https://github.com/hoivikaj/nzbdav/commit/f2fa35d86ad03c73ba5584ba2ccb3c28f25ef34d))
-* **deps:** bump ws from 8.19.0 to 8.20.0 in /frontend ([#380](https://github.com/hoivikaj/nzbdav/issues/380)) ([cb42d73](https://github.com/hoivikaj/nzbdav/commit/cb42d73124d528b57addc70d542f562ca16d8496))
-* **deps:** ran `npm audit fix`. ([a71cf69](https://github.com/hoivikaj/nzbdav/commit/a71cf694d9c4e0e7492ec357d68981982e148e52))
-* **deps:** removed the vite-tsconfig-paths plugin. ([c2bdf1d](https://github.com/hoivikaj/nzbdav/commit/c2bdf1dd50f745f7929df623bc5bd0be5fff8887))
-* downgrade unreachable Arr instance log level from Error to Debug ([#352](https://github.com/hoivikaj/nzbdav/issues/352)) ([90a03bf](https://github.com/hoivikaj/nzbdav/commit/90a03bf3e63a871b75d25ab109a6fcdd4689ffae))
-* ensure `audio/flac` content-type mapping for flac files. ([5253fe3](https://github.com/hoivikaj/nzbdav/commit/5253fe3f03cbc2889928c338b2096acc7b863a52))
-* fail queue items with missing nzb blobs instead of blocking queue ([#351](https://github.com/hoivikaj/nzbdav/issues/351)) ([a146d07](https://github.com/hoivikaj/nzbdav/commit/a146d07d8c62891993796b28ad358e41385dd02d))
-* funnel frontend auth through middleware. ([eb71ebf](https://github.com/hoivikaj/nzbdav/commit/eb71ebf8432fc78446de1e37e4d9c5c3e81112be))
-* improve error message for malformed nzbs. ([325252e](https://github.com/hoivikaj/nzbdav/commit/325252e65f910f36d0e52810ccb2fba0d1a50019))
-* **nntp:** Skip failing usenet providers with circuit breaker ([#400](https://github.com/hoivikaj/nzbdav/issues/400)) ([c5fa860](https://github.com/hoivikaj/nzbdav/commit/c5fa860930a55b566a06a74006dcc777079f6716))
-* **nntp:** tag provider name in connection-lock and command-error logs ([#441](https://github.com/hoivikaj/nzbdav/issues/441)) ([794948b](https://github.com/hoivikaj/nzbdav/commit/794948be293eaade7e495cb9ea88045ae33d699b))
-* NZBDonkey compatibility issues with nzb category ([#316](https://github.com/hoivikaj/nzbdav/issues/316)) ([7059b10](https://github.com/hoivikaj/nzbdav/commit/7059b10c4fb79d3dda7c3745360cddbee3ef0561))
-* remove 'Delete mounted files' option when clearing a failed history item. ([dfbc411](https://github.com/hoivikaj/nzbdav/commit/dfbc41148a0877cecba45bd01c97602222d1dac1))
-* typo when disposing queue nzb stream. ([3e44aae](https://github.com/hoivikaj/nzbdav/commit/3e44aaebd635f6dcd9949f1d6dcd80d61985cbb0))
-* update changelog link on ui leftnav-menu. ([14cd09d](https://github.com/hoivikaj/nzbdav/commit/14cd09d2a5f88438b79b46cc6b9c1200fedf0c16))
-* updated opacity for disabled history actions. ([0b82f48](https://github.com/hoivikaj/nzbdav/commit/0b82f482465d0c7a81c3dca7889b57a9e0d060b2))
-* updated padding on queue/history tables. ([2e83dc7](https://github.com/hoivikaj/nzbdav/commit/2e83dc74e75a27b3cba1aa5b82f5da5a0b1a8217))
-* webdav range requests past content boundary return 500 instead 416 ([#384](https://github.com/hoivikaj/nzbdav/issues/384)) ([a43d5d7](https://github.com/hoivikaj/nzbdav/commit/a43d5d7e3d2de1201800dab1a38ad67b1e9d001e))
-
-## [0.6.4](https://github.com/nzbdav-dev/nzbdav/compare/v0.6.3...v0.6.4) (2026-04-08)
-
-
-### Bug Fixes
-
-* **deps:** bump @types/node from 25.4.0 to 25.5.0 in /frontend ([#381](https://github.com/nzbdav-dev/nzbdav/issues/381)) ([680e80d](https://github.com/nzbdav-dev/nzbdav/commit/680e80df44d4a86a6c896e25c54762159fd69741))
-* **deps:** bump isbot from 5.1.36 to 5.1.37 in /frontend ([#379](https://github.com/nzbdav-dev/nzbdav/issues/379)) ([b054f42](https://github.com/nzbdav-dev/nzbdav/commit/b054f42a8e2b715f94995b5e37763f8c0d9651f7))
-* **deps:** Bump the dotnet group with 3 updates ([#395](https://github.com/nzbdav-dev/nzbdav/issues/395)) ([aae1e43](https://github.com/nzbdav-dev/nzbdav/commit/aae1e4367bb70f7a0a517779f453680c1e06c2bb))
-* **deps:** bump the react group in /frontend with 2 updates ([#394](https://github.com/nzbdav-dev/nzbdav/issues/394)) ([5ce46bc](https://github.com/nzbdav-dev/nzbdav/commit/5ce46bc74b0cf671a91987f92aca96c5830d4615))
-* **deps:** bump the react-router group in /frontend with 5 updates ([#372](https://github.com/nzbdav-dev/nzbdav/issues/372)) ([27d4cea](https://github.com/nzbdav-dev/nzbdav/commit/27d4cea5790d92bc6f965e3dfdb3c50f9dad207a))
-* **deps:** bump the tailwindcss group in /frontend with 2 updates ([#374](https://github.com/nzbdav-dev/nzbdav/issues/374)) ([2f1c0f8](https://github.com/nzbdav-dev/nzbdav/commit/2f1c0f8bf480d7d49dfdadcafba47e7e6f7ce948))
-* **deps:** bump vite from 7.3.1 to 8.0.3 in /frontend in the vite group ([#375](https://github.com/nzbdav-dev/nzbdav/issues/375)) ([2efc0c2](https://github.com/nzbdav-dev/nzbdav/commit/2efc0c24ae2672afe5644a0186dbc1ebad710419))
-* **deps:** bump ws from 8.19.0 to 8.20.0 in /frontend ([#380](https://github.com/nzbdav-dev/nzbdav/issues/380)) ([cb42d73](https://github.com/nzbdav-dev/nzbdav/commit/cb42d73124d528b57addc70d542f562ca16d8496))
-
-## [0.6.3](https://github.com/nzbdav-dev/nzbdav/compare/v0.6.2...v0.6.3) (2026-04-08)
-
-
-### Features
-
-* add NZB backup settings to frontend. ([55260d4](https://github.com/nzbdav-dev/nzbdav/commit/55260d41d00722b3881b4eeea5d5d07e86d5704b))
-* allow exporting nzb from history table. ([7928d4b](https://github.com/nzbdav-dev/nzbdav/commit/7928d4b1fb5fc785828b4a7b211d5c62b37b6243))
-* backup incoming nzbs to configured directory when enabled. ([c2b3692](https://github.com/nzbdav-dev/nzbdav/commit/c2b369229ae7ebd0bd3bfaa14c99f939d93c241e))
-* index QueueItems table by category and filename. ([9116bfc](https://github.com/nzbdav-dev/nzbdav/commit/9116bfc93407dc867206f16f644f7201591ff0e1))
-* organize /nzbs webdav dir by category. ([404d418](https://github.com/nzbdav-dev/nzbdav/commit/404d418a8a0a9d1465c1115b87a8506a5b9d56de))
-
-
-### Bug Fixes
-
-* remove 'Delete mounted files' option when clearing a failed history item. ([dfbc411](https://github.com/nzbdav-dev/nzbdav/commit/dfbc41148a0877cecba45bd01c97602222d1dac1))
-* updated opacity for disabled history actions. ([0b82f48](https://github.com/nzbdav-dev/nzbdav/commit/0b82f482465d0c7a81c3dca7889b57a9e0d060b2))
-* updated padding on queue/history tables. ([2e83dc7](https://github.com/nzbdav-dev/nzbdav/commit/2e83dc74e75a27b3cba1aa5b82f5da5a0b1a8217))
-* webdav range requests past content boundary return 500 instead 416 ([#384](https://github.com/nzbdav-dev/nzbdav/issues/384)) ([a43d5d7](https://github.com/nzbdav-dev/nzbdav/commit/a43d5d7e3d2de1201800dab1a38ad67b1e9d001e))
-
-## [0.6.2](https://github.com/nzbdav-dev/nzbdav/compare/v0.6.1...v0.6.2) (2026-03-24)
-
-
-### Bug Fixes
-
-* compatability issues with NZBDonkey ([#316](https://github.com/nzbdav-dev/nzbdav/issues/316)) ([b2d0f2a](https://github.com/nzbdav-dev/nzbdav/commit/b2d0f2a4c6b48cca688bdffb91ba1b71a3fb1b84))
-* downgrade unreachable Arr instance log level from Error to Debug ([#352](https://github.com/nzbdav-dev/nzbdav/issues/352)) ([90a03bf](https://github.com/nzbdav-dev/nzbdav/commit/90a03bf3e63a871b75d25ab109a6fcdd4689ffae))
-* ensure `audio/flac` content-type mapping for flac files. ([5253fe3](https://github.com/nzbdav-dev/nzbdav/commit/5253fe3f03cbc2889928c338b2096acc7b863a52))
-* fail queue items with missing nzb blobs instead of blocking queue ([#351](https://github.com/nzbdav-dev/nzbdav/issues/351)) ([a146d07](https://github.com/nzbdav-dev/nzbdav/commit/a146d07d8c62891993796b28ad358e41385dd02d))
-* funnel frontend auth through middleware. ([eb71ebf](https://github.com/nzbdav-dev/nzbdav/commit/eb71ebf8432fc78446de1e37e4d9c5c3e81112be))
-* improve error message for malformed nzbs. ([325252e](https://github.com/nzbdav-dev/nzbdav/commit/325252e65f910f36d0e52810ccb2fba0d1a50019))
-* typo when disposing queue nzb stream. ([3e44aae](https://github.com/nzbdav-dev/nzbdav/commit/3e44aaebd635f6dcd9949f1d6dcd80d61985cbb0))
-* update changelog link on ui leftnav-menu. ([14cd09d](https://github.com/nzbdav-dev/nzbdav/commit/14cd09d2a5f88438b79b46cc6b9c1200fedf0c16))
-
-## [0.6.1](https://github.com/nzbdav-dev/nzbdav/compare/v0.6.0...v0.6.1) (2026-03-11)
-
-
-### Bug Fixes
-
-* **deps:** bump @tailwindcss/vite from 4.1.11 to 4.2.1 in /frontend ([#330](https://github.com/nzbdav-dev/nzbdav/issues/330)) ([3389627](https://github.com/nzbdav-dev/nzbdav/commit/3389627c98a50370d580d614ebb0f0874d507219))
-* **deps:** bump @types/express-serve-static-core ([#347](https://github.com/nzbdav-dev/nzbdav/issues/347)) ([95f8953](https://github.com/nzbdav-dev/nzbdav/commit/95f89533f1ed3f16a4c862f3e67f83d6b6ddf401))
-* **deps:** bump @types/node from 20.19.10 to 25.4.0 in /frontend ([#328](https://github.com/nzbdav-dev/nzbdav/issues/328)) ([7239021](https://github.com/nzbdav-dev/nzbdav/commit/72390216d65380230fff1b0c091ec677e892a223))
-* **deps:** bump bootstrap from 5.3.7 to 5.3.8 in /frontend ([#329](https://github.com/nzbdav-dev/nzbdav/issues/329)) ([1790518](https://github.com/nzbdav-dev/nzbdav/commit/17905189d379ae0d8ed0e2934d3acde7e3009785))
-* **deps:** bump cross-env from 7.0.3 to 10.1.0 in /frontend ([#336](https://github.com/nzbdav-dev/nzbdav/issues/336)) ([b8d6693](https://github.com/nzbdav-dev/nzbdav/commit/b8d6693225e819127bb40063f335c8ab7a4f5ca0))
-* **deps:** bump express and @types/express in /frontend ([#324](https://github.com/nzbdav-dev/nzbdav/issues/324)) ([1539ce5](https://github.com/nzbdav-dev/nzbdav/commit/1539ce5d50ac53f1ca39a65166d17ed80fb295e1))
-* **deps:** bump isbot from 5.1.29 to 5.1.35 in /frontend ([#322](https://github.com/nzbdav-dev/nzbdav/issues/322)) ([2d0d069](https://github.com/nzbdav-dev/nzbdav/commit/2d0d0694ecc060134810e7c2d4bbb07aaa94a74f))
-* **deps:** bump isbot from 5.1.35 to 5.1.36 in /frontend ([#349](https://github.com/nzbdav-dev/nzbdav/issues/349)) ([0619772](https://github.com/nzbdav-dev/nzbdav/commit/06197726fd2be0695027e5a7ca1ecf8c55d21586))
-* **deps:** Bump Microsoft.AspNetCore.OpenApi from 10.0.1 to 10.0.4 ([#332](https://github.com/nzbdav-dev/nzbdav/issues/332)) ([7e0cfd6](https://github.com/nzbdav-dev/nzbdav/commit/7e0cfd6acada37b2b2de8961eae9d095a97f8417))
-* **deps:** Bump Microsoft.EntityFrameworkCore.Design from 10.0.1 to 10.0.4 ([#334](https://github.com/nzbdav-dev/nzbdav/issues/334)) ([88fa597](https://github.com/nzbdav-dev/nzbdav/commit/88fa5976bda674e98d2bf57802fbddeb721abaaa))
-* **deps:** Bump Microsoft.EntityFrameworkCore.Sqlite from 10.0.1 to 10.0.4 ([#338](https://github.com/nzbdav-dev/nzbdav/issues/338)) ([e19d72c](https://github.com/nzbdav-dev/nzbdav/commit/e19d72cd42b9ea302fc6e5dae32ea0e2652f1094))
-* **deps:** bump mime-types from 3.0.1 to 3.0.2 in /frontend ([#323](https://github.com/nzbdav-dev/nzbdav/issues/323)) ([8866951](https://github.com/nzbdav-dev/nzbdav/commit/88669514ff6ff279647cd8f92f23ae9f3aa908a4))
-* **deps:** bump react-dropzone from 14.3.8 to 15.0.0 in /frontend ([#348](https://github.com/nzbdav-dev/nzbdav/issues/348)) ([ab24e15](https://github.com/nzbdav-dev/nzbdav/commit/ab24e15c3b8ec3cda5c07c2943adbf1fadd1c52c))
-* **deps:** bump tailwindcss from 4.1.11 to 4.2.1 in /frontend ([#335](https://github.com/nzbdav-dev/nzbdav/issues/335)) ([2a62a41](https://github.com/nzbdav-dev/nzbdav/commit/2a62a41e8b3b094f69bbb687bec775776530435b))
-* **deps:** bump the react group in /frontend with 4 updates ([#346](https://github.com/nzbdav-dev/nzbdav/issues/346)) ([46a8a7b](https://github.com/nzbdav-dev/nzbdav/commit/46a8a7bc605033c8bf64bc159f9337425044b292))
-* **deps:** bump the react-router group in /frontend with 5 updates ([#345](https://github.com/nzbdav-dev/nzbdav/issues/345)) ([83833f4](https://github.com/nzbdav-dev/nzbdav/commit/83833f4e35cacc7010368a9b0935d1ed6945b58f))
-* **deps:** bump tsx from 4.20.3 to 4.21.0 in /frontend ([#326](https://github.com/nzbdav-dev/nzbdav/issues/326)) ([71974ec](https://github.com/nzbdav-dev/nzbdav/commit/71974eca1762fb72f5f9ecad181b33a8dacb413f))
-* **deps:** bump typescript from 5.9.2 to 5.9.3 in /frontend ([#325](https://github.com/nzbdav-dev/nzbdav/issues/325)) ([1c692a6](https://github.com/nzbdav-dev/nzbdav/commit/1c692a66364cce5112f2c66bff55ec9ce400ba13))
-* **deps:** bump vite from 6.3.5 to 7.3.1 in /frontend ([#337](https://github.com/nzbdav-dev/nzbdav/issues/337)) ([0f8eea6](https://github.com/nzbdav-dev/nzbdav/commit/0f8eea6db59d16a3aeaf4b611e8c6b8d94b77e00))
-* **deps:** bump vite-tsconfig-paths from 5.1.4 to 6.1.1 in /frontend ([#341](https://github.com/nzbdav-dev/nzbdav/issues/341)) ([c396ad3](https://github.com/nzbdav-dev/nzbdav/commit/c396ad34a826ea1cc37cf2d29e30466031eb79be))
-* **deps:** bump ws from 8.18.3 to 8.19.0 in /frontend ([#342](https://github.com/nzbdav-dev/nzbdav/issues/342)) ([f2fa35d](https://github.com/nzbdav-dev/nzbdav/commit/f2fa35d86ad03c73ba5584ba2ccb3c28f25ef34d))
+* **db:** index job folders, NZB references and latest health checks ([2aaeccb](https://github.com/infinidysk/infinidysk-rs/commit/2aaeccb791cab2e27a470b4e6cf07de171791be9))
+* **db:** keep an hourly provider-bytes summary for metrics records ([f57c42e](https://github.com/infinidysk/infinidysk-rs/commit/f57c42e665ea0ecfa9d10259c4bea499fe605ec4))
+* **db:** look up latest health only for the explorer page ([d612316](https://github.com/infinidysk/infinidysk-rs/commit/d612316606127980b9d4eaf4220878b9c8164bb8))
+* **db:** open the metrics store in the metrics task ([2dc6521](https://github.com/infinidysk/infinidysk-rs/commit/2dc65214167094be458d65b77b2aac12030cf07a))
+* **mount:** raise FUSE background limits inside containers ([cfb9972](https://github.com/infinidysk/infinidysk-rs/commit/cfb99728154ae7e862d53948fbeac70ca6756ad8))
+* **nntp:** keep two connections warm to each primary provider ([21b9a34](https://github.com/infinidysk/infinidysk-rs/commit/21b9a34c0b706abf12023f0597f45b4bbce544f4))
+* **nntp:** serve waiting playback requests before imports and health ([87d70bd](https://github.com/infinidysk/infinidysk-rs/commit/87d70bd3c39b020520eb4206e194a19a9ba7a463))
+* **nntp:** spread requests across idle connections before pipelining ([bba8dff](https://github.com/infinidysk/infinidysk-rs/commit/bba8dff0363b1b25eeefa11cf4ca145bb1be8e58))
+* **nntp:** stream decoded body chunks and skip requests cancelled while queued ([e7e2f97](https://github.com/infinidysk/infinidysk-rs/commit/e7e2f973ae132cff433b15af506b91d39724d64b))
+* **nntp:** wait for a connecting slot instead of queueing behind a busy connection ([5a1ea14](https://github.com/infinidysk/infinidysk-rs/commit/5a1ea1498898582aff56be55fea29ce2945edc64))
+* **sab:** filter and page history in SQL ([4e7eb37](https://github.com/infinidysk/infinidysk-rs/commit/4e7eb37892ebaffe3233a9fee06777f2a55c39a9))
+* **stream:** cache bodies that arrive after their reader left ([273089d](https://github.com/infinidysk/infinidysk-rs/commit/273089d251e969a4639423f5e05e2fe5ff20c00b))
+* **stream:** hedge slow head segments and warn on size mismatches ([be23221](https://github.com/infinidysk/infinidysk-rs/commit/be23221d391a720a31d94ca213d46750d5e26740))
+* **stream:** keep the previous segment so out-of-order reads do not reset prefetch ([d4d2e14](https://github.com/infinidysk/infinidysk-rs/commit/d4d2e1490c3ad858c5e45f436ff283dc31fb2476))
+* **stream:** keep the read-ahead open when playback keeps pace with downloads ([9f25608](https://github.com/infinidysk/infinidysk-rs/commit/9f256086a6602c874a4830380645baae4a5f4873))
+* **stream:** open the read-ahead window fully after the first segment ([e187590](https://github.com/infinidysk/infinidysk-rs/commit/e187590eb41fa10323db258461a233c6f4360745))
+* **stream:** prewarm connections when a read window starts ([d85323b](https://github.com/infinidysk/infinidysk-rs/commit/d85323b7397fd09f1e3ca12bfe09d477de7dbcb5))
+* **stream:** serve the awaited segment as it arrives and open bounded ranges fully ([91a2daf](https://github.com/infinidysk/infinidysk-rs/commit/91a2dafe70764de9be32c0396f2f3b06d8830e2c))
+* **stream:** stream every prefetched segment in as it arrives ([ca70fb6](https://github.com/infinidysk/infinidysk-rs/commit/ca70fb6c81594b2e3a0f5fa053b75dfcf2269abb))
+
+
+### Refactors
+
+* **health:** move the Arr client into an arr crate shared by all six profiles ([ef15181](https://github.com/infinidysk/infinidysk-rs/commit/ef15181965a4bec7e9fb4a71d1eb235239415c05))
+
+
+### Build System
+
+* **docker:** build the web UI into the image ([cfb9e0d](https://github.com/infinidysk/infinidysk-rs/commit/cfb9e0df2842cc8586abad51a37f3c9982ac3191))
+* **docker:** include ffprobe in the runtime image ([03b3328](https://github.com/infinidysk/infinidysk-rs/commit/03b3328fc291bbf59e442150da546bc31d293130))
+* **docker:** move the image and release builds to Ubuntu 26.04 ([d70d7b2](https://github.com/infinidysk/infinidysk-rs/commit/d70d7b28ce016202baf15fc3be1234f06752b3c1))
+* **docker:** ship the server as an ubuntu:24.04 image with FUSE support ([b3850af](https://github.com/infinidysk/infinidysk-rs/commit/b3850af2800e6d8b50b99435bf2a296734734f66))
+* target glibc on Ubuntu 24.04 instead of musl ([7569ed5](https://github.com/infinidysk/infinidysk-rs/commit/7569ed5e626ca6a857e130a9a3eeb20800d9a035))

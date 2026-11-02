@@ -1,0 +1,16 @@
+schema = 1
+name = "UsenetServer"
+website = "https://www.usenetserver.com"
+backbone = "omicron"
+port = 563
+
+[[servers]]
+hostname = "news.usenetserver.com"
+
+[[servers]]
+hostname = "news.iad.usenetserver.com"
+region = "US"
+
+[[servers]]
+hostname = "news.ams.usenetserver.com"
+region = "NL"

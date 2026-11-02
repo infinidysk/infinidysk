@@ -1,0 +1,13 @@
+schema = 1
+name = "Thundernews"
+website = "https://www.thundernews.com"
+backbone = "usenetexpress"
+port = 563
+
+[[servers]]
+hostname = "news.thundernews.com"
+region = "US"
+
+[[servers]]
+hostname = "eu.thundernews.com"
+region = "NL"

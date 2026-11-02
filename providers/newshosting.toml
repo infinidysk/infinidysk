@@ -1,0 +1,20 @@
+schema = 1
+name = "Newshosting"
+website = "https://www.newshosting.com"
+backbone = "omicron"
+port = 563
+
+[[servers]]
+hostname = "news.newshosting.com"
+
+[[servers]]
+hostname = "news-us.newshosting.com"
+region = "US"
+
+[[servers]]
+hostname = "news-nl.newshosting.com"
+region = "NL"
+
+[[servers]]
+hostname = "news-eu.newshosting.com"
+region = "NL"

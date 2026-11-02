@@ -1,0 +1,13 @@
+schema = 1
+name = "UsenetExpress"
+website = "https://www.usenetexpress.com"
+backbone = "usenetexpress"
+port = 563
+
+[[servers]]
+hostname = "news.usenetexpress.com"
+region = "US"
+
+[[servers]]
+hostname = "news-eu.usenetexpress.com"
+region = "NL"

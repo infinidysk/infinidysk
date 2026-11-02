@@ -1,0 +1,903 @@
+//! Process wiring: the SAB API and `WebDAV` on one port, the queue worker and the FUSE mount.
+
+use std::collections::HashMap;
+use std::future::{Future, IntoFuture as _};
+use std::net::SocketAddr;
+use std::pin::Pin;
+use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
+
+use anyhow::Context as _;
+use axum::extract::Request;
+use infinidysk_core::ItemId;
+use infinidysk_db::Db;
+use infinidysk_health::{
+    Arr, Health, Profile, Settings as HealthSettings, UnownedAction, Unverified,
+};
+use infinidysk_nntp::{
+    Articles, Bandwidth, Client, Credentials, Downloads, Endpoint, Pool, PoolConfig, Provider,
+    TlsMode, Workload,
+};
+use infinidysk_queue::Queue;
+use infinidysk_queue::import::{self, Output, Verifier};
+use infinidysk_stream::{Budget, Cache, CacheConfig, DiskConfig, Fault};
+use infinidysk_vfs::{Tracing, Vfs};
+use infinidysk_webdav::{Access, Auth as DavAuth, WebDav};
+use tokio::net::TcpListener;
+use tokio::sync::{Notify, RwLock, mpsc, watch};
+use tokio_util::sync::CancellationToken;
+use tower::Layer as _;
+use tracing::{info, warn};
+
+use crate::admin::{self, Admin};
+use crate::arr::{Discovery, Probe};
+use crate::auth::{self, Auth};
+use crate::config::{self, ConfigStore, Settings, Tuning};
+use crate::metrics::{Metrics, Sources};
+use crate::quota::Quotas;
+use crate::sab::{self, Sab};
+use crate::ui;
+
+const MB: u64 = 1_000_000;
+const PROVIDER_TIMEOUT: Duration = Duration::from_secs(30);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+/// Idle connections kept open to each primary-level provider, so a play after a
+/// pause skips the handshake.
+const WARM_FLOOR: usize = 2;
+/// How long open responses (streams) get to finish once shutdown starts.
+const DRAIN: Duration = Duration::from_secs(5);
+/// How often stale query planner statistics are refreshed, starting at startup.
+const OPTIMIZE_EVERY: Duration = Duration::from_hours(6);
+
+/// Process settings needed before the database is open.
+pub struct Boot {
+    pub listen: SocketAddr,
+    pub database_url: String,
+    /// Owner of every mounted file.
+    pub uid: u32,
+    pub gid: u32,
+    /// Trace reads opened in the first this many minutes; 0 for none.
+    pub trace_minutes: u32,
+    /// The metrics store, always its own SQLite file.
+    pub metrics_path: std::path::PathBuf,
+    /// Where log files are kept across restarts.
+    pub log_dir: std::path::PathBuf,
+    /// Where a C# install kept its data, imported on first boot.
+    pub config_dir: std::path::PathBuf,
+    /// The ffprobe binary for media analysis.
+    pub ffprobe: String,
+}
+
+impl Boot {
+    /// `INFINIDYSK_LISTEN`, `INFINIDYSK_DATABASE_URL`, `PUID`, `PGID`,
+    /// `INFINIDYSK_TRACE_MINUTES`, `INFINIDYSK_METRICS_PATH` (default: `metrics.sqlite`
+    /// beside a SQLite database, else in `/config`), `INFINIDYSK_LOG_DIR` (default: `logs`
+    /// in that same directory) and `INFINIDYSK_FFPROBE` (default:
+    /// `ffprobe` on `PATH`).
+    pub fn from_env() -> anyhow::Result<Self> {
+        let database_url = var(
+            "INFINIDYSK_DATABASE_URL",
+            "sqlite:/config/infinidysk.sqlite".to_owned(),
+        )?;
+        let beside = database_url
+            .strip_prefix("sqlite:")
+            .map(|p| {
+                p.trim_start_matches("//")
+                    .split('?')
+                    .next()
+                    .unwrap_or_default()
+            })
+            .and_then(|p| std::path::Path::new(p).parent())
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .map_or_else(|| "/config".into(), std::path::Path::to_path_buf);
+        Ok(Self {
+            listen: listen_from_env()?,
+            metrics_path: var("INFINIDYSK_METRICS_PATH", beside.join("metrics.sqlite"))?,
+            log_dir: var("INFINIDYSK_LOG_DIR", beside.join("logs"))?,
+            config_dir: beside,
+            database_url,
+            uid: var("PUID", 1000)?,
+            gid: var("PGID", 1000)?,
+            trace_minutes: var("INFINIDYSK_TRACE_MINUTES", 0)?,
+            ffprobe: var("INFINIDYSK_FFPROBE", "ffprobe".to_owned())?,
+        })
+    }
+}
+
+/// `INFINIDYSK_LISTEN`, default `0.0.0.0:3000`.
+pub fn listen_from_env() -> anyhow::Result<SocketAddr> {
+    var("INFINIDYSK_LISTEN", SocketAddr::from(([0, 0, 0, 0], 3000)))
+}
+
+fn var<T>(key: &str, default: T) -> anyhow::Result<T>
+where
+    T: FromStr,
+    T::Err: std::error::Error + Send + Sync + 'static,
+{
+    std::env::var(key).map_or(Ok(default), |v| {
+        v.parse().with_context(|| format!("{key} is invalid"))
+    })
+}
+
+/// How [`serve`] ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exit {
+    Stopped,
+    /// The admin API asked for a restart, to apply settings read only at startup.
+    Restart,
+}
+
+/// Serves until `cancel` fires, then unmounts and closes the database.
+#[allow(clippy::significant_drop_tightening)] // False positive: `vfs` is moved into `WebDav`.
+pub async fn serve(
+    listener: TcpListener,
+    boot: &Boot,
+    vars: impl IntoIterator<Item = (String, String)>,
+    cancel: CancellationToken,
+) -> anyhow::Result<Exit> {
+    let db = Db::connect(&boot.database_url)
+        .await
+        .context("opening the database")?;
+    let listener = crate::upgrade::serve_import(listener, &db, &boot.config_dir, &cancel)
+        .await
+        .context("serving the C# import")?;
+    if cancel.is_cancelled() {
+        db.close().await;
+        return Ok(Exit::Stopped);
+    }
+    crate::upgrade::stamp_migrated(&db, &boot.config_dir).await;
+    let mut store = ConfigStore::load(db.clone(), vars)
+        .await
+        .context("loading settings")?;
+    store
+        .generate_missing_secrets()
+        .await
+        .context("storing generated secrets")?;
+    crate::upgrade::keep_unowned_migrated(&db, &mut store).await;
+    crate::maintenance::schedule_dead_links(&db, &mut store).await;
+    let settings = store.settings().clone();
+    infinidysk_core::enable_experiments(&settings.experiments);
+    let tuning = settings.performance.effective();
+
+    let quotas = Arc::new(
+        Quotas::load(db.clone())
+            .await
+            .context("loading provider usage")?,
+    );
+    quotas.configure(&settings.providers);
+    let quota_task = {
+        let quotas = Arc::clone(&quotas);
+        let cancel = cancel.clone();
+        tokio::spawn(async move { quotas.run(cancel).await })
+    };
+    let bandwidth = Arc::new(Bandwidth::new(download_limit(&settings)));
+    let client = Arc::new(Client::new(providers(
+        &settings.providers,
+        &quotas,
+        &bandwidth,
+    )?));
+    let warm_task = {
+        let client = Arc::clone(&client);
+        let cancel = cancel.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(IDLE_TIMEOUT / 2);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    () = cancel.cancelled() => break,
+                    _ = tick.tick() => client.warm().await,
+                }
+            }
+        })
+    };
+    let optimize_task = {
+        let db = db.clone();
+        let cancel = cancel.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(OPTIMIZE_EVERY);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    () = cancel.cancelled() => break,
+                    _ = tick.tick() => {
+                        let _writing = db.write_permit().await;
+                        if let Err(error) = db.optimize().await {
+                            warn!(reason = %error, "could not refresh database statistics");
+                        }
+                    }
+                }
+            }
+        })
+    };
+    let cache = Arc::new(Cache::new(
+        tuning.memory_cache_enabled,
+        u64::from(tuning.memory_cache_mb) * MB,
+    ));
+    cache.configure(&cache_config(&tuning)).await;
+    {
+        // Imports read a release's first segments; playback usually starts there. A
+        // stream's abandoned read-ahead arrives anyway, and seeks often come back to it.
+        let cache = Arc::clone(&cache);
+        client.set_sink(Box::new(move |id, workload, body, drained| {
+            if workload == Workload::Queue || (drained && workload == Workload::Stream) {
+                cache.insert(id, body.data.clone());
+            }
+        }));
+    }
+    let queue = Arc::new(Queue::new(db.clone(), Arc::clone(&client)));
+    queue.restore().await.context("loading the queue pause")?;
+    queue.set_concurrency(settings.queue.concurrency.into());
+    db.set_nzb_retention_days(settings.queue.nzb_retention_days);
+    let cleanup = Arc::new(Notify::new());
+    set_rules(&queue, &settings);
+    add_categories(&queue, &settings).await;
+
+    let (arr_tx, arr_rx) = watch::channel(arr_instances(&settings.arr_instances));
+    let (health_tx, health_rx) = watch::channel(health_settings(&settings.health));
+    let (fault_tx, mut fault_rx) = mpsc::unbounded_channel::<(ItemId, usize, Fault)>();
+    let vfs = Arc::new(
+        Vfs::new(
+            db.clone(),
+            Arc::clone(&client),
+            Budget::new(
+                usize::try_from(u64::from(tuning.read_ahead_memory_mb) * MB).unwrap_or(usize::MAX),
+            ),
+            u64::from(tuning.read_ahead_mb) * MB,
+            &settings.mount.dir,
+        )
+        .with_cache(Arc::clone(&cache))
+        .with_report(Arc::new(move |id, index, fault| {
+            // Fails only at shutdown, when nobody records damage anymore.
+            let _ = fault_tx.send((id, index, fault));
+        })),
+    );
+    vfs.set_gap_tolerance(settings.health.degraded_tolerance);
+    let handoff = Arc::new(crate::handoff::Writer::new(
+        Arc::clone(&vfs),
+        (boot.uid, boot.gid),
+        &settings,
+    ));
+    queue.set_handoff(Arc::clone(&handoff) as _);
+    let analyzes = crate::probe::available(&boot.ffprobe).await;
+    queue.set_verifier(Arc::new(FirstCheck {
+        settings: health_rx.clone(),
+        analyzes,
+    }));
+    let worker = {
+        let queue = Arc::clone(&queue);
+        tokio::spawn(async move { queue.run().await })
+    };
+    let importing = {
+        let queue = Arc::clone(&queue);
+        move || !queue.active().is_empty()
+    };
+    let streaming = {
+        let vfs = Arc::clone(&vfs);
+        move || !vfs.sessions().open().is_empty()
+    };
+    let in_use = {
+        let vfs = Arc::clone(&vfs);
+        move |id| vfs.sessions().open().iter().any(|s| s.item == id)
+    };
+    let mut health = Health::new(db.clone(), Arc::clone(&client), arr_rx, health_rx)
+        .context("setting up health checks")?
+        .with_gates(importing.clone(), streaming.clone())
+        .with_in_use(in_use);
+    let busy = {
+        let (importing, streaming) = (importing.clone(), streaming.clone());
+        move || importing() || streaming()
+    };
+    if analyzes {
+        health = health.with_analyzer(crate::probe::analyzer(
+            Arc::clone(&vfs),
+            boot.ffprobe.clone(),
+            move || importing() || streaming(),
+        ));
+    }
+    let health = Arc::new(health);
+    let health_task = {
+        let health = Arc::clone(&health);
+        tokio::spawn(async move { health.run().await })
+    };
+    tokio::spawn(crate::upgrade::retry_skipped(
+        db.clone(),
+        boot.config_dir.clone(),
+        Arc::clone(&client),
+        settings.clone(),
+        cancel.clone(),
+    ));
+    // Playback damage, batched per file so a broken stretch costs one blob rewrite.
+    tokio::spawn({
+        let health = Arc::clone(&health);
+        async move {
+            while let Some(first) = fault_rx.recv().await {
+                let mut files: HashMap<ItemId, (Vec<usize>, Vec<usize>)> = HashMap::new();
+                let mut next = Some(first);
+                while let Some((id, index, fault)) = next {
+                    let (missing, corrupt) = files.entry(id).or_default();
+                    match fault {
+                        Fault::Missing => missing.push(index),
+                        Fault::Corrupt => corrupt.push(index),
+                    }
+                    next = fault_rx.try_recv().ok();
+                }
+                for (id, (missing, corrupt)) in files {
+                    if let Err(error) = health.report(id, &missing, &corrupt).await {
+                        warn!(item = %id, reason = %error, "could not record playback damage");
+                    }
+                }
+            }
+        }
+    });
+    if !infinidysk_core::experiments().is_empty() {
+        tracing::warn!(experiments = ?infinidysk_core::experiments(), "experiments on");
+    }
+    if boot.trace_minutes > 0 {
+        info!(minutes = boot.trace_minutes, "tracing new reads");
+        vfs.sessions().set_tracing(Some(Tracing {
+            until: Instant::now() + Duration::from_secs(u64::from(boot.trace_minutes) * 60),
+            capacity: admin::TRACE_CAPACITY,
+        }));
+    }
+    #[cfg(target_os = "linux")]
+    let (mount_tx, mount_rx) = watch::channel(Err(crate::healthcheck::MOUNTING.to_owned()));
+    #[cfg(not(target_os = "linux"))]
+    let (_, mount_rx) = watch::channel(Err("FUSE mounts need Linux; use WebDAV".to_owned()));
+    #[cfg(target_os = "linux")]
+    let mount = tokio::spawn(infinidysk_fuse::run(
+        Arc::clone(&vfs),
+        infinidysk_fuse::Config {
+            mount_dir: settings.mount.dir.clone().into(),
+            uid: boot.uid,
+            gid: boot.gid,
+            max_read: 1 << 20,
+            max_readahead: tuning.fuse_max_readahead_kb * 1000,
+            max_background: tuning.fuse_max_background,
+            epoch_times: settings.mount.epoch_times,
+        },
+        mount_tx,
+        cancel.clone(),
+    ));
+    let maintenance_live = Arc::new(crate::maintenance::Tracker::default());
+    let healthcheck = Arc::new(crate::healthcheck::Healthcheck::new(
+        db.clone(),
+        mount_rx.clone(),
+        settings.mount.dir.clone().into(),
+        worker.abort_handle(),
+    ));
+    let metrics = Arc::new(Metrics::new(
+        &boot.metrics_path,
+        Sources {
+            client: Arc::clone(&client),
+            vfs: Arc::clone(&vfs),
+            queue: Arc::clone(&queue),
+            health: Arc::clone(&health),
+            cache: Arc::clone(&cache),
+            maintenance: Arc::clone(&maintenance_live),
+            mount: mount_rx.clone(),
+        },
+    ));
+    let metrics_task = {
+        let metrics = Arc::clone(&metrics);
+        let cancel = cancel.clone();
+        tokio::spawn(async move { metrics.run(cancel).await })
+    };
+
+    let legacy_strm = crate::upgrade::legacy_strm(&db).await;
+    let dav = Arc::new(WebDav {
+        vfs: Arc::clone(&vfs),
+        queue: Arc::clone(&queue),
+        access: std::sync::RwLock::new(Access {
+            legacy_strm,
+            ..access(&settings)
+        }),
+    });
+    let live = Live {
+        client: Arc::clone(&client),
+        dav: Arc::clone(&dav),
+        cache: Arc::clone(&cache),
+        arr: arr_tx.clone(),
+        health: health_tx,
+        providers: Mutex::new(settings.providers.clone()),
+        quotas,
+        bandwidth,
+        cleanup,
+        mount_dir: settings.mount.dir.clone(),
+        epoch_times: settings.mount.epoch_times,
+        tuning,
+        experiments: settings.experiments.clone(),
+        handoff: Arc::clone(&handoff),
+    };
+    let config = Arc::new(RwLock::new(store));
+    let auth = Arc::new(
+        Auth::load(db.clone(), Arc::clone(&config))
+            .await
+            .context("loading the admin account")?,
+    );
+    let sab =
+        Sab::new(Arc::clone(&queue), Arc::clone(&config)).context("building the NZB fetcher")?;
+    let discovery = Arc::new(
+        Discovery::new(
+            Arc::clone(&config),
+            Arc::clone(&sab.probes),
+            Arc::clone(&queue),
+        )
+        .context("building the Arr client")?,
+    );
+    let cleanup_task = tokio::spawn(crate::cleanup::run(
+        db.clone(),
+        Arc::clone(&live.cleanup),
+        Arc::clone(&discovery),
+        arr_tx.subscribe(),
+        Arc::clone(&handoff),
+    ));
+    let library = Arc::new(
+        crate::library::Library::load(crate::library::Parts {
+            db: db.clone(),
+            vfs: Arc::clone(&vfs),
+            handoff: Arc::clone(&handoff),
+            dav: Arc::clone(&dav),
+            config: Arc::clone(&config),
+            discovery: Arc::clone(&discovery),
+            mount_dir: settings.mount.dir.clone(),
+            busy: Box::new(busy),
+        })
+        .await,
+    );
+    let library_task = tokio::spawn(Arc::clone(&library).run());
+    let maintenance = crate::maintenance::Maintenance::load(crate::maintenance::Parts {
+        db: db.clone(),
+        vfs: Arc::clone(&vfs),
+        handoff,
+        config: Arc::clone(&config),
+        library: Arc::clone(&library),
+        discovery: Arc::clone(&discovery),
+        queue: Arc::clone(&queue),
+        metrics: Arc::clone(&metrics),
+        mount_dir: settings.mount.dir.clone(),
+        live: maintenance_live,
+    })
+    .await;
+    let maintenance_task = tokio::spawn(Arc::clone(&maintenance).run());
+    let discovery_task = {
+        let discovery = Arc::clone(&discovery);
+        let instances = arr_tx.subscribe();
+        let events = arr_tx.subscribe();
+        tokio::spawn(async move {
+            tokio::join!(
+                discovery.run(instances),
+                discovery.notify(),
+                discovery.apply_events(events),
+                discovery.manage_queues()
+            )
+        })
+    };
+    let updates = Arc::new(crate::update::Updates::default());
+    let update_task = {
+        let updates = Arc::clone(&updates);
+        let cancel = cancel.clone();
+        tokio::spawn(async move { updates.run(cancel).await })
+    };
+    let restart = Arc::new(AtomicBool::new(false));
+    let admin = Arc::new(Admin {
+        config: Arc::clone(&config),
+        queue: Arc::clone(&queue),
+        client,
+        vfs,
+        health,
+        live,
+        metrics,
+        arr: discovery,
+        tests: crate::provider_test::Tests::load(db.clone())
+            .await
+            .context("loading provider speeds")?,
+        mount: mount_rx,
+        library,
+        maintenance,
+        updates,
+        cancel: cancel.clone(),
+        restart: Arc::clone(&restart),
+    });
+    let hooks = crate::arr::router(Arc::clone(&admin.arr));
+    let adoption = Arc::new(crate::upgrade::WebDavAdoption::load(Arc::clone(&admin)).await);
+    let app = sab::router(Arc::new(sab))
+        .merge(hooks)
+        .merge(crate::healthcheck::router(healthcheck))
+        .merge(admin::router(admin, Arc::clone(&auth)))
+        .merge(auth::router(auth))
+        .merge(
+            infinidysk_webdav::router(dav).layer(axum::middleware::from_fn_with_state(
+                adoption,
+                crate::upgrade::adopt_webdav,
+            )),
+        )
+        .layer(axum::middleware::from_fn(ui::serve));
+    // Before routing, so probe calls reach the SAB route.
+    let app = axum::middleware::map_request(probe_path).layer(app);
+
+    info!(addr = %listener.local_addr()?, "listening");
+    let server = axum::serve(
+        listener,
+        axum::ServiceExt::<Request>::into_make_service_with_connect_info::<SocketAddr>(app),
+    )
+    .with_graceful_shutdown(cancel.clone().cancelled_owned());
+    let served = tokio::select! {
+        served = server.into_future() => served.context("serving HTTP"),
+        () = async {
+            cancel.cancelled().await;
+            tokio::time::sleep(DRAIN).await;
+        } => {
+            warn!(reason = "open responses did not finish in time", "closing open connections");
+            Ok(())
+        }
+    };
+    cancel.cancel();
+    worker.abort();
+    health_task.abort();
+    discovery_task.abort();
+    cleanup_task.abort();
+    library_task.abort();
+    maintenance_task.abort();
+    update_task.abort();
+    warm_task.abort();
+    optimize_task.abort();
+    let _ = metrics_task.await;
+    let _ = quota_task.await;
+    #[cfg(target_os = "linux")]
+    let _ = mount.await;
+    db.close().await;
+    info!("stopped");
+    served.map(|()| {
+        if restart.load(Ordering::Relaxed) {
+            Exit::Restart
+        } else {
+            Exit::Stopped
+        }
+    })
+}
+
+/// Serves an Arr's probe calls, `…/infinidysk-probe-<nonce>/api`, as the SAB API.
+async fn probe_path(mut req: Request) -> Request {
+    if let Some(nonce) = crate::arr::nonce(req.uri().path()).map(str::to_owned) {
+        let uri = req
+            .uri()
+            .query()
+            .map_or_else(|| "/api".to_owned(), |q| format!("/api?{q}"));
+        if let Ok(uri) = uri.parse() {
+            *req.uri_mut() = uri;
+            req.extensions_mut().insert(Probe(nonce));
+        }
+    }
+    req
+}
+
+fn set_rules(queue: &Queue, settings: &Settings) {
+    queue.update_rules(|r| {
+        r.check_percent = settings.health.check_percent;
+        r.blocklist.clone_from(&settings.queue.extra_blocklist);
+    });
+}
+
+/// Arr apps flag the SAB category folders as missing until something lands in them.
+async fn add_categories(queue: &Queue, settings: &Settings) {
+    let categories: Vec<&str> = settings.sab.categories().filter(|c| *c != "*").collect();
+    if let Err(error) = queue.add_categories(&categories).await {
+        warn!(reason = %error, "could not create the category folders");
+    }
+}
+
+/// Enabled instances; health repairs through those whose profile supports it.
+pub(crate) fn arr_instances(instances: &[config::ArrInstance]) -> Vec<Arr> {
+    instances.iter().filter(|a| a.enabled).map(to_arr).collect()
+}
+
+pub(crate) fn to_arr(a: &config::ArrInstance) -> Arr {
+    Arr {
+        id: a.id,
+        name: a.name.clone(),
+        profile: match a.profile {
+            config::ArrProfile::Sonarr => Profile::Sonarr,
+            config::ArrProfile::Radarr => Profile::Radarr,
+            config::ArrProfile::Lidarr => Profile::Lidarr,
+            config::ArrProfile::Readarr => Profile::Readarr,
+            config::ArrProfile::Whisparr => Profile::Whisparr,
+            config::ArrProfile::Sportarr => Profile::Sportarr,
+        },
+        url: a.url.clone(),
+        api_key: a.api_key.0.clone(),
+    }
+}
+
+fn health_settings(h: &config::Health) -> HealthSettings {
+    HealthSettings {
+        enabled: h.enabled,
+        sample_percent: h.check_percent,
+        auto_repair: h.auto_repair,
+        degraded_tolerance: h.degraded_tolerance,
+        unowned_action: match h.unowned_action {
+            config::UnownedAction::Delete => UnownedAction::Delete,
+            config::UnownedAction::ActionNeeded => UnownedAction::ActionNeeded,
+        },
+        media_probe: h.media_probe,
+    }
+}
+
+/// Counts an import at a 100 % sample as its files' first health check.
+struct FirstCheck {
+    settings: watch::Receiver<HealthSettings>,
+    /// ffprobe is there to analyze good files.
+    analyzes: bool,
+}
+
+impl Verifier for FirstCheck {
+    fn verify<'a>(
+        &'a self,
+        articles: &'a dyn Articles,
+        output: &'a Output,
+        posted: Option<i64>,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<Option<infinidysk_db::FirstCheck>, import::Error>>
+                + Send
+                + 'a,
+        >,
+    > {
+        let analyze = self.analyzes && self.settings.borrow().media_probe;
+        Box::pin(async move {
+            let name = output.path.last().map_or("", String::as_str);
+            infinidysk_health::first_check(articles, &output.meta, name, posted, analyze)
+                .await
+                .map_err(|error| match error {
+                    Unverified::Damaged(message) => import::Error::Missing(message),
+                    Unverified::Inconclusive(error) => import::Error::Retry(error),
+                })
+        })
+    }
+}
+
+/// Settings a save applies without a restart.
+pub struct Live {
+    client: Arc<Client>,
+    dav: Arc<WebDav>,
+    cache: Arc<Cache>,
+    arr: watch::Sender<Vec<Arr>>,
+    health: watch::Sender<HealthSettings>,
+    /// Last applied, so saves that leave providers alone keep warm connections.
+    providers: Mutex<Vec<config::Provider>>,
+    quotas: Arc<Quotas>,
+    bandwidth: Arc<Bandwidth>,
+    /// Wakes the cleanup after a retention change.
+    cleanup: Arc<Notify>,
+    /// What FUSE mounted; changing it needs a restart.
+    mount_dir: String,
+    epoch_times: bool,
+    /// Tuning at startup, for the parts that need a restart.
+    tuning: Tuning,
+    experiments: Vec<String>,
+    handoff: Arc<crate::handoff::Writer>,
+}
+
+impl Live {
+    pub async fn apply(&self, settings: &Settings) -> anyhow::Result<()> {
+        self.quotas.configure(&settings.providers);
+        self.bandwidth.set_limit(download_limit(settings));
+        {
+            // Quota edits apply through the shared usage counters, without new pools.
+            let pools = |providers: &[config::Provider]| -> Vec<config::Provider> {
+                providers
+                    .iter()
+                    .map(|p| config::Provider {
+                        quota: None,
+                        ..p.clone()
+                    })
+                    .collect()
+            };
+            let mut current = self
+                .providers
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if pools(&current) != pools(&settings.providers) {
+                self.client.replace(providers(
+                    &settings.providers,
+                    &self.quotas,
+                    &self.bandwidth,
+                )?);
+                current.clone_from(&settings.providers);
+                drop(current);
+                let client = Arc::clone(&self.client);
+                tokio::spawn(async move { client.warm().await });
+            }
+        }
+        {
+            // Replaced STRM keys and C#'s earlier form are the library converter's.
+            let mut current = self
+                .dav
+                .access
+                .write()
+                .unwrap_or_else(PoisonError::into_inner);
+            *current = Access {
+                previous_strm: std::mem::take(&mut current.previous_strm),
+                legacy_strm: current.legacy_strm.take(),
+                ..access(settings)
+            };
+        }
+        self.arr
+            .send_replace(arr_instances(&settings.arr_instances));
+        self.health.send_replace(health_settings(&settings.health));
+        self.dav
+            .queue
+            .set_concurrency(settings.queue.concurrency.into());
+        self.dav
+            .queue
+            .db()
+            .set_nzb_retention_days(settings.queue.nzb_retention_days);
+        self.cleanup.notify_one();
+        set_rules(&self.dav.queue, settings);
+        self.handoff.configure(settings);
+        add_categories(&self.dav.queue, settings).await;
+        let tuning = settings.performance.effective();
+        self.dav
+            .vfs
+            .set_read_ahead(u64::from(tuning.read_ahead_mb) * MB);
+        self.dav
+            .vfs
+            .set_gap_tolerance(settings.health.degraded_tolerance);
+        self.cache.configure(&cache_config(&tuning)).await;
+        Ok(())
+    }
+
+    // ponytail: the shared read-ahead budget and FUSE knobs are fixed at startup;
+    // resize them live if restarts for tuning become a nuisance.
+    pub fn restart_required(&self, settings: &Settings) -> bool {
+        let tuning = settings.performance.effective();
+        settings.mount.dir != self.mount_dir
+            || settings.mount.epoch_times != self.epoch_times
+            || tuning.read_ahead_memory_mb != self.tuning.read_ahead_memory_mb
+            || tuning.fuse_max_readahead_kb != self.tuning.fuse_max_readahead_kb
+            || tuning.fuse_max_background != self.tuning.fuse_max_background
+            || settings.experiments != self.experiments
+    }
+
+    pub const fn cache(&self) -> &Arc<Cache> {
+        &self.cache
+    }
+
+    pub fn quotas(&self) -> &Quotas {
+        &self.quotas
+    }
+
+    pub fn mount_dir(&self) -> &str {
+        &self.mount_dir
+    }
+
+    /// Checks that STRM files can be written in `dir`.
+    pub async fn probe_strm_dir(&self, dir: &str) -> Result<(), String> {
+        self.handoff.probe(dir).await
+    }
+}
+
+fn cache_config(tuning: &Tuning) -> CacheConfig {
+    CacheConfig {
+        memory_enabled: tuning.memory_cache_enabled,
+        memory_bytes: u64::from(tuning.memory_cache_mb) * MB,
+        disk: tuning.disk_cache_enabled.then(|| DiskConfig {
+            dir: tuning.disk_cache_dir.clone().into(),
+            max_bytes: u64::from(tuning.disk_cache_gb) * 1000 * MB,
+            max_age: Duration::from_secs(u64::from(tuning.disk_cache_max_age_hours) * 3600),
+        }),
+    }
+}
+
+fn access(settings: &Settings) -> Access {
+    let webdav = &settings.webdav;
+    Access {
+        auth: DavAuth::Basic {
+            user: webdav.user.clone(),
+            password: webdav.password.0.clone(),
+        },
+        download_key: Some(webdav.download_key.0.clone()),
+        link_key: Some(settings.auth.session_key.0.clone()).filter(|k| !k.is_empty()),
+        strm_key: Some(settings.imports.strm_key.0.clone()).filter(|k| !k.is_empty()),
+        previous_strm: Vec::new(),
+        legacy_strm: None,
+        trusted_proxies: settings
+            .network
+            .trusted_proxies
+            .iter()
+            .filter_map(|p| infinidysk_webdav::parse_proxy(p))
+            .collect(),
+    }
+}
+
+/// Bytes per second.
+pub(crate) fn download_limit(settings: &Settings) -> Option<u64> {
+    settings
+        .network
+        .download_limit_mb_per_s
+        .map(|mb| u64::from(mb) * MB)
+}
+
+pub(crate) fn providers(
+    providers: &[config::Provider],
+    quotas: &Quotas,
+    bandwidth: &Arc<Bandwidth>,
+) -> anyhow::Result<Vec<Provider>> {
+    let enabled: Vec<_> = providers.iter().filter(|p| p.enabled).collect();
+    let primary = enabled.iter().map(|p| p.priority).min();
+    if enabled.is_empty() {
+        warn!(
+            reason = "no Usenet provider is enabled",
+            "imports and playback stay unavailable until a provider is added"
+        );
+    }
+    let downloads = Downloads::new(
+        enabled
+            .iter()
+            .map(|p| usize::from(p.max_connections) * pipeline_depth(p))
+            .sum(),
+    );
+    let weight_large = infinidysk_core::experiment("weight-large");
+    enabled
+        .into_iter()
+        .map(|p| {
+            let config = PoolConfig {
+                max_connections: p.max_connections.into(),
+                pipeline_depth: pipeline_depth(p),
+                idle_timeout: IDLE_TIMEOUT,
+                min_connections: if Some(p.priority) == primary {
+                    WARM_FLOOR.min(p.max_connections.into())
+                } else {
+                    0
+                },
+            };
+            Ok(Provider {
+                pool: Pool::new(
+                    endpoint(p)?
+                        .with_usage(quotas.usage(p.id))
+                        .with_bandwidth(Arc::clone(bandwidth)),
+                    config,
+                    Arc::clone(&downloads),
+                )?
+                .with_weight_large(weight_large),
+                key: p.id.to_string(),
+                name: if p.name.is_empty() {
+                    p.hostname.clone()
+                } else {
+                    p.name.clone()
+                },
+                priority: p.priority,
+                backbone: p.backbone.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, infinidysk_nntp::Error>>()
+        .context("configuring Usenet providers")
+}
+
+/// BODY requests in flight per connection; a `pipe<N>` experiment overrides it.
+fn pipeline_depth(p: &config::Provider) -> usize {
+    infinidysk_core::experiments()
+        .iter()
+        .find_map(|e| e.strip_prefix("pipe")?.parse().ok())
+        .unwrap_or_else(|| p.pipeline_depth.into())
+}
+
+pub(crate) fn endpoint(p: &config::Provider) -> Result<Endpoint, infinidysk_nntp::Error> {
+    let credentials = (!p.username.is_empty()).then(|| Credentials {
+        username: p.username.clone(),
+        password: p.password.0.clone(),
+    });
+    let tls = if p.tls {
+        TlsMode::Verified
+    } else {
+        TlsMode::Plain
+    };
+    Endpoint::new(
+        p.hostname.clone(),
+        p.port,
+        tls,
+        credentials,
+        PROVIDER_TIMEOUT,
+    )
+}

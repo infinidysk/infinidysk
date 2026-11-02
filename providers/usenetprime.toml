@@ -1,0 +1,18 @@
+schema = 1
+name = "UsenetPrime"
+website = "https://usenetprime.com"
+backbone = "usenetexpress"
+port = 563
+
+[[servers]]
+hostname = "news.usenetprime.com"
+region = "US"
+
+[[servers]]
+hostname = "eu.usenetprime.com"
+region = "NL"
+
+# Sold as an XS News bonus block; the server sits on Abavia's network.
+[[servers]]
+hostname = "bonus.usenetprime.com"
+backbone = "abavia"

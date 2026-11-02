@@ -1,61 +1,13 @@
-#####################
-# non-project files #
-#####################
-
-bin/
-obj/
-/packages/
-riderModule.iml
-/_ReSharper.Caches/
-*.DotSettings.user
-nuget
-BenchmarkDotNet.Artifacts/
-
-##############
-# IDE config #
-##############
-
+/target/
+.DS_Store
 .idea/
 .vscode/
 .cursor/
-
-########
-# macOS #
-########
-
-.DS_Store
-/swap/
-
-#################
-# Documentation #
-#################
-
-#######################
-# Local runtime state #
-#######################
-
 db.sqlite
 db.sqlite-shm
 db.sqlite-wal
-metrics.sqlite
-metrics.sqlite-shm
-metrics.sqlite-wal
+/ui/dist/
+/ui/node_modules/
 
-#######################
-# In-tree native libs #
-#######################
-
-libs/RapidYencSharp/runtimes/
-libs/rapidyenc/build/
-
-# Coverage reports
-frontend/coverage/
-TestResults/
-
-# Mutation testing
-StrykerOutput/
-frontend/reports/
-quality/mutation-reports/
-tests/NzbWebDAV.Tests/stryker-config.ci.json
-mutate-globs.txt
-
+# Local scratch space (plans, notes, dumps); never committed.
+/scrap/

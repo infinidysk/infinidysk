@@ -1,0 +1,9 @@
+schema = 1
+name = "Eweka"
+website = "https://www.eweka.nl"
+backbone = "eweka"
+port = 563
+
+[[servers]]
+hostname = "news.eweka.nl"
+region = "NL"

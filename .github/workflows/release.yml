@@ -2,393 +2,96 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
-  release:
-    types:
-      - published
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Semantic version to publish (e.g. 0.6.5)
-        required: true
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Serialize runs so an older build never overwrites a newer `edge`.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  # Tester image; never tag it `latest` so nobody lands on it by accident.
+  IMAGE: ghcr.io/infinidysk/infinidysk-next
 
 jobs:
   release-please:
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
-      major: ${{ steps.release.outputs.major }}
-      minor: ${{ steps.release.outputs.minor }}
-      patch: ${{ steps.release.outputs.patch }}
-      sha: ${{ steps.release.outputs.sha }}
-      dev_label: ${{ steps.vars.outputs.dev_label }}
-    permissions:
-      contents: write
-      pull-requests: write
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - id: vars
-        run: echo "dev_label=dev-$(date -u +%y%m%d.%H%M)" >> "$GITHUB_OUTPUT"
-
-      - name: Create release
+      - id: release
         uses: googleapis/release-please-action@v5
-        id: release
         with:
           config-file: .release-please-config.json
+          manifest-file: .release-please-manifest.json
 
-  resolve-version:
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    permissions: {}
-    outputs:
-      version: ${{ steps.vars.outputs.version }}
-      major: ${{ steps.vars.outputs.major }}
-      minor: ${{ steps.vars.outputs.minor }}
-      patch: ${{ steps.vars.outputs.patch }}
-      ref: ${{ steps.vars.outputs.ref }}
-      dev_label: ${{ steps.vars.outputs.dev_label }}
-    steps:
-      - name: Resolve version and tag
-        id: vars
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
-            REF="v${VERSION}"
-          else
-            REF="${{ github.event.release.tag_name }}"
-            VERSION="${REF#v}"
-          fi
-          MAJOR="${VERSION%%.*}"
-          REST="${VERSION#*.}"
-          MINOR="${REST%%.*}"
-          PATCH="${VERSION##*.}"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "major=${MAJOR}" >> "$GITHUB_OUTPUT"
-          echo "minor=${MINOR}" >> "$GITHUB_OUTPUT"
-          echo "patch=${PATCH}" >> "$GITHUB_OUTPUT"
-          echo "ref=${REF}" >> "$GITHUB_OUTPUT"
-          echo "dev_label=dev-$(date -u +%y%m%d.%H%M)" >> "$GITHUB_OUTPUT"
-
-  deploy:
-    if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
+  image:
     needs: release-please
-    uses: ./.github/workflows/docker-build-push.yml
+    if: needs.release-please.outputs.release_created == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-26.04
+            platform: linux/amd64
+          - runner: ubuntu-26.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
-    with:
-      tags: |
-        ghcr.io/${{ github.repository }}:latest
-        ghcr.io/${{ github.repository }}:dev
-        ghcr.io/${{ github.repository }}:rc
-        ghcr.io/${{ github.repository }}:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
-        ghcr.io/${{ github.repository }}:v${{ needs.release-please.outputs.major }}
-        ghcr.io/${{ github.repository }}:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}
-        docker.io/infinidysk/infinidysk:latest
-        docker.io/infinidysk/infinidysk:dev
-        docker.io/infinidysk/infinidysk:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
-        docker.io/infinidysk/infinidysk:v${{ needs.release-please.outputs.major }}
-        docker.io/infinidysk/infinidysk:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}
-      legacy_tags: |
-        ghcr.io/nzbdav/nzbdav:latest
-        ghcr.io/nzbdav/nzbdav:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
-        ghcr.io/nzbdav/nzbdav:v${{ needs.release-please.outputs.major }}
-        ghcr.io/nzbdav/nzbdav:v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}
-      nzbdav_version: ${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
-      dev_image_description: InfiniDysk development build ${{ needs.release-please.outputs.dev_label }}
-      dev_tags: |
-        ghcr.io/${{ github.repository }}:dev
-        docker.io/infinidysk/infinidysk:dev
-      checkout_ref: ${{ needs.release-please.outputs.sha }}
-      dockerhub_username: infinidysk
-    secrets:
-      registry_token: ${{ secrets.GITHUB_TOKEN }}
-      dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
-      old_ghcr_token: ${{ secrets.OLD_GHCR_TOKEN }}
-
-  assets:
-    if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
-    needs:
-      - release-please
-      - publish-dev-release
-    uses: ./.github/workflows/build-release-assets.yml
-    permissions:
-      contents: write
-    with:
-      version: ${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
-      checkout_ref: ${{ needs.release-please.outputs.sha }}
-      release_tag: v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
-      rolling_tag: dev
-
-  publish-dev-release:
-    if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
-    needs: release-please
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Create or update rolling dev release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_SHA: ${{ needs.release-please.outputs.sha }}
-          VERSION: v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
-          DEV_LABEL: ${{ needs.release-please.outputs.dev_label }}
-        run: |
-          set -euo pipefail
-          SHORT_SHA="${RELEASE_SHA:0:7}"
-          ROLLING_TITLE="Rolling :dev (${DEV_LABEL})"
-          ROLLING_NOTES="Unversioned development snapshot from \`main\` at [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${RELEASE_SHA}). Currently identical to [$VERSION](https://github.com/${{ github.repository }}/releases/tag/$VERSION)."
-          if gh release view dev --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            gh release edit dev \
-              --repo "${{ github.repository }}" \
-              --target "$RELEASE_SHA" \
-              --title "$ROLLING_TITLE" \
-              --notes "$ROLLING_NOTES" \
-              --prerelease
-          else
-            gh release create dev \
-              --repo "${{ github.repository }}" \
-              --target "$RELEASE_SHA" \
-              --title "$ROLLING_TITLE" \
-              --notes "$ROLLING_NOTES" \
-              --prerelease
-          fi
-
-  deploy-manual:
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    needs: resolve-version
-    uses: ./.github/workflows/docker-build-push.yml
-    permissions:
-      contents: read
-      packages: write
-    with:
-      tags: |
-        ghcr.io/${{ github.repository }}:latest
-        ghcr.io/${{ github.repository }}:dev
-        ghcr.io/${{ github.repository }}:rc
-        ghcr.io/${{ github.repository }}:${{ needs.resolve-version.outputs.ref }}
-        ghcr.io/${{ github.repository }}:v${{ needs.resolve-version.outputs.major }}
-        ghcr.io/${{ github.repository }}:v${{ needs.resolve-version.outputs.major }}.${{ needs.resolve-version.outputs.minor }}
-        docker.io/infinidysk/infinidysk:latest
-        docker.io/infinidysk/infinidysk:dev
-        docker.io/infinidysk/infinidysk:${{ needs.resolve-version.outputs.ref }}
-        docker.io/infinidysk/infinidysk:v${{ needs.resolve-version.outputs.major }}
-        docker.io/infinidysk/infinidysk:v${{ needs.resolve-version.outputs.major }}.${{ needs.resolve-version.outputs.minor }}
-      legacy_tags: |
-        ghcr.io/nzbdav/nzbdav:latest
-        ghcr.io/nzbdav/nzbdav:${{ needs.resolve-version.outputs.ref }}
-        ghcr.io/nzbdav/nzbdav:v${{ needs.resolve-version.outputs.major }}
-        ghcr.io/nzbdav/nzbdav:v${{ needs.resolve-version.outputs.major }}.${{ needs.resolve-version.outputs.minor }}
-      nzbdav_version: ${{ needs.resolve-version.outputs.version }}
-      dev_image_description: InfiniDysk development build ${{ needs.resolve-version.outputs.dev_label }}
-      dev_tags: |
-        ghcr.io/${{ github.repository }}:dev
-        docker.io/infinidysk/infinidysk:dev
-      checkout_ref: ${{ needs.resolve-version.outputs.ref }}
-      dockerhub_username: infinidysk
-    secrets:
-      registry_token: ${{ secrets.GITHUB_TOKEN }}
-      dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
-      old_ghcr_token: ${{ secrets.OLD_GHCR_TOKEN }}
-
-  assets-manual:
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    needs:
-      - resolve-version
-      - publish-dev-release-manual
-    uses: ./.github/workflows/build-release-assets.yml
-    permissions:
-      contents: write
-    with:
-      version: ${{ needs.resolve-version.outputs.version }}
-      checkout_ref: ${{ needs.resolve-version.outputs.ref }}
-      release_tag: ${{ needs.resolve-version.outputs.ref }}
-      rolling_tag: dev
-
-  publish-dev-release-manual:
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    needs: resolve-version
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Create or update rolling dev release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_REF: ${{ needs.resolve-version.outputs.ref }}
-          DEV_LABEL: ${{ needs.resolve-version.outputs.dev_label }}
-        run: |
-          set -euo pipefail
-          RELEASE_SHA=$(gh api "repos/${{ github.repository }}/commits/${RELEASE_REF}" --jq .sha)
-          SHORT_SHA="${RELEASE_SHA:0:7}"
-          ROLLING_TITLE="Rolling :dev (${DEV_LABEL})"
-          ROLLING_NOTES="Unversioned development snapshot from \`main\` at [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${RELEASE_SHA}). Currently identical to [$RELEASE_REF](https://github.com/${{ github.repository }}/releases/tag/$RELEASE_REF)."
-          if gh release view dev --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            gh release edit dev \
-              --repo "${{ github.repository }}" \
-              --target "$RELEASE_SHA" \
-              --title "$ROLLING_TITLE" \
-              --notes "$ROLLING_NOTES" \
-              --prerelease
-          else
-            gh release create dev \
-              --repo "${{ github.repository }}" \
-              --target "$RELEASE_SHA" \
-              --title "$ROLLING_TITLE" \
-              --notes "$ROLLING_NOTES" \
-              --prerelease
-          fi
-
-  tag-dev:
-    if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
-    needs:
-      - release-please
-      - deploy
-    uses: ./.github/workflows/move-movable-tag.yml
-    permissions:
-      contents: write
-    with:
-      tag_name: dev
-      ref: ${{ needs.release-please.outputs.sha }}
-
-  tag-rc:
-    if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
-    needs:
-      - release-please
-      - deploy
-      - tag-dev
-    uses: ./.github/workflows/move-movable-tag.yml
-    permissions:
-      contents: write
-    with:
-      tag_name: rc
-      ref: ${{ needs.release-please.outputs.sha }}
-
-  cleanup-prereleases:
-    if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
-    needs:
-      - release-please
-      - deploy
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release-please.outputs.sha }}
+          submodules: true
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: COMMIT=${{ github.sha }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,scope=${{ matrix.platform }},mode=max
+      - run: echo "${{ steps.build.outputs.digest }}" > "digest-${{ strategy.job-index }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ strategy.job-index }}
+          path: digest-${{ strategy.job-index }}
+          retention-days: 1
 
-      - name: Delete versioned pre-release releases and image tags
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          OLD_GHCR_TOKEN: ${{ secrets.OLD_GHCR_TOKEN }}
-        run: bash .github/scripts/cleanup-prerelease-artifacts.sh
-
-  tag-dev-manual:
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    needs:
-      - resolve-version
-      - deploy-manual
-    uses: ./.github/workflows/move-movable-tag.yml
-    permissions:
-      contents: write
-    with:
-      tag_name: dev
-      ref: ${{ needs.resolve-version.outputs.ref }}
-
-  tag-rc-manual:
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    needs:
-      - resolve-version
-      - deploy-manual
-      - tag-dev-manual
-    uses: ./.github/workflows/move-movable-tag.yml
-    permissions:
-      contents: write
-    with:
-      tag_name: rc
-      ref: ${{ needs.resolve-version.outputs.ref }}
-
-  cleanup-prereleases-manual:
-    if: |
-      (github.event_name == 'workflow_dispatch') ||
-      (github.event_name == 'release' && github.event.release.prerelease == false)
-    needs:
-      - resolve-version
-      - deploy-manual
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Delete versioned pre-release releases and image tags
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          OLD_GHCR_TOKEN: ${{ secrets.OLD_GHCR_TOKEN }}
-        run: bash .github/scripts/cleanup-prerelease-artifacts.sh
-
-  announce:
-    if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
-    needs:
-      - release-please
-      - deploy
-      - assets
-      - publish-dev-release
-      - tag-dev
-      - tag-rc
-      - cleanup-prereleases
+  image-manifest:
+    needs: [release-please, image]
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
-          ref: ${{ needs.release-please.outputs.sha }}
-
-      - name: Post announcement to Discord
-        env:
-          DISCORD_ANNOUNCEMENTS_WEBHOOK_URL: ${{ secrets.DISCORD_ANNOUNCEMENTS_WEBHOOK_URL }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
-          VERSION: ${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
-          REPO: ${{ github.repository }}
+          pattern: digest-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - env:
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
-          set -euo pipefail
-          if [ -z "${DISCORD_ANNOUNCEMENTS_WEBHOOK_URL}" ]; then
-            echo "DISCORD_ANNOUNCEMENTS_WEBHOOK_URL secret is not set" >&2
-            exit 1
-          fi
-
-          # Single-process extract: a sed|sed pipeline SIGPIPEs under pipefail when the
-          # second sed quits at the next ## [version] heading on a large CHANGELOG.
-          RELEASE_NOTES=$(awk '
-            /^## \[[0-9]+\.[0-9]+\.[0-9]+\]\(/ {
-              if (seen++) exit
-              next
-            }
-            seen { print }
-          ' CHANGELOG.md)
-          RELEASE_NOTES=$(printf '%s\n' "${RELEASE_NOTES}" | sed -E \
-            -e 's/ \(\[#[0-9]+\]\(https:\/\/github\.com\/[^)]+\/issues\/[0-9]+\)\)//g' \
-            -e 's/ \(\[[0-9a-f]+\]\(https:\/\/github\.com\/[^)]+\/commit\/[^)]+\)\)//g' \
-            -e 's/, closes \[#[0-9]+\]\(https:\/\/github\.com\/[^)]+\/issues\/[0-9]+\)//g')
-
-          SUMMARY=$(printf '%s' "$RELEASE_NOTES" | bash .github/scripts/summarize-release-notes.sh --type stable --version "v${VERSION}" || true)
-          IMAGE="ghcr.io/${REPO}:latest"
-          if [ -n "${SUMMARY}" ]; then
-            ANNOUNCEMENT_BODY=$(printf '🚀 **New Release: Version [%s]**\nImage: `%s`\n\n%s\n\nFull changelog: https://github.com/%s/releases/tag/v%s' \
-              "${VERSION}" "${IMAGE}" "${SUMMARY}" "${REPO}" "${VERSION}")
-          else
-            ANNOUNCEMENT_BODY=$(printf '🚀 **New Release: Version [%s]**\nImage: `%s`\n%s' "${VERSION}" "${IMAGE}" "${RELEASE_NOTES}")
-          fi
-
-          printf '%s' "$ANNOUNCEMENT_BODY" | bash .github/scripts/post-discord-messages.sh
+          # The server's update check needs every pushed image to carry a new version tag and `sha-<12>`.
+          tags=(-t "$IMAGE:edge" -t "$IMAGE:sha-${GITHUB_SHA::12}" -t "$IMAGE:$RELEASE_TAG")
+          mapfile -t refs < <(sed "s|^|$IMAGE@|" digest-*)
+          docker buildx imagetools create "${tags[@]}" "${refs[@]}"

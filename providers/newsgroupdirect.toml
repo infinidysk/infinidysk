@@ -1,0 +1,28 @@
+schema = 1
+name = "NewsgroupDirect"
+website = "https://www.newsgroupdirect.com"
+backbone = "usenetexpress"
+port = 563
+
+[[servers]]
+hostname = "news.newsgroupdirect.com"
+region = "US"
+
+[[servers]]
+hostname = "europe.newsgroupdirect.com"
+region = "NL"
+
+[[servers]]
+hostname = "super.newsgroupdirect.com"
+region = "US"
+backbone = "giganews"
+
+[[servers]]
+hostname = "farm.newsgroupdirect.com"
+region = "NL"
+backbone = "usenetfarm"
+
+[[servers]]
+hostname = "viper.newsgroupdirect.com"
+region = "NL"
+backbone = "vipernews"

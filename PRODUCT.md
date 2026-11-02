@@ -8,64 +8,58 @@ web
 
 ## Users
 
-Self-hosted InfiniDysk administrators configuring Usenet streaming for Plex,
-Emby, Jellyfin, Radarr, or Sonarr. Operators range from first-time installers to
-existing users revisiting configuration after an upgrade.
+Self-hosters running a Sonarr/Radarr plus Plex/Jellyfin stack in Docker, often upgrading from InfiniDysk 1.x. They open the UI to add providers and Arr instances, watch imports and playback, and troubleshoot when a read stalls or an import fails. Most visits are short check-ins; long visits happen while debugging.
 
 ## Product Purpose
 
-InfiniDysk mounts NZB documents as a virtual WebDAV filesystem and streams media
-directly from Usenet without first storing complete media files. Its admin UI
-must help operators reach a reliable configuration while keeping advanced
-controls available in Settings.
+infinidysk is a Usenet-backed virtual filesystem. It takes NZBs from Arr instances through a SABnzbd-compatible API and serves the media through a native FUSE mount and WebDAV, streaming from Usenet providers instead of downloading files to disk. Success is a library that plays like local files, imports that the Arrs accept without special handling, and problems that the user can find and fix from the UI.
 
 ## Positioning
 
-InfiniDysk combines on-demand Usenet streaming, a SABnzbd-compatible download
-client API, symlink or STRM import workflows, and operational health and repair
-tooling in one self-hosted product.
+- No download: the library streams straight from Usenet providers.
+- Built-in FUSE mount in one Rust binary; no rclone sidecar.
+- Drop-in SABnzbd replacement: Arrs add it as a SABnzbd download client, no plugin.
+- Health checks and PAR2 repair keep files playable over time.
+- Playback performance comes first, ahead of memory usage.
 
 ## Operating Context
 
-The product normally runs as a Docker image with a .NET backend and React Router
-admin UI. Symlink libraries use an rclone WebDAV sidecar and are typically
-consumed by Plex. STRM libraries are typically consumed directly by Emby or
-Jellyfin. Radarr and Sonarr can send downloads through the SAB-compatible API and
-can also be registered with InfiniDysk for monitoring and replacement actions.
+- Runs as a Linux x64/arm64 Docker container; the UI, SABnzbd API and WebDAV share one port.
+- Arr instances, media servers and other containers read the mount at the same host path.
+- Users reach the UI from desktop and phone browsers, often on a home network or behind a reverse proxy.
+- Troubleshooting relies on the Logs page, playback traces with secret-free exports, and the 1.x import report.
 
 ## Capabilities and Constraints
 
-- Configuration may be persisted in the operational database or owned by
-  authoritative `NZBDAV_CONFIG__...` environment variables.
-- Symlink setup uses rclone VFS caching and disables InfiniDysk segment caching.
-- STRM setup enables segment caching and requires a completed-downloads path and
-  a media-server-reachable Base URL.
-- External rclone and Arr services may be tested, but temporary unavailability
-  must not prevent an administrator from completing setup.
-- Configuration changes are reviewed and applied together. Existing imported
-  files are not automatically converted when import strategy changes.
-- Read-only users may inspect configuration but cannot mutate it.
+- Areas: Overview, Queue (imports and history), Explorer (library tree and media analysis), Health (checks, repair, schedule), Stats, Traces, System (logs), Settings (providers, Arr instances, library, mount, performance, network).
+- SABnzbd API (`/api?mode=…`) and WebDAV paths (`/view`, `/content`, `/nzbs`, `/.ids`, `/completed-symlinks`) must behave exactly like 1.x; everything else is new in 2.0.
+- 2.0 is an alpha for early testers. Not yet available: global bandwidth limit, global connection cap, search, indexers, backup and restore.
+- Terminology: "unowned" and "unlinked" files, never "orphan". Providers come from a managed catalog and share a backbone; there is no storage-group setting. Provider priority levels are pools; cascade routing is always on.
+- Arr configuration is one list of instances, each with a type profile; never per-Arr lists.
+- Data sizes and speeds use decimal units (KB, MB, GB, TB; MB/s), never MiB/GiB or bits. SABnzbd API fields keep SABnzbd's meaning.
 
 ## Brand Commitments
 
-Preserve the InfiniDysk name, existing logo, direct operator-focused voice, and
-the established daisyUI `night` application language.
+- Name: infinidysk, written lowercase in the UI.
+- Voice: plain, direct, and specific; say what happened and what to do next.
+- Never write movie, show, episode, album, book or release names anywhere; describe files generically (for example "stored RAR5 episode").
+- Never name competing or upstream-fork projects.
 
 ## Evidence on Hand
 
-Product behavior and setup guidance are documented in `README.md`, `AGENTS.md`,
-and [infinidysk/docs](https://github.com/infinidysk/docs). Existing operational UI patterns live under `frontend/app`, and the
-product logo is available in `frontend/public`.
+- README.md: install, upgrade from 1.x, rclone migration and troubleshooting guidance.
+- infinidysk-lab:docs/ (private): health, import, maintenance, restart-behavior and STRM policies.
+- crates/bench: benchmark scenarios matched to 1.x baselines; no published performance figures yet.
+- No testimonials, user counts, case studies or press exist. Do not invent them.
 
 ## Product Principles
 
-- Prefer safe, understandable defaults over exposing every advanced setting.
-- Explain consequences before changing storage, import, or integration behavior.
-- Keep operator secrets masked and environment-owned values authoritative.
-- Make recovery and later reconfiguration straightforward.
-- Preserve stream-first behavior and bounded local storage.
+1. SABnzbd is the truthstone: if SABnzbd accepts an NZB, so does infinidysk.
+2. Playback first: never trade throughput or prefetch for lower memory.
+3. Self-explaining failures: a known failure shows one clear reason and next step, not a stack dump.
+4. Opinionated defaults over toggles: managed provider catalog, always-on cascade routing, one global cache layer.
+5. Safe upgrades: 1.x data is read-only, imports are reported, and old formats retire on a stated schedule.
 
 ## Accessibility & Inclusion
 
-Setup controls must be keyboard operable, explicitly labelled, responsive, and
-understandable without relying on color alone.
+Every page must stay usable on a 360 px wide phone screen.

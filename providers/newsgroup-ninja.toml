@@ -1,0 +1,16 @@
+schema = 1
+name = "Newsgroup Ninja"
+website = "https://www.newsgroup.ninja"
+backbone = "omicron"
+port = 563
+
+[[servers]]
+hostname = "news.newsgroup.ninja"
+
+[[servers]]
+hostname = "us.sslusenet.com"
+region = "US"
+
+[[servers]]
+hostname = "nl.sslusenet.com"
+region = "NL"

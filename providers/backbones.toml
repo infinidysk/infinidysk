@@ -1,0 +1,30 @@
+# Backbones: the article spools providers resell. Providers on the same backbone
+# share missing articles, so cascade routing treats them as one group.
+# Table key = backbone id referenced by provider files.
+
+[abavia]
+name = "Abavia"
+
+[eweka]
+name = "Eweka"
+
+[giganews]
+name = "Giganews"
+
+[netnews]
+name = "NetNews"
+
+[omicron]
+name = "Omicron"
+
+[tweaknews]
+name = "Tweaknews"
+
+[usenetexpress]
+name = "UsenetExpress"
+
+[usenetfarm]
+name = "Usenet.Farm"
+
+[vipernews]
+name = "ViperNews"

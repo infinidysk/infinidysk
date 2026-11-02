@@ -1,7 +1,0 @@
-# Generated / build output
-build/
-dist-node/
-.react-router/
-coverage/
-package-lock.json
-stryker.config.json

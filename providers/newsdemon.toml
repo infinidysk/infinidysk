@@ -1,0 +1,17 @@
+schema = 1
+name = "NewsDemon"
+website = "https://www.newsdemon.com"
+backbone = "usenetexpress"
+port = 563
+
+[[servers]]
+hostname = "news.newsdemon.com"
+region = "US"
+
+[[servers]]
+hostname = "us.newsdemon.com"
+region = "US"
+
+[[servers]]
+hostname = "eu.newsdemon.com"
+region = "NL"

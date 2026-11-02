@@ -1,0 +1,38 @@
+[package]
+name = "infinidysk-webdav"
+description = "WebDAV and /view over the virtual tree"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+axum = { workspace = true, features = ["http1", "query", "tokio"] }
+base64.workspace = true
+hmac.workspace = true
+httpdate.workspace = true
+infinidysk-db.workspace = true
+infinidysk-queue.workspace = true
+infinidysk-vfs.workspace = true
+ipnet.workspace = true
+percent-encoding.workspace = true
+quick-xml.workspace = true
+serde.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+tokio-util = { workspace = true, features = ["io"] }
+tracing.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+infinidysk-core.workspace = true
+infinidysk-nntp.workspace = true
+infinidysk-stream.workspace = true
+infinidysk-testkit.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
+tower.workspace = true
+
+[lints]
+workspace = true

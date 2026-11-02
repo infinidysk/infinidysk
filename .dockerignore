@@ -1,11 +1,5 @@
 .git
-.cursor
-**/bin
-**/obj
-**/node_modules
-backend/publish
-frontend/build
-frontend/dist-node
-tests/
-libs/rapidyenc/build
-libs/RapidYencSharp/runtimes
+target
+scrap
+ui/node_modules
+ui/dist

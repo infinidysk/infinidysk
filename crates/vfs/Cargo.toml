@@ -1,0 +1,26 @@
+[package]
+name = "infinidysk-vfs"
+description = "The virtual tree served by WebDAV and FUSE, with seekable file readers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+infinidysk-core.workspace = true
+infinidysk-db.workspace = true
+infinidysk-nntp.workspace = true
+infinidysk-stream.workspace = true
+quick_cache.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+uuid.workspace = true
+
+[dev-dependencies]
+infinidysk-testkit.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
+
+[lints]
+workspace = true

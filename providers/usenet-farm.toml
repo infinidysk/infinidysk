@@ -1,0 +1,9 @@
+schema = 1
+name = "Usenet.Farm"
+website = "https://www.usenet.farm"
+backbone = "usenetfarm"
+port = 563
+
+[[servers]]
+hostname = "news.usenet.farm"
+region = "NL"

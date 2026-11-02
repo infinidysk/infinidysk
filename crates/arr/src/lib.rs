@@ -1,0 +1,397 @@
+//! HTTP client for the Arr apps: which app answers, which SABnzbd download clients it
+//! holds, and the calls health repair needs.
+
+pub mod inventory;
+pub mod library;
+pub mod queue;
+mod repair;
+pub mod webhook;
+
+use infinidysk_core::media::Kind;
+use reqwest::{Method, RequestBuilder};
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
+use uuid::Uuid;
+
+pub use repair::{Import, Owner, all_imports, imports, owner, owner_of_file, replace};
+
+/// What the Arr shows in place of a stored secret.
+const MASK: &str = "********";
+static NULL: Value = Value::Null;
+
+/// An enabled Arr instance.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Arr {
+    pub id: Uuid,
+    pub name: String,
+    pub profile: Profile,
+    /// Base URL, e.g. `http://sonarr:8989`.
+    pub url: String,
+    pub api_key: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Profile {
+    Sonarr,
+    Radarr,
+    Lidarr,
+    Readarr,
+    Whisparr,
+    Sportarr,
+}
+
+impl Profile {
+    /// Root of the endpoints we call; Sportarr's are its native ones.
+    const fn root(self) -> &'static str {
+        match self {
+            Self::Lidarr | Self::Readarr => "api/v1",
+            Self::Sportarr => "api",
+            Self::Sonarr | Self::Radarr | Self::Whisparr => "api/v3",
+        }
+    }
+
+    /// The `appName` its system status reports.
+    const fn app_name(self) -> &'static str {
+        match self {
+            Self::Sonarr => "Sonarr",
+            Self::Radarr => "Radarr",
+            Self::Lidarr => "Lidarr",
+            Self::Readarr => "Readarr",
+            Self::Whisparr => "Whisparr",
+            Self::Sportarr => "Sportarr",
+        }
+    }
+
+    /// What its categories import; any one of them satisfies it.
+    #[must_use]
+    pub const fn media(self) -> &'static [Kind] {
+        match self {
+            Self::Lidarr => &[Kind::Audio],
+            Self::Readarr => &[Kind::Book, Kind::Audio],
+            Self::Sonarr | Self::Radarr | Self::Whisparr | Self::Sportarr => &[Kind::Video],
+        }
+    }
+
+    /// Health repair can ask it for a replacement.
+    // ponytail: Readarr (bookfile + BookSearch, unmaintained upstream) and Sportarr (own
+    // API, no download ids in history) have no repair; add a `repair::Shape` for each.
+    #[must_use]
+    pub const fn repairs(self) -> bool {
+        matches!(
+            self,
+            Self::Sonarr | Self::Radarr | Self::Lidarr | Self::Whisparr
+        )
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("{}", with_cause(.0))]
+    Http(#[from] reqwest::Error),
+    #[error("{status} for {url}: {reason}")]
+    Rejected {
+        status: reqwest::StatusCode,
+        url: String,
+        reason: String,
+    },
+    #[error("unexpected response: {0}")]
+    Unexpected(&'static str),
+    #[error("it answers as {found}, not {expected}")]
+    WrongApp {
+        expected: &'static str,
+        found: String,
+    },
+}
+
+impl Error {
+    /// The Arr was unreachable, slow or failing, so retrying later may work.
+    #[must_use]
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Self::Http(e) => {
+                e.is_connect() || e.is_timeout() || e.status().is_some_and(|s| s.is_server_error())
+            }
+            Self::Rejected { status, .. } => status.is_server_error(),
+            Self::Unexpected(_) | Self::WrongApp { .. } => false,
+        }
+    }
+}
+
+/// reqwest's own message hides why a request failed, such as a refused connection.
+fn with_cause(error: &reqwest::Error) -> String {
+    let Some(mut root) = std::error::Error::source(error) else {
+        return error.to_string();
+    };
+    while let Some(source) = root.source() {
+        root = source;
+    }
+    format!("{error}: {root}")
+}
+
+/// A SABnzbd download client configured in an Arr.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SabClient {
+    pub id: i64,
+    pub name: String,
+    pub enabled: bool,
+    pub category: Option<String>,
+    pub host: String,
+    pub port: u16,
+    pub use_ssl: bool,
+    pub url_base: String,
+    /// `None` when the Arr masks or lacks it.
+    pub api_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemStatus {
+    app_name: Option<String>,
+    version: Option<String>,
+    sportarr_version: Option<String>,
+}
+
+/// Checks the instance answers as its profile and returns its version.
+pub async fn version(http: &reqwest::Client, arr: &Arr) -> Result<String, Error> {
+    let path = match arr.profile {
+        Profile::Sportarr => "api/v3/system/status".to_owned(),
+        profile => format!("{}/system/status", profile.root()),
+    };
+    let status: SystemStatus = fetch(request(http, arr, Method::GET, &path)).await?;
+    let found = if status.sportarr_version.is_some() {
+        "Sportarr"
+    } else {
+        status.app_name.as_deref().unwrap_or("an unknown app")
+    };
+    let expected = arr.profile.app_name();
+    if !found.eq_ignore_ascii_case(expected) {
+        return Err(Error::WrongApp {
+            expected,
+            found: found.to_owned(),
+        });
+    }
+    Ok(status
+        .sportarr_version
+        .or(status.version)
+        .unwrap_or_default())
+}
+
+/// Whisparr from v3 is built on Radarr (movies); before, on Sonarr (series).
+fn whisparr_has_movies(version: &str) -> bool {
+    version
+        .split('.')
+        .next()
+        .and_then(|major| major.parse::<u32>().ok())
+        .is_some_and(|major| major >= 3)
+}
+
+/// The SABnzbd download clients the instance holds.
+pub async fn sab_clients(http: &reqwest::Client, arr: &Arr) -> Result<Vec<SabClient>, Error> {
+    let clients: Vec<Value> = fetch(call(http, arr, Method::GET, "downloadclient")).await?;
+    Ok(clients
+        .iter()
+        .filter_map(|c| sab_client(c, arr.profile == Profile::Sportarr))
+        .collect())
+}
+
+/// Reads one download client: Servarr resources keep settings in `fields`, Sportarr's
+/// native ones at the top level.
+fn sab_client(client: &Value, native: bool) -> Option<SabClient> {
+    let sab = if native {
+        client["type"].as_i64() == Some(5)
+            || client["type"]
+                .as_str()
+                .is_some_and(|t| t.eq_ignore_ascii_case("sabnzbd"))
+    } else {
+        client["implementation"]
+            .as_str()
+            .is_some_and(|i| i.eq_ignore_ascii_case("sabnzbd"))
+    };
+    if !sab {
+        return None;
+    }
+    let get = |name: &str| -> &Value {
+        if native {
+            &client[name]
+        } else {
+            client["fields"]
+                .as_array()
+                .and_then(|fields| fields.iter().find(|f| f["name"] == name))
+                .map_or(&NULL, |f| &f["value"])
+        }
+    };
+    let text = |name: &str| get(name).as_str().unwrap_or_default().to_owned();
+    let category = ["category", "tvCategory", "movieCategory", "musicCategory"]
+        .into_iter()
+        .find_map(|k| get(k).as_str())
+        .filter(|c| !c.is_empty())
+        .map(str::to_owned);
+    let api_key = text("apiKey");
+    Some(SabClient {
+        id: client["id"].as_i64()?,
+        name: client["name"].as_str().unwrap_or_default().to_owned(),
+        enabled: client[if native { "enabled" } else { "enable" }]
+            .as_bool()
+            .unwrap_or(false),
+        category,
+        host: text("host"),
+        port: get("port")
+            .as_u64()
+            .and_then(|p| u16::try_from(p).ok())
+            .unwrap_or(0),
+        use_ssl: get("useSsl").as_bool().unwrap_or(false),
+        url_base: text("urlBase"),
+        api_key: (!api_key.is_empty() && api_key != MASK).then_some(api_key),
+    })
+}
+
+/// Has the Arr test its download client `id` with `marker` appended to the client's URL
+/// base, so the test's calls arrive at `…/<marker>/api`. The test's verdict is ignored:
+/// whether those calls arrived is the evidence.
+pub async fn probe(http: &reqwest::Client, arr: &Arr, id: i64, marker: &str) -> Result<(), Error> {
+    let mut client: Value = fetch(call(
+        http,
+        arr,
+        Method::GET,
+        &format!("downloadclient/{id}"),
+    ))
+    .await?;
+    let base = client["fields"]
+        .as_array_mut()
+        .and_then(|fields| fields.iter_mut().find(|f| f["name"] == "urlBase"))
+        .ok_or(Error::Unexpected("download client without urlBase"))?;
+    let value = format!(
+        "{}/{marker}",
+        base["value"]
+            .as_str()
+            .unwrap_or_default()
+            .trim_end_matches('/')
+    );
+    base["value"] = Value::String(value);
+    call(http, arr, Method::POST, "downloadclient/test")
+        .json(&client)
+        .send()
+        .await?;
+    Ok(())
+}
+
+/// Asks the Arr to check its download clients now rather than at its next poll. Sportarr
+/// has no such command and polls on its own.
+pub async fn refresh_downloads(http: &reqwest::Client, arr: &Arr) -> Result<(), Error> {
+    if arr.profile == Profile::Sportarr {
+        return Ok(());
+    }
+    send(
+        call(http, arr, Method::POST, "command")
+            .json(&serde_json::json!({ "name": "RefreshMonitoredDownloads" })),
+    )
+    .await
+}
+
+fn request(http: &reqwest::Client, arr: &Arr, method: Method, path: &str) -> RequestBuilder {
+    http.request(method, format!("{}/{path}", arr.url.trim_end_matches('/')))
+        .header("X-Api-Key", &arr.api_key)
+}
+
+/// A call under the profile's API root.
+fn call(http: &reqwest::Client, arr: &Arr, method: Method, path: &str) -> RequestBuilder {
+    request(http, arr, method, &format!("{}/{path}", arr.profile.root()))
+}
+
+async fn fetch<T: DeserializeOwned>(request: RequestBuilder) -> Result<T, Error> {
+    Ok(accepted(request).await?.json().await?)
+}
+
+async fn send(request: RequestBuilder) -> Result<(), Error> {
+    accepted(request).await?;
+    Ok(())
+}
+
+async fn accepted(request: RequestBuilder) -> Result<reqwest::Response, Error> {
+    let response = request.send().await?;
+    let status = response.status();
+    if !status.is_client_error() && !status.is_server_error() {
+        return Ok(response);
+    }
+    let url = response.url().to_string();
+    let body = response.text().await.unwrap_or_default();
+    Err(Error::Rejected {
+        status,
+        url,
+        reason: reason(&body),
+    })
+}
+
+/// Why the Arr refused, from its error body. Servarr validation failures also carry an
+/// `attemptedValue`, which is left out: it can be a password or API key.
+fn reason(body: &str) -> String {
+    let reason = match serde_json::from_str::<Value>(body) {
+        Ok(Value::Array(failures)) => failures
+            .iter()
+            .filter_map(|f| {
+                let message = f["errorMessage"].as_str()?;
+                Some(match f["propertyName"].as_str().filter(|p| !p.is_empty()) {
+                    Some(property) => format!("{property}: {message}"),
+                    None => message.to_owned(),
+                })
+            })
+            .collect::<Vec<_>>()
+            .join("; "),
+        Ok(v) => ["message", "error", "title"]
+            .into_iter()
+            .find_map(|k| v[k].as_str())
+            .unwrap_or_default()
+            .to_owned(),
+        Err(_) => body.trim().to_owned(),
+    };
+    if reason.is_empty() {
+        return "no details given".to_owned();
+    }
+    reason.chars().take(300).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn reads_why_an_arr_refused() {
+        let failures = json!([
+            { "propertyName": "Name", "errorMessage": "Should be unique", "attemptedValue": "hook" },
+            { "propertyName": "Password", "errorMessage": "Required", "attemptedValue": "secret" },
+        ]);
+        assert_eq!(
+            reason(&failures.to_string()),
+            "Name: Should be unique; Password: Required"
+        );
+        assert_eq!(reason(r#"{"message":"Not Found"}"#), "Not Found");
+        assert_eq!(reason(""), "no details given");
+    }
+
+    #[test]
+    fn reads_native_sportarr_clients() {
+        let sab = json!({
+            "id": 4, "name": "sab", "type": 5, "enabled": true, "host": "h", "port": 3000,
+            "useSsl": true, "urlBase": "/x", "apiKey": "key", "category": "sports",
+        });
+        let client = sab_client(&sab, true).unwrap();
+        assert_eq!(
+            client,
+            SabClient {
+                id: 4,
+                name: "sab".to_owned(),
+                enabled: true,
+                category: Some("sports".to_owned()),
+                host: "h".to_owned(),
+                port: 3000,
+                use_ssl: true,
+                url_base: "/x".to_owned(),
+                api_key: Some("key".to_owned()),
+            }
+        );
+        assert!(sab_client(&json!({ "id": 5, "type": 1 }), true).is_none());
+    }
+}

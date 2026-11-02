@@ -1,0 +1,13 @@
+schema = 1
+name = "Giganews"
+website = "https://giganews.com"
+backbone = "giganews"
+port = 563
+
+[[servers]]
+hostname = "news.giganews.com"
+region = "US"
+
+[[servers]]
+hostname = "news-europe.giganews.com"
+region = "NL"

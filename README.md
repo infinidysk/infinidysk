@@ -1,164 +1,184 @@
-> [!IMPORTANT] 
-> InfiniDysk is designed as a drop-in replacement and upgrade from `nzbdav-dev/nzbdav v0.6.4`. Follow the [migration guide](https://www.infinidysk.com/getting-started/migration/) before switching an existing installation.
->
-> Early adopters report **2x network throughput** and **seek times improved by up to 4x** compared with v0.6.4.
->
-> `ghcr.io/infinidysk/infinidysk:latest`
+# infinidysk-rs
 
-<p align="center">
-  <img src="docs/assets/logo.png" width="160" alt="InfiniDysk logo" />
-</p>
+Rust rewrite of InfiniDysk: a Usenet-backed virtual filesystem that imports NZBs through a SABnzbd-compatible API and serves media over a native FUSE mount and WebDAV, streaming directly from Usenet providers.
 
-<h1 align="center">InfiniDysk</h1>
+This is the 2.0 alpha, for early testers. Expect bugs, and keep your 1.x install around until you are happy. Contributors: see [AGENTS.md](AGENTS.md).
 
-<p align="center"><strong>The NzbDAV SuperFork</strong></p>
-<p align="center">
-  Stream NZBs directly from Usenet through a virtual filesystem — without downloading full media files first.
-</p>
+## Image
 
-> [!NOTE]
-> **NzbDAV is now InfiniDysk.** Docs, GitHub, and the Docker image have moved. If you still pull `ghcr.io/nzbdav/nzbdav`, switch to `ghcr.io/infinidysk/infinidysk` (same `/config` and mounts). Read the [rename FAQ](https://www.infinidysk.com/community/renaming-to-infinidysk/).
+`ghcr.io/infinidysk/infinidysk-next`, Linux x64 and arm64.
 
-<img width="1024" height="601" alt="InfiniDysk overview dashboard" src="docs/assets/overview.png" />
+| Tag | What it is |
+|-----|------------|
+| `v2.0.0-alpha.N` | An alpha release. Pin one of these if you want to stay put. |
+| `edge` | Every change on `main`, untested. May be broken. |
+| `sha-<commit>` | One exact build, for reproducing a bug. |
 
-<p align="center">
-  <a href="https://github.com/infinidysk/infinidysk/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/infinidysk/infinidysk" /></a>
-  <a href="https://github.com/infinidysk/infinidysk/pkgs/container/infinidysk"><img alt="Docker image" src="https://img.shields.io/badge/ghcr.io-infinidysk%2Finfinidysk-blue?logo=docker&logoColor=white" /></a>
-  <a href="https://github.com/infinidysk/infinidysk/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/infinidysk/infinidysk/ci.yml?branch=main&label=CI" /></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/infinidysk/infinidysk" /></a>
-</p>
-
----
-
-InfiniDysk combines a **WebDAV server** with a **SABnzbd-compatible API**. Sonarr, Radarr, and similar tools can use it as a drop-in download client, while Plex, Emby, Jellyfin, and other WebDAV clients stream content on demand from your Usenet providers.
-
-Please add feature requests and bug reports to the [issue tracker](https://github.com/infinidysk/infinidysk/issues), or join our [Discord](https://discord.gg/DAya7W6QMa) to chat with us.
-
-> After joining, use the channel and role selector to enable **InfiniDysk - SuperFork** for release notifications and development channels.
-
-## Features
-
-### Streaming and providers
-
-- **Virtual WebDAV filesystem** — Mount, browse, stream, and seek through NZB content without downloading complete media files first.
-- **Archive streaming** — Read RAR and 7z archives on demand, including password-protected content.
-- **Fast, resilient NNTP** — Pipeline article requests and cascade across multiple providers with automatic failover and circuit breakers.
-- **Provider routing and limits** — Separate provider-wide and article-transfer connection budgets, reserve burstable metadata capacity, set priorities and data caps, then Auto-tune transfers from the UI.
-- **Container-aware gap handling** — Preserve MPEG-TS timing across missing article ranges to reduce playback desynchronization.
-
-### Search and playback readiness
-
-- **Built-in Newznab search** — Configure indexers, monitor API usage, search manually, and mount results.
-- **Filters and adapters** — Apply regex or remote exclude lists and expose selected indexers through token-scoped Addon, Newznab, and JSON APIs.
-- **Watchdog, Preflight, and Warden** — Verify candidates, warm likely results, retry failed releases, and remember known-dead releases.
-- **Watchtower** — Keep wanted movies and episodes mapped to verified releases before playback begins.
-
-### Automation and library management
-
-- **SABnzbd-compatible queue** — Use add, queue, history, pause, resume, and speed-limit operations with configurable concurrent workers.
-- **Sonarr and Radarr integration** — Import through Rclone symlinks or lightweight STRM files and optionally repair unhealthy content.
-- **WebDAV management** — Browse, download, and delete eligible virtual filesystem items from the admin UI.
-- **[Experimental AltMount migration](https://www.infinidysk.com/guides/altmount-migration/)** — Rebuild and import an existing AltMount library through a guided wizard that leaves its source metadata untouched.
-
-### Operations and deployment
-
-- **Live operations dashboard** — Track throughput, latency, errors, active reads, provider usage, failover saves, and indexer activity.
-- **[Logs and diagnostics](https://www.infinidysk.com/configuration/support/)** — Filter and download logs, enable stream tracing from the UI, and generate redacted technical support packs.
-- **[Backup and restore](https://www.infinidysk.com/configuration/backup/)** — Schedule database backups and download, upload, or restore them from the Settings UI.
-- **[Headless configuration](https://www.infinidysk.com/configuration/headless/)** — Provision authoritative settings with `NZBDAV_CONFIG__...` environment variables.
-- **[OIDC / SSO](https://www.infinidysk.com/configuration/oidc/)** — Authenticate browser sessions through standards-compliant identity providers such as Authentik, Authelia, and Keycloak.
-- **[Prometheus metrics](https://www.infinidysk.com/operations/prometheus/)** — Scrape `/metrics` for streaming, seek latency, NNTP pools, circuit breakers, and process/runtime stats. Direct backend scrapes are anonymous unless `METRICS_REQUIRE_API_KEY=true`.
-- **[PostgreSQL](https://www.infinidysk.com/operations/postgresql/)** — Optional external PostgreSQL for the main operational database on new installs. SQLite stays the default; there is no SQLite-to-PostgreSQL migration yet. Auxiliary stores (`metrics.sqlite`, `warden.db`) remain in `/config`.
-- **[Admin API reference (Scalar)](https://www.infinidysk.com/configuration/environment-variables/)** — Opt-in Scalar explorer at `/scalar/` plus `/openapi/admin.json`, enabled with `ENABLE_API_DOCS=true`. Disabled by default in Docker.
-- **Flexible hosting** — Run with Docker, prebuilt Linux archives, or DUMB, and build for reverse-proxy sub-path hosting when needed.
+There is no `latest` tag on purpose, so nothing upgrades onto the alpha by accident. When 2.0 ships it moves back to the main `infinidysk` image and this one stops updating.
 
 ## Quick start
 
-InfiniDysk ships as a single multi-architecture Docker image. Use `latest` for the newest stable release. The `lts` tag is a manually curated long-term-support pointer and may lag behind `latest`.
-
-To try it without keeping any settings:
-
-```bash
-docker run --rm -it -p 3000:3000 ghcr.io/infinidysk/infinidysk:latest
-```
-
-This trial command is ephemeral: its settings are discarded when the container exits.
-
-For a persistent setup, save the following as `compose.yml`:
-
 ```yaml
 services:
-  nzbdav:
-    image: ghcr.io/infinidysk/infinidysk:latest
-    container_name: nzbdav
+  infinidysk:
+    image: ghcr.io/infinidysk/infinidysk-next:v2.0.0-alpha.1
+    container_name: infinidysk
     restart: unless-stopped
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - curl -fsSL http://localhost:3000/healthz > /dev/null || exit 1
-      interval: 30s
-      retries: 3
-      start_period: 60s
-      timeout: 5s
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: Etc/UTC # your time zone, e.g. Europe/Oslo; the maintenance window follows it
     ports:
       - "3000:3000"
-    environment:
-      PUID: "1000"
-      PGID: "1000"
-      TZ: Etc/UTC
     volumes:
       - ./config:/config
+      - /mnt:/mnt:rshared
+      - /sys/devices/virtual/bdi:/sys/devices/virtual/bdi:rw
+    devices:
+      - /dev/fuse:/dev/fuse
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
 ```
 
-Then run `docker compose up -d`, open `http://localhost:3000`, create your admin account, and configure your Usenet provider and WebDAV credentials under **Settings**.
+Open `http://<host>:3000`, create the admin account, then add your providers. Do this before exposing the port to an untrusted network: until an admin exists, anyone who reaches the page can create one.
 
-> [!IMPORTANT]
-> Port `3000` serves plain HTTP. If InfiniDysk will be reachable outside your trusted network, put it behind an HTTPS reverse proxy and do not expose the container port directly to the internet. WebDAV uses Basic authentication, so TLS is essential for remote access. When the proxy runs on the Docker host, bind the port to localhost with `127.0.0.1:3000:3000`.
+The UI, the SABnzbd API and WebDAV all share port 3000. The library is mounted at `/mnt/infinidysk` by default (Settings, or `INFINIDYSK__MOUNT__DIR`). Containers that read it (Sonarr, Radarr, Plex, …) need the same host path, for example `/mnt:/mnt:rslave`.
 
-Other supported setup paths:
+In Sonarr/Radarr, add a SABnzbd download client pointing at `infinidysk:3000` with the SAB API key from Settings.
 
-- **Linux without Docker** — Follow the [prebuilt archive guide](https://www.infinidysk.com/getting-started/prebuilt-archives/) to run the x64 or ARM64 release bundle.
-- **IPv6-only Docker hosts** — Use the Docker Hub mirror, `infinidysk/infinidysk`, because `ghcr.io` is not reachable over IPv6.
-- **Batteries-included Arr stack** — Use InfiniDysk as a supported core module in [DUMB](https://dumbarr.com/services/core/nzbdav/).
-- **Reverse-proxy sub-path** — Follow the [URL base guide](https://www.infinidysk.com/configuration/url-base/) to build an image for paths such as `/nzbdav`.
+### Health check
 
-## Documentation
+The image has a built-in health check, so you do not need a `healthcheck:` block. Containers that read the mount can wait for it:
 
-Full documentation is published at [www.infinidysk.com](https://www.infinidysk.com/). Start with the [getting started guide](https://www.infinidysk.com/getting-started/) for a production deployment.
+```yaml
+  plex:
+    depends_on:
+      infinidysk:
+        condition: service_healthy
+```
 
-- **Install and migrate** — Docker Compose, prebuilt Linux archives, first-run setup, upgrades from nzbdav-dev and community forks, and the [experimental AltMount migration](https://www.infinidysk.com/guides/altmount-migration/).
-- **Configure** — Settings walkthroughs, [headless environment configuration](https://www.infinidysk.com/configuration/headless/), OIDC, backup and restore, URL base, and provider tuning.
-- **Integrate** — Sonarr/Radarr automation, Rclone symlinks, STRM files, Plex, Emby, Jellyfin, and Stremio through AIOStreams.
-- **Search and prepare** — Indexers, token-scoped search profiles, Watchdog, Preflight, Warden, and [Watchtower](https://www.infinidysk.com/features/watchtower/).
-- **Operate and troubleshoot** — Health checks and repairs, live logs, stream tracing, support packs, performance tuning, [Prometheus metrics](https://www.infinidysk.com/operations/prometheus/), and [PostgreSQL](https://www.infinidysk.com/operations/postgresql/).
-- **Compare** — [InfiniDysk, AltMount, and classic download clients](https://www.infinidysk.com/guides/compare/).
+Healthy means the server answers, the database works, the import worker runs, and the FUSE mount is mounted and answers. Without `/dev/fuse` the mount is not checked. A normal start turns healthy within seconds. The first start after an upgrade from 1.x stays `starting` until the import is done; if that takes longer than the 10-minute start period, the container shows `unhealthy` until the import ends, so run `docker compose up -d` again once it has.
 
-## Why another fork?
+`GET /healthz` answers without sign-in: 200 when healthy, 503 while starting or unhealthy, with a small JSON body of check results and no other detail. Reasons for a failing check go to the log. `infinidysk healthcheck` calls it on the port from `INFINIDYSK_LISTEN` and exits 0 or 1.
 
-This project is a maintained fork of [nzbdav-dev/nzbdav](https://github.com/nzbdav-dev/nzbdav). We took ownership of the full Usenet streaming stack — NzbDAV, UsenetSharp, RapidYencSharp, rapidyenc, and SharpCompress — so playback, connection, archive, and decoding fixes can land in the right layer.
+## Upgrading from 1.x
 
-Read the full story on the [about page](https://www.infinidysk.com/community/about/).
+The upgrade reads your 1.x config and imports it into a new database: providers, Arr instances, categories, SAB API key, WebDAV and admin logins, the mount dir, the library and its item ids, history and the queue. Your 1.x files are opened read-only and never changed. Still, test on a copy:
 
-### Special thanks
+1. Stop 1.x so the copy is consistent, then copy its config directory:
 
-Special thanks to the forks and contributors whose ideas we consolidated:
+   ```sh
+   docker compose stop <1.x service>
+   cp -a ./config ./config-2.0
+   ```
 
-- [@Nzbdav-dev](https://github.com/Nzbdav-dev)
-- [@Pukabyte](https://github.com/Pukabyte)
-- [@elfhosted](https://github.com/elfhosted)
-- [@kha-kis](https://github.com/kha-kis)
-- [@mrghxst](https://github.com/mrghxst)
-- [@qooode](https://github.com/qooode)
-- [@dgherman](https://github.com/dgherman)
-- [@loambit](https://github.com/loambit)
+2. Optional dry run. This prints what will be carried over, what is not, and why, without importing anything:
 
-## Development
+   ```sh
+   docker run --rm -v ./config-2.0:/config ghcr.io/infinidysk/infinidysk-next:v2.0.0-alpha.1 import-report
+   ```
 
-The project consists of a .NET 10 backend (WebDAV, Usenet streaming, SAB API) and a React Router 8 frontend (admin UI). See [CONTRIBUTING.md](CONTRIBUTING.md) for local development setup and [CHANGELOG.md](CHANGELOG.md) for release history. Source for the published documentation lives in [infinidysk/docs](https://github.com/infinidysk/docs). Local `run-backend.sh` enables the Scalar admin API reference at `/scalar/`; Docker requires `ENABLE_API_DOCS=true`.
+3. Set `TZ` on 2.0 to the same zone 1.x ran in. 1.x stored local times, so a different zone shifts every file date, and media servers may then re-read your whole library.
+4. Start 2.0 with `./config-2.0:/config` (compose above). The import runs on first start; the UI shows progress and the full report. Sign in with your 1.x admin login.
+5. If the container name or port changed, update the SABnzbd download client in each Arr. The API key is the same.
+
+Do not run 1.x and 2.0 at the same time: both would use your provider connections. To roll back, stop 2.0 and start 1.x on the original `./config`. Anything imported or added while on 2.0 is not carried back.
+
+### Moving off rclone
+
+2.0 mounts the library itself over FUSE, so the rclone sidecar is no longer needed. Most 1.x installs used rclone, so this is the part to get right: **your library symlinks only keep working if the 2.0 mount sits at exactly the path rclone mounted.**
+
+1. Check your 1.x mount dir (Settings > Rclone Server, for example `/mnt/remote/infinidysk`). The upgrade carries it over as the 2.0 mount dir; confirm it in the import report. Your symlinks point into it (`<mount dir>/.ids/...`).
+2. Stop and remove the rclone service from your compose file, and make sure nothing is left mounted there:
+
+   ```sh
+   docker compose rm -sf <rclone service>
+   mount | grep /mnt/remote/infinidysk    # should print nothing
+   sudo umount -l /mnt/remote/infinidysk  # only if it still does
+   ```
+
+3. Give the infinidysk container what the rclone container had: `/dev/fuse`, `SYS_ADMIN`, `apparmor:unconfined`, and the parent directory with `:rshared` (as in the quick start). The mount dir must be visible at the same path inside the container, so if rclone used `/mnt:/mnt:rshared`, use the same bind here.
+4. Start 2.0 and check from the host and from an Arr container:
+
+   ```sh
+   ls /mnt/remote/infinidysk   # expect .ids, completed-symlinks, content, nzbs
+   ```
+
+   Then open one existing library symlink and confirm it plays.
+
+If your rclone mount used `--no-modtime`, every file on it showed a 1970 date and your media server stored that. 2.0 shows real dates by default, which makes Plex and similar servers re-read every file on their next scan. Before that scan, turn on Settings > Mount > Disable file timestamps and restart.
+
+To move the mount to a new path later, change it under Settings > Mount after setting your library folders under Settings > Library. After the restart, 2.0 rewrites the symlinks in those folders. That needs the library folders bound into the infinidysk container at the same paths your Arrs use.
+
+The rclone settings (RC notifications, cache flags) are not carried over; the built-in mount does not need them.
+
+If you cannot give the container FUSE (no `/dev/fuse`), 2.0 logs a warning and runs WebDAV-only. You can keep rclone in that case, pointed at `http://infinidysk:3000/` (1.x used port 8080). 2.0 does not send rclone refresh notifications, so keep `--dir-cache-time` short.
+
+## Not in 2.0 yet
+
+These 1.x features are missing in the alpha. The import report lists settings it could not carry over.
+
+- Global download bandwidth limit
+- Global connection cap across providers (per-provider connection counts do carry over)
+- Rclone RC notifications (not needed with the built-in mount)
+- Stremio and addon routes, search, indexers and Prowlarr
+- Backup and restore
+
+## Reporting problems
+
+Include:
+
+- The image tag (or `sha-` tag) you run.
+- The log, from `/config/logs/infinidysk.log` or the Logs page.
+- For playback problems: start a trace on the Traces page, reproduce, and attach the trace export. Exports have secrets removed.
+- For upgrade problems: the output of `import-report` (above).
+
+Never post provider passwords or API keys. Release names are not needed; describe the file instead (for example "stored RAR5 episode").
+
+## Configuration
+
+Settings live in the database and are edited in the UI. Any setting can also be forced with an environment variable, `INFINIDYSK__<SECTION>__<KEY>` (for example `INFINIDYSK__MOUNT__DIR=/mnt/remote/infinidysk`); forced values are not written back.
+
+| Variable | Default | |
+|----------|---------|---|
+| `INFINIDYSK_LISTEN` | `0.0.0.0:3000` | UI, SABnzbd API, WebDAV and `/healthz` |
+| `INFINIDYSK_DATABASE_URL` | `sqlite:/config/infinidysk.sqlite` | Use `postgres://…` for PostgreSQL |
+| `PUID` / `PGID` | `1000` | Owner shown on files in the mount |
+| `INFINIDYSK_LOG_DIR` | `/config/logs` | |
+| `RUST_LOG` | `info` | Log filter |
+
+## Media analysis
+
+The Explorer lists each media file's container, codecs, resolution and audio tracks, read by `ffprobe`. The Docker image includes it; elsewhere, install FFmpeg or point `INFINIDYSK_FFPROBE` at the binary. Without it, analysis is off and everything else works.
+
+## Who is reading
+
+Overview and Traces show who opened each read. This is best effort, for troubleshooting only.
+
+- **WebDAV** shows the user agent and the address that connected. Behind a reverse proxy, add the proxy under Settings > System > Network > Trusted proxies so the client from `X-Forwarded-For` is shown instead. Add only proxies you run; any other client can fake the header.
+- **FUSE** shows the process name, pid, and uid/gid of the reader. The kernel reports the reader as seen from the container that mounted. A reader in another container, or on the host, shows as `pid unavailable` with only its uid/gid, even when the mount is shared to it with `:rshared`. Mount propagation does not share process visibility. To see those process names, run infinidysk with `pid: host`. This lets the container see every process on the host, so only do it if you accept that.
+- For a snapshot of open files on the host, run `sudo lsof +f -- <mount dir>` or `sudo fuser -vm <mount dir>`. These show which processes hold files open right now, not which ones are reading.
+
+## FUSE in Docker
+
+- `/dev/fuse`, `SYS_ADMIN` and `apparmor:unconfined` let the container mount. Without `/dev/fuse` it logs a warning and serves WebDAV only.
+- `:rshared` on the parent directory makes the mount visible on the host and in other containers.
+- The `/sys/devices/virtual/bdi` volume lets the Settings > Performance preset set the kernel's readahead. Docker mounts `/sys` read-only, so without it readahead stays at the kernel's 128 KB.
+
+On shutdown the mount is removed. After a crash the next start clears the dead mount; see [infinidysk-lab:docs/restart-behavior.md](https://github.com/infinidysk/infinidysk-lab/blob/main/docs/restart-behavior.md).
+
+## Build
+
+Requires [rustup](https://rustup.rs); the toolchain is pinned in `rust-toolchain.toml`.
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+```
 
 ## License
 
-InfiniDysk is released under the [MIT License](LICENSE).
-
-> [!NOTE]
-> InfiniDysk is intended for use with legally obtained or public domain content only. The project maintainers do not condone piracy and will not provide support for users suspected of engaging in copyright infringement.
+MIT

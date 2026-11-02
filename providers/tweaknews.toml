@@ -1,0 +1,14 @@
+schema = 1
+name = "TweakNews"
+website = "https://www.tweaknews.eu"
+# Sources disagree: own spool caching Eweka, or the Base IP network.
+backbone = "tweaknews"
+port = 563
+
+[[servers]]
+hostname = "news.tweaknews.eu"
+region = "NL"
+
+[[servers]]
+hostname = "newshosting.tweaknews.eu"
+region = "NL"
