@@ -1,0 +1,19 @@
+# Stub so v1-release.yml can be started by hand; the real workflow lives on the v1 branch.
+name: v1 Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semantic version to publish (e.g. 0.6.5)
+        required: true
+
+permissions: {}
+
+jobs:
+  wrong-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::error::v1 releases run from the v1 branch. Pick v1 under 'Use workflow from', or run: gh workflow run v1-release.yml --ref v1 -f version=<version>"
+          exit 1
