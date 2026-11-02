@@ -465,7 +465,7 @@ Skip this handoff if there are no local changes and nothing to push or PR. Do no
 | `v1-ci.yml` | PRs and pushes to `v1` | Frontend lint/typecheck/build/tests + backend build/tests |
 | `v1-codeql.yml` | PRs and pushes to `v1` | CodeQL security analysis for C#, TypeScript, and GitHub Actions |
 | `v1-mutation.yml` | PRs and pushes to `v1` (pilot paths) | Mutation testing of the pilot files |
-| `v1-release.yml` | Push to `v1` | release-please versioning; publishes Linux archives and stable Docker tags to every registry, plus `dev`, `rc` and `lts` tags to canonical GHCR and `dev` to Docker Hub; refreshes the rolling `dev` and `rc` pre-releases; moves git `dev`, `rc` and `lts` tags (in that order); deletes versioned `v*-rc.*` pre-releases and their image tags; Discord announcement is LLM-summarized from `CHANGELOG.md` with raw-list fallback (`OPENAI_API_KEY` optional) |
+| `v1-release.yml` | Push to `v1` | release-please versioning; publishes Linux archives and stable Docker tags to every registry, plus `dev`, `rc` and `lts` tags to canonical GHCR and `dev` to Docker Hub; moves git `dev`, `rc` and `lts` tags (in that order); deletes versioned `v1.*-rc.*` pre-releases and their image tags; Discord announcement is LLM-summarized from `CHANGELOG.md` with raw-list fallback (`OPENAI_API_KEY` optional) |
 | `v1-release.yml` | Manual `workflow_dispatch` | Republishes the same artifacts and tags for an existing version |
 | `v1-docker-build-push.yml` | Reusable (called by v1-release) | Multi-arch Docker build with GHA cache |
 | `v1-build-release-assets.yml` | Reusable/manual (called by v1-release) | Builds linux-x64/arm64 archives and attaches them to GitHub Releases |
