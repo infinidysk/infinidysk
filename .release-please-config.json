@@ -67,6 +67,7 @@
   "packages": {
     ".": {
       "release-type": "simple",
+      "versioning": "always-bump-patch",
       "bump-minor-pre-major": false,
       "bump-patch-for-minor-pre-major": false
     }
