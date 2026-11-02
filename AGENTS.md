@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Quick-start guide for AI agents working on **infinidysk-rs**, the from-scratch Rust rewrite of InfiniDysk.
+Quick-start guide for AI agents working on **InfiniDysk 2.x**, the from-scratch Rust rewrite of InfiniDysk on `main`.
 
 ## What this project is
 
@@ -8,21 +8,21 @@ A Usenet-backed virtual filesystem. It imports NZBs from Sonarr/Radarr through a
 
 Target: a single Rust binary (tokio, axum, rustls, `fuse3`, sqlx on SQLite + PostgreSQL) with an embedded React + Vite SPA, shipped as a Linux x64/arm64 Docker image on `ubuntu:26.04` (glibc; no musl/Alpine). macOS is for development and benchmarking only. No Windows.
 
-## The original C# repository (specification)
+## The C# 1.x code on `v1` (specification)
 
 | | |
 |---|---|
-| GitHub | [`infinidysk/infinidysk`](https://github.com/infinidysk/infinidysk) |
-| Local checkout (if present) | `../infinidysk` (sibling of this repo) |
+| GitHub | [`infinidysk/infinidysk` branch `v1`](https://github.com/infinidysk/infinidysk/tree/v1) |
+| Local checkout (if present) | `../infinidysk` (sibling of this repo, on `v1`) |
 | Stack | .NET 10 backend (`backend/`, namespace `NzbWebDAV`), React Router frontend (`frontend/`), in-tree libs under `libs/` (`UsenetSharp`, `SharpCompress`, `RapidYencSharp`, `rapidyenc` submodule) |
-| Status | **Bug-fix only** while this rewrite runs |
+| Status | **Bug-fix only** (1.x maintenance) |
 
-The plan refers to its files as `infinidysk:<path>` (e.g. `infinidysk:backend/Clients/Usenet/ConnectionPool.cs`).
+The plan refers to its files as `infinidysk:<path>` (e.g. `infinidysk:backend/Clients/Usenet/ConnectionPool.cs`); those paths are on `v1`.
 
 Rules for using it:
 
 - Read C# source and tests as a **specification**. Write idiomatic Rust. No line-by-line ports.
-- **Never modify** the C# repo from a task in this repo. Read-only. If you need it and it is not checked out locally, read it via `gh` / the GitHub API.
+- **Never modify** `v1` from a task on `main`. Read-only. If you need it and it is not checked out locally, read it via `gh` / the GitHub API (`?ref=v1`).
 - Behavior that must stay **identical**: SAB API (`/api?mode=…`) and WebDAV paths/semantics (`/view`, `/content`, `/nzbs`, `/.ids`, `/completed-symlinks`). Everything else (schema, blob format, admin API, env vars, UI) is new.
 - Useful starting points in the C# repo: `backend/Clients/Usenet/` (NNTP pool, circuit breaker, streaming client), `backend/Streams/` (multi-segment stream), `backend/Queue/` (NZB/RAR/7z/PAR2), `backend/Api/SabControllers/`, `backend/WebDav/`, `backend/Database/Models/`, `backend.Benchmarks/` (perf scenarios + baselines), `docs/reference/sabnzbd-api.md`, `docs/reference/rfc3977.md`.
 

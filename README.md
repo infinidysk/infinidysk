@@ -167,7 +167,7 @@ Overview and Traces show who opened each read. This is best effort, for troubles
 - `:rshared` on the parent directory makes the mount visible on the host and in other containers.
 - The `/sys/devices/virtual/bdi` volume lets the Settings > Performance preset set the kernel's readahead. Docker mounts `/sys` read-only, so without it readahead stays at the kernel's 128 KB.
 
-On shutdown the mount is removed. After a crash the next start clears the dead mount; see [infinidysk-lab:docs/restart-behavior.md](https://github.com/infinidysk/infinidysk-lab/blob/main/docs/restart-behavior.md).
+On shutdown the mount is removed. After a crash the next start clears the dead mount.
 
 ## Build
 
