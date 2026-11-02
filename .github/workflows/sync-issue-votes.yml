@@ -1,0 +1,366 @@
+# Recounts thumbs-up (👍) reactions on issue bodies linked to the
+# InfiniDysk Ecosystem project and writes the count to the Votes number field.
+# Also appends an upvote footer to open Feature issues when missing.
+#
+# Requires repo secret PROJECT_VOTES_TOKEN: a fine-grained PAT (or GitHub App
+# token) with Organization Projects: Read and write, and Issues: Read on
+# repositories whose issues appear on the project (at least this repo).
+# Feature footer updates use the workflow GITHUB_TOKEN (issues: write).
+name: Sync issue votes
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sync-votes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync thumbs-up counts to Votes
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_VOTES_TOKEN }}
+          PROJECT_OWNER: infinidysk
+          PROJECT_NUMBER: "1"
+          FIELD_NAME: Votes
+        run: |
+          python3 <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+
+          def die(message: str, code: int = 1) -> None:
+              print(f"::error::{message}", file=sys.stderr)
+              raise SystemExit(code)
+
+
+          def gh_graphql(query: str, variables: dict | None = None) -> dict:
+              body: dict = {"query": query}
+              if variables is not None:
+                  body["variables"] = variables
+              result = subprocess.run(
+                  ["gh", "api", "graphql", "--input", "-"],
+                  input=json.dumps(body),
+                  capture_output=True,
+                  text=True,
+              )
+              if result.returncode != 0:
+                  die(
+                      "GraphQL request failed: "
+                      + (result.stderr.strip() or result.stdout.strip() or "unknown error")
+                  )
+              payload = json.loads(result.stdout)
+              if payload.get("errors"):
+                  die("GraphQL errors: " + json.dumps(payload["errors"]))
+              return payload["data"]
+
+
+          token = os.environ.get("GH_TOKEN", "").strip()
+          if not token:
+              die(
+                  "PROJECT_VOTES_TOKEN secret is missing or empty. "
+                  "Create a fine-grained PAT with Organization Projects: Read and write "
+                  "and Issues: Read, then store it as PROJECT_VOTES_TOKEN."
+              )
+
+          owner = os.environ["PROJECT_OWNER"]
+          project_number = int(os.environ["PROJECT_NUMBER"])
+          field_name = os.environ["FIELD_NAME"]
+
+          project_data = gh_graphql(
+              """
+              query($login: String!, $number: Int!) {
+                organization(login: $login) {
+                  projectV2(number: $number) {
+                    id
+                    fields(first: 100) {
+                      nodes {
+                        ... on ProjectV2Field {
+                          id
+                          name
+                          dataType
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              """,
+              {"login": owner, "number": project_number},
+          )
+
+          project = project_data["organization"]["projectV2"]
+          if not project:
+              die(f"Organization project #{project_number} not found for {owner}")
+
+          project_id = project["id"]
+          votes_field = next(
+              (
+                  field
+                  for field in project["fields"]["nodes"]
+                  if field and field.get("name") == field_name and field.get("dataType") == "NUMBER"
+              ),
+              None,
+          )
+          if not votes_field:
+              die(
+                  f'Number field "{field_name}" not found on project. '
+                  "Add it under Project settings → Custom fields."
+              )
+
+          field_id = votes_field["id"]
+          updated = 0
+          unchanged = 0
+          skipped = 0
+          cursor = None
+
+          while True:
+              page = gh_graphql(
+                  """
+                  query($projectId: ID!, $cursor: String) {
+                    node(id: $projectId) {
+                      ... on ProjectV2 {
+                        items(first: 50, after: $cursor) {
+                          pageInfo {
+                            hasNextPage
+                            endCursor
+                          }
+                          nodes {
+                            id
+                            content {
+                              ... on Issue {
+                                number
+                                repository {
+                                  nameWithOwner
+                                }
+                                reactionGroups {
+                                  content
+                                  reactors {
+                                    totalCount
+                                  }
+                                }
+                              }
+                            }
+                            fieldValues(first: 40) {
+                              nodes {
+                                ... on ProjectV2ItemFieldNumberValue {
+                                  number
+                                  field {
+                                    ... on ProjectV2Field {
+                                      name
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                  """,
+                  {"projectId": project_id, "cursor": cursor},
+              )
+
+              items = page["node"]["items"]
+              for item in items["nodes"]:
+                  content = item.get("content") or {}
+                  reaction_groups = content.get("reactionGroups")
+                  if reaction_groups is None:
+                      skipped += 1
+                      continue
+
+                  thumbs_up = 0
+                  for group in reaction_groups:
+                      if group.get("content") == "THUMBS_UP":
+                          thumbs_up = int(group["reactors"]["totalCount"])
+                          break
+
+                  current = None
+                  for value in item.get("fieldValues", {}).get("nodes", []):
+                      field = value.get("field") or {}
+                      if field.get("name") == field_name and "number" in value:
+                          current = value["number"]
+                          break
+
+                  if current is not None and float(current) == float(thumbs_up):
+                      unchanged += 1
+                      continue
+
+                  gh_graphql(
+                      """
+                      mutation(
+                        $projectId: ID!
+                        $itemId: ID!
+                        $fieldId: ID!
+                        $value: Float!
+                      ) {
+                        updateProjectV2ItemFieldValue(
+                          input: {
+                            projectId: $projectId
+                            itemId: $itemId
+                            fieldId: $fieldId
+                            value: { number: $value }
+                          }
+                        ) {
+                          projectV2Item {
+                            id
+                          }
+                        }
+                      }
+                      """,
+                      {
+                          "projectId": project_id,
+                          "itemId": item["id"],
+                          "fieldId": field_id,
+                          "value": float(thumbs_up),
+                      },
+                  )
+
+                  repo = (content.get("repository") or {}).get("nameWithOwner", "?")
+                  number = content.get("number", "?")
+                  print(f"Updated {repo}#{number}: {current} -> {thumbs_up}")
+                  updated += 1
+
+              page_info = items["pageInfo"]
+              if not page_info["hasNextPage"]:
+                  break
+              cursor = page_info["endCursor"]
+
+          print(
+              f"Votes sync done. updated={updated} unchanged={unchanged} skipped={skipped}"
+          )
+          PY
+
+      - name: Append Feature upvote footers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          python3 <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          FOOTER_MARKER = "<!-- nzbdav-votes-footer -->"
+          FOOTER = "\n".join(
+              [
+                  "<!-- nzbdav-votes-footer -->",
+                  "---",
+                  "",
+                  "**Upvote this request** by reacting with a thumbs-up (👍) on this issue. "
+                  "Thumbs-up counts are tracked as Votes on the project board and help us "
+                  "prioritize feature work.",
+              ]
+          )
+
+
+          def die(message: str, code: int = 1) -> None:
+              print(f"::error::{message}", file=sys.stderr)
+              raise SystemExit(code)
+
+
+          def gh_graphql(query: str, variables: dict | None = None) -> dict:
+              body: dict = {"query": query}
+              if variables is not None:
+                  body["variables"] = variables
+              result = subprocess.run(
+                  ["gh", "api", "graphql", "--input", "-"],
+                  input=json.dumps(body),
+                  capture_output=True,
+                  text=True,
+              )
+              if result.returncode != 0:
+                  die(
+                      "GraphQL request failed: "
+                      + (result.stderr.strip() or result.stdout.strip() or "unknown error")
+                  )
+              payload = json.loads(result.stdout)
+              if payload.get("errors"):
+                  die("GraphQL errors: " + json.dumps(payload["errors"]))
+              return payload["data"]
+
+
+          repo_owner = os.environ["REPO_OWNER"]
+          repo_name = os.environ["REPO_NAME"]
+          footer_appended = 0
+          footer_present = 0
+          footer_skipped = 0
+          cursor = None
+
+          while True:
+              page = gh_graphql(
+                  """
+                  query($owner: String!, $name: String!, $cursor: String) {
+                    repository(owner: $owner, name: $name) {
+                      issues(first: 50, after: $cursor, states: OPEN) {
+                        pageInfo {
+                          hasNextPage
+                          endCursor
+                        }
+                        nodes {
+                          id
+                          number
+                          body
+                          issueType {
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                  """,
+                  {
+                      "owner": repo_owner,
+                      "name": repo_name,
+                      "cursor": cursor,
+                  },
+              )
+
+              issues = page["repository"]["issues"]
+              for issue in issues["nodes"]:
+                  issue_type = (issue.get("issueType") or {}).get("name")
+                  if issue_type != "Feature":
+                      footer_skipped += 1
+                      continue
+
+                  body = issue.get("body") or ""
+                  if FOOTER_MARKER in body:
+                      footer_present += 1
+                      continue
+
+                  new_body = body.rstrip() + "\n\n" + FOOTER
+                  gh_graphql(
+                      """
+                      mutation($id: ID!, $body: String!) {
+                        updateIssue(input: { id: $id, body: $body }) {
+                          issue {
+                            id
+                          }
+                        }
+                      }
+                      """,
+                      {"id": issue["id"], "body": new_body},
+                  )
+                  print(f"Appended upvote footer to #{issue['number']}")
+                  footer_appended += 1
+
+              page_info = issues["pageInfo"]
+              if not page_info["hasNextPage"]:
+                  break
+              cursor = page_info["endCursor"]
+
+          print(
+              "Feature footers done. "
+              f"appended={footer_appended} already-present={footer_present} "
+              f"skipped={footer_skipped}"
+          )
+          PY

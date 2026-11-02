@@ -1,0 +1,5 @@
+# CI-policy files cannot silently loosen. GitHub only enforces this
+# when the main ruleset requires a code-owner review.
+
+/.github/workflows/ @hoivikaj
+/.github/CODEOWNERS @hoivikaj

@@ -1,0 +1,72 @@
+name: Feature request
+description: Suggest an improvement to InfiniDysk
+type: Feature
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sharing an idea. Feature requests should describe a legitimate use case for InfiniDysk; the project supports legally obtained content only.
+
+        New features go into 2.x. 1.x (the `v1` branch) gets bug fixes only.
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have searched existing issues and did not find a similar request.
+          required: true
+        - label: This request relates to use with legally obtained content.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What problem would this solve? Who would benefit?
+      placeholder: I need to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior or workflow you would like.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe workarounds or other approaches you have considered.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Relevant area
+      options:
+        - WebDAV or streaming
+        - Usenet provider connection
+        - Queue, NZB processing, or health checks
+        - SABnzbd-compatible API
+        - Sonarr, Radarr, or another integration
+        - Admin UI
+        - Authentication
+        - Documentation
+        - Other
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add mockups, examples, screenshots, or links that clarify the request.
+
+  - type: markdown
+    attributes:
+      value: |
+        <!-- nzbdav-votes-footer -->
+        ---
+
+        **Upvote this request** by reacting with a thumbs-up (👍) on this issue. Thumbs-up counts are tracked as Votes on the project board and help us prioritize feature work.
