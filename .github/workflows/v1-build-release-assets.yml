@@ -1,4 +1,4 @@
-name: Build release assets
+name: v1 Build release assets
 
 on:
   workflow_call:
