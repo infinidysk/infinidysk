@@ -23,6 +23,16 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+/** `git/matching-refs/tags/v1.` payload for the given tag names. */
+function tagsResponse(...tags: string[]): Response {
+  return jsonResponse(
+    tags.map((tag) => ({
+      ref: `refs/tags/${tag}`,
+      object: { sha: "0123456789abcdef0123456789abcdef01234567", type: "commit" },
+    })),
+  );
+}
+
 function firstCalledUrl(): string {
   const input = fetchMock.mock.calls[0]?.[0];
   if (typeof input !== "string") throw new Error("Expected fetch to be called with a string URL");
@@ -89,100 +99,89 @@ describe("checkForUpdate", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("returns update metadata when latest is newer", async () => {
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({
-        tag_name: "v0.8.0",
-        html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0",
-      }),
-    );
+  it("returns update metadata when a newer 1.x release exists", async () => {
+    fetchMock.mockResolvedValueOnce(tagsResponse("v1.6.3", "v1.7.0", "v1.7.1"));
 
-    await expect(checkForUpdate("0.7.5")).resolves.toEqual({
+    await expect(checkForUpdate("1.7.0")).resolves.toEqual({
       kind: "release",
-      latestVersion: "0.8.0",
-      releaseUrl: "https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0",
+      latestVersion: "1.7.1",
+      releaseUrl: "https://github.com/infinidysk/infinidysk/releases/tag/v1.7.1",
     });
+    expect(firstCalledUrl()).toBe(
+      "https://api.github.com/repos/infinidysk/infinidysk/git/matching-refs/tags/v1.",
+    );
   });
 
   it("returns null when current version is up to date", async () => {
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({
-        tag_name: "v0.7.5",
-        html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.7.5",
-      }),
-    );
+    fetchMock.mockResolvedValueOnce(tagsResponse("v1.6.3", "v1.7.0"));
 
-    await expect(checkForUpdate("0.7.5")).resolves.toBeNull();
+    await expect(checkForUpdate("1.7.0")).resolves.toBeNull();
   });
 
   it("returns null when current version is newer than latest", async () => {
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({
-        tag_name: "v0.7.5",
-        html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.7.5",
-      }),
-    );
+    fetchMock.mockResolvedValueOnce(tagsResponse("v1.7.0"));
 
-    await expect(checkForUpdate("0.8.0")).resolves.toBeNull();
+    await expect(checkForUpdate("1.8.0")).resolves.toBeNull();
   });
 
-  it("falls back to releases page when html_url is missing", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ tag_name: "v0.9.0" }));
+  it("compares tags numerically instead of by list order", async () => {
+    fetchMock.mockResolvedValueOnce(tagsResponse("v1.10.0", "v1.9.4", "v1.2.0"));
 
-    await expect(checkForUpdate("0.7.5")).resolves.toEqual({
-      kind: "release",
-      latestVersion: "0.9.0",
-      releaseUrl: "https://github.com/infinidysk/infinidysk/releases",
+    await expect(checkForUpdate("1.9.4")).resolves.toMatchObject({
+      latestVersion: "1.10.0",
     });
+  });
+
+  it("ignores release candidates and 2.x tags", async () => {
+    fetchMock.mockResolvedValueOnce(
+      tagsResponse("v1.7.0", "v1.8.0-rc.1", "v10.0.0", "v1.8", "v2.0.0", "v2.0.0-beta.1"),
+    );
+
+    await expect(checkForUpdate("1.7.0")).resolves.toBeNull();
+  });
+
+  it("returns null when no 1.x tag exists", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    await expect(checkForUpdate("1.7.0")).resolves.toBeNull();
+  });
+
+  it("returns null for an unexpected payload", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ tag_name: "v1.8.0" }));
+    await expect(checkForUpdate("1.7.0")).resolves.toBeNull();
   });
 
   it("returns null when fetch fails", async () => {
     fetchMock.mockRejectedValueOnce(new Error("network down"));
-    await expect(checkForUpdate("0.7.5")).resolves.toBeNull();
+    await expect(checkForUpdate("1.7.0")).resolves.toBeNull();
   });
 
   it("returns null when GitHub responds with an error status", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ message: "rate limited" }, 403));
-    await expect(checkForUpdate("0.7.5")).resolves.toBeNull();
+    await expect(checkForUpdate("1.7.0")).resolves.toBeNull();
   });
 
   it("reuses the cached release within the TTL", async () => {
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({
-        tag_name: "v0.8.0",
-        html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0",
-      }),
-    );
+    fetchMock.mockResolvedValueOnce(tagsResponse("v1.7.1"));
 
-    await checkForUpdate("0.7.5");
-    await checkForUpdate("0.7.5");
+    await checkForUpdate("1.7.0");
+    await checkForUpdate("1.7.0");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("refetches after the cache TTL expires", async () => {
     fetchMock
-      .mockResolvedValueOnce(
-        jsonResponse({
-          tag_name: "v0.8.0",
-          html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0",
-        }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          tag_name: "v0.9.0",
-          html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.9.0",
-        }),
-      );
+      .mockResolvedValueOnce(tagsResponse("v1.7.1"))
+      .mockResolvedValueOnce(tagsResponse("v1.7.1", "v1.7.2"));
 
-    await expect(checkForUpdate("0.7.5")).resolves.toMatchObject({
-      latestVersion: "0.8.0",
+    await expect(checkForUpdate("1.7.0")).resolves.toMatchObject({
+      latestVersion: "1.7.1",
     });
 
     vi.advanceTimersByTime(60 * 60 * 1000);
 
-    await expect(checkForUpdate("0.7.5")).resolves.toMatchObject({
-      latestVersion: "0.9.0",
+    await expect(checkForUpdate("1.7.0")).resolves.toMatchObject({
+      latestVersion: "1.7.2",
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -190,112 +189,90 @@ describe("checkForUpdate", () => {
   it("never hits the compare endpoint when a newer release exists", async () => {
     getBuildCommitMock.mockResolvedValue({
       sha: "abc1234",
-      branch: "main",
+      branch: "v1",
       source: "git",
     });
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({
-        tag_name: "v0.8.0",
-        html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.8.0",
-      }),
-    );
+    fetchMock.mockResolvedValueOnce(tagsResponse("v1.7.1"));
 
-    await checkForUpdate("0.7.5");
+    await checkForUpdate("1.7.0");
 
     expect(getBuildCommitMock).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(firstCalledUrl()).toContain("/releases/latest");
+    expect(firstCalledUrl()).toContain("/git/matching-refs/tags/v1.");
   });
 
-  it("returns commits behind for an up-to-date source checkout on main", async () => {
+  it("returns commits behind for an up-to-date source checkout on v1", async () => {
     const buildSha = "abcdef0123456789abcdef0123456789abcdef01";
     getBuildCommitMock.mockResolvedValue({
       sha: buildSha,
-      branch: "main",
+      branch: "v1",
       source: "git",
     });
-    fetchMock
-      .mockResolvedValueOnce(
-        jsonResponse({
-          tag_name: "v0.7.5",
-          html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.7.5",
-        }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          status: "ahead",
-          ahead_by: 2,
-          html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...main`,
-        }),
-      );
+    fetchMock.mockResolvedValueOnce(tagsResponse("v1.7.0")).mockResolvedValueOnce(
+      jsonResponse({
+        status: "ahead",
+        ahead_by: 2,
+        html_url: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...v1`,
+      }),
+    );
 
-    await expect(checkForUpdate("0.7.5")).resolves.toEqual({
+    await expect(checkForUpdate("1.7.0")).resolves.toEqual({
       kind: "dev",
       commitsBehind: 2,
-      compareUrl: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...main`,
-      trackRef: "main",
+      compareUrl: `https://github.com/infinidysk/infinidysk/compare/${buildSha}...v1`,
+      trackRef: "v1",
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("does not compare release images against unreleased main commits", async () => {
+  it("does not compare release images against unreleased v1 commits", async () => {
     getBuildCommitMock.mockResolvedValue({
       sha: "abcdef0123456789abcdef0123456789abcdef01",
-      branch: "main",
+      branch: "v1",
       source: "env",
     });
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({
-        tag_name: "v0.7.5",
-        html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.7.5",
-      }),
-    );
+    fetchMock.mockResolvedValueOnce(tagsResponse("v1.7.0"));
 
-    await expect(checkForUpdate("0.7.5")).resolves.toBeNull();
+    await expect(checkForUpdate("1.7.0")).resolves.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(firstCalledUrl()).toContain("/releases/latest");
+    expect(firstCalledUrl()).toContain("/git/matching-refs/tags/v1.");
   });
 
   it("does not compare release builds using version-embedded SHAs", async () => {
     getBuildCommitMock.mockResolvedValue({
       sha: "e0eef520",
-      branch: "main",
+      branch: "v1",
       source: "version",
     });
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({
-        tag_name: "v0.7.5",
-        html_url: "https://github.com/infinidysk/infinidysk/releases/tag/v0.7.5",
-      }),
-    );
+    fetchMock.mockResolvedValueOnce(tagsResponse("v1.7.0"));
 
-    await expect(checkForUpdate("0.7.5")).resolves.toBeNull();
+    await expect(checkForUpdate("1.7.0")).resolves.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(firstCalledUrl()).toContain("/releases/latest");
+    expect(firstCalledUrl()).toContain("/git/matching-refs/tags/v1.");
   });
 
-  it("notifies main-<sha> builds when main is ahead", async () => {
+  it("notifies main-<sha> builds when v1 is ahead", async () => {
     getBuildCommitMock.mockResolvedValue({
       sha: "e0eef520",
-      branch: "main",
+      branch: "v1",
       source: "version",
     });
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
         status: "ahead",
         ahead_by: 2,
-        html_url: "https://github.com/infinidysk/infinidysk/compare/e0eef520...main",
+        html_url: "https://github.com/infinidysk/infinidysk/compare/e0eef520...v1",
       }),
     );
 
     await expect(checkForUpdate("main-e0eef520")).resolves.toEqual({
       kind: "dev",
       commitsBehind: 2,
-      compareUrl: "https://github.com/infinidysk/infinidysk/compare/e0eef520...main",
-      trackRef: "main",
+      compareUrl: "https://github.com/infinidysk/infinidysk/compare/e0eef520...v1",
+      trackRef: "v1",
     });
     expect(getBuildCommitMock).toHaveBeenCalledWith({ version: "main-e0eef520" });
-    expect(firstCalledUrl()).toContain("/compare/e0eef520...main");
+    expect(firstCalledUrl()).toContain("/compare/e0eef520...v1");
   });
 });
 

@@ -2,7 +2,6 @@ import { getBuildCommit, type BuildCommit } from "./version.server";
 import {
   compareSemver,
   isComparableVersion,
-  parseVersionParts,
   type DevUpdateAvailable,
   type ReleaseUpdateAvailable,
   type UpdateAvailable,
@@ -16,12 +15,15 @@ export {
   type UpdateAvailable,
 };
 
-const GITHUB_LATEST_RELEASE_URL =
-  "https://api.github.com/repos/infinidysk/infinidysk/releases/latest";
+// 1.x only offers 1.x releases. 2.x ships as a separate image and needs a
+// migration, so GitHub's "latest release" is not a safe update target.
+const GITHUB_V1_TAGS_URL =
+  "https://api.github.com/repos/infinidysk/infinidysk/git/matching-refs/tags/v1.";
+const STABLE_V1_TAG_PATTERN = /^refs\/tags\/v(1\.\d+\.\d+)$/;
 const GITHUB_COMPARE_URL_PREFIX = "https://api.github.com/repos/infinidysk/infinidysk/compare/";
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const FETCH_TIMEOUT_MS = 5_000;
-const RELEASES_FALLBACK_URL = "https://github.com/infinidysk/infinidysk/releases";
+const RELEASE_TAG_URL_PREFIX = "https://github.com/infinidysk/infinidysk/releases/tag/";
 const COMMITS_URL_PREFIX = "https://github.com/infinidysk/infinidysk/commits/";
 
 type CachedRelease = {
@@ -64,7 +66,7 @@ async function fetchLatestRelease(): Promise<CachedRelease | null> {
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
-    const response = await fetch(GITHUB_LATEST_RELEASE_URL, {
+    const response = await fetch(GITHUB_V1_TAGS_URL, {
       signal: controller.signal,
       headers: {
         Accept: "application/vnd.github+json",
@@ -74,20 +76,24 @@ async function fetchLatestRelease(): Promise<CachedRelease | null> {
 
     if (!response.ok) return null;
 
-    const data = (await response.json()) as {
-      tag_name?: string;
-      html_url?: string;
-    };
+    const data = (await response.json()) as unknown;
+    if (!Array.isArray(data)) return null;
 
-    const tag = data.tag_name?.trim();
-    if (!tag) return null;
-
-    const latestVersion = tag.replace(/^v/i, "");
-    if (!parseVersionParts(latestVersion)) return null;
+    // Release candidates (`v1.2.3-rc.1`) do not match the stable pattern.
+    let latestVersion: string | undefined;
+    for (const entry of data as ({ ref?: unknown } | null)[]) {
+      const ref = entry?.ref;
+      if (typeof ref !== "string") continue;
+      const version = STABLE_V1_TAG_PATTERN.exec(ref)?.[1];
+      if (version && (!latestVersion || compareSemver(version, latestVersion) > 0)) {
+        latestVersion = version;
+      }
+    }
+    if (!latestVersion) return null;
 
     return {
       latestVersion,
-      releaseUrl: data.html_url?.trim() || RELEASES_FALLBACK_URL,
+      releaseUrl: `${RELEASE_TAG_URL_PREFIX}v${latestVersion}`,
       checkedAt: Date.now(),
     };
   } catch {
@@ -243,10 +249,10 @@ async function checkForDevUpdate(
 }
 
 /**
- * Returns update metadata when a newer stable GitHub release exists than
+ * Returns update metadata when a newer stable 1.x release exists than
  * `currentVersion`, or when a non-release build is behind commits on its
- * track ref (`main` for source/`main-<sha>` builds, `dev` for `:dev` images).
- * Failures yield null.
+ * track ref (`v1` for source/`main-<sha>`/`v1-<sha>` builds, `dev` for `:dev`
+ * images). Failures yield null.
  */
 export async function checkForUpdate(
   currentVersion: string | undefined | null,
@@ -256,7 +262,7 @@ export async function checkForUpdate(
     if (releaseUpdate) return releaseUpdate;
 
     // A source checkout still reads the latest released version from
-    // version.txt. If its local main commit is stale, compare it with GitHub
+    // version.txt. If its local commit is stale, compare it with GitHub
     // after confirming there is no newer release. Release Docker images use
     // the env-provided SHA and intentionally remain release-only.
     return checkForDevUpdate(true);

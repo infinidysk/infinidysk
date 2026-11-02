@@ -8,7 +8,7 @@ export type DevUpdateAvailable = {
   kind: "dev";
   commitsBehind: number;
   compareUrl: string;
-  /** GitHub ref compared against (e.g. `main` or `dev`). */
+  /** GitHub ref compared against (e.g. `v1` or `dev`). */
   trackRef: string;
 };
 
