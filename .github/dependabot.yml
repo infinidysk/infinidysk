@@ -66,3 +66,65 @@ updates:
       github-actions:
         patterns: ["*"]
     open-pull-requests-limit: 10
+
+  # 1.x on the v1 branch. Dependabot only reads this file from the default branch.
+  - package-ecosystem: nuget
+    directory: /
+    target-branch: v1
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "fix(deps)"
+    groups:
+      nuget-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: v1
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "fix(deps)"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: npm
+    directory: /frontend
+    target-branch: v1
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "fix(deps)"
+    groups:
+      react-router:
+        patterns:
+          - "react-router"
+          - "@react-router/*"
+        update-types:
+          - minor
+          - patch
+      npm-minor-and-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "react-router"
+          - "@react-router/*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 10
