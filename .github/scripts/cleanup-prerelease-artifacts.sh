@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deletes versioned pre-release GitHub releases (vX.Y.Z-rc.N) and their image
-# tags after a stable release. Leaves the rolling `rc` release and tag alone.
+# tags after a stable release. Leaves the movable `rc` tag alone.
 #
 # Required env:
 #   GH_TOKEN              — GitHub token with contents:write + packages:write

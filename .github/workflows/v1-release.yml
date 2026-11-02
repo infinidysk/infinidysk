@@ -112,9 +112,7 @@ jobs:
 
   assets:
     if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
-    needs:
-      - release-please
-      - publish-dev-release
+    needs: release-please
     uses: ./.github/workflows/v1-build-release-assets.yml
     permissions:
       contents: write
@@ -122,41 +120,6 @@ jobs:
       version: ${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
       checkout_ref: ${{ needs.release-please.outputs.sha }}
       release_tag: v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
-      rolling_tag: "dev rc"
-
-  publish-dev-release:
-    if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
-    needs: release-please
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Create or update rolling dev and rc releases
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_SHA: ${{ needs.release-please.outputs.sha }}
-          VERSION: v${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}.${{ needs.release-please.outputs.patch }}
-          DEV_LABEL: ${{ needs.release-please.outputs.dev_label }}
-        run: |
-          set -euo pipefail
-          upsert_rolling() {
-            local tag="$1" title="$2" notes="$3" action=create
-            if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-              action=edit
-            fi
-            gh release "$action" "$tag" \
-              --repo "${{ github.repository }}" \
-              --target "$RELEASE_SHA" \
-              --title "$title" \
-              --notes "$notes" \
-              --prerelease
-          }
-          SHORT_SHA="${RELEASE_SHA:0:7}"
-          RELEASE_LINK="[$VERSION](https://github.com/${{ github.repository }}/releases/tag/$VERSION)"
-          upsert_rolling dev "Rolling :dev (${DEV_LABEL})" \
-            "Unversioned development snapshot from \`v1\` at [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${RELEASE_SHA}). Currently identical to ${RELEASE_LINK}."
-          upsert_rolling rc "Rolling :rc (${VERSION})" \
-            "Currently points to ${RELEASE_LINK}. See that release for versioned notes and assets."
 
   deploy-manual:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
@@ -198,9 +161,7 @@ jobs:
 
   assets-manual:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    needs:
-      - resolve-version
-      - publish-dev-release-manual
+    needs: resolve-version
     uses: ./.github/workflows/v1-build-release-assets.yml
     permissions:
       contents: write
@@ -208,41 +169,6 @@ jobs:
       version: ${{ needs.resolve-version.outputs.version }}
       checkout_ref: ${{ needs.resolve-version.outputs.ref }}
       release_tag: ${{ needs.resolve-version.outputs.ref }}
-      rolling_tag: "dev rc"
-
-  publish-dev-release-manual:
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    needs: resolve-version
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Create or update rolling dev and rc releases
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_REF: ${{ needs.resolve-version.outputs.ref }}
-          DEV_LABEL: ${{ needs.resolve-version.outputs.dev_label }}
-        run: |
-          set -euo pipefail
-          RELEASE_SHA=$(gh api "repos/${{ github.repository }}/commits/${RELEASE_REF}" --jq .sha)
-          upsert_rolling() {
-            local tag="$1" title="$2" notes="$3" action=create
-            if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-              action=edit
-            fi
-            gh release "$action" "$tag" \
-              --repo "${{ github.repository }}" \
-              --target "$RELEASE_SHA" \
-              --title "$title" \
-              --notes "$notes" \
-              --prerelease
-          }
-          SHORT_SHA="${RELEASE_SHA:0:7}"
-          RELEASE_LINK="[$RELEASE_REF](https://github.com/${{ github.repository }}/releases/tag/$RELEASE_REF)"
-          upsert_rolling dev "Rolling :dev (${DEV_LABEL})" \
-            "Unversioned development snapshot from \`v1\` at [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${RELEASE_SHA}). Currently identical to ${RELEASE_LINK}."
-          upsert_rolling rc "Rolling :rc (${RELEASE_REF})" \
-            "Currently points to ${RELEASE_LINK}. See that release for versioned notes and assets."
 
   tag-dev:
     if: github.event_name == 'push' && needs.release-please.outputs.release_created == 'true'
@@ -374,7 +300,6 @@ jobs:
       - release-please
       - deploy
       - assets
-      - publish-dev-release
       - tag-dev
       - tag-rc
       - tag-lts
