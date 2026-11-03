@@ -9,7 +9,7 @@ use infinidysk_nntp::{
     Client, Downloads, Endpoint, Error, Phase, Pool, PoolConfig, Progress, Provider, TlsMode,
     Usage, Workload,
 };
-use infinidysk_testkit::{Corpus, Impairment, LoopbackServer};
+use infinidysk_testkit::{Corpus, Impairment, LoopbackServer, post};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
@@ -275,6 +275,87 @@ async fn client_fails_over_from_a_wrong_part() {
         .await
         .unwrap();
     assert_eq!(body.offset, ARTICLE_SIZE as u64);
+}
+
+/// Answers every BODY with `chunks`, written 100 ms apart so each arrives as its own read.
+async fn raw_body_server(chunks: Vec<Vec<u8>>) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let chunks = Arc::new(chunks);
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            stream.set_nodelay(true).unwrap();
+            let chunks = Arc::clone(&chunks);
+            tokio::spawn(async move {
+                let (read, mut write) = stream.into_split();
+                write.write_all(b"200 ready\r\n").await.unwrap();
+                let mut lines = BufReader::new(read).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if !line.starts_with("BODY ") {
+                        write.write_all(b"500 unsupported\r\n").await.unwrap();
+                        continue;
+                    }
+                    for (index, chunk) in chunks.iter().enumerate() {
+                        if index > 0 {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                        }
+                        write.write_all(chunk).await.unwrap();
+                        write.flush().await.unwrap();
+                    }
+                }
+            });
+        }
+    });
+    port
+}
+
+/// `data` yEnc-encoded and the terminator, with no `=yend`.
+fn trailerless(head: &[u8], data: &[u8]) -> Vec<u8> {
+    [head, &infinidysk_yenc::encode(data, 128), b"\r\n.\r\n"].concat()
+}
+
+const REPLY: &[u8] = b"222 0 <a@test> body follows\r\n";
+
+#[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // False positive: the client is used to the end.
+async fn short_trailerless_body_fails_over() {
+    let data = b"abcdefgh";
+    let head = [REPLY, b"=ybegin line=128 size=8 name=x\r\n"].concat();
+    let short = raw_body_server(vec![trailerless(&head, &data[..4])]).await;
+    let full = LoopbackServer::start(post("t", "x", data, data.len()))
+        .await
+        .unwrap();
+    let downloads = Downloads::new(16);
+    let client = Client::new([
+        provider(short, 0, None, &downloads),
+        provider(full.addr().port(), 1, None, &downloads),
+    ]);
+    let body = body(&client, "t-0@loopback").await.unwrap();
+    assert_eq!(&*body.data, data);
+    assert_eq!(downloads.available_permits(), 16);
+}
+
+#[tokio::test]
+async fn a_complete_trailerless_part_with_a_split_header_is_kept() {
+    let first = [REPLY, b"=ybegin part=1 line=128 size=100 name=x\r\n=yp"].concat();
+    let rest = trailerless(b"art begin=1 end=4\r\n", b"abcd");
+    let port = raw_body_server(vec![first, rest]).await;
+    let downloads = Downloads::new(16);
+    let client = Client::new([provider(port, 0, None, &downloads)]);
+    let body = body(&client, "a@test").await.unwrap();
+    assert_eq!(&*body.data, b"abcd");
+    assert_eq!(downloads.available_permits(), 16);
+}
+
+#[tokio::test]
+async fn a_complete_trailerless_article_is_kept() {
+    let head = [REPLY, b"=ybegin line=128 size=8 name=x\r\n"].concat();
+    let port = raw_body_server(vec![trailerless(&head, b"abcdefgh")]).await;
+    let downloads = Downloads::new(16);
+    let client = Client::new([provider(port, 0, None, &downloads)]);
+    let body = body(&client, "a@test").await.unwrap();
+    assert_eq!(&*body.data, b"abcdefgh");
+    assert_eq!(downloads.available_permits(), 16);
 }
 
 #[tokio::test]
