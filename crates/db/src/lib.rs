@@ -20,6 +20,7 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, br
 use uuid::Uuid;
 
 pub mod metrics;
+pub mod transfer;
 
 /// Buffered change notices per subscriber before it lags.
 const CHANGES: usize = 256;
@@ -120,6 +121,41 @@ pub enum Error {
     InvalidName(String),
     #[error("stored row is invalid: {0}")]
     Corrupt(&'static str),
+    #[error("this needs a SQLite database")]
+    NotSqlite,
+    #[error("this needs a PostgreSQL database")]
+    NotPostgres,
+    #[error("change capture is not running")]
+    NotCapturing,
+    #[error("{0} differs between SQLite and PostgreSQL")]
+    Mismatch(&'static str),
+    #[error("column {0} has a type the copy does not handle")]
+    UnsupportedColumn(String),
+}
+
+impl Error {
+    /// The target may differ from SQLite in a way only a full copy repairs.
+    #[must_use]
+    pub fn needs_full_copy(&self) -> bool {
+        match self {
+            Self::Mismatch(_) | Self::NotCapturing => true,
+            Self::Sqlx(sqlx::Error::Database(e)) => {
+                e.code().is_some_and(|code| code.starts_with("23"))
+            }
+            _ => false,
+        }
+    }
+}
+
+/// A migration history this build does not know is another build's schema.
+fn migrated(result: Result<(), sqlx::migrate::MigrateError>) -> Result<(), Error> {
+    match result {
+        Err(
+            e @ (sqlx::migrate::MigrateError::VersionMissing(_)
+            | sqlx::migrate::MigrateError::VersionMismatch(_)),
+        ) => Err(Error::OtherSchema(e)),
+        result => Ok(result?),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -991,17 +1027,10 @@ impl Db {
         } else {
             return Err(Error::UnsupportedUrl);
         };
-        let migrated = match &pool {
+        migrated(match &pool {
             Pool::Sqlite(pool) => sqlx::migrate!("./migrations/sqlite").run(pool).await,
             Pool::Postgres(pool) => sqlx::migrate!("./migrations/postgres").run(pool).await,
-        };
-        match migrated {
-            Err(
-                e @ (sqlx::migrate::MigrateError::VersionMissing(_)
-                | sqlx::migrate::MigrateError::VersionMismatch(_)),
-            ) => return Err(Error::OtherSchema(e)),
-            migrated => migrated?,
-        }
+        })?;
         Ok(Self {
             pool,
             changes: broadcast::channel(CHANGES).0,
