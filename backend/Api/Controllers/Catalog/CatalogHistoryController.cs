@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Extensions;
 using NzbWebDAV.Models.Catalog;
 using NzbWebDAV.Services.Catalog;
 
@@ -21,7 +22,7 @@ public sealed class CatalogHistoryController(CatalogWatchHistoryService historyS
     {
         Response.Headers.CacheControl = "no-store";
         var entries = await historyService
-            .ListAsync(ReadLimit(), HttpContext.RequestAborted)
+            .ListAsync(HttpContext.GetViewerProfileId(), ReadLimit(), HttpContext.RequestAborted)
             .ConfigureAwait(false);
         return Ok(new CatalogHistoryResponse
         {
@@ -72,7 +73,8 @@ public sealed class CatalogHistoryProgressController(
                     display?.Title,
                     display?.Subtitle,
                     display?.PosterUrl,
-                    display?.BackdropUrl),
+                    display?.BackdropUrl,
+                    ProfileId: HttpContext.GetViewerProfileId()),
                 ct)
             .ConfigureAwait(false);
 
@@ -171,7 +173,7 @@ public sealed class CatalogHistoryItemController(CatalogWatchHistoryService hist
             throw CatalogException.Validation("History id must be a positive integer.");
 
         var removed = await historyService
-            .RemoveAsync(id, HttpContext.RequestAborted)
+            .RemoveAsync(HttpContext.GetViewerProfileId(), id, HttpContext.RequestAborted)
             .ConfigureAwait(false);
         if (!removed)
             return NotFound(new BaseApiResponse { Status = false, Error = "History entry not found." });

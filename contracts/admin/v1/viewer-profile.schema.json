@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/viewer-profile.schema.json",
+  "title": "Admin viewer profile create success",
+  "type": "object",
+  "required": [
+    "status",
+    "profile"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "const": true
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "profile": {
+      "type": "object",
+      "required": [
+        "id",
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

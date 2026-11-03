@@ -467,6 +467,9 @@ public sealed partial class Program
                 .AddSingleton(sp => new CatalogWatchHistoryService(
                     () => sp.GetRequiredService<IDbContextFactory<DavDatabaseContext>>().CreateDbContext(),
                     sp.GetRequiredService<TimeProvider>()))
+                .AddSingleton(sp => new ViewerProfileService(
+                    () => sp.GetRequiredService<IDbContextFactory<DavDatabaseContext>>().CreateDbContext(),
+                    sp.GetRequiredService<TimeProvider>()))
                 .AddSingleton<CatalogService>()
                 .AddSingleton<CatalogPlaybackSessionStore>()
                 .AddSingleton<CatalogPlaybackService>()

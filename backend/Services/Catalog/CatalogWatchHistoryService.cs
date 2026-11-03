@@ -5,10 +5,11 @@ using NzbWebDAV.Database.Models;
 namespace NzbWebDAV.Services.Catalog;
 
 /// <summary>
-/// Watch history for the catalog: one resumable row per title (per episode for series),
-/// written from playback creation and from the player's progress reports. Single-admin
-/// deployments mean no per-user column and no cross-user locking; each write is one
-/// upsert statement under EF's own transaction.
+/// Watch history for the catalog: one resumable row per viewer profile per title (per
+/// episode for series), written from playback creation and from the player's progress
+/// reports. Every read and write is scoped by profile id, so profiles never see each
+/// other's Continue Watching; each write is one upsert statement under EF's own
+/// transaction.
 /// </summary>
 public sealed class CatalogWatchHistoryService(
     Func<DavDatabaseContext> contextFactory,
@@ -61,6 +62,7 @@ public sealed class CatalogWatchHistoryService(
 
             var existing = await context.CatalogWatchHistories
                 .FirstOrDefaultAsync(entry => !entry.Finished
+                                              && entry.ProfileId == request.ProfileId
                                               && entry.Kind == kind
                                               && entry.TmdbId == request.TmdbId
                                               && entry.Season == season
@@ -73,6 +75,7 @@ public sealed class CatalogWatchHistoryService(
                 // beside this resume row; the new watch supersedes it.
                 await context.CatalogWatchHistories
                     .Where(entry => entry.Finished
+                                    && entry.ProfileId == request.ProfileId
                                     && entry.Kind == kind
                                     && entry.TmdbId == request.TmdbId
                                     && entry.Season == season
@@ -82,6 +85,7 @@ public sealed class CatalogWatchHistoryService(
 
                 context.CatalogWatchHistories.Add(new CatalogWatchHistory
                 {
+                    ProfileId = request.ProfileId,
                     Kind = kind,
                     TmdbId = request.TmdbId,
                     Season = season,
@@ -118,12 +122,16 @@ public sealed class CatalogWatchHistoryService(
     /// Resume candidates, resumable rows first and finished rows at the tail, newest first
     /// within each group. <paramref name="limit"/> is clamped to a bounded page size.
     /// </summary>
-    public async Task<IReadOnlyList<CatalogWatchHistory>> ListAsync(int limit, CancellationToken ct)
+    public async Task<IReadOnlyList<CatalogWatchHistory>> ListAsync(
+        int profileId,
+        int limit,
+        CancellationToken ct)
     {
         var take = Math.Clamp(limit, 1, MaxLimit);
         await using var context = contextFactory();
         return await context.CatalogWatchHistories
             .AsNoTracking()
+            .Where(entry => entry.ProfileId == profileId)
             .OrderBy(entry => entry.Finished)
             .ThenByDescending(entry => entry.UpdatedAtEpoch)
             .Take(take)
@@ -132,11 +140,11 @@ public sealed class CatalogWatchHistoryService(
     }
 
     /// <summary>Removes one row: the user's "Remove from Continue Watching" action.</summary>
-    public async Task<bool> RemoveAsync(int id, CancellationToken ct)
+    public async Task<bool> RemoveAsync(int profileId, int id, CancellationToken ct)
     {
         await using var context = contextFactory();
         var removed = await context.CatalogWatchHistories
-            .Where(entry => entry.Id == id)
+            .Where(entry => entry.Id == id && entry.ProfileId == profileId)
             .ExecuteDeleteAsync(ct)
             .ConfigureAwait(false);
         return removed > 0;
@@ -173,4 +181,5 @@ public sealed record ReportProgressRequest(
     string? Title,
     string? Subtitle,
     string? PosterUrl,
-    string? BackdropUrl);
+    string? BackdropUrl,
+    int ProfileId);

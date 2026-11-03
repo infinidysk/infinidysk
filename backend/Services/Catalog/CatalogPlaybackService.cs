@@ -25,6 +25,7 @@ public sealed class CatalogPlaybackService(
 
     public async Task<CatalogPlayback> CreateAsync(
         CreatePlaybackRequest request,
+        int profileId,
         string publicBaseUrl,
         string publicPathPrefix,
         CancellationToken ct)
@@ -79,7 +80,8 @@ public sealed class CatalogPlaybackService(
                         identity.Title,
                         identity.Subtitle,
                         identity.PosterUrl,
-                        identity.BackdropUrl),
+                        identity.BackdropUrl,
+                        ProfileId: profileId),
                     ct)
                 .ConfigureAwait(false);
         }

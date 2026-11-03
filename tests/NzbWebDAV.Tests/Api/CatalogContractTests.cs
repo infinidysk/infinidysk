@@ -40,6 +40,7 @@ public sealed class CatalogContractTests(NzbDavWebApplicationFactory factory)
                      "/api/catalog/titles/movie/10331",
                      "/api/catalog/person/525",
                      "/api/catalog/history",
+                     "/api/viewer-profiles",
                  })
         {
             using var response = await client.GetAsync(path);
@@ -417,6 +418,81 @@ public sealed class CatalogContractTests(NzbDavWebApplicationFactory factory)
 
         using var beyond = await client.GetAsync($"/api/catalog/playback/{sessionId:D}/segments/9.ts");
         Assert.Equal(HttpStatusCode.NotFound, beyond.StatusCode);
+    }
+
+    [Fact]
+    public async Task ViewerProfilesListAndCreateMatchContract()
+    {
+        using var host = CreateHost();
+        using var client = CreateCatalogClient(host);
+
+        using var list = await client.GetAsync("/api/viewer-profiles");
+        Assert.Equal(HttpStatusCode.OK, list.StatusCode);
+        using var listJson = await JsonDocument.ParseAsync(await list.Content.ReadAsStreamAsync());
+        JsonContractValidator.AssertMatchesSchema(
+            listJson.RootElement, "admin/v1/viewer-profiles.schema.json");
+        Assert.Contains(
+            listJson.RootElement.GetProperty("items").EnumerateArray(),
+            entry => entry.GetProperty("id").GetInt32() == ViewerProfileService.DefaultProfileId
+                     && entry.GetProperty("name").GetString() == "Main");
+
+        using var create = await client.PostAsync(
+            "/api/viewer-profiles",
+            new StringContent("""{"name":"Kids"}""", Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.OK, create.StatusCode);
+        using var createJson = await JsonDocument.ParseAsync(await create.Content.ReadAsStreamAsync());
+        JsonContractValidator.AssertMatchesSchema(
+            createJson.RootElement, "admin/v1/viewer-profile.schema.json");
+        var created = createJson.RootElement.GetProperty("profile");
+        Assert.Equal("Kids", created.GetProperty("name").GetString());
+        Assert.True(created.GetProperty("id").GetInt32() > ViewerProfileService.DefaultProfileId);
+
+        using var blank = await client.PostAsync(
+            "/api/viewer-profiles",
+            new StringContent("""{"name":"   "}""", Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.BadRequest, blank.StatusCode);
+    }
+
+    [Fact]
+    public async Task WatchHistoryStaysPerViewerProfile()
+    {
+        using var host = CreateHost();
+        using var client = CreateCatalogClient(host);
+
+        using var create = await client.PostAsync(
+            "/api/viewer-profiles",
+            new StringContent("""{"name":"Second"}""", Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.OK, create.StatusCode);
+        using var createJson = await JsonDocument.ParseAsync(await create.Content.ReadAsStreamAsync());
+        var secondProfileId = createJson.RootElement.GetProperty("profile").GetProperty("id").GetInt32();
+
+        using var progress = new HttpRequestMessage(HttpMethod.Post, "/api/catalog/history/progress")
+        {
+            Content = new StringContent(
+                """{"type":"movie","tmdbId":550,"position":30,"duration":100}""",
+                Encoding.UTF8,
+                "application/json"),
+        };
+        progress.Headers.Add("x-viewer-profile-id", secondProfileId.ToString());
+        using var progressResponse = await client.SendAsync(progress);
+        Assert.Equal(HttpStatusCode.OK, progressResponse.StatusCode);
+
+        // The same write is invisible to the default profile, which is what admin and
+        // WebDAV sessions resolve to when they send no header at all.
+        Assert.Contains(550, await ReadHistoryTmdbIds(client, secondProfileId));
+        Assert.DoesNotContain(550, await ReadHistoryTmdbIds(client, null));
+    }
+
+    private static async Task<List<int>> ReadHistoryTmdbIds(HttpClient client, int? profileId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/catalog/history?limit=50");
+        if (profileId is { } id) request.Headers.Add("x-viewer-profile-id", id.ToString());
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        return json.RootElement.GetProperty("items").EnumerateArray()
+            .Select(item => item.GetProperty("tmdbId").GetInt32())
+            .ToList();
     }
 
     private WebApplicationFactory<Program> CreateHost(IFFmpegRunner? ffmpegRunner = null)

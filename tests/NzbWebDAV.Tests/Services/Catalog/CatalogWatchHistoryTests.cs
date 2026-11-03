@@ -49,7 +49,7 @@ public sealed class CatalogWatchHistoryTests : IAsyncLifetime
         _clock.Advance(TimeSpan.FromSeconds(30));
         await _service.ReportProgressAsync(Movie(10378, position: 30, duration: 600), CancellationToken.None);
 
-        var row = Assert.Single(await _service.ListAsync(20, CancellationToken.None));
+        var row = Assert.Single(await _service.ListAsync(1, 20, CancellationToken.None));
         Assert.Equal("Big Buck Bunny", row.Title);
         Assert.Equal(30, row.PositionSeconds);
         Assert.Equal(600, row.DurationSeconds);
@@ -65,7 +65,7 @@ public sealed class CatalogWatchHistoryTests : IAsyncLifetime
         await _service.ReportProgressAsync(Series(1930, season: 1, episode: 2, position: 10), CancellationToken.None);
         await _service.ReportProgressAsync(Series(1930, season: 1, episode: 1, position: 120), CancellationToken.None);
 
-        var rows = await _service.ListAsync(20, CancellationToken.None);
+        var rows = await _service.ListAsync(1, 20, CancellationToken.None);
 
         Assert.Equal(2, rows.Count);
         Assert.Equal([1, 2], rows.Select(row => row.Episode));
@@ -80,7 +80,7 @@ public sealed class CatalogWatchHistoryTests : IAsyncLifetime
         await _service.ReportProgressAsync(
             Movie(10378, position: 600, duration: 600, finished: true), CancellationToken.None);
 
-        var finished = Assert.Single(await _service.ListAsync(20, CancellationToken.None));
+        var finished = Assert.Single(await _service.ListAsync(1, 20, CancellationToken.None));
         Assert.True(finished.Finished);
         Assert.Equal(600, finished.PositionSeconds);
 
@@ -89,7 +89,7 @@ public sealed class CatalogWatchHistoryTests : IAsyncLifetime
 
         // The superseded finished row leaves with the new watch, so Continue Watching
         // never shows a stale "Watched" card next to the live one.
-        var row = Assert.Single(await _service.ListAsync(20, CancellationToken.None));
+        var row = Assert.Single(await _service.ListAsync(1, 20, CancellationToken.None));
         Assert.Equal(5, row.PositionSeconds);
         Assert.False(row.Finished);
     }
@@ -101,7 +101,7 @@ public sealed class CatalogWatchHistoryTests : IAsyncLifetime
         _clock.Advance(TimeSpan.FromSeconds(60));
         await _service.ReportProgressAsync(Movie(2, position: 5, duration: 600), CancellationToken.None);
 
-        var rows = await _service.ListAsync(20, CancellationToken.None);
+        var rows = await _service.ListAsync(1, 20, CancellationToken.None);
 
         Assert.Equal(new[] { 2, 1 }, rows.Select(row => row.TmdbId));
         Assert.False(rows[0].Finished);
@@ -114,13 +114,34 @@ public sealed class CatalogWatchHistoryTests : IAsyncLifetime
         await _service.ReportProgressAsync(Movie(1, position: 10, duration: 600), CancellationToken.None);
         _clock.Advance(TimeSpan.FromSeconds(1));
         await _service.ReportProgressAsync(Movie(2, position: 10, duration: 600), CancellationToken.None);
-        var target = (await _service.ListAsync(20, CancellationToken.None)).Single(row => row.TmdbId == 2);
+        var target = (await _service.ListAsync(1, 20, CancellationToken.None)).Single(row => row.TmdbId == 2);
 
-        Assert.True(await _service.RemoveAsync(target.Id, CancellationToken.None));
+        Assert.True(await _service.RemoveAsync(1, target.Id, CancellationToken.None));
 
-        var remaining = Assert.Single(await _service.ListAsync(20, CancellationToken.None));
+        var remaining = Assert.Single(await _service.ListAsync(1, 20, CancellationToken.None));
         Assert.Equal(1, remaining.TmdbId);
-        Assert.False(await _service.RemoveAsync(target.Id, CancellationToken.None));
+        Assert.False(await _service.RemoveAsync(1, target.Id, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Profiles_KeepIndependentResumeRows()
+    {
+        await _service.ReportProgressAsync(
+            Movie(10378, position: 10, duration: 600) with { ProfileId = 1 }, CancellationToken.None);
+        await _service.ReportProgressAsync(
+            Movie(10378, position: 200, duration: 600) with { ProfileId = 2 }, CancellationToken.None);
+
+        // The same movie reported by two profiles is two rows: the resume index is
+        // profile-scoped, so one profile's progress never overwrites the other's.
+        var profileOne = Assert.Single(await _service.ListAsync(1, 20, CancellationToken.None));
+        var profileTwo = Assert.Single(await _service.ListAsync(2, 20, CancellationToken.None));
+        Assert.Equal(10, profileOne.PositionSeconds);
+        Assert.Equal(200, profileTwo.PositionSeconds);
+
+        Assert.False(await _service.RemoveAsync(2, profileOne.Id, CancellationToken.None));
+        Assert.True(await _service.RemoveAsync(2, profileTwo.Id, CancellationToken.None));
+        Assert.Single(await _service.ListAsync(1, 20, CancellationToken.None));
+        Assert.Empty(await _service.ListAsync(2, 20, CancellationToken.None));
     }
 
     [Fact]
@@ -132,12 +153,12 @@ public sealed class CatalogWatchHistoryTests : IAsyncLifetime
             await _service.ReportProgressAsync(Movie(id, position: 10, duration: 600), CancellationToken.None);
         }
 
-        var page = await _service.ListAsync(40, CancellationToken.None);
+        var page = await _service.ListAsync(1, 40, CancellationToken.None);
         Assert.Equal(40, page.Count);
         Assert.Equal(45, page[0].TmdbId);
         Assert.Equal(6, page[^1].TmdbId);
 
-        Assert.Single(await _service.ListAsync(0, CancellationToken.None));
+        Assert.Single(await _service.ListAsync(1, 0, CancellationToken.None));
     }
 
     [Fact]
@@ -147,7 +168,7 @@ public sealed class CatalogWatchHistoryTests : IAsyncLifetime
         _clock.Advance(TimeSpan.FromDays(CatalogWatchHistoryService.RetentionDays + 1));
         await _service.ReportProgressAsync(Movie(2, position: 10, duration: 600), CancellationToken.None);
 
-        var rows = await _service.ListAsync(20, CancellationToken.None);
+        var rows = await _service.ListAsync(1, 20, CancellationToken.None);
 
         Assert.Equal(2, Assert.Single(rows).TmdbId);
     }
@@ -165,7 +186,8 @@ public sealed class CatalogWatchHistoryTests : IAsyncLifetime
             "Big Buck Bunny",
             null,
             "https://image.tmdb.org/t/p/w500/poster.jpg",
-            "https://image.tmdb.org/t/p/w1280/backdrop.jpg");
+            "https://image.tmdb.org/t/p/w1280/backdrop.jpg",
+            ProfileId: 1);
 
     private static ReportProgressRequest Series(int tmdbId, int season, int episode, double position)
         => new(
@@ -179,7 +201,8 @@ public sealed class CatalogWatchHistoryTests : IAsyncLifetime
             "The Beverly Hillbillies",
             $"S{season}E{episode} · The Clampetts Strike Oil",
             null,
-            null);
+            null,
+            ProfileId: 1);
 
     private sealed class MutableTimeProvider(DateTimeOffset start) : TimeProvider
     {

@@ -1,11 +1,28 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using System.Globalization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
+using NzbWebDAV.Services.Catalog;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Extensions;
 
 public static class HttpContextExtensions
 {
+    /// <summary>Header the frontend proxy uses to scope watch state to the picked profile.</summary>
+    public const string ViewerProfileHeaderName = "x-viewer-profile-id";
+
+    /// <summary>
+    /// The viewer profile this request acts as. An absent or malformed header means the
+    /// default profile, which is what admin sessions, WebDAV, and the SAB API use.
+    /// </summary>
+    public static int GetViewerProfileId(this HttpContext httpContext)
+    {
+        var raw = httpContext.Request.Headers[ViewerProfileHeaderName].ToString();
+        return int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id) && id > 0
+            ? id
+            : ViewerProfileService.DefaultProfileId;
+    }
+
     public static string? GetRequestParam(this HttpContext httpContext, string key)
     {
         return httpContext.GetQueryParam(key)

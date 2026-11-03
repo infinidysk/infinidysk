@@ -31,6 +31,7 @@ public sealed class CatalogPlaybackController(
         var baseUrl = configManager.GetBaseUrl();
         var playback = await playbackService.CreateAsync(
                 request,
+                HttpContext.GetViewerProfileId(),
                 HttpContext.GetPublicBaseUrl(baseUrl),
                 HttpContext.GetPublicPathPrefix(baseUrl),
                 HttpContext.RequestAborted)
