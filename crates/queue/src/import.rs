@@ -7,7 +7,7 @@ use std::future::Future;
 use std::ops::Range;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -38,6 +38,11 @@ const PAR2_MAX_ARTICLES: usize = 64;
 const PAR2_TOTAL_BYTES: usize = 128_000_000;
 const PAR2_TOTAL_ARTICLES: usize = 256;
 const STAT_ATTEMPTS: usize = 3;
+/// Archive key derivations running at once across all imports: half the cores, at least one,
+/// so the rest stay free for playback.
+static DERIVATIONS: LazyLock<Semaphore> = LazyLock::new(|| {
+    Semaphore::new(std::thread::available_parallelism().map_or(1, |n| n.get().div_ceil(2)))
+});
 /// Requests a first health check expects per file: two random bodies and a box walk; the
 /// first segment is usually held already.
 const FIRST_CHECK_REQUESTS: usize = 3;
@@ -1183,7 +1188,16 @@ async fn key(job: &Job, name: &str, kdf: &Kdf) -> Result<Derived, Error> {
         .get_or_try_init(|| {
             let (kdf, password) = (kdf.clone(), password.clone());
             async move {
-                match tokio::task::spawn_blocking(move || kdf.derive(&password)).await {
+                let permit = DERIVATIONS
+                    .acquire()
+                    .await
+                    .expect("DERIVATIONS is a static semaphore that is never closed");
+                match tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    kdf.derive(&password)
+                })
+                .await
+                {
                     Ok(derived) => derived.map_err(|e| archive_error(name, &e)),
                     Err(e) => Err(failed(format!("{name}: key derivation failed: {e}"))),
                 }
@@ -1923,6 +1937,46 @@ mod tests {
         assert_eq!(error.to_string(), missing("media.mkv").to_string());
         let issued = job.progress.issued.load(Ordering::Relaxed);
         assert!(issued > 0 && issued <= CONCURRENCY as u64, "{issued}");
+    }
+
+    #[tokio::test]
+    async fn key_derivations_wait_for_a_free_slot() {
+        let job = Arc::new(Job {
+            client: Arc::new(Client::new([])),
+            requests: Semaphore::new(CONCURRENCY),
+            progress: Arc::new(Progress::default()),
+            blocklist: Vec::new(),
+            bodies: Mutex::default(),
+            password: Some("secret".to_owned()),
+            keys: Mutex::default(),
+            waits: Mutex::default(),
+        });
+        let kdf = Kdf::SevenZip {
+            salt: Vec::new(),
+            cycles: 0,
+        };
+        let held = DERIVATIONS
+            .acquire_many(u32::try_from(DERIVATIONS.available_permits()).unwrap())
+            .await
+            .unwrap();
+
+        let mut task = tokio::spawn({
+            let job = Arc::clone(&job);
+            async move { key(&job, "archive.7z", &kdf).await }
+        });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut task)
+                .await
+                .is_err(),
+            "derived while every slot was taken"
+        );
+
+        drop(held);
+        let derived = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(derived.is_ok());
     }
 
     #[test]
