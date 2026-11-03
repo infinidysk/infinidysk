@@ -18,6 +18,8 @@ pub const SIGNATURE: &[u8] = b"7z\xbc\xaf\x27\x1c";
 const START_HEADER: u64 = 32;
 /// Upper bound for the (decoded) header; real headers are kilobytes.
 const MAX_HEADER: u64 = 256 << 20;
+/// Memory the parsed header may take; the same ceiling as the header bytes.
+const MAX_INDEX: usize = 256 << 20;
 
 const COPY: &[u8] = &[0x00];
 const LZMA: &[u8] = &[0x03, 0x01, 0x01];
@@ -102,7 +104,7 @@ impl Reader {
             let Some(bytes) = window(at, buf, offset, len) else {
                 return Ok(Step::Need { offset, len });
             };
-            let header = match std::mem::take(&mut self.state) {
+            let (header, packed) = match std::mem::take(&mut self.state) {
                 State::Start => {
                     self.state = start_header(bytes)?;
                     continue;
@@ -111,7 +113,7 @@ impl Reader {
                     if crc32(0, bytes) != crc {
                         return Err(Error::HeaderCrc(offset));
                     }
-                    parse(bytes, offset)?
+                    (parse(bytes, offset, MAX_INDEX)?, false)
                 }
                 State::Packed { folder, .. } => {
                     let key = match aes(&folder, offset)? {
@@ -130,14 +132,15 @@ impl Reader {
                         }
                     };
                     let parsed = decode(&folder, bytes, offset, key.as_ref())
-                        .and_then(|decoded| parse(&decoded, offset));
-                    match parsed {
+                        .and_then(|decoded| parse(&decoded, offset, MAX_INDEX));
+                    let header = match parsed {
                         // A wrong key decrypts to garbage.
                         Err(Error::Corrupt { .. } | Error::HeaderCrc(_)) if key.is_some() => {
                             return Err(Error::WrongPassword);
                         }
                         parsed => parsed?,
-                    }
+                    };
+                    (header, true)
                 }
                 State::Done => unreachable!("handled above"),
             };
@@ -145,6 +148,13 @@ impl Reader {
                 Header::Entries(entries) => {
                     self.state = State::Done;
                     return Ok(Step::Done(entries));
+                }
+                // 7-Zip reads one encoded header, never a chain of them.
+                Header::Encoded { offset, .. } if packed => {
+                    return Err(Error::Corrupt {
+                        offset,
+                        reason: "nested encoded header",
+                    });
                 }
                 Header::Encoded {
                     offset,
@@ -319,6 +329,22 @@ impl Folder {
 
 /// Size and CRC of one file packed into a folder.
 type Substream = (u64, Option<u32>);
+/// One row of the flattened stream table `entries` builds.
+type Stream = (
+    u64,
+    Option<u32>,
+    Option<Range<u64>>,
+    bool,
+    Option<Encryption>,
+);
+
+/// Index bytes charged per folder, including its default single substream.
+const FOLDER_INDEX: usize = size_of::<Folder>()
+    + size_of::<Vec<Substream>>()
+    + size_of::<Substream>()
+    + size_of::<usize>()
+    + size_of::<bool>()
+    + size_of::<Option<u32>>();
 
 #[derive(Debug, Default)]
 struct Streams {
@@ -350,8 +376,8 @@ mod id {
     pub const ENCODED_HEADER: u64 = 0x17;
 }
 
-fn parse(b: &[u8], offset: u64) -> Result<Header, Error> {
-    let mut c = Cur { b, offset };
+fn parse(b: &[u8], offset: u64, budget: usize) -> Result<Header, Error> {
+    let mut c = Cur { b, offset, budget };
     match c.number()? {
         id::HEADER => {}
         id::ENCODED_HEADER => {
@@ -408,6 +434,10 @@ fn streams(c: &mut Cur) -> Result<Streams, Error> {
             id::PACK_INFO => {
                 s.pack_pos = c.number()?;
                 let n = c.count()?;
+                c.charge(
+                    n,
+                    size_of::<u64>() + size_of::<bool>() + size_of::<Option<u32>>(),
+                )?;
                 loop {
                     match c.number()? {
                         id::END => break,
@@ -426,12 +456,15 @@ fn streams(c: &mut Cur) -> Result<Streams, Error> {
             _ => return Err(c.corrupt("unknown streams property")),
         }
     }
-    s.substreams = substreams.unwrap_or_else(|| {
+    s.substreams = if let Some(substreams) = substreams {
+        substreams
+    } else {
+        c.charge(s.folders.len(), size_of::<Stream>())?;
         s.folders
             .iter()
             .map(|f| vec![(f.unpack_size(), f.crc)])
             .collect()
-    });
+    };
     Ok(s)
 }
 
@@ -440,6 +473,7 @@ fn unpack_info(c: &mut Cur, folders: &mut Vec<Folder>) -> Result<(), Error> {
         return Err(c.corrupt("expected folders"));
     }
     let n = c.count()?;
+    c.charge(n, FOLDER_INDEX)?;
     if c.byte()? != 0 {
         return Err(c.corrupt("external folders"));
     }
@@ -487,8 +521,10 @@ fn folder(c: &mut Cur) -> Result<Folder, Error> {
         };
         ins += i;
         outs += o;
+        c.charge(1, size_of::<Coder>())?;
         f.coders.push(Coder { id, props });
     }
+    c.charge(outs, size_of::<bool>() + 2 * size_of::<u64>())?;
     let mut bound_outs = vec![false; outs];
     for _ in 1..outs {
         c.small(ins)?; // in index
@@ -517,6 +553,13 @@ fn substreams_info(c: &mut Cur, folders: &[Folder]) -> Result<Vec<Vec<Substream>
     if prop == id::NUM_UNPACK_STREAM {
         for n in &mut counts {
             *n = c.count()?;
+            c.charge(
+                *n,
+                size_of::<Substream>()
+                    + size_of::<bool>()
+                    + size_of::<Option<u32>>()
+                    + size_of::<Stream>(),
+            )?;
         }
         prop = c.number()?;
     }
@@ -597,6 +640,10 @@ struct FileInfo {
 
 fn files_info(c: &mut Cur) -> Result<Vec<FileInfo>, Error> {
     let n = c.count()?;
+    c.charge(
+        n,
+        3 * size_of::<bool>() + size_of::<String>() + size_of::<FileInfo>() + size_of::<Entry>(),
+    )?;
     let mut empty_stream = vec![false; n];
     let mut empty_file = Vec::new();
     let mut names = vec![String::new(); n];
@@ -610,6 +657,7 @@ fn files_info(c: &mut Cur) -> Result<Vec<FileInfo>, Error> {
         let mut p = Cur {
             b: c.take(len)?,
             offset: c.offset,
+            budget: 0,
         };
         match prop {
             id::EMPTY_STREAM => empty_stream = bits(&mut p, n)?,
@@ -662,7 +710,7 @@ fn entries(s: &Streams, files: Vec<FileInfo>, c: &Cur) -> Result<Vec<Entry>, Err
     // (folder, substream) for each stream in file order, plus where it starts.
     let overflow = || c.corrupt("pack offsets");
     let base = START_HEADER.checked_add(s.pack_pos).ok_or_else(overflow)?;
-    let mut streams = Vec::new();
+    let mut streams: Vec<Stream> = Vec::with_capacity(s.substreams.iter().map(Vec::len).sum());
     let mut pack_index = 0;
     for (f, subs) in s.folders.iter().zip(&s.substreams) {
         let mut start = s
@@ -726,6 +774,7 @@ fn entries(s: &Streams, files: Vec<FileInfo>, c: &Cur) -> Result<Vec<Entry>, Err
 struct Cur<'a> {
     b: &'a [u8],
     offset: u64,
+    budget: usize,
 }
 
 impl<'a> Cur<'a> {
@@ -747,6 +796,15 @@ impl<'a> Cur<'a> {
 
     fn byte(&mut self) -> Result<u8, Error> {
         Ok(self.take(1)?[0])
+    }
+
+    /// Takes `n * each` bytes from the parse budget, before they are allocated.
+    fn charge(&mut self, n: usize, each: usize) -> Result<(), Error> {
+        self.budget = n
+            .checked_mul(each)
+            .and_then(|bytes| self.budget.checked_sub(bytes))
+            .ok_or_else(|| self.corrupt("header too large to index"))?;
+        Ok(())
     }
 
     /// A count of at most `max`.
@@ -785,5 +843,57 @@ impl<'a> Cur<'a> {
             value |= high << (8 * extra);
         }
         Ok(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn too_large(parsed: &Result<Header, Error>) -> bool {
+        matches!(
+            parsed,
+            Err(Error::Corrupt {
+                reason: "header too large to index",
+                ..
+            })
+        )
+    }
+
+    #[test]
+    fn empty_folders_are_charged_before_they_are_collected() {
+        let mut bytes = vec![0x01, 0x04, 0x07, 0x0b, 0x64, 0x00];
+        bytes.extend([0x00; 100]);
+        bytes.extend([0x0c, 0x00, 0x00, 0x00]);
+        assert!(too_large(&parse(&bytes, 0, 1_000)));
+        assert!(matches!(
+            parse(&bytes, 0, MAX_INDEX),
+            Ok(Header::Entries(e)) if e.is_empty()
+        ));
+    }
+
+    #[test]
+    fn implicit_substreams_are_charged_for_the_stream_table() {
+        let mut bytes = vec![0x01, 0x04, 0x07, 0x0b, 0x64, 0x00];
+        bytes.extend([0x00; 100]);
+        bytes.extend([0x0c, 0x00, 0x00, 0x00]);
+        assert!(too_large(&parse(&bytes, 0, 100 * FOLDER_INDEX)));
+        assert!(matches!(
+            parse(&bytes, 0, 100 * (FOLDER_INDEX + size_of::<Stream>())),
+            Ok(Header::Entries(e)) if e.is_empty()
+        ));
+    }
+
+    #[test]
+    fn files_are_charged_before_they_are_allocated() {
+        let bytes = [0x01, 0x05, 0x08, 0x00, 0x00];
+        assert!(too_large(&parse(&bytes, 0, 100)));
+        assert!(matches!(
+            parse(&bytes, 0, MAX_INDEX),
+            Err(Error::Corrupt {
+                reason: "more files than streams",
+                ..
+            })
+        ));
     }
 }

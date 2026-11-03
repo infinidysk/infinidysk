@@ -95,3 +95,27 @@ fn empty_files_are_kept_and_directories_dropped() {
 fn rejects_other_formats() {
     assert_eq!(read(&fixture("Rar5.none.rar")), Err(Error::Signature));
 }
+
+#[test]
+fn rejects_nested_encoded_header() {
+    // An encoded header whose one COPY-coded stream is this same header.
+    let header = [
+        0x17, 0x06, 0x00, 0x01, 0x09, 0x12, 0x00, 0x07, 0x0b, 0x01, 0x00, 0x01, 0x01, 0x00, 0x0c,
+        0x12, 0x00, 0x00,
+    ];
+    let mut tail = Vec::new();
+    tail.extend_from_slice(&0u64.to_le_bytes());
+    tail.extend_from_slice(&(header.len() as u64).to_le_bytes());
+    tail.extend_from_slice(&crc32(0, &header).to_le_bytes());
+    let mut archive = b"7z\xbc\xaf\x27\x1c\x00\x04".to_vec();
+    archive.extend_from_slice(&crc32(0, &tail).to_le_bytes());
+    archive.extend_from_slice(&tail);
+    archive.extend_from_slice(&header);
+    assert!(matches!(
+        read(&archive),
+        Err(Error::Corrupt {
+            reason: "nested encoded header",
+            ..
+        })
+    ));
+}
