@@ -226,8 +226,9 @@ impl Writer {
             let mut removed = 0;
             for h in &stale {
                 let path = Path::new(&h.path);
-                if path.starts_with(&root)
-                    && !path.components().any(|c| c == Component::ParentDir)
+                if path
+                    .strip_prefix(&root)
+                    .is_ok_and(|rel| rel.components().all(|c| matches!(c, Component::Normal(_))))
                     && ours(h)
                 {
                     remove(path, &root);
@@ -639,7 +640,8 @@ mod tests {
     async fn sweep_ignores_paths_that_climb_out_of_the_folder() {
         let tmp = std::env::temp_dir().join(format!("infinidysk-handoff-{}", ItemId::new()));
         let strm_dir = tmp.join("strm");
-        fs::create_dir_all(&strm_dir).unwrap();
+        fs::create_dir_all(strm_dir.join("sub")).unwrap();
+        fs::create_dir_all(tmp.join("x")).unwrap();
         let db = Db::connect(&format!("sqlite:{}", tmp.join("db.sqlite").display()))
             .await
             .unwrap();
@@ -666,9 +668,32 @@ mod tests {
             job: Some(JobId::new()),
             size: None,
         };
-        db.record_handoffs(&[climbing]).await.unwrap();
+        db.record_handoffs(std::slice::from_ref(&climbing))
+            .await
+            .unwrap();
         writer.sweep(&db).await;
         assert!(outside.exists(), "a path with \"..\" is never swept");
+
+        let inside = strm_dir.join("a.strm");
+        fs::write(&inside, Config::new(&settings).strm_url(item, "mkv")).unwrap();
+        let in_root = Handoff {
+            path: strm_dir.join("sub/../a.strm").display().to_string(),
+            ..climbing.clone()
+        };
+        db.record_handoffs(&[in_root]).await.unwrap();
+        writer.sweep(&db).await;
+        assert!(inside.exists(), "nor one that stays inside");
+
+        // A configured root may itself hold "..".
+        settings.imports.strm_dir = tmp.join("x/../strm").display().to_string();
+        writer.configure(&settings);
+        let below = Handoff {
+            path: tmp.join("x/../strm/a.strm").display().to_string(),
+            ..climbing
+        };
+        db.record_handoffs(&[below]).await.unwrap();
+        writer.sweep(&db).await;
+        assert!(!inside.exists(), "a clean path below such a root is swept");
         fs::remove_dir_all(&tmp).unwrap();
     }
 
