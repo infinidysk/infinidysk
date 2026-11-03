@@ -652,9 +652,14 @@ impl Library {
             return Ok(Some("a library conversion is running"));
         }
         let journal = self.parts.db.conversions().await?;
+        // A row outside every configured folder waits for its folder to come back;
+        // the folders maintenance walks are not part of it.
+        let folders = folders(&self.settings().await);
         Ok(journal
             .iter()
-            .any(|c| c.state < CONVERTED)
+            .any(|c| {
+                c.state < CONVERTED && folders.iter().any(|f| Path::new(&c.source).starts_with(f))
+            })
             .then_some("a library conversion left moves unfinished"))
     }
 
@@ -2193,7 +2198,12 @@ fn holds(root: &Root, path: &Path, pointer: &Pointer) -> io::Result<Option<bool>
     Ok(Some(match (pointer, entry) {
         (Pointer::Link(text), Entry::Link) => root.read_link(path)?.as_os_str() == text.as_str(),
         (Pointer::Strm(text), Entry::File(len)) => {
-            len <= MAX_STRM_BYTES && root.read_to_string(path)? == *text
+            len <= MAX_STRM_BYTES
+                && match root.read_to_string(path, MAX_STRM_BYTES) {
+                    Ok(read) => read == *text,
+                    Err(e) if e.kind() == io::ErrorKind::InvalidData => false,
+                    Err(e) => return Err(e),
+                }
         }
         _ => false,
     }))

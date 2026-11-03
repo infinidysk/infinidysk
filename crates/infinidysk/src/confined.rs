@@ -155,7 +155,8 @@ impl Root {
     }
 
     /// The text of the file at `path`, refusing a symlink there.
-    pub fn read_to_string(&self, path: &Path) -> io::Result<String> {
+    /// The file at `path`, refused as `InvalidData` when longer than `max` bytes.
+    pub fn read_to_string(&self, path: &Path, max: u64) -> io::Result<String> {
         let (dirs, name) = self.split(path)?;
         let chain = self.dirs(&dirs, None)?;
         let fd = openat(
@@ -165,7 +166,13 @@ impl Root {
             Mode::empty(),
         )?;
         let mut text = String::new();
-        File::from(fd).read_to_string(&mut text)?;
+        File::from(fd).take(max + 1).read_to_string(&mut text)?;
+        if text.len() as u64 > max {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{} is longer than {max} bytes", path.display()),
+            ));
+        }
         Ok(text)
     }
 
@@ -211,8 +218,10 @@ impl Root {
                     };
                     let fd = openat(parent, name, flags, Mode::empty())
                         .map_err(|e| self.refused(e, parent, name, &at))?;
-                    if made {
-                        own(&fd, owner)?;
+                    if made && let Err(error) = own(&fd, owner) {
+                        // Made again, and owned, by the next attempt.
+                        let _ = unlinkat(parent, name, UnlinkatFlags::RemoveDir);
+                        return Err(error);
                     }
                     fd
                 }
@@ -316,7 +325,23 @@ mod tests {
     }
 
     #[test]
-    fn write_does_not_follow_a_planted_partial_symlink() {
+    fn reads_refuse_files_past_the_limit() {
+        let tmp = scratch();
+        fs::write(tmp.join("root/a.strm"), b"12345").unwrap();
+        let root = Root::open(&tmp.join("root")).unwrap();
+        assert_eq!(
+            root.read_to_string(&tmp.join("root/a.strm"), 5).unwrap(),
+            "12345"
+        );
+        let error = root
+            .read_to_string(&tmp.join("root/a.strm"), 4)
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn write_leaves_a_symlink_at_a_fixed_partial_name_alone() {
         let tmp = scratch();
         let owner = {
             let m = fs::metadata(&tmp).unwrap();

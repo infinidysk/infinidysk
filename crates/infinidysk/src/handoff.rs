@@ -122,7 +122,7 @@ impl Writer {
                     "{}/completed-symlinks/{}/{}",
                     c.mount_dir, job.category, job.folder
                 ),
-                files: Vec::new(),
+                ..Written::default()
             });
         }
         let storage = format!("{}/{}/{}", c.strm_dir, job.category, job.folder);
@@ -159,8 +159,8 @@ impl Writer {
             };
             writes.push((target, bytes, handoff));
         }
-        let (owner, root) = (self.owner, PathBuf::from(&c.strm_dir));
-        let undo_root = root.clone();
+        let (owner, root) = (self.owner, strm_root(&c));
+        let (undo_root, written_root) = (root.clone(), root.display().to_string());
         bounded(
             &self.busy,
             FS_TIMEOUT,
@@ -181,6 +181,7 @@ impl Writer {
                 }
                 Ok(Written {
                     storage,
+                    root: written_root,
                     files: done,
                 })
             },
@@ -227,21 +228,26 @@ impl Writer {
                 return;
             }
         };
-        let root = PathBuf::from(self.config().strm_dir);
+        let root = strm_root(&self.config());
+        // Records of files that could not be checked stay for a later sweep.
         let swept = tokio::task::spawn_blocking(move || {
             let mut removed = 0;
-            if let Ok(root) = Root::open(&root) {
-                for h in &stale {
-                    if ours(&root, h) {
+            let mut checked = Vec::with_capacity(stale.len());
+            let Ok(root) = Root::open(&root) else {
+                return (checked, removed);
+            };
+            for h in stale {
+                match ours(&root, &h) {
+                    Ok(true) => {
                         remove(&root, Path::new(&h.path));
                         removed += 1;
                     }
+                    Ok(false) => {}
+                    Err(_) => continue,
                 }
+                checked.push(h.path);
             }
-            (
-                stale.into_iter().map(|h| h.path).collect::<Vec<_>>(),
-                removed,
-            )
+            (checked, removed)
         })
         .await;
         let Ok((paths, removed)) = swept else {
@@ -269,7 +275,7 @@ impl HandoffWriter for Writer {
         if c.strategy != ImportStrategy::Strm {
             return Box::pin(std::future::ready(Ok(false)));
         }
-        let root = PathBuf::from(&c.strm_dir);
+        let root = strm_root(&c);
         let path = root.join(category).join(folder);
         Box::pin(bounded(
             &self.busy,
@@ -291,7 +297,10 @@ impl HandoffWriter for Writer {
     }
 
     fn discard(&self, written: &Written) {
-        if let Ok(root) = Root::open(Path::new(&self.config().strm_dir)) {
+        if written.files.is_empty() {
+            return;
+        }
+        if let Ok(root) = Root::open(Path::new(&written.root)) {
             for f in &written.files {
                 remove(&root, Path::new(&f.path));
             }
@@ -340,17 +349,40 @@ fn strm_item(text: &str) -> Option<ItemId> {
     ItemId::from_ids_path(ids)
 }
 
-/// Whether the file at a handoff path still holds what we wrote there.
-fn ours(root: &Root, h: &Handoff) -> bool {
+/// Whether the file at a handoff path still holds what we wrote there. A path outside
+/// `root` is not ours; an error means it could not be checked.
+fn ours(root: &Root, h: &Handoff) -> io::Result<bool> {
     let path = Path::new(&h.path);
-    match (root.entry(path), h.size) {
-        (Ok(Some(Entry::File(len))), Some(size)) => len == size,
-        (Ok(Some(Entry::File(len))), None) => {
-            len <= MAX_STRM_BYTES
-                && root.read_to_string(path).ok().and_then(|s| strm_item(&s)) == Some(h.item)
+    let checked: io::Result<bool> = (|| {
+        Ok(match (root.entry(path)?, h.size) {
+            (Some(Entry::File(len)), Some(size)) => len == size,
+            (Some(Entry::File(len)), None) => {
+                len <= MAX_STRM_BYTES
+                    && strm_item(&root.read_to_string(path, MAX_STRM_BYTES)?) == Some(h.item)
+            }
+            _ => false,
+        })
+    })();
+    match checked {
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData
+            ) =>
+        {
+            Ok(false)
         }
-        _ => false,
+        other => other,
     }
+}
+
+/// The STRM folder as a path; settings trim `/` to nothing.
+fn strm_root(c: &Config) -> PathBuf {
+    PathBuf::from(if c.strm_dir.is_empty() {
+        "/"
+    } else {
+        &c.strm_dir
+    })
 }
 
 /// Creates `dir` and its missing parents. Only for a configured folder; folders below it
@@ -635,6 +667,81 @@ mod tests {
         db.record_handoffs(&[below]).await.unwrap();
         writer.sweep(&db).await;
         assert!(!inside.exists(), "a clean path below such a root is swept");
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[tokio::test]
+    async fn discards_under_the_written_root_and_keeps_rows_it_cannot_check() {
+        let tmp = std::env::temp_dir().join(format!("infinidysk-handoff-{}", ItemId::new()));
+        let strm_dir = tmp.join("strm");
+        fs::create_dir_all(&strm_dir).unwrap();
+        fs::create_dir_all(tmp.join("elsewhere")).unwrap();
+        let db = Db::connect(&format!("sqlite:{}", tmp.join("db.sqlite").display()))
+            .await
+            .unwrap();
+        let vfs = Arc::new(Vfs::new(
+            db.clone(),
+            Arc::new(Client::new([])),
+            Budget::new(1 << 20),
+            0,
+            "/mnt",
+        ));
+        let mut settings = Settings::default();
+        settings.imports.strategy = ImportStrategy::Strm;
+        settings.imports.strm_dir = strm_dir.display().to_string();
+        settings.imports.strm_key.0 = "key".into();
+        settings.network.public_url = "https://media.example".into();
+        let writer = Writer::new(vfs, (1000, 1000), &settings);
+
+        let video = vec!["a.mkv".to_owned()];
+        let meta = FileMeta::Nzb(NzbFile {
+            segments: Segments::default(),
+            proof: None,
+        });
+        let item = ItemId::new();
+        let written = writer
+            .hand_off(HandoffJob {
+                job: JobId::new(),
+                category: "tv",
+                folder: "job",
+                kinds: &[media::Kind::Video],
+                files: vec![HandoffFile {
+                    item,
+                    path: &video,
+                    meta: &meta,
+                }],
+            })
+            .await
+            .unwrap();
+        let strm = strm_dir.join("tv/job/a.strm");
+        assert!(strm.exists());
+        let mut moved = settings.clone();
+        moved.imports.strm_dir = tmp.join("other").display().to_string();
+        writer.configure(&moved);
+        writer.discard(&written);
+        assert!(!strm.exists(), "removed below the folder it was written in");
+        writer.configure(&settings);
+
+        let planted = tmp.join("elsewhere/a.strm");
+        fs::write(&planted, Config::new(&settings).strm_url(item, "mkv")).unwrap();
+        std::os::unix::fs::symlink(tmp.join("elsewhere"), strm_dir.join("s")).unwrap();
+        let h = Handoff {
+            path: strm_dir.join("s/a.strm").display().to_string(),
+            item,
+            job: Some(JobId::new()),
+            size: None,
+        };
+        db.record_handoffs(std::slice::from_ref(&h)).await.unwrap();
+        writer.sweep(&db).await;
+        assert!(planted.exists());
+        assert_eq!(
+            db.stale_handoffs().await.unwrap().len(),
+            1,
+            "a row below a symlinked folder stays for a later sweep"
+        );
+        fs::remove_file(strm_dir.join("s")).unwrap();
+        writer.sweep(&db).await;
+        assert_eq!(db.stale_handoffs().await.unwrap(), []);
         fs::remove_dir_all(&tmp).unwrap();
     }
 

@@ -692,7 +692,11 @@ impl HandoffWriter for Handoffs {
                     size: None,
                 })
                 .collect();
-            Ok(Written { storage, files })
+            Ok(Written {
+                storage,
+                files,
+                ..Written::default()
+            })
         })
     }
 
