@@ -58,9 +58,9 @@ const MAX_NAME: usize = 64;
 /// Tools that read for another app; read history also names the app that started them.
 const HELPERS: [&str; 3] = ["ffmpeg", "ffprobe", "mediainfo"];
 /// Shells a helper may run under; the parent walk looks past them.
-const SHELLS: [&str; 3] = ["sh", "bash", "dash"];
+const SHELLS: [&str; 4] = ["sh", "ash", "bash", "dash"];
 /// Parents that only start processes; reaching one means no app is known.
-const LAUNCHERS: [&str; 7] = [
+const LAUNCHERS: [&str; 8] = [
     "init",
     "systemd",
     "tini",
@@ -68,6 +68,7 @@ const LAUNCHERS: [&str; 7] = [
     "dumb-init",
     "s6-supervise",
     "s6-svscan",
+    "supervisord",
 ];
 /// Parents looked at to find the app behind a helper.
 const MAX_PARENT_HOPS: usize = 4;
@@ -729,9 +730,9 @@ fn caller_label(process: Option<Process>, tid: u32, uid: u32, gid: u32) -> Strin
         None if tid == 0 => format!("pid unavailable · {ids}"),
         None => format!("pid {tid} · {ids}"),
         Some(Process { name, pid, parent }) => {
-            let name = match parent {
-                Some(app) => format!("{} › {}", clean(&app), clean(&name)),
-                None => clean(&name),
+            let name = match parent.map(|app| clean(&app)) {
+                Some(app) if !app.is_empty() => format!("{app} › {}", clean(&name)),
+                _ => clean(&name),
             };
             let thread = if pid == tid {
                 String::new()
@@ -1419,13 +1420,18 @@ mod tests {
             "each part loses control characters and the separator"
         );
         let long = "x".repeat(200);
-        let label = caller_label(Some(named("ffmpeg", 50, Some(&long))), 50, 0, 0);
-        assert!(
-            label.starts_with(&format!(
-                "{} \u{203a} ffmpeg (pid 50)",
+        assert_eq!(
+            caller_label(Some(named("ffmpeg", 50, Some(&long))), 50, 0, 0),
+            format!(
+                "{} \u{203a} ffmpeg (pid 50) \u{b7} uid 0 gid 0",
                 "x".repeat(MAX_NAME)
-            )),
-            "a long app name cannot push out the helper: {label}"
+            ),
+            "a long app name cannot push out the helper"
+        );
+        assert_eq!(
+            caller_label(Some(named("ffmpeg", 50, Some("\u{203a}\u{7}"))), 50, 0, 0),
+            "ffmpeg (pid 50) \u{b7} uid 0 gid 0",
+            "an app name that cleans to nothing is left out"
         );
     }
 
@@ -1438,8 +1444,10 @@ mod tests {
             (13, ("dash", Some(12))),
             (14, ("sh", Some(13))),
             (15, ("ffprobe", Some(10))),
+            (16, ("ash", Some(10))),
             (20, ("tini", Some(1))),
             (21, ("containerd-shim", Some(1))),
+            (22, ("supervisord", Some(1))),
             (30, ("sh", Some(31))),
             (31, ("sh", Some(30))),
             (40, ("sh", Some(41))),
@@ -1454,6 +1462,7 @@ mod tests {
         assert_eq!(walk(Some(10)).as_deref(), Some("silo"));
         assert_eq!(walk(Some(11)).as_deref(), Some("silo"), "through a shell");
         assert_eq!(walk(Some(15)).as_deref(), Some("silo"), "through a helper");
+        assert_eq!(walk(Some(16)).as_deref(), Some("silo"), "through ash");
         assert_eq!(
             walk(Some(13)).as_deref(),
             Some("silo"),
@@ -1462,6 +1471,7 @@ mod tests {
         assert_eq!(walk(Some(14)), None, "four shells use up the hops");
         assert_eq!(walk(Some(20)), None, "a launcher");
         assert_eq!(walk(Some(21)), None, "a launcher with a cut name");
+        assert_eq!(walk(Some(22)), None, "a process supervisor");
         assert_eq!(walk(Some(1)), None, "pid 1");
         assert_eq!(walk(None), None, "no PPid");
         assert_eq!(walk(Some(30)), None, "a loop between parents");
@@ -1469,6 +1479,37 @@ mod tests {
         assert_eq!(walk(Some(40)), None, "a parent that went away");
         assert_eq!(walk(Some(50)), None, "a hidden grandparent");
         assert_eq!(walk(Some(60)), None, "an empty name");
+    }
+
+    #[test]
+    fn a_live_helper_is_named_with_the_process_that_started_it() {
+        let me = std::process::id();
+        let dir = std::env::temp_dir().join(format!("infinidysk-fuse-helper-{me}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        // The kernel names a process after the path it was started from.
+        let helper = dir.join("ffmpeg");
+        let _ = std::fs::remove_file(&helper);
+        std::os::unix::fs::symlink("/bin/sleep", &helper).unwrap();
+        let mut child = std::process::Command::new(&helper)
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let found = loop {
+            match process(pid) {
+                Some(p) if p.name == "ffmpeg" => break p,
+                _ if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                _ => panic!("the helper never showed up under its own name"),
+            }
+        };
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+        let mine = parse_status(&read_proc(&format!("/proc/{me}/status")).unwrap()).unwrap();
+        assert_eq!(found.parent, Some(mine.0));
     }
 
     #[test]
