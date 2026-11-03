@@ -144,6 +144,21 @@ pub async fn serve(
     let db = Db::connect(&boot.database_url)
         .await
         .context("opening the database")?;
+    let booted = crate::database::serve_cutover(
+        listener,
+        db,
+        boot,
+        std::path::Path::new(crate::database::CONFIG_DIR),
+        crate::database::LIMITS,
+        &cancel,
+    )
+    .await
+    .context("switching to PostgreSQL")?;
+    let (listener, db) = (booted.listener, booted.db);
+    if cancel.is_cancelled() {
+        db.close().await;
+        return Ok(Exit::Stopped);
+    }
     let listener = crate::upgrade::serve_import(listener, &db, &boot.config_dir, &cancel)
         .await
         .context("serving the C# import")?;
@@ -489,9 +504,9 @@ pub async fn serve(
         db.clone(),
         boot,
         std::path::Path::new(crate::database::CONFIG_DIR),
-        crate::database::BootFile::load(std::path::Path::new(crate::database::CONFIG_DIR))?,
+        booted.file,
         crate::database::LIMITS,
-        None,
+        booted.error,
     );
     database.resume().await;
     let admin = Arc::new(Admin {

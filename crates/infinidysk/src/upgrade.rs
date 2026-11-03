@@ -1200,6 +1200,10 @@ fn upgrade_router(server: Arc<UpgradeServer>) -> Router {
         )
         .route("/api/v1/upgrade/retry", post(post_upgrade_retry))
         .route(
+            "/api/v1/database/cutover",
+            get(crate::database::get_cutover_none),
+        )
+        .route(
             crate::healthcheck::PATH,
             get(|State(server): State<Arc<UpgradeServer>>| async move {
                 use crate::healthcheck::{Check, Report};
@@ -1611,6 +1615,36 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), server.retry.notified())
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn import_router_reports_no_cutover() {
+        use axum::body::Body;
+        use http_body_util::BodyExt as _;
+        use tower::ServiceExt as _;
+
+        let server = Arc::new(UpgradeServer {
+            status: watch::channel(UpgradeStatus::importing()).0,
+            retry: Notify::new(),
+        });
+        let app = upgrade_router(Arc::clone(&server));
+        for state in [UpgradeState::Importing, UpgradeState::Failed] {
+            server.status.send_modify(|status| status.state = state);
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/v1/database/cutover")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let status: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(status["state"], "none");
+        }
     }
 
     #[tokio::test]

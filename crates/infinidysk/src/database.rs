@@ -12,15 +12,18 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
-use axum::Json;
 use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
+use axum::routing::get;
+use axum::{Json, Router};
 use infinidysk_db::Db;
 use infinidysk_db::transfer::{self, PgConnection};
 use serde::{Deserialize, Serialize};
+use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use utoipa::ToSchema;
 
@@ -406,7 +409,13 @@ impl Migrator {
         limits: Limits,
         cutover_error: Option<String>,
     ) -> Arc<Self> {
-        let current = db.is_postgres().then(|| display(&boot.database_url));
+        // After a boot-time switch `boot` still names SQLite; the boot file names the target.
+        let current = db.is_postgres().then(|| {
+            display(match (boot.database_source, &file.url) {
+                (Source::Env, _) | (_, None) => &boot.database_url,
+                (_, Some(url)) => url,
+            })
+        });
         let status = watch::channel(Status {
             error: cutover_error,
             ..Status::default()
@@ -868,6 +877,258 @@ impl Drop for WorkerGuard {
             .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         self.0.trace("worker stopped");
     }
+}
+
+/// Makes change capture match the boot file. Capture that may have missed a write forces a
+/// full copy. Returns why a requested switch became a copy.
+async fn reconcile(
+    db: &Db,
+    file: &mut BootFile,
+    dir: &Path,
+    owner: (u32, u32),
+) -> anyhow::Result<Option<String>> {
+    if db.is_postgres() {
+        return Ok(None);
+    }
+    let capture = db.capture().await?;
+    let Some(migration) = &mut file.migration else {
+        if capture != transfer::Capture::Off {
+            db.stop_capture().await?;
+            warn!("removed leftover change capture");
+        }
+        return Ok(None);
+    };
+    let version = db.schema_version().await?;
+    if capture == transfer::Capture::Intact && version == migration.schema_version {
+        return Ok(None);
+    }
+    let why = if capture == transfer::Capture::Intact {
+        "the SQLite schema changed since the copy"
+    } else {
+        "change capture was interrupted"
+    };
+    db.start_capture().await?;
+    let was_cutover = migration.state == MigrationState::Cutover;
+    migration.state = MigrationState::Copying;
+    migration.schema_version = version;
+    warn!(reason = why, "copying the database to PostgreSQL again");
+    if let Err(error) = file.save(dir, owner) {
+        warn!(reason = %error, "could not save the move to PostgreSQL; continuing");
+    }
+    Ok(was_cutover.then(|| "change capture was interrupted; copying again".to_owned()))
+}
+
+/// Renames `infinidysk.sqlite` and its `-wal` / `-shm` files to `…pre-postgres`. Only warns.
+fn retire(dir: &Path) {
+    for suffix in ["", "-wal", "-shm"] {
+        let from = dir.join(format!("{DEFAULT_SQLITE}{suffix}"));
+        if !from.exists() {
+            continue;
+        }
+        let to = dir.join(format!("{PRE_POSTGRES}{suffix}"));
+        if to.exists() {
+            warn!(path = %to.display(), "not renaming the SQLite file: its renamed copy already exists");
+            continue;
+        }
+        if let Err(error) = fs::rename(&from, &to) {
+            warn!(reason = %error, path = %from.display(), "could not rename the SQLite file");
+        }
+    }
+}
+
+/// What boot runs on after [`serve_cutover`].
+pub struct Booted {
+    pub listener: TcpListener,
+    pub db: Db,
+    /// In-memory boot file; newer than disk when a save failed.
+    pub file: BootFile,
+    /// Why a requested switch did not happen (the app then runs on SQLite).
+    pub error: Option<String>,
+}
+
+fn cutover_router(progress: Arc<watch::Sender<CutoverProgress>>) -> Router {
+    Router::new()
+        .route(
+            "/api/v1/database/cutover",
+            get(
+                |State(progress): State<Arc<watch::Sender<CutoverProgress>>>| async move {
+                    (
+                        [(header::CACHE_CONTROL, "no-store")],
+                        Json(CutoverStatus {
+                            state: CutoverState::Running,
+                            started_ms: crate::logs::started_ms(),
+                            progress: Some(progress.borrow().clone()),
+                        }),
+                    )
+                },
+            ),
+        )
+        .route(
+            crate::healthcheck::PATH,
+            get(|| async {
+                use crate::healthcheck::{Check, Report};
+                Report::new([("database", Check::Pending)])
+            }),
+        )
+        .fallback(|| async {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(header::RETRY_AFTER, "60")],
+                Json(serde_json::json!({
+                    "error": "Switching to PostgreSQL; open the web UI for progress."
+                })),
+            )
+        })
+        .with_state(progress)
+        .layer(axum::middleware::from_fn(crate::ui::serve))
+}
+
+/// Reconciles capture; when the boot file asks for the switch, serves a progress screen
+/// while it applies the last changes, verifies and switches.
+///
+/// # Errors
+///
+/// The listener failed, SQLite failed, or the switch was published but could not be made
+/// durable. Every other failure falls back to SQLite.
+pub async fn serve_cutover(
+    listener: TcpListener,
+    db: Db,
+    boot: &Boot,
+    dir: &Path,
+    limits: Limits,
+    cancel: &CancellationToken,
+) -> anyhow::Result<Booted> {
+    let owner = (boot.uid, boot.gid);
+    let mut file = BootFile::load(dir)?;
+    let booted = |listener, db, file, error| Booted {
+        listener,
+        db,
+        file,
+        error,
+    };
+    if boot.database_source == Source::Env {
+        return Ok(booted(listener, db, file, None));
+    }
+    if db.is_postgres() {
+        retire(dir);
+        return Ok(booted(listener, db, file, None));
+    }
+    if let Some(error) = reconcile(&db, &mut file, dir, owner).await? {
+        return Ok(booted(listener, db, file, Some(error)));
+    }
+    let Some(target) = file
+        .migration
+        .as_ref()
+        .filter(|m| m.state == MigrationState::Cutover)
+        .map(|m| m.target.clone())
+    else {
+        return Ok(booted(listener, db, file, None));
+    };
+    info!("switching to PostgreSQL");
+    let listener = listener.into_std()?;
+    let next = listener.try_clone()?;
+    let progress = Arc::new(
+        watch::channel(CutoverProgress {
+            stage: ProgressStage::Syncing,
+            table: None,
+            done: 0,
+            total: 0,
+        })
+        .0,
+    );
+    let stop = CancellationToken::new();
+    let serving = axum::serve(
+        TcpListener::from_std(listener)?,
+        cutover_router(Arc::clone(&progress)),
+    )
+    .with_graceful_shutdown(stop.clone().cancelled_owned())
+    .into_future();
+    tokio::pin!(serving);
+    let beat = Beat::new();
+    let switching = watchdog(limits.stall, &beat, async {
+        let report = |p: transfer::Progress| {
+            beat.touch();
+            progress.send_replace(CutoverProgress {
+                stage: p.stage.into(),
+                table: Some(p.table.to_owned()),
+                done: p.done,
+                total: p.total,
+            });
+        };
+        let mut conn = transfer::connect(&target, limits.lock_timeout).await?;
+        beat.touch();
+        transfer::migrate(&mut conn).await?;
+        beat.touch();
+        db.sync(&mut conn, true, &report).await?;
+        drop(conn);
+        progress.send_replace(CutoverProgress {
+            stage: ProgressStage::Switching,
+            table: None,
+            done: 0,
+            total: 0,
+        });
+        beat.touch();
+        // ponytail: a stall inside this call can leave one pooled connection's
+        // return-to-pool ping hanging in the background; once per boot, on a pool never used.
+        Ok(Db::connect(&target).await?)
+    });
+    let outcome = tokio::select! {
+        () = cancel.cancelled() => None,
+        result = switching => Some(result),
+        result = &mut serving => {
+            result?;
+            bail!("the switch HTTP server stopped unexpectedly");
+        }
+    };
+    stop.cancel();
+    serving.await?;
+    let listener = TcpListener::from_std(next)?;
+    let Some(outcome) = outcome else {
+        return Ok(booted(listener, db, file, None));
+    };
+    let error = match outcome {
+        Ok(target_db) => {
+            let mut switched = file.clone();
+            switched.url = Some(target.clone());
+            switched.migration = None;
+            match switched.save(dir, owner) {
+                Ok(()) => {
+                    if let Err(error) = db.stop_capture().await {
+                        warn!(reason = %error, "could not remove change capture from SQLite");
+                    }
+                    if let Err(error) = db.checkpoint().await {
+                        warn!(reason = %error, "could not checkpoint SQLite");
+                    }
+                    db.close().await;
+                    retire(dir);
+                    info!("switched to PostgreSQL");
+                    return Ok(booted(listener, target_db, switched, None));
+                }
+                Err(SaveError::NotDurable(error)) => {
+                    tracing::error!(
+                        reason = %error,
+                        "could not make /config/{BOOT_FILE} durable; stopping before either database takes writes"
+                    );
+                    return Err(SaveError::NotDurable(error).into());
+                }
+                Err(error) => anyhow::Error::from(error),
+            }
+        }
+        Err(error) => error,
+    };
+    let why = reason(&error, &target);
+    warn!(reason = %why, "switching to PostgreSQL failed; staying on SQLite");
+    if let Some(migration) = &mut file.migration {
+        migration.state = if needs_full_copy(&error) {
+            MigrationState::Copying
+        } else {
+            MigrationState::Syncing
+        };
+    }
+    if let Err(error) = file.save(dir, owner) {
+        warn!(reason = %error, "could not save the move to PostgreSQL; the next start tries the switch again");
+    }
+    Ok(booted(listener, db, file, Some(why)))
 }
 
 #[derive(Clone, Copy, Serialize, ToSchema)]
@@ -1420,8 +1681,15 @@ mod tests {
                 .expect("connect")
         }
 
+        /// A plain connection, not counted as a transfer backend.
+        async fn plain(&self) -> PgConnection {
+            <PgConnection as sqlx::Connection>::connect(&self.url)
+                .await
+                .expect("connect")
+        }
+
         async fn execute(&self, sql: &str) {
-            let mut conn = self.conn().await;
+            let mut conn = self.plain().await;
             sqlx::query(sqlx::AssertSqlSafe(sql.to_owned()))
                 .execute(&mut conn)
                 .await
@@ -1429,7 +1697,7 @@ mod tests {
         }
 
         async fn count(&self, sql: &str) -> i64 {
-            let mut conn = self.conn().await;
+            let mut conn = self.plain().await;
             sqlx::query_scalar(sqlx::AssertSqlSafe(sql.to_owned()))
                 .fetch_one(&mut conn)
                 .await
@@ -1455,6 +1723,7 @@ mod tests {
         transfer::migrate(&mut conn).await.expect("migrate");
         db.copy_all(&mut conn, |_| {}).await.expect("copy");
         db.sync(&mut conn, true, |_| {}).await.expect("verify");
+        sqlx::Connection::close(conn).await.expect("close");
     }
 
     #[tokio::test]
@@ -1532,6 +1801,401 @@ mod tests {
         assert_eq!(db.pending_changes().await.expect("pending"), 0);
         drop(conn);
         db.close().await;
+        pg.drop().await;
+    }
+
+    async fn cut(db: Db, boot: &Boot, dir: &Path, limits: Limits) -> anyhow::Result<Booted> {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        serve_cutover(listener, db, boot, dir, limits, &CancellationToken::new()).await
+    }
+
+    fn disk_state(dir: &Path) -> Option<MigrationState> {
+        BootFile::load(dir)
+            .expect("load")
+            .migration
+            .map(|m| m.state)
+    }
+
+    fn file_state(file: &BootFile) -> Option<MigrationState> {
+        file.migration.as_ref().map(|m| m.state)
+    }
+
+    fn renamed(dir: &Path) -> bool {
+        dir.join(PRE_POSTGRES).exists()
+    }
+
+    /// Saves a migration to `target` in `state`, at `db`'s schema version.
+    async fn request(db: &Db, dir: &Path, target: &str, state: MigrationState) {
+        let mut file = in_state(target, state);
+        if let Some(migration) = &mut file.migration {
+            migration.schema_version = db.schema_version().await.expect("version");
+        }
+        file.save(dir, owner()).expect("save");
+    }
+
+    async fn rebuild_config(dir: &Path) {
+        let raw = sqlx::SqlitePool::connect(&sqlite_url(dir))
+            .await
+            .expect("open raw");
+        sqlx::raw_sql(
+            "CREATE TABLE config_new (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL); \
+             INSERT INTO config_new SELECT key, value FROM config; \
+             DROP TABLE config; ALTER TABLE config_new RENAME TO config;",
+        )
+        .execute(&raw)
+        .await
+        .expect("rebuild");
+        raw.close().await;
+    }
+
+    #[tokio::test]
+    async fn failed_cutover_stays_on_sqlite() {
+        let dir = Dir::new();
+        let db = sqlite(&dir.0).await;
+        db.start_capture().await.expect("capture");
+        request(&db, &dir.0, UNREACHABLE, MigrationState::Cutover).await;
+        let booted = cut(db, &boot(&dir.0), &dir.0, short()).await.expect("boot");
+        assert!(!booted.db.is_postgres());
+        let error = booted.error.expect("error");
+        assert!(
+            !error.contains(UNREACHABLE) && !error.contains(":p@"),
+            "{error}"
+        );
+        assert_eq!(disk_state(&dir.0), Some(MigrationState::Syncing));
+        assert_eq!(
+            booted.db.capture().await.expect("capture"),
+            transfer::Capture::Intact
+        );
+        assert!(dir.0.join(DEFAULT_SQLITE).exists() && !renamed(&dir.0));
+        booted.db.close().await;
+    }
+
+    #[tokio::test]
+    async fn boot_reconciles_capture() {
+        // (a) A crash dropped capture after the switch was requested.
+        let dir = Dir::new();
+        let db = sqlite(&dir.0).await;
+        request(&db, &dir.0, UNREACHABLE, MigrationState::Cutover).await;
+        let booted = cut(db, &boot(&dir.0), &dir.0, short()).await.expect("boot");
+        assert!(booted.error.is_some());
+        assert_eq!(disk_state(&dir.0), Some(MigrationState::Copying));
+        assert_eq!(file_state(&booted.file), Some(MigrationState::Copying));
+        assert_eq!(
+            booted.db.capture().await.expect("capture"),
+            transfer::Capture::Intact
+        );
+        booted.db.close().await;
+
+        // (b) A migration rebuilt a captured table.
+        let dir = Dir::new();
+        let db = sqlite(&dir.0).await;
+        db.start_capture().await.expect("capture");
+        request(&db, &dir.0, UNREACHABLE, MigrationState::Syncing).await;
+        rebuild_config(&dir.0).await;
+        assert_eq!(
+            db.capture().await.expect("capture"),
+            transfer::Capture::Broken
+        );
+        let booted = cut(db, &boot(&dir.0), &dir.0, short()).await.expect("boot");
+        assert!(booted.error.is_none());
+        assert_eq!(disk_state(&dir.0), Some(MigrationState::Copying));
+        assert_eq!(
+            booted.db.capture().await.expect("capture"),
+            transfer::Capture::Intact
+        );
+        booted.db.close().await;
+
+        // (c) Capture left behind without a migration.
+        let dir = Dir::new();
+        let db = sqlite(&dir.0).await;
+        db.start_capture().await.expect("capture");
+        let booted = cut(db, &boot(&dir.0), &dir.0, short()).await.expect("boot");
+        assert!(booted.error.is_none());
+        assert_eq!(
+            booted.db.capture().await.expect("capture"),
+            transfer::Capture::Off
+        );
+        booted.db.close().await;
+    }
+
+    async fn transfer_backends(pg: &Pg) -> i64 {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity \
+             WHERE application_name = 'infinidysk-transfer' AND datname = $1",
+        )
+        .bind(&pg.name)
+        .fetch_one(&pg.admin)
+        .await
+        .expect("count")
+    }
+
+    async fn backends_gone(pg: &Pg, within: Duration) {
+        let deadline = Instant::now() + within;
+        while transfer_backends(pg).await > 0 {
+            assert!(Instant::now() < deadline, "transfer backends stayed");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn blocked_cutover_cleans_up_and_retries() {
+        let Some(pg) = Pg::create().await else {
+            return;
+        };
+        let dir = Dir::new();
+        let boot = boot(&dir.0);
+        let db = sqlite(&dir.0).await;
+        copy_to(&db, &pg).await;
+        db.write_config(&[("test.key", "1")], &[])
+            .await
+            .expect("write");
+        request(&db, &dir.0, &pg.url, MigrationState::Cutover).await;
+
+        // Lock: the final pass waits on a lock and gives up on the server.
+        let mut locker = pg.plain().await;
+        let mut tx = sqlx::Connection::begin(&mut locker).await.expect("begin");
+        sqlx::query("LOCK TABLE config IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *tx)
+            .await
+            .expect("lock");
+        let booted = tokio::time::timeout(Duration::from_secs(30), cut(db, &boot, &dir.0, short()))
+            .await
+            .expect("in time")
+            .expect("boot");
+        assert!(!booted.db.is_postgres());
+        assert!(booted.error.is_some());
+        assert_eq!(disk_state(&dir.0), Some(MigrationState::Syncing));
+        assert!(!renamed(&dir.0));
+        backends_gone(&pg, Duration::from_secs(5)).await;
+        tx.rollback().await.expect("unlock");
+        drop(locker);
+
+        // Stall: the server stops answering mid-pass.
+        pg.execute(
+            "CREATE FUNCTION stall() RETURNS trigger LANGUAGE plpgsql AS \
+             'BEGIN PERFORM pg_sleep(10); RETURN NULL; END'",
+        )
+        .await;
+        pg.execute(
+            "CREATE TRIGGER stall BEFORE INSERT ON config FOR EACH STATEMENT EXECUTE FUNCTION stall()",
+        )
+        .await;
+        request(&booted.db, &dir.0, &pg.url, MigrationState::Cutover).await;
+        let booted = tokio::time::timeout(
+            Duration::from_secs(8),
+            cut(booted.db, &boot, &dir.0, short()),
+        )
+        .await
+        .expect("in time")
+        .expect("boot");
+        assert!(!booted.db.is_postgres());
+        let error = booted.error.expect("error");
+        assert!(error.contains("stopped responding"), "{error}");
+        assert_eq!(disk_state(&dir.0), Some(MigrationState::Syncing));
+        backends_gone(&pg, Duration::from_secs(15)).await;
+
+        // Retry: the next boot switches.
+        pg.execute("DROP TRIGGER stall ON config").await;
+        request(&booted.db, &dir.0, &pg.url, MigrationState::Cutover).await;
+        let booted = cut(booted.db, &boot, &dir.0, short()).await.expect("boot");
+        assert!(booted.db.is_postgres());
+        assert!(booted.error.is_none());
+        assert!(renamed(&dir.0));
+        booted.db.close().await;
+        pg.drop().await;
+    }
+
+    #[tokio::test]
+    async fn unpublished_switch_stays_on_sqlite() {
+        let Some(pg) = Pg::create().await else {
+            return;
+        };
+        let dir = Dir::new();
+        let boot = boot(&dir.0);
+        let db = sqlite(&dir.0).await;
+        copy_to(&db, &pg).await;
+        request(&db, &dir.0, &pg.url, MigrationState::Cutover).await;
+        let tmp = dir.0.join(format!("{BOOT_FILE}.tmp"));
+        fs::create_dir(&tmp).expect("block tmp");
+        let booted = cut(db, &boot, &dir.0, short()).await.expect("boot");
+        assert!(!booted.db.is_postgres());
+        let error = booted.error.expect("error");
+        assert!(error.contains(BOOT_FILE), "{error}");
+        assert_eq!(file_state(&booted.file), Some(MigrationState::Syncing));
+        assert_eq!(disk_state(&dir.0), Some(MigrationState::Cutover));
+        assert_eq!(
+            booted.db.capture().await.expect("capture"),
+            transfer::Capture::Intact
+        );
+        assert!(!renamed(&dir.0));
+        fs::remove_dir(&tmp).expect("unblock tmp");
+        let booted = cut(booted.db, &boot, &dir.0, short()).await.expect("boot");
+        assert!(booted.db.is_postgres());
+        assert!(renamed(&dir.0));
+        booted.db.close().await;
+        pg.drop().await;
+    }
+
+    #[tokio::test]
+    async fn switch_stops_when_selection_is_not_durable() {
+        let Some(pg) = Pg::create().await else {
+            return;
+        };
+        let dir = Dir::new();
+        let db = sqlite(&dir.0).await;
+        copy_to(&db, &pg).await;
+        request(&db, &dir.0, &pg.url, MigrationState::Cutover).await;
+        fail_next_dir_sync();
+        let error = match cut(db, &boot(&dir.0), &dir.0, short()).await {
+            Ok(_) => panic!("the switch went on"),
+            Err(error) => format!("{error:#}"),
+        };
+        assert!(error.contains(BOOT_FILE), "{error}");
+        assert!(!renamed(&dir.0));
+        let db = sqlite(&dir.0).await;
+        assert_eq!(
+            db.capture().await.expect("capture"),
+            transfer::Capture::Intact
+        );
+        db.close().await;
+        let visible = BootFile::load(&dir.0).expect("load");
+        assert_eq!(visible.url.as_deref(), Some(pg.url.as_str()));
+
+        // An immediate restart whose sync fails again opens nothing.
+        fail_next_dir_sync();
+        assert!(select(None, &dir.0).is_err());
+        assert!(!renamed(&dir.0));
+
+        // A restart with a working sync runs on PostgreSQL and retires SQLite.
+        let (_, url, source) = select(None, &dir.0).expect("select");
+        assert_eq!(url, pg.url);
+        assert_eq!(source, Source::BootFile);
+        let mut boot = boot(&dir.0);
+        boot.database_url = url;
+        boot.database_source = source;
+        let pg_db = Db::connect(&boot.database_url).await.expect("connect");
+        let booted = cut(pg_db, &boot, &dir.0, short()).await.expect("boot");
+        assert!(booted.db.is_postgres());
+        assert!(renamed(&dir.0) && !dir.0.join(DEFAULT_SQLITE).exists());
+        booted.db.close().await;
+        pg.drop().await;
+    }
+
+    #[tokio::test]
+    async fn cancel_is_durable_with_target_locked() {
+        let Some(pg) = Pg::create().await else {
+            return;
+        };
+        let dir = Dir::new();
+        let boot = boot(&dir.0);
+        let db = sqlite(&dir.0).await;
+        copy_to(&db, &pg).await;
+        request(&db, &dir.0, &pg.url, MigrationState::Syncing).await;
+        let limits = Limits {
+            cleanup: Duration::from_secs(1),
+            ..short()
+        };
+        let migrator = Migrator::new(
+            db.clone(),
+            &boot,
+            &dir.0,
+            BootFile::load(&dir.0).expect("load"),
+            limits,
+            None,
+        );
+        migrator.resume().await;
+        let mut locker = pg.plain().await;
+        let mut tx = sqlx::Connection::begin(&mut locker).await.expect("begin");
+        sqlx::query("LOCK TABLE blobs IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *tx)
+            .await
+            .expect("lock");
+        let cancelled = tokio::time::timeout(Duration::from_secs(10), migrator.cancel())
+            .await
+            .expect("in time");
+        assert!(cancelled.is_ok());
+        assert!(BootFile::load(&dir.0).expect("load").migration.is_none());
+        assert_eq!(db.capture().await.expect("capture"), transfer::Capture::Off);
+
+        let booted = cut(db, &boot, &dir.0, limits).await.expect("boot");
+        assert!(booted.error.is_none());
+        let next = Migrator::new(
+            booted.db.clone(),
+            &boot,
+            &dir.0,
+            booted.file,
+            limits,
+            booted.error,
+        );
+        next.resume().await;
+        assert!(next.view().migration.is_none());
+        tx.rollback().await.expect("unlock");
+        drop(locker);
+        booted.db.close().await;
+        pg.drop().await;
+    }
+
+    #[tokio::test]
+    async fn divergence_recopies_then_switches() {
+        let Some(pg) = Pg::create().await else {
+            return;
+        };
+        let dir = Dir::new();
+        let boot = boot(&dir.0);
+        let db = sqlite(&dir.0).await;
+        db.write_config(&[("test.key", "sqlite")], &[])
+            .await
+            .expect("write");
+        copy_to(&db, &pg).await;
+        pg.execute("UPDATE config SET value = 'postgres' WHERE key = 'test.key'")
+            .await;
+        request(&db, &dir.0, &pg.url, MigrationState::Cutover).await;
+        let booted = cut(db, &boot, &dir.0, short()).await.expect("boot");
+        assert!(!booted.db.is_postgres());
+        let error = booted.error.clone().expect("error");
+        assert!(error.contains("config"), "{error}");
+        assert_eq!(file_state(&booted.file), Some(MigrationState::Copying));
+
+        let migrator = Migrator::new(
+            booted.db.clone(),
+            &boot,
+            &dir.0,
+            booted.file,
+            short(),
+            booted.error,
+        );
+        migrator.resume().await;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let view = migrator.view().migration.expect("migration");
+            if view.state == MigrationState::Syncing && view.error.is_none() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "no sync: {:?}", view.error);
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(migrator.cutover().await.is_ok());
+        let booted = cut(booted.db, &boot, &dir.0, short()).await.expect("boot");
+        assert!(booted.db.is_postgres());
+        let value = booted
+            .db
+            .config()
+            .await
+            .expect("config")
+            .into_iter()
+            .find(|(key, _)| key == "test.key")
+            .map(|(_, value)| value);
+        assert_eq!(value.as_deref(), Some("sqlite"));
+        let disk = BootFile::load(&dir.0).expect("load");
+        assert_eq!(disk.url.as_deref(), Some(pg.url.as_str()));
+        assert!(disk.migration.is_none());
+        assert!(renamed(&dir.0));
+        let migrator = Migrator::new(booted.db.clone(), &boot, &dir.0, booted.file, short(), None);
+        assert_eq!(
+            migrator.view().target,
+            Some(transfer::describe(&pg.url).expect("describe"))
+        );
+        booted.db.close().await;
         pg.drop().await;
     }
 }
