@@ -14,8 +14,8 @@ pub enum Error {
     Allocation(#[from] std::collections::TryReserveError),
     #[error("truncated")]
     Truncated,
-    #[error("{0} trailing bytes")]
-    Trailing(usize),
+    #[error("trailing data")]
+    Trailing,
     #[error("{0}")]
     Invalid(&'static str),
 }
@@ -89,7 +89,7 @@ impl<'a> Reader<'a> {
             }
             Ok(())
         } else {
-            Err(Error::Trailing(1))
+            Err(Error::Trailing)
         }
     }
 

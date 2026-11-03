@@ -351,6 +351,12 @@ mod tests {
                 Err(DecodeError::Payload(_))
             ));
         }
+
+        let mut remainder = [0; 16].as_slice();
+        let error = Reader::new(&mut remainder).finish().unwrap_err();
+        assert!(matches!(error, Error::Trailing));
+        assert_eq!(error.to_string(), "trailing data");
+        assert_eq!(remainder.len(), 15);
     }
 
     #[test]
