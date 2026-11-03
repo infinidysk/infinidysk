@@ -2,6 +2,8 @@
 //! `MemoryPack`, decoded into types shaped like the C# ones. Members are read by their
 //! `MemoryPackOrder`; members a blob predates read as their C# default.
 
+use std::io::Read as _;
+
 use uuid::Uuid;
 
 use crate::memorypack::{Error, Object, Reader};
@@ -110,7 +112,25 @@ pub fn decode<T>(
     compressed: &[u8],
     read: impl FnOnce(&Object<'_>) -> Result<T, Error>,
 ) -> Result<T, DecodeError> {
-    let raw = zstd::stream::decode_all(compressed)?;
+    decode_within(compressed, crate::MAX_METADATA_BYTES, read)
+}
+
+/// [`decode`], refusing more than `limit` decompressed bytes.
+fn decode_within<T>(
+    compressed: &[u8],
+    limit: u64,
+    read: impl FnOnce(&Object<'_>) -> Result<T, Error>,
+) -> Result<T, DecodeError> {
+    let mut raw = Vec::new();
+    zstd::stream::read::Decoder::new(compressed)?
+        .take(limit + 1)
+        .read_to_end(&mut raw)?;
+    if raw.len() as u64 > limit {
+        return Err(DecodeError::Zstd(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("larger than {limit} bytes once decompressed"),
+        )));
+    }
     let mut r = Reader::new(&raw);
     let root = r.object()?.ok_or(Error::Invalid("null root"))?;
     r.finish()?;
@@ -292,6 +312,20 @@ mod tests {
         let mut out = i32::try_from(items.len()).unwrap().to_le_bytes().to_vec();
         out.extend(items.iter().flatten());
         out
+    }
+
+    #[test]
+    fn decode_refuses_output_past_its_limit() {
+        let over = zstd::encode_all(&vec![0u8; 1_001][..], 3).unwrap();
+        match decode_within(&over, 1_000, nzb_file) {
+            Err(DecodeError::Zstd(e)) => assert!(e.to_string().contains("larger than"), "{e}"),
+            other => panic!("expected a size refusal, got {other:?}"),
+        }
+        let at = zstd::encode_all(&vec![0u8; 1_000][..], 3).unwrap();
+        assert!(matches!(
+            decode_within(&at, 1_000, nzb_file),
+            Err(DecodeError::Payload(_))
+        ));
     }
 
     #[test]
