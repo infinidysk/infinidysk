@@ -1237,6 +1237,48 @@ impl Db {
         Ok(ids.into_iter().map(BlobId).collect())
     }
 
+    pub async fn missing_nzb_links(&self) -> Result<(Vec<ItemId>, Vec<JobId>), Error> {
+        let items: Vec<Uuid> = on!(self, pool => sqlx::query_scalar(
+            "SELECT id FROM items WHERE nzb_blob IS NULL"
+        ).fetch_all(pool).await?);
+        let history: Vec<Uuid> = on!(self, pool => sqlx::query_scalar(
+            "SELECT id FROM history WHERE nzb_blob IS NULL"
+        ).fetch_all(pool).await?);
+        Ok((
+            items.into_iter().map(ItemId).collect(),
+            history.into_iter().map(JobId).collect(),
+        ))
+    }
+
+    /// Restores missing legacy NZB links without replacing current links or recreating rows.
+    pub async fn restore_nzb_links(
+        &self,
+        items: &[(ItemId, BlobId)],
+        history: &[(JobId, BlobId)],
+    ) -> Result<u64, Error> {
+        let mut restored = 0;
+        on!(self, pool => {
+            let mut tx = pool.begin().await?;
+            for &(id, blob) in items {
+                restored += sqlx::query(
+                    "UPDATE items SET nzb_blob = $2 WHERE id = $1 AND nzb_blob IS NULL \
+                     AND EXISTS (SELECT 1 FROM blobs WHERE id = $2)",
+                ).bind(id.0).bind(blob.0).execute(&mut *tx).await?.rows_affected();
+            }
+            for &(id, blob) in history {
+                restored += sqlx::query(
+                    "UPDATE history SET nzb_blob = $2 WHERE id = $1 AND nzb_blob IS NULL \
+                     AND EXISTS (SELECT 1 FROM blobs WHERE id = $2)",
+                ).bind(id.0).bind(blob.0).execute(&mut *tx).await?.rows_affected();
+            }
+            tx.commit().await?;
+        });
+        if restored != 0 {
+            self.notify(Change::History);
+        }
+        Ok(restored)
+    }
+
     /// Writes `blobs`, then items carried over from another install with their health
     /// bookkeeping (parents before children), in one transaction.
     pub async fn import_items(

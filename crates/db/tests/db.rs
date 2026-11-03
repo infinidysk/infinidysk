@@ -695,6 +695,7 @@ async fn exercise(db: &Db) {
     );
     assert!(db.item(content.id).await.expect("query").is_some());
     unlinked(db).await;
+    restored_nzb_links(db).await;
     first_checks(db).await;
 }
 
@@ -951,6 +952,87 @@ async fn unlinked(db: &Db) {
     assert!(db.item(kept.id).await.expect("query").is_some());
     assert!(db.item(cat.id).await.expect("query").is_some());
     assert_eq!(db.blob(loose_nzb).await.expect("query"), None);
+}
+
+async fn restored_nzb_links(db: &Db) {
+    let content = db
+        .item(ItemId::CONTENT)
+        .await
+        .expect("NZB recovery fixture")
+        .expect("NZB recovery fixture");
+    let item = Item::child(&content, "restored", ItemKind::NzbFile).expect("NZB recovery fixture");
+    let download = BlobId::new();
+    db.insert(std::slice::from_ref(&item), &[(download, b"nzb")])
+        .await
+        .expect("NZB recovery fixture");
+    let history = HistoryEntry {
+        id: JobId::new(),
+        created_at: 1,
+        file_name: "restored.nzb".into(),
+        job_name: "restored".into(),
+        category: String::new(),
+        status: JobStatus::Completed,
+        total_bytes: 0,
+        download_seconds: 0,
+        fail_message: None,
+        download_dir: None,
+        nzb_blob: None,
+        storage: None,
+    };
+    db.import_history(std::slice::from_ref(&history))
+        .await
+        .expect("NZB recovery fixture");
+    let (items, histories) = db.missing_nzb_links().await.expect("NZB recovery fixture");
+    assert!(items.contains(&item.id));
+    assert!(histories.contains(&history.id));
+    let missing = BlobId::new();
+    assert_eq!(
+        db.restore_nzb_links(&[(item.id, missing)], &[(history.id, missing)])
+            .await
+            .expect("NZB recovery fixture"),
+        0
+    );
+    assert_eq!(
+        db.restore_nzb_links(&[(item.id, download)], &[(history.id, download)])
+            .await
+            .expect("NZB recovery fixture"),
+        2
+    );
+    let other = BlobId::new();
+    db.insert(&[], &[(other, b"other")])
+        .await
+        .expect("NZB recovery fixture");
+    assert_eq!(
+        db.restore_nzb_links(&[(item.id, other)], &[(history.id, other)])
+            .await
+            .expect("NZB recovery fixture"),
+        0
+    );
+    assert_eq!(
+        db.item(item.id)
+            .await
+            .expect("NZB recovery fixture")
+            .expect("NZB recovery fixture")
+            .nzb_blob,
+        Some(download)
+    );
+    assert_eq!(
+        db.history_entry(history.id)
+            .await
+            .expect("NZB recovery fixture")
+            .expect("NZB recovery fixture")
+            .nzb_blob,
+        Some(download)
+    );
+    assert_eq!(
+        db.restore_nzb_links(&[(ItemId::new(), download)], &[(JobId::new(), download)])
+            .await
+            .expect("NZB recovery fixture"),
+        0
+    );
+    let (items, histories) = db.missing_nzb_links().await.expect("NZB recovery fixture");
+    assert!(!items.contains(&item.id));
+    assert!(!histories.contains(&history.id));
 }
 
 #[tokio::test]
