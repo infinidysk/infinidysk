@@ -60,6 +60,7 @@ async fn start_from(csharp_db: Option<&[u8]>) -> (SocketAddr, CancellationToken,
     let boot = Boot {
         listen: addr,
         database_url: format!("sqlite:{}", path.display()),
+        database_source: infinidysk::database::Source::Env,
         uid: 0,
         gid: 0,
         trace_minutes: 0,

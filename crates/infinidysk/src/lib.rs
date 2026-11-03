@@ -7,6 +7,7 @@ pub mod auth;
 mod cleanup;
 pub mod config;
 mod confined;
+pub mod database;
 mod fetch;
 mod files;
 mod handoff;

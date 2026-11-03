@@ -55,6 +55,8 @@ const OPTIMIZE_EVERY: Duration = Duration::from_hours(6);
 pub struct Boot {
     pub listen: SocketAddr,
     pub database_url: String,
+    /// Where `database_url` came from.
+    pub database_source: crate::database::Source,
     /// Owner of every mounted file.
     pub uid: u32,
     pub gid: u32,
@@ -71,15 +73,16 @@ pub struct Boot {
 }
 
 impl Boot {
-    /// `INFINIDYSK_LISTEN`, `INFINIDYSK_DATABASE_URL`, `PUID`, `PGID`,
+    /// `INFINIDYSK_LISTEN`, `INFINIDYSK_DATABASE_URL` (default: the URL in
+    /// `/config/database.toml`, else `/config/infinidysk.sqlite`), `PUID`, `PGID`,
     /// `INFINIDYSK_TRACE_MINUTES`, `INFINIDYSK_METRICS_PATH` (default: `metrics.sqlite`
     /// beside a SQLite database, else in `/config`), `INFINIDYSK_LOG_DIR` (default: `logs`
     /// in that same directory) and `INFINIDYSK_FFPROBE` (default:
     /// `ffprobe` on `PATH`).
     pub fn from_env() -> anyhow::Result<Self> {
-        let database_url = var(
-            "INFINIDYSK_DATABASE_URL",
-            "sqlite:/config/infinidysk.sqlite".to_owned(),
+        let (_, database_url, database_source) = crate::database::select(
+            std::env::var("INFINIDYSK_DATABASE_URL").ok(),
+            std::path::Path::new(crate::database::CONFIG_DIR),
         )?;
         let beside = database_url
             .strip_prefix("sqlite:")
@@ -98,6 +101,7 @@ impl Boot {
             log_dir: var("INFINIDYSK_LOG_DIR", beside.join("logs"))?,
             config_dir: beside,
             database_url,
+            database_source,
             uid: var("PUID", 1000)?,
             gid: var("PGID", 1000)?,
             trace_minutes: var("INFINIDYSK_TRACE_MINUTES", 0)?,

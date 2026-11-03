@@ -79,6 +79,7 @@ async fn start(
     let boot = Boot {
         listen: addr,
         database_url: format!("sqlite:{}", root.join("infinidysk.sqlite").display()),
+        database_source: infinidysk::database::Source::Env,
         uid: 0,
         gid: 0,
         trace_minutes: 0,
