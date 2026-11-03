@@ -72,6 +72,8 @@ pub struct Writer {
     /// Held while a call into the completed STRM directory runs, even after the job gave up
     /// on it, so a dead share ties up one blocking thread at most.
     busy: Arc<tokio::sync::Mutex<()>>,
+    /// `busy` for a folder settings would switch to, so a hung one leaves handoffs alone.
+    probing: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Writer {
@@ -81,6 +83,7 @@ impl Writer {
             owner,
             config: RwLock::new(Config::new(settings)),
             busy: Arc::default(),
+            probing: Arc::default(),
         }
     }
 
@@ -91,8 +94,13 @@ impl Writer {
     /// Checks that STRM files can be written in `dir`, creating it if missing.
     pub async fn probe(&self, dir: &str) -> Result<(), String> {
         let (dir, owner) = (PathBuf::from(dir), self.owner);
+        let gate = if dir == Path::new(&self.config().strm_dir) {
+            &self.busy
+        } else {
+            &self.probing
+        };
         bounded(
-            &self.busy,
+            gate,
             FS_TIMEOUT,
             move |_| {
                 let probed = (|| -> io::Result<()> {
@@ -686,7 +694,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn probe_refuses_while_the_folder_has_not_answered() {
+    async fn a_hung_folder_refuses_only_probes_of_itself() {
         let dir = std::env::temp_dir().join(format!("infinidysk-handoff-{}", ItemId::new()));
         let db = Db::connect(&format!(
             "sqlite:{}",
@@ -701,18 +709,29 @@ mod tests {
             0,
             "/mnt",
         ));
-        let writer = Writer::new(vfs, (1000, 1000), &Settings::default());
-        let target = dir.join("strm").display().to_string();
-
-        let held = writer.busy.try_lock().unwrap();
-        let refused = writer.probe(&target).await;
-        assert!(
-            refused
-                .unwrap_err()
+        let mut settings = Settings::default();
+        settings.imports.strategy = ImportStrategy::Strm;
+        settings.imports.strm_dir = dir.join("strm").display().to_string();
+        let writer = Writer::new(vfs, (1000, 1000), &settings);
+        let current = settings.imports.strm_dir.clone();
+        let candidate = dir.join("other").display().to_string();
+        let refused = |r: Result<(), String>| {
+            r.unwrap_err()
                 .contains("has not answered an earlier request yet")
-        );
+        };
+
+        // A call into the current folder still running.
+        let held = writer.busy.try_lock().unwrap();
+        assert!(refused(writer.probe(&current).await));
+        assert_eq!(writer.probe(&candidate).await, Ok(()));
         drop(held);
-        assert_eq!(writer.probe(&target).await, Ok(()));
+
+        // A candidate probe that has not returned.
+        let held = writer.probing.try_lock().unwrap();
+        assert!(refused(writer.probe(&candidate).await));
+        assert_eq!(writer.probe(&current).await, Ok(()));
+        assert_eq!(writer.taken("tv", "job").await, Ok(false));
+        drop(held);
         fs::remove_dir_all(&dir).unwrap();
     }
 
