@@ -184,6 +184,10 @@ async fn usage_groups_reads_by_program_without_pids_or_addresses() {
     let reads = [
         read("fuse", "player (pid 1, tid 2) · uid 0 gid 0", 10),
         read("fuse", "player (pid 3) · uid 0 gid 0", 20),
+        read("fuse", "silo › ffmpeg (pid 5) · uid 0 gid 0", 7),
+        read("fuse", "silo › ffmpeg (pid 6, tid 7) · uid 0 gid 0", 8),
+        read("fuse", "other › ffmpeg (pid 8) · uid 0 gid 0", 3),
+        read("fuse", "ffmpeg (pid 9) · uid 0 gid 0", 4),
         read("fuse", "pid 4 · uid 0 gid 0", 1),
         read("webdav", "agent/1.0 · 10.0.0.1", 5),
         read("webdav", "10.0.0.2", 2),
@@ -201,7 +205,10 @@ async fn usage_groups_reads_by_program_without_pids_or_addresses() {
         usage,
         [
             row("fuse", "player", 2, 30, 8),
+            row("fuse", "silo › ffmpeg", 2, 15, 8),
             row("webdav", "agent/1.0", 1, 5, 4),
+            row("fuse", "ffmpeg", 1, 4, 4),
+            row("fuse", "other › ffmpeg", 1, 3, 4),
             row("webdav", "10.0.0.2", 1, 2, 4),
             row("fuse", "", 1, 1, 4),
         ]
