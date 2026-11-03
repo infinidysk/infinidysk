@@ -221,6 +221,7 @@ public class DavDatabaseContext : DbContext
     public DbSet<Par2RepairJob> Par2RepairJobs => Set<Par2RepairJob>();
     public DbSet<SetupWizardState> SetupWizardStates => Set<SetupWizardState>();
     public DbSet<CatalogWatchHistory> CatalogWatchHistories => Set<CatalogWatchHistory>();
+    public DbSet<ViewerProfile> ViewerProfiles => Set<ViewerProfile>();
 
     // Pending blob writes for the current unit of work (flushed in SaveChangesAsync).
     private readonly List<DavNzbFile> _blobNzbFiles = [];
@@ -770,6 +771,9 @@ public class DavDatabaseContext : DbContext
             e.Property(i => i.Id)
                 .ValueGeneratedOnAdd();
 
+            e.Property(i => i.ProfileId)
+                .IsRequired();
+
             e.Property(i => i.Kind)
                 .HasConversion<int>()
                 .IsRequired();
@@ -787,15 +791,29 @@ public class DavDatabaseContext : DbContext
             e.Property(i => i.BackdropUrl)
                 .HasMaxLength(512);
 
-            // One resumable row per title+episode: finished rows leave the partial index so a
-            // re-watch after completion starts a new row instead of colliding with history.
-            e.HasIndex(i => new { i.Kind, i.TmdbId, i.Season, i.Episode })
+            // One resumable row per profile+title+episode: finished rows leave the partial index
+            // so a re-watch after completion starts a new row instead of colliding with history.
+            e.HasIndex(i => new { i.ProfileId, i.Kind, i.TmdbId, i.Season, i.Episode })
                 .IsUnique()
                 .HasFilter("NOT \"Finished\"")
                 .HasDatabaseName("IX_catalog_watch_history_ResumeKey");
 
-            e.HasIndex(i => i.UpdatedAtEpoch)
-                .HasDatabaseName("IX_catalog_watch_history_UpdatedAtEpoch");
+            e.HasIndex(i => new { i.ProfileId, i.UpdatedAtEpoch })
+                .HasDatabaseName("IX_catalog_watch_history_ProfileId_UpdatedAtEpoch");
+        });
+
+        // ViewerProfile
+        b.Entity<ViewerProfile>(e =>
+        {
+            e.ToTable("viewer_profiles");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .ValueGeneratedOnAdd();
+
+            e.Property(i => i.Name)
+                .IsRequired()
+                .HasMaxLength(ViewerProfile.MaxNameLength);
         });
 
         // BlobCleanupItem

@@ -105,6 +105,9 @@ namespace NzbWebDAV.Database.PostgresMigrations
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)");
 
+                    b.Property<int>("ProfileId")
+                        .HasColumnType("integer");
+
                     b.Property<int?>("Season")
                         .HasColumnType("integer");
 
@@ -127,10 +130,10 @@ namespace NzbWebDAV.Database.PostgresMigrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UpdatedAtEpoch")
-                        .HasDatabaseName("IX_catalog_watch_history_UpdatedAtEpoch");
+                    b.HasIndex("ProfileId", "UpdatedAtEpoch")
+                        .HasDatabaseName("IX_catalog_watch_history_ProfileId_UpdatedAtEpoch");
 
-                    b.HasIndex("Kind", "TmdbId", "Season", "Episode")
+                    b.HasIndex("ProfileId", "Kind", "TmdbId", "Season", "Episode")
                         .IsUnique()
                         .HasDatabaseName("IX_catalog_watch_history_ResumeKey")
                         .HasFilter("NOT \"Finished\"");
@@ -735,6 +738,27 @@ namespace NzbWebDAV.Database.PostgresMigrations
                     b.HasKey("Id");
 
                     b.ToTable("SetupWizardStates", (string)null);
+                });
+
+            modelBuilder.Entity("NzbWebDAV.Database.Models.ViewerProfile", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<long>("CreatedAtEpoch")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("viewer_profiles", (string)null);
                 });
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.WantedItem", b =>

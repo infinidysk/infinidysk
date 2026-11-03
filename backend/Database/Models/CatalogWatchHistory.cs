@@ -1,13 +1,17 @@
 namespace NzbWebDAV.Database.Models;
 
 /// <summary>
-/// One resumable catalog playback. Single-admin deployments need no per-user column:
-/// the unique index over (Kind, TmdbId, Season, Episode) where the row is unfinished is
+/// One resumable catalog playback, scoped to the viewer profile that owns it: the unique
+/// index over (ProfileId, Kind, TmdbId, Season, Episode) where the row is unfinished is
 /// the dedupe key, so a re-watch after completion starts a new row.
 /// </summary>
 public sealed class CatalogWatchHistory
 {
     public int Id { get; set; }
+
+    /// <summary>Viewer profile that owns this row. 1 is the seeded "Main" profile.</summary>
+    public int ProfileId { get; set; }
+
     public WatchKind Kind { get; set; }
     public int TmdbId { get; set; }
     public int? Season { get; set; }

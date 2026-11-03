@@ -98,6 +98,9 @@ namespace NzbWebDAV.Database.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("ProfileId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int?>("Season")
                         .HasColumnType("INTEGER");
 
@@ -120,10 +123,10 @@ namespace NzbWebDAV.Database.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UpdatedAtEpoch")
-                        .HasDatabaseName("IX_catalog_watch_history_UpdatedAtEpoch");
+                    b.HasIndex("ProfileId", "UpdatedAtEpoch")
+                        .HasDatabaseName("IX_catalog_watch_history_ProfileId_UpdatedAtEpoch");
 
-                    b.HasIndex("Kind", "TmdbId", "Season", "Episode")
+                    b.HasIndex("ProfileId", "Kind", "TmdbId", "Season", "Episode")
                         .IsUnique()
                         .HasDatabaseName("IX_catalog_watch_history_ResumeKey")
                         .HasFilter("NOT \"Finished\"");
@@ -726,6 +729,25 @@ namespace NzbWebDAV.Database.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("SetupWizardStates", (string)null);
+                });
+
+            modelBuilder.Entity("NzbWebDAV.Database.Models.ViewerProfile", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("CreatedAtEpoch")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("viewer_profiles", (string)null);
                 });
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.WantedItem", b =>
