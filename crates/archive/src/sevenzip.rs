@@ -329,6 +329,22 @@ impl Folder {
 
 /// Size and CRC of one file packed into a folder.
 type Substream = (u64, Option<u32>);
+/// One row of the flattened stream table `entries` builds.
+type Stream = (
+    u64,
+    Option<u32>,
+    Option<Range<u64>>,
+    bool,
+    Option<Encryption>,
+);
+
+/// Index bytes charged per folder, including its default single substream.
+const FOLDER_INDEX: usize = size_of::<Folder>()
+    + size_of::<Vec<Substream>>()
+    + size_of::<Substream>()
+    + size_of::<usize>()
+    + size_of::<bool>()
+    + size_of::<Option<u32>>();
 
 #[derive(Debug, Default)]
 struct Streams {
@@ -440,12 +456,15 @@ fn streams(c: &mut Cur) -> Result<Streams, Error> {
             _ => return Err(c.corrupt("unknown streams property")),
         }
     }
-    s.substreams = substreams.unwrap_or_else(|| {
+    s.substreams = if let Some(substreams) = substreams {
+        substreams
+    } else {
+        c.charge(s.folders.len(), size_of::<Stream>())?;
         s.folders
             .iter()
             .map(|f| vec![(f.unpack_size(), f.crc)])
             .collect()
-    });
+    };
     Ok(s)
 }
 
@@ -454,15 +473,7 @@ fn unpack_info(c: &mut Cur, folders: &mut Vec<Folder>) -> Result<(), Error> {
         return Err(c.corrupt("expected folders"));
     }
     let n = c.count()?;
-    c.charge(
-        n,
-        size_of::<Folder>()
-            + size_of::<Vec<Substream>>()
-            + size_of::<Substream>()
-            + size_of::<usize>()
-            + size_of::<bool>()
-            + size_of::<Option<u32>>(),
-    )?;
+    c.charge(n, FOLDER_INDEX)?;
     if c.byte()? != 0 {
         return Err(c.corrupt("external folders"));
     }
@@ -547,13 +558,7 @@ fn substreams_info(c: &mut Cur, folders: &[Folder]) -> Result<Vec<Vec<Substream>
                 size_of::<Substream>()
                     + size_of::<bool>()
                     + size_of::<Option<u32>>()
-                    + size_of::<(
-                        u64,
-                        Option<u32>,
-                        Option<Range<u64>>,
-                        bool,
-                        Option<Encryption>,
-                    )>(),
+                    + size_of::<Stream>(),
             )?;
         }
         prop = c.number()?;
@@ -705,7 +710,7 @@ fn entries(s: &Streams, files: Vec<FileInfo>, c: &Cur) -> Result<Vec<Entry>, Err
     // (folder, substream) for each stream in file order, plus where it starts.
     let overflow = || c.corrupt("pack offsets");
     let base = START_HEADER.checked_add(s.pack_pos).ok_or_else(overflow)?;
-    let mut streams = Vec::new();
+    let mut streams: Vec<Stream> = Vec::with_capacity(s.substreams.iter().map(Vec::len).sum());
     let mut pack_index = 0;
     for (f, subs) in s.folders.iter().zip(&s.substreams) {
         let mut start = s
@@ -863,6 +868,18 @@ mod tests {
         assert!(too_large(&parse(&bytes, 0, 1_000)));
         assert!(matches!(
             parse(&bytes, 0, MAX_INDEX),
+            Ok(Header::Entries(e)) if e.is_empty()
+        ));
+    }
+
+    #[test]
+    fn implicit_substreams_are_charged_for_the_stream_table() {
+        let mut bytes = vec![0x01, 0x04, 0x07, 0x0b, 0x64, 0x00];
+        bytes.extend([0x00; 100]);
+        bytes.extend([0x0c, 0x00, 0x00, 0x00]);
+        assert!(too_large(&parse(&bytes, 0, 100 * FOLDER_INDEX)));
+        assert!(matches!(
+            parse(&bytes, 0, 100 * (FOLDER_INDEX + size_of::<Stream>())),
             Ok(Header::Entries(e)) if e.is_empty()
         ));
     }
