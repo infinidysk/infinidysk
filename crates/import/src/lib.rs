@@ -296,8 +296,8 @@ fn blob_path(blobs: &Path, id: &str) -> Option<PathBuf> {
     Some(blobs.join(&hex[..2]).join(&hex[2..4]).join(id.to_string()))
 }
 
-/// Largest legacy NZB blob read; the queue's `nzb::MAX_UPLOAD`.
-pub(crate) const MAX_NZB_BLOB_BYTES: u64 = 257_000_000;
+/// Largest legacy NZB blob read; the queue's `nzb::MAX_NZB`.
+pub(crate) const MAX_NZB_BLOB_BYTES: u64 = 256_000_000;
 /// Largest legacy metadata blob read, and decompressed (see `csharp::decode`).
 pub(crate) const MAX_METADATA_BYTES: u64 = 64_000_000;
 
