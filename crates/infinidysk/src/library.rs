@@ -2042,6 +2042,10 @@ fn taken(path: &Path, item: ItemId) -> bool {
 pub(crate) fn local(dirs: &[config::LibraryDir], path: &str) -> Option<PathBuf> {
     dirs.iter().find_map(|d| {
         let rest = Path::new(path).strip_prefix(d.arr_path()).ok()?;
+        // `..` would leave the library folder.
+        if !rest.components().all(|c| matches!(c, Component::Normal(_))) {
+            return None;
+        }
         Some(Path::new(&d.path).join(rest))
     })
 }
@@ -2585,6 +2589,20 @@ mod tests {
         assert!(fs::symlink_metadata(outside.join("a.mkv")).is_ok());
         assert!(unlink(&found(library.join("show/a.mkv")), &folders).unwrap());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn local_rejects_paths_that_climb_out() {
+        let dirs = [config::LibraryDir {
+            path: "/lib".to_owned(),
+            arr_path: "/arr".to_owned(),
+        }];
+        assert_eq!(
+            local(&dirs, "/arr/show/a.strm"),
+            Some(PathBuf::from("/lib/show/a.strm"))
+        );
+        assert_eq!(local(&dirs, "/arr/../../outside.strm"), None);
+        assert_eq!(local(&dirs, "/arr/show/../../x.strm"), None);
     }
 
     #[test]
