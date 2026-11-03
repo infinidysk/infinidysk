@@ -3,10 +3,10 @@
 //! directory. The daily cleanup removes what no Arr took.
 
 use std::collections::HashMap;
-use std::fs::{self, DirBuilder, OpenOptions};
-use std::io::{self, Write as _};
-use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _};
-use std::path::{Component, Path, PathBuf};
+use std::fs::{self, DirBuilder};
+use std::io;
+use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _};
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
@@ -21,6 +21,7 @@ use tokio::sync::oneshot;
 use tracing::{info, warn};
 
 use crate::config::{ImportStrategy, Settings};
+use crate::confined::{Entry, Root};
 
 /// Release subtitles written beside the STRMs; Arrs import them with the video.
 const SUBTITLES: [&str; 7] = ["srt", "ass", "ssa", "vtt", "sub", "idx", "sup"];
@@ -164,11 +165,14 @@ impl Writer {
             &self.busy,
             FS_TIMEOUT,
             move |progress| {
+                let root = make_dir(&root, owner)
+                    .and_then(|()| Root::open(&root))
+                    .map_err(|e| format!("{}: {e}", root.display()))?;
                 let mut done: Vec<Handoff> = Vec::with_capacity(writes.len());
                 for (target, bytes, handoff) in writes {
-                    if let Err(error) = write(&target, &bytes, owner) {
+                    if let Err(error) = root.write(&target, &bytes, owner) {
                         for f in &done {
-                            remove(Path::new(&f.path), &root);
+                            remove(&root, Path::new(&f.path));
                         }
                         return Err(format!("{}: {error}", target.display()));
                     }
@@ -182,8 +186,10 @@ impl Writer {
             },
             // The job went back to the queue while these were written.
             move |late: Written| {
-                for f in &late.files {
-                    remove(Path::new(&f.path), &undo_root);
+                if let Ok(root) = Root::open(&undo_root) {
+                    for f in &late.files {
+                        remove(&root, Path::new(&f.path));
+                    }
                 }
             },
         )
@@ -224,15 +230,12 @@ impl Writer {
         let root = PathBuf::from(self.config().strm_dir);
         let swept = tokio::task::spawn_blocking(move || {
             let mut removed = 0;
-            for h in &stale {
-                let path = Path::new(&h.path);
-                if path
-                    .strip_prefix(&root)
-                    .is_ok_and(|rel| rel.components().all(|c| matches!(c, Component::Normal(_))))
-                    && ours(h)
-                {
-                    remove(path, &root);
-                    removed += 1;
+            if let Ok(root) = Root::open(&root) {
+                for h in &stale {
+                    if ours(&root, h) {
+                        remove(&root, Path::new(&h.path));
+                        removed += 1;
+                    }
                 }
             }
             (
@@ -266,11 +269,16 @@ impl HandoffWriter for Writer {
         if c.strategy != ImportStrategy::Strm {
             return Box::pin(std::future::ready(Ok(false)));
         }
-        let path = Path::new(&c.strm_dir).join(category).join(folder);
+        let root = PathBuf::from(&c.strm_dir);
+        let path = root.join(category).join(folder);
         Box::pin(bounded(
             &self.busy,
             FS_TIMEOUT,
-            move |_| Ok(fs::symlink_metadata(&path).is_ok()),
+            move |_| {
+                Ok(Root::open(&root)
+                    .and_then(|root| root.entry(&path))
+                    .is_ok_and(|e| e.is_some()))
+            },
             |_| {},
         ))
     }
@@ -283,9 +291,10 @@ impl HandoffWriter for Writer {
     }
 
     fn discard(&self, written: &Written) {
-        let root = PathBuf::from(self.config().strm_dir);
-        for f in &written.files {
-            remove(Path::new(&f.path), &root);
+        if let Ok(root) = Root::open(Path::new(&self.config().strm_dir)) {
+            for f in &written.files {
+                remove(&root, Path::new(&f.path));
+            }
         }
     }
 }
@@ -332,71 +341,20 @@ fn strm_item(text: &str) -> Option<ItemId> {
 }
 
 /// Whether the file at a handoff path still holds what we wrote there.
-fn ours(h: &Handoff) -> bool {
+fn ours(root: &Root, h: &Handoff) -> bool {
     let path = Path::new(&h.path);
-    let Ok(meta) = fs::symlink_metadata(path) else {
-        return false;
-    };
-    meta.is_file()
-        && match h.size {
-            Some(size) => meta.len() == size,
-            None => {
-                meta.len() <= MAX_STRM_BYTES
-                    && fs::read_to_string(path).ok().and_then(|s| strm_item(&s)) == Some(h.item)
-            }
+    match (root.entry(path), h.size) {
+        (Ok(Some(Entry::File(len))), Some(size)) => len == size,
+        (Ok(Some(Entry::File(len))), None) => {
+            len <= MAX_STRM_BYTES
+                && root.read_to_string(path).ok().and_then(|s| strm_item(&s)) == Some(h.item)
         }
-}
-
-/// Writes `bytes` to `path` through a temporary file, durably, creating its folders.
-pub fn write(path: &Path, bytes: &[u8], owner: (u32, u32)) -> io::Result<()> {
-    let dir = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
-    make_dir(dir, owner)?;
-    let name = path.file_name().ok_or(io::ErrorKind::InvalidInput)?;
-    let tmp = dir.join(format!(
-        ".{}.{}.partial",
-        name.to_string_lossy(),
-        ItemId::new()
-    ));
-    let mut created = false;
-    let written = (|| {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o644)
-            .open(&tmp)?;
-        created = true;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        own(&tmp, owner)?;
-        fs::rename(&tmp, path)
-    })();
-    if written.is_err() && created {
-        let _ = fs::remove_file(&tmp);
+        _ => false,
     }
-    written?;
-    fs::File::open(dir)?.sync_all()
 }
 
-/// Points the symlink `path` at `target` through a temporary link, durably.
-pub fn link(path: &Path, target: &str, (uid, gid): (u32, u32)) -> io::Result<()> {
-    let dir = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
-    let name = path.file_name().ok_or(io::ErrorKind::InvalidInput)?;
-    let tmp = dir.join(format!(".{}.partial", name.to_string_lossy()));
-    let _ = fs::remove_file(&tmp);
-    let linked = (|| {
-        std::os::unix::fs::symlink(target, &tmp)?;
-        if fs::symlink_metadata(&tmp)?.uid() == 0 && uid != 0 {
-            std::os::unix::fs::lchown(&tmp, Some(uid), Some(gid))?;
-        }
-        fs::rename(&tmp, path)
-    })();
-    if linked.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    linked?;
-    fs::File::open(dir)?.sync_all()
-}
-
+/// Creates `dir` and its missing parents. Only for a configured folder; folders below it
+/// are made by [`Root::write`].
 fn make_dir(dir: &Path, owner: (u32, u32)) -> io::Result<()> {
     if dir.is_dir() {
         return Ok(());
@@ -419,29 +377,12 @@ fn own(path: &Path, (uid, gid): (u32, u32)) -> io::Result<()> {
     Ok(())
 }
 
-/// Removes a handoff file, then the folders this empties below its category folder in
-/// `root`.
-fn remove(path: &Path, root: &Path) {
-    if let Err(error) = fs::remove_file(path)
+/// Removes a handoff file, then the folders this empties below its category folder.
+fn remove(root: &Root, path: &Path) {
+    if let Err(error) = root.remove(path, 1)
         && error.kind() != io::ErrorKind::NotFound
     {
         warn!(path = %path.display(), reason = %error, "could not remove a handed-off file");
-        return;
-    }
-    let Some(category) = path
-        .strip_prefix(root)
-        .ok()
-        .and_then(|rel| rel.components().next())
-        .map(|c| root.join(c))
-    else {
-        return;
-    };
-    let mut dir = path.parent();
-    while let Some(d) = dir.filter(|d| d.starts_with(&category) && *d != category) {
-        if fs::remove_dir(d).is_err() {
-            break;
-        }
-        dir = d.parent();
     }
 }
 
@@ -694,24 +635,6 @@ mod tests {
         db.record_handoffs(&[below]).await.unwrap();
         writer.sweep(&db).await;
         assert!(!inside.exists(), "a clean path below such a root is swept");
-        fs::remove_dir_all(&tmp).unwrap();
-    }
-
-    #[test]
-    fn write_does_not_follow_a_planted_partial_symlink() {
-        let tmp = std::env::temp_dir().join(format!("infinidysk-handoff-{}", ItemId::new()));
-        let dir = tmp.join("dir");
-        fs::create_dir_all(&dir).unwrap();
-        let victim = tmp.join("victim");
-        fs::write(&victim, "marker").unwrap();
-        let planted = dir.join(".a.strm.partial");
-        std::os::unix::fs::symlink(&victim, &planted).unwrap();
-        let meta = fs::metadata(&tmp).unwrap();
-
-        write(&dir.join("a.strm"), b"url", (meta.uid(), meta.gid())).unwrap();
-        assert_eq!(fs::read_to_string(&victim).unwrap(), "marker");
-        assert_eq!(fs::read_to_string(dir.join("a.strm")).unwrap(), "url");
-        assert!(fs::symlink_metadata(&planted).unwrap().is_symlink());
         fs::remove_dir_all(&tmp).unwrap();
     }
 

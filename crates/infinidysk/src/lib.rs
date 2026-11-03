@@ -6,6 +6,7 @@ pub mod arr;
 pub mod auth;
 mod cleanup;
 pub mod config;
+mod confined;
 mod fetch;
 mod files;
 mod handoff;
