@@ -1,7 +1,9 @@
 version: 2
 updates:
+  # Setting labels replaces Dependabot's defaults, so keep them next to v1/v2.
   - package-ecosystem: cargo
     directory: /
+    labels: [dependencies, v2]
     schedule:
       interval: monthly
     cooldown:
@@ -15,6 +17,7 @@ updates:
 
   - package-ecosystem: npm
     directory: /ui
+    labels: [dependencies, javascript, v2]
     schedule:
       interval: monthly
     cooldown:
@@ -28,6 +31,7 @@ updates:
 
   - package-ecosystem: docker
     directory: /
+    labels: [dependencies, v2]
     schedule:
       interval: monthly
     cooldown:
@@ -40,6 +44,7 @@ updates:
 
   - package-ecosystem: rust-toolchain
     directory: /
+    labels: [dependencies, v2]
     schedule:
       interval: monthly
     cooldown:
@@ -49,6 +54,7 @@ updates:
 
   - package-ecosystem: gitsubmodule
     directory: /
+    labels: [dependencies, v2]
     schedule:
       interval: monthly
     commit-message:
@@ -56,6 +62,7 @@ updates:
 
   - package-ecosystem: github-actions
     directory: /
+    labels: [dependencies, github_actions, v2]
     schedule:
       interval: monthly
     cooldown:
@@ -71,6 +78,7 @@ updates:
   - package-ecosystem: nuget
     directory: /
     target-branch: v1
+    labels: [dependencies, .NET, v1]
     schedule:
       interval: monthly
     cooldown:
@@ -89,6 +97,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     target-branch: v1
+    labels: [dependencies, github_actions, v1]
     schedule:
       interval: monthly
     cooldown:
@@ -104,6 +113,7 @@ updates:
   - package-ecosystem: npm
     directory: /frontend
     target-branch: v1
+    labels: [dependencies, javascript, v1]
     schedule:
       interval: monthly
     cooldown:
