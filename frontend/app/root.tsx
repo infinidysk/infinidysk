@@ -13,7 +13,11 @@ import {
 
 import "./app.css";
 import type { Route } from "./+types/root";
-import { getSessionUser, IS_FRONTEND_AUTH_DISABLED } from "~/auth/authentication.server";
+import {
+  getSessionUser,
+  getSessionViewerProfile,
+  IS_FRONTEND_AUTH_DISABLED,
+} from "~/auth/authentication.server";
 import { TopNavigation } from "./routes/_index/components/top-navigation/top-navigation";
 import { LeftNavigation } from "./routes/_index/components/left-navigation/left-navigation";
 import { PageLayout } from "./routes/_index/components/page-layout/page-layout";
@@ -43,12 +47,13 @@ export async function loader({ request }: Route.LoaderArgs) {
   const path = new URL(request.url).pathname.replace(/\.data$/, "");
   // The catalog is its own full-width surface: no admin sidebar, top nav, or banners.
   const isWatchRoute = path === "/watch" || path.startsWith("/watch/");
-  if (path === "/login" || path === "/onboarding") {
+  if (path === "/login" || path === "/login/admin" || path === "/onboarding") {
     return {
       useLayout: false,
       serviceProvider: null,
       isResetAdminPasswordSet: resetAdminPasswordSet,
       rcloneProxyWarningActive: false,
+      viewerProfile: null,
     };
   }
 
@@ -91,6 +96,7 @@ export async function loader({ request }: Route.LoaderArgs) {
         .find((item) => item.configName === "play.watchdog-enabled")
         ?.configValue?.toLowerCase() !== "false",
     serviceProvider,
+    viewerProfile: sessionUser ? await getSessionViewerProfile(request) : null,
   };
 }
 
@@ -154,6 +160,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
     hasUsenetProviders,
     isWatchdogEnabled,
     serviceProvider,
+    viewerProfile,
   } = loaderData;
   const location = useLocation();
   const navigation = useNavigation();
@@ -164,8 +171,11 @@ export default function App({ loaderData }: Route.ComponentProps) {
   const isCurrentExplorePage = location.pathname.startsWith("/explore");
   const isNextExplorePage = navigation.location?.pathname?.startsWith("/explore");
   const showLoading = isNavigating && !(isCurrentExplorePage && isNextExplorePage);
-  const hideShell = location.pathname === "/login" || location.pathname === "/onboarding";
-  const outlet = <Outlet context={{ role, isOidcEnabled, serviceProvider }} />;
+  const hideShell =
+    location.pathname === "/login" ||
+    location.pathname === "/login/admin" ||
+    location.pathname === "/onboarding";
+  const outlet = <Outlet context={{ role, isOidcEnabled, serviceProvider, viewerProfile }} />;
 
   if (useLayout && !hideShell) {
     return (

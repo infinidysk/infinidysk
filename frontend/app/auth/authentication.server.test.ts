@@ -180,6 +180,55 @@ describe("authentication sessions", () => {
     await expect(authentication.getOidcFlowState(authenticatedRequest)).resolves.toBeNull();
   });
 
+  it("selects a viewer profile and clears it on logout", async () => {
+    const selectResult = await authentication.selectViewerProfile(
+      new Request("http://localhost/login"),
+      { id: 7, name: "Kids" },
+    );
+    const profileRequest = new Request("http://localhost/watch", {
+      headers: { Cookie: getSetCookie(selectResult) },
+    });
+
+    await expect(authentication.getSessionViewerProfile(profileRequest)).resolves.toEqual({
+      id: 7,
+      name: "Kids",
+    });
+    await expect(authentication.getSessionUser(profileRequest)).resolves.toEqual({
+      username: "Kids",
+      role: "profile",
+    });
+    await expect(authentication.isAuthenticated(profileRequest)).resolves.toBe(true);
+
+    const logoutResult = await authentication.logout(profileRequest);
+    const loggedOutRequest = new Request("http://localhost/login", {
+      headers: { Cookie: getSetCookie(logoutResult) },
+    });
+    await expect(authentication.getSessionUser(loggedOutRequest)).resolves.toBeNull();
+    await expect(authentication.getSessionViewerProfile(loggedOutRequest)).resolves.toBeNull();
+  });
+
+  it("drops a picked profile when an admin signs in", async () => {
+    const selectResult = await authentication.selectViewerProfile(
+      new Request("http://localhost/login"),
+      { id: 7, name: "Kids" },
+    );
+    const adminResult = await authentication.setSessionUser(
+      new Request("http://localhost/login/admin", {
+        headers: { Cookie: getSetCookie(selectResult) },
+      }),
+      "alice",
+    );
+    const adminRequest = new Request("http://localhost/overview", {
+      headers: { Cookie: getSetCookie(adminResult) },
+    });
+
+    await expect(authentication.getSessionViewerProfile(adminRequest)).resolves.toBeNull();
+    await expect(authentication.getSessionUser(adminRequest)).resolves.toEqual({
+      username: "alice",
+      role: "admin",
+    });
+  });
+
   it("accepts authentication cookies on Request objects", async () => {
     const setResult = await authentication.setSessionUser(
       new Request("http://localhost/"),

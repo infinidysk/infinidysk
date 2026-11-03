@@ -7,8 +7,10 @@ function handlers(overrides: Partial<Parameters<typeof admitAndForwardBackendReq
     isAuthenticated: vi.fn(() => Promise.resolve(true)),
     injectApiKey: vi.fn(() => Promise.resolve()),
     getRole: vi.fn(() => Promise.resolve<string | null>("admin")),
+    applyViewerProfileScope: vi.fn(() => Promise.resolve()),
     rejectMetrics: vi.fn(),
     rejectReadOnlyMutation: vi.fn(),
+    rejectViewerProfileScope: vi.fn(),
     observeRclone: vi.fn(),
     forward: vi.fn(),
     ...overrides,
@@ -22,6 +24,7 @@ describe("backend proxy admission", () => {
     const request = {
       requiresMetricsAuthentication: false,
       isReadOnlyMutation: isReadOnlyDeniedBackendMutation("GET", path),
+      isViewerProfileRestricted: false,
       userAgent: undefined,
     };
     await admitAndForwardBackendRequest(request, readonly);
@@ -44,6 +47,7 @@ describe("backend proxy admission", () => {
         {
           requiresMetricsAuthentication: false,
           isReadOnlyMutation: isReadOnlyDeniedBackendMutation("POST", path),
+          isViewerProfileRestricted: false,
           userAgent: undefined,
         },
         callbacks,
@@ -61,6 +65,7 @@ describe("backend proxy admission", () => {
       {
         requiresMetricsAuthentication: true,
         isReadOnlyMutation: false,
+        isViewerProfileRestricted: false,
         userAgent: "rclone/v1.70.3",
       },
       callbacks,
@@ -81,6 +86,7 @@ describe("backend proxy admission", () => {
       {
         requiresMetricsAuthentication: false,
         isReadOnlyMutation: true,
+        isViewerProfileRestricted: false,
         userAgent: "rclone/v1.70.3",
       },
       callbacks,
@@ -90,6 +96,52 @@ describe("backend proxy admission", () => {
     expect(callbacks.rejectReadOnlyMutation).toHaveBeenCalledOnce();
     expect(callbacks.observeRclone).not.toHaveBeenCalled();
     expect(callbacks.forward).not.toHaveBeenCalled();
+  });
+
+  it("rejects profile sessions outside the catalog without forwarding", async () => {
+    const callbacks = handlers({
+      getRole: vi.fn(() => Promise.resolve("profile")),
+    });
+
+    await admitAndForwardBackendRequest(
+      {
+        requiresMetricsAuthentication: false,
+        isReadOnlyMutation: false,
+        isViewerProfileRestricted: true,
+        userAgent: undefined,
+      },
+      callbacks,
+    );
+
+    expect(callbacks.injectApiKey).toHaveBeenCalledOnce();
+    expect(callbacks.rejectViewerProfileScope).toHaveBeenCalledOnce();
+    expect(callbacks.applyViewerProfileScope).not.toHaveBeenCalled();
+    expect(callbacks.forward).not.toHaveBeenCalled();
+  });
+
+  it("scopes the profile header before observing and forwarding", async () => {
+    const calls: string[] = [];
+    const callbacks = handlers({
+      getRole: vi.fn(() => Promise.resolve("profile")),
+      applyViewerProfileScope: vi.fn(() => {
+        calls.push("scope");
+        return Promise.resolve();
+      }),
+      observeRclone: vi.fn(() => calls.push("observe")),
+      forward: vi.fn(() => calls.push("forward")),
+    });
+
+    await admitAndForwardBackendRequest(
+      {
+        requiresMetricsAuthentication: false,
+        isReadOnlyMutation: false,
+        isViewerProfileRestricted: false,
+        userAgent: undefined,
+      },
+      callbacks,
+    );
+
+    expect(calls).toEqual(["scope", "observe", "forward"]);
   });
 
   it("observes immediately before forwarding admitted requests", async () => {
@@ -103,6 +155,7 @@ describe("backend proxy admission", () => {
       {
         requiresMetricsAuthentication: false,
         isReadOnlyMutation: false,
+        isViewerProfileRestricted: false,
         userAgent: "rclone/v1.70.3",
       },
       callbacks,

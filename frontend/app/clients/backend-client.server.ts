@@ -15,6 +15,11 @@ import {
   catalogTitleResponseSchema,
   type CatalogTitleType,
 } from "~/clients/catalog-contract";
+import {
+  viewerProfileResponseSchema,
+  viewerProfilesResponseSchema,
+  type ViewerProfile,
+} from "~/clients/viewer-profile-contract";
 import { toStreamTracingStatus, type StreamTracingStatus } from "~/utils/stream-tracing-status";
 
 export type { StreamTracingStatus };
@@ -344,14 +349,45 @@ class BackendClient {
     );
   }
 
-  public async getCatalogHistory(limit = 20, signal?: AbortSignal) {
+  public async getCatalogHistory(limit = 20, profileId?: number, signal?: AbortSignal) {
     const parameters = new URLSearchParams({ limit: String(limit) });
     return await call(
       `${adminApi.catalogHistory}?${parameters}`,
       "Could not load your watch history",
-      { method: "GET", ...(signal ? { signal } : {}) },
+      {
+        method: "GET",
+        ...(profileId !== undefined
+          ? { headers: { "x-viewer-profile-id": String(profileId) } }
+          : {}),
+        ...(signal ? { signal } : {}),
+      },
       catalogHistoryResponseSchema,
     );
+  }
+
+  public async listViewerProfiles(): Promise<ViewerProfile[]> {
+    const data = await call(
+      adminApi.viewerProfiles,
+      "Could not load profiles",
+      { method: "GET" },
+      viewerProfilesResponseSchema,
+    );
+    return data.items;
+  }
+
+  public async createViewerProfile(name: string): Promise<ViewerProfile> {
+    const data = await call(
+      adminApi.viewerProfiles,
+      "Could not create the profile",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      },
+      viewerProfileResponseSchema,
+    );
+    if (!data.profile) throw new Error("Could not create the profile.");
+    return data.profile;
   }
 
   public async getCatalogTitle(
@@ -360,9 +396,7 @@ class BackendClient {
     season?: number,
     signal?: AbortSignal,
   ) {
-    const path = adminApi.catalogTitle
-      .replace("{type}", type)
-      .replace("{tmdbId}", String(tmdbId));
+    const path = adminApi.catalogTitle.replace("{type}", type).replace("{tmdbId}", String(tmdbId));
     const query = season === undefined ? "" : `?${new URLSearchParams({ season: String(season) })}`;
     return await call(
       `${path}${query}`,

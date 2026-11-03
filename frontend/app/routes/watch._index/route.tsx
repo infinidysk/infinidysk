@@ -7,6 +7,7 @@ import { TitleCard } from "~/components/watch/title-card";
 import { TitleRow } from "~/components/watch/title-row";
 import { fetchCatalogSearch } from "~/clients/catalog-client";
 import { backendClient } from "~/clients/backend-client.server";
+import { getSessionViewerProfile } from "~/auth/authentication.server";
 import type {
   CatalogHistoryItem,
   CatalogRow,
@@ -28,11 +29,13 @@ export async function loader({ request }: Route.LoaderArgs): Promise<WatchLoader
   const query = (new URL(request.url).searchParams.get("q") ?? "").trim();
 
   if (query.length === 0) {
+    // Profile sessions see their own Continue Watching, never the shared admin history.
+    const profileId = (await getSessionViewerProfile(request))?.id;
     try {
       const [home, history] = await Promise.all([
         backendClient.getCatalogHome(),
         // A history failure must not blank the catalog: it costs one row, not the page.
-        backendClient.getCatalogHistory(20).catch(() => null),
+        backendClient.getCatalogHistory(20, profileId).catch(() => null),
       ]);
       return {
         mode: "home",
@@ -105,7 +108,10 @@ function CatalogSkeletons() {
           <div className="skeleton h-5 w-40 rounded" />
           <div className="flex gap-3 overflow-hidden">
             {[0, 1, 2, 3, 4, 5].map((card) => (
-              <div key={card} className="skeleton aspect-[2/3] w-36 shrink-0 rounded-lg sm:w-44 lg:w-48" />
+              <div
+                key={card}
+                className="skeleton aspect-[2/3] w-36 shrink-0 rounded-lg sm:w-44 lg:w-48"
+              />
             ))}
           </div>
         </div>
@@ -156,7 +162,11 @@ function CatalogHero({ item }: { item: CatalogSummary }) {
   return (
     <section className="relative mt-4 overflow-hidden rounded-xl border border-base-content/10 bg-base-200">
       {item.backdropUrl && (
-        <img src={item.backdropUrl} alt="" className="absolute inset-0 h-full w-full object-cover opacity-45" />
+        <img
+          src={item.backdropUrl}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover opacity-45"
+        />
       )}
       <div className="relative flex flex-col gap-3 bg-gradient-to-t from-base-100 via-base-100/60 to-transparent p-6 md:p-10">
         <h1 className="max-w-3xl text-3xl font-bold tracking-tight md:text-4xl">{item.title}</h1>
@@ -271,7 +281,12 @@ function CatalogSearchView({
 
       {hasMore && (
         <div className="mt-6 flex justify-center">
-          <Button variant="secondary" size="small" onClick={() => void loadMore()} disabled={loading}>
+          <Button
+            variant="secondary"
+            size="small"
+            onClick={() => void loadMore()}
+            disabled={loading}
+          >
             {loading && <span className="loading loading-spinner loading-xs" />}
             Load more
           </Button>

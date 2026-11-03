@@ -1,5 +1,5 @@
 import type express from "express";
-import { isAuthenticated } from "~/auth/authentication.server";
+import { getSessionUser, isAuthenticated } from "~/auth/authentication.server";
 import { URL_BASE } from "~/utils/url-base";
 import { safeDecodePath } from "../../server/proxy-path";
 
@@ -15,11 +15,23 @@ const PUBLIC_PATHS = [
   "/__manifest",
   "/login",
   "/login.data",
+  "/login/admin",
+  "/login/admin.data",
   "/onboarding",
   "/onboarding.data",
   "/auth/oidc/login",
   "/auth/oidc/callback",
 ];
+
+// A profile session may only reach the catalog, its own logout, and public paths.
+const VIEWER_PROFILE_ALLOWED_PREFIXES = ["/watch", "/logout"];
+function isViewerProfileAllowedPath(pathname: string | null): boolean {
+  if (pathname === null) return false;
+  return VIEWER_PROFILE_ALLOWED_PREFIXES.some(
+    (prefix) =>
+      pathname === prefix || pathname.startsWith(`${prefix}/`) || pathname.startsWith(`${prefix}.`),
+  );
+}
 
 export async function authMiddleware(
   req: express.Request,
@@ -29,6 +41,13 @@ export async function authMiddleware(
   // Allow explicitly public paths (malformed encoding is not public)
   const pathname = safeDecodePath(req.path);
   if (pathname !== null && PUBLIC_PATHS.includes(pathname)) return next();
+
+  // A profile session may only reach the catalog, its own logout, and public paths
+  const user = await getSessionUser(req);
+  if (user?.role === "profile" && !isViewerProfileAllowedPath(pathname)) {
+    res.redirect(302, `${URL_BASE}/watch`);
+    return;
+  }
 
   // Allow authenticated sessions
   if (await isAuthenticated(req)) return next();

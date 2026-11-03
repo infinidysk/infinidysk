@@ -1,5 +1,7 @@
-import { Link } from "react-router";
+import { Form, Link, useOutletContext } from "react-router";
 import { Icon } from "~/components/ui";
+import type { AppOutletContext } from "~/auth/authorization";
+import { ProfileAvatar } from "~/components/watch/profile-avatar";
 import { withUrlBase } from "~/utils/url-base";
 
 export type WatchHeaderProps = {
@@ -12,6 +14,8 @@ export type WatchHeaderProps = {
  * admin UI. Deliberately separate from the admin shell — /watch renders no sidebar.
  */
 export function WatchHeader({ query }: WatchHeaderProps) {
+  const { role, viewerProfile } = useOutletContext<AppOutletContext>();
+
   return (
     <header className="sticky top-0 z-30 border-b border-base-content/10 bg-base-100/85 backdrop-blur">
       <div className="mx-auto flex w-full max-w-[1600px] flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 md:px-6">
@@ -46,10 +50,30 @@ export function WatchHeader({ query }: WatchHeaderProps) {
           </label>
         </form>
 
-        <Link to="/overview" className="btn btn-ghost btn-sm gap-1">
-          <Icon name="admin_panel_settings" className="!text-[18px]" />
-          Admin
-        </Link>
+        {role === "profile" ? (
+          <details className="dropdown dropdown-end">
+            <summary className="btn btn-ghost btn-sm gap-2">
+              <ProfileAvatar name={viewerProfile?.name ?? "Profile"} className="h-6 w-6 text-xs" />
+              {viewerProfile?.name ?? "Profile"}
+            </summary>
+            <ul className="menu dropdown-content z-40 mt-2 w-48 rounded-box border border-base-content/10 bg-base-100 p-2 shadow-lg">
+              <li>
+                <Form method="post" action={withUrlBase("/logout")}>
+                  <input name="confirm" value="true" type="hidden" />
+                  <button type="submit">Switch profile</button>
+                </Form>
+              </li>
+              <li>
+                <Link to="/logout">Sign out</Link>
+              </li>
+            </ul>
+          </details>
+        ) : (
+          <Link to="/overview" className="btn btn-ghost btn-sm gap-1">
+            <Icon name="admin_panel_settings" className="!text-[18px]" />
+            Admin
+          </Link>
+        )}
       </div>
     </header>
   );

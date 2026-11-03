@@ -7,12 +7,15 @@ import type { IncomingMessage } from "http";
 
 export const IS_FRONTEND_AUTH_DISABLED = process.env["DISABLE_FRONTEND_AUTH"] === "true";
 
-export type UserRole = "admin" | "readonly";
+export type UserRole = "admin" | "readonly" | "profile";
 
 export type User = {
   username: string;
   role: UserRole;
 };
+
+/** The picked viewer profile a session is watching as; admin/readonly sessions carry none. */
+export type ViewerProfileSession = { id: number; name: string };
 
 export type OidcFlowState = {
   codeVerifier: string;
@@ -114,7 +117,7 @@ export async function getSessionUser(request: Request | IncomingMessage): Promis
   if (!user?.username) return null;
   return {
     username: user.username,
-    role: user.role === "readonly" ? "readonly" : "admin",
+    role: user.role === "readonly" ? "readonly" : user.role === "profile" ? "profile" : "admin",
   };
 }
 
@@ -122,12 +125,14 @@ export async function login(request: Request): Promise<SessionResponseInit> {
   const user = await authenticate(request);
   const session = await sessionStorage.getSession(request.headers.get("cookie"));
   session.set("user", user);
+  session.unset("viewerProfile");
   return { headers: { "Set-Cookie": await sessionStorage.commitSession(session) } };
 }
 
 export async function logout(request: Request | IncomingMessage): Promise<SessionResponseInit> {
   const session = await sessionStorage.getSession(getCookieHeader(request));
   session.unset("user");
+  session.unset("viewerProfile");
   return { headers: { "Set-Cookie": await sessionStorage.commitSession(session) } };
 }
 
@@ -139,7 +144,38 @@ export async function setSessionUser(
   const session = await sessionStorage.getSession(getCookieHeader(request));
   session.set("user", { username, role });
   session.unset("oidcFlow");
+  session.unset("viewerProfile");
   return { headers: { "Set-Cookie": await sessionStorage.commitSession(session) } };
+}
+
+/**
+ * Signs the session in as a viewer profile. Selecting a tile is the whole sign-in, so the
+ * profile name doubles as the session username; no credential or profile id is trusted
+ * from the browser beyond the id chosen on the picker.
+ */
+export async function selectViewerProfile(
+  request: Request | IncomingMessage,
+  profile: ViewerProfileSession,
+): Promise<SessionResponseInit> {
+  const session = await sessionStorage.getSession(getCookieHeader(request));
+  session.set("user", { username: profile.name, role: "profile" } satisfies User);
+  session.set("viewerProfile", { id: profile.id, name: profile.name });
+  session.unset("oidcFlow");
+  return { headers: { "Set-Cookie": await sessionStorage.commitSession(session) } };
+}
+
+export async function getSessionViewerProfile(
+  request: Request | IncomingMessage,
+): Promise<ViewerProfileSession | null> {
+  if (IS_FRONTEND_AUTH_DISABLED) return null;
+
+  const cookieHeader = getCookieHeader(request);
+  if (!cookieHeader) return null;
+
+  const session = await sessionStorage.getSession(cookieHeader);
+  const profile = session.get("viewerProfile") as ViewerProfileSession | undefined;
+  if (!profile || !Number.isInteger(profile.id) || profile.id <= 0 || !profile.name) return null;
+  return { id: profile.id, name: profile.name };
 }
 
 export async function setOidcFlowState(

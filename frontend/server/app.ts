@@ -16,7 +16,11 @@ import {
 } from "./proxy-path";
 import { logger, requestPathForLog } from "./logger";
 import { authMiddleware } from "~/auth/auth-middleware.server";
-import { getSessionUser, isAuthenticated } from "~/auth/authentication.server";
+import {
+  getSessionUser,
+  getSessionViewerProfile,
+  isAuthenticated,
+} from "~/auth/authentication.server";
 import { setApiKeyForAuthenticatedRequests } from "./inject-api-key.server";
 import {
   BACKEND_FAILURE_LOG_THROTTLE_MS,
@@ -35,6 +39,7 @@ import { handleBackendProxyResponse } from "./backend-proxy-response";
 import { oidcRouter } from "./oidc-routes";
 import { observeRcloneProxyRequest } from "./rclone-proxy-warning.server";
 import { admitAndForwardBackendRequest } from "./backend-proxy-admission";
+import { applyViewerProfileScope, isViewerProfileAllowedBackendPath } from "./viewer-profile-scope";
 import { URL_BASE } from "~/utils/url-base";
 
 export const app = express();
@@ -128,7 +133,14 @@ const forwardToBackend = createProxyMiddleware({
   },
 });
 
-const credentialPostPaths = new Set(["/login", "/login.data", "/onboarding", "/onboarding.data"]);
+const credentialPostPaths = new Set([
+  "/login",
+  "/login.data",
+  "/login/admin",
+  "/login/admin.data",
+  "/onboarding",
+  "/onboarding.data",
+]);
 const oidcGetPaths = new Set(["/auth/oidc/login", "/auth/oidc/callback"]);
 const credentialRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -166,10 +178,15 @@ app.use(credentialRateLimiter);
 app.use(async (req, res, next) => {
   if (shouldProxyToBackend(req.method, req.path)) {
     const decodedPath = safeDecodePath(req.path);
+    const role = (await getSessionUser(req))?.role ?? null;
     return admitAndForwardBackendRequest(
       {
         requiresMetricsAuthentication: decodedPath === "/metrics",
         isReadOnlyMutation: isReadOnlyDeniedBackendMutation(req.method, req.path),
+        // Malformed paths stay restricted: only an explicitly allowed decoded path passes.
+        isViewerProfileRestricted:
+          role === "profile" &&
+          !(decodedPath !== null && isViewerProfileAllowedBackendPath(decodedPath)),
         userAgent: req.headers["user-agent"],
       },
       {
@@ -181,7 +198,9 @@ app.use(async (req, res, next) => {
                 req,
                 getFrontendRuntimeConfig().frontendBackendApiKey,
               ),
-        getRole: async () => (await getSessionUser(req))?.role ?? null,
+        getRole: () => Promise.resolve(role),
+        applyViewerProfileScope: async () =>
+          applyViewerProfileScope(req, (await getSessionViewerProfile(req))?.id ?? null),
         rejectMetrics: () => {
           res.status(401).type("text/plain").send("Metrics authentication required.");
         },
@@ -189,6 +208,12 @@ app.use(async (req, res, next) => {
           res.status(403).json({
             status: false,
             error: "Read-only users cannot perform destructive maintenance.",
+          });
+        },
+        rejectViewerProfileScope: () => {
+          res.status(403).json({
+            status: false,
+            error: "Profiles cannot access server administration.",
           });
         },
         observeRclone: (userAgent) => observeRcloneProxyRequest(userAgent, logger.warn),

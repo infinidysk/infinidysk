@@ -3,7 +3,7 @@ import type { ShouldRevalidateFunctionArgs } from "react-router";
 /** True for pages the root loader renders without the app layout. */
 export function isLayoutlessPath(pathname: string): boolean {
   const path = pathname.replace(/\.data$/, "");
-  return path === "/login" || path === "/onboarding";
+  return path === "/login" || path === "/login/admin" || path === "/onboarding";
 }
 
 /**

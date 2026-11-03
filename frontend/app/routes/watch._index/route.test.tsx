@@ -7,6 +7,7 @@ import WatchRoute, { loader } from "./route";
 import type { CatalogHistoryItem, CatalogRow, CatalogSearchPage } from "~/clients/catalog-contract";
 
 const mocks = vi.hoisted(() => ({
+  getSessionViewerProfile: vi.fn(),
   getCatalogHome: vi.fn(),
   getCatalogHistory: vi.fn(),
   searchCatalog: vi.fn(),
@@ -20,6 +21,9 @@ vi.mock("~/clients/backend-client.server", () => ({
     getCatalogHistory: mocks.getCatalogHistory,
     searchCatalog: mocks.searchCatalog,
   },
+}));
+vi.mock("~/auth/authentication.server", () => ({
+  getSessionViewerProfile: mocks.getSessionViewerProfile,
 }));
 vi.mock("~/clients/catalog-client", () => ({
   fetchCatalogSearch: mocks.fetchCatalogSearch,
@@ -105,6 +109,7 @@ function renderWatch(data: Awaited<ReturnType<typeof loader>>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.getSessionViewerProfile.mockResolvedValue({ id: 7, name: "Kids" });
   mocks.getCatalogHome.mockResolvedValue({ status: true, rows: [trendingRow, popularRow] });
   mocks.getCatalogHistory.mockResolvedValue({ status: true, items: [] });
   mocks.removeCatalogHistoryItem.mockResolvedValue(undefined);
@@ -128,7 +133,8 @@ describe("watch catalog loader", () => {
     expect(data.mode).toBe("home");
     expect(data.rows.map((row) => row.id)).toEqual(["trending", "popular-movies"]);
     expect(data.history).toEqual([resumeItem]);
-    expect(mocks.getCatalogHistory).toHaveBeenCalledWith(20);
+    // Continue Watching is scoped to the profile the session picked.
+    expect(mocks.getCatalogHistory).toHaveBeenCalledWith(20, 7);
     expect(mocks.searchCatalog).not.toHaveBeenCalled();
   });
 
@@ -214,7 +220,6 @@ describe("watch catalog view", () => {
     const progress = within(row as HTMLElement).getByRole("progressbar", { name: /progress/i });
     expect(progress.getAttribute("aria-valuenow")).toBe("20");
   });
-
 
   it("removes a title from Continue Watching", async () => {
     renderWatch({
