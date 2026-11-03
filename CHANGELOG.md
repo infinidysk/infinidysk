@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.0.0-beta.1](https://github.com/infinidysk/infinidysk/compare/v2.0.0-alpha.17...v2.0.0-beta.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **deps:** Bump @tanstack/react-query ([#1778](https://github.com/infinidysk/infinidysk/issues/1778)) ([10fba4d](https://github.com/infinidysk/infinidysk/commit/10fba4df44c845d95975ee19ab52706b5ee3536e))
+* **deps:** Bump fast-uri from 3.1.8 to 3.1.9 in /ui ([#1784](https://github.com/infinidysk/infinidysk/issues/1784)) ([7a4df2b](https://github.com/infinidysk/infinidysk/commit/7a4df2bb218acfb52c4473b2d7d2b0669956abba))
+* **deps:** Bump qs from 6.16.0 to 6.17.1 in /ui ([#1785](https://github.com/infinidysk/infinidysk/issues/1785)) ([d52c2fb](https://github.com/infinidysk/infinidysk/commit/d52c2fb8b10f6b305b6f19cf22cd6906a2656927))
+* **deps:** Bump systeminformation from 5.33.15 to 5.33.19 in /ui ([#1786](https://github.com/infinidysk/infinidysk/issues/1786)) ([608ade1](https://github.com/infinidysk/infinidysk/commit/608ade139964120ef798b7758b86b815e0ccb51a))
+
+
+### Build System
+
+* publish 2.x images from infinidysk/infinidysk ([c773c9f](https://github.com/infinidysk/infinidysk/commit/c773c9fbfe3f30bc25882a093a30e0149aa6b736))
+
 ## 2.0.0-alpha.17 (2026-11-02)
 
 
