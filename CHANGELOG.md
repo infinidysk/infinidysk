@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.1](https://github.com/infinidysk/infinidysk/compare/v1.7.0...v1.7.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **ui:** only offer 1.x releases as updates ([#1771](https://github.com/infinidysk/infinidysk/issues/1771)) ([18230cd](https://github.com/infinidysk/infinidysk/commit/18230cd849619d655f4208d904daf3f321741f77))
+* **ui:** tell 1.x users that 2.0 is in beta ([#1790](https://github.com/infinidysk/infinidysk/issues/1790)) ([d09a5b3](https://github.com/infinidysk/infinidysk/commit/d09a5b3e4eb0d184c974d05f631d959130d4f315))
+
 ## [1.7.0](https://github.com/infinidysk/infinidysk/compare/v1.6.3...v1.7.0) (2026-10-29)
 
 
