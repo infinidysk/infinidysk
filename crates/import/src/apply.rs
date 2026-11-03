@@ -72,12 +72,49 @@ pub struct Imported {
     pub skipped_count: u64,
 }
 
-/// File conversion in this attempt; previously imported files are not counted.
+/// What an import is doing, in order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Stage {
+    /// Reading the C# database and every file's metadata blob.
+    #[default]
+    Checking,
+    Directories,
+    Nzbs,
+    Files,
+    /// History, queue and settings.
+    Finishing,
+}
+
+/// One stage of this attempt; items an earlier attempt wrote are not counted.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Progress {
-    pub files: u64,
-    pub total: u64,
+    pub stage: Stage,
+    /// Items this stage has finished; in [`Stage::Files`], files written.
+    pub done: u64,
+    /// Items this stage has to do; `None` while still counting them.
+    pub total: Option<u64>,
+    /// Files not carried over in [`Stage::Files`].
     pub skipped: u64,
+}
+
+impl Progress {
+    pub(crate) const fn counting(stage: Stage) -> Self {
+        Self {
+            stage,
+            done: 0,
+            total: None,
+            skipped: 0,
+        }
+    }
+
+    pub(crate) const fn at(stage: Stage, done: u64, total: u64) -> Self {
+        Self {
+            stage,
+            done,
+            total: Some(total),
+            skipped: 0,
+        }
+    }
 }
 
 impl Imported {
@@ -193,7 +230,7 @@ pub async fn apply(
     apply_with_progress(config, db, client, storage_root, |_| {}).await
 }
 
-/// Like [`apply`], reporting committed files and skipped files during conversion.
+/// Like [`apply`], reporting each stage after the survey and its counts.
 pub async fn apply_with_progress(
     config: &Path,
     db: &Db,
@@ -219,17 +256,22 @@ pub async fn apply_with_progress(
         );
     }
     let mut done = Imported::default();
+    progress(Progress::counting(Stage::Directories));
     let tree = tree(&mut cs, db, &tz, &mut done).await?;
+    let total = tree.dirs.len() as u64;
+    progress(Progress::at(Stage::Directories, 0, total));
     for chunk in tree.dirs.chunks(BATCH) {
         db.import_items(chunk, &[]).await?;
         done.directories += chunk.len() as u64;
+        progress(Progress::at(Stage::Directories, done.directories, total));
     }
     tracing::info!(
         directories = done.directories,
         "C# import: directories written"
     );
-    let nzbs = import_nzbs(&mut cs, db, &blobs, None, &mut done).await?;
+    let nzbs = import_nzbs(&mut cs, db, &blobs, None, &mut done, &progress).await?;
     convert_files(tree.files, &blobs, client, &nzbs, db, &mut done, &progress).await?;
+    progress(Progress::counting(Stage::Finishing));
     let items: HashSet<Uuid> = db.item_ids().await?.into_iter().map(|i| i.0).collect();
     record_handoffs(&mut cs, db, &items).await?;
 
@@ -378,6 +420,7 @@ pub async fn restore_nzb_downloads(config: &Path, db: &Db) -> Result<u64, Error>
         &config.join("blobs"),
         Some(&wanted),
         &mut Imported::default(),
+        &|_| {},
     )
     .await?;
     let items: Vec<_> = items
@@ -452,7 +495,7 @@ pub async fn retry_files(
         .iter()
         .filter_map(|f| f.nzb.as_deref().and_then(uuid))
         .collect();
-    let nzbs = import_nzbs(&mut cs, db, &blobs, Some(&wanted), &mut done).await?;
+    let nzbs = import_nzbs(&mut cs, db, &blobs, Some(&wanted), &mut done, &|_| {}).await?;
     let ids: HashSet<Uuid> = files.iter().filter_map(|f| uuid(&f.id)).collect();
     convert_files(files, &blobs, client, &nzbs, db, &mut done, &|_| {}).await?;
     let written: HashSet<Uuid> = db
@@ -593,8 +636,9 @@ async fn convert_files(
     let skipped_before = done.skipped_count;
     let report = |done: &Imported| {
         progress(Progress {
-            files: done.files,
-            total,
+            stage: Stage::Files,
+            done: done.files,
+            total: Some(total),
             skipped: done.skipped_count - skipped_before,
         });
     };
@@ -692,7 +736,9 @@ async fn import_nzbs(
     blobs: &Path,
     only: Option<&HashSet<Uuid>>,
     done: &mut Imported,
+    progress: &(dyn Fn(Progress) + Sync),
 ) -> Result<HashSet<Uuid>, Error> {
+    progress(Progress::counting(Stage::Nzbs));
     let stored: HashSet<Uuid> = db.blob_ids().await?.into_iter().map(|b| b.0).collect();
     let ids: Vec<String> = sqlx::query_scalar(
         "SELECT NzbBlobId FROM DavItems WHERE NzbBlobId IS NOT NULL \
@@ -707,6 +753,9 @@ async fn import_nzbs(
         .collect();
     let mut available: HashSet<Uuid> = wanted.intersection(&stored).copied().collect();
     let todo: Vec<Uuid> = wanted.difference(&stored).copied().collect();
+    let total = todo.len() as u64;
+    let mut handled = 0;
+    progress(Progress::at(Stage::Nzbs, handled, total));
     let mut encoded = stream::iter(todo)
         .map(|id| {
             let blobs = blobs.to_owned();
@@ -730,6 +779,8 @@ async fn import_nzbs(
     let mut bytes = 0;
     while let Some(result) = encoded.next().await {
         let (id, nzb) = result??;
+        handled += 1;
+        progress(Progress::at(Stage::Nzbs, handled, total));
         let Some(nzb) = nzb else {
             continue;
         };
@@ -2104,6 +2155,25 @@ mod tests {
                 .await
                 .unwrap();
             }
+            sqlx::raw_sql(
+                "CREATE TABLE __EFMigrationsHistory (MigrationId TEXT, ProductVersion TEXT);
+                 INSERT INTO __EFMigrationsHistory VALUES ('20260824160000_Test', '10.0.0');",
+            )
+            .execute(&mut source)
+            .await
+            .unwrap();
+            let checks = std::sync::Mutex::new(Vec::new());
+            crate::survey_with_progress(&config, |progress| {
+                checks.lock().unwrap().push(progress);
+            })
+            .await
+            .unwrap();
+            let checks = checks.into_inner().unwrap();
+            let last = *checks.last().unwrap();
+            assert_eq!(checks[0], Progress::counting(Stage::Checking));
+            assert_eq!(last.total, Some(last.done));
+            assert!(last.done >= 3);
+            assert!(checks[1..].windows(2).all(|w| w[0].done <= w[1].done));
             for (total, written) in [(3, 2), (1, 0)] {
                 let updates = std::sync::Mutex::new(Vec::new());
                 let imported = apply_with_progress(&config, &db, &client, "/mnt", |progress| {
@@ -2112,18 +2182,28 @@ mod tests {
                 .await
                 .unwrap();
                 let updates = updates.into_inner().unwrap();
+                let mut stages: Vec<Stage> = updates.iter().map(|p| p.stage).collect();
+                stages.dedup();
                 assert_eq!(
-                    updates[0],
-                    Progress {
-                        total,
-                        ..Progress::default()
-                    }
+                    stages,
+                    [
+                        Stage::Directories,
+                        Stage::Nzbs,
+                        Stage::Files,
+                        Stage::Finishing
+                    ]
                 );
+                let updates: Vec<Progress> = updates
+                    .into_iter()
+                    .filter(|p| p.stage == Stage::Files)
+                    .collect();
+                assert_eq!(updates[0], Progress::at(Stage::Files, 0, total));
                 assert_eq!(
                     updates.last(),
                     Some(&Progress {
-                        files: written,
-                        total,
+                        stage: Stage::Files,
+                        done: written,
+                        total: Some(total),
                         skipped: 1
                     })
                 );
@@ -2132,7 +2212,7 @@ mod tests {
                 assert!(
                     updates
                         .iter()
-                        .all(|progress| progress.files + progress.skipped <= total)
+                        .all(|progress| progress.done + progress.skipped <= total)
                 );
             }
         });

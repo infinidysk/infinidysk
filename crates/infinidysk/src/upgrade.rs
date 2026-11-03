@@ -700,7 +700,7 @@ async fn import_with_progress(
         return Ok(());
     }
     tracing::info!(config = %config.display(), "importing or resuming the C# install");
-    let survey = infinidysk_import::survey(config).await?;
+    let survey = infinidysk_import::survey_with_progress(config, &progress).await?;
     anyhow::ensure!(
         survey.supported(),
         "the C# install is too old to import; update it to v1.3.0 or later, \
@@ -991,20 +991,52 @@ pub struct UpgradeStatus {
     pub progress: Option<UpgradeProgress>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum UpgradeStage {
+    /// Reading the C# database and every file's metadata.
+    Checking,
+    Directories,
+    Nzbs,
+    Files,
+    /// History, queue and settings.
+    Finishing,
+}
+
+impl From<infinidysk_import::Stage> for UpgradeStage {
+    fn from(stage: infinidysk_import::Stage) -> Self {
+        use infinidysk_import::Stage;
+        match stage {
+            Stage::Checking => Self::Checking,
+            Stage::Directories => Self::Directories,
+            Stage::Nzbs => Self::Nzbs,
+            Stage::Files => Self::Files,
+            Stage::Finishing => Self::Finishing,
+        }
+    }
+}
+
 #[derive(Clone, Serialize, ToSchema)]
 pub struct UpgradeProgress {
-    pub files: u64,
-    /// Files remaining at the start of this attempt, excluding previously written files.
-    pub total: u64,
+    pub stage: UpgradeStage,
+    /// Items this stage has finished; in `files`, files written.
+    pub done: u64,
+    /// Items this stage has to do in this attempt, excluding earlier attempts' work;
+    /// absent while counting.
+    pub total: Option<u64>,
+    /// Files not carried over in `files`.
     pub skipped: u64,
-    /// Estimated seconds remaining in file conversion; absent until measurable or while finalizing.
+    /// Estimated seconds left in this stage; absent until measurable.
     pub eta_seconds: Option<u64>,
 }
 
 impl UpgradeProgress {
+    /// `elapsed` is the time since this stage began.
     fn new(progress: infinidysk_import::Progress, elapsed: Duration) -> Self {
-        let completed = progress.files.saturating_add(progress.skipped);
-        let remaining = progress.total.saturating_sub(completed);
+        let completed = progress.done.saturating_add(progress.skipped);
+        let remaining = progress
+            .total
+            .map_or(0, |total| total.saturating_sub(completed));
         let eta_seconds = if completed > 0 && remaining > 0 {
             elapsed
                 .as_millis()
@@ -1016,7 +1048,8 @@ impl UpgradeProgress {
             None
         };
         Self {
-            files: progress.files,
+            stage: progress.stage.into(),
+            done: progress.done,
             total: progress.total,
             skipped: progress.skipped,
             eta_seconds,
@@ -1187,11 +1220,20 @@ pub async fn serve_import(
     tokio::pin!(serving);
     let importing = async {
         loop {
-            let started = std::sync::OnceLock::new();
+            let stage = std::sync::Mutex::new(None::<(infinidysk_import::Stage, Instant)>);
             let result = import_with_progress(db, config, |progress| {
-                let started = started.get_or_init(Instant::now);
+                let elapsed = {
+                    let mut stage = stage.lock().unwrap_or_else(PoisonError::into_inner);
+                    match *stage {
+                        Some((at, started)) if at == progress.stage => started.elapsed(),
+                        _ => {
+                            *stage = Some((progress.stage, Instant::now()));
+                            Duration::ZERO
+                        }
+                    }
+                };
                 server.status.send_modify(|status| {
-                    status.progress = Some(UpgradeProgress::new(progress, started.elapsed()));
+                    status.progress = Some(UpgradeProgress::new(progress, elapsed));
                 });
             })
             .await;
@@ -1348,28 +1390,24 @@ mod tests {
 
     #[test]
     fn upgrade_eta_counts_skips_and_waits_for_measurable_work() {
+        use infinidysk_import::{Progress, Stage};
         let elapsed = Duration::from_secs(10);
+        let files = |done, total, skipped| Progress {
+            stage: Stage::Files,
+            done,
+            total,
+            skipped,
+        };
         for progress in [
-            infinidysk_import::Progress::default(),
-            infinidysk_import::Progress {
-                total: 100,
-                ..Default::default()
-            },
-            infinidysk_import::Progress {
-                files: 90,
-                total: 100,
-                skipped: 10,
-            },
+            Progress::default(),
+            files(0, Some(100), 0),
+            files(90, Some(100), 10),
+            files(40, None, 0),
         ] {
             assert_eq!(UpgradeProgress::new(progress, elapsed).eta_seconds, None);
         }
-        let progress = infinidysk_import::Progress {
-            files: 40,
-            total: 100,
-            skipped: 10,
-        };
         assert_eq!(
-            UpgradeProgress::new(progress, elapsed).eta_seconds,
+            UpgradeProgress::new(files(40, Some(100), 10), elapsed).eta_seconds,
             Some(10)
         );
     }
@@ -1426,8 +1464,9 @@ mod tests {
         server.status.send_modify(|status| {
             status.progress = Some(UpgradeProgress::new(
                 infinidysk_import::Progress {
-                    files: 40,
-                    total: 100,
+                    stage: infinidysk_import::Stage::Files,
+                    done: 40,
+                    total: Some(100),
                     skipped: 10,
                 },
                 Duration::from_secs(10),
@@ -1450,7 +1489,7 @@ mod tests {
         assert_eq!(
             status["progress"],
             serde_json::json!({
-                "files": 40, "total": 100, "skipped": 10, "eta_seconds": 10,
+                "stage": "files", "done": 40, "total": 100, "skipped": 10, "eta_seconds": 10,
             })
         );
         // Docker counts the import as starting; consumers wait for it.
