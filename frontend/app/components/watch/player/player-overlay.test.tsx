@@ -62,11 +62,20 @@ function installMedia(el: HTMLVideoElement, options: { duration?: number; paused
   };
 }
 
-function renderOverlay(overrides: Record<string, unknown> = {}) {
+function renderOverlay(
+  overrides: Record<string, unknown> = {},
+  episodeNav?: { onPrevious: (() => void) | null; onNext: (() => void) | null },
+) {
   const player = fakePlayer(overrides);
   const onClose = vi.fn();
   const view = render(
-    <PlayerOverlay player={player} title="Night of the Living Dead" releaseTitle="Night.1968.1080p" onClose={onClose} />,
+    <PlayerOverlay
+      player={player}
+      title="Night of the Living Dead"
+      releaseTitle="Night.1968.1080p"
+      onClose={onClose}
+      episodeNav={episodeNav}
+    />,
   );
   return { ...view, player, onClose, media: installMedia(view.container.querySelector("video")!) };
 }
@@ -87,6 +96,33 @@ describe("PlayerOverlay", () => {
     expect(screen.getByLabelText("Fullscreen")).toBeTruthy();
     expect(screen.getByLabelText("Back 10 seconds")).toBeTruthy();
     expect(screen.getByLabelText("Forward 30 seconds")).toBeTruthy();
+  });
+
+  it("steps episodes from the chrome and from the keyboard", () => {
+    const onPrevious = vi.fn();
+    const onNext = vi.fn();
+    renderOverlay({}, { onPrevious, onNext });
+
+    fireEvent.click(screen.getByLabelText("Previous episode"));
+    fireEvent.click(screen.getByLabelText("Next episode"));
+    expect(onPrevious).toHaveBeenCalledTimes(1);
+    expect(onNext).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyDown(window, { key: "]" });
+    expect(onNext).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(window, { key: "[" });
+    expect(onPrevious).toHaveBeenCalledTimes(2);
+  });
+
+  it("disables episode stepping at the season edges and omits it for movies", () => {
+    const first = renderOverlay({}, { onPrevious: null, onNext: null });
+    expect(screen.getByLabelText<HTMLButtonElement>("Previous episode").disabled).toBe(true);
+    expect(screen.getByLabelText<HTMLButtonElement>("Next episode").disabled).toBe(true);
+    first.unmount();
+
+    renderOverlay();
+    expect(screen.queryByLabelText("Previous episode")).toBeNull();
+    expect(screen.queryByLabelText("Next episode")).toBeNull();
   });
 
   it("seeks with the keyboard and the timeline", () => {

@@ -8,7 +8,9 @@ import {
 import { getFrontendRuntimeConfig } from "../../server/runtime-config";
 import { adminApi } from "~/clients/admin-operations";
 import {
+  catalogHistoryResponseSchema,
   catalogHomeSchema,
+  catalogPersonResponseSchema,
   catalogSearchResponseSchema,
   catalogTitleResponseSchema,
   type CatalogTitleType,
@@ -330,6 +332,25 @@ class BackendClient {
       "Could not search the catalog",
       { method: "GET", ...(signal ? { signal } : {}) },
       catalogSearchResponseSchema,
+    );
+  }
+
+  public async getCatalogPerson(personId: string, signal?: AbortSignal) {
+    return await call(
+      adminApi.catalogPerson.replace("{personId}", encodeURIComponent(personId)),
+      "Could not load the person",
+      { method: "GET", ...(signal ? { signal } : {}) },
+      catalogPersonResponseSchema,
+    );
+  }
+
+  public async getCatalogHistory(limit = 20, signal?: AbortSignal) {
+    const parameters = new URLSearchParams({ limit: String(limit) });
+    return await call(
+      `${adminApi.catalogHistory}?${parameters}`,
+      "Could not load your watch history",
+      { method: "GET", ...(signal ? { signal } : {}) },
+      catalogHistoryResponseSchema,
     );
   }
 

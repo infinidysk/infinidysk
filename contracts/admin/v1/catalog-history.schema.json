@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/catalog-history.schema.json",
+  "title": "Admin catalog watch history success",
+  "type": "object",
+  "required": [
+    "status",
+    "items"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "const": true
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "tmdbId",
+        "season",
+        "episode",
+        "title",
+        "subtitle",
+        "posterUrl",
+        "positionSeconds",
+        "durationSeconds",
+        "updatedAtEpoch",
+        "finished"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "type": {
+          "enum": [
+            "movie",
+            "series"
+          ]
+        },
+        "tmdbId": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "season": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "episode": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "subtitle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "posterUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "positionSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "durationSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updatedAtEpoch": {
+          "type": "integer"
+        },
+        "finished": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

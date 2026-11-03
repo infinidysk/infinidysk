@@ -115,3 +115,12 @@ public abstract class GetOnlyApiController : BaseApiController
     [HttpGet]
     public Task<IActionResult> HandleGetApiRequest() => ExecuteApiRequest();
 }
+
+public abstract class DeleteOnlyApiController : BaseApiController
+{
+    [NonAction]
+    public sealed override Task<IActionResult> HandleApiRequest() => ExecuteApiRequest();
+
+    [HttpDelete]
+    public Task<IActionResult> HandleDeleteApiRequest() => ExecuteApiRequest();
+}

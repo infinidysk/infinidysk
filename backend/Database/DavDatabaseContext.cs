@@ -220,6 +220,7 @@ public class DavDatabaseContext : DbContext
     public DbSet<ArticleMissCacheEntry> ArticleMissCacheEntries => Set<ArticleMissCacheEntry>();
     public DbSet<Par2RepairJob> Par2RepairJobs => Set<Par2RepairJob>();
     public DbSet<SetupWizardState> SetupWizardStates => Set<SetupWizardState>();
+    public DbSet<CatalogWatchHistory> CatalogWatchHistories => Set<CatalogWatchHistory>();
 
     // Pending blob writes for the current unit of work (flushed in SaveChangesAsync).
     private readonly List<DavNzbFile> _blobNzbFiles = [];
@@ -758,6 +759,43 @@ public class DavDatabaseContext : DbContext
                     x => x.ToUnixTimeSeconds(),
                     x => DateTimeOffset.FromUnixTimeSeconds(x)
                 );
+        });
+
+        // CatalogWatchHistory
+        b.Entity<CatalogWatchHistory>(e =>
+        {
+            e.ToTable("catalog_watch_history");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .ValueGeneratedOnAdd();
+
+            e.Property(i => i.Kind)
+                .HasConversion<int>()
+                .IsRequired();
+
+            e.Property(i => i.TmdbId)
+                .IsRequired();
+
+            e.Property(i => i.Title)
+                .IsRequired();
+
+            e.Property(i => i.Subtitle)
+                .HasMaxLength(256);
+            e.Property(i => i.PosterUrl)
+                .HasMaxLength(512);
+            e.Property(i => i.BackdropUrl)
+                .HasMaxLength(512);
+
+            // One resumable row per title+episode: finished rows leave the partial index so a
+            // re-watch after completion starts a new row instead of colliding with history.
+            e.HasIndex(i => new { i.Kind, i.TmdbId, i.Season, i.Episode })
+                .IsUnique()
+                .HasFilter("NOT \"Finished\"")
+                .HasDatabaseName("IX_catalog_watch_history_ResumeKey");
+
+            e.HasIndex(i => i.UpdatedAtEpoch)
+                .HasDatabaseName("IX_catalog_watch_history_UpdatedAtEpoch");
         });
 
         // BlobCleanupItem

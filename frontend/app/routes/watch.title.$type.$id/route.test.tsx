@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Route } from "./+types/route";
@@ -17,6 +17,7 @@ vi.mock("~/clients/backend-client.server", () => ({
 vi.mock("~/clients/catalog-client", () => ({
   createCatalogPlayback: mocks.createCatalogPlayback,
   fetchCatalogSearch: vi.fn(),
+  reportWatchHistoryProgress: vi.fn(),
 }));
 
 const movieTitle: CatalogTitleResponse = {
@@ -77,9 +78,12 @@ function loaderArgs(path: string, type = "movie", id = "10331"): Route.LoaderArg
   } as unknown as Route.LoaderArgs;
 }
 
-async function renderTitle(data: Awaited<ReturnType<typeof loader>>) {
+type TitleLoaderData = Awaited<ReturnType<typeof loader>>;
+
+function renderTitle(data: Pick<TitleLoaderData, "catalogTitle"> & Partial<TitleLoaderData>) {
+  const loaderData: TitleLoaderData = { resumeEpisode: null, ...data };
   const router = createMemoryRouter(
-    [{ path: "/watch/title/:type/:id", element: <WatchTitleRoute />, loader: () => data }],
+    [{ path: "/watch/title/:type/:id", element: <WatchTitleRoute />, loader: () => loaderData }],
     { initialEntries: ["/watch/title/movie/10331"] },
   );
   return render(<RouterProvider router={router} />);
@@ -87,6 +91,8 @@ async function renderTitle(data: Awaited<ReturnType<typeof loader>>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // jsdom has no layout, so the resume row's scroll-into-view is a no-op stub.
+  Element.prototype.scrollIntoView = vi.fn();
   mocks.getCatalogTitle.mockResolvedValue(movieTitle);
   mocks.createCatalogPlayback.mockResolvedValue({
     status: true,
@@ -127,6 +133,25 @@ describe("watch title loader", () => {
     await loader(loaderArgs("/watch/title/series/1930?season=1", "series", "1930"));
 
     expect(mocks.getCatalogTitle).toHaveBeenCalledWith("series", 1930, 1);
+  });
+
+
+  it("carries the resume episode from the deep link", async () => {
+    const data = await loader(
+      loaderArgs("/watch/title/series/1930?season=1&episode=2", "series", "1930"),
+    );
+
+    expect(data.resumeEpisode).toBe(2);
+    expect(mocks.getCatalogTitle).toHaveBeenCalledWith("series", 1930, 1);
+  });
+
+  it("rejects an episode without a season and an out-of-range episode", async () => {
+    await expect(
+      loader(loaderArgs("/watch/title/series/1930?episode=2", "series", "1930")),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      loader(loaderArgs("/watch/title/series/1930?season=1&episode=0", "series", "1930")),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   it("rejects invalid types and ids as 404s", async () => {
@@ -184,6 +209,54 @@ describe("watch title view", () => {
       ),
     );
     expect(screen.getByRole("button", { name: /retry/i })).toBeTruthy();
+  });
+
+
+
+  it("marks the resume episode and plays it from the primary action", async () => {
+    const firstEpisode = seriesTitle.episodes[0]!;
+    renderTitle({
+      catalogTitle: {
+        ...seriesTitle,
+        episodes: [firstEpisode, { ...firstEpisode, episodeNumber: 2, name: "Getting Settled" }],
+      },
+      resumeEpisode: 2,
+    });
+
+    const resumeButton = await screen.findByRole("button", { name: /resume/i });
+    expect(resumeButton.textContent).toContain("Resume");
+    expect(screen.getByText(/Resume · S01E02/)).toBeTruthy();
+
+    resumeButton.click();
+    await waitFor(() =>
+      expect(mocks.createCatalogPlayback).toHaveBeenLastCalledWith(
+        { type: "series", tmdbId: 1930, season: 1, episode: 2 },
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("carries the season lineup into the player so episodes can be stepped", async () => {
+    const firstEpisode = seriesTitle.episodes[0]!;
+    renderTitle({
+      catalogTitle: {
+        ...seriesTitle,
+        episodes: [firstEpisode, { ...firstEpisode, episodeNumber: 2, name: "Getting Settled" }],
+      },
+    });
+
+    const playButtons = await screen.findAllByRole("button", { name: /^play$/i });
+    playButtons[0]!.click();
+    await waitFor(() => expect(mocks.createCatalogPlayback).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Next episode" }));
+
+    await waitFor(() =>
+      expect(mocks.createCatalogPlayback).toHaveBeenLastCalledWith(
+        { type: "series", tmdbId: 1930, season: 1, episode: 2 },
+        expect.anything(),
+      ),
+    );
   });
 
   it("plays an episode with its season and episode coordinates", async () => {

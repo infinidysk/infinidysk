@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Globalization;
 using NzbWebDAV.Clients.Metadata;
 using NzbWebDAV.Exceptions;
@@ -7,23 +8,35 @@ using Serilog;
 namespace NzbWebDAV.Services.Catalog;
 
 /// <summary>
-/// TMDB/TVDB-backed catalog read model: the four home rows, multi-search, title details,
-/// and the provider-neutral identity the existing profile search flow needs for playback.
-/// Provider responses are cached with single-flight tasks so a burst of home requests
-/// issues one request per provider endpoint.
+/// TMDB/TVDB-backed catalog read model: the home rows (provider lists, trending people,
+/// Continue Watching), multi-search, title and person details, and the provider-neutral
+/// identity the existing profile search flow needs for playback. Provider responses are
+/// cached with single-flight tasks so a burst of home requests issues one request per
+/// provider endpoint; the local watch history is read fresh on every home request.
 /// </summary>
 public sealed class CatalogService(TmdbClient tmdbClient, TvdbClient tvdbClient)
 {
+    internal const string TrendingPeopleRowId = "trending-people";
+
     internal static readonly TimeSpan HomeTtl = TimeSpan.FromMinutes(15);
     internal static readonly TimeSpan SearchTtl = TimeSpan.FromMinutes(5);
     internal static readonly TimeSpan TitleTtl = TimeSpan.FromHours(24);
 
+    /// <summary>
+    /// Provider rows in display order. Continue Watching is not a provider row: it is
+    /// served by the watch-history endpoint, which carries the resume coordinates and
+    /// progress the row renders.
+    /// </summary>
     private static readonly RowDefinition[] RowDefinitions =
     [
         new("trending", "Trending Now"),
         new("popular-movies", "Popular Movies"),
         new("popular-series", "Popular Series"),
         new("top-rated-movies", "Top Rated Movies"),
+        new("now-playing", "New Releases"),
+        new("upcoming-movies", "Upcoming"),
+        new("top-rated-series", "Top Rated TV"),
+        new(TrendingPeopleRowId, "Trending People"),
     ];
 
     private readonly MetadataMemo _memo = new();
@@ -70,7 +83,13 @@ public sealed class CatalogService(TmdbClient tmdbClient, TvdbClient tvdbClient)
             var imdbId = movie.ImdbId
                          ?? throw CatalogException.UnprocessableEntity(
                              "This movie has no usable IMDb identifier.");
-            return new PlaybackIdentity("movie", imdbId, movie.Details.Title);
+            return new PlaybackIdentity(
+                "movie",
+                imdbId,
+                movie.Details.Title,
+                null,
+                movie.Details.PosterUrl,
+                movie.Details.BackdropUrl);
         }
 
         var series = await GetSeriesAsync(tmdbId, season, ct).ConfigureAwait(false)
@@ -82,12 +101,16 @@ public sealed class CatalogService(TmdbClient tmdbClient, TvdbClient tvdbClient)
         }
 
         var title = series.Details.Title;
+        var subtitle = EpisodeLabel(series.Details, requestedSeason, requestedEpisode);
         if (series.TvdbId is { } tvdbId)
         {
             return new PlaybackIdentity(
                 "series",
                 FormattableString.Invariant($"tvdb:{tvdbId}:{requestedSeason}:{requestedEpisode}"),
-                title);
+                title,
+                subtitle,
+                series.Details.PosterUrl,
+                series.Details.BackdropUrl);
         }
 
         if (series.ImdbId is { } seriesImdbId)
@@ -95,7 +118,10 @@ public sealed class CatalogService(TmdbClient tmdbClient, TvdbClient tvdbClient)
             return new PlaybackIdentity(
                 "series",
                 FormattableString.Invariant($"{seriesImdbId}:{requestedSeason}:{requestedEpisode}"),
-                title);
+                title,
+                subtitle,
+                series.Details.PosterUrl,
+                series.Details.BackdropUrl);
         }
 
         throw CatalogException.UnprocessableEntity("This series has no usable IMDb or TVDB identifier.");
@@ -105,16 +131,85 @@ public sealed class CatalogService(TmdbClient tmdbClient, TvdbClient tvdbClient)
 
     private async Task<CatalogRow> LoadRowAsync(RowDefinition row, CancellationToken ct)
     {
+        if (row.Id == TrendingPeopleRowId)
+        {
+            var people = await tmdbClient.GetTrendingPeopleAsync(ct).ConfigureAwait(false);
+            return new CatalogRow(row.Id, row.Title, [], people.Select(ToPersonSummary).ToList());
+        }
+
         var items = row.Id switch
         {
             "trending" => await tmdbClient.GetTrendingAsync(ct).ConfigureAwait(false),
             "popular-movies" => await tmdbClient.GetPopularMoviesAsync(ct).ConfigureAwait(false),
             "popular-series" => await tmdbClient.GetPopularSeriesAsync(ct).ConfigureAwait(false),
             "top-rated-movies" => await tmdbClient.GetTopRatedMoviesAsync(ct).ConfigureAwait(false),
-            _ => [],
+            "now-playing" => await tmdbClient.GetNowPlayingMoviesAsync(ct).ConfigureAwait(false),
+            "upcoming-movies" => await tmdbClient.GetUpcomingMoviesAsync(ct).ConfigureAwait(false),
+            "top-rated-series" => await tmdbClient.GetTopRatedSeriesAsync(ct).ConfigureAwait(false),
+            _ => throw new InvalidOperationException($"Unknown catalog row '{row.Id}'."),
         };
         return new CatalogRow(row.Id, row.Title, items);
     }
+
+    /// <summary>
+    /// Server-side display metadata for a progress report, so the browser cannot write
+    /// arbitrary titles or artwork into the watch history.
+    /// </summary>
+    public async Task<CatalogHistoryDisplay?> GetHistoryDisplayAsync(
+        string type, int tmdbId, int? season, int? episode, CancellationToken ct)
+    {
+        if (IsMovie(type))
+        {
+            var movie = await GetMovieAsync(tmdbId, ct).ConfigureAwait(false);
+            return movie is null
+                ? null
+                : new CatalogHistoryDisplay(
+                    movie.Details.Title, null, movie.Details.PosterUrl, movie.Details.BackdropUrl);
+        }
+
+        var series = await GetSeriesAsync(tmdbId, season, ct).ConfigureAwait(false);
+        if (series is null) return null;
+        var subtitle = season is { } requestedSeason && episode is { } requestedEpisode
+            ? EpisodeLabel(series.Details, requestedSeason, requestedEpisode)
+            : null;
+        return new CatalogHistoryDisplay(
+            series.Details.Title, subtitle, series.Details.PosterUrl, series.Details.BackdropUrl);
+    }
+
+    /// <summary>Person details and combined credits; null when TMDB does not know the id.</summary>
+    public Task<CatalogPersonDetails?> GetPersonAsync(int personId, CancellationToken ct)
+    {
+        var key = string.Create(CultureInfo.InvariantCulture, $"person:{personId}");
+        return _memo.GetOrCreateAsync<CatalogPersonDetails?>(key, TitleTtl, async token =>
+        {
+            var person = await tmdbClient.GetPersonAsync(personId, token).ConfigureAwait(false);
+            if (person is null) return null;
+            return new CatalogPersonDetails(
+                person.Person.PersonId.ToString(CultureInfo.InvariantCulture),
+                person.Person.Name,
+                person.Person.ProfileUrl,
+                person.Biography,
+                person.Birthday,
+                person.PlaceOfBirth,
+                person.KnownForDepartment,
+                person.Credits);
+        }, ct);
+    }
+
+    /// <summary>`S1E5` plus the episode name when the selected season lists it.</summary>
+    private static string EpisodeLabel(CatalogTitleDetails details, int season, int episode)
+    {
+        var label = FormattableString.Invariant($"S{season}E{episode}");
+        var match = details.Episodes.FirstOrDefault(candidate =>
+            candidate.SeasonNumber == season && candidate.EpisodeNumber == episode);
+        return match is null ? label : FormattableString.Invariant($"{label} · {match.Name}");
+    }
+
+    private static CatalogPersonSummary ToPersonSummary(TmdbPerson person)
+        => new(
+            person.PersonId.ToString(CultureInfo.InvariantCulture),
+            person.Name,
+            person.ProfileUrl);
 
     private Task<MovieMetadata?> GetMovieAsync(int tmdbId, CancellationToken ct)
     {

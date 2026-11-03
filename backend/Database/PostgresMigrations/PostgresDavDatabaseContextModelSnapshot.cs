@@ -17,7 +17,7 @@ namespace NzbWebDAV.Database.PostgresMigrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.11")
+                .HasAnnotation("ProductVersion", "10.0.12")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -72,6 +72,70 @@ namespace NzbWebDAV.Database.PostgresMigrations
                     b.HasKey("Id");
 
                     b.ToTable("BlobCleanupItems", (string)null);
+                });
+
+            modelBuilder.Entity("NzbWebDAV.Database.Models.CatalogWatchHistory", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("BackdropUrl")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<long>("DurationSeconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("Episode")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("Finished")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("PositionSeconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("PosterUrl")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<int?>("Season")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("StartedAtEpoch")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Subtitle")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("TmdbId")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("UpdatedAtEpoch")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UpdatedAtEpoch")
+                        .HasDatabaseName("IX_catalog_watch_history_UpdatedAtEpoch");
+
+                    b.HasIndex("Kind", "TmdbId", "Season", "Episode")
+                        .IsUnique()
+                        .HasDatabaseName("IX_catalog_watch_history_ResumeKey")
+                        .HasFilter("NOT \"Finished\"");
+
+                    b.ToTable("catalog_watch_history", (string)null);
                 });
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.ConfigItem", b =>
@@ -138,9 +202,6 @@ namespace NzbWebDAV.Database.PostgresMigrations
                         .HasColumnType("boolean")
                         .HasDefaultValue(false);
 
-                    b.Property<int?>("UrgentRepairFailures")
-                        .HasColumnType("integer");
-
                     b.Property<Guid?>("HistoryItemId")
                         .HasColumnType("uuid");
 
@@ -176,6 +237,9 @@ namespace NzbWebDAV.Database.PostgresMigrations
                         .HasColumnType("integer");
 
                     b.Property<int>("Type")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("UrgentRepairFailures")
                         .HasColumnType("integer");
 
                     b.HasKey("Id");

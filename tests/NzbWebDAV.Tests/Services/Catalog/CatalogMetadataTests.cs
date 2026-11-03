@@ -19,6 +19,18 @@ namespace NzbWebDAV.Tests.Services.Catalog;
 public sealed class CatalogMetadataTests
 {
     private const string TmdbToken = "tmdb-read-token-value";
+
+    private static readonly string[] ExpectedRowIds =
+    [
+        "trending",
+        "popular-movies",
+        "popular-series",
+        "top-rated-movies",
+        "now-playing",
+        "upcoming-movies",
+        "top-rated-series",
+        "trending-people",
+    ];
     private const string TvdbKey = "tvdb-api-key-value";
 
     [Fact]
@@ -130,9 +142,7 @@ public sealed class CatalogMetadataTests
         Assert.NotNull(error.RetryAfter);
 
         var home = await catalog.GetHomeAsync(CancellationToken.None);
-        Assert.Equal(
-            new[] { "trending", "popular-movies", "popular-series", "top-rated-movies" },
-            home.Rows.Select(row => row.Id));
+        Assert.Equal(ExpectedRowIds, home.Rows.Select(row => row.Id));
         var popular = home.Rows.Single(row => row.Id == "popular-movies");
         Assert.Equal("Recovered", Assert.Single(popular.Items).Title);
         Assert.Equal(2, popularCalls);
@@ -294,7 +304,12 @@ public sealed class CatalogMetadataTests
         {
             var path = request.RequestUri!.AbsolutePath;
             if (path.EndsWith("/movie/10331", StringComparison.Ordinal))
-                return Json("""{"id":10331,"title":"Night of the Living Dead","release_date":"1968-10-01"}""");
+            {
+                return Json("""
+                    {"id":10331,"title":"Night of the Living Dead","release_date":"1968-10-01",
+                     "poster_path":"/p.jpg","backdrop_path":"/b.jpg"}
+                    """);
+            }
             if (path.EndsWith("/movie/10331/external_ids", StringComparison.Ordinal))
                 return Json("""{"imdb_id":"tt0063350"}""");
             if (path.EndsWith("/tv/1930", StringComparison.Ordinal))
@@ -308,11 +323,120 @@ public sealed class CatalogMetadataTests
         var movie = await catalog.GetPlaybackIdentityAsync("movie", 10331, null, null, CancellationToken.None);
         Assert.Equal("movie", movie.Type);
         Assert.Equal("tt0063350", movie.Id);
+        // Display fields are server-resolved so the watch history never stores browser text.
+        Assert.Equal("https://image.tmdb.org/t/p/w500/p.jpg", movie.PosterUrl);
+        Assert.Equal("https://image.tmdb.org/t/p/w1280/b.jpg", movie.BackdropUrl);
+        Assert.Null(movie.Subtitle);
 
         var series = await catalog.GetPlaybackIdentityAsync("series", 1930, 1, 1, CancellationToken.None);
         Assert.Equal("series", series.Type);
         Assert.Equal("tvdb:71471:1:1", series.Id);
         Assert.Equal("The Beverly Hillbillies", series.Title);
+        Assert.Equal("S1E1", series.Subtitle);
+    }
+
+
+    [Fact]
+    public async Task Home_ListsProviderRowsThenPeople()
+    {
+        var handler = new ScriptedHandler((request, _) =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/now_playing", StringComparison.Ordinal))
+                return Json("""{"results":[{"id":11,"title":"New Release","release_date":"2026-01-02"}]}""");
+            if (path.EndsWith("/upcoming", StringComparison.Ordinal))
+                return Json("""{"results":[{"id":12,"title":"Coming Soon","release_date":"2026-05-01"}]}""");
+            if (path.EndsWith("/tv/top_rated", StringComparison.Ordinal))
+                return Json("""{"results":[{"id":13,"name":"Top Show","first_air_date":"2019-03-01"}]}""");
+            if (path.EndsWith("/trending/person/week", StringComparison.Ordinal))
+            {
+                return Json("""
+                    {"results":[
+                      {"id":525,"name":"Christopher Nolan","profile_path":"/nolan.jpg","popularity":93.5,
+                       "known_for":[{"title":"Inception"},{"title":"Interstellar"},{"title":"Tenet"}]}
+                    ]}
+                    """);
+            }
+
+            return Json("""{"results":[]}""");
+        });
+        var catalog = CreateCatalog(handler, tmdbToken: TmdbToken, tvdbKey: null);
+
+        var home = await catalog.GetHomeAsync(CancellationToken.None);
+
+        Assert.Equal(ExpectedRowIds, home.Rows.Select(row => row.Id));
+        var releases = home.Rows.Single(row => row.Id == "now-playing");
+        Assert.Equal("New Release", Assert.Single(releases.Items).Title);
+        Assert.Null(releases.People);
+        Assert.Equal("Top Show", Assert.Single(home.Rows.Single(row => row.Id == "top-rated-series").Items).Title);
+
+        var peopleRow = home.Rows.Single(row => row.Id == "trending-people");
+        Assert.Empty(peopleRow.Items);
+        var person = Assert.Single(peopleRow.People!);
+        Assert.Equal("525", person.PersonId);
+        Assert.Equal("Christopher Nolan", person.Name);
+        Assert.Equal("https://image.tmdb.org/t/p/w500/nolan.jpg", person.ProfileUrl);
+    }
+
+    [Fact]
+    public async Task Tmdb_TrendingPeopleJoinsTheFirstTwoKnownForTitles()
+    {
+        var handler = new ScriptedHandler((_, _) => Json("""
+            {"results":[
+              {"id":525,"name":"Christopher Nolan","profile_path":null,"popularity":12.5,
+               "known_for":[{"title":"Inception"},{"name":"Person of Interest"}]},
+              {"id":0,"name":"No Id"},
+              {"id":9,"known_for":[]}
+            ]}
+            """));
+
+        var people = await CreateTmdb(handler).GetTrendingPeopleAsync(CancellationToken.None);
+
+        var nolan = Assert.Single(people);
+        Assert.Equal(525, nolan.PersonId);
+        Assert.Equal("Inception, Person of Interest", nolan.KnownFor);
+        Assert.Null(nolan.ProfileUrl);
+    }
+
+    [Fact]
+    public async Task Tmdb_PersonDetailsMergeCreditsByPopularityAndDropDuplicates()
+    {
+        var handler = new ScriptedHandler((request, _) =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/person/525", StringComparison.Ordinal))
+            {
+                return Json("""
+                    {"id":525,"name":"Christopher Nolan","biography":"Director.","birthday":"1970-07-30",
+                     "place_of_birth":"London","known_for_department":"Directing","popularity":90,"profile_path":"/n.jpg"}
+                    """);
+            }
+
+            if (path.EndsWith("/person/525/combined_credits", StringComparison.Ordinal))
+            {
+                return Json("""
+                    {"cast":[
+                       {"media_type":"movie","id":27205,"title":"Inception","popularity":50,"poster_path":"/i.jpg"},
+                       {"media_type":"tv","id":1399,"name":"A Show","popularity":20}
+                     ],
+                     "crew":[
+                       {"media_type":"movie","id":27205,"title":"Inception","popularity":80},
+                       {"media_type":"movie","id":157336,"title":"Interstellar","popularity":65},
+                       {"media_type":"person","id":500,"name":"Someone"}
+                     ]}
+                    """);
+            }
+
+            return Json("{}");
+        });
+
+        var details = await CreateTmdb(handler).GetPersonAsync(525, CancellationToken.None);
+
+        Assert.NotNull(details);
+        Assert.Equal("Christopher Nolan", details.Person.Name);
+        Assert.Equal("London", details.PlaceOfBirth);
+        Assert.Equal("Directing", details.KnownForDepartment);
+        Assert.Equal(new[] { "Inception", "Interstellar", "A Show" }, details.Credits.Select(c => c.Title));
     }
 
     [Fact]

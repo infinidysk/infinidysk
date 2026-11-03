@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infinidysk.local/contracts/admin/v1/catalog-person.schema.json",
+  "title": "Admin catalog person success",
+  "type": "object",
+  "required": [
+    "status",
+    "person",
+    "credits"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "const": true
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "person": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "personId",
+        "name",
+        "profileUrl",
+        "biography",
+        "birthday",
+        "placeOfBirth",
+        "knownForDepartment"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "personId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "profileUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "biography": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "birthday": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "placeOfBirth": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "knownForDepartment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "credits": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/summary"
+      }
+    }
+  },
+  "$defs": {
+    "summary": {
+      "type": "object",
+      "required": [
+        "type",
+        "tmdbId",
+        "title",
+        "year",
+        "overview",
+        "rating",
+        "posterUrl",
+        "backdropUrl"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "movie",
+            "series"
+          ]
+        },
+        "tmdbId": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "year": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "overview": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rating": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "posterUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "backdropUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

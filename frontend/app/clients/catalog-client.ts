@@ -3,9 +3,12 @@ import { withUrlBase } from "~/utils/url-base";
 import {
   catalogPlaybackSchema,
   catalogSearchResponseSchema,
+  catalogTitleResponseSchema,
+  type CatalogHistoryProgressRequest,
   type CatalogPlayback,
   type CatalogPlaybackRequest,
   type CatalogSearchPage,
+  type CatalogTitleResponse,
 } from "./catalog-contract";
 
 /**
@@ -76,4 +79,49 @@ export async function createCatalogPlayback(
     body: JSON.stringify(request),
   });
   return readCatalogResponse(response, catalogPlaybackSchema, "Could not start playback.");
+}
+
+/**
+ * Records playback position for Continue Watching. Fire-and-forget: a failed report only
+ * costs resume accuracy, so callers must not surface it as a playback error.
+ */
+export async function reportWatchHistoryProgress(
+  request: CatalogHistoryProgressRequest,
+  signal?: AbortSignal,
+): Promise<void> {
+  await fetch(withUrlBase("/api/catalog/history/progress"), {
+    method: "POST",
+    ...(signal ? { signal } : {}),
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(request),
+    keepalive: true,
+  });
+}
+
+/** Drops one row from Continue Watching (and from history) by id. */
+export async function removeCatalogHistoryItem(id: number, signal?: AbortSignal): Promise<void> {
+  const response = await fetch(withUrlBase(`/api/catalog/history/${id}`), {
+    method: "DELETE",
+    ...(signal ? { signal } : {}),
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) throw new Error("Could not remove this title from Continue Watching.");
+}
+
+/** One season's episodes, used to roll a season finale into the next season. */
+export async function fetchCatalogSeason(
+  tmdbId: number,
+  season: number,
+  signal: AbortSignal,
+): Promise<CatalogTitleResponse> {
+  const parameters = new URLSearchParams({ season: String(season) });
+  const response = await fetch(
+    withUrlBase(`/api/catalog/titles/series/${tmdbId}?${parameters}`),
+    { signal, headers: { Accept: "application/json" } },
+  );
+  return readCatalogResponse(
+    response,
+    catalogTitleResponseSchema,
+    "Could not load the next season.",
+  );
 }

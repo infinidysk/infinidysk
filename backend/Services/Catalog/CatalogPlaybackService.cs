@@ -1,7 +1,9 @@
+using System.Data.Common;
 using NzbWebDAV.Config;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Models.Catalog;
 using NzbWebDAV.Utils;
+using Serilog;
 
 namespace NzbWebDAV.Services.Catalog;
 
@@ -15,7 +17,8 @@ public sealed class CatalogPlaybackService(
     ConfigManager configManager,
     CatalogService catalogService,
     SearchProfileService searchProfileService,
-    CatalogPlaybackSessionStore sessionStore)
+    CatalogPlaybackSessionStore sessionStore,
+    CatalogWatchHistoryService watchHistory)
 {
     internal const string NotConfiguredMessage = "Catalog playback is not configured.";
     internal const string NoReleasesMessage = "No Usenet releases found for this title.";
@@ -58,6 +61,34 @@ public sealed class CatalogPlaybackService(
             identity.Id,
             search.Candidates[0].Title,
             publicPathPrefix);
+
+        // The row appears as soon as a stream is found, so Continue Watching is accurate
+        // even if the player never gets to its first timed report. A history failure must
+        // never cost the viewer a working stream.
+        try
+        {
+            await watchHistory.ReportProgressAsync(
+                    new ReportProgressRequest(
+                        identity.Type,
+                        request.TmdbId,
+                        request.Season,
+                        request.Episode,
+                        Position: 0,
+                        Duration: session.MediaDuration?.TotalSeconds,
+                        Finished: false,
+                        identity.Title,
+                        identity.Subtitle,
+                        identity.PosterUrl,
+                        identity.BackdropUrl),
+                    ct)
+                .ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is DbException or InvalidOperationException)
+        {
+            Log.Warning(
+                "Catalog: could not record watch history when starting playback ({ExceptionType}).",
+                e.GetType().Name);
+        }
 
         var playbackId = session.Id.ToString("D");
         return new CatalogPlayback(

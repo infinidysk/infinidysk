@@ -461,6 +461,12 @@ public sealed partial class Program
                 .AddSingleton<SearchProfileService>()
                 .AddSingleton<TmdbClient>()
                 .AddSingleton<TvdbClient>()
+                .AddSingleton(TimeProvider.System)
+                // Owns its short-lived DbContexts directly, so the catalog stays a
+                // singleton read model with no scoped database dependency.
+                .AddSingleton(sp => new CatalogWatchHistoryService(
+                    () => sp.GetRequiredService<IDbContextFactory<DavDatabaseContext>>().CreateDbContext(),
+                    sp.GetRequiredService<TimeProvider>()))
                 .AddSingleton<CatalogService>()
                 .AddSingleton<CatalogPlaybackSessionStore>()
                 .AddSingleton<CatalogPlaybackService>()

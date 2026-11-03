@@ -15,7 +15,7 @@ namespace NzbWebDAV.Database.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.12");
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.Account", b =>
                 {
@@ -67,6 +67,68 @@ namespace NzbWebDAV.Database.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("BlobCleanupItems", (string)null);
+                });
+
+            modelBuilder.Entity("NzbWebDAV.Database.Models.CatalogWatchHistory", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("BackdropUrl")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("DurationSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("Episode")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Finished")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("PositionSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PosterUrl")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("Season")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("StartedAtEpoch")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Subtitle")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TmdbId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("UpdatedAtEpoch")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UpdatedAtEpoch")
+                        .HasDatabaseName("IX_catalog_watch_history_UpdatedAtEpoch");
+
+                    b.HasIndex("Kind", "TmdbId", "Season", "Episode")
+                        .IsUnique()
+                        .HasDatabaseName("IX_catalog_watch_history_ResumeKey")
+                        .HasFilter("NOT \"Finished\"");
+
+                    b.ToTable("catalog_watch_history", (string)null);
                 });
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.ConfigItem", b =>
@@ -133,9 +195,6 @@ namespace NzbWebDAV.Database.Migrations
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(false);
 
-                    b.Property<int?>("UrgentRepairFailures")
-                        .HasColumnType("INTEGER");
-
                     b.Property<Guid?>("HistoryItemId")
                         .HasColumnType("TEXT");
 
@@ -171,6 +230,9 @@ namespace NzbWebDAV.Database.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("Type")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("UrgentRepairFailures")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");

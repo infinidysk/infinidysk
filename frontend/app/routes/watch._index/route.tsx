@@ -2,16 +2,24 @@ import { Link, useLoaderData, useNavigation, useRevalidator } from "react-router
 import { useEffect, useRef, useState } from "react";
 import type { Route } from "./+types/route";
 import { Alert, Button, Icon } from "~/components/ui";
+import { ContinueWatchingRow } from "~/components/watch/continue-watching-row";
 import { TitleCard } from "~/components/watch/title-card";
 import { TitleRow } from "~/components/watch/title-row";
 import { fetchCatalogSearch } from "~/clients/catalog-client";
 import { backendClient } from "~/clients/backend-client.server";
-import type { CatalogRow, CatalogSearchPage, CatalogSummary } from "~/clients/catalog-contract";
+import type {
+  CatalogHistoryItem,
+  CatalogRow,
+  CatalogSearchPage,
+  CatalogSummary,
+} from "~/clients/catalog-contract";
 
 type WatchLoaderData = {
   mode: "home" | "search";
   query: string;
   rows: CatalogRow[];
+  /** Continue Watching, richest form: position and episode coordinates per title. */
+  history: CatalogHistoryItem[];
   page: CatalogSearchPage | null;
   error: string | null;
 };
@@ -21,13 +29,25 @@ export async function loader({ request }: Route.LoaderArgs): Promise<WatchLoader
 
   if (query.length === 0) {
     try {
-      const home = await backendClient.getCatalogHome();
-      return { mode: "home", query: "", rows: home.rows, page: null, error: null };
+      const [home, history] = await Promise.all([
+        backendClient.getCatalogHome(),
+        // A history failure must not blank the catalog: it costs one row, not the page.
+        backendClient.getCatalogHistory(20).catch(() => null),
+      ]);
+      return {
+        mode: "home",
+        query: "",
+        rows: home.rows,
+        history: history?.items ?? [],
+        page: null,
+        error: null,
+      };
     } catch (cause) {
       return {
         mode: "home",
         query: "",
         rows: [],
+        history: [],
         page: null,
         error:
           cause instanceof Error ? cause.message : "The catalog could not be loaded right now.",
@@ -40,6 +60,7 @@ export async function loader({ request }: Route.LoaderArgs): Promise<WatchLoader
       mode: "search",
       query,
       rows: [],
+      history: [],
       page: null,
       error: "Search queries are limited to 100 characters.",
     };
@@ -47,12 +68,13 @@ export async function loader({ request }: Route.LoaderArgs): Promise<WatchLoader
 
   try {
     const page = await backendClient.searchCatalog(query, 1);
-    return { mode: "search", query, rows: [], page, error: null };
+    return { mode: "search", query, rows: [], history: [], page, error: null };
   } catch (cause) {
     return {
       mode: "search",
       query,
       rows: [],
+      history: [],
       page: null,
       error:
         cause instanceof Error ? cause.message : "The catalog could not be searched right now.",
@@ -67,7 +89,8 @@ export default function WatchHomeRoute() {
     navigation.state !== "idle" && (navigation.location?.pathname ?? "").startsWith("/watch");
 
   if (isNavigating) return <CatalogSkeletons />;
-  if (data.mode === "home") return <CatalogHomeView rows={data.rows} error={data.error} />;
+  if (data.mode === "home")
+    return <CatalogHomeView rows={data.rows} history={data.history} error={data.error} />;
   return (
     <CatalogSearchView key={data.query} query={data.query} page={data.page} error={data.error} />
   );
@@ -91,10 +114,17 @@ function CatalogSkeletons() {
   );
 }
 
-function CatalogHomeView({ rows, error }: { rows: CatalogRow[]; error: string | null }) {
+function CatalogHomeView({
+  rows,
+  history,
+  error,
+}: {
+  rows: CatalogRow[];
+  history: CatalogHistoryItem[];
+  error: string | null;
+}) {
   const revalidator = useRevalidator();
-  const trending = rows.find((row) => row.id === "trending");
-  const hero = trending?.items[0] ?? rows[0]?.items[0] ?? null;
+  const hero = rows.find((row) => row.id === "trending")?.items?.[0] ?? null;
 
   if (error !== null) {
     return (
@@ -114,6 +144,7 @@ function CatalogHomeView({ rows, error }: { rows: CatalogRow[]; error: string | 
   return (
     <>
       {hero && <CatalogHero item={hero} />}
+      <ContinueWatchingRow items={history} />
       {rows.map((row) => (
         <TitleRow key={row.id} row={row} />
       ))}

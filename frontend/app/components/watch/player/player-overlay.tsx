@@ -35,6 +35,16 @@ export type PlayerOverlayProps = {
   /** Release name the stream was resolved from. */
   releaseTitle: string;
   onClose: () => void;
+  /**
+   * Episode stepping for series. Omitted for movies; a null handler means the player is
+   * at the first/last episode of the loaded season, so that button renders disabled.
+   */
+  episodeNav?:
+    | {
+        onPrevious: (() => void) | null;
+        onNext: (() => void) | null;
+      }
+    | undefined;
 };
 
 /**
@@ -42,9 +52,15 @@ export type PlayerOverlayProps = {
  * carries the title, transport, scrub bar, volume, speed, mode switch and fullscreen.
  * The chrome fades while playback runs and returns on pointer or keyboard activity.
  * Keyboard: space/k play, j/l or arrows seek, up/down volume, m mute, f fullscreen,
- * 0-9 jump, Escape fullscreen/close.
+ * 0-9 jump, [ / ] previous/next episode, Escape fullscreen/close.
  */
-export function PlayerOverlay({ player, title, releaseTitle, onClose }: PlayerOverlayProps) {
+export function PlayerOverlay({
+  player,
+  title,
+  releaseTitle,
+  onClose,
+  episodeNav,
+}: PlayerOverlayProps) {
   const shellRef = useRef<HTMLDivElement>(null);
   const rateMenuRef = useRef<HTMLDivElement>(null);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -273,6 +289,18 @@ export function PlayerOverlay({ player, title, releaseTitle, onClose }: PlayerOv
         case "f":
           void toggleFullscreen();
           break;
+        case "[":
+          if (episodeNav?.onPrevious) {
+            event.preventDefault();
+            episodeNav.onPrevious();
+          }
+          break;
+        case "]":
+          if (episodeNav?.onNext) {
+            event.preventDefault();
+            episodeNav.onNext();
+          }
+          break;
         case "Escape":
           // Menus dismiss first, then fullscreen, and only then the player.
           if (rateMenuOpen) setRateMenuOpen(false);
@@ -289,6 +317,7 @@ export function PlayerOverlay({ player, title, releaseTitle, onClose }: PlayerOv
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
     bump,
+    episodeNav,
     media,
     onClose,
     rateMenuOpen,
@@ -455,6 +484,18 @@ export function PlayerOverlay({ player, title, releaseTitle, onClose }: PlayerOv
 
         <div className="mt-1 flex items-center justify-between gap-2">
           <div className="flex items-center gap-0.5">
+            {episodeNav && (
+              <button
+                type="button"
+                onClick={episodeNav.onPrevious ?? undefined}
+                disabled={!episodeNav.onPrevious}
+                aria-label="Previous episode"
+                title="Previous episode"
+                className={`${CHROME_BUTTON} disabled:pointer-events-none disabled:opacity-30`}
+              >
+                <Icon name="skip_previous" className="!text-[22px]" />
+              </button>
+            )}
             <button
               type="button"
               onClick={() => seekBy(-SKIP_BACK_SECONDS)}
@@ -481,6 +522,18 @@ export function PlayerOverlay({ player, title, releaseTitle, onClose }: PlayerOv
             >
               <Icon name="forward_30" className="!text-[24px]" />
             </button>
+            {episodeNav && (
+              <button
+                type="button"
+                onClick={episodeNav.onNext ?? undefined}
+                disabled={!episodeNav.onNext}
+                aria-label="Next episode"
+                title="Next episode"
+                className={`${CHROME_BUTTON} disabled:pointer-events-none disabled:opacity-30`}
+              >
+                <Icon name="skip_next" className="!text-[22px]" />
+              </button>
+            )}
             <div className="ml-1 flex items-center gap-1">
               <button
                 type="button"

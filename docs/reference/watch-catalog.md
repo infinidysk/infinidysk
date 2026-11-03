@@ -26,9 +26,10 @@ sequenceDiagram
     participant Search as SearchProfileService
     participant Play as ProfilePlayController
     participant View as /view (byte ranges)
-    UI->>API: GET home | search | titles/{type}/{id}
+    UI->>API: GET home | search | titles/{type}/{id} | person/{id}
     API->>Meta: cached provider request
     Meta-->>API: title + external ids (server-side only)
+    UI->>API: GET history (Continue Watching, with progress)
     UI->>API: POST playback {type,tmdbId,season,episode}
     API->>Search: SearchByImdbAsync(profile, identity)
     Search-->>API: PlayTokens[0]
@@ -67,17 +68,44 @@ envelope (`status`, `error`) or the shared problem-details filter for admin rout
 
 | Method | Route | Notes |
 |---|---|---|
-| GET | `/api/catalog/home` | Four rows fetched concurrently: `trending`, `popular-movies`, `popular-series`, `top-rated-movies`. Cache 15 min. |
+| GET | `/api/catalog/home` | Eight provider rows fetched concurrently: `trending`, `popular-movies`, `popular-series`, `top-rated-movies`, `now-playing`, `upcoming-movies`, `top-rated-series`, `trending-people`. Cache 15 min. Continue Watching is not a provider row and is served by `/api/catalog/history`. |
 | GET | `/api/catalog/search?q=&page=` | 1–100 character query, page 1–20. People results dropped. Cache 5 min. |
 | GET | `/api/catalog/titles/{type}/{tmdbId}?season=` | `movie` or `series`. Seasons/episodes included. Cache 24 h. |
+| GET | `/api/catalog/person/{personId}` | Biography header plus one merged, popularity-ordered credit list. Cache 24 h. |
+| GET | `/api/catalog/history?limit=` | Resume rows, resumable first, finished at the tail. Default 20, capped at 200. Never cached. |
+| POST | `/api/catalog/history/progress` | `{type, tmdbId, season?, episode?, position, duration?, finished?}` → `{status}`. Display fields are resolved server-side. |
+| DELETE | `/api/catalog/history/{id}` | Removes one row: "Remove from Continue Watching". 404 when the row is already gone. |
 | POST | `/api/catalog/playback` | `{type, tmdbId, season?, episode?}` → `{playbackId, directUrl, hlsUrl, releaseTitle}`. |
 | GET | `/api/catalog/playback/{id}/playlist.m3u8` | Authenticated VOD manifest. |
 | GET | `/api/catalog/playback/{id}/segments/{index}.ts` | `video/mp2t`, generated on demand. |
+
+Home rows carry exactly one of `items` (title cards) and `people` (the
+`trending-people` row), never both, and the strict row schema rejects a row with
+neither. Continue Watching comes from its own endpoint, which carries the resume
+coordinates and progress a bare summary row cannot express.
 
 Status codes are meaningful: `400` invalid coordinates, `404` unknown title, empty
 release list, or expired session, `422` missing external identity or unusable duration,
 `502` provider/encoder failure, `503` unconfigured or still preparing (with
 `Retry-After`).
+
+### Watch history
+
+`catalog_watch_history` holds one resumable row per title (per episode for series). The
+unique index is filtered to `NOT "Finished"`, so re-watching a completed title starts a
+new row instead of colliding with history. The row is written twice:
+
+1. When playback resolves a stream, with the server-resolved title, episode label,
+   artwork, and position 0 — so Continue Watching is accurate even if the player never
+   reports.
+2. Every 10 s from the player (one report per six-second segment boundary) and once on
+   `ended`, which flips `Finished` and pins the position to the duration.
+
+Starting a title again supersedes its finished row, so the row never shows a stale
+"Watched" card beside the live one; rows older than 32 days are pruned on the next
+write. History failures stay local: a failed write never costs the viewer a working
+stream, and a failed read empties only the Continue Watching row — the catalog rows come
+from the provider cache and are unaffected.
 
 ### Identity mapping
 
@@ -141,6 +169,15 @@ is accepted by both native HLS and hls.js.
 buffered/played seek rail, ±10/30 s, volume, speed menu, PiP, fullscreen, failure
 banner, and a playback-data panel (`i`).
 
+Series playback carries the season's episode order with the target, so the player adds
+previous/next episode buttons beside the transport (disabled at the season edges) and
+autoplays the next episode when the current one ends. The switch is a new playback
+session: the finished episode's history row is written first, then the dialog resolves
+the next episode's stream and mounts a fresh player, which autoplays. At a season finale
+the player fetches the next season's episode list and continues with its first episode;
+only the last episode of the last season stops. Stepping backwards stays within the
+loaded season.
+
 Chrome is text-shadow only — no translucent fills or backdrop blur. Measured on this
 host, painting translucent bands over 1080p video cost 9–11 dropped frames per 20 s;
 identical chrome with fills removed dropped 0.
@@ -150,7 +187,8 @@ the chrome is hidden, so the cursor disappears after the idle delay — in fulls
 too — and returns on pointer movement.
 
 Keyboard: space/k play, arrows/j/l seek, up/down volume, m mute, f fullscreen, 0–9
-jump, i playback data, Escape dismisses menu → exits fullscreen → closes.
+jump, i playback data, `[` / `]` previous/next episode, Escape dismisses menu → exits
+fullscreen → closes.
 
 ## Running it locally
 
@@ -188,6 +226,7 @@ zero DTS regressions for both streams, confirm audio RMS is flat across a bounda
 | Metadata clients | `backend/Clients/Metadata/{MetadataHttp,TmdbClient,TvdbClient}.cs` |
 | Catalog service and models | `backend/Services/Catalog/CatalogService.cs`, `backend/Models/Catalog/Models.cs` |
 | Playback identity/session | `backend/Services/Catalog/{CatalogPlaybackService,CatalogPlaybackSessionStore,CatalogBackendUrl}.cs` |
+| Watch history | `backend/Services/Catalog/CatalogWatchHistoryService.cs`, `backend/Database/Models/CatalogWatchHistory.cs` |
 | Encoder | `backend/Services/Catalog/{FFmpegRunner,CatalogTranscodeRun,CatalogTranscodeService,CatalogHlsManifest}.cs` |
 | API | `backend/Api/Controllers/Catalog/` |
 | Shared player | `frontend/app/components/media-player/` |

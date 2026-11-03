@@ -38,6 +38,8 @@ public sealed class CatalogContractTests(NzbDavWebApplicationFactory factory)
                      "/api/catalog/home",
                      "/api/catalog/search?q=night",
                      "/api/catalog/titles/movie/10331",
+                     "/api/catalog/person/525",
+                     "/api/catalog/history",
                  })
         {
             using var response = await client.GetAsync(path);
@@ -46,6 +48,14 @@ public sealed class CatalogContractTests(NzbDavWebApplicationFactory factory)
 
         using var playback = await client.SendAsync(request);
         Assert.Equal(HttpStatusCode.Unauthorized, playback.StatusCode);
+
+        using var progress = await client.PostAsync(
+            "/api/catalog/history/progress",
+            new StringContent("""{"type":"movie","tmdbId":10331,"position":1}""", Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.Unauthorized, progress.StatusCode);
+
+        using var remove = await client.DeleteAsync("/api/catalog/history/1");
+        Assert.Equal(HttpStatusCode.Unauthorized, remove.StatusCode);
 
         using var manifest = await client.GetAsync(
             $"/api/catalog/playback/{Guid.NewGuid():D}/playlist.m3u8");
@@ -70,7 +80,11 @@ public sealed class CatalogContractTests(NzbDavWebApplicationFactory factory)
 
         var rows = json.RootElement.GetProperty("rows").EnumerateArray().ToList();
         Assert.Equal(
-            new[] { "trending", "popular-movies", "popular-series", "top-rated-movies" },
+            new[]
+            {
+                "trending", "popular-movies", "popular-series", "top-rated-movies",
+                "now-playing", "upcoming-movies", "top-rated-series", "trending-people",
+            },
             rows.Select(row => row.GetProperty("id").GetString()));
         var trending = rows[0].GetProperty("items").EnumerateArray().ToList();
         Assert.Equal("movie", trending[0].GetProperty("type").GetString());
@@ -79,6 +93,149 @@ public sealed class CatalogContractTests(NzbDavWebApplicationFactory factory)
             "https://image.tmdb.org/t/p/w500/poster.jpg",
             trending[0].GetProperty("posterUrl").GetString());
         Assert.Equal("series", trending[1].GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task HomePeopleRowCarriesPeopleNotItems()
+    {
+        using var host = CreateHost();
+        using var client = CreateCatalogClient(host);
+
+        using var response = await client.GetAsync("/api/catalog/home");
+
+        using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        JsonContractValidator.AssertMatchesSchema(json.RootElement, "admin/v1/catalog-home.schema.json");
+        var peopleRow = json.RootElement.GetProperty("rows").EnumerateArray()
+            .Single(row => row.GetProperty("id").GetString() == "trending-people");
+        Assert.Equal(JsonValueKind.Null, peopleRow.GetProperty("items").ValueKind);
+        var person = peopleRow.GetProperty("people").EnumerateArray().Single();
+        Assert.Equal("525", person.GetProperty("personId").GetString());
+        Assert.Equal("Christopher Nolan", person.GetProperty("name").GetString());
+        Assert.Equal(
+            "https://image.tmdb.org/t/p/w500/nolan.jpg",
+            person.GetProperty("profileUrl").GetString());
+
+        var trendingRow = json.RootElement.GetProperty("rows").EnumerateArray().First();
+        Assert.Equal(JsonValueKind.Null, trendingRow.GetProperty("people").ValueKind);
+    }
+
+    [Fact]
+    public async Task PersonDetailsMatchContractAndRejectUnknownIds()
+    {
+        using var host = CreateHost();
+        using var client = CreateCatalogClient(host);
+
+        using var response = await client.GetAsync("/api/catalog/person/525");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        JsonContractValidator.AssertMatchesSchema(json.RootElement, "admin/v1/catalog-person.schema.json");
+        var person = json.RootElement.GetProperty("person");
+        Assert.Equal("Christopher Nolan", person.GetProperty("name").GetString());
+        Assert.Equal("London", person.GetProperty("placeOfBirth").GetString());
+        Assert.Equal(
+            new[] { "Interstellar", "Inception" },
+            json.RootElement.GetProperty("credits").EnumerateArray()
+                .Select(credit => credit.GetProperty("title").GetString()));
+
+        using var missing = await client.GetAsync("/api/catalog/person/999999");
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        using var missingJson = await JsonDocument.ParseAsync(await missing.Content.ReadAsStreamAsync());
+        Assert.Equal("Person not found.", ProblemDetail(missingJson));
+    }
+
+    [Fact]
+    public async Task WatchHistoryRecordsProgressFromProviderMetadata()
+    {
+        using var host = CreateHost();
+        using var client = CreateCatalogClient(host);
+
+        using var progress = await client.PostAsync(
+            "/api/catalog/history/progress",
+            new StringContent(
+                """{"type":"movie","tmdbId":10331,"position":42,"duration":600}""",
+                Encoding.UTF8,
+                "application/json"));
+        Assert.Equal(HttpStatusCode.OK, progress.StatusCode);
+        using var progressJson = await JsonDocument.ParseAsync(await progress.Content.ReadAsStreamAsync());
+        JsonContractValidator.AssertMatchesSchema(
+            progressJson.RootElement, "admin/v1/catalog-history-progress.schema.json");
+
+        using var history = await client.GetAsync("/api/catalog/history?limit=5");
+        Assert.Equal(HttpStatusCode.OK, history.StatusCode);
+        using var historyJson = await JsonDocument.ParseAsync(await history.Content.ReadAsStreamAsync());
+        JsonContractValidator.AssertMatchesSchema(historyJson.RootElement, "admin/v1/catalog-history.schema.json");
+        var item = historyJson.RootElement.GetProperty("items").EnumerateArray()
+            .Single(entry => entry.GetProperty("tmdbId").GetInt32() == 10331);
+        Assert.Equal("movie", item.GetProperty("type").GetString());
+        // Display fields come from provider metadata, never from the request body.
+        Assert.Equal("Night of the Living Dead", item.GetProperty("title").GetString());
+        Assert.Equal(42, item.GetProperty("positionSeconds").GetInt64());
+        Assert.Equal(600, item.GetProperty("durationSeconds").GetInt64());
+        Assert.False(item.GetProperty("finished").GetBoolean());
+        Assert.True(item.GetProperty("id").GetInt32() > 0);
+        // The home response is provider-only: Continue Watching is its own endpoint.
+        using var home = await client.GetAsync("/api/catalog/home");
+        using var homeJson = await JsonDocument.ParseAsync(await home.Content.ReadAsStreamAsync());
+        Assert.DoesNotContain(
+            "continue-watching",
+            homeJson.RootElement.GetProperty("rows").EnumerateArray()
+                .Select(row => row.GetProperty("id").GetString()));
+    }
+
+    [Fact]
+    public async Task DeleteRemovesOneHistoryRowAndReportsMissingIds()
+    {
+        using var host = CreateHost();
+        using var client = CreateCatalogClient(host);
+
+        using var progress = await client.PostAsync(
+            "/api/catalog/history/progress",
+            new StringContent(
+                """{"type":"series","tmdbId":1930,"season":1,"episode":2,"position":30,"duration":1500}""",
+                Encoding.UTF8,
+                "application/json"));
+        Assert.Equal(HttpStatusCode.OK, progress.StatusCode);
+
+        using var before = await client.GetAsync("/api/catalog/history?limit=50");
+        using var beforeJson = await JsonDocument.ParseAsync(await before.Content.ReadAsStreamAsync());
+        var row = beforeJson.RootElement.GetProperty("items").EnumerateArray()
+            .Single(entry => entry.GetProperty("tmdbId").GetInt32() == 1930
+                             && entry.GetProperty("episode").GetInt32() == 2);
+        var id = row.GetProperty("id").GetInt32();
+
+        using var remove = await client.DeleteAsync($"/api/catalog/history/{id}");
+        Assert.Equal(HttpStatusCode.OK, remove.StatusCode);
+
+        using var after = await client.GetAsync("/api/catalog/history?limit=50");
+        using var afterJson = await JsonDocument.ParseAsync(await after.Content.ReadAsStreamAsync());
+        Assert.DoesNotContain(
+            id,
+            afterJson.RootElement.GetProperty("items").EnumerateArray()
+                .Select(entry => entry.GetProperty("id").GetInt32()));
+
+        using var missing = await client.DeleteAsync($"/api/catalog/history/{id}");
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        using var missingJson = await JsonDocument.ParseAsync(await missing.Content.ReadAsStreamAsync());
+        Assert.Equal("History entry not found.", ProblemDetail(missingJson));
+    }
+
+    [Theory]
+    [InlineData("""{"type":"movie","tmdbId":10331,"season":1,"position":1}""")]
+    [InlineData("""{"type":"series","tmdbId":1930,"season":1,"position":1}""")]
+    [InlineData("""{"type":"movie","tmdbId":0,"position":1}""")]
+    [InlineData("""{"type":"movie","tmdbId":10331,"position":-1}""")]
+    [InlineData("{oops")]
+    public async Task ProgressRejectsMalformedCoordinates(string body)
+    {
+        using var host = CreateHost();
+        using var client = CreateCatalogClient(host);
+
+        using var response = await client.PostAsync(
+            "/api/catalog/history/progress",
+            new StringContent(body, Encoding.UTF8, "application/json"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Theory]
@@ -332,9 +489,41 @@ public sealed class CatalogContractTests(NzbDavWebApplicationFactory factory)
 
         if (path.EndsWith("/movie/popular", StringComparison.Ordinal)
             || path.EndsWith("/movie/top_rated", StringComparison.Ordinal)
-            || path.EndsWith("/tv/popular", StringComparison.Ordinal))
+            || path.EndsWith("/tv/popular", StringComparison.Ordinal)
+            || path.EndsWith("/tv/top_rated", StringComparison.Ordinal)
+            || path.EndsWith("/now_playing", StringComparison.Ordinal)
+            || path.EndsWith("/upcoming", StringComparison.Ordinal))
         {
             return Json("""{"results":[]}""");
+        }
+
+        if (path.EndsWith("/trending/person/week", StringComparison.Ordinal))
+        {
+            return Json("""
+                {"results":[
+                  {"id":525,"name":"Christopher Nolan","profile_path":"/nolan.jpg","popularity":93.5,
+                   "known_for":[{"title":"Inception"},{"title":"Interstellar"}]}
+                ]}
+                """);
+        }
+
+        if (path.EndsWith("/person/525", StringComparison.Ordinal))
+        {
+            return Json("""
+                {"id":525,"name":"Christopher Nolan","biography":"Director.","birthday":"1970-07-30",
+                 "place_of_birth":"London","known_for_department":"Directing","popularity":93.5,"profile_path":"/nolan.jpg"}
+                """);
+        }
+
+        if (path.EndsWith("/person/525/combined_credits", StringComparison.Ordinal))
+        {
+            return Json("""
+                {"cast":[
+                   {"media_type":"movie","id":27205,"title":"Inception","popularity":50,"poster_path":"/i.jpg"},
+                   {"media_type":"movie","id":157336,"title":"Interstellar","popularity":65}
+                 ],
+                 "crew":[]}
+                """);
         }
 
         if (path.EndsWith("/search/multi", StringComparison.Ordinal))

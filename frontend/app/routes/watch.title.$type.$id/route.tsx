@@ -1,8 +1,12 @@
 import { useLoaderData, useNavigate } from "react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Route } from "./+types/route";
 import { Button, Icon, Label } from "~/components/ui";
-import { PlaybackDialog, type PlaybackTarget } from "~/components/watch/playback-dialog";
+import {
+  PlaybackDialog,
+  episodeTarget,
+  type PlaybackTarget,
+} from "~/components/watch/playback-dialog";
 import { backendClient } from "~/clients/backend-client.server";
 import type { CatalogEpisode, CatalogTitleResponse } from "~/clients/catalog-contract";
 
@@ -17,15 +21,28 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     throw new Response("Title not found.", { status: 404 });
   }
 
-  const seasonRaw = new URL(request.url).searchParams.get("season");
+  const searchParams = new URL(request.url).searchParams;
+  const seasonRaw = searchParams.get("season");
   const season = seasonRaw === null ? undefined : Number(seasonRaw);
   if (season !== undefined && (!Number.isInteger(season) || season < 0)) {
     throw new Response("Season must be zero or greater.", { status: 404 });
   }
 
+  // Continue Watching deep-links carry the episode so the resume lands on the right row.
+  const episodeRaw = searchParams.get("episode");
+  const resumeEpisode = episodeRaw === null ? null : Number(episodeRaw);
+  if (resumeEpisode !== null) {
+    if (!Number.isInteger(resumeEpisode) || resumeEpisode < 1) {
+      throw new Response("Episode must be one or greater.", { status: 404 });
+    }
+    if (season === undefined) {
+      throw new Response("Episode requires a season.", { status: 404 });
+    }
+  }
+
   try {
     const catalogTitle = await backendClient.getCatalogTitle(type, tmdbId, season);
-    return { catalogTitle };
+    return { catalogTitle, resumeEpisode };
   } catch (cause) {
     const notFound =
       cause instanceof Error && /404|not found/i.test(`${cause.message} ${String(cause.name)}`);
@@ -37,7 +54,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
 }
 
 export default function WatchTitleRoute() {
-  const { catalogTitle } = useLoaderData<typeof loader>();
+  const { catalogTitle, resumeEpisode } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const [target, setTarget] = useState<PlaybackTarget | null>(null);
   const title = catalogTitle.title;
@@ -54,16 +71,28 @@ export default function WatchTitleRoute() {
     runtime,
   ].filter(Boolean);
 
+  // The season order travels with the target so the player can step and autoplay
+  // without another round trip to the title page.
+  const lineup = catalogTitle.episodes.map((entry) => ({
+    season: entry.seasonNumber,
+    episode: entry.episodeNumber,
+    name: entry.name,
+  }));
   const openEpisode = (episode: CatalogEpisode) =>
-    setTarget({
-      type: "series",
-      tmdbId: title.tmdbId,
-      season: episode.seasonNumber,
-      episode: episode.episodeNumber,
-      label: `S${String(episode.seasonNumber).padStart(2, "0")}E${String(
-        episode.episodeNumber,
-      ).padStart(2, "0")} · ${episode.name}`,
-    });
+    setTarget(
+      episodeTarget(
+        {
+          tmdbId: title.tmdbId,
+          seasons: catalogTitle.seasons.map((season) => season.seasonNumber),
+          episodes: lineup,
+        },
+        {
+          season: episode.seasonNumber,
+          episode: episode.episodeNumber,
+          name: episode.name,
+        },
+      ),
+    );
 
   return (
     <>
@@ -130,6 +159,7 @@ export default function WatchTitleRoute() {
               )
             }
             onPlay={openEpisode}
+            resumeEpisode={resumeEpisode}
           />
         )}
       {target && <PlaybackDialog target={target} onClose={() => setTarget(null)} />}
@@ -141,12 +171,20 @@ function SeriesEpisodes({
   catalogTitle,
   onSeasonChange,
   onPlay,
+  resumeEpisode,
 }: {
   catalogTitle: CatalogTitleResponse;
   onSeasonChange: (season: number | null) => void;
   onPlay: (episode: CatalogEpisode) => void;
+  resumeEpisode: number | null;
 }) {
   const { seasons, episodes, selectedSeason } = catalogTitle;
+  const resumeRef = useRef<HTMLLIElement>(null);
+
+  // The episode from Continue Watching is scrolled into view once the season renders.
+  useEffect(() => {
+    resumeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [resumeEpisode, selectedSeason]);
 
   return (
     <section className="py-6">
@@ -180,10 +218,20 @@ function SeriesEpisodes({
         </p>
       ) : (
         <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {episodes.map((episode) => (
+          {episodes.map((episode) => {
+            const isResume =
+              resumeEpisode !== null &&
+              episode.episodeNumber === resumeEpisode &&
+              episode.seasonNumber === selectedSeason;
+            return (
             <li
               key={`${episode.seasonNumber}:${episode.episodeNumber}`}
-              className="flex gap-3 rounded-lg border border-base-content/10 bg-base-200/60 p-3"
+              ref={isResume ? resumeRef : undefined}
+              aria-current={isResume ? "true" : undefined}
+              data-resume={isResume ? "true" : undefined}
+              className={`flex gap-3 rounded-lg border bg-base-200/60 p-3 ${
+                isResume ? "border-primary/60 ring-1 ring-primary/30" : "border-base-content/10"
+              }`}
             >
               <div className="aspect-video w-32 shrink-0 overflow-hidden rounded bg-base-300">
                 {episode.stillUrl ? (
@@ -211,15 +259,23 @@ function SeriesEpisodes({
                 {episode.overview && (
                   <p className="line-clamp-2 text-xs text-base-content/60">{episode.overview}</p>
                 )}
-                <div className="mt-auto pt-1">
+                <div className="mt-auto flex items-center gap-2 pt-1">
                   <Button variant="primary" size="xsmall" onClick={() => onPlay(episode)}>
                     <Icon name="play_arrow" className="!text-[16px]" />
-                    Play
+                    {isResume ? "Resume" : "Play"}
                   </Button>
+                  {isResume && (
+                    <span className="text-xs font-medium text-primary">
+                      {`Resume · S${String(episode.seasonNumber).padStart(2, "0")}E${String(
+                        episode.episodeNumber,
+                      ).padStart(2, "0")}`}
+                    </span>
+                  )}
                 </div>
               </div>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </section>

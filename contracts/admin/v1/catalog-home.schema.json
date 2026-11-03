@@ -3,26 +3,89 @@
   "$id": "https://infinidysk.local/contracts/admin/v1/catalog-home.schema.json",
   "title": "Admin catalog home success",
   "type": "object",
-  "required": ["status", "rows"],
+  "required": [
+    "status",
+    "rows"
+  ],
   "additionalProperties": false,
   "properties": {
-    "status": { "const": true },
-    "error": { "type": ["string", "null"] },
+    "status": {
+      "const": true
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "rows": {
       "type": "array",
-      "items": { "$ref": "#/$defs/row" }
+      "items": {
+        "$ref": "#/$defs/row"
+      }
     }
   },
   "$defs": {
     "row": {
       "type": "object",
-      "required": ["id", "title", "items"],
+      "required": [
+        "id",
+        "title",
+        "items",
+        "people"
+      ],
       "additionalProperties": false,
+      "description": "Exactly one of items and people is a list; the other is null.",
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "title": { "type": "string", "minLength": 1 },
-        "items": { "type": "array", "items": { "$ref": "#/$defs/summary" } }
-      }
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "items": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/summary"
+          }
+        },
+        "people": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/person"
+          }
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "items": {
+              "type": "array"
+            },
+            "people": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "items": {
+              "type": "null"
+            },
+            "people": {
+              "type": "array"
+            }
+          }
+        }
+      ]
     },
     "summary": {
       "type": "object",
@@ -38,14 +101,75 @@
       ],
       "additionalProperties": false,
       "properties": {
-        "type": { "enum": ["movie", "series"] },
-        "tmdbId": { "type": "integer", "minimum": 1 },
-        "title": { "type": "string", "minLength": 1 },
-        "year": { "type": ["integer", "null"] },
-        "overview": { "type": ["string", "null"] },
-        "rating": { "type": ["number", "null"] },
-        "posterUrl": { "type": ["string", "null"] },
-        "backdropUrl": { "type": ["string", "null"] }
+        "type": {
+          "enum": [
+            "movie",
+            "series"
+          ]
+        },
+        "tmdbId": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "year": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "overview": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rating": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "posterUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "backdropUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "person": {
+      "type": "object",
+      "required": [
+        "personId",
+        "name",
+        "profileUrl"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "personId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "profileUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     }
   }

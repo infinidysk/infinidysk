@@ -44,6 +44,46 @@ public sealed class TmdbClient(IHttpClientFactory httpClientFactory, ConfigManag
         return ReadSummaries(document.RootElement, forcedType: "movie");
     }
 
+    public async Task<IReadOnlyList<CatalogSummary>> GetNowPlayingMoviesAsync(CancellationToken ct)
+    {
+        using var document = await GetAsync("/movie/now_playing?language=en-US&region=US&page=1", ct)
+            .ConfigureAwait(false);
+        return ReadSummaries(document.RootElement, forcedType: "movie");
+    }
+
+    public async Task<IReadOnlyList<CatalogSummary>> GetUpcomingMoviesAsync(CancellationToken ct)
+    {
+        using var document = await GetAsync("/movie/upcoming?language=en-US&region=US&page=1", ct)
+            .ConfigureAwait(false);
+        return ReadSummaries(document.RootElement, forcedType: "movie");
+    }
+
+    public async Task<IReadOnlyList<CatalogSummary>> GetTopRatedSeriesAsync(CancellationToken ct)
+    {
+        using var document = await GetAsync("/tv/top_rated?language=en-US&page=1", ct).ConfigureAwait(false);
+        return ReadSummaries(document.RootElement, forcedType: "series");
+    }
+
+    /// <summary>Trending people, with the first two "known for" titles joined for the card.</summary>
+    public async Task<IReadOnlyList<TmdbPerson>> GetTrendingPeopleAsync(CancellationToken ct)
+    {
+        using var document = await GetAsync("/trending/person/week?language=en-US", ct).ConfigureAwait(false);
+        if (!document.RootElement.TryGetProperty("results", out var results)
+            || results.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var items = new List<TmdbPerson>();
+        foreach (var item in results.EnumerateArray())
+        {
+            var people = ReadPerson(item);
+            if (people is not null) items.Add(people);
+        }
+
+        return items;
+    }
+
     public async Task<CatalogSearchPage> SearchMultiAsync(string query, int page, CancellationToken ct)
     {
         var url = FormattableString.Invariant(
@@ -132,6 +172,103 @@ public sealed class TmdbClient(IHttpClientFactory httpClientFactory, ConfigManag
         }
 
         return items;
+    }
+
+    /// <summary>
+    /// Person details plus the merged movie/series credit list, or null when TMDB does
+    /// not know the person.
+    /// </summary>
+    public async Task<TmdbPersonDetails?> GetPersonAsync(int personId, CancellationToken ct)
+    {
+        using var document = await TryGetAsync(
+            FormattableString.Invariant($"/person/{personId}?language=en-US"), ct).ConfigureAwait(false);
+        if (document is null) return null;
+
+        var root = document.RootElement;
+        var person = ReadPerson(root);
+        if (person is null) return null;
+
+        return new TmdbPersonDetails(
+            person,
+            root.ReadString("biography"),
+            root.ReadString("birthday"),
+            root.ReadString("place_of_birth"),
+            root.ReadString("known_for_department"),
+            await GetCombinedCreditsAsync(personId, ct).ConfigureAwait(false));
+    }
+
+    /// <summary>
+    /// Cast and crew credits merged into one popularity-ordered list. The same title can
+    /// appear as several characters/roles, so entries are deduplicated by media type and id.
+    /// </summary>
+    private async Task<IReadOnlyList<CatalogSummary>> GetCombinedCreditsAsync(int personId, CancellationToken ct)
+    {
+        using var document = await TryGetAsync(
+            FormattableString.Invariant($"/person/{personId}/combined_credits?language=en-US"), ct)
+            .ConfigureAwait(false);
+        if (document is null) return [];
+
+        var credits = new Dictionary<(string Type, int TmdbId), (CatalogSummary Summary, double Popularity)>();
+        foreach (var property in (string[])["cast", "crew"])
+        {
+            if (!document.RootElement.TryGetProperty(property, out var entries)
+                || entries.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            foreach (var entry in entries.EnumerateArray())
+            {
+                var summary = ReadSummary(entry, forcedType: null);
+                if (summary is null) continue;
+
+                var key = (summary.Type, summary.TmdbId);
+                var popularity = entry.ReadDouble("popularity") ?? 0;
+                if (credits.TryGetValue(key, out var existing) && existing.Popularity >= popularity) continue;
+                credits[key] = (summary, popularity);
+            }
+        }
+
+        return credits.Values
+            .OrderByDescending(credit => credit.Popularity)
+            .Select(credit => credit.Summary)
+            .ToList();
+    }
+
+    private static TmdbPerson? ReadPerson(JsonElement element)
+    {
+        var id = element.ReadInt("id");
+        if (id is not > 0) return null;
+        var name = element.ReadString("name");
+        if (name is null) return null;
+
+        return new TmdbPerson(
+            id.Value,
+            name,
+            MetadataHttp.BuildTmdbImageUrl(element.ReadString("profile_path"), PosterSize),
+            element.ReadDouble("popularity") ?? 0,
+            ReadKnownFor(element));
+    }
+
+    /// <summary>First two "known for" titles, joined; null when TMDB lists none.</summary>
+    private static string? ReadKnownFor(JsonElement element)
+    {
+        if (!element.TryGetProperty("known_for", out var knownFor)
+            || knownFor.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var titles = new List<string>(2);
+        foreach (var entry in knownFor.EnumerateArray())
+        {
+            var title = entry.ReadString("title") ?? entry.ReadString("name");
+            if (string.IsNullOrWhiteSpace(title)) continue;
+            titles.Add(title);
+            if (titles.Count == 2) break;
+        }
+
+        return titles.Count == 0 ? null : string.Join(", ", titles);
     }
 
     private async Task<JsonDocument> GetAsync(string relativeUrl, CancellationToken ct)
@@ -297,3 +434,11 @@ public sealed record TmdbSeriesDetails(
     int? RuntimeMinutes,
     IReadOnlyList<string> Genres,
     IReadOnlyList<CatalogSeason> Seasons);
+
+public sealed record TmdbPersonDetails(
+    TmdbPerson Person,
+    string? Biography,
+    string? Birthday,
+    string? PlaceOfBirth,
+    string? KnownForDepartment,
+    IReadOnlyList<CatalogSummary> Credits);

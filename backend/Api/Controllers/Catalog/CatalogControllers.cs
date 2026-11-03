@@ -100,3 +100,25 @@ public sealed class CatalogTitleController(CatalogService catalogService) : GetO
         return season;
     }
 }
+
+[ApiController]
+[Route("api/catalog/person/{personId:int}")]
+[ProducesResponseType(typeof(CatalogPersonResponse), 200)]
+public sealed class CatalogPersonController(CatalogService catalogService) : GetOnlyApiController
+{
+    protected override async Task<IActionResult> HandleRequest()
+    {
+        Response.Headers.CacheControl = "no-store";
+        var raw = HttpContext.Request.RouteValues["personId"]?.ToString();
+        if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var personId) || personId <= 0)
+            throw CatalogException.Validation("Person id must be a positive integer.");
+
+        var person = await catalogService
+            .GetPersonAsync(personId, HttpContext.RequestAborted)
+            .ConfigureAwait(false);
+        if (person is null)
+            return NotFound(new BaseApiResponse { Status = false, Error = "Person not found." });
+
+        return Ok(CatalogContractMapper.ToResponse(person));
+    }
+}
