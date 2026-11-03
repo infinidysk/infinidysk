@@ -20,7 +20,8 @@ use sqlx::sqlite::SqliteConnectOptions;
 use uuid::Uuid;
 
 pub use crate::apply::{
-    Imported, Progress, apply, apply_with_progress, retry_files, stamp_download_ids,
+    Imported, Progress, apply, apply_with_progress, restore_nzb_downloads, retry_files,
+    stamp_download_ids,
 };
 use crate::csharp::{LongRange, decode};
 pub use crate::password::{is_legacy, legacy_hash, verify_legacy};
@@ -180,8 +181,8 @@ impl Survey {
             self.missing_file_blobs += 1;
             return;
         };
-        let bytes = match read_blob(blobs, &meta, MAX_METADATA_BYTES) {
-            Ok(Some(bytes)) => bytes,
+        let file = match open_blob(blobs, &meta) {
+            Ok(Some(file)) => file,
             Ok(None) => {
                 self.missing_file_blobs += 1;
                 return;
@@ -192,15 +193,15 @@ impl Survey {
         let result = match sub_type {
             201 => {
                 self.nzb_files += 1;
-                decode(&bytes, csharp::nzb_file).map(|f| self.nzb(&f, size))
+                decode(file, csharp::nzb_file).map(|f| self.nzb(&f, size))
             }
             202 => {
                 self.rar_files += 1;
-                decode(&bytes, csharp::rar_file).map(|f| self.rar(&f, size))
+                decode(file, csharp::rar_file).map(|f| self.rar(&f, size))
             }
             203 => {
                 self.multipart_files += 1;
-                decode(&bytes, csharp::multipart_file).map(|f| self.multipart(&f, size))
+                decode(file, csharp::multipart_file).map(|f| self.multipart(&f, size))
             }
             other => return self.fail(id, format!("unknown file type {other}")),
         };
@@ -299,10 +300,8 @@ fn blob_path(blobs: &Path, id: &str) -> Option<PathBuf> {
     Some(blobs.join(&hex[..2]).join(&hex[2..4]).join(id.to_string()))
 }
 
-/// Largest legacy NZB blob read; the queue's `nzb::MAX_NZB`.
-pub(crate) const MAX_NZB_BLOB_BYTES: u64 = 256_000_000;
-/// Largest legacy metadata blob read.
-pub(crate) const MAX_METADATA_BYTES: u64 = 64_000_000;
+/// Matches C#'s current NZB ingestion limit; new uploads use the queue's separate cap.
+pub(crate) const MAX_NZB_BLOB_BYTES: u64 = 268_435_456;
 
 /// Reads blob `id` below the folder `blobs`, following no symlink below it and reading at
 /// most `limit` bytes; `None` when it is not there.
@@ -473,6 +472,12 @@ mod tests {
         };
         let regular = Uuid::now_v7().to_string();
         std::fs::write(place(&regular), b"nzb").unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(place(&regular))
+            .unwrap()
+            .set_len(MAX_NZB_BLOB_BYTES)
+            .unwrap();
         let linked = Uuid::now_v7().to_string();
         std::os::unix::fs::symlink(place(&regular), place(&linked)).unwrap();
 
@@ -480,8 +485,17 @@ mod tests {
         for nzb in [regular, linked] {
             survey.file(&blobs, (String::new(), 201, None, None, Some(nzb), false));
         }
+        let oversized = Uuid::now_v7().to_string();
+        File::create(place(&oversized))
+            .unwrap()
+            .set_len(MAX_NZB_BLOB_BYTES + 1)
+            .unwrap();
+        survey.file(
+            &blobs,
+            (String::new(), 201, None, None, Some(oversized), false),
+        );
         std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(survey.missing_nzb_blobs, 1);
+        assert_eq!(survey.missing_nzb_blobs, 2);
     }
 
     #[test]

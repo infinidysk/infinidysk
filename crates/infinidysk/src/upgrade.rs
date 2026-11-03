@@ -852,7 +852,7 @@ pub async fn keep_unowned_migrated(db: &Db, store: &mut ConfigStore) {
 
 /// Config key set once files an earlier C# import skipped were retried. Bumped when the
 /// importer learns to carry over files it used to skip, so installs retry once more.
-const SKIPPED_RETRIED_KEY: &str = "upgrade.skipped_retried.4";
+const SKIPPED_RETRIED_KEY: &str = "upgrade.skipped_retried.5";
 
 /// Whether files an earlier C# import skipped may still be brought back.
 pub(crate) async fn skipped_pending(db: &Db) -> Result<bool, infinidysk_db::Error> {
@@ -896,6 +896,13 @@ pub async fn retry_skipped(
         .unwrap_or_default();
     let mut set = vec![(SKIPPED_RETRIED_KEY, "true".to_owned())];
     if config.join("db.sqlite").is_file() {
+        match infinidysk_import::restore_nzb_downloads(&config, &db).await {
+            Ok(restored) => tracing::info!(restored, "restored missing C# NZB download links"),
+            Err(error) => {
+                tracing::warn!(reason = %error, "could not restore C# NZB download links");
+                return;
+            }
+        }
         let roots: Vec<PathBuf> = settings
             .imports
             .library_dirs
@@ -1503,7 +1510,7 @@ mod tests {
         db.write_config(
             &[
                 (STATE_KEY, "\"done\""),
-                ("upgrade.skipped_retried.3", "true"),
+                ("upgrade.skipped_retried.4", "true"),
             ],
             &[],
         )

@@ -2,6 +2,13 @@
 //! `MemoryPack`, decoded into types shaped like the C# ones. Members are read by their
 //! `MemoryPackOrder`; members a blob predates read as their C# default.
 
+#![allow(
+    clippy::redundant_closure_for_method_calls,
+    reason = "Method pointers do not satisfy the streaming field callback's higher-ranked lifetimes."
+)]
+
+use std::io::{BufReader, Read};
+
 use uuid::Uuid;
 
 use crate::memorypack::{Error, Object, Reader};
@@ -107,14 +114,15 @@ pub struct PendingPart {
 
 /// Decompresses blob file contents and reads the root object with `read`.
 pub fn decode<T>(
-    compressed: &[u8],
+    compressed: impl Read,
     read: impl FnOnce(&Object<'_>) -> Result<T, Error>,
 ) -> Result<T, DecodeError> {
-    let raw = zstd::stream::decode_all(compressed)?;
-    let mut r = Reader::new(&raw);
-    let root = r.object()?.ok_or(Error::Invalid("null root"))?;
-    r.finish()?;
-    Ok(read(&root)?)
+    let decoder = zstd::stream::read::Decoder::new(compressed)?;
+    let mut input = BufReader::new(decoder);
+    let mut reader = Reader::new(&mut input);
+    let value = object(&mut reader, read)?;
+    reader.finish()?;
+    Ok(value)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -127,22 +135,25 @@ pub enum DecodeError {
 
 pub fn nzb_file(o: &Object<'_>) -> Result<NzbFile, Error> {
     Ok(NzbFile {
-        id: o.field(0, Reader::guid)?.unwrap_or_default(),
-        segment_ids: o.field(1, Reader::strings)?.flatten().unwrap_or_default(),
+        id: o.field(0, |reader| reader.guid())?.unwrap_or_default(),
+        segment_ids: o
+            .field(1, |reader| reader.strings())?
+            .flatten()
+            .unwrap_or_default(),
         ranges: o.field(2, ranges)?.flatten(),
         fallbacks: o.field(3, fallbacks)?.flatten(),
-        missing: o.field(4, Reader::i32s)?.flatten(),
-        container_class: o.field(5, Reader::opt_u8)?.flatten(),
-        critical_head_end: o.field(6, Reader::opt_i64)?.flatten(),
-        corrupt: o.field(7, Reader::i32s)?.flatten(),
-        ranges_trusted: o.field(8, Reader::opt_bool)?.flatten(),
+        missing: o.field(4, |reader| reader.i32s())?.flatten(),
+        container_class: o.field(5, |reader| reader.opt_u8())?.flatten(),
+        critical_head_end: o.field(6, |reader| reader.opt_i64())?.flatten(),
+        corrupt: o.field(7, |reader| reader.i32s())?.flatten(),
+        ranges_trusted: o.field(8, |reader| reader.opt_bool())?.flatten(),
         proof: o.field(9, proof)?.flatten(),
     })
 }
 
 pub fn rar_file(o: &Object<'_>) -> Result<RarFile, Error> {
     Ok(RarFile {
-        id: o.field(0, Reader::guid)?.unwrap_or_default(),
+        id: o.field(0, |reader| reader.guid())?.unwrap_or_default(),
         parts: o
             .field(1, |r| r.list(|r| object(r, rar_part)))?
             .flatten()
@@ -152,18 +163,21 @@ pub fn rar_file(o: &Object<'_>) -> Result<RarFile, Error> {
 
 fn rar_part(o: &Object<'_>) -> Result<RarPart, Error> {
     Ok(RarPart {
-        segment_ids: o.field(0, Reader::strings)?.flatten().unwrap_or_default(),
-        part_size: o.field(1, Reader::i64)?.unwrap_or_default(),
-        offset: o.field(2, Reader::i64)?.unwrap_or_default(),
-        byte_count: o.field(3, Reader::i64)?.unwrap_or_default(),
+        segment_ids: o
+            .field(0, |reader| reader.strings())?
+            .flatten()
+            .unwrap_or_default(),
+        part_size: o.field(1, |reader| reader.i64())?.unwrap_or_default(),
+        offset: o.field(2, |reader| reader.i64())?.unwrap_or_default(),
+        byte_count: o.field(3, |reader| reader.i64())?.unwrap_or_default(),
         ranges: o.field(4, ranges)?.flatten(),
         fallbacks: o.field(5, fallbacks)?.flatten(),
-        ranges_trusted: o.field(6, Reader::opt_bool)?.flatten(),
+        ranges_trusted: o.field(6, |reader| reader.opt_bool())?.flatten(),
     })
 }
 
 pub fn multipart_file(o: &Object<'_>) -> Result<MultipartFile, Error> {
-    let id = o.field(0, Reader::guid)?.unwrap_or_default();
+    let id = o.field(0, |reader| reader.guid())?.unwrap_or_default();
     let file = o
         .field(1, |r| {
             object(r, |m| {
@@ -174,14 +188,14 @@ pub fn multipart_file(o: &Object<'_>) -> Result<MultipartFile, Error> {
                         .field(1, |r| r.list(|r| object(r, file_part)))?
                         .flatten()
                         .unwrap_or_default(),
-                    is_lazy: m.field(2, Reader::bool)?.unwrap_or_default(),
-                    path_in_archive: m.field(3, Reader::string)?.flatten(),
-                    password: m.field(4, Reader::string)?.flatten(),
+                    is_lazy: m.field(2, |reader| reader.bool())?.unwrap_or_default(),
+                    path_in_archive: m.field(3, |reader| reader.string())?.flatten(),
+                    password: m.field(4, |reader| reader.string())?.flatten(),
                     pending: m
                         .field(5, |r| r.list(|r| object(r, pending_part)))?
                         .flatten()
                         .unwrap_or_default(),
-                    expected_size: m.field(6, Reader::opt_i64)?.flatten(),
+                    expected_size: m.field(6, |reader| reader.opt_i64())?.flatten(),
                 })
             })
         })?
@@ -194,40 +208,49 @@ pub fn multipart_file(o: &Object<'_>) -> Result<MultipartFile, Error> {
 
 fn file_part(o: &Object<'_>) -> Result<FilePart, Error> {
     Ok(FilePart {
-        segment_ids: o.field(0, Reader::strings)?.flatten().unwrap_or_default(),
+        segment_ids: o
+            .field(0, |reader| reader.strings())?
+            .flatten()
+            .unwrap_or_default(),
         segment_range: o.field(1, range)?.unwrap_or_default(),
         data_range: o.field(2, range)?.unwrap_or_default(),
         ranges: o.field(3, ranges)?.flatten(),
         fallbacks: o.field(4, fallbacks)?.flatten(),
-        split_after: o.field(5, Reader::opt_bool)?.flatten(),
-        ranges_trusted: o.field(6, Reader::opt_bool)?.flatten(),
+        split_after: o.field(5, |reader| reader.opt_bool())?.flatten(),
+        ranges_trusted: o.field(6, |reader| reader.opt_bool())?.flatten(),
         proof: o.field(7, proof)?.flatten(),
     })
 }
 
 fn pending_part(o: &Object<'_>) -> Result<PendingPart, Error> {
     Ok(PendingPart {
-        segment_ids: o.field(0, Reader::strings)?.flatten().unwrap_or_default(),
+        segment_ids: o
+            .field(0, |reader| reader.strings())?
+            .flatten()
+            .unwrap_or_default(),
         segment_range: o.field(1, range)?.unwrap_or_default(),
-        estimated_size: o.field(2, Reader::i64)?.unwrap_or_default(),
+        estimated_size: o.field(2, |reader| reader.i64())?.unwrap_or_default(),
         fallbacks: o.field(3, fallbacks)?.flatten(),
         proof: o.field(4, proof)?.flatten(),
     })
 }
 
 /// A non-null object read with `read`.
-fn object<'a, T>(
-    r: &mut Reader<'a>,
-    read: impl FnOnce(&Object<'a>) -> Result<T, Error>,
+fn object<T>(
+    r: &mut Reader<'_>,
+    read: impl FnOnce(&Object<'_>) -> Result<T, Error>,
 ) -> Result<T, Error> {
-    read(&r.object()?.ok_or(Error::Invalid("null element"))?)
+    let object = r.object()?.ok_or(Error::Invalid("null element"))?;
+    let value = read(&object)?;
+    object.finish()?;
+    Ok(value)
 }
 
 fn range(r: &mut Reader<'_>) -> Result<LongRange, Error> {
     object(r, |o| {
         Ok(LongRange {
-            start: o.field(0, Reader::i64)?.unwrap_or_default(),
-            end: o.field(1, Reader::i64)?.unwrap_or_default(),
+            start: o.field(0, |reader| reader.i64())?.unwrap_or_default(),
+            end: o.field(1, |reader| reader.i64())?.unwrap_or_default(),
         })
     })
 }
@@ -245,26 +268,51 @@ fn aes(r: &mut Reader<'_>) -> Result<Option<AesParams>, Error> {
     let Some(o) = r.object()? else {
         return Ok(None);
     };
-    Ok(Some(AesParams {
-        decoded_size: o.field(0, Reader::i64)?.unwrap_or_default(),
-        iv: o.field(1, Reader::bytes)?.flatten().unwrap_or_default(),
-        key: o.field(2, Reader::bytes)?.flatten().unwrap_or_default(),
-    }))
+    let value = AesParams {
+        decoded_size: o.field(0, |reader| reader.i64())?.unwrap_or_default(),
+        iv: o
+            .field(1, |reader| reader.bytes())?
+            .flatten()
+            .unwrap_or_default(),
+        key: o
+            .field(2, |reader| reader.bytes())?
+            .flatten()
+            .unwrap_or_default(),
+    };
+    o.finish()?;
+    Ok(Some(value))
 }
 
 fn proof(r: &mut Reader<'_>) -> Result<Option<Par2Proof>, Error> {
     let Some(o) = r.object()? else {
         return Ok(None);
     };
-    Ok(Some(Par2Proof {
-        file_length: o.field(0, Reader::i64)?.unwrap_or_default(),
-        slice_size: o.field(1, Reader::i32)?.unwrap_or_default(),
-        slice_md5: o.field(2, Reader::bytes)?.flatten().unwrap_or_default(),
-        slice_crc32: o.field(3, Reader::u32s)?.flatten().unwrap_or_default(),
-        file_id: o.field(4, Reader::bytes)?.flatten().unwrap_or_default(),
-        file_hash: o.field(5, Reader::bytes)?.flatten().unwrap_or_default(),
-        file_16k_hash: o.field(6, Reader::bytes)?.flatten().unwrap_or_default(),
-    }))
+    let value = Par2Proof {
+        file_length: o.field(0, |reader| reader.i64())?.unwrap_or_default(),
+        slice_size: o.field(1, |reader| reader.i32())?.unwrap_or_default(),
+        slice_md5: o
+            .field(2, |reader| reader.bytes())?
+            .flatten()
+            .unwrap_or_default(),
+        slice_crc32: o
+            .field(3, |reader| reader.u32s())?
+            .flatten()
+            .unwrap_or_default(),
+        file_id: o
+            .field(4, |reader| reader.bytes())?
+            .flatten()
+            .unwrap_or_default(),
+        file_hash: o
+            .field(5, |reader| reader.bytes())?
+            .flatten()
+            .unwrap_or_default(),
+        file_16k_hash: o
+            .field(6, |reader| reader.bytes())?
+            .flatten()
+            .unwrap_or_default(),
+    };
+    o.finish()?;
+    Ok(Some(value))
 }
 
 #[cfg(test)]
@@ -295,6 +343,80 @@ mod tests {
     }
 
     #[test]
+    fn decode_rejects_truncated_fields_and_trailing_bytes() {
+        for bytes in [&[1, 16, 0][..], &[0, 0][..]] {
+            let compressed = zstd::encode_all(bytes, 1).unwrap();
+            assert!(matches!(
+                decode(compressed.as_slice(), nzb_file),
+                Err(DecodeError::Payload(_))
+            ));
+        }
+
+        let mut remainder = [0; 16].as_slice();
+        let error = Reader::new(&mut remainder).finish().unwrap_err();
+        assert!(matches!(error, Error::Trailing));
+        assert_eq!(error.to_string(), "trailing data");
+        assert_eq!(remainder.len(), 15);
+    }
+
+    #[test]
+    fn skips_large_unknown_fields_without_a_metadata_size_limit() {
+        let length = 536_870_913_u32;
+        let header = [vec![2, 0, 131], length.to_le_bytes().to_vec()].concat();
+        let input = header
+            .as_slice()
+            .chain(std::io::repeat(0).take(u64::from(length)));
+        let compressed = zstd::encode_all(input, 1).unwrap();
+        let value = decode(compressed.as_slice(), |root| {
+            Ok(root.field(0, |_| Ok(42))?.unwrap())
+        })
+        .unwrap();
+        assert_eq!(value, 42);
+        let truncated = zstd::encode_all(header.as_slice(), 1).unwrap();
+        assert!(matches!(
+            decode(truncated.as_slice(), |_| Ok(())),
+            Err(DecodeError::Payload(Error::Truncated))
+        ));
+    }
+
+    #[test]
+    fn collection_lengths_do_not_allocate_before_reading_elements() {
+        let payload = obj(&[vec![], i32::MAX.to_le_bytes().to_vec()]);
+        let compressed = zstd::encode_all(payload.as_slice(), 1).unwrap();
+        assert!(matches!(
+            decode(compressed.as_slice(), |root| root
+                .field(1, |reader| reader.strings())),
+            Err(DecodeError::Payload(Error::Truncated))
+        ));
+    }
+
+    #[test]
+    fn nested_optional_objects_skip_new_fields() {
+        let payload = obj(&[
+            obj(&[0_i64.to_le_bytes().to_vec(), list(&[]), list(&[]), vec![7]]),
+            obj(&[
+                0_i64.to_le_bytes().to_vec(),
+                0_i32.to_le_bytes().to_vec(),
+                list(&[]),
+                list(&[]),
+                list(&[]),
+                list(&[]),
+                list(&[]),
+                vec![8],
+            ]),
+            vec![1],
+        ]);
+        let compressed = zstd::encode_all(payload.as_slice(), 1).unwrap();
+        decode(compressed.as_slice(), |root| {
+            assert!(root.field(0, aes)?.flatten().is_some());
+            assert!(root.field(1, proof)?.flatten().is_some());
+            assert_eq!(root.field(2, |reader| reader.bool())?, Some(true));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn reads_a_version_tolerant_nzb_file() {
         let id = Uuid::now_v7();
         let range = |s: i64, e: i64| obj(&[s.to_le_bytes().to_vec(), e.to_le_bytes().to_vec()]);
@@ -310,7 +432,7 @@ mod tests {
             head_end,
         ]);
         let compressed = zstd::encode_all(blob.as_slice(), 1).unwrap();
-        let file = decode(&compressed, nzb_file).unwrap();
+        let file = decode(compressed.as_slice(), nzb_file).unwrap();
         assert_eq!(
             file,
             NzbFile {

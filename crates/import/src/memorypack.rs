@@ -1,43 +1,95 @@
 //! Reader for the `MemoryPack` wire format, limited to what C# metadata blobs use:
 //! version-tolerant objects, strings, arrays and unmanaged values.
 
+use std::cell::{Cell, RefCell};
+use std::io::{self, Read};
+
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("{0}")]
+    Io(io::Error),
+    #[error("metadata allocation failed: {0}")]
+    Allocation(#[from] std::collections::TryReserveError),
     #[error("truncated")]
     Truncated,
-    #[error("{0} trailing bytes")]
-    Trailing(usize),
+    #[error("trailing data")]
+    Trailing,
     #[error("{0}")]
     Invalid(&'static str),
 }
 
 pub struct Reader<'a> {
-    buf: &'a [u8],
+    input: &'a mut dyn Read,
+    remaining: Option<u64>,
+}
+
+impl From<io::Error> for Error {
+    fn from(error: io::Error) -> Self {
+        if error.kind() == io::ErrorKind::UnexpectedEof {
+            Self::Truncated
+        } else {
+            Self::Io(error)
+        }
+    }
+}
+
+impl Read for Reader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let length = self.remaining.map_or(buf.len(), |remaining| {
+            usize::try_from(remaining)
+                .unwrap_or(usize::MAX)
+                .min(buf.len())
+        });
+        let read = self.input.read(&mut buf[..length])?;
+        if let Some(remaining) = &mut self.remaining {
+            *remaining -= read as u64;
+        }
+        Ok(read)
+    }
 }
 
 impl<'a> Reader<'a> {
-    pub const fn new(buf: &'a [u8]) -> Self {
-        Self { buf }
+    pub fn new(input: &'a mut dyn Read) -> Self {
+        Self {
+            input,
+            remaining: None,
+        }
     }
 
-    fn take(&mut self, n: usize) -> Result<&'a [u8], Error> {
-        let (head, rest) = self.buf.split_at_checked(n).ok_or(Error::Truncated)?;
-        self.buf = rest;
-        Ok(head)
+    fn read_bytes(&mut self, length: usize) -> Result<Vec<u8>, Error> {
+        if self
+            .remaining
+            .is_some_and(|remaining| length as u64 > remaining)
+        {
+            return Err(Error::Truncated);
+        }
+        let mut bytes = Vec::new();
+        let mut chunk = [0; 8192];
+        while bytes.len() < length {
+            let count = (length - bytes.len()).min(chunk.len());
+            self.read_exact(&mut chunk[..count])?;
+            bytes.try_reserve(count)?;
+            bytes.extend_from_slice(&chunk[..count]);
+        }
+        Ok(bytes)
     }
 
     fn fixed<const N: usize>(&mut self) -> Result<[u8; N], Error> {
         let mut out = [0; N];
-        out.copy_from_slice(self.take(N)?);
+        self.read_exact(&mut out)?;
         Ok(out)
     }
 
-    pub const fn finish(&self) -> Result<(), Error> {
-        match self.buf.len() {
-            0 => Ok(()),
-            n => Err(Error::Trailing(n)),
+    pub fn finish(&mut self) -> Result<(), Error> {
+        if self.read(&mut [0])? == 0 {
+            if self.remaining.is_some_and(|remaining| remaining != 0) {
+                return Err(Error::Truncated);
+            }
+            Ok(())
+        } else {
+            Err(Error::Trailing)
         }
     }
 
@@ -112,23 +164,26 @@ impl<'a> Reader<'a> {
         }
         if header >= 0 {
             let units = usize::try_from(header).map_err(|_| Error::Invalid("length"))?;
-            let raw = self.take(units.checked_mul(2).ok_or(Error::Truncated)?)?;
-            let utf16: Vec<u16> = raw
+            let raw = self.read_bytes(units.checked_mul(2).ok_or(Error::Truncated)?)?;
+            let utf16 = raw
                 .as_chunks::<2>()
                 .0
                 .iter()
-                .map(|c| u16::from_le_bytes(*c))
-                .collect();
-            return String::from_utf16(&utf16)
-                .map(Some)
-                .map_err(|_| Error::Invalid("bad UTF-16 string"));
+                .map(|chunk| u16::from_le_bytes(*chunk));
+            let mut text = String::new();
+            for character in char::decode_utf16(utf16) {
+                let character = character.map_err(|_| Error::Invalid("bad UTF-16 string"))?;
+                text.try_reserve(character.len_utf8())?;
+                text.push(character);
+            }
+            return Ok(Some(text));
         }
         // UTF-8: the complement of the byte count, then the UTF-16 length.
         let bytes = usize::try_from(!header).map_err(|_| Error::Invalid("length"))?;
         self.i32()?;
-        let raw = self.take(bytes)?;
-        std::str::from_utf8(raw)
-            .map(|s| Some(s.to_owned()))
+        let raw = self.read_bytes(bytes)?;
+        String::from_utf8(raw)
+            .map(Some)
             .map_err(|_| Error::Invalid("bad UTF-8 string"))
     }
 
@@ -144,10 +199,11 @@ impl<'a> Reader<'a> {
         let Some(n) = self.count()? else {
             return Ok(None);
         };
-        // Bounded by the input: every element takes at least one byte.
-        let mut out = Vec::with_capacity(n.min(self.buf.len()));
+        let mut out = Vec::new();
         for _ in 0..n {
-            out.push(item(self)?);
+            let value = item(self)?;
+            out.try_reserve(1)?;
+            out.push(value);
         }
         Ok(Some(out))
     }
@@ -159,14 +215,19 @@ impl<'a> Reader<'a> {
         let Some(n) = self.count()? else {
             return Ok(None);
         };
-        let raw = self.take(n.checked_mul(N).ok_or(Error::Truncated)?)?;
-        Ok(Some(
-            raw.as_chunks::<N>().0.iter().map(|c| from(*c)).collect(),
-        ))
+        let mut values = Vec::new();
+        for _ in 0..n {
+            let value = from(self.fixed()?);
+            values.try_reserve(1)?;
+            values.push(value);
+        }
+        Ok(Some(values))
     }
 
     pub fn bytes(&mut self) -> Result<Option<Vec<u8>>, Error> {
-        self.unmanaged(|[b]: [u8; 1]| b)
+        self.count()?
+            .map(|length| self.read_bytes(length))
+            .transpose()
     }
 
     pub fn i32s(&mut self) -> Result<Option<Vec<i32>>, Error> {
@@ -179,7 +240,7 @@ impl<'a> Reader<'a> {
 
     /// A version-tolerant object: member count, each member's byte length, the members.
     /// `None` for null.
-    pub fn object(&mut self) -> Result<Option<Object<'a>>, Error> {
+    pub fn object(&mut self) -> Result<Option<Object<'_>>, Error> {
         let members = self.fixed::<1>()?[0];
         if members == 255 {
             return Ok(None);
@@ -190,32 +251,65 @@ impl<'a> Reader<'a> {
                 usize::try_from(self.varint()?).map_err(|_| Error::Invalid("member length"))?;
             lengths.push(len);
         }
-        let fields = lengths
-            .into_iter()
-            .map(|len| self.take(len))
-            .collect::<Result<_, _>>()?;
-        Ok(Some(Object { fields }))
+        let length = lengths.iter().try_fold(0_u64, |total, length| {
+            total
+                .checked_add(*length as u64)
+                .ok_or(Error::Invalid("object length overflow"))
+        })?;
+        if self.remaining.is_some_and(|remaining| length > remaining) {
+            return Err(Error::Truncated);
+        }
+        Ok(Some(Object {
+            input: RefCell::new(Reader {
+                input: self,
+                remaining: Some(length),
+            }),
+            lengths,
+            next: Cell::new(0),
+        }))
     }
 }
 
 pub struct Object<'a> {
-    fields: Vec<&'a [u8]>,
+    input: RefCell<Reader<'a>>,
+    lengths: Vec<usize>,
+    next: Cell<usize>,
 }
 
-impl<'a> Object<'a> {
+impl Object<'_> {
     /// Member `i` read by `read`, which must consume it exactly; `None` when the writer
     /// predates the member.
     pub fn field<T>(
         &self,
         i: usize,
-        read: impl FnOnce(&mut Reader<'a>) -> Result<T, Error>,
+        read: impl FnOnce(&mut Reader<'_>) -> Result<T, Error>,
     ) -> Result<Option<T>, Error> {
-        let Some(bytes) = self.fields.get(i) else {
+        let Some(&length) = self.lengths.get(i) else {
             return Ok(None);
         };
-        let mut r = Reader::new(bytes);
-        let value = read(&mut r)?;
-        r.finish()?;
+        if i < self.next.get() {
+            return Err(Error::Invalid("fields must be read in order"));
+        }
+        let mut input = self.input.borrow_mut();
+        for &skipped in &self.lengths[self.next.get()..i] {
+            let copied = io::copy(&mut input.by_ref().take(skipped as u64), &mut io::sink())?;
+            if copied != skipped as u64 {
+                return Err(Error::Truncated);
+            }
+        }
+        let mut field = Reader {
+            input: &mut *input,
+            remaining: Some(length as u64),
+        };
+        let value = read(&mut field)?;
+        field.finish()?;
+        self.next.set(i + 1);
         Ok(Some(value))
+    }
+
+    pub fn finish(&self) -> Result<(), Error> {
+        let mut input = self.input.borrow_mut();
+        io::copy(&mut *input, &mut io::sink())?;
+        input.finish()
     }
 }

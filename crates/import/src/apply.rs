@@ -22,7 +22,7 @@ use jiff::tz::TimeZone;
 use uuid::Uuid;
 
 use crate::csharp::{self, LongRange, decode};
-use crate::{Error, MAX_METADATA_BYTES, MAX_NZB_BLOB_BYTES, open, read_blob};
+use crate::{Error, MAX_NZB_BLOB_BYTES, open, open_blob, read_blob};
 
 /// C#'s fixed folders (`/`, `/nzbs`, `/content`, `/completed-symlinks`, `/.ids`) have
 /// ids up to this one.
@@ -341,6 +341,56 @@ pub async fn apply_with_progress(
         done.queued += 1;
     }
     Ok(done)
+}
+
+/// Restores missing NZB downloads for surviving C# items and history entries.
+pub async fn restore_nzb_downloads(config: &Path, db: &Db) -> Result<u64, Error> {
+    let (items, history) = db.missing_nzb_links().await?;
+    let items: HashSet<_> = items.into_iter().map(|id| id.0).collect();
+    let history: HashSet<_> = history.into_iter().map(|id| id.0).collect();
+    let mut source = open(config).await?;
+    let item_rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT Id, NzbBlobId FROM DavItems WHERE NzbBlobId IS NOT NULL")
+            .fetch_all(&mut source)
+            .await?;
+    let history_rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT Id, NzbBlobId FROM HistoryItems WHERE NzbBlobId IS NOT NULL")
+            .fetch_all(&mut source)
+            .await?;
+    let links = |rows: Vec<(String, String)>, missing: &HashSet<Uuid>| {
+        rows.into_iter()
+            .filter_map(|(id, blob)| {
+                let id = uuid(&id)?;
+                missing.contains(&id).then_some((id, uuid(&blob)?))
+            })
+            .collect::<Vec<_>>()
+    };
+    let items = links(item_rows, &items);
+    let history = links(history_rows, &history);
+    let wanted = items
+        .iter()
+        .chain(&history)
+        .map(|(_, blob)| *blob)
+        .collect();
+    let available = import_nzbs(
+        &mut source,
+        db,
+        &config.join("blobs"),
+        Some(&wanted),
+        &mut Imported::default(),
+    )
+    .await?;
+    let items: Vec<_> = items
+        .into_iter()
+        .filter(|(_, blob)| available.contains(blob))
+        .map(|(id, blob)| (ItemId(id), BlobId(blob)))
+        .collect();
+    let history: Vec<_> = history
+        .into_iter()
+        .filter(|(_, blob)| available.contains(blob))
+        .map(|(id, blob)| (JobId(id), BlobId(blob)))
+        .collect();
+    Ok(db.restore_nzb_links(&items, &history).await?)
 }
 
 /// Writes the C# files in `config` that `db` lacks and `keep` accepts by id and path,
@@ -841,13 +891,13 @@ async fn convert(
     let blobs = blobs.to_owned();
     let sub_type = row.sub_type;
     let file = tokio::task::spawn_blocking(move || {
-        let bytes = read_blob(&blobs, &id, MAX_METADATA_BYTES)
+        let input = open_blob(&blobs, &id)
             .map_err(|e| format!("metadata blob: {e}"))?
             .ok_or("metadata blob: not found")?;
         let file = match sub_type {
-            201 => decode(&bytes, csharp::nzb_file).map(CsFile::Nzb),
-            202 => decode(&bytes, csharp::rar_file).map(CsFile::Rar),
-            203 => decode(&bytes, csharp::multipart_file).map(CsFile::Multipart),
+            201 => decode(input, csharp::nzb_file).map(CsFile::Nzb),
+            202 => decode(input, csharp::rar_file).map(CsFile::Rar),
+            203 => decode(input, csharp::multipart_file).map(CsFile::Multipart),
             other => return Err(format!("unknown file type {other}")),
         };
         file.map_err(|e| format!("metadata blob: {e}"))
@@ -2154,6 +2204,59 @@ mod tests {
                 db.job_at("/content/tv/a").await.unwrap(),
                 Some((JobId(download), "a".to_owned()))
             );
+        });
+    }
+
+    #[test]
+    fn restores_missing_downloads_without_replacing_links_or_recreating_records() {
+        rt().block_on(async {
+            use sqlx::ConnectOptions as _;
+            let (config, job) = seed("/content", "/content/job").await;
+            let mut source = sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(config.join("db.sqlite")).connect().await.unwrap();
+            let download = Uuid::now_v7();
+            let history = Uuid::now_v7();
+            let file = Uuid::now_v7();
+            sqlx::query(
+                "INSERT INTO DavItems (Id, ParentId, Name, Path, CreatedAt, Type, SubType, \
+                 FileSize, FileBlobId, NzbBlobId) \
+                 VALUES ($1, $2, 'file.mkv', '/content/job/file.mkv', '2025-01-01', 2, 203, 100, $3, $4)",
+            ).bind(file.to_string()).bind(job.to_string())
+                .bind(multipart_blob(&config.join("blobs"))).bind(download.to_string())
+                .execute(&mut source).await.unwrap();
+            sqlx::query(
+                "INSERT INTO HistoryItems VALUES ($1, '2025-01-01', 'job.nzb', \
+                 'job', '', 1, 100, 1, NULL, $2, $3)",
+            ).bind(history.to_string()).bind(job.to_string()).bind(download.to_string())
+                .execute(&mut source).await.unwrap();
+            let db = Db::connect("sqlite::memory:").await.unwrap();
+            let client = Client::new(Vec::<infinidysk_nntp::Provider>::new());
+            apply(&config, &db, &client, "/mnt").await.unwrap();
+            assert_eq!(db.item(ItemId(file)).await.unwrap().unwrap().nzb_blob, None);
+            assert_eq!(db.history_entry(JobId(history)).await.unwrap().unwrap().nzb_blob, None);
+
+            let path = blob_path(&config.join("blobs"), &download.to_string()).unwrap();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, b"<nzb/>").unwrap();
+            let deleted = Uuid::now_v7();
+            sqlx::query(
+                "INSERT INTO HistoryItems VALUES ($1, '2025-01-01', 'job.nzb', \
+                 'job', '', 1, 100, 1, NULL, $2, $3)",
+            ).bind(Uuid::now_v7().to_string()).bind(job.to_string()).bind(deleted.to_string())
+                .execute(&mut source).await.unwrap();
+            let deleted_path = blob_path(&config.join("blobs"), &deleted.to_string()).unwrap();
+            std::fs::create_dir_all(deleted_path.parent().unwrap()).unwrap();
+            std::fs::write(deleted_path, b"<nzb/>").unwrap();
+
+            assert_eq!(restore_nzb_downloads(&config, &db).await.unwrap(), 2);
+            assert_eq!(db.item(ItemId(file)).await.unwrap().unwrap().nzb_blob, Some(BlobId(download)));
+            assert_eq!(db.history_entry(JobId(history)).await.unwrap().unwrap().nzb_blob, Some(BlobId(download)));
+            assert!(db.blob(BlobId(deleted)).await.unwrap().is_none());
+            assert_eq!(restore_nzb_downloads(&config, &db).await.unwrap(), 0);
+            assert_eq!(db.restore_nzb_links(
+                &[(ItemId(file), BlobId(deleted))], &[(JobId(history), BlobId(deleted))],
+            ).await.unwrap(), 0);
+            db.close().await;
         });
     }
 
