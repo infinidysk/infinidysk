@@ -171,7 +171,9 @@ type FileRow = (
 impl Survey {
     fn file(&mut self, blobs: &Path, (id, sub_type, size, meta, nzb, strm): FileRow) {
         self.strm_outputs += u64::from(strm);
-        if !nzb.is_some_and(|n| blob_path(blobs, &n).is_some_and(|p| p.is_file())) {
+        // Counts what `import_nzbs` will carry over: no symlinks, nothing above the cap.
+        let carried = nzb.and_then(|n| open_blob(blobs, &n).ok().flatten());
+        if !carried.is_some_and(|f| f.metadata().is_ok_and(|m| m.len() <= MAX_NZB_BLOB_BYTES)) {
             self.missing_nzb_blobs += 1;
         }
         let Some(meta) = meta else {
@@ -290,6 +292,7 @@ impl Survey {
 }
 
 /// `blobs/<2 hex>/<2 hex>/<id>`, as C# lays them out.
+#[cfg(test)]
 fn blob_path(blobs: &Path, id: &str) -> Option<PathBuf> {
     let id = Uuid::parse_str(id).ok()?;
     let hex = id.simple().to_string();
@@ -304,6 +307,23 @@ pub(crate) const MAX_METADATA_BYTES: u64 = 64_000_000;
 /// Reads blob `id` below the folder `blobs`, following no symlink below it and reading at
 /// most `limit` bytes; `None` when it is not there.
 fn read_blob(blobs: &Path, id: &str, limit: u64) -> io::Result<Option<Vec<u8>>> {
+    let Some(file) = open_blob(blobs, id)? else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("larger than {limit} bytes"),
+        ));
+    }
+    Ok(Some(bytes))
+}
+
+/// Opens blob `id` below the folder `blobs`, following no symlink below it; the blob must
+/// be a regular file. `None` when it is not there.
+fn open_blob(blobs: &Path, id: &str) -> io::Result<Option<File>> {
     let Ok(id) = Uuid::parse_str(id) else {
         return Ok(None);
     };
@@ -334,15 +354,7 @@ fn read_blob(blobs: &Path, id: &str, limit: u64) -> io::Result<Option<Vec<u8>>> 
             "not a regular file",
         ));
     }
-    let mut bytes = Vec::new();
-    file.take(limit + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > limit {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("larger than {limit} bytes"),
-        ));
-    }
-    Ok(Some(bytes))
+    Ok(Some(file))
 }
 
 impl fmt::Display for Survey {
@@ -448,6 +460,28 @@ mod tests {
         });
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(!survey.unwrap().supported());
+    }
+
+    #[test]
+    fn the_survey_counts_nzb_blobs_the_import_would_skip_as_missing() {
+        let dir = std::env::temp_dir().join(format!("infinidysk-nzbs-{}", Uuid::now_v7()));
+        let blobs = dir.join("blobs");
+        let place = |id: &str| {
+            let path = blob_path(&blobs, id).unwrap();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            path
+        };
+        let regular = Uuid::now_v7().to_string();
+        std::fs::write(place(&regular), b"nzb").unwrap();
+        let linked = Uuid::now_v7().to_string();
+        std::os::unix::fs::symlink(place(&regular), place(&linked)).unwrap();
+
+        let mut survey = Survey::default();
+        for nzb in [regular, linked] {
+            survey.file(&blobs, (String::new(), 201, None, None, Some(nzb), false));
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(survey.missing_nzb_blobs, 1);
     }
 
     #[test]
