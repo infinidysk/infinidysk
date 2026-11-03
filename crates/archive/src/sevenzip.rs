@@ -102,7 +102,7 @@ impl Reader {
             let Some(bytes) = window(at, buf, offset, len) else {
                 return Ok(Step::Need { offset, len });
             };
-            let header = match std::mem::take(&mut self.state) {
+            let (header, packed) = match std::mem::take(&mut self.state) {
                 State::Start => {
                     self.state = start_header(bytes)?;
                     continue;
@@ -111,7 +111,7 @@ impl Reader {
                     if crc32(0, bytes) != crc {
                         return Err(Error::HeaderCrc(offset));
                     }
-                    parse(bytes, offset)?
+                    (parse(bytes, offset)?, false)
                 }
                 State::Packed { folder, .. } => {
                     let key = match aes(&folder, offset)? {
@@ -131,13 +131,14 @@ impl Reader {
                     };
                     let parsed = decode(&folder, bytes, offset, key.as_ref())
                         .and_then(|decoded| parse(&decoded, offset));
-                    match parsed {
+                    let header = match parsed {
                         // A wrong key decrypts to garbage.
                         Err(Error::Corrupt { .. } | Error::HeaderCrc(_)) if key.is_some() => {
                             return Err(Error::WrongPassword);
                         }
                         parsed => parsed?,
-                    }
+                    };
+                    (header, true)
                 }
                 State::Done => unreachable!("handled above"),
             };
@@ -145,6 +146,13 @@ impl Reader {
                 Header::Entries(entries) => {
                     self.state = State::Done;
                     return Ok(Step::Done(entries));
+                }
+                // 7-Zip reads one encoded header, never a chain of them.
+                Header::Encoded { offset, .. } if packed => {
+                    return Err(Error::Corrupt {
+                        offset,
+                        reason: "nested encoded header",
+                    });
                 }
                 Header::Encoded {
                     offset,
