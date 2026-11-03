@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, Write as _};
 use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
@@ -72,6 +72,8 @@ pub struct Writer {
     /// Held while a call into the completed STRM directory runs, even after the job gave up
     /// on it, so a dead share ties up one blocking thread at most.
     busy: Arc<tokio::sync::Mutex<()>>,
+    /// `busy` for a folder settings would switch to, so a hung one leaves handoffs alone.
+    probing: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Writer {
@@ -81,6 +83,7 @@ impl Writer {
             owner,
             config: RwLock::new(Config::new(settings)),
             busy: Arc::default(),
+            probing: Arc::default(),
         }
     }
 
@@ -91,15 +94,26 @@ impl Writer {
     /// Checks that STRM files can be written in `dir`, creating it if missing.
     pub async fn probe(&self, dir: &str) -> Result<(), String> {
         let (dir, owner) = (PathBuf::from(dir), self.owner);
-        tokio::task::spawn_blocking(move || {
-            make_dir(&dir, owner)?;
-            let probe = dir.join(format!(".infinidysk-probe-{}", ItemId::new()));
-            fs::write(&probe, b"")?;
-            fs::remove_file(&probe)
-        })
+        let gate = if dir == Path::new(&self.config().strm_dir) {
+            &self.busy
+        } else {
+            &self.probing
+        };
+        bounded(
+            gate,
+            FS_TIMEOUT,
+            move |_| {
+                let probed = (|| -> io::Result<()> {
+                    make_dir(&dir, owner)?;
+                    let probe = dir.join(format!(".infinidysk-probe-{}", ItemId::new()));
+                    fs::write(&probe, b"")?;
+                    fs::remove_file(&probe)
+                })();
+                probed.map_err(|e| e.to_string())
+            },
+            |()| {},
+        )
         .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
     }
 
     fn config(&self) -> Config {
@@ -226,7 +240,11 @@ impl Writer {
             let mut removed = 0;
             for h in &stale {
                 let path = Path::new(&h.path);
-                if path.starts_with(&root) && ours(h) {
+                if path
+                    .strip_prefix(&root)
+                    .is_ok_and(|rel| rel.components().all(|c| matches!(c, Component::Normal(_))))
+                    && ours(h)
+                {
                     remove(path, &root);
                     removed += 1;
                 }
@@ -348,20 +366,25 @@ pub fn write(path: &Path, bytes: &[u8], owner: (u32, u32)) -> io::Result<()> {
     let dir = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
     make_dir(dir, owner)?;
     let name = path.file_name().ok_or(io::ErrorKind::InvalidInput)?;
-    let tmp = dir.join(format!(".{}.partial", name.to_string_lossy()));
+    let tmp = dir.join(format!(
+        ".{}.{}.partial",
+        name.to_string_lossy(),
+        ItemId::new()
+    ));
+    let mut created = false;
     let written = (|| {
         let mut file = OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .mode(0o644)
             .open(&tmp)?;
+        created = true;
         file.write_all(bytes)?;
         file.sync_all()?;
         own(&tmp, owner)?;
         fs::rename(&tmp, path)
     })();
-    if written.is_err() {
+    if written.is_err() && created {
         let _ = fs::remove_file(&tmp);
     }
     written?;
@@ -628,6 +651,85 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sweep_ignores_paths_that_climb_out_of_the_folder() {
+        let tmp = std::env::temp_dir().join(format!("infinidysk-handoff-{}", ItemId::new()));
+        let strm_dir = tmp.join("strm");
+        fs::create_dir_all(strm_dir.join("sub")).unwrap();
+        fs::create_dir_all(tmp.join("x")).unwrap();
+        let db = Db::connect(&format!("sqlite:{}", tmp.join("db.sqlite").display()))
+            .await
+            .unwrap();
+        let vfs = Arc::new(Vfs::new(
+            db.clone(),
+            Arc::new(Client::new([])),
+            Budget::new(1 << 20),
+            0,
+            "/mnt",
+        ));
+        let mut settings = Settings::default();
+        settings.imports.strategy = ImportStrategy::Strm;
+        settings.imports.strm_dir = strm_dir.display().to_string();
+        settings.imports.strm_key.0 = "key".into();
+        settings.network.public_url = "https://media.example".into();
+        let writer = Writer::new(vfs, (1000, 1000), &settings);
+
+        let item = ItemId::new();
+        let outside = tmp.join("outside.strm");
+        fs::write(&outside, Config::new(&settings).strm_url(item, "mkv")).unwrap();
+        let climbing = Handoff {
+            path: strm_dir.join("../outside.strm").display().to_string(),
+            item,
+            job: Some(JobId::new()),
+            size: None,
+        };
+        db.record_handoffs(std::slice::from_ref(&climbing))
+            .await
+            .unwrap();
+        writer.sweep(&db).await;
+        assert!(outside.exists(), "a path with \"..\" is never swept");
+
+        let inside = strm_dir.join("a.strm");
+        fs::write(&inside, Config::new(&settings).strm_url(item, "mkv")).unwrap();
+        let in_root = Handoff {
+            path: strm_dir.join("sub/../a.strm").display().to_string(),
+            ..climbing.clone()
+        };
+        db.record_handoffs(&[in_root]).await.unwrap();
+        writer.sweep(&db).await;
+        assert!(inside.exists(), "nor one that stays inside");
+
+        // A configured root may itself hold "..".
+        settings.imports.strm_dir = tmp.join("x/../strm").display().to_string();
+        writer.configure(&settings);
+        let below = Handoff {
+            path: tmp.join("x/../strm/a.strm").display().to_string(),
+            ..climbing
+        };
+        db.record_handoffs(&[below]).await.unwrap();
+        writer.sweep(&db).await;
+        assert!(!inside.exists(), "a clean path below such a root is swept");
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn write_does_not_follow_a_planted_partial_symlink() {
+        let tmp = std::env::temp_dir().join(format!("infinidysk-handoff-{}", ItemId::new()));
+        let dir = tmp.join("dir");
+        fs::create_dir_all(&dir).unwrap();
+        let victim = tmp.join("victim");
+        fs::write(&victim, "marker").unwrap();
+        let planted = dir.join(".a.strm.partial");
+        std::os::unix::fs::symlink(&victim, &planted).unwrap();
+        let meta = fs::metadata(&tmp).unwrap();
+
+        write(&dir.join("a.strm"), b"url", (meta.uid(), meta.gid())).unwrap();
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "marker");
+        assert_eq!(fs::read_to_string(dir.join("a.strm")).unwrap(), "url");
+        assert!(fs::symlink_metadata(&planted).unwrap().is_symlink());
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[tokio::test]
     async fn a_hung_strm_directory_call_gives_up_and_undoes_its_late_result() {
         let busy = Arc::new(tokio::sync::Mutex::new(()));
         let (release, hang) = std::sync::mpsc::channel::<()>();
@@ -677,6 +779,48 @@ mod tests {
         );
         let third = bounded(&busy, Duration::from_secs(5), |_| Ok(3), |_| {}).await;
         assert_eq!(third, Ok(3));
+    }
+
+    #[tokio::test]
+    async fn a_hung_folder_refuses_only_probes_of_itself() {
+        let dir = std::env::temp_dir().join(format!("infinidysk-handoff-{}", ItemId::new()));
+        let db = Db::connect(&format!(
+            "sqlite:{}",
+            dir.with_extension("sqlite").display()
+        ))
+        .await
+        .unwrap();
+        let vfs = Arc::new(Vfs::new(
+            db,
+            Arc::new(Client::new([])),
+            Budget::new(1 << 20),
+            0,
+            "/mnt",
+        ));
+        let mut settings = Settings::default();
+        settings.imports.strategy = ImportStrategy::Strm;
+        settings.imports.strm_dir = dir.join("strm").display().to_string();
+        let writer = Writer::new(vfs, (1000, 1000), &settings);
+        let current = settings.imports.strm_dir.clone();
+        let candidate = dir.join("other").display().to_string();
+        let refused = |r: Result<(), String>| {
+            r.unwrap_err()
+                .contains("has not answered an earlier request yet")
+        };
+
+        // A call into the current folder still running.
+        let held = writer.busy.try_lock().unwrap();
+        assert!(refused(writer.probe(&current).await));
+        assert_eq!(writer.probe(&candidate).await, Ok(()));
+        drop(held);
+
+        // A candidate probe that has not returned.
+        let held = writer.probing.try_lock().unwrap();
+        assert!(refused(writer.probe(&candidate).await));
+        assert_eq!(writer.probe(&current).await, Ok(()));
+        assert_eq!(writer.taken("tv", "job").await, Ok(false));
+        drop(held);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
