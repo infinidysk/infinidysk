@@ -32,6 +32,7 @@ use uuid::Uuid;
 use crate::admin::{Admin, ApiError, Fail};
 use crate::arr::Discovery;
 use crate::config::{self, ConfigStore, ImportStrategy, Settings};
+use crate::confined::{Entry, Root};
 use crate::handoff::{self, MAX_STRM_BYTES, MAX_SUBTITLE_BYTES};
 use crate::upgrade::{LEGACY_STRM_KEY, LegacyStrm};
 
@@ -313,12 +314,17 @@ pub struct Progress {
 
 impl Progress {
     fn problem(&mut self, path: &Path, reason: impl Into<String>) {
+        let (path, reason) = (path.display().to_string(), reason.into());
+        if self
+            .problems
+            .iter()
+            .any(|p| p.path == path && p.reason == reason)
+        {
+            return;
+        }
         self.problems_total += 1;
         if self.problems.len() < LISTED {
-            self.problems.push(Problem {
-                path: path.display().to_string(),
-                reason: reason.into(),
-            });
+            self.problems.push(Problem { path, reason });
         }
     }
 }
@@ -646,9 +652,14 @@ impl Library {
             return Ok(Some("a library conversion is running"));
         }
         let journal = self.parts.db.conversions().await?;
+        // A row outside every configured folder waits for its folder to come back;
+        // the folders maintenance walks are not part of it.
+        let folders = folders(&self.settings().await);
         Ok(journal
             .iter()
-            .any(|c| c.state < CONVERTED)
+            .any(|c| {
+                c.state < CONVERTED && folders.iter().any(|f| Path::new(&c.source).starts_with(f))
+            })
             .then_some("a library conversion left moves unfinished"))
     }
 
@@ -897,12 +908,13 @@ impl Library {
             .await;
         let mut job = self.lock();
         match result {
-            Ok(()) => {
+            Ok(left) => {
                 if run.is_some() {
                     job.state = ConversionState::Idle;
                     job.reason = None;
                 }
-                Next::Again
+                // Rows that could not finish wait for the next tick instead of spinning.
+                if left { Next::Later } else { Next::Again }
             }
             Err(Stop::Cancelled) => Next::Again,
             Err(Stop::Wait(reason)) => {
@@ -932,7 +944,7 @@ impl Library {
         run: Option<&Run>,
         imported: &[String],
         cancel: &CancellationToken,
-    ) -> Result<(), Stop> {
+    ) -> Result<bool, Stop> {
         let target = Target::of(settings);
         if target.mount_dir != self.parts.mount_dir.trim_end_matches('/') {
             return Err(Stop::Wait(format!(
@@ -949,9 +961,11 @@ impl Library {
         }
         let known = self.known(settings).await;
         let mut arr_files = ArrFiles::default();
-        self.finish_unfinished(cancel).await?;
-        if let Some(run) = run {
+        if run.is_some() {
             self.progress(|p| *p = Progress::default());
+        }
+        let left = self.finish_unfinished(settings, cancel).await?;
+        if let Some(run) = run {
             let roots: Vec<_> = settings
                 .imports
                 .library_dirs
@@ -1020,7 +1034,7 @@ impl Library {
             p.phase = String::new();
             p.folder = None;
         });
-        Ok(())
+        Ok(left)
     }
 
     fn progress(&self, f: impl FnOnce(&mut Progress)) {
@@ -1097,8 +1111,8 @@ impl Library {
                     self.progress(|p| p.dangling += 1);
                     Ok(())
                 }
-                (Action::Rewrite(to), _) => self.rewrite(&f, to).await,
-                (Action::Copy, Some(item)) => self.copy(&f, &item).await,
+                (Action::Rewrite(to), _) => self.rewrite(settings, &f, to).await,
+                (Action::Copy, Some(item)) => self.copy(settings, &f, &item).await,
                 (Action::Move(path, to), _) => {
                     self.move_pointer(settings, &f, path, to, arr_files).await
                 }
@@ -1117,17 +1131,19 @@ impl Library {
         Ok(())
     }
 
-    async fn rewrite(&self, f: &Found, to: Pointer) -> Result<(), Fault> {
-        let (path, from, owner) = (
+    async fn rewrite(&self, settings: &Settings, f: &Found, to: Pointer) -> Result<(), Fault> {
+        let (path, from, owner, folders) = (
             f.path.clone(),
             f.pointer.clone(),
             self.parts.handoff.owner(),
+            folders(settings),
         );
         let rewritten = blocking(move || {
-            if holds(&path, &from)? != Some(true) {
+            let root = Root::below(&folders, &path)?;
+            if holds(&root, &path, &from)? != Some(true) {
                 return Ok(false);
             }
-            put(&path, &to, owner)?;
+            put(&root, &path, &to, owner)?;
             Ok(true)
         })
         .await?;
@@ -1137,7 +1153,7 @@ impl Library {
         Ok(())
     }
 
-    async fn copy(&self, f: &Found, item: &Item) -> Result<(), Fault> {
+    async fn copy(&self, settings: &Settings, f: &Found, item: &Item) -> Result<(), Fault> {
         let size = item.size.unwrap_or_default();
         if size > MAX_SUBTITLE_BYTES {
             return Err(Fault::File(format!(
@@ -1156,16 +1172,18 @@ impl Library {
             .read_to_end(&mut bytes)
             .await
             .map_err(|e| Fault::File(format!("reading the subtitle: {e}")))?;
-        let (path, from, owner) = (
+        let (path, from, owner, folders) = (
             f.path.clone(),
             f.pointer.clone(),
             self.parts.handoff.owner(),
+            folders(settings),
         );
         let copied = blocking(move || {
-            if holds(&path, &from)? != Some(true) {
+            let root = Root::below(&folders, &path)?;
+            if holds(&root, &path, &from)? != Some(true) {
                 return Ok(false);
             }
-            handoff::write(&path, &bytes, owner)?;
+            root.write(&path, &bytes, owner)?;
             Ok(true)
         })
         .await?;
@@ -1251,43 +1269,55 @@ impl Library {
         db.put_conversion(&c)
             .await
             .map_err(|e| Fault::Wait(e.to_string()))?;
-        if self.steps(c, owned, false).await? {
+        if self.steps(c, owned, false, &folders(settings)).await? {
             self.progress(|p| p.converted += 1);
         }
         Ok(())
     }
 
-    /// Finishes journal rows a restart or failure interrupted.
-    async fn finish_unfinished(&self, cancel: &CancellationToken) -> Result<(), Stop> {
+    /// Finishes journal rows a restart or failure interrupted. Returns whether some are
+    /// left for a later look.
+    async fn finish_unfinished(
+        &self,
+        settings: &Settings,
+        cancel: &CancellationToken,
+    ) -> Result<bool, Stop> {
+        let folders = folders(settings);
         let rows = self
             .parts
             .db
             .conversions()
             .await
             .map_err(|e| Stop::Wait(e.to_string()))?;
+        let mut left = false;
         for c in rows.into_iter().filter(|c| c.state < CONVERTED) {
             if cancel.is_cancelled() {
                 return Err(Stop::Cancelled);
             }
             let owned: Vec<Owned> = serde_json::from_str(&c.owners).unwrap_or_default();
             let source = PathBuf::from(&c.source);
-            match self.steps(c, owned, true).await {
+            match self.steps(c, owned, true, &folders).await {
                 Ok(_) => {}
                 Err(Fault::Wait(reason)) => return Err(Stop::Wait(reason)),
-                Err(Fault::File(reason)) => self.progress(|p| p.problem(&source, reason)),
+                Err(Fault::File(reason)) => {
+                    left = true;
+                    self.progress(|p| p.problem(&source, reason));
+                }
             }
         }
-        Ok(())
+        Ok(left)
     }
 
     /// Runs the journal steps of `c` from its state. Returns whether it converted; when
     /// the source changed meanwhile, what was done is undone. `resumed`: after a restart,
-    /// a missing source was removed by us.
+    /// a missing source was removed by us. Source and target share a folder, which lies
+    /// in one of `folders`.
     async fn steps(
         &self,
         mut c: Conversion,
         owned: Vec<Owned>,
         resumed: bool,
+        folders: &[PathBuf],
     ) -> Result<bool, Fault> {
         let db = &self.parts.db;
         let (source, target) = (PathBuf::from(&c.source), PathBuf::from(&c.target));
@@ -1296,16 +1326,17 @@ impl Library {
         let owner = self.parts.handoff.owner();
         if c.state == INTENT {
             let (s, t, from, to) = (source.clone(), target.clone(), from.clone(), to.clone());
-            let item = c.item;
+            let (item, folders) = (c.item, folders.to_vec());
             let written = blocking(move || {
-                if holds(&s, &from)? != Some(true) {
+                let root = Root::below(&folders, &s)?;
+                if holds(&root, &s, &from)? != Some(true) {
                     return Ok(Err(None));
                 }
                 match fs::symlink_metadata(&t) {
                     Err(e) if e.kind() == io::ErrorKind::NotFound => {}
                     Err(e) => return Err(e),
                     Ok(meta) => {
-                        let same = holds(&t, &to)? == Some(true)
+                        let same = holds(&root, &t, &to)? == Some(true)
                             || classify(&t, &meta, &Known::any()).is_some_and(|f| f.item == item);
                         if !same {
                             return Ok(Err(Some(format!(
@@ -1316,7 +1347,7 @@ impl Library {
                         return Ok(Ok(()));
                     }
                 }
-                put(&t, &to, owner)?;
+                put(&root, &t, &to, owner)?;
                 Ok(Ok(()))
             })
             .await;
@@ -1352,23 +1383,24 @@ impl Library {
                 .map_err(|e| Fault::Wait(e.to_string()))?;
         }
         if c.state == MOVED {
-            let s = source.clone();
-            let removed = blocking(move || match holds(&s, &from)? {
-                Some(true) => fs::remove_file(&s).map(|()| true),
-                None if resumed => Ok(true),
-                _ => Ok(false),
+            let (s, owned_folders) = (source.clone(), folders.to_vec());
+            let removed = blocking(move || {
+                let root = Root::below(&owned_folders, &s)?;
+                match holds(&root, &s, &from)? {
+                    Some(true) => root.remove(&s, usize::MAX).map(|()| true),
+                    None if resumed => Ok(true),
+                    _ => Ok(false),
+                }
             })
             .await;
             match removed {
                 Ok(true) => {}
                 Ok(false) => {
-                    self.undo(&c, &owned, &to).await?;
+                    self.undo(&c, &owned, &to, folders).await?;
                     return Ok(false);
                 }
-                Err(error) => {
-                    self.undo(&c, &owned, &to).await?;
-                    return Err(error);
-                }
+                // Whether the source changed is unknown, so the journal stays for a later run.
+                Err(error) => return Err(error),
             }
             if owned.iter().any(|o| o.media.is_some()) {
                 c.state = CONVERTED;
@@ -1385,19 +1417,24 @@ impl Library {
     }
 
     /// Removes the target if it still holds what we wrote and gives the owners their
-    /// source path back.
-    async fn undo(&self, c: &Conversion, owned: &[Owned], to: &Pointer) -> Result<(), Fault> {
-        let (t, to) = (PathBuf::from(&c.target), to.clone());
-        if let Err(Fault::File(reason)) = blocking(move || {
-            if holds(&t, &to)? == Some(true) {
-                fs::remove_file(&t)?;
+    /// source path back. When the target cannot be reached, the journal and owners stay
+    /// for a later run.
+    async fn undo(
+        &self,
+        c: &Conversion,
+        owned: &[Owned],
+        to: &Pointer,
+        folders: &[PathBuf],
+    ) -> Result<(), Fault> {
+        let (t, to, folders) = (PathBuf::from(&c.target), to.clone(), folders.to_vec());
+        blocking(move || {
+            let root = Root::below(&folders, &t)?;
+            if holds(&root, &t, &to)? == Some(true) {
+                root.remove(&t, usize::MAX)?;
             }
             Ok(())
         })
-        .await
-        {
-            warn!(path = %c.target, %reason, "could not remove a converted file whose source changed");
-        }
+        .await?;
         let db = &self.parts.db;
         for o in owned {
             db.move_owner(o.instance, c.item, &o.to, &o.from, false)
@@ -1803,12 +1840,13 @@ impl Library {
                 };
                 let rewritten = rekey(text, &target.key);
                 let owner = self.parts.handoff.owner();
-                let (path, from) = (f.path.clone(), f.pointer.clone());
+                let (path, from, folders) = (f.path.clone(), f.pointer.clone(), folders(&settings));
                 let done = blocking(move || {
-                    if holds(&path, &from)? != Some(true) {
+                    let root = Root::below(&folders, &path)?;
+                    if holds(&root, &path, &from)? != Some(true) {
                         return Ok(false);
                     }
-                    put(&path, &Pointer::Strm(rewritten), owner)?;
+                    put(&root, &path, &Pointer::Strm(rewritten), owner)?;
                     Ok(true)
                 })
                 .await;
@@ -2153,37 +2191,53 @@ pub(crate) fn normalize(path: &Path) -> PathBuf {
 }
 
 /// Whether `path` still holds `pointer`; `None` when it is gone.
-fn holds(path: &Path, pointer: &Pointer) -> io::Result<Option<bool>> {
-    let meta = match fs::symlink_metadata(path) {
-        Ok(meta) => meta,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e),
+fn holds(root: &Root, path: &Path, pointer: &Pointer) -> io::Result<Option<bool>> {
+    let Some(entry) = root.entry(path)? else {
+        return Ok(None);
     };
-    Ok(Some(match pointer {
-        Pointer::Link(text) => {
-            meta.file_type().is_symlink() && fs::read_link(path)?.as_os_str() == text.as_str()
+    Ok(Some(match (pointer, entry) {
+        (Pointer::Link(text), Entry::Link) => root.read_link(path)?.as_os_str() == text.as_str(),
+        (Pointer::Strm(text), Entry::File(len)) => {
+            len <= MAX_STRM_BYTES
+                && match root.read_to_string(path, MAX_STRM_BYTES) {
+                    Ok(read) => read == *text,
+                    Err(e) if e.kind() == io::ErrorKind::InvalidData => false,
+                    Err(e) => return Err(e),
+                }
         }
-        Pointer::Strm(text) => {
-            meta.is_file() && meta.len() <= MAX_STRM_BYTES && fs::read_to_string(path)? == *text
-        }
+        _ => false,
     }))
 }
 
-/// Removes `f` if it still holds the pointer it was found with; whether it did.
-pub(crate) fn unlink(f: &Found) -> io::Result<bool> {
-    if holds(&f.path, &f.pointer)? != Some(true) {
+/// Removes `f` if it still holds the pointer it was found with; whether it did. `f` lies
+/// in one of `folders`.
+pub(crate) fn unlink(f: &Found, folders: &[PathBuf]) -> io::Result<bool> {
+    let root = Root::below(folders, &f.path)?;
+    if holds(&root, &f.path, &f.pointer)? != Some(true) {
         return Ok(false);
     }
-    fs::remove_file(&f.path)?;
+    root.remove(&f.path, usize::MAX)?;
     Ok(true)
 }
 
 /// Writes `pointer` at `path`, replacing what is there.
-fn put(path: &Path, pointer: &Pointer, owner: (u32, u32)) -> io::Result<()> {
+fn put(root: &Root, path: &Path, pointer: &Pointer, owner: (u32, u32)) -> io::Result<()> {
     match pointer {
-        Pointer::Link(text) => handoff::link(path, text, owner),
-        Pointer::Strm(text) => handoff::write(path, text.as_bytes(), owner),
+        Pointer::Link(text) => root.link(path, text, owner),
+        Pointer::Strm(text) => root.write(path, text.as_bytes(), owner),
     }
+}
+
+/// The folders our pointers live in: the library folders and the completed STRM directory.
+/// Writes and removals stay below the one a path lies in.
+pub(crate) fn folders(settings: &Settings) -> Vec<PathBuf> {
+    settings
+        .imports
+        .library_dirs
+        .iter()
+        .map(|d| PathBuf::from(&d.path))
+        .chain(std::iter::once(PathBuf::from(&settings.imports.strm_dir)))
+        .collect()
 }
 
 /// Our pointers below `root`, in path order. Directory symlinks are not followed.
@@ -2504,6 +2558,32 @@ mod tests {
             "a rewritten earlier-form STRM keeps its size"
         );
         assert_eq!(rekey(&url(&legacy), "key"), url(&hmac));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unlink_stays_in_the_library_folder_of_its_path() {
+        let dir = temp();
+        let (library, outside) = (dir.join("library"), dir.join("outside"));
+        fs::create_dir_all(library.join("show")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, library.join("moved")).unwrap();
+        let item = ItemId::new();
+        let text = format!("/mnt/{}", item.ids_path());
+        let found = |path: PathBuf| Found {
+            path,
+            item,
+            pointer: Pointer::Link(text.clone()),
+            legacy: false,
+        };
+        std::os::unix::fs::symlink(&text, outside.join("a.mkv")).unwrap();
+        std::os::unix::fs::symlink(&text, library.join("show/a.mkv")).unwrap();
+        let folders = [library.clone()];
+
+        assert!(unlink(&found(library.join("moved/a.mkv")), &folders).is_err());
+        assert!(unlink(&found(outside.join("a.mkv")), &folders).is_err());
+        assert!(fs::symlink_metadata(outside.join("a.mkv")).is_ok());
+        assert!(unlink(&found(library.join("show/a.mkv")), &folders).unwrap());
         fs::remove_dir_all(dir).unwrap();
     }
 

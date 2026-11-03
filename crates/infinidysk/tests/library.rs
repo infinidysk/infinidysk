@@ -115,6 +115,7 @@ fn link(path: &Path, target: &str) {
 }
 
 #[tokio::test]
+#[allow(clippy::many_single_char_names)] // Items are named after their files.
 async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
     let root = std::env::temp_dir().join(format!("infinidysk-library-{}", ItemId::new()));
     let (lib, strm, mount) = (root.join("lib"), root.join("strm"), root.join("mnt"));
@@ -182,7 +183,7 @@ async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
         .unwrap();
     let tv = db.item_by_path("/content/tv").await.unwrap().unwrap();
     let dir = Item::child(&tv, "job", ItemKind::Directory).unwrap();
-    let [e, f, g, h] = ["e.mkv", "f.mkv", "g.mkv", "h.mkv"]
+    let [e, f, g, h, k] = ["e.mkv", "f.mkv", "g.mkv", "h.mkv", "k.mkv"]
         .map(|name| Item::child(&dir, name, ItemKind::NzbFile).unwrap());
     let job = JobId::new();
     let history = HistoryEntry {
@@ -199,7 +200,7 @@ async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
         nzb_blob: None,
         storage: None,
     };
-    let items = [dir, e.clone(), f.clone(), g.clone(), h.clone()];
+    let items = [dir, e.clone(), f.clone(), g.clone(), h.clone(), k.clone()];
     db.add_history(&history, &items, &[]).await.unwrap();
     let pointer = |item: &Item| format!("{}/{}", mount.display(), item.id.ids_path());
     for item in [&e, &f, &g, &h] {
@@ -230,6 +231,32 @@ async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
         original: pointer(&h),
         written: "written before the crash".to_owned(),
         owners: "[]".to_owned(),
+        reason: None,
+    })
+    .await
+    .unwrap();
+    // A crash after removing k's source, in a folder no longer configured.
+    let gone = root.join("gone");
+    fs::create_dir_all(&gone).unwrap();
+    let k_strm = gone.join("k.strm");
+    fs::write(&k_strm, "written before the crash").unwrap();
+    db.record_owner(sonarr_id, k.id, None, "/gone/k.strm", Some(job))
+        .await
+        .unwrap();
+    let owned = json!([{
+        "instance": sonarr_id, "from": "/gone/k.mkv", "to": "/gone/k.strm",
+        "file_id": null, "media": null, "details": null, "monitor": [], "settled": false,
+    }]);
+    db.put_conversion(&Conversion {
+        source: gone.join("k.mkv").display().to_string(),
+        target: k_strm.display().to_string(),
+        item: k.id,
+        state: 3,
+        from_link: true,
+        to_link: false,
+        original: pointer(&k),
+        written: "written before the crash".to_owned(),
+        owners: owned.to_string(),
         reason: None,
     })
     .await
@@ -292,6 +319,41 @@ async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
     let (_, view) = admin(addr, "GET", "/api/v1/library", "").await;
     let problems = view["progress"]["problems"].to_string();
     assert!(problems.contains("g.strm already exists"), "{problems}");
+    assert!(
+        problems.contains("outside the library folders"),
+        "{problems}"
+    );
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let (_, later) = admin(addr, "GET", "/api/v1/library", "").await;
+    assert_eq!(
+        later["progress"]["problems_total"], view["progress"]["problems_total"],
+        "a kept row is not retried at once"
+    );
+    assert_eq!(
+        later["progress"]["problems"]
+            .to_string()
+            .matches("outside the library folders")
+            .count(),
+        1,
+        "and is listed once"
+    );
+    assert_eq!(
+        fs::read_to_string(&k_strm).unwrap(),
+        "written before the crash"
+    );
+    assert_eq!(
+        db.item_owners(k.id).await.unwrap()[0].1.path,
+        "/gone/k.strm",
+        "an unreachable conversion keeps its owner"
+    );
+    assert!(
+        db.conversions()
+            .await
+            .unwrap()
+            .iter()
+            .any(|c| c.item == k.id && c.state == 3),
+        "and its journal entry"
+    );
 
     // A new key rewrites every STRM in place; the old one keeps working meanwhile.
     let before = strm_of("e.strm");

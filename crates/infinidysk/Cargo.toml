@@ -25,6 +25,7 @@ infinidysk-stream.workspace = true
 infinidysk-vfs.workspace = true
 infinidysk-webdav.workspace = true
 jiff.workspace = true
+nix = { workspace = true, features = ["fs"] }
 percent-encoding.workspace = true
 regex.workspace = true
 reqwest.workspace = true

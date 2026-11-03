@@ -112,6 +112,8 @@ pub struct HandoffFile<'a> {
 #[derive(Debug, Default)]
 pub struct Written {
     pub storage: String,
+    /// The folder `files` were written below, kept for removing them later.
+    pub root: String,
     pub files: Vec<Handoff>,
 }
 

@@ -3,10 +3,10 @@
 //! directory. The daily cleanup removes what no Arr took.
 
 use std::collections::HashMap;
-use std::fs::{self, DirBuilder, OpenOptions};
-use std::io::{self, Write as _};
-use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _};
-use std::path::{Component, Path, PathBuf};
+use std::fs::{self, DirBuilder};
+use std::io;
+use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _};
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
@@ -21,6 +21,7 @@ use tokio::sync::oneshot;
 use tracing::{info, warn};
 
 use crate::config::{ImportStrategy, Settings};
+use crate::confined::{Entry, Root};
 
 /// Release subtitles written beside the STRMs; Arrs import them with the video.
 const SUBTITLES: [&str; 7] = ["srt", "ass", "ssa", "vtt", "sub", "idx", "sup"];
@@ -135,7 +136,7 @@ impl Writer {
                     "{}/completed-symlinks/{}/{}",
                     c.mount_dir, job.category, job.folder
                 ),
-                files: Vec::new(),
+                ..Written::default()
             });
         }
         let storage = format!("{}/{}/{}", c.strm_dir, job.category, job.folder);
@@ -172,17 +173,20 @@ impl Writer {
             };
             writes.push((target, bytes, handoff));
         }
-        let (owner, root) = (self.owner, PathBuf::from(&c.strm_dir));
-        let undo_root = root.clone();
+        let (owner, root) = (self.owner, strm_root(&c));
+        let (undo_root, written_root) = (root.clone(), root.display().to_string());
         bounded(
             &self.busy,
             FS_TIMEOUT,
             move |progress| {
+                let root = make_dir(&root, owner)
+                    .and_then(|()| Root::open(&root))
+                    .map_err(|e| format!("{}: {e}", root.display()))?;
                 let mut done: Vec<Handoff> = Vec::with_capacity(writes.len());
                 for (target, bytes, handoff) in writes {
-                    if let Err(error) = write(&target, &bytes, owner) {
+                    if let Err(error) = root.write(&target, &bytes, owner) {
                         for f in &done {
-                            remove(Path::new(&f.path), &root);
+                            remove(&root, Path::new(&f.path));
                         }
                         return Err(format!("{}: {error}", target.display()));
                     }
@@ -191,13 +195,16 @@ impl Writer {
                 }
                 Ok(Written {
                     storage,
+                    root: written_root,
                     files: done,
                 })
             },
             // The job went back to the queue while these were written.
             move |late: Written| {
-                for f in &late.files {
-                    remove(Path::new(&f.path), &undo_root);
+                if let Ok(root) = Root::open(&undo_root) {
+                    for f in &late.files {
+                        remove(&root, Path::new(&f.path));
+                    }
                 }
             },
         )
@@ -235,24 +242,26 @@ impl Writer {
                 return;
             }
         };
-        let root = PathBuf::from(self.config().strm_dir);
+        let root = strm_root(&self.config());
+        // Records of files that could not be checked stay for a later sweep.
         let swept = tokio::task::spawn_blocking(move || {
             let mut removed = 0;
-            for h in &stale {
-                let path = Path::new(&h.path);
-                if path
-                    .strip_prefix(&root)
-                    .is_ok_and(|rel| rel.components().all(|c| matches!(c, Component::Normal(_))))
-                    && ours(h)
-                {
-                    remove(path, &root);
-                    removed += 1;
+            let mut checked = Vec::with_capacity(stale.len());
+            let Ok(root) = Root::open(&root) else {
+                return (checked, removed);
+            };
+            for h in stale {
+                match ours(&root, &h) {
+                    Ok(true) => {
+                        remove(&root, Path::new(&h.path));
+                        removed += 1;
+                    }
+                    Ok(false) => {}
+                    Err(_) => continue,
                 }
+                checked.push(h.path);
             }
-            (
-                stale.into_iter().map(|h| h.path).collect::<Vec<_>>(),
-                removed,
-            )
+            (checked, removed)
         })
         .await;
         let Ok((paths, removed)) = swept else {
@@ -280,11 +289,16 @@ impl HandoffWriter for Writer {
         if c.strategy != ImportStrategy::Strm {
             return Box::pin(std::future::ready(Ok(false)));
         }
-        let path = Path::new(&c.strm_dir).join(category).join(folder);
+        let root = strm_root(&c);
+        let path = root.join(category).join(folder);
         Box::pin(bounded(
             &self.busy,
             FS_TIMEOUT,
-            move |_| Ok(fs::symlink_metadata(&path).is_ok()),
+            move |_| {
+                Ok(Root::open(&root)
+                    .and_then(|root| root.entry(&path))
+                    .is_ok_and(|e| e.is_some()))
+            },
             |_| {},
         ))
     }
@@ -297,9 +311,13 @@ impl HandoffWriter for Writer {
     }
 
     fn discard(&self, written: &Written) {
-        let root = PathBuf::from(self.config().strm_dir);
-        for f in &written.files {
-            remove(Path::new(&f.path), &root);
+        if written.files.is_empty() {
+            return;
+        }
+        if let Ok(root) = Root::open(Path::new(&written.root)) {
+            for f in &written.files {
+                remove(&root, Path::new(&f.path));
+            }
         }
     }
 }
@@ -345,72 +363,44 @@ fn strm_item(text: &str) -> Option<ItemId> {
     ItemId::from_ids_path(ids)
 }
 
-/// Whether the file at a handoff path still holds what we wrote there.
-fn ours(h: &Handoff) -> bool {
+/// Whether the file at a handoff path still holds what we wrote there. A path outside
+/// `root` is not ours; an error means it could not be checked.
+fn ours(root: &Root, h: &Handoff) -> io::Result<bool> {
     let path = Path::new(&h.path);
-    let Ok(meta) = fs::symlink_metadata(path) else {
-        return false;
-    };
-    meta.is_file()
-        && match h.size {
-            Some(size) => meta.len() == size,
-            None => {
-                meta.len() <= MAX_STRM_BYTES
-                    && fs::read_to_string(path).ok().and_then(|s| strm_item(&s)) == Some(h.item)
+    let checked: io::Result<bool> = (|| {
+        Ok(match (root.entry(path)?, h.size) {
+            (Some(Entry::File(len)), Some(size)) => len == size,
+            (Some(Entry::File(len)), None) => {
+                len <= MAX_STRM_BYTES
+                    && strm_item(&root.read_to_string(path, MAX_STRM_BYTES)?) == Some(h.item)
             }
-        }
-}
-
-/// Writes `bytes` to `path` through a temporary file, durably, creating its folders.
-pub fn write(path: &Path, bytes: &[u8], owner: (u32, u32)) -> io::Result<()> {
-    let dir = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
-    make_dir(dir, owner)?;
-    let name = path.file_name().ok_or(io::ErrorKind::InvalidInput)?;
-    let tmp = dir.join(format!(
-        ".{}.{}.partial",
-        name.to_string_lossy(),
-        ItemId::new()
-    ));
-    let mut created = false;
-    let written = (|| {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o644)
-            .open(&tmp)?;
-        created = true;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        own(&tmp, owner)?;
-        fs::rename(&tmp, path)
+            _ => false,
+        })
     })();
-    if written.is_err() && created {
-        let _ = fs::remove_file(&tmp);
-    }
-    written?;
-    fs::File::open(dir)?.sync_all()
-}
-
-/// Points the symlink `path` at `target` through a temporary link, durably.
-pub fn link(path: &Path, target: &str, (uid, gid): (u32, u32)) -> io::Result<()> {
-    let dir = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
-    let name = path.file_name().ok_or(io::ErrorKind::InvalidInput)?;
-    let tmp = dir.join(format!(".{}.partial", name.to_string_lossy()));
-    let _ = fs::remove_file(&tmp);
-    let linked = (|| {
-        std::os::unix::fs::symlink(target, &tmp)?;
-        if fs::symlink_metadata(&tmp)?.uid() == 0 && uid != 0 {
-            std::os::unix::fs::lchown(&tmp, Some(uid), Some(gid))?;
+    match checked {
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData
+            ) =>
+        {
+            Ok(false)
         }
-        fs::rename(&tmp, path)
-    })();
-    if linked.is_err() {
-        let _ = fs::remove_file(&tmp);
+        other => other,
     }
-    linked?;
-    fs::File::open(dir)?.sync_all()
 }
 
+/// The STRM folder as a path; settings trim `/` to nothing.
+fn strm_root(c: &Config) -> PathBuf {
+    PathBuf::from(if c.strm_dir.is_empty() {
+        "/"
+    } else {
+        &c.strm_dir
+    })
+}
+
+/// Creates `dir` and its missing parents. Only for a configured folder; folders below it
+/// are made by [`Root::write`].
 fn make_dir(dir: &Path, owner: (u32, u32)) -> io::Result<()> {
     if dir.is_dir() {
         return Ok(());
@@ -433,29 +423,12 @@ fn own(path: &Path, (uid, gid): (u32, u32)) -> io::Result<()> {
     Ok(())
 }
 
-/// Removes a handoff file, then the folders this empties below its category folder in
-/// `root`.
-fn remove(path: &Path, root: &Path) {
-    if let Err(error) = fs::remove_file(path)
+/// Removes a handoff file, then the folders this empties below its category folder.
+fn remove(root: &Root, path: &Path) {
+    if let Err(error) = root.remove(path, 1)
         && error.kind() != io::ErrorKind::NotFound
     {
         warn!(path = %path.display(), reason = %error, "could not remove a handed-off file");
-        return;
-    }
-    let Some(category) = path
-        .strip_prefix(root)
-        .ok()
-        .and_then(|rel| rel.components().next())
-        .map(|c| root.join(c))
-    else {
-        return;
-    };
-    let mut dir = path.parent();
-    while let Some(d) = dir.filter(|d| d.starts_with(&category) && *d != category) {
-        if fs::remove_dir(d).is_err() {
-            break;
-        }
-        dir = d.parent();
     }
 }
 
@@ -711,21 +684,78 @@ mod tests {
         fs::remove_dir_all(&tmp).unwrap();
     }
 
-    #[test]
-    fn write_does_not_follow_a_planted_partial_symlink() {
+    #[tokio::test]
+    async fn discards_under_the_written_root_and_keeps_rows_it_cannot_check() {
         let tmp = std::env::temp_dir().join(format!("infinidysk-handoff-{}", ItemId::new()));
-        let dir = tmp.join("dir");
-        fs::create_dir_all(&dir).unwrap();
-        let victim = tmp.join("victim");
-        fs::write(&victim, "marker").unwrap();
-        let planted = dir.join(".a.strm.partial");
-        std::os::unix::fs::symlink(&victim, &planted).unwrap();
-        let meta = fs::metadata(&tmp).unwrap();
+        let strm_dir = tmp.join("strm");
+        fs::create_dir_all(&strm_dir).unwrap();
+        fs::create_dir_all(tmp.join("elsewhere")).unwrap();
+        let db = Db::connect(&format!("sqlite:{}", tmp.join("db.sqlite").display()))
+            .await
+            .unwrap();
+        let vfs = Arc::new(Vfs::new(
+            db.clone(),
+            Arc::new(Client::new([])),
+            Budget::new(1 << 20),
+            0,
+            "/mnt",
+        ));
+        let mut settings = Settings::default();
+        settings.imports.strategy = ImportStrategy::Strm;
+        settings.imports.strm_dir = strm_dir.display().to_string();
+        settings.imports.strm_key.0 = "key".into();
+        settings.network.public_url = "https://media.example".into();
+        let writer = Writer::new(vfs, (1000, 1000), &settings);
 
-        write(&dir.join("a.strm"), b"url", (meta.uid(), meta.gid())).unwrap();
-        assert_eq!(fs::read_to_string(&victim).unwrap(), "marker");
-        assert_eq!(fs::read_to_string(dir.join("a.strm")).unwrap(), "url");
-        assert!(fs::symlink_metadata(&planted).unwrap().is_symlink());
+        let video = vec!["a.mkv".to_owned()];
+        let meta = FileMeta::Nzb(NzbFile {
+            segments: Segments::default(),
+            proof: None,
+        });
+        let item = ItemId::new();
+        let written = writer
+            .hand_off(HandoffJob {
+                job: JobId::new(),
+                category: "tv",
+                folder: "job",
+                kinds: &[media::Kind::Video],
+                files: vec![HandoffFile {
+                    item,
+                    path: &video,
+                    meta: &meta,
+                }],
+            })
+            .await
+            .unwrap();
+        let strm = strm_dir.join("tv/job/a.strm");
+        assert!(strm.exists());
+        let mut moved = settings.clone();
+        moved.imports.strm_dir = tmp.join("other").display().to_string();
+        writer.configure(&moved);
+        writer.discard(&written);
+        assert!(!strm.exists(), "removed below the folder it was written in");
+        writer.configure(&settings);
+
+        let planted = tmp.join("elsewhere/a.strm");
+        fs::write(&planted, Config::new(&settings).strm_url(item, "mkv")).unwrap();
+        std::os::unix::fs::symlink(tmp.join("elsewhere"), strm_dir.join("s")).unwrap();
+        let h = Handoff {
+            path: strm_dir.join("s/a.strm").display().to_string(),
+            item,
+            job: Some(JobId::new()),
+            size: None,
+        };
+        db.record_handoffs(std::slice::from_ref(&h)).await.unwrap();
+        writer.sweep(&db).await;
+        assert!(planted.exists());
+        assert_eq!(
+            db.stale_handoffs().await.unwrap().len(),
+            1,
+            "a row below a symlinked folder stays for a later sweep"
+        );
+        fs::remove_file(strm_dir.join("s")).unwrap();
+        writer.sweep(&db).await;
+        assert_eq!(db.stale_handoffs().await.unwrap(), []);
         fs::remove_dir_all(&tmp).unwrap();
     }
 

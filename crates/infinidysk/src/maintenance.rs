@@ -761,8 +761,8 @@ impl Maintenance {
                 replace.push((arr, arr_file, ids));
             }
             let removed = tokio::task::spawn_blocking({
-                let link = link.clone();
-                move || library::unlink(&link)
+                let (link, folders) = (link.clone(), library::folders(&settings));
+                move || library::unlink(&link, &folders)
             })
             .await
             .map_err(|e| Stop::Reason(format!("removing a library link failed: {e}")))?;
