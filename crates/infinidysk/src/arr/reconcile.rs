@@ -444,9 +444,10 @@ fn content_paths(dropped: &str, categories: &[String]) -> Vec<(String, String)> 
 async fn forget(db: &Db, arr: &Arr, gone: &[ArrOwner]) -> Result<usize, infinidysk_db::Error> {
     let mut deleted = 0;
     for owner in gone {
-        if let Some(item) = db.forget_owner(arr.id, owner).await? {
-            tracing::info!(arr = %arr.name, item = %item, "deleting a file its Arr no longer has");
-            db.delete_item(item).await?;
+        if let Some(item) = db.forget_owner(arr.id, owner).await?
+            && db.delete_unowned(item).await?
+        {
+            tracing::info!(arr = %arr.name, item = %item, "deleted a file its Arr no longer has");
             deleted += 1;
         }
     }

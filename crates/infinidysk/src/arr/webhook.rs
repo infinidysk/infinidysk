@@ -319,8 +319,9 @@ impl Discovery {
 /// Forgets `arr`'s files matching `which` and deletes the items nobody owns anymore.
 async fn release(db: &Db, arr: &Arr, which: OwnedFile) -> Result<(), Failure> {
     for item in db.forget_owners(arr.id, &which).await? {
-        tracing::info!(arr = %arr.name, item = %item, "deleting a file its Arr deleted");
-        db.delete_item(item).await?;
+        if db.delete_unowned(item).await? {
+            tracing::info!(arr = %arr.name, item = %item, "deleted a file its Arr deleted");
+        }
     }
     Ok(())
 }
