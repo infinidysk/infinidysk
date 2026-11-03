@@ -700,6 +700,7 @@ async fn read_par2(
         )
     });
     let mut files: Vec<(u64, infinidysk_par2::File)> = Vec::new();
+    let mut seen = HashSet::new();
     let (mut articles, mut bytes) = (0, 0);
     for i in candidates {
         let vol = nzb.files[i].name().to_ascii_lowercase().contains(".vol");
@@ -736,7 +737,7 @@ async fn read_par2(
         bytes += reader.buffered();
         let index = reader.index();
         for f in index.files {
-            if !files.iter().any(|(_, g)| g.id == f.id) {
+            if seen.insert(f.id) {
                 files.push((index.slice_size, f));
             }
         }
