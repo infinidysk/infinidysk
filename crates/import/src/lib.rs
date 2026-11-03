@@ -298,7 +298,7 @@ fn blob_path(blobs: &Path, id: &str) -> Option<PathBuf> {
 
 /// Largest legacy NZB blob read; the queue's `nzb::MAX_NZB`.
 pub(crate) const MAX_NZB_BLOB_BYTES: u64 = 256_000_000;
-/// Largest legacy metadata blob read, and decompressed (see `csharp::decode`).
+/// Largest legacy metadata blob read.
 pub(crate) const MAX_METADATA_BYTES: u64 = 64_000_000;
 
 /// Reads blob `id` below the folder `blobs`, following no symlink below it and reading at
@@ -312,7 +312,8 @@ fn read_blob(blobs: &Path, id: &str, limit: u64) -> io::Result<Option<Vec<u8>>> 
     // O_NONBLOCK: opening a planted FIFO must not wait for a writer.
     let leaf = OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK | OFlag::O_CLOEXEC;
     let opened = (|| -> io::Result<File> {
-        let root = File::open(blobs)?;
+        // Follows a symlinked root; O_DIRECTORY refuses a FIFO there instead of waiting.
+        let root = nix::fcntl::open(blobs, dir.difference(OFlag::O_NOFOLLOW), Mode::empty())?;
         let a = openat(&root, &hex[..2], dir, Mode::empty())?;
         let b = openat(&a, &hex[2..4], dir, Mode::empty())?;
         Ok(File::from(openat(
@@ -508,6 +509,15 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(5))
             .expect("a FIFO must not block the read");
         assert_eq!(read, Err(io::ErrorKind::InvalidData));
+
+        let root = dir.join("fifo-blobs");
+        nix::unistd::mkfifo(&root, Mode::S_IRUSR | Mode::S_IWUSR).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(read_blob(&root, &id, 64).is_err()));
+        let refused = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("a FIFO blobs folder must not block the read");
+        assert!(refused);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
