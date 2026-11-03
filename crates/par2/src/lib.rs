@@ -4,6 +4,7 @@
 //! descriptions and slice checksums of its recovery set. Damaged packets are skipped by
 //! rescanning for the next packet magic, like other PAR2 clients do.
 
+use std::collections::HashMap;
 use std::ops::Range;
 
 use md5::{Digest, Md5};
@@ -215,6 +216,7 @@ fn build(index: &mut Index, packets: &[Packet]) {
     let packets = || packets.iter().filter(move |p| p.set == set);
     let id = |b: &[u8]| -> Option<Id> { b.get(..16)?.try_into().ok() };
 
+    let mut at: HashMap<Id, usize> = HashMap::new();
     for p in packets().filter(|p| p.kind == FILE_DESC) {
         let b = p.body;
         let (Some(fid), Some(hash), Some(hash_16k), Some(length)) = (
@@ -225,13 +227,14 @@ fn build(index: &mut Index, packets: &[Packet]) {
         ) else {
             continue;
         };
-        if index.files.iter().any(|f| f.id == fid) {
+        if at.contains_key(&fid) {
             continue;
         }
         let name = String::from_utf8_lossy(b.get(56..).unwrap_or_default())
             .trim_end_matches('\0')
             .to_owned();
         let length = u64::from_le_bytes(length.try_into().expect("8-byte slice"));
+        at.insert(fid, index.files.len());
         index.files.push(File {
             id: fid,
             hash,
@@ -242,7 +245,9 @@ fn build(index: &mut Index, packets: &[Packet]) {
         });
     }
     for p in packets() {
-        let Some(file) = id(p.body).and_then(|fid| index.files.iter_mut().find(|f| f.id == fid))
+        let Some(file) = id(p.body)
+            .and_then(|fid| at.get(&fid).copied())
+            .map(|i| &mut index.files[i])
         else {
             continue;
         };
@@ -270,9 +275,16 @@ fn build(index: &mut Index, packets: &[Packet]) {
     }
     if let Some(main) = main {
         index.slice_size = u64::from_le_bytes(main.body[..8].try_into().expect("8-byte slice"));
-        let order: Vec<Id> = main.body[12..].as_chunks::<16>().0.to_vec();
+        let order = main.body[12..].as_chunks::<16>().0;
+        // Reversed so a repeated ID keeps its first position.
+        let rank: HashMap<Id, usize> = order
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(i, o)| (*o, i))
+            .collect();
         index
             .files
-            .sort_by_key(|f| order.iter().position(|o| *o == f.id).unwrap_or(usize::MAX));
+            .sort_by_key(|f| rank.get(&f.id).copied().unwrap_or(usize::MAX));
     }
 }

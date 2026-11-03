@@ -67,6 +67,65 @@ fn prefixes_damage_and_recovery_volumes() {
     assert_eq!(vol.files, whole.files);
 }
 
+fn packet(set: &[u8; 16], kind: &[u8; 16], body: &[u8]) -> Vec<u8> {
+    let mut rest = [set.as_slice(), kind, body].concat();
+    rest.resize(rest.len().next_multiple_of(4), 0);
+    let len = 32 + rest.len() as u64;
+    [
+        b"PAR2\0PKT".as_slice(),
+        &len.to_le_bytes(),
+        &Md5::digest(&rest),
+        &rest,
+    ]
+    .concat()
+}
+
+fn file_desc(set: &[u8; 16], fid: &[u8; 16], name: &str) -> Vec<u8> {
+    let body = [
+        fid.as_slice(),
+        &[1; 16],
+        &[2; 16],
+        &7u64.to_le_bytes(),
+        name.as_bytes(),
+    ]
+    .concat();
+    packet(set, b"PAR 2.0\0FileDesc", &body)
+}
+
+#[test]
+fn indexes_many_descriptors_in_order_and_first_wins() {
+    const N: u128 = 20_000;
+    let set = [9; 16];
+    let ids: Vec<[u8; 16]> = (0..N).map(|i| (i + 1).to_le_bytes()).collect();
+    let main_body = [
+        4096u64.to_le_bytes().as_slice(),
+        &u32::try_from(N).unwrap().to_le_bytes(),
+        &ids.iter().rev().flatten().copied().collect::<Vec<u8>>(),
+    ]
+    .concat();
+    let mut reader = Reader::default();
+    reader.push(&packet(&set, b"PAR 2.0\0Main\0\0\0\0", &main_body));
+    for (i, fid) in ids.iter().enumerate() {
+        reader.push(&file_desc(&set, fid, &format!("f{i}.bin")));
+    }
+    reader.push(&file_desc(&set, &ids[5], "dup.bin"));
+
+    let index = reader.index();
+    assert_eq!(index.set_id, Some(set));
+    assert_eq!(index.slice_size, 4096);
+    assert_eq!(index.files.len(), ids.len());
+    assert!(
+        index
+            .files
+            .iter()
+            .map(|f| f.id)
+            .eq(ids.iter().rev().copied())
+    );
+    let five = index.files.iter().find(|f| f.id == ids[5]).unwrap();
+    assert_eq!(five.name, "f5.bin");
+    assert_eq!(five.length, 7);
+}
+
 #[test]
 fn reader_matches_a_full_parse_after_every_piece() {
     let mut damaged = fixture("set.par2");
