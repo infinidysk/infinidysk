@@ -85,7 +85,7 @@ Dependencies point downward only. Parsers do no I/O. No traits just for mocking.
 | | `archive` | stored-member headers for RAR4/RAR5/7z, multipart |
 | | `par2` | PAR2 parse, verify, repair |
 | L1 | `nntp` | provider pool, circuit breaker, download permits, lifecycle guards |
-| | `db` | sqlx, SQLite + PostgreSQL, per-backend migrations; one runtime SQL string per query (`$N` placeholders, portable SQL) |
+| | `db` | sqlx, SQLite + PostgreSQL, per-backend migrations; one runtime SQL string per query (`$N` placeholders, portable SQL; PostgreSQL-only row locks such as `FOR UPDATE` run behind a backend check) |
 | | `arr` | Arr HTTP client: profiles, system status, SAB download-client discovery, repair calls |
 | L2 | `stream` | multi-segment seekable stream, prefetch |
 | L3 | `vfs` | tree shared by WebDAV and FUSE: lookup, listing, `/.ids`, `/completed-symlinks`, read handles |

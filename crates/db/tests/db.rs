@@ -1128,7 +1128,22 @@ async fn adoption_during_cleanup_keeps_the_item(db: &Db, url: &str) {
             .await
             .expect("record");
         let deleted = cleanup(db.clone());
-        tokio::time::sleep(pause).await;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        while sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database() \
+             AND wait_event_type = 'Lock' AND query LIKE '%FROM items WHERE id = $1 FOR UPDATE'",
+        )
+        .fetch_one(&raw)
+        .await
+        .expect("query")
+            == 0
+        {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "cleanup never waited on the item lock"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
         tx.commit().await.expect("commit");
         let deleted = deleted.await.expect("join");
         raw.close().await;

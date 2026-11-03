@@ -2,7 +2,8 @@
 //!
 //! Queries are runtime-checked strings written in the SQL both backends accept (`$N`
 //! placeholders, `ON CONFLICT`, recursive CTEs), so each lives once and runs on the
-//! native driver of either backend.
+//! native driver of either backend. The exception is PostgreSQL row locking (`FOR UPDATE`),
+//! which SQLite lacks and does not need with its single writer; it runs behind a backend check.
 
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -1885,6 +1886,8 @@ impl Db {
     /// same transaction. Returns whether it went.
     pub async fn delete_unowned(&self, id: ItemId) -> Result<bool, Error> {
         // An owner insert's foreign-key check share-locks the item row; SQLite has one writer.
+        // READ COMMITTED lets the check below see an owner committed while the lock waited.
+        const ISOLATION: &str = "SET TRANSACTION ISOLATION LEVEL READ COMMITTED";
         const LOCK: &str = "SELECT 1 FROM items WHERE id = $1 FOR UPDATE";
         const UNOWNED: &str = "SELECT 1 FROM items WHERE id = $1 \
                                AND NOT EXISTS (SELECT 1 FROM arr_owners WHERE item_id = $1)";
@@ -1892,6 +1895,7 @@ impl Db {
         let deleted = on!(self, pool => {
             let mut tx = pool.begin().await?;
             if postgres {
+                sqlx::query(ISOLATION).execute(&mut *tx).await?;
                 sqlx::query(LOCK).bind(id.0).execute(&mut *tx).await?;
             }
             let unowned: Option<i32> = sqlx::query_scalar(UNOWNED)
