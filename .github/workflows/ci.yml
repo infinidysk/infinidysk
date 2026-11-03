@@ -71,6 +71,12 @@ jobs:
       - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
 
+  discord-announce:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash .github/scripts/test-post-discord-messages.sh
+
   release-build:
     strategy:
       fail-fast: false

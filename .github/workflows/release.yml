@@ -95,3 +95,39 @@ jobs:
           tags=(-t "$IMAGE:edge" -t "$IMAGE:sha-${GITHUB_SHA::12}" -t "$IMAGE:$RELEASE_TAG")
           mapfile -t refs < <(sed "s|^|$IMAGE@|" digest-*)
           docker buildx imagetools create "${tags[@]}" "${refs[@]}"
+
+  announce:
+    needs: [release-please, image-manifest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Post the release to Discord dev-announcements
+        env:
+          DISCORD_ANNOUNCEMENTS_WEBHOOK_URL: ${{ secrets.DISCORD_DEVANNOUNCEMENTS_WEBHOOK_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DISCORD_ANNOUNCEMENTS_WEBHOOK_URL}" ]; then
+            echo "DISCORD_DEVANNOUNCEMENTS_WEBHOOK_URL secret is not set" >&2
+            exit 1
+          fi
+
+          # The release body is the edited release PR notes, not just the generated changelog.
+          NOTES=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
+          SUMMARY=$(printf '%s' "$NOTES" | bash .github/scripts/summarize-release-notes.sh --type dev --version "$RELEASE_TAG" || true)
+          if [ -n "$SUMMARY" ]; then
+            BODY=$(printf '🛠️ **InfiniDysk 2.x: %s**\nImage: `%s:edge`\n\n%s\n\nRelease notes: %s' \
+              "$RELEASE_TAG" "$IMAGE" "$SUMMARY" "$URL")
+          else
+            BODY=$(printf '🛠️ **InfiniDysk 2.x: %s**\nImage: `%s:edge`\nRelease notes: %s\n\n%s' \
+              "$RELEASE_TAG" "$IMAGE" "$URL" "$NOTES")
+          fi
+          printf '%s' "$BODY" | bash .github/scripts/post-discord-messages.sh
