@@ -164,18 +164,34 @@ pub async fn survey_with_progress(
     .await?;
     drop(db);
     let total = files.len() as u64;
+    progress(Progress::at(Stage::Checking, 0, total));
     tracing::info!(files = total, "C# import: checking file metadata");
     let started = Instant::now();
     let checked = Arc::new(AtomicU64::new(0));
     let counter = Arc::clone(&checked);
     let blobs = config.join("blobs");
-    let mut scan = tokio::task::spawn_blocking(move || {
+    let scan = tokio::task::spawn_blocking(move || {
         for file in files {
             s.file(&blobs, file);
             counter.fetch_add(1, Ordering::Relaxed);
         }
         s
     });
+    let survey = track_scan(scan, &checked, total, &progress).await?;
+    tracing::info!(
+        files = total,
+        seconds = started.elapsed().as_secs(),
+        "C# import: file metadata checked"
+    );
+    Ok(survey)
+}
+
+async fn track_scan(
+    mut scan: tokio::task::JoinHandle<Survey>,
+    checked: &AtomicU64,
+    total: u64,
+    progress: &impl Fn(Progress),
+) -> Result<Survey, Error> {
     let mut tick = tokio::time::interval(PROGRESS_EVERY);
     let mut ticks = 0_u32;
     let s = loop {
@@ -192,11 +208,6 @@ pub async fn survey_with_progress(
         }
     };
     progress(Progress::at(Stage::Checking, total, total));
-    tracing::info!(
-        files = total,
-        seconds = started.elapsed().as_secs(),
-        "C# import: file metadata checked"
-    );
     Ok(s)
 }
 
@@ -470,6 +481,38 @@ impl fmt::Display for Survey {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn checking_reports_progress_before_the_scan_finishes() {
+        let checked = Arc::new(AtomicU64::new(0));
+        let counter = Arc::clone(&checked);
+        let (reported, received) = std::sync::mpsc::channel();
+        let scan = tokio::task::spawn_blocking(move || {
+            for done in 1..3 {
+                counter.store(done, Ordering::Relaxed);
+                assert_eq!(received.recv_timeout(Duration::from_secs(5)).unwrap(), done);
+            }
+            counter.store(3, Ordering::Relaxed);
+            Survey::default()
+        });
+        let updates = std::sync::Mutex::new(Vec::<Progress>::new());
+        track_scan(scan, &checked, 3, &|progress| {
+            let mut updates = updates.lock().unwrap();
+            let previous = updates.last().map_or(0, |previous| previous.done);
+            updates.push(progress);
+            drop(updates);
+            if progress.done > previous && progress.done < 3 {
+                reported.send(progress.done).unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        let updates = updates.into_inner().unwrap();
+        assert!(updates.contains(&Progress::at(Stage::Checking, 1, 3)));
+        assert!(updates.contains(&Progress::at(Stage::Checking, 2, 3)));
+        assert_eq!(updates.last(), Some(&Progress::at(Stage::Checking, 3, 3)));
+        assert!(updates.windows(2).all(|pair| pair[0].done <= pair[1].done));
+    }
 
     #[test]
     fn a_schema_before_the_oldest_is_refused_not_failed() {

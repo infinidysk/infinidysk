@@ -780,18 +780,22 @@ async fn import_nzbs(
     while let Some(result) = encoded.next().await {
         let (id, nzb) = result??;
         handled += 1;
-        progress(Progress::at(Stage::Nzbs, handled, total));
-        let Some(nzb) = nzb else {
-            continue;
-        };
-        bytes += nzb.len();
-        batch.push((BlobId(id), nzb));
-        if bytes >= NZB_BATCH {
-            write_blobs(db, &mut batch, &mut available, done).await?;
-            bytes = 0;
+        if let Some(nzb) = nzb {
+            bytes += nzb.len();
+            batch.push((BlobId(id), nzb));
+            if bytes >= NZB_BATCH {
+                write_blobs(db, &mut batch, &mut available, done).await?;
+                bytes = 0;
+            }
         }
+        progress(Progress::at(
+            Stage::Nzbs,
+            handled - batch.len() as u64,
+            total,
+        ));
     }
     write_blobs(db, &mut batch, &mut available, done).await?;
+    progress(Progress::at(Stage::Nzbs, handled, total));
     tracing::info!(nzbs = available.len(), "C# import: NZBs written");
     Ok(available)
 }
@@ -2131,7 +2135,8 @@ mod tests {
         rt().block_on(async {
             use sqlx::ConnectOptions as _;
             let (config, job) = seed("/content", "/content/job").await;
-            let db = Db::connect(&format!("sqlite:{}", tmp().join("db.sqlite").display()))
+            let destination = tmp().join("db.sqlite");
+            let db = Db::connect(&format!("sqlite:{}", destination.display()))
                 .await
                 .unwrap();
             let client = Client::new(Vec::<infinidysk_nntp::Provider>::new());
@@ -2140,17 +2145,24 @@ mod tests {
                 .connect()
                 .await
                 .unwrap();
+            let nzb = Uuid::now_v7();
+            let missing_nzb = Uuid::now_v7();
+            let nzb_path = blob_path(&config.join("blobs"), &nzb.to_string()).unwrap();
+            std::fs::create_dir_all(nzb_path.parent().unwrap()).unwrap();
+            std::fs::write(nzb_path, b"<nzb/>").unwrap();
             for index in 0..3 {
                 let meta = (index < 2).then(|| multipart_blob(&config.join("blobs")));
                 sqlx::query(
                     "INSERT INTO DavItems (Id, ParentId, Name, Path, CreatedAt, Type, SubType, \
-                     FileSize, FileBlobId) VALUES ($1, $2, $3, $4, '2025-01-01', 2, 203, 100, $5)",
+                     FileSize, FileBlobId, NzbBlobId) \
+                     VALUES ($1, $2, $3, $4, '2025-01-01', 2, 203, 100, $5, $6)",
                 )
                 .bind(Uuid::now_v7().to_string())
                 .bind(job.to_string())
                 .bind(format!("file-{index}.mkv"))
                 .bind(format!("/content/job/file-{index}.mkv"))
                 .bind(meta)
+                .bind(if index == 1 { missing_nzb } else { nzb }.to_string())
                 .execute(&mut source)
                 .await
                 .unwrap();
@@ -2174,7 +2186,42 @@ mod tests {
             assert_eq!(last.total, Some(last.done));
             assert!(last.done >= 3);
             assert!(checks[1..].windows(2).all(|w| w[0].done <= w[1].done));
-            for (total, written) in [(3, 2), (1, 0)] {
+            let mut destination = sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(destination)
+                .connect()
+                .await
+                .unwrap();
+            sqlx::raw_sql(
+                "CREATE TRIGGER reject_blob BEFORE INSERT ON blobs \
+                 BEGIN SELECT RAISE(FAIL, 'test write failure'); END;",
+            )
+            .execute(&mut destination)
+            .await
+            .unwrap();
+            let failed_updates = std::sync::Mutex::new(Vec::new());
+            let result = import_nzbs(
+                &mut source,
+                &db,
+                &config.join("blobs"),
+                None,
+                &mut Imported::default(),
+                &|progress| failed_updates.lock().unwrap().push(progress),
+            )
+            .await;
+            assert!(result.is_err());
+            assert!(
+                failed_updates
+                    .into_inner()
+                    .unwrap()
+                    .iter()
+                    .all(|progress| { progress.total.is_none_or(|total| progress.done < total) })
+            );
+            assert_eq!(db.blob_ids().await.unwrap(), [] as [BlobId; 0]);
+            sqlx::query("DROP TRIGGER reject_blob")
+                .execute(&mut destination)
+                .await
+                .unwrap();
+            for (total, written, directories, nzbs) in [(3, 2, 2, 2), (1, 0, 0, 1)] {
                 let updates = std::sync::Mutex::new(Vec::new());
                 let imported = apply_with_progress(&config, &db, &client, "/mnt", |progress| {
                     updates.lock().unwrap().push(progress);
@@ -2193,6 +2240,21 @@ mod tests {
                         Stage::Finishing
                     ]
                 );
+                for (stage, total) in [(Stage::Directories, directories), (Stage::Nzbs, nzbs)] {
+                    let stage_updates: Vec<_> = updates
+                        .iter()
+                        .filter(|update| update.stage == stage)
+                        .collect();
+                    assert_eq!(*stage_updates[0], Progress::counting(stage));
+                    assert_eq!(*stage_updates[1], Progress::at(stage, 0, total));
+                    assert_eq!(
+                        **stage_updates.last().unwrap(),
+                        Progress::at(stage, total, total)
+                    );
+                    assert!(stage_updates.iter().all(|update| update.done <= total));
+                }
+                assert_eq!(imported.nzbs, nzbs - 1);
+                assert!(db.blob_ids().await.unwrap().contains(&BlobId(nzb)));
                 let updates: Vec<Progress> = updates
                     .into_iter()
                     .filter(|p| p.stage == Stage::Files)

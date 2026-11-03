@@ -67,7 +67,7 @@ function UpgradeProgress({ status, reconnecting }: { status: Schemas["UpgradeSta
   const labels = stage && stage !== "finishing" ? upgradeStages[stage] : undefined;
   const total = progress?.total;
   const completed = progress ? progress.done + progress.skipped : 0;
-  const percent = finishing ? 100 : total == null ? undefined : total > 0 ? Math.min(100, completed / total * 100) : 100;
+  const percent = finishing || total == null ? undefined : total > 0 ? Math.min(100, completed / total * 100) : 100;
   const step = stage && stage !== "finishing" ? upgradeSteps.indexOf(stage) + 1 : undefined;
   const phase = finishing ? "Finalizing import" : labels?.phase ?? "Preparing import";
   return (
@@ -83,7 +83,7 @@ function UpgradeProgress({ status, reconnecting }: { status: Schemas["UpgradeSta
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-4 text-sm">
               <p role="status">
-                {reconnecting ? "Connection lost. Reconnecting..." : phase}
+                {reconnecting ? "Connection lost. Reconnecting…" : phase}
                 {!reconnecting && step ? <span className="text-muted-foreground"> · Step {step} of {upgradeSteps.length}</span> : null}
               </p>
               <span className="text-muted-foreground shrink-0 tabular-nums">{percent === undefined ? "" : `${percent.toFixed(1)}%`}</span>
@@ -96,7 +96,10 @@ function UpgradeProgress({ status, reconnecting }: { status: Schemas["UpgradeSta
               aria-valuemax={100}
               aria-valuenow={percent}
             >
-              <div className="bg-primary h-full" style={{ width: `${percent ?? 0}%` }} />
+              <div
+                className={`bg-primary h-full ${percent === undefined ? "motion-safe:animate-pulse" : ""}`}
+                style={{ width: percent === undefined ? "33%" : `${percent}%` }}
+              />
             </div>
           </div>
           {progress && labels ? (
@@ -107,7 +110,7 @@ function UpgradeProgress({ status, reconnecting }: { status: Schemas["UpgradeSta
               </div>
               <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
                 <dt className="text-muted-foreground">{labels.total}</dt>
-                <dd className="font-mono tabular-nums">{total == null ? "Counting..." : total.toLocaleString()}</dd>
+                <dd className="font-mono tabular-nums">{total == null ? "Counting…" : total.toLocaleString()}</dd>
               </div>
               {stage === "files" ? (
                 <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
@@ -117,7 +120,7 @@ function UpgradeProgress({ status, reconnecting }: { status: Schemas["UpgradeSta
               ) : null}
               <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
                 <dt className="text-muted-foreground">Time left in this step</dt>
-                <dd className="tabular-nums">{progress.eta_seconds == null ? "Estimating..." : duration(progress.eta_seconds)}</dd>
+                <dd className="tabular-nums">{total != null && completed >= total ? "Finishing…" : progress.eta_seconds == null ? "Estimating…" : duration(progress.eta_seconds)}</dd>
               </div>
             </dl>
           ) : null}

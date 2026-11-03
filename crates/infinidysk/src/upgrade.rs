@@ -1057,6 +1057,25 @@ impl UpgradeProgress {
     }
 }
 
+#[derive(Default)]
+struct ProgressClock {
+    stage: Option<infinidysk_import::Stage>,
+    started: Option<Instant>,
+}
+
+impl ProgressClock {
+    fn elapsed(&mut self, progress: infinidysk_import::Progress, now: Instant) -> Duration {
+        if self.stage != Some(progress.stage) || progress.total.is_none() {
+            self.stage = Some(progress.stage);
+            self.started = None;
+        }
+        if progress.total.is_none() {
+            return Duration::ZERO;
+        }
+        now.duration_since(*self.started.get_or_insert(now))
+    }
+}
+
 impl UpgradeStatus {
     fn importing() -> Self {
         Self {
@@ -1220,18 +1239,12 @@ pub async fn serve_import(
     tokio::pin!(serving);
     let importing = async {
         loop {
-            let stage = std::sync::Mutex::new(None::<(infinidysk_import::Stage, Instant)>);
+            let clock = std::sync::Mutex::new(ProgressClock::default());
             let result = import_with_progress(db, config, |progress| {
-                let elapsed = {
-                    let mut stage = stage.lock().unwrap_or_else(PoisonError::into_inner);
-                    match *stage {
-                        Some((at, started)) if at == progress.stage => started.elapsed(),
-                        _ => {
-                            *stage = Some((progress.stage, Instant::now()));
-                            Duration::ZERO
-                        }
-                    }
-                };
+                let elapsed = clock
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .elapsed(progress, Instant::now());
                 server.status.send_modify(|status| {
                     status.progress = Some(UpgradeProgress::new(progress, elapsed));
                 });
@@ -1387,6 +1400,64 @@ fn describe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upgrade_clock_excludes_preparation_and_resets_between_stages_and_attempts() {
+        use infinidysk_import::{Progress, Stage};
+        let mut clock = ProgressClock::default();
+        let mut now = Instant::now();
+        for stage in [
+            Stage::Checking,
+            Stage::Directories,
+            Stage::Nzbs,
+            Stage::Files,
+        ] {
+            let mut progress = Progress {
+                stage,
+                ..Progress::default()
+            };
+            assert_eq!(clock.elapsed(progress, now), Duration::ZERO);
+            now += Duration::from_secs(60);
+            progress.total = Some(100);
+            assert_eq!(clock.elapsed(progress, now), Duration::ZERO);
+            now += Duration::from_secs(5);
+            assert_eq!(clock.elapsed(progress, now), Duration::from_secs(5));
+            now += Duration::from_secs(5);
+            progress.done = 50;
+            assert_eq!(
+                UpgradeProgress::new(progress, clock.elapsed(progress, now)).eta_seconds,
+                Some(10)
+            );
+        }
+        let progress = Progress {
+            stage: Stage::Files,
+            total: Some(100),
+            ..Progress::default()
+        };
+        let mut retry = ProgressClock::default();
+        assert_eq!(retry.elapsed(progress, now), Duration::ZERO);
+        assert_eq!(
+            retry.elapsed(progress, now + Duration::from_secs(5)),
+            Duration::from_secs(5)
+        );
+    }
+
+    #[test]
+    fn upgrade_stages_have_stable_wire_names() {
+        use infinidysk_import::Stage;
+        for (stage, name) in [
+            (Stage::Checking, "checking"),
+            (Stage::Directories, "directories"),
+            (Stage::Nzbs, "nzbs"),
+            (Stage::Files, "files"),
+            (Stage::Finishing, "finishing"),
+        ] {
+            assert_eq!(
+                serde_json::to_value(UpgradeStage::from(stage)).unwrap(),
+                name
+            );
+        }
+    }
 
     #[test]
     fn upgrade_eta_counts_skips_and_waits_for_measurable_work() {
