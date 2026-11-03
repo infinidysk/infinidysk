@@ -299,10 +299,12 @@ fn blob_path(blobs: &Path, id: &str) -> Option<PathBuf> {
     Some(blobs.join(&hex[..2]).join(&hex[2..4]).join(id.to_string()))
 }
 
-/// Largest legacy NZB blob read; the queue's `nzb::MAX_NZB`.
-pub(crate) const MAX_NZB_BLOB_BYTES: u64 = 256_000_000;
-/// Largest legacy metadata blob read, and decompressed (see `csharp::decode`).
-pub(crate) const MAX_METADATA_BYTES: u64 = 64_000_000;
+/// Largest legacy NZB blob read: C#'s own NZB cap (256 MiB), so nothing C# stored is lost.
+pub(crate) const MAX_NZB_BLOB_BYTES: u64 = 268_435_456;
+/// Largest legacy metadata blob read, and decompressed (see `csharp::decode`). Metadata comes
+/// from one NZB; message-ids at most double as UTF-16, and the rest per segment is smaller
+/// than its XML.
+pub(crate) const MAX_METADATA_BYTES: u64 = 2 * MAX_NZB_BLOB_BYTES;
 
 /// Reads blob `id` below the folder `blobs`, following no symlink below it and reading at
 /// most `limit` bytes; `None` when it is not there.
