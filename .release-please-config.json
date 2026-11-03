@@ -1,7 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "changelog-path": "CHANGELOG.md",
-  "last-release-sha": "98f6befe0abc2c6679959661c9acf3d94d307a62",
   "include-commit-authors": true,
   "bump-minor-pre-major": true,
   "changelog-sections": [
