@@ -950,9 +950,11 @@ impl Library {
         }
         let known = self.known(settings).await;
         let mut arr_files = ArrFiles::default();
+        if run.is_some() {
+            self.progress(|p| *p = Progress::default());
+        }
         self.finish_unfinished(settings, cancel).await?;
         if let Some(run) = run {
-            self.progress(|p| *p = Progress::default());
             let roots: Vec<_> = settings
                 .imports
                 .library_dirs
@@ -1381,10 +1383,8 @@ impl Library {
                     self.undo(&c, &owned, &to, folders).await?;
                     return Ok(false);
                 }
-                Err(error) => {
-                    self.undo(&c, &owned, &to, folders).await?;
-                    return Err(error);
-                }
+                // Whether the source changed is unknown, so the journal stays for a later run.
+                Err(error) => return Err(error),
             }
             if owned.iter().any(|o| o.media.is_some()) {
                 c.state = CONVERTED;
@@ -1401,7 +1401,8 @@ impl Library {
     }
 
     /// Removes the target if it still holds what we wrote and gives the owners their
-    /// source path back.
+    /// source path back. When the target cannot be reached, the journal and owners stay
+    /// for a later run.
     async fn undo(
         &self,
         c: &Conversion,
@@ -1410,17 +1411,14 @@ impl Library {
         folders: &[PathBuf],
     ) -> Result<(), Fault> {
         let (t, to, folders) = (PathBuf::from(&c.target), to.clone(), folders.to_vec());
-        if let Err(Fault::File(reason)) = blocking(move || {
+        blocking(move || {
             let root = Root::below(&folders, &t)?;
             if holds(&root, &t, &to)? == Some(true) {
                 root.remove(&t, usize::MAX)?;
             }
             Ok(())
         })
-        .await
-        {
-            warn!(path = %c.target, %reason, "could not remove a converted file whose source changed");
-        }
+        .await?;
         let db = &self.parts.db;
         for o in owned {
             db.move_owner(o.instance, c.item, &o.to, &o.from, false)
