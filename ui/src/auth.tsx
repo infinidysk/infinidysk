@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, type ReactNode, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { CircleAlert, Loader2, RotateCcw } from "lucide-react";
 import { api, body, HttpError, type Schemas } from "./api/client";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Failure, useTitle } from "./ui";
 import { duration } from "./format";
+import { switching, useSwitching } from "./database";
 
 export const authKey = ["auth"];
 
@@ -32,8 +33,20 @@ export function Spinner() {
 }
 
 /** Renders `children` once signed in; otherwise the setup or login form, or why the
- * import from C# failed. */
+ * import from C# failed. While the switch to PostgreSQL runs, its progress. */
 export function Gate({ children }: { children: ReactNode }) {
+  const client = useQueryClient();
+  const since = useSwitching();
+  const cutover = useQuery({
+    queryKey: ["cutover"],
+    queryFn: () => body(api.GET("/api/v1/database/cutover", { cache: "no-store" })),
+    retry: false,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      return since != null || !data || data.state === "running" ? 1000 : false;
+    },
+    refetchIntervalInBackground: true,
+  });
   const upgrade = useQuery({
     queryKey: ["upgrade"],
     queryFn: () => body(api.GET("/api/v1/upgrade/status", { cache: "no-store" })),
@@ -43,6 +56,17 @@ export function Gate({ children }: { children: ReactNode }) {
     },
     refetchIntervalInBackground: true,
   });
+  const cut = cutover.isError ? undefined : cutover.data;
+  // The new process answers: the switch is over, on PostgreSQL or back on SQLite with the reason.
+  const switched = since != null && cut?.state === "none" && cut.started_ms !== since;
+  useEffect(() => {
+    if (!switched) return;
+    switching.end();
+    void client.invalidateQueries();
+  }, [switched, client]);
+  if (cut?.state === "running") return <CutoverProgress progress={cut.progress ?? null} />;
+  if (since != null && !switched) return <CutoverProgress progress={null} />;
+  if (cutover.isPending) return <Spinner />;
   if (upgrade.isPending) return <Spinner />;
   if (upgrade.data?.state === "importing") return <UpgradeProgress status={upgrade.data} reconnecting={upgrade.isError} />;
   if (upgrade.data?.state === "failed") return <UpgradeFailed status={upgrade.data} />;
@@ -124,6 +148,57 @@ function UpgradeProgress({ status, reconnecting }: { status: Schemas["UpgradeSta
               </div>
             </dl>
           ) : null}
+        </div>
+      </div>
+    </main>
+  );
+}
+
+const cutoverStages: Record<Schemas["ProgressStage"], string> = {
+  copying: "Applying last changes",
+  syncing: "Applying last changes",
+  verifying: "Checking",
+  switching: "Switching",
+};
+
+/** The switch to PostgreSQL; without `progress`, the old process is stopping or the new one is starting. */
+function CutoverProgress({ progress }: { progress: Schemas["CutoverProgress"] | null }) {
+  useTitle("Switching to PostgreSQL");
+  const phase = progress ? cutoverStages[progress.stage] : "Restarting…";
+  const percent = progress && progress.total > 0 ? Math.min(100, (progress.done / progress.total) * 100) : undefined;
+  return (
+    <main className="grid min-h-screen place-items-center p-4">
+      <div className="w-full max-w-md space-y-6">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <img src="/mark.svg" alt="" className="size-12" />
+          <div>
+            <h1 className="text-xl font-medium">Switching to PostgreSQL</h1>
+            <p className="text-muted-foreground mt-1">Playback, WebDAV and imports pause until the switch finishes.</p>
+          </div>
+        </div>
+        <div className="space-y-5 border-y py-5">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-4 text-sm">
+              <p role="status">
+                {phase}
+                {progress?.table ? <span className="text-muted-foreground font-mono"> · {progress.table}</span> : null}
+              </p>
+              <span className="text-muted-foreground shrink-0 tabular-nums">{percent === undefined ? "" : `${percent.toFixed(1)}%`}</span>
+            </div>
+            <div
+              className="bg-muted h-1.5 w-full overflow-hidden rounded-full"
+              role="progressbar"
+              aria-label={phase}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={percent}
+            >
+              <div
+                className={`bg-primary h-full ${percent === undefined ? "motion-safe:animate-pulse" : ""}`}
+                style={{ width: percent === undefined ? "33%" : `${percent}%` }}
+              />
+            </div>
+          </div>
         </div>
       </div>
     </main>

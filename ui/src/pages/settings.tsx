@@ -20,6 +20,7 @@ import { useAuth } from "../auth";
 import { copyText, MASK, notAPassword, type Settings as Doc, useRestart, useSaveSettings, useSettings } from "../settings";
 import { LibraryPanel, PreviewDialog, type PreviewRequest, previewTitle } from "../library";
 import { MaintenancePanel } from "../maintenance";
+import { DatabasePanel } from "../database";
 import { Alert, AlertAction, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -203,6 +204,12 @@ const categories = [
     slug: "network",
     title: "Network",
     description: "How Arrs and browsers reach infinidysk, and how it identifies clients behind a reverse proxy",
+  },
+  {
+    group: "System",
+    slug: "database",
+    title: "Database",
+    description: "Where infinidysk keeps its library, queue and history, and moving it to PostgreSQL",
   },
   {
     group: "System",
@@ -668,6 +675,7 @@ export function Settings() {
         <div className="min-w-0">
           {category.slug === "providers" && <Providers title={category.title} description={category.description} />}
           {category.slug === "arr" && <ArrInstances title={category.title} description={category.description} />}
+          {category.slug === "database" && <DatabasePanel title={category.title} description={category.description} />}
           <form id="settings" onSubmit={submit}>
             {category.slug === "download-client" && (
               <Section category={category}>
