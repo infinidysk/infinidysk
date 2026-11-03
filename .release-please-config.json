@@ -21,8 +21,7 @@
       "release-type": "simple",
       "versioning": "prerelease",
       "prerelease": true,
-      "prerelease-type": "beta",
-      "extra-files": ["README.md"]
+      "prerelease-type": "beta"
     }
   }
 }

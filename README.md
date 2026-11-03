@@ -39,11 +39,10 @@ Then set your fork's default branch to `v1` and sync that branch from now on. A 
 
 A new install. Coming from 1.x? Follow [Upgrade from 1.x](https://www.infinidysk.com/v2/upgrade/) instead, so your library and history carry over.
 
-<!-- x-release-please-start-version -->
 ```yaml
 services:
   infinidysk:
-    image: ghcr.io/infinidysk/infinidysk-next:v2.0.0-alpha.17
+    image: ghcr.io/infinidysk/infinidysk-next:edge
     container_name: infinidysk
     restart: unless-stopped
     environment:
@@ -63,11 +62,10 @@ services:
     security_opt:
       - apparmor:unconfined
 ```
-<!-- x-release-please-end -->
 
 Open `http://<host>:3000`, create the admin account, then add your providers. Do this before exposing the port to an untrusted network: until an admin exists, anyone who reaches the page can create one.
 
-The UI, the SABnzbd API and WebDAV share port 3000. The library is mounted at `/mnt/infinidysk`. The image is `ghcr.io/infinidysk/infinidysk-next` for Linux x64 and arm64; `edge` follows every change on `main`, and there is no `latest` tag until 2.0 ships.
+The UI, the SABnzbd API and WebDAV share port 3000. The library is mounted at `/mnt/infinidysk`. The image is `ghcr.io/infinidysk/infinidysk-next` for Linux x64 and arm64; `edge` is the newest 2.x release, every release also has its own `v2.x.y` tag, and there is no `latest` tag until 2.0 ships.
 
 Next steps in the docs: [Run with Docker](https://www.infinidysk.com/v2/install/docker/), [Providers](https://www.infinidysk.com/v2/install/providers/), [Connect your Arr apps](https://www.infinidysk.com/v2/install/connect-arr/), [Settings](https://www.infinidysk.com/v2/reference/settings/).
 
