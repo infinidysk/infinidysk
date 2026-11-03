@@ -55,6 +55,22 @@ const MAX_BACKOFF: Duration = Duration::from_secs(60);
 const MAX_PROC: u64 = 16 * 1024;
 /// Characters of a process name kept in read history.
 const MAX_NAME: usize = 64;
+/// Tools that read for another app; read history also names the app that started them.
+const HELPERS: [&str; 3] = ["ffmpeg", "ffprobe", "mediainfo"];
+/// Shells a helper may run under; the parent walk looks past them.
+const SHELLS: [&str; 3] = ["sh", "bash", "dash"];
+/// Parents that only start processes; reaching one means no app is known.
+const LAUNCHERS: [&str; 7] = [
+    "init",
+    "systemd",
+    "tini",
+    "docker-init",
+    "dumb-init",
+    "s6-supervise",
+    "s6-svscan",
+];
+/// Parents looked at to find the app behind a helper.
+const MAX_PARENT_HOPS: usize = 4;
 /// The kernel sends a handle's reads concurrently, so one can overtake the read before
 /// it. A read close ahead of an idle handle waits this long for the gap to fill instead
 /// of seeking away from the stream's prefetch.
@@ -610,18 +626,63 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// The name and pid of the process thread `tid` belongs to; `None` when `/proc` hides it.
-fn process(tid: u32) -> Option<(String, u32)> {
-    let (name, pid) = parse_status(&read_proc(&format!("/proc/{tid}/status"))?)?;
-    if pid == tid {
-        return Some((name, pid));
+/// A FUSE caller as `/proc` shows it.
+struct Process {
+    name: String,
+    pid: u32,
+    /// The app that started a helper such as ffmpeg; best effort, for display only.
+    parent: Option<String>,
+}
+
+/// The process thread `tid` belongs to; `None` when `/proc` hides it.
+fn process(tid: u32) -> Option<Process> {
+    let status = read_proc(&format!("/proc/{tid}/status"))?;
+    let (name, pid) = parse_status(&status)?;
+    let name = if pid == tid {
+        name
+    } else {
+        // A thread may rename itself; the process goes by its main thread's name.
+        read_proc(&format!("/proc/{pid}/comm"))
+            .map(|comm| comm.trim_end().to_owned())
+            .filter(|comm| !comm.is_empty())
+            .unwrap_or(name)
+    };
+    // Threads share their process's parent.
+    let parent = HELPERS
+        .contains(&name.as_str())
+        .then(|| {
+            parent_app(pid, parse_ppid(&status), |p| {
+                let status = read_proc(&format!("/proc/{p}/status"))?;
+                Some((parse_status(&status)?.0, parse_ppid(&status)))
+            })
+        })
+        .flatten();
+    Some(Process { name, pid, parent })
+}
+
+/// The first app above `reader`, walking past shells and helpers; `None` at a launcher,
+/// pid 1, a loop, a hidden parent, or after [`MAX_PARENT_HOPS`].
+fn parent_app(
+    reader: u32,
+    ppid: Option<u32>,
+    mut lookup: impl FnMut(u32) -> Option<(String, Option<u32>)>,
+) -> Option<String> {
+    let mut seen = vec![reader];
+    let mut next = ppid;
+    for _ in 0..MAX_PARENT_HOPS {
+        let pid = next.filter(|&p| p > 1 && !seen.contains(&p))?;
+        seen.push(pid);
+        let (name, ppid) = lookup(pid)?;
+        let name = name.as_str();
+        if name.is_empty() || LAUNCHERS.contains(&name) || name.starts_with("containerd-shim") {
+            return None;
+        }
+        if !SHELLS.contains(&name) && !HELPERS.contains(&name) {
+            return Some(name.to_owned());
+        }
+        next = ppid;
     }
-    // A thread may rename itself; the process goes by its main thread's name.
-    let leader = read_proc(&format!("/proc/{pid}/comm"))
-        .map(|comm| comm.trim_end().to_owned())
-        .filter(|comm| !comm.is_empty())
-        .unwrap_or(name);
-    Some((leader, pid))
+    None
 }
 
 fn read_proc(path: &str) -> Option<String> {
@@ -645,18 +706,33 @@ fn parse_status(status: &str) -> Option<(String, u32)> {
     Some((field("Name")?.to_owned(), field("Tgid")?.parse().ok()?))
 }
 
-/// `name (pid P, tid T) · uid U gid G`, or the ids alone when the process is hidden.
-fn caller_label(process: Option<(String, u32)>, tid: u32, uid: u32, gid: u32) -> String {
+/// `PPid` from `/proc/<tid>/status`.
+fn parse_ppid(status: &str) -> Option<u32> {
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("PPid:"))?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// `[app › ]name (pid P, tid T) · uid U gid G`, or the ids alone when the process is hidden.
+fn caller_label(process: Option<Process>, tid: u32, uid: u32, gid: u32) -> String {
     let ids = format!("uid {uid} gid {gid}");
+    let clean = |name: &str| -> String {
+        name.chars()
+            .filter(|&c| !c.is_control() && c != '›')
+            .take(MAX_NAME)
+            .collect()
+    };
     match process {
         None if tid == 0 => format!("pid unavailable · {ids}"),
         None => format!("pid {tid} · {ids}"),
-        Some((name, pid)) => {
-            let name: String = name
-                .chars()
-                .filter(|c| !c.is_control())
-                .take(MAX_NAME)
-                .collect();
+        Some(Process { name, pid, parent }) => {
+            let name = match parent {
+                Some(app) => format!("{} › {}", clean(&app), clean(&name)),
+                None => clean(&name),
+            };
             let thread = if pid == tid {
                 String::new()
             } else {
@@ -1297,11 +1373,11 @@ mod tests {
         assert_eq!(parse_status(status), Some(("Plex Transcoder".into(), 412)));
         assert_eq!(parse_status("Name:\tx\n"), None);
         assert_eq!(
-            caller_label(Some(("player\u{1b}[31m".into(), 412)), 419, 1000, 100),
+            caller_label(Some(named("player\u{1b}[31m", 412, None)), 419, 1000, 100),
             "player[31m (pid 412, tid 419) \u{b7} uid 1000 gid 100"
         );
         assert_eq!(
-            caller_label(Some(("player".into(), 412)), 412, 0, 0),
+            caller_label(Some(named("player", 412, None)), 412, 0, 0),
             "player (pid 412) \u{b7} uid 0 gid 0"
         );
         assert_eq!(caller_label(None, 77, 1, 2), "pid 77 \u{b7} uid 1 gid 2");
@@ -1310,7 +1386,102 @@ mod tests {
             "pid unavailable \u{b7} uid 1 gid 2"
         );
         let me = std::process::id();
-        assert_eq!(process(me).map(|(_, pid)| pid), Some(me));
+        let found = process(me).expect("this test's own process is visible");
+        assert_eq!((found.pid, found.parent), (me, None));
+    }
+
+    fn named(name: &str, pid: u32, parent: Option<&str>) -> Process {
+        Process {
+            name: name.to_owned(),
+            pid,
+            parent: parent.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_helper_is_labelled_with_the_app_that_started_it() {
+        assert_eq!(
+            caller_label(Some(named("ffmpeg", 50, Some("silo"))), 50, 1000, 1000),
+            "silo \u{203a} ffmpeg (pid 50) \u{b7} uid 1000 gid 1000"
+        );
+        assert_eq!(
+            caller_label(Some(named("ffmpeg", 50, Some("silo"))), 51, 0, 0),
+            "silo \u{203a} ffmpeg (pid 50, tid 51) \u{b7} uid 0 gid 0"
+        );
+        assert_eq!(
+            caller_label(
+                Some(named("ff\u{203a}\u{7}mpeg", 50, Some("a\u{203a}b"))),
+                50,
+                0,
+                0
+            ),
+            "ab \u{203a} ffmpeg (pid 50) \u{b7} uid 0 gid 0",
+            "each part loses control characters and the separator"
+        );
+        let long = "x".repeat(200);
+        let label = caller_label(Some(named("ffmpeg", 50, Some(&long))), 50, 0, 0);
+        assert!(
+            label.starts_with(&format!(
+                "{} \u{203a} ffmpeg (pid 50)",
+                "x".repeat(MAX_NAME)
+            )),
+            "a long app name cannot push out the helper: {label}"
+        );
+    }
+
+    #[test]
+    fn the_parent_app_is_the_first_one_past_shells_and_helpers() {
+        let table: HashMap<u32, (&str, Option<u32>)> = HashMap::from([
+            (10, ("silo", Some(1))),
+            (11, ("sh", Some(10))),
+            (12, ("bash", Some(11))),
+            (13, ("dash", Some(12))),
+            (14, ("sh", Some(13))),
+            (15, ("ffprobe", Some(10))),
+            (20, ("tini", Some(1))),
+            (21, ("containerd-shim", Some(1))),
+            (30, ("sh", Some(31))),
+            (31, ("sh", Some(30))),
+            (40, ("sh", Some(41))),
+            (50, ("sh", Some(99))),
+            (60, ("", Some(10))),
+        ]);
+        let walk = |ppid| {
+            parent_app(100, ppid, |p| {
+                table.get(&p).map(|&(n, pp)| (n.to_owned(), pp))
+            })
+        };
+        assert_eq!(walk(Some(10)).as_deref(), Some("silo"));
+        assert_eq!(walk(Some(11)).as_deref(), Some("silo"), "through a shell");
+        assert_eq!(walk(Some(15)).as_deref(), Some("silo"), "through a helper");
+        assert_eq!(
+            walk(Some(13)).as_deref(),
+            Some("silo"),
+            "three shells, then the app"
+        );
+        assert_eq!(walk(Some(14)), None, "four shells use up the hops");
+        assert_eq!(walk(Some(20)), None, "a launcher");
+        assert_eq!(walk(Some(21)), None, "a launcher with a cut name");
+        assert_eq!(walk(Some(1)), None, "pid 1");
+        assert_eq!(walk(None), None, "no PPid");
+        assert_eq!(walk(Some(30)), None, "a loop between parents");
+        assert_eq!(walk(Some(100)), None, "a loop back to the reader");
+        assert_eq!(walk(Some(40)), None, "a parent that went away");
+        assert_eq!(walk(Some(50)), None, "a hidden grandparent");
+        assert_eq!(walk(Some(60)), None, "an empty name");
+    }
+
+    #[test]
+    fn ppid_is_read_apart_from_the_name() {
+        let status = "Name:\tffmpeg\nTgid:\t50\nPid:\t50\nPPid:\t10\n";
+        assert_eq!(parse_ppid(status), Some(10));
+        assert_eq!(parse_ppid("Name:\tx\nTgid:\t5\n"), None);
+        assert_eq!(parse_ppid("Name:\tx\nTgid:\t5\nPPid:\tno\n"), None);
+        assert_eq!(
+            parse_status("Name:\tx\nTgid:\t5\nPPid:\tno\n"),
+            Some(("x".into(), 5)),
+            "a bad PPid keeps the name"
+        );
     }
 
     #[test]

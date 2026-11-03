@@ -1771,7 +1771,8 @@ fn rescues(sums: &HashMap<String, u64>, name: &dyn Fn(&str) -> String) -> Vec<Re
     out
 }
 
-/// Usage by app: a program's first word (`Plex Media Scan` → `Plex`), and for `WebDAV`
+/// Usage by app: a program's first word (`Plex Media Scan` → `Plex`, `silo › ffmpeg` →
+/// `silo`), and for `WebDAV`
 /// agents the product before its version (`rclone/1.69` → `rclone`), so one app's
 /// processes and versions add up.
 fn apps(usage: Vec<Usage>) -> Vec<AppUsage> {
@@ -2187,6 +2188,34 @@ fn mem_total(meminfo: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_helper_counts_toward_the_app_that_started_it() {
+        let usage = |program: &str, served| Usage {
+            delivery: "fuse".to_owned(),
+            program: program.to_owned(),
+            reads: 1,
+            served,
+            open_ms: 0,
+        };
+        let got: Vec<_> = apps(vec![
+            usage("silo", 10),
+            usage("silo › ffmpeg", 5),
+            usage("other › ffmpeg", 3),
+            usage("ffmpeg", 1),
+        ])
+        .into_iter()
+        .map(|a| (a.app, a.reads, a.served))
+        .collect();
+        assert_eq!(
+            got,
+            [
+                ("silo".to_owned(), 2, 15),
+                ("other".to_owned(), 1, 3),
+                ("ffmpeg".to_owned(), 1, 1),
+            ]
+        );
+    }
 
     #[test]
     fn a_stall_is_reported_once_until_it_ends() {
