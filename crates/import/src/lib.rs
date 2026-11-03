@@ -11,6 +11,9 @@ use std::fmt;
 use std::fs::File;
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use nix::fcntl::{OFlag, openat};
 use nix::sys::stat::Mode;
@@ -20,7 +23,7 @@ use sqlx::sqlite::SqliteConnectOptions;
 use uuid::Uuid;
 
 pub use crate::apply::{
-    Imported, Progress, apply, apply_with_progress, restore_nzb_downloads, retry_files,
+    Imported, Progress, Stage, apply, apply_with_progress, restore_nzb_downloads, retry_files,
     stamp_download_ids,
 };
 use crate::csharp::{LongRange, decode};
@@ -31,6 +34,9 @@ pub use crate::settings::{ArrInstance, ArrKind, Config, Provider, ProviderKind};
 /// to `HealthRepairPending`.
 const OLDEST_MIGRATION: &str = "20260824160000";
 const SHOWN_FAILURES: usize = 20;
+const PROGRESS_EVERY: Duration = Duration::from_secs(1);
+/// Progress reports between log lines while checking file metadata.
+const LOG_EVERY: u32 = 30;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -105,6 +111,15 @@ async fn open(config: &Path) -> Result<SqliteConnection, Error> {
 
 /// Surveys the C# `/config` at `config` without changing it.
 pub async fn survey(config: &Path) -> Result<Survey, Error> {
+    survey_with_progress(config, |_| {}).await
+}
+
+/// Like [`survey`], reporting [`Stage::Checking`] as it reads the file metadata blobs.
+pub async fn survey_with_progress(
+    config: &Path,
+    progress: impl Fn(Progress),
+) -> Result<Survey, Error> {
+    progress(Progress::counting(Stage::Checking));
     let mut db = open(config).await?;
     let count = |n: i64| u64::try_from(n).unwrap_or_default();
     let migration = sqlx::query_scalar(
@@ -148,15 +163,52 @@ pub async fn survey(config: &Path) -> Result<Survey, Error> {
     .fetch_all(&mut db)
     .await?;
     drop(db);
+    let total = files.len() as u64;
+    progress(Progress::at(Stage::Checking, 0, total));
+    tracing::info!(files = total, "C# import: checking file metadata");
+    let started = Instant::now();
+    let checked = Arc::new(AtomicU64::new(0));
+    let counter = Arc::clone(&checked);
     let blobs = config.join("blobs");
-    tokio::task::spawn_blocking(move || {
+    let scan = tokio::task::spawn_blocking(move || {
         for file in files {
             s.file(&blobs, file);
+            counter.fetch_add(1, Ordering::Relaxed);
         }
         s
-    })
-    .await
-    .map_err(Error::from)
+    });
+    let survey = track_scan(scan, &checked, total, &progress).await?;
+    tracing::info!(
+        files = total,
+        seconds = started.elapsed().as_secs(),
+        "C# import: file metadata checked"
+    );
+    Ok(survey)
+}
+
+async fn track_scan(
+    mut scan: tokio::task::JoinHandle<Survey>,
+    checked: &AtomicU64,
+    total: u64,
+    progress: &impl Fn(Progress),
+) -> Result<Survey, Error> {
+    let mut tick = tokio::time::interval(PROGRESS_EVERY);
+    let mut ticks = 0_u32;
+    let s = loop {
+        tokio::select! {
+            result = &mut scan => break result?,
+            _ = tick.tick() => {
+                let done = checked.load(Ordering::Relaxed);
+                progress(Progress::at(Stage::Checking, done, total));
+                ticks = ticks.wrapping_add(1);
+                if ticks.is_multiple_of(LOG_EVERY) {
+                    tracing::info!(checked = done, total, "C# import: checking file metadata");
+                }
+            }
+        }
+    };
+    progress(Progress::at(Stage::Checking, total, total));
+    Ok(s)
 }
 
 /// `(id, sub type, size, metadata blob, NZB blob, has a STRM output)`.
@@ -429,6 +481,38 @@ impl fmt::Display for Survey {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn checking_reports_progress_before_the_scan_finishes() {
+        let checked = Arc::new(AtomicU64::new(0));
+        let counter = Arc::clone(&checked);
+        let (reported, received) = std::sync::mpsc::channel();
+        let scan = tokio::task::spawn_blocking(move || {
+            for done in 1..3 {
+                counter.store(done, Ordering::Relaxed);
+                assert_eq!(received.recv_timeout(Duration::from_secs(5)).unwrap(), done);
+            }
+            counter.store(3, Ordering::Relaxed);
+            Survey::default()
+        });
+        let updates = std::sync::Mutex::new(Vec::<Progress>::new());
+        track_scan(scan, &checked, 3, &|progress| {
+            let mut updates = updates.lock().unwrap();
+            let previous = updates.last().map_or(0, |previous| previous.done);
+            updates.push(progress);
+            drop(updates);
+            if progress.done > previous && progress.done < 3 {
+                reported.send(progress.done).unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        let updates = updates.into_inner().unwrap();
+        assert!(updates.contains(&Progress::at(Stage::Checking, 1, 3)));
+        assert!(updates.contains(&Progress::at(Stage::Checking, 2, 3)));
+        assert_eq!(updates.last(), Some(&Progress::at(Stage::Checking, 3, 3)));
+        assert!(updates.windows(2).all(|pair| pair[0].done <= pair[1].done));
+    }
 
     #[test]
     fn a_schema_before_the_oldest_is_refused_not_failed() {

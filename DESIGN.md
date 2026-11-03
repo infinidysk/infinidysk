@@ -643,6 +643,7 @@ Reuse these before writing new markup; a second hand-rolled copy of an existing 
 - Refetches keep the previous data on screen (`placeholderData: keepPreviousData`) and may dim it (`opacity-80`); never swap back to a skeleton.
 - Spinners (`Loader2 animate-spin`) only in buttons and inline status, never full page.
 - Progress: an `h-1.5 rounded-full bg-muted` track with a `bg-primary` fill, `role="progressbar"` with `aria-valuenow`, and the numbers as text beside it.
+- Unknown totals and upgrade finalization omit the percentage and `aria-valuenow`; a one-third-width fill uses `motion-safe:animate-pulse` to show activity and stays still with reduced motion. A completed counted stage shows “Finishing…” instead of estimating time remaining.
 
 ### Icons
 

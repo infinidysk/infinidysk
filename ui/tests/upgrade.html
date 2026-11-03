@@ -15,12 +15,13 @@
     if (!condition) throw new Error(message);
   };
   let state = "none";
+  let progress = null;
   let failing = false;
   globalThis.fetch = async (request) => {
     const url = new URL(request.url);
     if (url.pathname === "/api/v1/upgrade/status") {
       return Response.json(
-        failing ? { error: "Temporary status failure" } : { state, error: null, progress: null },
+        failing ? { error: "Temporary status failure" } : { state, error: null, progress },
         { status: failing ? 503 : 200 },
       );
     }
@@ -66,6 +67,48 @@
         await settle(() => client.invalidateQueries({ queryKey: ["auth"] }));
         check(document.getElementById("unsaved"), `${cached}: successful refetch did not recover`);
         if (cached) check(document.getElementById("unsaved") === input, `${cached}: recovery replaced the app`);
+      } finally {
+        await act(async () => root.unmount());
+        client.clear();
+      }
+    }
+    state = "importing";
+    const stages = [
+      [{ stage: "checking", done: 0, total: null, skipped: 0, eta_seconds: null }, ["Checking 1.x files", "Step 1 of 4", "Counting…"], ""],
+      [{ stage: "checking", done: 250000, total: 781067, skipped: 0, eta_seconds: 120 }, ["Files checked", "250,000", "781,067"], "32.0%"],
+      [{ stage: "checking", done: 10, total: 10, skipped: 0, eta_seconds: null }, ["Checking 1.x files", "Finishing…"], "100.0%"],
+      [{ stage: "directories", done: 5, total: 10, skipped: 0, eta_seconds: 10 }, ["Writing folders", "Step 2 of 4", "Folders written", "Total folders"], "50.0%"],
+      [{ stage: "directories", done: 0, total: 0, skipped: 0, eta_seconds: null }, ["Writing folders", "Finishing…"], "100.0%"],
+      [{ stage: "nzbs", done: 5, total: 10, skipped: 0, eta_seconds: null }, ["Step 3 of 4", "NZBs processed", "Estimating…"], "50.0%"],
+      [{ stage: "files", done: 40, total: 100, skipped: 10, eta_seconds: 10 }, ["Importing files", "Skipped", "Time left in this step"], "50.0%"],
+      [{ stage: "files", done: 90, total: 100, skipped: 10, eta_seconds: null }, ["Importing files", "Skipped", "Finishing…"], "100.0%"],
+      [{ stage: "finishing", done: 0, total: null, skipped: 0, eta_seconds: null }, ["Finalizing import"], ""],
+    ];
+    for (const [fixture, texts, percent] of stages) {
+      progress = fixture;
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const root = createRoot(document.getElementById("root"));
+      try {
+        await act(async () => {
+          root.render(createElement(QueryClientProvider, { client }, createElement(Gate, null, null)));
+          await new Promise(resolve => setTimeout(resolve, 50));
+        });
+        await act(async () => {
+          await client.invalidateQueries();
+          await new Promise(resolve => setTimeout(resolve, 50));
+        });
+        const text = document.getElementById("root").textContent;
+        for (const expected of texts) check(text.includes(expected), `${fixture.stage}: missing "${expected}" in "${text}"`);
+        check(fixture.stage === "files" || !text.includes("Skipped"), `${fixture.stage}: showed skipped files`);
+        check(fixture.stage !== "finishing" || !text.includes("Step"), "finishing: showed a step number");
+        const bar = document.querySelector('[role="progressbar"]');
+        const value = bar.getAttribute("aria-valuenow");
+        check(percent === "" ? value === null : value !== null && Math.abs(Number(value) - parseFloat(percent)) < 0.05, `${fixture.stage}: wrong progressbar value ${value}`);
+        check(percent === "" || text.includes(percent), `${fixture.stage}: missing ${percent}`);
+        if (percent === "") {
+          check(!text.includes("%"), `${fixture.stage}: showed a percentage without a total`);
+          check(parseFloat(bar.firstElementChild.style.width) > 0, `${fixture.stage}: invisible activity indicator`);
+        }
       } finally {
         await act(async () => root.unmount());
         client.clear();

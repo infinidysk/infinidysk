@@ -50,13 +50,26 @@ export function Gate({ children }: { children: ReactNode }) {
   return <Signed>{children}</Signed>;
 }
 
+type CountedStage = Exclude<Schemas["UpgradeStage"], "finishing">;
+const upgradeStages: Record<CountedStage, { phase: string; done: string; total: string }> = {
+  checking: { phase: "Checking 1.x files", done: "Files checked", total: "Files to check" },
+  directories: { phase: "Writing folders", done: "Folders written", total: "Total folders" },
+  nzbs: { phase: "Storing NZBs", done: "NZBs processed", total: "Total NZBs" },
+  files: { phase: "Importing files", done: "Files written", total: "Total files" },
+};
+const upgradeSteps = Object.keys(upgradeStages) as CountedStage[];
+
 function UpgradeProgress({ status, reconnecting }: { status: Schemas["UpgradeStatus"]; reconnecting: boolean }) {
   useTitle("Upgrading");
   const progress = status.progress;
-  const completed = progress ? progress.files + progress.skipped : 0;
-  const percent = progress ? (progress.total > 0 ? Math.min(100, completed / progress.total * 100) : 100) : undefined;
-  const finishing = progress && completed >= progress.total;
-  const phase = finishing ? "Finalizing import" : progress ? "Importing files" : "Preparing import";
+  const stage = progress?.stage;
+  const finishing = stage === "finishing";
+  const labels = stage && stage !== "finishing" ? upgradeStages[stage] : undefined;
+  const total = progress?.total;
+  const completed = progress ? progress.done + progress.skipped : 0;
+  const percent = finishing || total == null ? undefined : total > 0 ? Math.min(100, completed / total * 100) : 100;
+  const step = stage && stage !== "finishing" ? upgradeSteps.indexOf(stage) + 1 : undefined;
+  const phase = finishing ? "Finalizing import" : labels?.phase ?? "Preparing import";
   return (
     <main className="grid min-h-screen place-items-center p-4">
       <div className="w-full max-w-md space-y-6">
@@ -69,38 +82,48 @@ function UpgradeProgress({ status, reconnecting }: { status: Schemas["UpgradeSta
         <div className="space-y-5 border-y py-5">
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-4 text-sm">
-              <p role="status">{reconnecting ? "Connection lost. Reconnecting..." : phase}</p>
+              <p role="status">
+                {reconnecting ? "Connection lost. Reconnecting…" : phase}
+                {!reconnecting && step ? <span className="text-muted-foreground"> · Step {step} of {upgradeSteps.length}</span> : null}
+              </p>
               <span className="text-muted-foreground shrink-0 tabular-nums">{percent === undefined ? "" : `${percent.toFixed(1)}%`}</span>
             </div>
             <div
               className="bg-muted h-1.5 w-full overflow-hidden rounded-full"
               role="progressbar"
-              aria-label="File processing"
+              aria-label={phase}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={percent}
             >
-              <div className="bg-primary h-full" style={{ width: `${percent ?? 0}%` }} />
+              <div
+                className={`bg-primary h-full ${percent === undefined ? "motion-safe:animate-pulse" : ""}`}
+                style={{ width: percent === undefined ? "33%" : `${percent}%` }}
+              />
             </div>
           </div>
-          <dl className="space-y-3 text-sm">
-            <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
-              <dt className="text-muted-foreground">Files written</dt>
-              <dd className="font-mono tabular-nums">{(progress?.files ?? 0).toLocaleString()}</dd>
-            </div>
-            <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
-              <dt className="text-muted-foreground">Total files</dt>
-              <dd className="font-mono tabular-nums">{progress?.total.toLocaleString() ?? "Counting..."}</dd>
-            </div>
-            <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
-              <dt className="text-muted-foreground">Skipped</dt>
-              <dd className="font-mono tabular-nums">{(progress?.skipped ?? 0).toLocaleString()}</dd>
-            </div>
-            <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
-              <dt className="text-muted-foreground">Estimated remaining</dt>
-              <dd className="tabular-nums">{finishing ? "Finalizing..." : progress?.eta_seconds == null ? "Estimating..." : duration(progress.eta_seconds)}</dd>
-            </div>
-          </dl>
+          {progress && labels ? (
+            <dl className="space-y-3 text-sm">
+              <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
+                <dt className="text-muted-foreground">{labels.done}</dt>
+                <dd className="font-mono tabular-nums">{progress.done.toLocaleString()}</dd>
+              </div>
+              <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
+                <dt className="text-muted-foreground">{labels.total}</dt>
+                <dd className="font-mono tabular-nums">{total == null ? "Counting…" : total.toLocaleString()}</dd>
+              </div>
+              {stage === "files" ? (
+                <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
+                  <dt className="text-muted-foreground">Skipped</dt>
+                  <dd className="font-mono tabular-nums">{progress.skipped.toLocaleString()}</dd>
+                </div>
+              ) : null}
+              <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
+                <dt className="text-muted-foreground">Time left in this step</dt>
+                <dd className="tabular-nums">{total != null && completed >= total ? "Finishing…" : progress.eta_seconds == null ? "Estimating…" : duration(progress.eta_seconds)}</dd>
+              </div>
+            </dl>
+          ) : null}
         </div>
       </div>
     </main>
