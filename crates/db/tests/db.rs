@@ -567,7 +567,9 @@ async fn exercise(db: &Db) {
     );
     let sub = Item::child(&out, "S", ItemKind::Directory).expect("valid");
     let ep = Item::child(&sub, "e.mkv", ItemKind::NzbFile).expect("valid");
-    db.insert(&[sub, ep.clone()], &[]).await.expect("insert");
+    db.insert(&[sub.clone(), ep.clone()], &[])
+        .await
+        .expect("insert");
     let (a, b) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
     db.record_owner(a, ep.id, Some(7), "/tv/S/e.mkv", Some(job.id))
         .await
@@ -623,6 +625,48 @@ async fn exercise(db: &Db) {
     assert_eq!(
         db.forget_owner(a, &owner).await.expect("forget"),
         Some(ep.id)
+    );
+
+    // Cleanup deletes an item only while no Arr owns it.
+    let re = Item::child(&sub, "f.mkv", ItemKind::NzbFile).expect("valid");
+    db.insert(std::slice::from_ref(&re), &[])
+        .await
+        .expect("insert");
+    let owner = ArrOwner {
+        item: re.id,
+        file_id: Some(11),
+        path: "/tv/f.mkv".into(),
+    };
+    db.record_owner(a, re.id, owner.file_id, &owner.path, None)
+        .await
+        .expect("record");
+    assert_eq!(
+        db.forget_owner(a, &owner).await.expect("forget"),
+        Some(re.id)
+    );
+    let owner = ArrOwner {
+        item: re.id,
+        file_id: None,
+        path: "/tv2/f.mkv".into(),
+    };
+    db.record_owner(b, re.id, owner.file_id, &owner.path, None)
+        .await
+        .expect("record");
+    assert!(
+        !db.delete_unowned(re.id).await.expect("delete"),
+        "b adopted it"
+    );
+    assert!(db.item(re.id).await.expect("query").is_some());
+    assert_eq!(db.owner_instances(re.id).await.expect("query"), [b]);
+    assert_eq!(
+        db.forget_owner(b, &owner).await.expect("forget"),
+        Some(re.id)
+    );
+    assert!(db.delete_unowned(re.id).await.expect("delete"));
+    assert_eq!(db.item(re.id).await.expect("query"), None);
+    assert!(
+        !db.delete_unowned(ItemId::new()).await.expect("delete"),
+        "no such item"
     );
 
     db.push_arr_event(a, b"1").await.expect("push");
@@ -1035,13 +1079,76 @@ async fn restored_nzb_links(db: &Db) {
     assert!(!histories.contains(&history.id));
 }
 
+/// An owner insert still in progress when cleanup checks the item keeps the item.
+async fn adoption_during_cleanup_keeps_the_item(db: &Db, url: &str) {
+    const RECORD: &str = "INSERT INTO arr_owners (instance_id, item_id, file_id, path, job_id) \
+                          VALUES ($1, $2, $3, $4, $5) ON CONFLICT (instance_id, item_id) DO UPDATE \
+                          SET file_id = excluded.file_id, path = excluded.path, job_id = excluded.job_id";
+    let content = db
+        .item_by_path("/content")
+        .await
+        .expect("query")
+        .expect("seeded");
+    let item = Item::child(&content, "adopted.mkv", ItemKind::NzbFile).expect("valid");
+    db.insert(std::slice::from_ref(&item), &[])
+        .await
+        .expect("insert");
+    let arr = uuid::Uuid::now_v7();
+    let id = item.id;
+    let cleanup = |db: Db| tokio::spawn(async move { db.delete_unowned(id).await });
+    let pause = std::time::Duration::from_millis(200);
+    let deleted = if url.starts_with("sqlite:") {
+        let raw = sqlx::SqlitePool::connect(url).await.expect("open");
+        let mut tx = raw.begin().await.expect("begin");
+        sqlx::query(RECORD)
+            .bind(arr)
+            .bind(id.0)
+            .bind(Some(1_i64))
+            .bind("/tv/adopted.mkv")
+            .bind(None::<uuid::Uuid>)
+            .execute(&mut *tx)
+            .await
+            .expect("record");
+        let deleted = cleanup(db.clone());
+        tokio::time::sleep(pause).await;
+        tx.commit().await.expect("commit");
+        let deleted = deleted.await.expect("join");
+        raw.close().await;
+        deleted
+    } else {
+        let raw = sqlx::PgPool::connect(url).await.expect("open");
+        let mut tx = raw.begin().await.expect("begin");
+        sqlx::query(RECORD)
+            .bind(arr)
+            .bind(id.0)
+            .bind(Some(1_i64))
+            .bind("/tv/adopted.mkv")
+            .bind(None::<uuid::Uuid>)
+            .execute(&mut *tx)
+            .await
+            .expect("record");
+        let deleted = cleanup(db.clone());
+        tokio::time::sleep(pause).await;
+        tx.commit().await.expect("commit");
+        let deleted = deleted.await.expect("join");
+        raw.close().await;
+        deleted
+    };
+    assert!(
+        !matches!(deleted, Ok(true)),
+        "cleanup deleted an adopted item: {deleted:?}"
+    );
+    assert!(db.item(id).await.expect("query").is_some());
+    assert_eq!(db.owner_instances(id).await.expect("query"), [arr]);
+}
+
 #[tokio::test]
 async fn sqlite_storage_round_trips() {
     let path = std::env::temp_dir().join(format!("infinidysk-db-{}.sqlite", ItemId::new()));
-    let db = Db::connect(&format!("sqlite:{}", path.display()))
-        .await
-        .expect("connect");
+    let url = format!("sqlite:{}", path.display());
+    let db = Db::connect(&url).await.expect("connect");
     exercise(&db).await;
+    adoption_during_cleanup_keeps_the_item(&db, &url).await;
     db.close().await;
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -1121,10 +1228,10 @@ async fn postgres_storage_round_trips() {
     sqlx::query(create).execute(&admin).await.expect("create");
     let (base, _) = admin_url.rsplit_once('/').expect("url has a database path");
 
-    let db = Db::connect(&format!("{base}/{name}"))
-        .await
-        .expect("connect");
+    let url = format!("{base}/{name}");
+    let db = Db::connect(&url).await.expect("connect");
     exercise(&db).await;
+    adoption_during_cleanup_keeps_the_item(&db, &url).await;
     db.close().await;
     let drop = sqlx::AssertSqlSafe(format!("DROP DATABASE {name}"));
     sqlx::query(drop).execute(&admin).await.expect("drop");
