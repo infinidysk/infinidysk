@@ -91,15 +91,21 @@ impl Writer {
     /// Checks that STRM files can be written in `dir`, creating it if missing.
     pub async fn probe(&self, dir: &str) -> Result<(), String> {
         let (dir, owner) = (PathBuf::from(dir), self.owner);
-        tokio::task::spawn_blocking(move || {
-            make_dir(&dir, owner)?;
-            let probe = dir.join(format!(".infinidysk-probe-{}", ItemId::new()));
-            fs::write(&probe, b"")?;
-            fs::remove_file(&probe)
-        })
+        bounded(
+            &self.busy,
+            FS_TIMEOUT,
+            move |_| {
+                let probed = (|| -> io::Result<()> {
+                    make_dir(&dir, owner)?;
+                    let probe = dir.join(format!(".infinidysk-probe-{}", ItemId::new()));
+                    fs::write(&probe, b"")?;
+                    fs::remove_file(&probe)
+                })();
+                probed.map_err(|e| e.to_string())
+            },
+            |()| {},
+        )
         .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
     }
 
     fn config(&self) -> Config {
@@ -677,6 +683,37 @@ mod tests {
         );
         let third = bounded(&busy, Duration::from_secs(5), |_| Ok(3), |_| {}).await;
         assert_eq!(third, Ok(3));
+    }
+
+    #[tokio::test]
+    async fn probe_refuses_while_the_folder_has_not_answered() {
+        let dir = std::env::temp_dir().join(format!("infinidysk-handoff-{}", ItemId::new()));
+        let db = Db::connect(&format!(
+            "sqlite:{}",
+            dir.with_extension("sqlite").display()
+        ))
+        .await
+        .unwrap();
+        let vfs = Arc::new(Vfs::new(
+            db,
+            Arc::new(Client::new([])),
+            Budget::new(1 << 20),
+            0,
+            "/mnt",
+        ));
+        let writer = Writer::new(vfs, (1000, 1000), &Settings::default());
+        let target = dir.join("strm").display().to_string();
+
+        let held = writer.busy.try_lock().unwrap();
+        let refused = writer.probe(&target).await;
+        assert!(
+            refused
+                .unwrap_err()
+                .contains("has not answered an earlier request yet")
+        );
+        drop(held);
+        assert_eq!(writer.probe(&target).await, Ok(()));
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

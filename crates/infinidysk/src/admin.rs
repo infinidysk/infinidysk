@@ -436,17 +436,31 @@ async fn put_settings(
     State(admin): State<Arc<Admin>>,
     Json(settings): Json<Settings>,
 ) -> Result<Json<SettingsView>, Fail> {
-    let mut store = admin.config.write().await;
-    let (current, next) = (&store.settings().imports, &settings.imports);
-    let dir = next.strm_dir.trim();
-    if next.strategy == ImportStrategy::Strm
-        && dir.starts_with('/')
-        && (current.strategy != next.strategy || current.strm_dir != dir)
+    // The probe can hang on a dead share, so it runs before the settings lock.
+    let wanted = |current: &config::Imports| {
+        let next = &settings.imports;
+        let dir = next.strm_dir.trim();
+        (next.strategy == ImportStrategy::Strm
+            && dir.starts_with('/')
+            && (current.strategy != next.strategy || current.strm_dir != dir))
+            .then(|| dir.to_owned())
+    };
+    let probed = wanted(&admin.config.read().await.settings().imports);
+    if let Some(dir) = &probed
         && let Err(reason) = admin.live.probe_strm_dir(dir).await
     {
         return Err(Fail::Setting(
             "imports.strm_dir".to_owned(),
             format!("Cannot write STRM files in {dir:?}: {reason}"),
+        ));
+    }
+    let mut store = admin.config.write().await;
+    if let Some(dir) = wanted(&store.settings().imports)
+        && probed.as_ref() != Some(&dir)
+    {
+        return Err(Fail::Setting(
+            "imports.strm_dir".to_owned(),
+            "Settings changed while the STRM folder was checked; save again".to_owned(),
         ));
     }
     store.save(settings).await?;
