@@ -8,8 +8,12 @@ mod password;
 mod settings;
 
 use std::fmt;
+use std::fs::File;
+use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
+use nix::fcntl::{OFlag, openat};
+use nix::sys::stat::Mode;
 use sqlx::ConnectOptions as _;
 use sqlx::SqliteConnection;
 use sqlx::sqlite::SqliteConnectOptions;
@@ -167,16 +171,18 @@ type FileRow = (
 impl Survey {
     fn file(&mut self, blobs: &Path, (id, sub_type, size, meta, nzb, strm): FileRow) {
         self.strm_outputs += u64::from(strm);
-        if !nzb.is_some_and(|n| blob_path(blobs, &n).is_some_and(|p| p.is_file())) {
+        // Counts what `import_nzbs` will carry over: no symlinks, nothing above the cap.
+        let carried = nzb.and_then(|n| open_blob(blobs, &n).ok().flatten());
+        if !carried.is_some_and(|f| f.metadata().is_ok_and(|m| m.len() <= MAX_NZB_BLOB_BYTES)) {
             self.missing_nzb_blobs += 1;
         }
-        let Some(path) = meta.and_then(|m| blob_path(blobs, &m)) else {
+        let Some(meta) = meta else {
             self.missing_file_blobs += 1;
             return;
         };
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        let bytes = match read_blob(blobs, &meta, MAX_METADATA_BYTES) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => {
                 self.missing_file_blobs += 1;
                 return;
             }
@@ -286,10 +292,69 @@ impl Survey {
 }
 
 /// `blobs/<2 hex>/<2 hex>/<id>`, as C# lays them out.
+#[cfg(test)]
 fn blob_path(blobs: &Path, id: &str) -> Option<PathBuf> {
     let id = Uuid::parse_str(id).ok()?;
     let hex = id.simple().to_string();
     Some(blobs.join(&hex[..2]).join(&hex[2..4]).join(id.to_string()))
+}
+
+/// Largest legacy NZB blob read; the queue's `nzb::MAX_NZB`.
+pub(crate) const MAX_NZB_BLOB_BYTES: u64 = 256_000_000;
+/// Largest legacy metadata blob read.
+pub(crate) const MAX_METADATA_BYTES: u64 = 64_000_000;
+
+/// Reads blob `id` below the folder `blobs`, following no symlink below it and reading at
+/// most `limit` bytes; `None` when it is not there.
+fn read_blob(blobs: &Path, id: &str, limit: u64) -> io::Result<Option<Vec<u8>>> {
+    let Some(file) = open_blob(blobs, id)? else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("larger than {limit} bytes"),
+        ));
+    }
+    Ok(Some(bytes))
+}
+
+/// Opens blob `id` below the folder `blobs`, following no symlink below it; the blob must
+/// be a regular file. `None` when it is not there.
+fn open_blob(blobs: &Path, id: &str) -> io::Result<Option<File>> {
+    let Ok(id) = Uuid::parse_str(id) else {
+        return Ok(None);
+    };
+    let hex = id.simple().to_string();
+    let dir = OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
+    // O_NONBLOCK: opening a planted FIFO must not wait for a writer.
+    let leaf = OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK | OFlag::O_CLOEXEC;
+    let opened = (|| -> io::Result<File> {
+        // Follows a symlinked root; O_DIRECTORY refuses a FIFO there instead of waiting.
+        let root = nix::fcntl::open(blobs, dir.difference(OFlag::O_NOFOLLOW), Mode::empty())?;
+        let a = openat(&root, &hex[..2], dir, Mode::empty())?;
+        let b = openat(&a, &hex[2..4], dir, Mode::empty())?;
+        Ok(File::from(openat(
+            &b,
+            id.to_string().as_str(),
+            leaf,
+            Mode::empty(),
+        )?))
+    })();
+    let file = match opened {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "not a regular file",
+        ));
+    }
+    Ok(Some(file))
 }
 
 impl fmt::Display for Survey {
@@ -395,5 +460,99 @@ mod tests {
         });
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(!survey.unwrap().supported());
+    }
+
+    #[test]
+    fn the_survey_counts_nzb_blobs_the_import_would_skip_as_missing() {
+        let dir = std::env::temp_dir().join(format!("infinidysk-nzbs-{}", Uuid::now_v7()));
+        let blobs = dir.join("blobs");
+        let place = |id: &str| {
+            let path = blob_path(&blobs, id).unwrap();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            path
+        };
+        let regular = Uuid::now_v7().to_string();
+        std::fs::write(place(&regular), b"nzb").unwrap();
+        let linked = Uuid::now_v7().to_string();
+        std::os::unix::fs::symlink(place(&regular), place(&linked)).unwrap();
+
+        let mut survey = Survey::default();
+        for nzb in [regular, linked] {
+            survey.file(&blobs, (String::new(), 201, None, None, Some(nzb), false));
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(survey.missing_nzb_blobs, 1);
+    }
+
+    #[test]
+    fn read_blob_follows_no_symlink_below_the_blobs_folder() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("infinidysk-blobs-{}", Uuid::now_v7()));
+        let (blobs, outside) = (dir.join("blobs"), dir.join("outside"));
+        std::fs::create_dir_all(&blobs).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let write = |id: &str, bytes: &[u8]| {
+            let path = blob_path(&blobs, id).unwrap();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        };
+
+        let id = Uuid::now_v7().to_string();
+        write(&id, b"blob");
+        assert_eq!(read_blob(&blobs, &id, 64).unwrap(), Some(b"blob".to_vec()));
+        assert_eq!(
+            read_blob(&blobs, &Uuid::now_v7().to_string(), 64).unwrap(),
+            None
+        );
+        let linked = dir.join("linked-blobs");
+        symlink(&blobs, &linked).unwrap();
+        assert_eq!(read_blob(&linked, &id, 64).unwrap(), Some(b"blob".to_vec()));
+
+        let big = Uuid::now_v7().to_string();
+        write(&big, b"12345");
+        let error = read_blob(&blobs, &big, 4).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+
+        std::fs::write(outside.join("secret"), b"secret").unwrap();
+        let leaf = Uuid::now_v7().to_string();
+        let path = blob_path(&blobs, &leaf).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        symlink(outside.join("secret"), &path).unwrap();
+        let error = read_blob(&blobs, &leaf, 64).unwrap_err();
+        assert_ne!(error.kind(), io::ErrorKind::NotFound);
+
+        // v7 ids above share their first byte; flip it so the symlink is the only way in.
+        let mut bytes = Uuid::now_v7().into_bytes();
+        bytes[0] ^= 0xff;
+        let parent = Uuid::from_bytes(bytes);
+        let hex = parent.simple().to_string();
+        let target = outside.join("p").join(&hex[2..4]);
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join(parent.to_string()), b"secret").unwrap();
+        symlink(outside.join("p"), blobs.join(&hex[..2])).unwrap();
+        assert!(read_blob(&blobs, &parent.to_string(), 64).is_err());
+
+        let fifo = Uuid::now_v7().to_string();
+        let path = blob_path(&blobs, &fifo).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        nix::unistd::mkfifo(&path, Mode::S_IRUSR | Mode::S_IWUSR).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let reader = blobs.clone();
+        std::thread::spawn(move || tx.send(read_blob(&reader, &fifo, 64).map_err(|e| e.kind())));
+        let read = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("a FIFO must not block the read");
+        assert_eq!(read, Err(io::ErrorKind::InvalidData));
+
+        let root = dir.join("fifo-blobs");
+        nix::unistd::mkfifo(&root, Mode::S_IRUSR | Mode::S_IWUSR).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(read_blob(&root, &id, 64).is_err()));
+        let refused = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("a FIFO blobs folder must not block the read");
+        assert!(refused);
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
