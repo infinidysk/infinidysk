@@ -298,7 +298,7 @@ fn blob_path(blobs: &Path, id: &str) -> Option<PathBuf> {
 
 /// Largest legacy NZB blob read; the queue's `nzb::MAX_NZB`.
 pub(crate) const MAX_NZB_BLOB_BYTES: u64 = 256_000_000;
-/// Largest legacy metadata blob read.
+/// Largest legacy metadata blob read, and decompressed (see `csharp::decode`).
 pub(crate) const MAX_METADATA_BYTES: u64 = 64_000_000;
 
 /// Reads blob `id` below the folder `blobs`, following no symlink below it and reading at
