@@ -2,18 +2,31 @@
 
 ## [2.0.0-beta.1](https://github.com/infinidysk/infinidysk/compare/v2.0.0-alpha.17...v2.0.0-beta.1) (2026-11-03)
 
+InfiniDysk 2.0 is now in beta, and it lives on `main`. It is a rewrite in Rust: one native binary with the server, the web UI and a built-in FUSE mount. It speaks the same SABnzbd API and serves the same WebDAV paths as 1.x, so Arr apps and media servers see no difference. See [What's new in 2.x](https://www.infinidysk.com/v2/whats-new/).
 
-### Bug Fixes
+### Upgrading from 1.x
 
-* **deps:** Bump @tanstack/react-query ([#1778](https://github.com/infinidysk/infinidysk/issues/1778)) ([10fba4d](https://github.com/infinidysk/infinidysk/commit/10fba4df44c845d95975ee19ab52706b5ee3536e))
-* **deps:** Bump fast-uri from 3.1.8 to 3.1.9 in /ui ([#1784](https://github.com/infinidysk/infinidysk/issues/1784)) ([7a4df2b](https://github.com/infinidysk/infinidysk/commit/7a4df2bb218acfb52c4473b2d7d2b0669956abba))
-* **deps:** Bump qs from 6.16.0 to 6.17.1 in /ui ([#1785](https://github.com/infinidysk/infinidysk/issues/1785)) ([d52c2fb](https://github.com/infinidysk/infinidysk/commit/d52c2fb8b10f6b305b6f19cf22cd6906a2656927))
-* **deps:** Bump systeminformation from 5.33.15 to 5.33.19 in /ui ([#1786](https://github.com/infinidysk/infinidysk/issues/1786)) ([608ade1](https://github.com/infinidysk/infinidysk/commit/608ade139964120ef798b7758b86b815e0ccb51a))
+Moving from 1.x to 2.x is a breaking change. It needs manual steps: copy your config, run the import, and replace the rclone sidecar with the built-in mount. Changing the image name alone is not an upgrade. Some 1.x features are not in 2.x yet.
 
+Read [Before you upgrade](https://www.infinidysk.com/v2/upgrade/) and [what is not in 2.x yet](https://www.infinidysk.com/v2/whats-new/#feature-comparison) first.
 
-### Build System
+### Image
 
-* publish 2.x images from infinidysk/infinidysk ([c773c9f](https://github.com/infinidysk/infinidysk/commit/c773c9fbfe3f30bc25882a093a30e0149aa6b736))
+`ghcr.io/infinidysk/infinidysk-next:v2.0.0-beta.1` for Linux x64 and arm64. `edge` is always the newest 2.x release. There is no `latest` tag until 2.0.0. For a new install, see [Run with Docker](https://www.infinidysk.com/v2/install/docker/).
+
+Alpha installs offer this release as an update. Earlier alpha notes are in [CHANGELOG.md](https://github.com/infinidysk/infinidysk/blob/main/CHANGELOG.md).
+
+### 1.x
+
+1.x continues on the [`v1`](https://github.com/infinidysk/infinidysk/tree/v1) branch with bug fixes only. It keeps the `ghcr.io/infinidysk/infinidysk` image and all its tags, so 1.x installs from the image need no change. If you run 1.x from a source checkout or a fork of `main`, switch it to `v1`; see [Looking for 1.x?](https://github.com/infinidysk/infinidysk#looking-for-1x).
+
+### Other changes
+
+Dependency updates in the web UI: `@tanstack/react-query`, `fast-uri`, `qs` and `systeminformation`.
+
+### Reporting problems
+
+Open a [GitHub issue](https://github.com/infinidysk/infinidysk/issues/new/choose) (the bug form asks which version you run) or ask on [Discord](https://discord.gg/DAya7W6QMa). See [Reporting a bug](https://www.infinidysk.com/v2/help/reporting/) for what to include.
 
 ## 2.0.0-alpha.17 (2026-11-02)
 
