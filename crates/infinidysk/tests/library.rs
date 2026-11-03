@@ -323,6 +323,20 @@ async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
         problems.contains("outside the library folders"),
         "{problems}"
     );
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let (_, later) = admin(addr, "GET", "/api/v1/library", "").await;
+    assert_eq!(
+        later["progress"]["problems_total"], view["progress"]["problems_total"],
+        "a kept row is not retried at once"
+    );
+    assert_eq!(
+        later["progress"]["problems"]
+            .to_string()
+            .matches("outside the library folders")
+            .count(),
+        1,
+        "and is listed once"
+    );
     assert_eq!(
         fs::read_to_string(&k_strm).unwrap(),
         "written before the crash"

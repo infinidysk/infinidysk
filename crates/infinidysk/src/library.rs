@@ -314,12 +314,17 @@ pub struct Progress {
 
 impl Progress {
     fn problem(&mut self, path: &Path, reason: impl Into<String>) {
+        let (path, reason) = (path.display().to_string(), reason.into());
+        if self
+            .problems
+            .iter()
+            .any(|p| p.path == path && p.reason == reason)
+        {
+            return;
+        }
         self.problems_total += 1;
         if self.problems.len() < LISTED {
-            self.problems.push(Problem {
-                path: path.display().to_string(),
-                reason: reason.into(),
-            });
+            self.problems.push(Problem { path, reason });
         }
     }
 }
@@ -898,12 +903,13 @@ impl Library {
             .await;
         let mut job = self.lock();
         match result {
-            Ok(()) => {
+            Ok(left) => {
                 if run.is_some() {
                     job.state = ConversionState::Idle;
                     job.reason = None;
                 }
-                Next::Again
+                // Rows that could not finish wait for the next tick instead of spinning.
+                if left { Next::Later } else { Next::Again }
             }
             Err(Stop::Cancelled) => Next::Again,
             Err(Stop::Wait(reason)) => {
@@ -933,7 +939,7 @@ impl Library {
         run: Option<&Run>,
         imported: &[String],
         cancel: &CancellationToken,
-    ) -> Result<(), Stop> {
+    ) -> Result<bool, Stop> {
         let target = Target::of(settings);
         if target.mount_dir != self.parts.mount_dir.trim_end_matches('/') {
             return Err(Stop::Wait(format!(
@@ -953,7 +959,7 @@ impl Library {
         if run.is_some() {
             self.progress(|p| *p = Progress::default());
         }
-        self.finish_unfinished(settings, cancel).await?;
+        let left = self.finish_unfinished(settings, cancel).await?;
         if let Some(run) = run {
             let roots: Vec<_> = settings
                 .imports
@@ -1023,7 +1029,7 @@ impl Library {
             p.phase = String::new();
             p.folder = None;
         });
-        Ok(())
+        Ok(left)
     }
 
     fn progress(&self, f: impl FnOnce(&mut Progress)) {
@@ -1264,12 +1270,13 @@ impl Library {
         Ok(())
     }
 
-    /// Finishes journal rows a restart or failure interrupted.
+    /// Finishes journal rows a restart or failure interrupted. Returns whether some are
+    /// left for a later look.
     async fn finish_unfinished(
         &self,
         settings: &Settings,
         cancel: &CancellationToken,
-    ) -> Result<(), Stop> {
+    ) -> Result<bool, Stop> {
         let folders = folders(settings);
         let rows = self
             .parts
@@ -1277,6 +1284,7 @@ impl Library {
             .conversions()
             .await
             .map_err(|e| Stop::Wait(e.to_string()))?;
+        let mut left = false;
         for c in rows.into_iter().filter(|c| c.state < CONVERTED) {
             if cancel.is_cancelled() {
                 return Err(Stop::Cancelled);
@@ -1286,10 +1294,13 @@ impl Library {
             match self.steps(c, owned, true, &folders).await {
                 Ok(_) => {}
                 Err(Fault::Wait(reason)) => return Err(Stop::Wait(reason)),
-                Err(Fault::File(reason)) => self.progress(|p| p.problem(&source, reason)),
+                Err(Fault::File(reason)) => {
+                    left = true;
+                    self.progress(|p| p.problem(&source, reason));
+                }
             }
         }
-        Ok(())
+        Ok(left)
     }
 
     /// Runs the journal steps of `c` from its state. Returns whether it converted; when
