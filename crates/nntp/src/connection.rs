@@ -553,14 +553,20 @@ impl Connection {
             self.stream.consume(used);
             match end {
                 DecodeEnd::None => {}
-                DecodeEnd::Article => break,
+                DecodeEnd::Article => {
+                    // Without `=yend`, only the length shows the article is whole.
+                    if data.len() < expected {
+                        return Err(Error::Yenc("article ended before its announced size"));
+                    }
+                    break;
+                }
                 DecodeEnd::Control => {
                     // Rest of a `=y…` line; data resumes at a line start.
                     self.read_line().await?;
                     state = DecoderState::default();
                     if self.line.starts_with(b"part ") {
-                        if let Some((begin, _)) = parse_ypart(&self.line) {
-                            offset = begin;
+                        if let Some((begin, len)) = parse_ypart(&self.line) {
+                            (offset, expected) = (begin, len);
                         }
                     } else if self.line.starts_with(b"end") {
                         let key: &[u8] = if part.is_some() { b"pcrc32" } else { b"crc32" };
