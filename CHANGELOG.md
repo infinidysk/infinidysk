@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.0.0-beta.1](https://github.com/infinidysk/infinidysk/compare/v2.0.0-alpha.17...v2.0.0-beta.1) (2026-11-03)
+
+### Beta
+
+* InfiniDysk 2.0 is now in beta. It is a rewrite in Rust: one native binary with the server, the web UI and a built-in FUSE mount. It speaks the same SABnzbd API and serves the same WebDAV paths as 1.x, so Arr apps and media servers see no difference ([What's new in 2.x](https://www.infinidysk.com/v2/whats-new/))
+* The image is ghcr.io/infinidysk/infinidysk-next:v2.0.0-beta.1 for Linux x64 and arm64. The edge tag is always the newest 2.x release; there is no latest tag until 2.0.0 ([Run with Docker](https://www.infinidysk.com/v2/install/docker/))
+
+### Upgrading from 1.x
+
+* Moving from 1.x to 2.x is a breaking change with manual steps: copy your config, run the import, and replace the rclone sidecar with the built-in mount. Changing the image name alone is not an upgrade ([Before you upgrade](https://www.infinidysk.com/v2/upgrade/))
+* Some 1.x features are not in 2.x yet ([Feature comparison](https://www.infinidysk.com/v2/whats-new/#feature-comparison))
+* 1.x continues on the v1 branch with bug fixes only and keeps the ghcr.io/infinidysk/infinidysk image and all its tags ([Looking for 1.x?](https://github.com/infinidysk/infinidysk#looking-for-1x))
+
+### Other changes
+
+* **ui:** update @tanstack/react-query, fast-uri, qs and systeminformation
+
+### Reporting problems
+
+* Open a GitHub issue (the bug form asks which version you run) or ask on Discord ([Reporting a bug](https://www.infinidysk.com/v2/help/reporting/))
+
 ## 2.0.0-alpha.17 (2026-11-02)
 
 
