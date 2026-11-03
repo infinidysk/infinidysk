@@ -270,7 +270,7 @@ impl Discovery {
         self.rediscover.notify_one();
     }
 
-    /// One pass over `arrs`; `true` when every Arr answered.
+    /// One pass over `arrs`; `true` when every Arr answered and took our webhook.
     async fn discover(&self, arrs: &[Arr]) -> bool {
         let sab_key = self.config.read().await.settings().sab.api_key.0.clone();
         {
@@ -305,11 +305,11 @@ impl Discovery {
         let mut ok = true;
         for arr in arrs {
             let found = self.check(arr, &sab_key).await;
-            ok &= found.is_ok();
             let hook = match &found {
                 Ok((_, clients)) => Some(self.register(arr, clients, &sab_key).await),
                 Err(_) => None,
             };
+            ok &= found.is_ok() && !matches!(hook, Some(Err(_)));
             self.record(arr, found);
             if let (Some(hook), Some(k)) = (hook, self.lock().get_mut(&arr.id)) {
                 (k.webhook_url, k.webhook_error) = match hook {

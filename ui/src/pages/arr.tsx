@@ -177,10 +177,17 @@ function Retry({ size }: { size: "xs" | "sm" }) {
     onSuccess: () => setTimeout(() => void client.invalidateQueries({ queryKey: ["arr-status"] }), 1500),
   });
   return (
-    <Button type="button" variant="outline" size={size} className="shrink-0" disabled={retry.isPending} onClick={() => retry.mutate()}>
-      {retry.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-      Retry
-    </Button>
+    <>
+      <Button type="button" variant="outline" size={size} className="shrink-0" disabled={retry.isPending} onClick={() => retry.mutate()}>
+        {retry.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+        Retry
+      </Button>
+      {retry.isError && (
+        <span role="alert" className="text-destructive text-xs">
+          {retry.error.message}
+        </span>
+      )}
+    </>
   );
 }
 
