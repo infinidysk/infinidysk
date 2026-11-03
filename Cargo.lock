@@ -1162,6 +1162,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "sqlx",
  "thiserror",
  "tokio",
  "tokio-util",

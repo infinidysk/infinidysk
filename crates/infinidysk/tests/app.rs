@@ -165,6 +165,14 @@ async fn healthz_answers_without_sign_in_and_the_probe_reads_it() {
     let (code, body) = send(addr, get).await;
     let report: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(report["checks"]["database"], "pass");
+    // The switch status answers without sign-in; starting a switch does not.
+    let cutover = "GET /api/v1/database/cutover HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+    let (cutover_code, cutover_body) = send(addr, cutover).await;
+    assert_eq!(cutover_code, "HTTP/1.1 200 OK");
+    let cutover_status: Value = serde_json::from_str(&cutover_body).unwrap();
+    assert_eq!(cutover_status["state"], "none");
+    let start = "POST /api/v1/database/cutover HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+    assert_eq!(send(addr, start).await.0, "HTTP/1.1 401 Unauthorized");
     assert_eq!(report["checks"]["queue"], "pass");
     assert_eq!(code == "HTTP/1.1 200 OK", report["status"] == "healthy");
     let probed = infinidysk::healthcheck::probe(addr).await;

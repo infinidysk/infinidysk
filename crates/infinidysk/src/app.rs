@@ -485,6 +485,15 @@ pub async fn serve(
         tokio::spawn(async move { updates.run(cancel).await })
     };
     let restart = Arc::new(AtomicBool::new(false));
+    let database = crate::database::Migrator::new(
+        db.clone(),
+        boot,
+        std::path::Path::new(crate::database::CONFIG_DIR),
+        crate::database::BootFile::load(std::path::Path::new(crate::database::CONFIG_DIR))?,
+        crate::database::LIMITS,
+        None,
+    );
+    database.resume().await;
     let admin = Arc::new(Admin {
         config: Arc::clone(&config),
         queue: Arc::clone(&queue),
@@ -501,6 +510,7 @@ pub async fn serve(
         library,
         maintenance,
         updates,
+        database: Arc::clone(&database),
         cancel: cancel.clone(),
         restart: Arc::clone(&restart),
     });
@@ -547,6 +557,7 @@ pub async fn serve(
     update_task.abort();
     warm_task.abort();
     optimize_task.abort();
+    database.stop().await;
     let _ = metrics_task.await;
     let _ = quota_task.await;
     #[cfg(target_os = "linux")]

@@ -15,7 +15,7 @@ use infinidysk_core::ItemId;
 use sha2::{Digest as _, Sha256};
 use sqlx::postgres::{PgArguments, PgConnectOptions, PgRow, Postgres};
 use sqlx::query::Query;
-use sqlx::sqlite::{Sqlite, SqliteConnection, SqlitePool, SqliteRow};
+use sqlx::sqlite::{Sqlite, SqliteArguments, SqliteConnection, SqlitePool, SqliteRow};
 use sqlx::{AssertSqlSafe, ConnectOptions as _, Connection as _, Row as _};
 use uuid::Uuid;
 
@@ -132,15 +132,36 @@ pub async fn connect(url: &str, lock_timeout: Duration) -> Result<PgConnection, 
     Ok(options.connect().await?)
 }
 
+/// `user@host:port/database` for a PostgreSQL URL; never the password.
+pub fn describe(url: &str) -> Result<String, Error> {
+    if !(url.starts_with("postgres:") || url.starts_with("postgresql:")) {
+        return Err(Error::NotPostgres);
+    }
+    let options = PgConnectOptions::from_str(url)?;
+    let user = options.get_username();
+    Ok(format!(
+        "{user}@{}:{}/{}",
+        options.get_host(),
+        options.get_port(),
+        options.get_database().unwrap_or(user)
+    ))
+}
+
 /// Brings `conn`'s database to this build's schema.
 pub async fn migrate(conn: &mut PgConnection) -> Result<(), Error> {
-    migrated(sqlx::migrate!("./migrations/postgres").run(conn).await)
+    // `run_direct` is `run` without the generic `Acquire`, whose future fails rustc's
+    // higher-ranked `Send` check inside spawned tasks.
+    migrated(
+        sqlx::migrate!("./migrations/postgres")
+            .run_direct(None, conn, false)
+            .await,
+    )
 }
 
 /// Empties every table we own.
 pub async fn truncate_all(conn: &mut PgConnection) -> Result<(), Error> {
     let names: Vec<String> = TABLES.iter().map(|(name, _)| quote(name)).collect();
-    dynamic::<Postgres>(format!("TRUNCATE {}", names.join(", ")))
+    dynamic_pg(format!("TRUNCATE {}", names.join(", ")))
         .execute(conn)
         .await?;
     Ok(())
@@ -244,7 +265,7 @@ impl Db {
                 ("delete", format!("('{table}', {old})")),
             ] {
                 let event = op.to_ascii_uppercase();
-                dynamic::<Sqlite>(format!(
+                dynamic_sqlite(format!(
                     "CREATE TRIGGER IF NOT EXISTS pg_sync_{table}_{op} AFTER {event} ON {quoted} \
                      BEGIN INSERT INTO {CHANGES} (tbl, k1, k2) VALUES {values}; END"
                 ))
@@ -264,7 +285,7 @@ impl Db {
         for kind in ["trigger", "table"] {
             for (_, name, _) in found.iter().filter(|(k, _, _)| k == kind) {
                 let what = kind.to_ascii_uppercase();
-                dynamic::<Sqlite>(format!("DROP {what} IF EXISTS {}", quote(name)))
+                dynamic_sqlite(format!("DROP {what} IF EXISTS {}", quote(name)))
                     .execute(&mut *tx)
                     .await?;
             }
@@ -356,7 +377,7 @@ impl Db {
             report(0);
             let mut batch = Batch::new(table, false);
             let mut done = 0;
-            let mut rows = dynamic::<Sqlite>(table.select("")).fetch(&mut *snap);
+            let mut rows = dynamic_sqlite(table.select("")).fetch(&mut *snap);
             while let Some(row) = rows.try_next().await? {
                 if batch.push(table.sqlite_row(&row)?) {
                     done += batch.flush(target).await?;
@@ -484,12 +505,12 @@ async fn apply(
     }
     for table in tables.iter().filter(|t| changed.contains(t.name)) {
         let query = if table.key_at.is_empty() {
-            dynamic::<Postgres>(format!("DELETE FROM {}", quote(table.name)))
+            dynamic_pg(format!("DELETE FROM {}", quote(table.name)))
                 .execute(&mut *tx)
                 .await?;
-            dynamic::<Sqlite>(table.select(""))
+            dynamic_sqlite(table.select(""))
         } else {
-            dynamic::<Sqlite>(table.select(&table.changed_filter()))
+            dynamic_sqlite(table.select(&table.changed_filter()))
                 .bind(table.name)
                 .bind(hw)
         };
@@ -538,7 +559,7 @@ async fn compare(
         };
         report(0);
         let mut ours = Sum::default();
-        let mut rows = dynamic::<Sqlite>(table.select("")).fetch(&mut *snap);
+        let mut rows = dynamic_sqlite(table.select("")).fetch(&mut *snap);
         while let Some(row) = rows.try_next().await? {
             ours.add(&table.sqlite_row(&row)?);
             if ours.count % BATCH_ROWS as u64 == 0 {
@@ -547,7 +568,7 @@ async fn compare(
         }
         drop(rows);
         let mut theirs = Sum::default();
-        let mut rows = dynamic::<Postgres>(table.select("")).fetch(&mut *target);
+        let mut rows = dynamic_pg(table.select("")).fetch(&mut *target);
         while let Some(row) = rows.try_next().await? {
             theirs.add(&table.postgres_row(&row)?);
             if theirs.count % BATCH_ROWS as u64 == 0 {
@@ -649,7 +670,7 @@ impl Table {
             .zip(["k1", "k2"])
             .map(|(name, logged)| format!("t.{} = c.{logged}", quote(name)))
             .collect();
-        let rows = dynamic::<Sqlite>(format!(
+        let rows = dynamic_sqlite(format!(
             "SELECT DISTINCT c.k1, c.k2 FROM {CHANGES} c WHERE c.tbl = $1 AND c.seq <= $2 \
              AND NOT EXISTS (SELECT 1 FROM {} t WHERE {})",
             quote(self.name),
@@ -687,7 +708,7 @@ impl Table {
             );
             placeholders(&mut sql, chunk.len(), names.len());
             sql.push(')');
-            let mut query = dynamic::<Postgres>(sql);
+            let mut query = dynamic_pg(sql);
             for value in chunk.iter().flatten() {
                 query = value.clone().bind(query);
             }
@@ -833,7 +854,7 @@ impl<'t> Batch<'t> {
             sql.push_str(&self.table.conflict);
         }
         let written = rows.len() as u64;
-        let mut query = dynamic::<Postgres>(sql);
+        let mut query = dynamic_pg(sql);
         for value in rows.into_iter().flatten() {
             query = value.bind(query);
         }
@@ -856,10 +877,13 @@ fn placeholders(sql: &mut String, rows: usize, width: usize) {
     }
 }
 
-/// A query built at run time: kept out of the prepared statement cache.
-fn dynamic<DB: sqlx::Database + sqlx::database::HasStatementCache>(
-    sql: String,
-) -> Query<'static, DB, <DB as sqlx::Database>::Arguments> {
+/// A query built at run time: kept out of the prepared statement cache. Concrete per
+/// backend: the generic form trips rustc's higher-ranked `Send` check in spawned tasks.
+fn dynamic_sqlite(sql: String) -> Query<'static, Sqlite, SqliteArguments> {
+    sqlx::query(AssertSqlSafe(sql)).persistent(false)
+}
+
+fn dynamic_pg(sql: String) -> Query<'static, Postgres, PgArguments> {
     sqlx::query(AssertSqlSafe(sql)).persistent(false)
 }
 

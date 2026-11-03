@@ -51,6 +51,7 @@ infinidysk-fuse.workspace = true
 [dev-dependencies]
 http-body-util.workspace = true
 infinidysk-testkit.workspace = true
+sqlx.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "rt"] }
 tower.workspace = true
 
