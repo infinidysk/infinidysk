@@ -22,7 +22,7 @@ use jiff::tz::TimeZone;
 use uuid::Uuid;
 
 use crate::csharp::{self, LongRange, decode};
-use crate::{Error, blob_path, open};
+use crate::{Error, MAX_METADATA_BYTES, MAX_NZB_BLOB_BYTES, open, read_blob};
 
 /// C#'s fixed folders (`/`, `/nzbs`, `/content`, `/completed-symlinks`, `/.ids`) have
 /// ids up to this one.
@@ -659,12 +659,20 @@ async fn import_nzbs(
     let todo: Vec<Uuid> = wanted.difference(&stored).copied().collect();
     let mut encoded = stream::iter(todo)
         .map(|id| {
-            let path = blob_path(blobs, &id.to_string());
+            let blobs = blobs.to_owned();
             tokio::task::spawn_blocking(move || {
-                let Some(xml) = path.and_then(|p| std::fs::read(p).ok()) else {
-                    return Ok((id, None));
-                };
-                blob::encode_nzb(&xml).map(|b| (id, Some(b)))
+                match read_blob(&blobs, &id.to_string(), MAX_NZB_BLOB_BYTES) {
+                    Ok(Some(xml)) => blob::encode_nzb(&xml).map(|b| (id, Some(b))),
+                    Ok(None) => Ok((id, None)),
+                    Err(error) => {
+                        tracing::warn!(
+                            blob = %id,
+                            reason = %error,
+                            "C# import: skipped an NZB blob it could not read safely"
+                        );
+                        Ok((id, None))
+                    }
+                }
             })
         })
         .buffer_unordered(PARALLEL);
@@ -829,14 +837,13 @@ async fn convert(
     blobs: &Path,
     sizer: &mut Sizer<'_>,
 ) -> Result<(FileMeta, bool), String> {
-    let path = row
-        .meta
-        .as_deref()
-        .and_then(|m| blob_path(blobs, m))
-        .ok_or("no metadata blob")?;
+    let id = row.meta.clone().ok_or("no metadata blob")?;
+    let blobs = blobs.to_owned();
     let sub_type = row.sub_type;
     let file = tokio::task::spawn_blocking(move || {
-        let bytes = std::fs::read(path).map_err(|e| format!("metadata blob: {e}"))?;
+        let bytes = read_blob(&blobs, &id, MAX_METADATA_BYTES)
+            .map_err(|e| format!("metadata blob: {e}"))?
+            .ok_or("metadata blob: not found")?;
         let file = match sub_type {
             201 => decode(&bytes, csharp::nzb_file).map(CsFile::Nzb),
             202 => decode(&bytes, csharp::rar_file).map(CsFile::Rar),
@@ -1765,6 +1772,7 @@ fn parent(id: Uuid) -> ItemId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blob_path;
 
     #[test]
     fn derives_even_splits_and_refuses_others() {
@@ -2146,6 +2154,52 @@ mod tests {
                 db.job_at("/content/tv/a").await.unwrap(),
                 Some((JobId(download), "a".to_owned()))
             );
+        });
+    }
+
+    #[test]
+    fn a_symlinked_nzb_blob_is_not_imported() {
+        rt().block_on(async {
+            use sqlx::ConnectOptions as _;
+            let (cs, job) = seed("/content", "/content/job").await;
+            let nzb =
+                b"<?xml version=\"1.0\"?><nzb xmlns=\"http://www.newzbin.com/DTD/2003/nzb\"></nzb>";
+            let outside = tmp().join("outside.nzb");
+            std::fs::write(&outside, nzb).unwrap();
+            let (kept, linked) = (Uuid::now_v7(), Uuid::now_v7());
+            for id in [kept, linked] {
+                let path = blob_path(&cs.join("blobs"), &id.to_string()).unwrap();
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                if id == kept {
+                    std::fs::write(&path, nzb).unwrap();
+                } else {
+                    std::os::unix::fs::symlink(&outside, &path).unwrap();
+                }
+            }
+            let mut c = sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(cs.join("db.sqlite"))
+                .connect()
+                .await
+                .unwrap();
+            for id in [kept, linked] {
+                sqlx::query(
+                    "INSERT INTO HistoryItems VALUES ($1, '2025-01-01 00:00:00', 'job.nzb', \
+                     'job', '', 1, 100, 1, NULL, $2, $3)",
+                )
+                .bind(Uuid::now_v7().to_string())
+                .bind(job.to_string())
+                .bind(id.to_string())
+                .execute(&mut c)
+                .await
+                .unwrap();
+            }
+            let db = Db::connect(&format!("sqlite:{}", tmp().join("db.sqlite").display()))
+                .await
+                .unwrap();
+            let client = Client::new(Vec::<infinidysk_nntp::Provider>::new());
+            apply(&cs, &db, &client, "/mnt").await.unwrap();
+            assert!(db.blob(BlobId(kept)).await.unwrap().is_some());
+            assert!(db.blob(BlobId(linked)).await.unwrap().is_none());
         });
     }
 

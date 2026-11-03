@@ -17,6 +17,7 @@ infinidysk-core.workspace = true
 infinidysk-db.workspace = true
 infinidysk-nntp.workspace = true
 jiff.workspace = true
+nix = { workspace = true, features = ["fs"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
