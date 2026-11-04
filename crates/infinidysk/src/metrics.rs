@@ -1129,56 +1129,19 @@ impl Metrics {
         let unwritten_at = pending_minute - pending_minute.rem_euclid(bucket);
         let unwritten = pending.counters.iter().map(|(k, v)| (unwritten_at, k, *v));
         for (ts, key, value) in rows.iter().map(|(t, k, v)| (*t, k, *v)).chain(unwritten) {
-            let point: &mut Point = points.entry(ts).or_default();
-            match key.as_str() {
-                "peak.read_bps" => point.peak_bps = point.peak_bps.max(value),
-                "peak.fetch_bps" => point.peak_fetch_bps = point.peak_fetch_bps.max(value),
-                "reads.ended" => point.reads += value,
-                "reads.stalls" => point.stalls += value,
-                "queue.completed" => point.imports += value,
-                "queue.failed" => point.import_failures += value,
-                "health.healthy" | "health.inconclusive" => point.checks += value,
-                "health.unhealthy" => {
-                    point.checks += value;
-                    point.unhealthy += value;
-                }
-                "cache.memory_hits" | "cache.disk_hits" | "cache.joined" => {
-                    point.cache_hits += value;
-                }
-                "cache.misses" => point.cache_misses += value,
-                k if k.starts_with("served.") => point.served += value,
-                k if k.starts_with("rescue.") => point.rescues += value,
-                _ => {}
-            }
+            tally(points.entry(ts).or_default(), key, value);
             if let Some((provider, field)) = provider_field(key) {
                 let spark = sparks.entry(provider).or_default().entry(ts).or_default();
                 match field {
-                    Field::Bytes(workload) => {
-                        point.fetched += value;
-                        match workload {
-                            Workload::Stream => point.stream_bytes += value,
-                            Workload::Queue => point.queue_bytes += value,
-                            Workload::Health => point.health_bytes += value,
-                        }
-                        spark.bytes += value;
-                    }
+                    Field::Bytes(_) => spark.bytes += value,
                     Field::Attempt(_, Outcome::Cancelled) => {}
-                    Field::Attempt(workload, outcome) => {
-                        match workload {
-                            Workload::Stream => point.stream += value,
-                            Workload::Queue => point.queue += value,
-                            Workload::Health => point.health += value,
-                        }
+                    Field::Attempt(_, outcome) => {
                         spark.requests += value;
                         if outcome == Outcome::NotFound {
-                            point.missing += value;
                             spark.missing += value;
                         }
                     }
-                    Field::Failed(_) => {
-                        point.errors += value;
-                        spark.failures += value;
-                    }
+                    Field::Failed(_) => spark.failures += value,
                     _ => {}
                 }
             }
@@ -1617,6 +1580,52 @@ fn provider_field(key: &str) -> Option<(&str, Field)> {
         },
     };
     Some((provider, field))
+}
+
+/// Adds counter `key` to the bucket `point`.
+fn tally(point: &mut Point, key: &str, value: u64) {
+    match key {
+        "peak.read_bps" => point.peak_bps = point.peak_bps.max(value),
+        "peak.fetch_bps" => point.peak_fetch_bps = point.peak_fetch_bps.max(value),
+        "reads.ended" => point.reads += value,
+        "reads.stalls" => point.stalls += value,
+        "queue.completed" => point.imports += value,
+        "queue.failed" => point.import_failures += value,
+        "health.healthy" | "health.inconclusive" => point.checks += value,
+        "health.unhealthy" => {
+            point.checks += value;
+            point.unhealthy += value;
+        }
+        "cache.memory_hits" | "cache.disk_hits" | "cache.joined" => {
+            point.cache_hits += value;
+        }
+        "cache.misses" => point.cache_misses += value,
+        k if k.starts_with("served.") => point.served += value,
+        k if k.starts_with("rescue.") => point.rescues += value,
+        _ => {}
+    }
+    match provider_field(key).map(|(_, field)| field) {
+        Some(Field::Bytes(workload)) => {
+            point.fetched += value;
+            match workload {
+                Workload::Stream => point.stream_bytes += value,
+                Workload::Queue => point.queue_bytes += value,
+                Workload::Health => point.health_bytes += value,
+            }
+        }
+        Some(Field::Attempt(workload, outcome)) if outcome != Outcome::Cancelled => {
+            match workload {
+                Workload::Stream => point.stream += value,
+                Workload::Queue => point.queue += value,
+                Workload::Health => point.health += value,
+            }
+            if outcome == Outcome::NotFound {
+                point.missing += value;
+            }
+        }
+        Some(Field::Failed(_)) => point.errors += value,
+        _ => {}
+    }
 }
 
 /// Provider name by key; the key itself for providers no longer configured.
@@ -2323,6 +2332,30 @@ mod tests {
         assert_eq!(
             mem_total("MemTotal:       16 kB\nMemFree: 1 kB\n"),
             Some(16 * 1024)
+        );
+    }
+
+    #[test]
+    fn a_bucket_splits_provider_traffic_by_workload() {
+        let (ok, missing) = (Outcome::Retrieved.label(), Outcome::NotFound.label());
+        let mut point = Point::default();
+        for (key, value) in [
+            ("p.a.stream.bytes".to_owned(), 100),
+            ("p.b.stream.bytes".to_owned(), 50),
+            ("p.a.queue.bytes".to_owned(), 7),
+            ("p.a.health.bytes".to_owned(), 3),
+            (format!("p.a.queue.{ok}"), 2),
+            (format!("p.b.stream.{missing}"), 1),
+            ("served.fuse".to_owned(), 90),
+        ] {
+            tally(&mut point, &key, value);
+        }
+        let bytes = (point.stream_bytes, point.queue_bytes, point.health_bytes);
+        assert_eq!(bytes, (150, 7, 3));
+        assert_eq!((point.fetched, point.served), (160, 90));
+        assert_eq!(
+            (point.stream, point.queue, point.health, point.missing),
+            (1, 2, 0, 1)
         );
     }
 
