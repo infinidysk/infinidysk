@@ -39,7 +39,66 @@ export const notAPassword = {
   "data-bwignore": true,
 } as const;
 
-const RESTART_WAIT_MS = 120_000;
+const RESTART_WAIT_MS = 5 * 60_000;
+// One poll request; a process that accepts the connection but never answers must not stall the wait.
+const POLL_REQUEST_MS = 10_000;
+
+export type Restarted = "restarted" | "signed-out";
+
+/**
+ * Polls until a new process answers. `before` is `started_ms` from before the request;
+ * `attempt` is the id the restore or undo request returned. Uses only server values: the
+ * browser clock is never compared with a server time.
+ */
+export async function waitForRestart(
+  before: number,
+  opts: {
+    attempt?: string;
+    pollMs?: number;
+    deadlineMs?: number;
+    onProgress?: (running: Schemas["LiveMaintenance"] | null) => void;
+  } = {},
+): Promise<Restarted> {
+  const { attempt, pollMs = 1000, deadlineMs = RESTART_WAIT_MS, onProgress } = opts;
+  // Set once the old process may be gone; a reported `staging` attempt clears it.
+  let deadline: number | null = null;
+  const start = () => {
+    deadline ??= Date.now() + deadlineMs;
+  };
+  // `null` when the request did not reach a process.
+  const get = async <T>(request: Promise<{ data?: T; response: Response }>) => {
+    try {
+      const { data, response } = await request;
+      return { data, status: response.status };
+    } catch {
+      return null;
+    }
+  };
+  for (;;) {
+    if (deadline != null && Date.now() >= deadline) throw new Error("infinidysk has not come back after 5 minutes; check its logs");
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    const status = await get(api.GET("/api/v1/status", { signal: AbortSignal.timeout(POLL_REQUEST_MS) }));
+    if (status?.status === 401) return "signed-out";
+    if (!status || status.status >= 500 || !status.data) {
+      start();
+      continue;
+    }
+    if (status.data.started_ms !== before) return "restarted";
+    const maintenance = await get(api.GET("/api/v1/maintenance", { signal: AbortSignal.timeout(POLL_REQUEST_MS) }));
+    if (maintenance?.status === 401) return "signed-out";
+    if (maintenance?.data) onProgress?.(maintenance.data.running ?? null);
+    let staging = false;
+    if (attempt) {
+      const backups = await get(api.GET("/api/v1/backups", { signal: AbortSignal.timeout(POLL_REQUEST_MS) }));
+      if (backups?.status === 401) return "signed-out";
+      const mine = backups?.data?.attempt?.id === attempt ? backups.data.attempt : null;
+      if (mine?.state === "failed") throw new Error(mine.reason ?? "The restore failed.");
+      staging = mine?.state === "staging";
+    }
+    if (staging) deadline = null;
+    else start();
+  }
+}
 
 /** Restarts the server and resolves once the new process answers. */
 export function useRestart() {
@@ -48,12 +107,7 @@ export function useRestart() {
     mutationFn: async () => {
       const before = (await body(api.GET("/api/v1/status"))).started_ms;
       await body(api.POST("/api/v1/restart"));
-      for (const deadline = Date.now() + RESTART_WAIT_MS; Date.now() < deadline; ) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        const status = await body(api.GET("/api/v1/status")).catch(() => null);
-        if (status && status.started_ms !== before) return;
-      }
-      throw new Error("infinidysk has not come back after 2 minutes; check its logs");
+      if ((await waitForRestart(before)) === "signed-out") window.location.reload();
     },
     onSuccess: () => void client.invalidateQueries(),
   });

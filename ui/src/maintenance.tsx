@@ -3,8 +3,9 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { CircleAlert, Loader2, ScrollText, TriangleAlert } from "lucide-react";
 import { Link } from "react-router";
 import { api, body, type Schemas } from "./api/client";
-import { ago, bytes, stamp } from "./format";
+import { ago, bytes, duration, stamp } from "./format";
 import type { Settings as Doc } from "./settings";
+import { BackupsPanel } from "./backups";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,13 @@ type Report = Schemas["MaintenanceReport"];
 type Outcome = Schemas["RunOutcome"];
 
 export const jobCopy: Record<Job, { title: string; blurb: string; tip: string; confirm: string; noun: string }> = {
+  "backup-database": {
+    title: "Back up database",
+    blurb: "Writes a copy of the library database to the backup folder and keeps the newest copies.",
+    tip: "Copies the library database (settings, logins, downloads, history and file details) while infinidysk keeps running. Each copy is checked and gets a SHA-256 checksum. After a good copy, the oldest scheduled and manual backups beyond Copies to keep are deleted; pinned, uploaded and added backups stay. It stops without deleting anything if the backup folder lacks room for the copy plus a reserve. It runs first in the window, before the jobs that delete. A PostgreSQL database is not backed up; use pg_dump.",
+    confirm: "Writes a copy about the size of the database's used space. Imports and playback keep running.",
+    noun: "backup",
+  },
   "remove-unlinked": {
     title: "Remove unlinked files",
     blurb: "Deletes files that no symlink or STRM file in your library points to.",
@@ -56,7 +64,7 @@ const triggers: Record<Schemas["RunTrigger"], string> = { manual: "Manual", wind
 
 const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
 
-function useMaintenance() {
+export function useMaintenance() {
   return useQuery({
     queryKey: ["maintenance"],
     queryFn: () => body(api.GET("/api/v1/maintenance")),
@@ -67,8 +75,20 @@ function useMaintenance() {
 /** Whether the report's files can be removed from the review dialog. */
 const reviewable = (r: Report) => r.unlinked > 0 && (r.outcome === "held" || (r.dry_run && r.outcome === "finished"));
 
+/** `done / total` of a running job; backup work counts bytes. */
+export function progress(job: Job, live: Schemas["LiveMaintenance"]): string {
+  const n = job === "backup-database" ? (v: number) => bytes(v) : (v: number) => v.toLocaleString();
+  return live.total ? `${n(live.done)} / ${n(live.total)}` : live.done ? n(live.done) : "";
+}
+
 function summary(r: Report): string {
   if (r.outcome === "stopped") return r.reason ? "The run stopped early:" : "A safety check failed.";
+  if (r.job === "backup-database") {
+    const b = r.backup;
+    if (!b) return "No backup was written.";
+    const wrote = `Wrote ${b.name} (${bytes(b.size_bytes)}) in ${duration(Math.max(1, Math.round(b.duration_ms / 1000)))}.`;
+    return b.pruned > 0 ? `${wrote} Removed ${plural(b.pruned, "old backup")} (${bytes(b.pruned_bytes)}).` : wrote;
+  }
   if (r.job === "compact-database") {
     const lines = r.databases.map((d) => {
       const name = databaseNames[d.name] ?? d.name;
@@ -167,6 +187,13 @@ export function MaintenancePanel({
         {view.isError && <p className="text-destructive">{view.error.message}</p>}
       </div>
 
+      <BackupsPanel
+        value={value.backup}
+        locked={locked}
+        running={view.data?.running ?? null}
+        onChange={(backup) => onChange({ ...value, backup })}
+      />
+
       <Runs runs={view.data?.runs ?? []} />
     </div>
   );
@@ -224,7 +251,7 @@ function JobCard({
         ) : (
           <label htmlFor={id} className="text-muted-foreground flex shrink-0 items-center gap-2 text-xs">
             Run daily
-            <Switch id={id} checked={scheduled} disabled={locked} onCheckedChange={onScheduled} />
+            <Switch id={id} checked={scheduled} disabled={locked || (!!job.unavailable_reason && !scheduled)} onCheckedChange={onScheduled} />
           </label>
         )}
       </div>
@@ -239,7 +266,7 @@ function JobCard({
                 {mine.step}
               </span>
               <span className="text-muted-foreground tabular-nums">
-                {mine.total ? `${mine.done.toLocaleString()} / ${mine.total.toLocaleString()}` : mine.done ? mine.done.toLocaleString() : ""}
+                {progress(job.job, mine)}
               </span>
             </div>
             <div className="bg-muted h-1.5 overflow-hidden rounded-full">
@@ -453,11 +480,13 @@ function Runs({ runs }: { runs: Schemas["MaintenanceRun"][] }) {
                 <span className="text-muted-foreground tabular-nums">
                   {!run.files
                     ? ""
-                    : run.job === "compact-database"
-                      ? `${plural(run.files, "database")} · ${bytes(run.bytes)} reclaimed`
-                      : run.job === "remove-dead-links"
-                        ? plural(run.files, "link")
-                        : `${plural(run.files, "file")} · ${bytes(run.bytes)}`}
+                    : run.job === "backup-database"
+                      ? `Wrote ${bytes(run.bytes)}`
+                      : run.job === "compact-database"
+                        ? `${plural(run.files, "database")} · ${bytes(run.bytes)} reclaimed`
+                        : run.job === "remove-dead-links"
+                          ? plural(run.files, "link")
+                          : `${plural(run.files, "file")} · ${bytes(run.bytes)}`}
                 </span>
                 <span>
                   <Status tone={outcomes[run.outcome][1]}>{outcomes[run.outcome][0]}</Status>

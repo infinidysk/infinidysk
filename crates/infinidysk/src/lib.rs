@@ -4,6 +4,7 @@ pub mod admin;
 pub mod app;
 pub mod arr;
 pub mod auth;
+mod backup;
 mod cleanup;
 pub mod config;
 mod confined;

@@ -116,6 +116,7 @@ pub struct Parts {
     /// The FUSE mount folder; never walked as a library folder.
     pub mount_dir: String,
     pub live: Arc<Tracker>,
+    pub backups: Arc<crate::backup::Backups>,
 }
 
 pub struct Maintenance {
@@ -147,7 +148,7 @@ impl Tracker {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn step(&self, step: &'static str, total: Option<u64>) {
+    pub(crate) fn step(&self, step: &'static str, total: Option<u64>) {
         if let Some(live) = self.lock().as_mut() {
             live.step = step;
             live.done = 0;
@@ -155,7 +156,7 @@ impl Tracker {
         }
     }
 
-    fn done(&self, done: u64) {
+    pub(crate) fn done(&self, done: u64) {
         if let Some(live) = self.lock().as_mut() {
             live.done = done;
         }
@@ -228,6 +229,8 @@ pub struct MaintenanceReport {
     folders_removed: u64,
     /// Compact database: each database it looked at, in order.
     databases: Vec<DatabaseCompaction>,
+    /// Back up database: the copy it wrote.
+    backup: Option<crate::backup::BackupReport>,
     #[serde(skip)]
     files: Vec<MaintenanceFile>,
 }
@@ -266,8 +269,8 @@ pub struct MaintenanceRun {
     trigger: RunTrigger,
     started_ms: i64,
     finished_ms: i64,
-    outcome: RunOutcome,
-    reason: Option<String>,
+    pub(crate) outcome: RunOutcome,
+    pub(crate) reason: Option<String>,
     /// Files removed, or for dry runs and held runs the files found; databases
     /// compacted for compact database.
     files: u64,
@@ -303,7 +306,7 @@ impl From<infinidysk_db::Error> for Stop {
 }
 
 /// The one running job; dropping it frees the slot.
-struct Slot(Arc<Maintenance>);
+pub(crate) struct Slot(Arc<Maintenance>);
 
 impl Drop for Slot {
     fn drop(&mut self) {
@@ -357,6 +360,8 @@ impl Maintenance {
             (j.always_scheduled() || settings.maintenance.scheduled.contains(j))
                 && !done.contains(j)
                 && !(importing && *j == MaintenanceJob::CompactDatabase)
+                && !(*j == MaintenanceJob::BackupDatabase
+                    && self.parts.backups.unavailable().is_some())
         })?;
         Some((job, start_ms, end_ms))
     }
@@ -422,6 +427,35 @@ impl Maintenance {
         Ok((Slot(Arc::clone(self)), cancel))
     }
 
+    /// Takes the slot for backup work outside a job run (verify, restore); the live view
+    /// shows it under the backup job with `step`.
+    pub(crate) fn claim(
+        self: &Arc<Self>,
+        step: &'static str,
+    ) -> Result<(Slot, CancellationToken), Fail> {
+        let claimed = self.begin(&Order {
+            job: MaintenanceJob::BackupDatabase,
+            dry_run: false,
+            trigger: RunTrigger::Manual,
+            only: None,
+        })?;
+        self.parts.live.step(step, None);
+        Ok(claimed)
+    }
+
+    /// Whether the slot holds backup work now.
+    pub(crate) fn backup_busy(&self) -> bool {
+        self.parts
+            .live
+            .get()
+            .is_some_and(|l| l.job == MaintenanceJob::BackupDatabase)
+    }
+
+    /// The newest finished run of `job`.
+    pub fn last_run(&self, job: MaintenanceJob) -> Option<MaintenanceRun> {
+        self.lock().runs.iter().find(|r| r.job == job).cloned()
+    }
+
     fn start(self: &Arc<Self>, run: Order) -> Result<(), Fail> {
         let (slot, cancel) = self.begin(&run)?;
         let this = Arc::clone(self);
@@ -459,10 +493,23 @@ impl Maintenance {
             skipped_open: 0,
             folders_removed: 0,
             databases: Vec::new(),
+            backup: None,
             files: Vec::new(),
         };
         info!(dry_run = run.dry_run, trigger = ?run.trigger, "maintenance job started");
         let result = match run.job {
+            MaintenanceJob::BackupDatabase => {
+                let kind = if run.trigger == RunTrigger::Window {
+                    crate::backup::Kind::Scheduled
+                } else {
+                    crate::backup::Kind::Manual
+                };
+                self.parts
+                    .backups
+                    .create(kind, cancel)
+                    .await
+                    .map(|backup| report.backup = Some(backup))
+            }
             MaintenanceJob::RemoveUnlinked => self.remove_unlinked(&run, cancel, &mut report).await,
             MaintenanceJob::RemoveDeadLinks => {
                 self.remove_dead_links(&run, cancel, &mut report).await
@@ -483,7 +530,12 @@ impl Maintenance {
         };
         report.finished_ms = now_ms();
         let duration_ms = report.finished_ms - report.at_ms;
-        let (files, bytes) = if run.job == MaintenanceJob::CompactDatabase {
+        let (files, bytes) = if run.job == MaintenanceJob::BackupDatabase {
+            report
+                .backup
+                .as_ref()
+                .map_or((0, 0), |b| (1, b.size_bytes()))
+        } else if run.job == MaintenanceJob::CompactDatabase {
             let compacted = report.databases.iter().filter_map(|d| {
                 d.size_bytes_after
                     .map(|after| d.size_bytes_before.saturating_sub(after))
@@ -978,6 +1030,9 @@ impl Maintenance {
             .into_iter()
             .map(|job| {
                 let unavailable_reason = match job {
+                    MaintenanceJob::BackupDatabase => {
+                        self.parts.backups.unavailable().map(str::to_owned)
+                    }
                     MaintenanceJob::RemoveUnlinked | MaintenanceJob::RemoveDeadLinks => settings
                         .imports
                         .library_dirs

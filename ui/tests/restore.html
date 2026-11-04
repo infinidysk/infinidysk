@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Restore wait regression</title>
+<pre id="result">Running</pre>
+<script type="module">
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const check = (condition, message) => {
+    if (!condition) throw new Error(message);
+  };
+  // Each step answers one poll: a status reply, or "down" (fetch rejects) or a status code for every request.
+  let script = [];
+  let polls = 0;
+  let current;
+  globalThis.fetch = async (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/v1/status") current = script[Math.min(polls++, script.length - 1)];
+    const s = current;
+    if (s === "down") throw new TypeError("Failed to fetch");
+    if (typeof s === "number") return Response.json({ error: "x" }, { status: s });
+    if (url.pathname === "/api/v1/status") return Response.json({ started_ms: s.started ?? 1 });
+    if (url.pathname === "/api/v1/maintenance") return Response.json({ running: s.running === undefined ? null : s.running, jobs: [], runs: [] });
+    if (url.pathname === "/api/v1/backups") return Response.json({ backups: [], attempt: s.attempt ?? null });
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  };
+  const live = { job: "backup-database", step: "Restoring: copying the backup", done: 1, total: 2, dry_run: false };
+  const staging = { started: 1, running: live, attempt: { id: "a1", action: "restore", state: "staging" } };
+  const failed = { started: 1, running: null, attempt: { id: "a1", action: "restore", state: "failed", reason: "copy failed" } };
+
+  try {
+    const { waitForRestart } = await import("/src/settings.ts");
+    const run = async (name, steps, expect, setup) => {
+      script = steps;
+      polls = 0;
+      setup?.();
+      let outcome;
+      try {
+        outcome = await waitForRestart(1, { attempt: "a1", pollMs: 1, deadlineMs: 50 });
+      } catch (error) {
+        outcome = `rejected: ${error.message}`;
+      } finally {
+        Date.now = originalNow;
+      }
+      check(outcome === expect, `${name}: expected ${expect}, got ${outcome}`);
+    };
+    await run("new secret", [staging, staging, "down", "down", "down", 401], "signed-out");
+    await run("same secret", [staging, "down", { started: 2 }], "restarted");
+    await run("staging failed", [failed], "rejected: copy failed");
+    await run("browser clock ahead", [failed], "rejected: copy failed", () => {
+      Date.now = () => originalNow() + 86_400_000;
+    });
+    await run(
+      "another attempt failed",
+      [{ ...failed, attempt: { ...failed.attempt, id: "a0" } }, staging, { started: 2 }],
+      "restarted",
+    );
+    await run("lost attempt", [{ started: 1 }], "rejected: infinidysk has not come back after 5 minutes; check its logs");
+    await run("proxy while down", [staging, 502, 502, { started: 2 }], "restarted");
+    await run("staging outlasts deadline", [...Array(100).fill(staging), { started: 2 }], "restarted");
+    document.getElementById("result").textContent = "PASS";
+  } catch (error) {
+    document.getElementById("result").textContent = `FAIL: ${error.message}`;
+  } finally {
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+  }
+</script>

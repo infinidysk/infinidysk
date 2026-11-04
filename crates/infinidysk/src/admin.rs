@@ -35,6 +35,7 @@ use uuid::Uuid;
 use crate::app::Live;
 use crate::arr;
 use crate::auth::{self, Auth};
+use crate::backup;
 use crate::config::{self, ConfigStore, ImportStrategy, Settings};
 use crate::database;
 use crate::files;
@@ -68,6 +69,7 @@ pub struct Admin {
     pub mount: watch::Receiver<Result<infinidysk_vfs::Kernel, String>>,
     pub library: Arc<crate::library::Library>,
     pub maintenance: Arc<crate::maintenance::Maintenance>,
+    pub backups: Arc<crate::backup::Backups>,
     pub updates: Arc<crate::update::Updates>,
     pub database: Arc<crate::database::Migrator>,
     /// Ends event streams at shutdown.
@@ -168,6 +170,17 @@ pub struct Admin {
         database::delete_migration,
         database::post_cutover,
         database::get_cutover_none,
+        backup::api::get_backups,
+        backup::api::get_file,
+        backup::api::patch_backup,
+        backup::api::delete_backup,
+        backup::api::post_verify,
+        backup::api::delete_legacy,
+        backup::api::post_restore,
+        backup::api::post_undo,
+        backup::api::delete_undo,
+        backup::api::delete_last_restore,
+        backup::api::put_upload,
     ),
     modifiers(&Security),
     security(("session" = []), ("api_key" = []))
@@ -328,6 +341,33 @@ pub fn router(admin: Arc<Admin>, auth: Arc<Auth>) -> Router {
             post(database::post_migration).delete(database::delete_migration),
         )
         .route("/api/v1/database/cutover", post(database::post_cutover))
+        .route("/api/v1/backups", get(backup::api::get_backups))
+        .route("/api/v1/backups/legacy", delete(backup::api::delete_legacy))
+        .route(
+            "/api/v1/backups/undo",
+            post(backup::api::post_undo).delete(backup::api::delete_undo),
+        )
+        .route(
+            "/api/v1/backups/last-restore",
+            delete(backup::api::delete_last_restore),
+        )
+        .route(
+            "/api/v1/backups/upload",
+            put(backup::api::put_upload).layer(DefaultBodyLimit::disable()),
+        )
+        .route(
+            "/api/v1/backups/{name}",
+            axum::routing::patch(backup::api::patch_backup).delete(backup::api::delete_backup),
+        )
+        .route("/api/v1/backups/{name}/file", get(backup::api::get_file))
+        .route(
+            "/api/v1/backups/{name}/verify",
+            post(backup::api::post_verify),
+        )
+        .route(
+            "/api/v1/backups/{name}/restore",
+            post(backup::api::post_restore),
+        )
         .route_layer(axum::middleware::from_fn_with_state(auth, auth::require))
         .route("/api/v1/upgrade/status", get(upgrade::get_upgrade_status))
         .route("/api/v1/database/cutover", get(database::get_cutover_none))
@@ -355,6 +395,8 @@ pub enum Fail {
     NotFound,
     Conflict(String),
     Unavailable(String),
+    /// A server-side failure the caller should read.
+    Failed(String),
     Internal,
 }
 
@@ -397,6 +439,7 @@ impl IntoResponse for Fail {
             Self::NotFound => (StatusCode::NOT_FOUND, "not found".to_owned()),
             Self::Conflict(msg) => (StatusCode::CONFLICT, msg),
             Self::Unavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
+            Self::Failed(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal error".to_owned(),
@@ -1262,6 +1305,8 @@ struct Status {
     disk_cache: Option<DiskCacheStatus>,
     /// Unix milliseconds this process started; changes after a restart.
     started_ms: i64,
+    /// Why scheduled backups need a look; absent when they are fine or off.
+    backup_warning: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -1444,6 +1489,13 @@ async fn get_status(State(admin): State<Arc<Admin>>) -> Json<Status> {
         }),
         (None, None) => None,
     };
+    let backup_warning = admin.backups.warning(
+        admin.config.read().await.settings(),
+        admin
+            .maintenance
+            .last_run(config::MaintenanceJob::BackupDatabase)
+            .as_ref(),
+    );
     Json(Status {
         version: crate::update::VERSION,
         commit: crate::update::COMMIT,
@@ -1456,6 +1508,7 @@ async fn get_status(State(admin): State<Arc<Admin>>) -> Json<Status> {
         },
         disk_cache,
         started_ms: logs::started_ms(),
+        backup_warning,
     })
 }
 
