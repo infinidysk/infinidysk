@@ -338,10 +338,10 @@ function Resources({ live }: { live?: Schemas["LiveView"] }) {
       hint: "Decoded segments kept in memory so repeat reads skip the provider. The tick marks where it ends when full.",
     },
     {
-      label: "Page cache",
+      label: "Kernel cache",
       tone: "bg-primary/20",
-      size: r.memory_page_cache_bytes,
-      hint: "Files on disk the kernel keeps cached; it frees this when memory is needed.",
+      size: r.memory_kernel_cache_bytes,
+      hint: "File contents and file metadata the kernel keeps cached. It may free this under memory pressure, but it still counts toward a container memory limit.",
     },
   ];
   return (
@@ -378,7 +378,9 @@ function Resources({ live }: { live?: Schemas["LiveView"] }) {
             aria-label="Memory use"
             aria-valuemin={0}
             aria-valuemax={100}
-            aria-valuenow={Math.round(share(r.memory_process_bytes, r.memory_limit_bytes))}
+            aria-valuenow={Math.round(
+              share(r.memory_process_bytes + r.memory_kernel_cache_bytes, r.memory_limit_bytes),
+            )}
           >
             {memory.map((m) => (
               <div key={m.label} className={cn(m.tone, "h-full")} style={{ width: percent(m.size, r.memory_limit_bytes) }} />

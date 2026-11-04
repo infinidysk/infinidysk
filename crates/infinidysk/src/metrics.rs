@@ -199,14 +199,15 @@ struct Resources {
     cpu_cores: Option<f64>,
     /// The CPU quota, else the CPUs this process may run on.
     cpu_limit_cores: f64,
-    /// Memory in use apart from page cache: the process, kernel and socket buffers.
+    /// Memory in use apart from the kernel cache: the process, kernel and socket buffers.
     memory_process_bytes: u64,
     /// Part of `memory_process_bytes` held by the in-memory segment cache.
     memory_segment_cache_bytes: u64,
     /// Configured size of the in-memory segment cache; 0 when it is off.
     memory_segment_cache_limit_bytes: u64,
-    /// Page cache of files read; the kernel frees it when memory runs short.
-    memory_page_cache_bytes: u64,
+    /// Page cache and reclaimable slab (dentries, inodes); the kernel may free it under
+    /// memory pressure, but it still counts toward the cgroup limit.
+    memory_kernel_cache_bytes: u64,
     /// `memory.max`, or the host's memory when that is lower or unset.
     memory_limit_bytes: u64,
     /// Whether `memory_limit_bytes` is a cgroup limit rather than the host's memory.
@@ -2162,9 +2163,7 @@ impl Cgroup {
             .ok_or("cgroup cpu.stat has no usage_usec.")?;
         let current =
             limit(&read("memory.current")?).ok_or("cgroup memory.current is not a number.")?;
-        let cache = stat_field(&read("memory.stat")?, "file")
-            .unwrap_or(0)
-            .min(current);
+        let cache = kernel_cache(&read("memory.stat")?).min(current);
         let max = limit(&read("memory.max")?);
         // cpu.max is missing when the cpu controller is not delegated.
         let quota = read("cpu.max").ok().as_deref().and_then(cpu_quota);
@@ -2183,7 +2182,7 @@ impl Cgroup {
                 memory_process_bytes: current - cache,
                 memory_segment_cache_bytes: 0,
                 memory_segment_cache_limit_bytes: 0,
-                memory_page_cache_bytes: cache,
+                memory_kernel_cache_bytes: cache,
                 memory_limit_bytes: max.map_or(self.host_memory, |m| m.min(self.host_memory)),
                 memory_limited: max.is_some_and(|m| m < self.host_memory),
             },
@@ -2200,6 +2199,14 @@ fn cgroup_path(text: &str) -> Option<&str> {
 fn stat_field(text: &str, key: &str) -> Option<u64> {
     text.lines()
         .find_map(|l| l.strip_prefix(key)?.strip_prefix(' ')?.parse().ok())
+}
+
+/// Page cache plus reclaimable slab from `memory.stat`, the parts `MemAvailable` also counts.
+fn kernel_cache(stat: &str) -> u64 {
+    ["file", "slab_reclaimable"]
+        .into_iter()
+        .filter_map(|key| stat_field(stat, key))
+        .fold(0, u64::saturating_add)
 }
 
 /// A number, or `None` for `max`.
@@ -2321,6 +2328,9 @@ mod tests {
         assert_eq!(cgroup_path("12:memory:/docker/abc\n"), None);
         let stat = "anon 100\nfile 2048\nfile_mapped 7\n";
         assert_eq!(stat_field(stat, "file"), Some(2048));
+        let stat = "file 2048\nslab_reclaimable 512\nslab_unreclaimable 64\n";
+        assert_eq!(kernel_cache(stat), 2560);
+        assert_eq!(kernel_cache("anon 1\n"), 0);
         assert_eq!(
             stat_field("usage_usec 42\nuser_usec 1\n", "usage_usec"),
             Some(42)
@@ -2333,6 +2343,42 @@ mod tests {
             mem_total("MemTotal:       16 kB\nMemFree: 1 kB\n"),
             Some(16 * 1024)
         );
+    }
+
+    #[test]
+    fn cgroup_read_splits_memory_into_app_and_kernel_cache() {
+        let dir = std::env::temp_dir().join(format!("infinidysk-cgroup-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("temp dir is writable");
+        let write = |name: &str, text: &str| {
+            fs::write(dir.join(name), text).expect("temp dir is writable");
+        };
+        write("cpu.stat", "usage_usec 42\n");
+        write("cpu.max", "max 100000\n");
+        write("memory.max", "max\n");
+        write(
+            "memory.stat",
+            "anon 100\nfile 2048\nslab_reclaimable 512\nslab_unreclaimable 64\n",
+        );
+        let cgroup = Cgroup {
+            dir: dir.clone(),
+            host_memory: 1 << 40,
+        };
+
+        write("memory.current", "4096\n");
+        let (usec, r) = cgroup.read().expect("all cgroup files exist");
+        assert_eq!(usec, 42);
+        assert_eq!(r.memory_kernel_cache_bytes, 2560);
+        assert_eq!(r.memory_process_bytes, 1536);
+        assert_eq!(r.memory_limit_bytes, 1 << 40);
+        assert!(!r.memory_limited);
+
+        // The stat can briefly exceed memory.current; the cache is clamped.
+        write("memory.current", "2000\n");
+        let (_, r) = cgroup.read().expect("all cgroup files exist");
+        assert_eq!(r.memory_kernel_cache_bytes, 2000);
+        assert_eq!(r.memory_process_bytes, 0);
+
+        fs::remove_dir_all(&dir).expect("temp dir is removable");
     }
 
     #[test]
