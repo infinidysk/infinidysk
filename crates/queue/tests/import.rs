@@ -128,9 +128,18 @@ async fn queue_on(servers: &[&LoopbackServer]) -> Queue {
 
 /// [`queue_on`] with its SQLite database at `path`.
 async fn queue_at(servers: &[&LoopbackServer], path: &std::path::Path) -> Queue {
+    // Background work leaves one slot for playback; four remain for imports.
+    queue_sized(servers, path, 5).await
+}
+
+/// [`queue_at`] with `max_connections` per provider.
+async fn queue_sized(
+    servers: &[&LoopbackServer],
+    path: &std::path::Path,
+    max_connections: usize,
+) -> Queue {
     let config = PoolConfig {
-        // Background work leaves one slot for playback; four remain for imports.
-        max_connections: 5,
+        max_connections,
         pipeline_depth: 4,
         idle_timeout: Duration::from_secs(5),
         min_connections: 0,
@@ -996,7 +1005,9 @@ async fn a_stalled_job_does_not_hold_up_the_next_one() {
         LoopbackServer::start_stalling([c.clone(), d.clone()].concat(), 0, Duration::from_secs(3))
             .await
             .unwrap();
-    let (_server, queue) = setup_on(server).await;
+    // Enough connections that no request of the other job pipelines behind the stalled one.
+    let path = std::env::temp_dir().join(format!("infinidysk-queue-{}.sqlite", ItemId::new()));
+    let queue = queue_sized(&[&server], &path, 16).await;
     let db = queue.db().clone();
     let job = Submission {
         file_name: "job.nzb",

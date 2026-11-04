@@ -736,6 +736,8 @@ async fn queue_management(addr: SocketAddr, database_url: &str) {
     *QUEUE.lock().unwrap() = vec![
         record(7, sample, "sab 1", "Sample"),
         record(8, unknown, "sab 1", "Unknown Series"),
+        // A second episode of the same pack repeats the message; it is shown once.
+        record(10, unknown, "sab 1", "Unknown Series"),
         // Not our verified client, so left alone.
         record(9, sample, "sab 2", "Sample"),
     ];
