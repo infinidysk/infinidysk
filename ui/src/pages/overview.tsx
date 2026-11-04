@@ -158,6 +158,7 @@ function Attention({ live }: { live?: Live }) {
   if (status && !status.mount.mounted) {
     items.push({ to: "/system", tone: "warning", text: `Not mounted${status.mount.reason ? `: ${status.mount.reason}` : ""}` });
   }
+  if (status?.backup_warning) items.push({ to: "/settings/maintenance", tone: "warning", text: status.backup_warning });
   if (items.length === 0) return null;
   return (
     <section aria-labelledby="attention" className="mb-6">
