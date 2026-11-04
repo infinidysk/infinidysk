@@ -1,6 +1,7 @@
 import { type ReactNode, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, DatabaseZap, Loader2, PlugZap, TriangleAlert } from "lucide-react";
+import { toast } from "sonner";
 import { api, body, type Schemas } from "./api/client";
 import { ago, stamp } from "./format";
 import {
@@ -16,6 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmButton, Failure, Field, SettingsPanel, SettingsSection, Status } from "./ui";
+import { notAPassword } from "./settings";
 
 type Migration = Schemas["MigrationView"];
 
@@ -113,7 +115,7 @@ function Start() {
   const [confirming, setConfirming] = useState(false);
   const check = useMutation({ mutationFn: (target: string) => body(api.POST("/api/v1/database/check", { body: { url: target } })) });
   const start = useMutation({
-    mutationFn: () => body(api.POST("/api/v1/database/migration", { body: { url } })),
+    mutationFn: (target: string) => body(api.POST("/api/v1/database/migration", { body: { url: target } })),
     onSuccess: () => void client.invalidateQueries({ queryKey: ["database"] }),
   });
   const tested = check.data && check.variables === url ? check.data : undefined;
@@ -125,7 +127,7 @@ function Start() {
           id="database-url"
           type="password"
           className="font-mono"
-          autoComplete="new-password"
+          {...notAPassword}
           placeholder="postgres://user:password@host:5432/database"
           value={url}
           onChange={(e) => setUrl(e.target.value.trim())}
@@ -161,14 +163,14 @@ function Start() {
           {start.isPending ? <Loader2 className="animate-spin" /> : <DatabaseZap />}
           Copy to PostgreSQL
         </Button>
-        {start.isError && <Failure error={start.error} />}
+        {start.isError && start.variables === url && <Failure error={start.error} />}
       </div>
       <Confirm
         open={confirming}
         onOpenChange={setConfirming}
         title="Copy to PostgreSQL?"
         confirm="Start copying"
-        onConfirm={() => start.mutate()}
+        onConfirm={() => start.mutate(url)}
       >
         infinidysk copies the library, queue, history and settings to PostgreSQL, then keeps the copy in sync while you keep using
         it. Nothing switches until you choose Switch to PostgreSQL. Back up <code>/config</code> before switching.
@@ -182,7 +184,11 @@ function Move({ migration, target }: { migration: Migration; target?: string | n
   const client = useQueryClient();
   const [confirming, setConfirming] = useState(false);
   const refresh = () => void client.invalidateQueries({ queryKey: ["database"] });
-  const cancel = useMutation({ mutationFn: () => body(api.DELETE("/api/v1/database/migration")), onSettled: refresh });
+  const cancel = useMutation({
+    mutationFn: () => body(api.DELETE("/api/v1/database/migration")),
+    onSuccess: (done) => done.warnings.forEach((warning) => toast.warning(warning, { duration: Infinity })),
+    onSettled: refresh,
+  });
   const cutover = useMutation({
     mutationFn: () => body(api.POST("/api/v1/database/cutover")),
     onSuccess: (started) => switching.begin(started.started_ms),
@@ -221,7 +227,7 @@ function Move({ migration, target }: { migration: Migration; target?: string | n
             aria-valuenow={percent}
           >
             <div
-              className={percent === undefined ? "bg-primary/40 h-full w-1/3 animate-pulse" : "bg-primary h-full transition-[width]"}
+              className={percent === undefined ? "bg-primary/40 h-full w-1/3 motion-safe:animate-pulse" : "bg-primary h-full transition-[width]"}
               style={percent === undefined ? undefined : { width: `${percent}%` }}
             />
           </div>
