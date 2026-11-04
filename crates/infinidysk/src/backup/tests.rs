@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use infinidysk_core::ItemId;
 
+use super::boot::{self, Action, Intent, Paths, Pending, Phase};
 use super::files::*;
 
 fn scratch() -> PathBuf {
@@ -337,5 +338,447 @@ fn part_files_start_private() {
     );
     drop(part);
     assert!(!path.exists());
+    fs::remove_dir_all(dir).unwrap();
+}
+
+// Restore and undo at boot.
+
+const CRASH: &str = "INFINIDYSK_BACKUP_CRASH";
+
+fn paths(dir: &Path) -> Paths {
+    Paths {
+        live: dir.join("db.sqlite"),
+    }
+}
+
+fn put(path: &Path, text: &str) {
+    fs::write(path, text).unwrap();
+}
+
+fn text(path: &Path) -> Option<String> {
+    fs::read_to_string(path).ok()
+}
+
+fn gone(path: &Path) -> bool {
+    path.symlink_metadata().is_err()
+}
+
+fn no_set(base: &Path) -> bool {
+    ["", "-wal", "-shm", "-journal"]
+        .iter()
+        .all(|s| gone(&with(base, s)))
+}
+
+fn intent(action: Action, phase: Phase) -> Intent {
+    Intent {
+        format: boot::FORMAT,
+        attempt: uuid::Uuid::nil(),
+        action,
+        phase,
+        backup: Some("b.sqlite".to_owned()),
+        backup_created_ms: Some(1),
+        swapped_ms: None,
+        failed: None,
+    }
+}
+
+fn write_intent(p: &Paths, i: &Intent) {
+    fs::write(p.intent(), serde_json::to_vec(i).unwrap()).unwrap();
+}
+
+fn read_intent(p: &Paths) -> Option<Intent> {
+    fs::read(p.intent())
+        .ok()
+        .map(|b| serde_json::from_slice(&b).unwrap())
+}
+
+fn apply(p: &Paths) -> Pending {
+    match boot::apply_pending_with(p, false, &mut Steps::default()) {
+        Ok(pending) => pending,
+        Err(e) => panic!("boot could not resolve: {e}"),
+    }
+}
+
+fn opened(pending: &Pending) -> Option<&Intent> {
+    match pending {
+        Pending::Open(i) => Some(i),
+        Pending::None => None,
+    }
+}
+
+/// `apply_pending`, then the file steps `finish` runs after a good open.
+fn boot_and_finish(p: &Paths, steps: &mut Steps) {
+    let pending = boot::apply_pending_with(p, false, steps).unwrap();
+    if let Pending::Open(i) = pending {
+        let i = boot::mark_opened(p, i, steps).unwrap();
+        boot::clean_up(p, &i, steps).unwrap();
+    }
+}
+
+/// A failed open from `swapped`, then the fresh process.
+fn roll_back(p: &Paths, steps: &mut Steps) {
+    let pending = Pending::Open(read_intent(p).unwrap());
+    boot::begin_roll_back_with(p, pending, "did not open", steps).unwrap();
+    boot::apply_pending_with(p, false, steps).unwrap();
+}
+
+/// The next boot of a rollback scenario: rolls back again when the crash left `swapped`.
+fn roll_back_next_boot(p: &Paths) -> Intent {
+    let mut pending = apply(p);
+    if pending.swapped() {
+        boot::begin_roll_back_with(p, pending, "did not open", &mut Steps::default()).unwrap();
+        pending = apply(p);
+    }
+    let i = opened(&pending).expect("an intent").clone();
+    assert_eq!(i.phase, Phase::RolledBack);
+    assert!(i.failed.is_some());
+    i
+}
+
+/// In a child process: runs `scenario` with an abort at the step `CRASH` names.
+fn crash_child(scenario: fn(&Paths, &mut Steps)) -> bool {
+    let Ok(spec) = std::env::var(CRASH) else {
+        return false;
+    };
+    let (n, dir) = spec.split_once(':').unwrap();
+    let mut steps = Steps {
+        at: Some((n.parse().unwrap(), Fault::Abort)),
+        n: 0,
+    };
+    scenario(&paths(Path::new(dir)), &mut steps);
+    true
+}
+
+/// Crashes a child after each step in turn, on a fresh fixture, then runs `next_boot`.
+fn crash_every_step(test: &str, fixture: fn(&Paths), next_boot: fn(&Paths)) {
+    use std::os::unix::process::ExitStatusExt as _;
+    for n in 0.. {
+        let dir = scratch();
+        let p = paths(&dir);
+        fixture(&p);
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &format!("backup::tests::{test}"), "--nocapture"])
+            .env(CRASH, format!("{n}:{}", dir.display()))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        let finished = status.success();
+        assert!(finished || status.signal() == Some(6), "step {n}: {status}");
+        next_boot(&p);
+        fs::remove_dir_all(dir).unwrap();
+        if finished {
+            assert!(n > 0);
+            break;
+        }
+    }
+}
+
+#[test]
+fn restore_survives_a_crash_after_every_step() {
+    if crash_child(boot_and_finish) {
+        return;
+    }
+    crash_every_step(
+        "restore_survives_a_crash_after_every_step",
+        |p| {
+            put(&p.live, "old");
+            put(&with(&p.live, "-wal"), "old-wal");
+            put(&p.undo(), "older");
+            put(&p.staged(), "new");
+            write_intent(p, &intent(Action::Restore, Phase::Requested));
+        },
+        |p| {
+            boot_and_finish(p, &mut Steps::default());
+            assert_eq!(text(&p.live).as_deref(), Some("new"));
+            assert!(gone(&with(&p.live, "-wal")) && gone(&with(&p.live, "-shm")));
+            assert_eq!(text(&p.undo()).as_deref(), Some("old"));
+            assert_eq!(text(&with(&p.undo(), "-wal")).as_deref(), Some("old-wal"));
+            for item in fs::read_dir(p.dir()).unwrap() {
+                assert_ne!(text(&item.unwrap().path()).as_deref(), Some("older"));
+            }
+            assert!(gone(&p.staged()) && gone(&p.intent()) && gone(&with(&p.intent(), ".tmp")));
+        },
+    );
+}
+
+#[test]
+fn restore_rollback_survives_a_crash_after_every_step() {
+    if crash_child(roll_back) {
+        return;
+    }
+    crash_every_step(
+        "restore_rollback_survives_a_crash_after_every_step",
+        |p| {
+            put(&p.live, "new");
+            put(&with(&p.live, "-wal"), "junk");
+            put(&with(&p.live, "-shm"), "junk");
+            put(&p.undo(), "old");
+            put(&with(&p.undo(), "-wal"), "old-wal");
+            write_intent(p, &intent(Action::Restore, Phase::Swapped));
+        },
+        |p| {
+            roll_back_next_boot(p);
+            assert_eq!(text(&p.live).as_deref(), Some("old"));
+            assert_eq!(text(&with(&p.live, "-wal")).as_deref(), Some("old-wal"));
+            assert!(gone(&with(&p.live, "-shm")));
+            assert!(no_set(&p.undo()) && gone(&p.staged()));
+        },
+    );
+}
+
+#[test]
+fn undo_survives_a_crash_after_every_step() {
+    if crash_child(boot_and_finish) {
+        return;
+    }
+    crash_every_step(
+        "undo_survives_a_crash_after_every_step",
+        |p| {
+            put(&p.live, "new");
+            put(&with(&p.live, "-wal"), "new-wal");
+            put(&p.undo(), "old");
+            put(&with(&p.undo(), "-wal"), "old-wal");
+            write_intent(p, &intent(Action::Undo, Phase::Requested));
+        },
+        |p| {
+            boot_and_finish(p, &mut Steps::default());
+            assert_eq!(text(&p.live).as_deref(), Some("old"));
+            assert_eq!(text(&with(&p.live, "-wal")).as_deref(), Some("old-wal"));
+            assert!(no_set(&p.undo()) && no_set(&p.undone()));
+            assert!(gone(&p.intent()) && gone(&with(&p.intent(), ".tmp")));
+        },
+    );
+}
+
+fn swapped_undo(p: &Paths) {
+    put(&p.live, "old");
+    put(&with(&p.live, "-wal"), "old-wal");
+    put(&p.undone(), "new");
+    put(&with(&p.undone(), "-wal"), "new-wal");
+    write_intent(p, &intent(Action::Undo, Phase::Swapped));
+}
+
+#[test]
+fn undo_rollback_survives_a_crash_after_every_step() {
+    if crash_child(roll_back) {
+        return;
+    }
+    crash_every_step(
+        "undo_rollback_survives_a_crash_after_every_step",
+        swapped_undo,
+        |p| {
+            roll_back_next_boot(p);
+            assert_eq!(text(&p.live).as_deref(), Some("new"));
+            assert_eq!(text(&with(&p.live, "-wal")).as_deref(), Some("new-wal"));
+            assert_eq!(text(&p.undo()).as_deref(), Some("old"));
+            assert_eq!(text(&with(&p.undo(), "-wal")).as_deref(), Some("old-wal"));
+            assert!(no_set(&p.undone()));
+        },
+    );
+}
+
+#[test]
+fn interrupted_undo_cleanup_never_rolls_back() {
+    fn finish_files(p: &Paths, steps: &mut Steps) {
+        let i = boot::mark_opened(p, read_intent(p).unwrap(), steps).unwrap();
+        boot::clean_up(p, &i, steps).unwrap();
+    }
+    if crash_child(finish_files) {
+        return;
+    }
+    crash_every_step(
+        "interrupted_undo_cleanup_never_rolls_back",
+        swapped_undo,
+        |p| match read_intent(p).map(|i| i.phase) {
+            Some(Phase::Swapped) => {
+                assert_eq!(text(&p.undone()).as_deref(), Some("new"));
+                assert_eq!(text(&with(&p.undone(), "-wal")).as_deref(), Some("new-wal"));
+                roll_back_next_boot(p);
+                assert_eq!(text(&p.live).as_deref(), Some("new"));
+                assert_eq!(text(&with(&p.live, "-wal")).as_deref(), Some("new-wal"));
+            }
+            Some(Phase::Opened) => {
+                let pending = apply(p);
+                assert!(!pending.swapped());
+                assert!(
+                    boot::begin_roll_back_with(p, pending, "did not open", &mut Steps::default())
+                        .is_err()
+                );
+                assert_eq!(text(&p.live).as_deref(), Some("old"));
+                assert_eq!(text(&with(&p.live, "-wal")).as_deref(), Some("old-wal"));
+                boot_and_finish(p, &mut Steps::default());
+                assert!(no_set(&p.undone()) && gone(&p.intent()));
+            }
+            other => {
+                assert_eq!(other, None);
+                assert!(opened(&apply(p)).is_none());
+                assert!(no_set(&p.undone()));
+                assert_eq!(text(&p.live).as_deref(), Some("old"));
+                assert_eq!(text(&with(&p.live, "-wal")).as_deref(), Some("old-wal"));
+            }
+        },
+    );
+}
+
+#[test]
+fn staging_commit_handles_a_failure_at_every_step() {
+    let i = intent(Action::Restore, Phase::Requested);
+    for n in 0.. {
+        let dir = scratch();
+        let p = paths(&dir);
+        put(&p.live, "old");
+        put(&p.undo(), "older");
+        let (part, mut file) = Part::create(p.part()).unwrap();
+        std::io::Write::write_all(&mut file, b"new").unwrap();
+        drop(file);
+        let mut steps = Steps {
+            at: Some((n, Fault::Error)),
+            n: 0,
+        };
+        let result = boot::place_staged(&p, part, &mut steps)
+            .map_err(WriteError::Unpublished)
+            .and_then(|staged| boot::commit(&p, staged, &i, &mut steps));
+        assert_eq!(text(&p.live).as_deref(), Some("old"));
+        assert_eq!(text(&p.undo()).as_deref(), Some("older"));
+        assert!(gone(&p.intent()) || text(&p.staged()).as_deref() == Some("new"));
+        let done = match result {
+            Ok(()) => true,
+            Err(WriteError::Unpublished(_)) => {
+                assert!(gone(&p.intent()) && gone(&p.staged()) && gone(&p.part()));
+                assert!(gone(&with(&p.intent(), ".tmp")));
+                false
+            }
+            Err(WriteError::NotDurable(_)) => {
+                assert!(!gone(&p.intent()) && !gone(&p.staged()));
+                false
+            }
+        };
+        fs::remove_dir_all(dir).unwrap();
+        if done {
+            assert!(n > 0);
+            break;
+        }
+    }
+}
+
+#[test]
+fn a_stale_intent_tmp_does_not_block_boot() {
+    let dir = scratch();
+    let p = paths(&dir);
+    put(&p.live, "old");
+    put(&p.staged(), "new");
+    write_intent(&p, &intent(Action::Restore, Phase::AsideCleared));
+    let tmp = with(&p.intent(), ".tmp");
+    put(&tmp, "garbage");
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o644)).unwrap();
+    let pending = apply(&p);
+    assert!(pending.swapped());
+    assert_eq!(mode(&p.intent()), 0o600);
+    assert!(gone(&tmp));
+    assert_eq!(text(&p.live).as_deref(), Some("new"));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+fn snapshot(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut all: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .map(|item| {
+            let path = item.unwrap().path();
+            let bytes = fs::read(&path).unwrap();
+            (path, bytes)
+        })
+        .collect();
+    all.sort();
+    all
+}
+
+#[test]
+fn apply_pending_refuses_states_it_cannot_explain() {
+    type Setup = fn(&Paths);
+    let cases: [(&str, Setup, bool); 6] = [
+        (
+            "live-aside with S, L and L-wal",
+            |p| {
+                put(&p.staged(), "new");
+                put(&p.live, "old");
+                put(&with(&p.live, "-wal"), "old-wal");
+                write_intent(p, &intent(Action::Restore, Phase::LiveAside));
+            },
+            false,
+        ),
+        (
+            "restore without S",
+            |p| {
+                put(&p.live, "old");
+                write_intent(p, &intent(Action::Restore, Phase::Requested));
+            },
+            false,
+        ),
+        (
+            "undo without U",
+            |p| {
+                put(&p.live, "new");
+                write_intent(p, &intent(Action::Undo, Phase::Requested));
+            },
+            false,
+        ),
+        (
+            "move conflict",
+            |p| {
+                put(&p.staged(), "new");
+                put(&p.live, "old");
+                put(&with(&p.live, "-shm"), "old-shm");
+                put(&with(&p.live, "-wal"), "old-wal");
+                put(&with(&p.undo(), "-wal"), "older-wal");
+                write_intent(p, &intent(Action::Restore, Phase::AsideCleared));
+            },
+            false,
+        ),
+        (
+            "unknown phase",
+            |p| {
+                put(&p.live, "old");
+                put(&p.staged(), "new");
+                let json = serde_json::to_string(&intent(Action::Restore, Phase::Requested))
+                    .unwrap()
+                    .replace("requested", "bogus");
+                put(&p.intent(), &json);
+            },
+            false,
+        ),
+        (
+            "intent on PostgreSQL",
+            |p| {
+                put(&p.live, "old");
+                put(&p.staged(), "new");
+                write_intent(p, &intent(Action::Restore, Phase::Requested));
+            },
+            true,
+        ),
+    ];
+    for (case, setup, postgres) in cases {
+        let dir = scratch();
+        let p = paths(&dir);
+        setup(&p);
+        let before = snapshot(&dir);
+        let result = boot::apply_pending_with(&p, postgres, &mut Steps::default());
+        assert!(result.is_err(), "{case}");
+        assert_eq!(snapshot(&dir), before, "{case}");
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn leftovers_without_an_intent_are_removed() {
+    let dir = scratch();
+    let p = paths(&dir);
+    put(&p.live, "old");
+    put(&p.staged(), "new");
+    put(&p.part(), "half");
+    put(&with(&p.intent(), ".tmp"), "{");
+    assert!(opened(&apply(&p)).is_none());
+    assert!(gone(&p.staged()) && gone(&p.part()) && gone(&with(&p.intent(), ".tmp")));
+    assert_eq!(text(&p.live).as_deref(), Some("old"));
     fs::remove_dir_all(dir).unwrap();
 }

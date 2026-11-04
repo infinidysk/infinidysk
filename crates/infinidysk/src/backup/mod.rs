@@ -4,21 +4,23 @@
 use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use infinidysk_db::{Db, Error as DbError, check_file, latest_sqlite_schema, now_ms};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use utoipa::ToSchema;
+use uuid::Uuid;
 
 use crate::config::{ConfigStore, MaintenanceJob, Settings};
 use crate::maintenance::{MaintenanceRun, RunOutcome, Stop, Tracker};
 
 pub mod api;
+pub mod boot;
 mod files;
 
 use files::{Entry, Manifest, Part};
@@ -30,6 +32,9 @@ const NOTE_MAX: usize = 500;
 const PROGRESS_EVERY: Duration = Duration::from_secs(1);
 pub const POSTGRES: &str = "Your database is PostgreSQL. Back it up with pg_dump; infinidysk backs up SQLite databases only.";
 const CHANGED: &str = "The file changed since it was made (checksum differs); it may be damaged.";
+const STAGED_CHANGED: &str =
+    "The backup file changed since it was made (checksum differs); it may be damaged.";
+const UNFINISHED: &str = "A restore or undo has not finished; restart infinidysk.";
 
 pub struct Parts {
     pub db: Db,
@@ -49,8 +54,66 @@ pub struct Backups {
     manifests: tokio::sync::Mutex<()>,
     /// `created_ms` of the newest finished backup, 0 for none; for the stale warning.
     newest_ms: AtomicI64,
-    /// The last verify that failed since startup, for the panel.
+    /// The last verify, restore or undo that failed since startup, for the panel.
     task: Mutex<Option<TaskResult>>,
+    /// An upload is being written; one at a time.
+    uploading: AtomicBool,
+    /// The restore or undo of this run.
+    attempt: Mutex<Option<Attempt>>,
+}
+
+/// Clears [`Backups::uploading`] on drop.
+struct Flag<'a>(&'a AtomicBool);
+
+impl Drop for Flag<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+/// The last restore, from config key `backup.last_restore`.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct LastRestore {
+    pub attempt: Uuid,
+    pub backup: String,
+    pub backup_created_ms: Option<i64>,
+    pub at_ms: i64,
+    /// Why the restored database did not open; the previous one is back.
+    #[serde(default)]
+    pub failed: Option<String>,
+    /// Why an undo did not open; the restored database stayed.
+    #[serde(default)]
+    pub undo_failed: Option<String>,
+}
+
+/// The database a restore replaced, kept for undo.
+#[derive(Serialize, ToSchema)]
+pub struct UndoView {
+    size_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AttemptAction {
+    Restore,
+    Undo,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AttemptState {
+    Staging,
+    Restarting,
+    Failed,
+}
+
+/// A restore or undo started in this run.
+#[derive(Clone, Serialize, ToSchema)]
+pub struct Attempt {
+    id: Uuid,
+    action: AttemptAction,
+    state: AttemptState,
+    reason: Option<String>,
 }
 
 /// The copy the backup job wrote.
@@ -89,6 +152,11 @@ pub struct BackupsView {
     task: Option<TaskResult>,
     /// 1.x backup folders, when any exist.
     legacy: Option<LegacyView>,
+    /// The database the last restore replaced, when it is still kept.
+    undo: Option<UndoView>,
+    last_restore: Option<LastRestore>,
+    /// The restore or undo of this run.
+    attempt: Option<Attempt>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -116,6 +184,8 @@ pub struct BackupView {
 #[serde(rename_all = "snake_case")]
 pub enum TaskAction {
     Verify,
+    Restore,
+    Undo,
 }
 
 /// A backup task that failed.
@@ -158,6 +228,15 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// The JSON in config key `backup.last_restore`.
+async fn last_restore(db: &Db) -> Option<LastRestore> {
+    let rows = db.config().await.ok()?;
+    let (_, json) = rows
+        .into_iter()
+        .find(|(k, _)| k == boot::LAST_RESTORE_KEY)?;
+    serde_json::from_str(&json).ok()
+}
+
 impl Backups {
     /// Deletes leftover part files and manifests whose file is gone; reads `newest_ms`.
     pub async fn new(parts: Parts) -> Self {
@@ -166,6 +245,8 @@ impl Backups {
             manifests: tokio::sync::Mutex::new(()),
             newest_ms: AtomicI64::new(0),
             task: Mutex::new(None),
+            uploading: AtomicBool::new(false),
+            attempt: Mutex::new(None),
         };
         if let Ok(dir) = this.resolve_dir().await {
             let found = files::blocking(move || {
@@ -259,6 +340,9 @@ impl Backups {
                 backups: Vec::new(),
                 task: None,
                 legacy: None,
+                undo: None,
+                last_restore: None,
+                attempt: None,
             };
         }
         let (dir, mut dir_error) = match self.dir().await {
@@ -269,17 +353,19 @@ impl Backups {
             Ok(Some(s)) => s.size_bytes.saturating_sub(s.free_bytes),
             _ => 0,
         };
-        let (listed, free_bytes, legacy) = {
+        let (listed, free_bytes, legacy, undo) = {
             let (dir, config_dir) = (dir.clone(), self.parts.config_dir.clone());
+            let paths = self.paths();
             tokio::task::spawn_blocking(move || {
                 (
                     files::entries(&dir),
                     infinidysk_stream::free_space(&dir),
                     files::legacy(&config_dir),
+                    paths.and_then(|p| undo_size(&p)),
                 )
             })
             .await
-            .unwrap_or_else(|e| (Err(io::Error::other(e)), None, None))
+            .unwrap_or_else(|e| (Err(io::Error::other(e)), None, None, None))
         };
         let backups = match listed {
             Ok(entries) => entries.iter().map(BackupView::of).collect(),
@@ -288,6 +374,7 @@ impl Backups {
                 Vec::new()
             }
         };
+        let last_restore = last_restore(&self.parts.db).await;
         BackupsView {
             unavailable_reason: None,
             dir: dir.display().to_string(),
@@ -298,7 +385,144 @@ impl Backups {
             backups,
             task: lock(&self.task).clone(),
             legacy,
+            undo: undo.map(|size_bytes| UndoView { size_bytes }),
+            last_restore,
+            attempt: lock(&self.attempt).clone(),
         }
+    }
+
+    /// The restore files; `None` on PostgreSQL.
+    fn paths(&self) -> Option<boot::Paths> {
+        self.parts.live.clone().map(|live| boot::Paths { live })
+    }
+
+    fn set_attempt(
+        &self,
+        id: Uuid,
+        action: AttemptAction,
+        state: AttemptState,
+        reason: Option<String>,
+    ) {
+        *lock(&self.attempt) = Some(Attempt {
+            id,
+            action,
+            state,
+            reason,
+        });
+    }
+
+    /// Marks the upload running; `None` when one already is.
+    fn start_upload(&self) -> Option<Flag<'_>> {
+        self.uploading
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Flag(&self.uploading))
+    }
+
+    /// Staging steps 1–7: copies, checks and stages `entry`, then commits the intent.
+    /// `Err` is for people.
+    async fn stage_restore(
+        &self,
+        dir: &Path,
+        entry: Entry,
+        attempt: Uuid,
+        cancel: &CancellationToken,
+    ) -> Result<(), String> {
+        let paths = self.paths().ok_or(POSTGRES)?;
+        if paths.intent().exists() {
+            return Err(UNFINISHED.to_owned());
+        }
+        let tracker = &self.parts.tracker;
+        tracker.step("Restoring: copying the backup", Some(entry.size_bytes));
+        let progress = Arc::new(AtomicU64::new(0));
+        let job = {
+            let (src, part, cancel, progress) = (
+                entry.path.clone(),
+                paths.part(),
+                cancel.clone(),
+                Arc::clone(&progress),
+            );
+            files::blocking(move || {
+                files::remove(&part)?;
+                files::copy_to_part(&src, part, &mut |done| {
+                    progress.store(done, Ordering::Relaxed);
+                    !cancel.is_cancelled()
+                })
+            })
+        };
+        let (part, sha) = match self.tracked(job, || progress.load(Ordering::Relaxed)).await {
+            Ok(done) => done,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => return Err("Cancelled".to_owned()),
+            Err(e) => return Err(format!("Could not copy the backup: {e}")),
+        };
+        let sha256 = files::hex(&sha);
+        let saved = entry.manifest.as_ref().and_then(|m| m.sha256.clone());
+        if saved.is_some_and(|s| s != sha256) {
+            return Err(STAGED_CHANGED.to_owned());
+        }
+        if let Ok(meta) = std::fs::metadata(&paths.live) {
+            use std::os::unix::fs::MetadataExt as _;
+            files::own(part.path(), (meta.uid(), meta.gid()));
+        }
+        tracker.step("Restoring: checking the copy", None);
+        let stop = {
+            let cancel = cancel.clone();
+            move || cancel.is_cancelled()
+        };
+        let check = match check_file(part.path(), stop).await {
+            Ok(check) => check,
+            Err(DbError::Interrupted) => return Err("Cancelled".to_owned()),
+            Err(e) => return Err(format!("The backup failed its check: {e}")),
+        };
+        if let Some(failure) = check.failure() {
+            return Err(format!("The backup failed its check: {failure}"));
+        }
+        let staged = {
+            let paths = paths.clone();
+            files::blocking(move || boot::place_staged(&paths, part, &mut files::Steps::default()))
+                .await
+                .map_err(|e| format!("Could not stage the backup: {e}"))?
+        };
+        let name = entry.name.clone();
+        let shown = sha256.clone();
+        if let Err(error) = files::update_manifest(&self.manifests, dir, &name, move |m| {
+            m.verified_ms = Some(now_ms());
+            m.verify_error = None;
+            m.sha256.get_or_insert(shown);
+            m.schema_version = Some(check.schema_version);
+            m.items = Some(check.items);
+        })
+        .await
+        {
+            warn!(backup = %name, reason = %error, "could not record the check on the backup");
+        }
+        let intent = boot::Intent {
+            format: boot::FORMAT,
+            attempt,
+            action: boot::Action::Restore,
+            phase: boot::Phase::Requested,
+            backup: Some(name),
+            backup_created_ms: Some(entry.created_ms()),
+            swapped_ms: None,
+            failed: None,
+        };
+        commit_intent(paths, Some(staged), intent).await
+    }
+
+    /// Writes the undo intent. `Err` is for people.
+    async fn stage_undo(&self, attempt: Uuid) -> Result<(), String> {
+        let paths = self.paths().ok_or(POSTGRES)?;
+        let intent = boot::Intent {
+            format: boot::FORMAT,
+            attempt,
+            action: boot::Action::Undo,
+            phase: boot::Phase::Requested,
+            backup: None,
+            backup_created_ms: None,
+            swapped_ms: None,
+            failed: None,
+        };
+        commit_intent(paths, None, intent).await
     }
 
     /// Runs `job` while copying `progress()` into the live view every second.
@@ -530,6 +754,53 @@ impl Backups {
         let newest = self.newest_ms.load(Ordering::Relaxed);
         let age = now_ms() - newest;
         (newest > 0 && age > STALE_AFTER_MS).then(|| format!("No backup in {} days", age / DAY_MS))
+    }
+}
+
+/// Total size of the `U` set; `None` when there is no undo copy or a restore is waiting.
+fn undo_size(paths: &boot::Paths) -> Option<u64> {
+    let undo = paths.undo();
+    if !undo.exists() || paths.intent().exists() {
+        return None;
+    }
+    Some(
+        ["", "-wal", "-shm", "-journal"]
+            .iter()
+            .filter_map(|s| std::fs::metadata(files::with(&undo, s)).ok())
+            .map(|m| m.len())
+            .sum(),
+    )
+}
+
+/// Staging steps 6–7 off the runtime. `Err` is for people.
+async fn commit_intent(
+    paths: boot::Paths,
+    staged: Option<Part>,
+    intent: boot::Intent,
+) -> Result<(), String> {
+    let i = paths.intent();
+    let done = tokio::task::spawn_blocking(move || {
+        let mut steps = files::Steps::default();
+        if let Some(staged) = staged {
+            boot::commit(&paths, staged, &intent, &mut steps)
+        } else {
+            let bytes = serde_json::to_vec_pretty(&intent)
+                .map_err(|e| files::WriteError::Unpublished(io::Error::other(e)))?;
+            files::write_atomic(&paths.intent(), &bytes, &mut steps)
+        }
+    })
+    .await
+    .map_err(|e| files::WriteError::Unpublished(io::Error::other(e)));
+    match done.and_then(|r| r) {
+        Ok(()) => Ok(()),
+        Err(files::WriteError::Unpublished(e)) => {
+            Err(format!("Could not save the restore request: {e}"))
+        }
+        Err(files::WriteError::NotDurable(e)) => Err(format!(
+            "The restore is ready but could not be saved safely: {e}. Restart infinidysk to \
+             apply it, or delete {} to drop it.",
+            i.display()
+        )),
     }
 }
 

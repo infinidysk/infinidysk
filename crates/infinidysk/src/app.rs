@@ -134,7 +134,8 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Exit {
     Stopped,
-    /// The admin API asked for a restart, to apply settings read only at startup.
+    /// The admin API asked for a restart, to apply settings read only at startup or a
+    /// restore, or a restored database did not open and boot rolls it back.
     Restart,
 }
 
@@ -146,9 +147,18 @@ pub async fn serve(
     vars: impl IntoIterator<Item = (String, String)>,
     cancel: CancellationToken,
 ) -> anyhow::Result<Exit> {
-    let db = Db::connect(&boot.database_url)
-        .await
-        .context("opening the database")?;
+    let pending = crate::backup::boot::apply_pending(boot)?;
+    let db = match Db::connect(&boot.database_url).await {
+        Ok(db) => db,
+        Err(error) if pending.swapped() => {
+            let reason = format!("{:#}", anyhow::Error::from(error));
+            warn!(%reason, "the restored database did not open; putting the previous one back");
+            crate::backup::boot::begin_roll_back(boot, pending, &reason)?;
+            return Ok(Exit::Restart);
+        }
+        Err(error) => return Err(anyhow::Error::from(error).context("opening the database")),
+    };
+    crate::backup::boot::finish(&db, boot, pending).await?;
     let booted = crate::database::serve_cutover(
         listener,
         db,

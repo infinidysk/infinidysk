@@ -176,6 +176,11 @@ pub struct Admin {
         backup::api::delete_backup,
         backup::api::post_verify,
         backup::api::delete_legacy,
+        backup::api::post_restore,
+        backup::api::post_undo,
+        backup::api::delete_undo,
+        backup::api::delete_last_restore,
+        backup::api::put_upload,
     ),
     modifiers(&Security),
     security(("session" = []), ("api_key" = []))
@@ -339,6 +344,18 @@ pub fn router(admin: Arc<Admin>, auth: Arc<Auth>) -> Router {
         .route("/api/v1/backups", get(backup::api::get_backups))
         .route("/api/v1/backups/legacy", delete(backup::api::delete_legacy))
         .route(
+            "/api/v1/backups/undo",
+            post(backup::api::post_undo).delete(backup::api::delete_undo),
+        )
+        .route(
+            "/api/v1/backups/last-restore",
+            delete(backup::api::delete_last_restore),
+        )
+        .route(
+            "/api/v1/backups/upload",
+            put(backup::api::put_upload).layer(DefaultBodyLimit::disable()),
+        )
+        .route(
             "/api/v1/backups/{name}",
             axum::routing::patch(backup::api::patch_backup).delete(backup::api::delete_backup),
         )
@@ -346,6 +363,10 @@ pub fn router(admin: Arc<Admin>, auth: Arc<Auth>) -> Router {
         .route(
             "/api/v1/backups/{name}/verify",
             post(backup::api::post_verify),
+        )
+        .route(
+            "/api/v1/backups/{name}/restore",
+            post(backup::api::post_restore),
         )
         .route_layer(axum::middleware::from_fn_with_state(auth, auth::require))
         .route("/api/v1/upgrade/status", get(upgrade::get_upgrade_status))
@@ -374,6 +395,8 @@ pub enum Fail {
     NotFound,
     Conflict(String),
     Unavailable(String),
+    /// A server-side failure the caller should read.
+    Failed(String),
     Internal,
 }
 
@@ -416,6 +439,7 @@ impl IntoResponse for Fail {
             Self::NotFound => (StatusCode::NOT_FOUND, "not found".to_owned()),
             Self::Conflict(msg) => (StatusCode::CONFLICT, msg),
             Self::Unavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
+            Self::Failed(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal error".to_owned(),
