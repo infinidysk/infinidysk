@@ -2346,6 +2346,42 @@ mod tests {
     }
 
     #[test]
+    fn cgroup_read_splits_memory_into_app_and_kernel_cache() {
+        let dir = std::env::temp_dir().join(format!("infinidysk-cgroup-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("temp dir is writable");
+        let write = |name: &str, text: &str| {
+            fs::write(dir.join(name), text).expect("temp dir is writable");
+        };
+        write("cpu.stat", "usage_usec 42\n");
+        write("cpu.max", "max 100000\n");
+        write("memory.max", "max\n");
+        write(
+            "memory.stat",
+            "anon 100\nfile 2048\nslab_reclaimable 512\nslab_unreclaimable 64\n",
+        );
+        let cgroup = Cgroup {
+            dir: dir.clone(),
+            host_memory: 1 << 40,
+        };
+
+        write("memory.current", "4096\n");
+        let (usec, r) = cgroup.read().expect("all cgroup files exist");
+        assert_eq!(usec, 42);
+        assert_eq!(r.memory_kernel_cache_bytes, 2560);
+        assert_eq!(r.memory_process_bytes, 1536);
+        assert_eq!(r.memory_limit_bytes, 1 << 40);
+        assert!(!r.memory_limited);
+
+        // The stat can briefly exceed memory.current; the cache is clamped.
+        write("memory.current", "2000\n");
+        let (_, r) = cgroup.read().expect("all cgroup files exist");
+        assert_eq!(r.memory_kernel_cache_bytes, 2000);
+        assert_eq!(r.memory_process_bytes, 0);
+
+        fs::remove_dir_all(&dir).expect("temp dir is removable");
+    }
+
+    #[test]
     fn a_bucket_splits_provider_traffic_by_workload() {
         let (ok, missing) = (Outcome::Retrieved.label(), Outcome::NotFound.label());
         let mut point = Point::default();
