@@ -186,6 +186,7 @@ pub async fn delete_backup(
     files::delete(&admin.backups.manifests, &dir, &name)
         .await
         .map_err(|e| io_fail(&e))?;
+    admin.backups.refresh_newest(dir).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

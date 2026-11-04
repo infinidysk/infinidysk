@@ -255,19 +255,20 @@ impl Backups {
             })
             .await;
             match found {
-                Ok(entries) => {
-                    let newest = entries
-                        .iter()
-                        .filter(|e| matches!(e.kind(), Kind::Scheduled | Kind::Manual))
-                        .map(Entry::created_ms)
-                        .max()
-                        .unwrap_or(0);
-                    this.newest_ms.store(newest, Ordering::Relaxed);
-                }
+                Ok(entries) => this.newest_ms.store(newest(&entries), Ordering::Relaxed),
                 Err(error) => warn!(reason = %error, "could not read the backup folder"),
             }
         }
         this
+    }
+
+    /// Re-reads `newest_ms` from the folder after a delete; under the lock so a
+    /// backup that publishes meanwhile is not lost.
+    pub(super) async fn refresh_newest(&self, dir: PathBuf) {
+        let _held = self.manifests.lock().await;
+        if let Ok(entries) = files::blocking(move || files::entries(&dir)).await {
+            self.newest_ms.store(newest(&entries), Ordering::Relaxed);
+        }
     }
 
     async fn settings(&self) -> Settings {
@@ -356,7 +357,9 @@ impl Backups {
         let (listed, free_bytes, legacy, undo) = {
             let (dir, config_dir) = (dir.clone(), self.parts.config_dir.clone());
             let paths = self.paths();
-            tokio::task::spawn_blocking(move || {
+            // Held so `newest_ms` below matches the folder even if a backup publishes now.
+            let _held = self.manifests.lock().await;
+            let found = tokio::task::spawn_blocking(move || {
                 (
                     files::entries(&dir),
                     infinidysk_stream::free_space(&dir),
@@ -365,7 +368,11 @@ impl Backups {
                 )
             })
             .await
-            .unwrap_or_else(|e| (Err(io::Error::other(e)), None, None, None))
+            .unwrap_or_else(|e| (Err(io::Error::other(e)), None, None, None));
+            if let Ok(entries) = &found.0 {
+                self.newest_ms.store(newest(entries), Ordering::Relaxed);
+            }
+            found
         };
         let backups = match listed {
             Ok(entries) => entries.iter().map(BackupView::of).collect(),
@@ -648,7 +655,7 @@ impl Backups {
         self.newest_ms.fetch_max(created_ms, Ordering::Relaxed);
         live.step("Removing old backups", None);
         let keep = self.settings().await.maintenance.backup.keep;
-        let (pruned, pruned_bytes) = files::prune(&self.manifests, &dir, keep.into())
+        let (pruned, pruned_bytes) = files::prune(&self.manifests, &dir, keep.into(), &name)
             .await
             .map_err(|e| {
                 Stop::Reason(format!(
@@ -755,6 +762,16 @@ impl Backups {
         let age = now_ms() - newest;
         (newest > 0 && age > STALE_AFTER_MS).then(|| format!("No backup in {} days", age / DAY_MS))
     }
+}
+
+/// The newest scheduled or manual backup's `created_ms`; 0 when there is none.
+fn newest(entries: &[Entry]) -> i64 {
+    entries
+        .iter()
+        .filter(|e| matches!(e.kind(), Kind::Scheduled | Kind::Manual))
+        .map(Entry::created_ms)
+        .max()
+        .unwrap_or(0)
 }
 
 /// Total size of the `U` set; `None` when there is no undo copy or a restore is waiting.

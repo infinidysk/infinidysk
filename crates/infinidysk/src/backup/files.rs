@@ -521,18 +521,23 @@ pub(super) async fn delete(
 }
 
 /// Lists the folder under the lock, picks `prune_list(.., keep)` from those fresh
-/// manifests, and deletes each file and manifest before releasing it. Returns (count, bytes).
+/// manifests, and deletes each file and manifest before releasing it. Never deletes
+/// `written`, the backup just made, even when the clock went back. Returns (count, bytes).
 pub(super) async fn prune(
     lock: &tokio::sync::Mutex<()>,
     dir: &Path,
     keep: usize,
+    written: &str,
 ) -> io::Result<(u64, u64)> {
     let _held = lock.lock().await;
-    let dir = dir.to_owned();
+    let (dir, written) = (dir.to_owned(), written.to_owned());
     blocking(move || {
         let entries = entries(&dir)?;
         let (mut count, mut bytes) = (0, 0);
         for entry in prune_list(&entries, keep) {
+            if entry.name == written {
+                continue;
+            }
             fs::remove_file(&entry.path)?;
             remove(&manifest_path(&dir, &entry.name))?;
             count += 1;

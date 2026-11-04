@@ -234,6 +234,22 @@ fn pinned_in_manifest(dir: &Path, name: &str) -> bool {
     serde_json::from_slice::<Manifest>(&bytes).unwrap().pinned
 }
 
+#[tokio::test]
+async fn prune_keeps_the_new_backup_after_the_clock_went_back() {
+    let lock = tokio::sync::Mutex::new(());
+    let dir = scratch();
+    three_manual(&dir, &lock).await;
+    let part = finished(&dir, "m0.sqlite", b"data");
+    publish(&lock, &dir, part, "m0.sqlite", &manifest(Kind::Manual, 0))
+        .await
+        .unwrap();
+    prune(&lock, &dir, 1, "m0.sqlite").await.unwrap();
+    assert!(dir.join("m0.sqlite").exists());
+    assert!(dir.join("m3.sqlite").exists());
+    assert!(!dir.join("m2.sqlite").exists());
+    fs::remove_dir_all(dir).unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_pin_is_never_lost_to_pruning() {
     let lock = Arc::new(tokio::sync::Mutex::new(()));
@@ -242,7 +258,7 @@ async fn a_pin_is_never_lost_to_pruning() {
     update_manifest(&lock, &dir, "m1.sqlite", |m| m.pinned = true)
         .await
         .unwrap();
-    prune(&lock, &dir, 1).await.unwrap();
+    prune(&lock, &dir, 1, "m3.sqlite").await.unwrap();
     assert!(dir.join("m1.sqlite").exists());
     assert!(dir.join("m3.sqlite").exists());
     assert!(!dir.join("m2.sqlite").exists());
@@ -250,7 +266,7 @@ async fn a_pin_is_never_lost_to_pruning() {
 
     let dir = scratch();
     three_manual(&dir, &lock).await;
-    prune(&lock, &dir, 1).await.unwrap();
+    prune(&lock, &dir, 1, "m3.sqlite").await.unwrap();
     let late = update_manifest(&lock, &dir, "m1.sqlite", |m| m.pinned = true).await;
     assert_eq!(late.unwrap_err().kind(), std::io::ErrorKind::NotFound);
     fs::remove_dir_all(dir).unwrap();
@@ -266,7 +282,7 @@ async fn a_pin_is_never_lost_to_pruning() {
         };
         let pruned = {
             let (lock, dir) = (Arc::clone(&lock), Arc::clone(&dir));
-            tokio::spawn(async move { prune(&lock, &dir, 1).await })
+            tokio::spawn(async move { prune(&lock, &dir, 1, "m3.sqlite").await })
         };
         let (pin, pruned) = tokio::join!(pin, pruned);
         pruned.unwrap().unwrap();
