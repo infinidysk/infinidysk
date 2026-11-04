@@ -5,6 +5,7 @@ mod apply;
 mod csharp;
 mod memorypack;
 mod password;
+pub mod postgres;
 mod settings;
 
 use std::fmt;
@@ -33,6 +34,10 @@ pub use crate::settings::{ArrInstance, ArrKind, Config, Provider, ProviderKind};
 /// The oldest C# schema imported (v1.3.0): the import reads every `DavItems` column up
 /// to `HealthRepairPending`.
 const OLDEST_MIGRATION: &str = "20260824160000";
+/// Written by 1.x (v1.3.0 and later) into its `/config` at every start.
+const CONTRACT: &str = "db-contract.json";
+const PROVIDER_VAR: &str = "DATABASE_PROVIDER";
+const CONNECTION_VAR: &str = "DATABASE_CONNECTION_STRING";
 const SHOWN_FAILURES: usize = 20;
 const PROGRESS_EVERY: Duration = Duration::from_secs(1);
 /// Progress reports between log lines while checking file metadata.
@@ -50,6 +55,79 @@ pub enum Error {
     Write(#[from] infinidysk_db::Error),
     #[error("encoding an NZB: {0}")]
     Blob(#[from] infinidysk_core::blob::Error),
+    #[error(
+        "DATABASE_PROVIDER is postgres, but DATABASE_CONNECTION_STRING is not set; set it as it was for 1.x"
+    )]
+    NoConnectionString,
+    #[error(
+        "{} says the 1.x install kept its data in PostgreSQL, but DATABASE_PROVIDER and \
+         DATABASE_CONNECTION_STRING are not set; set them as they were for 1.x, or delete that \
+         file to start empty", .0.display()
+    )]
+    PostgresNotConfigured(PathBuf),
+    #[error(transparent)]
+    ConnectionString(#[from] postgres::ConnectionError),
+    #[error("the 1.x PostgreSQL database did not answer within 15 s")]
+    ConnectTimeout,
+    #[error("could not connect to the 1.x PostgreSQL database: {0}")]
+    Connect(#[source] sqlx::Error),
+    #[error("the 1.x PostgreSQL database has no {0} table; check DATABASE_CONNECTION_STRING")]
+    MissingTable(&'static str),
+    #[error("the copy of the 1.x PostgreSQL database: {0}")]
+    Stage(#[source] io::Error),
+}
+
+/// Where a 1.x install keeps its database. Holds a connection string: no `Debug`.
+pub enum Source {
+    /// No 1.x install here.
+    None,
+    /// `db.sqlite` in its `/config`.
+    Sqlite,
+    /// PostgreSQL, with 1.x's `DATABASE_CONNECTION_STRING`.
+    Postgres(String),
+}
+
+/// How 1.x chose its database: `DATABASE_PROVIDER` when set, else the provider in
+/// `db-contract.json`, else `db.sqlite` when present. `vars` is the process environment.
+pub fn source(config: &Path, vars: &[(String, String)]) -> Result<Source, Error> {
+    let var = |name: &str| {
+        vars.iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.trim())
+            .filter(|v| !v.is_empty())
+    };
+    let provider = var(PROVIDER_VAR)
+        .map(str::to_ascii_lowercase)
+        .or_else(|| contract_provider(config));
+    match provider.as_deref() {
+        Some("postgres" | "postgresql") => match var(CONNECTION_VAR) {
+            Some(connection) => Ok(Source::Postgres(connection.to_owned())),
+            None if var(PROVIDER_VAR).is_some() => Err(Error::NoConnectionString),
+            None => Err(Error::PostgresNotConfigured(config.join(CONTRACT))),
+        },
+        _ if config.join("db.sqlite").is_file() => Ok(Source::Sqlite),
+        _ => Ok(Source::None),
+    }
+}
+
+/// The lowercased `provider` in `db-contract.json`; `None` when it is missing or unreadable.
+fn contract_provider(config: &Path) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Contract {
+        provider: String,
+    }
+    let path = config.join(CONTRACT);
+    if !path.is_file() {
+        return None;
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(
+        serde_json::from_str::<Contract>(&text)
+            .ok()?
+            .provider
+            .trim()
+            .to_ascii_lowercase(),
+    )
 }
 
 /// What a C# `/config` holds, and what importing it involves.
@@ -96,9 +174,15 @@ impl Survey {
     }
 }
 
-/// Opens the C# database in `config` read-only.
+/// Opens the C# database in `config` read-only: the copy of a PostgreSQL install while
+/// one exists, else `db.sqlite`.
 async fn open(config: &Path) -> Result<SqliteConnection, Error> {
-    let path = config.join("db.sqlite");
+    let staged = config.join(postgres::STAGED);
+    let path = if staged.is_file() {
+        staged
+    } else {
+        config.join("db.sqlite")
+    };
     if !path.is_file() {
         return Err(Error::NoDatabase(path));
     }
@@ -512,6 +596,63 @@ mod tests {
         assert!(updates.contains(&Progress::at(Stage::Checking, 2, 3)));
         assert_eq!(updates.last(), Some(&Progress::at(Stage::Checking, 3, 3)));
         assert!(updates.windows(2).all(|pair| pair[0].done <= pair[1].done));
+    }
+
+    #[test]
+    fn the_install_source_follows_how_1x_chose_its_database() {
+        let case = |contract: Option<&str>, sqlite: bool, vars: &[(&str, &str)]| {
+            let dir = std::env::temp_dir().join(format!("infinidysk-source-{}", Uuid::now_v7()));
+            std::fs::create_dir_all(&dir).unwrap();
+            if let Some(contract) = contract {
+                std::fs::write(dir.join(CONTRACT), contract).unwrap();
+            }
+            if sqlite {
+                std::fs::write(dir.join("db.sqlite"), "").unwrap();
+            }
+            let vars: Vec<(String, String)> = vars
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect();
+            let source = source(&dir, &vars);
+            std::fs::remove_dir_all(&dir).unwrap();
+            source
+        };
+        let pg = r#"{"provider":"postgres"}"#;
+        let conn = (CONNECTION_VAR, "Host=h");
+
+        let explicit = [(PROVIDER_VAR, "postgres"), conn];
+        assert!(matches!(case(None, true, &explicit), Ok(Source::Postgres(c)) if c == "Host=h"));
+        let explicit = [(PROVIDER_VAR, "PostgreSQL"), conn];
+        assert!(matches!(
+            case(None, false, &explicit),
+            Ok(Source::Postgres(_))
+        ));
+        assert!(matches!(
+            case(None, true, &[(PROVIDER_VAR, "postgres")]),
+            Err(Error::NoConnectionString)
+        ));
+        assert!(matches!(
+            case(Some(pg), true, &[conn]),
+            Ok(Source::Postgres(_))
+        ));
+        assert!(matches!(
+            case(Some(pg), true, &[(PROVIDER_VAR, " "), (CONNECTION_VAR, "")]),
+            Err(Error::PostgresNotConfigured(_))
+        ));
+        assert!(matches!(case(None, true, &[]), Ok(Source::Sqlite)));
+        assert!(matches!(case(None, false, &[conn]), Ok(Source::None)));
+        assert!(matches!(
+            case(Some("not json"), false, &[]),
+            Ok(Source::None)
+        ));
+        assert!(matches!(
+            case(Some(r#"{"provider":" PostgreSQL "}"#), false, &[conn]),
+            Ok(Source::Postgres(_))
+        ));
+        assert!(matches!(
+            case(Some(pg), true, &[(PROVIDER_VAR, "sqlite"), conn]),
+            Ok(Source::Sqlite)
+        ));
     }
 
     #[test]

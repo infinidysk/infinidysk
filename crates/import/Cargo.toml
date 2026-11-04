@@ -30,6 +30,7 @@ zstd.workspace = true
 
 [dev-dependencies]
 infinidysk-testkit.workspace = true
+tokio = { workspace = true, features = ["io-util", "net"] }
 
 [lints]
 workspace = true
