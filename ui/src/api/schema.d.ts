@@ -3651,6 +3651,12 @@ export interface components {
             cpu_limit_cores: number;
             /**
              * Format: int64
+             * @description Page cache and reclaimable slab (dentries, inodes); the kernel may free it under
+             *     memory pressure, but it still counts toward the cgroup limit.
+             */
+            memory_kernel_cache_bytes: number;
+            /**
+             * Format: int64
              * @description `memory.max`, or the host's memory when that is lower or unset.
              */
             memory_limit_bytes: number;
@@ -3658,12 +3664,7 @@ export interface components {
             memory_limited: boolean;
             /**
              * Format: int64
-             * @description Page cache of files read; the kernel frees it when memory runs short.
-             */
-            memory_page_cache_bytes: number;
-            /**
-             * Format: int64
-             * @description Memory in use apart from page cache: the process, kernel and socket buffers.
+             * @description Memory in use apart from the kernel cache: the process, kernel and socket buffers.
              */
             memory_process_bytes: number;
             /**
