@@ -862,6 +862,7 @@ Sign-in, first-run setup and the upgrade-failed screen sit outside the app shell
 - Centered (`grid min-h-screen place-items-center p-4`): the 48px mark (`/mark.svg`, the logo without its navy tile) above the title (`page-title`) and a short description, then one card (`bg-card rounded-lg border p-5`), `max-w-sm` for forms and wider only to show a report (`max-w-2xl`).
 - The tab title names the screen ("Sign in | infinidysk", "Upgrade failed | infinidysk") through `useTitle` and is restored when it closes.
 - One full-width primary action ("Sign in", "Create account", "Retry the import"); its pending label matches the verb ("Signing in…").
+- With SSO set up, the sign-in card offers **Sign in with SSO**, a link to `/auth/oidc/login`. Under the password form it is an `outline` full-width button below an "or" divider; without the password form it is the primary action. An SSO failure shows in the card like any other failed sign-in.
 - The title stays the same across states; loading, error and success render inside the same card.
 - Field errors under the field; a failed submission below the action with the input kept, focus returned to the field to fix, and API errors rewritten as "what failed, then the fix"; a blocked state as an `Alert` in the card.
 - Username fields turn off autocapitalize, autocorrect and spellcheck; usernames are case-sensitive.
