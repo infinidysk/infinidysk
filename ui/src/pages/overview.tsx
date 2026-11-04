@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, CircleAlert, Info } from "lucide-react";
-import { type PointerEvent, type ReactNode, memo, useState } from "react";
+import { type PointerEvent, type ReactNode, memo, useLayoutEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { api, body, type Schemas } from "../api/client";
 import { ago, bytes, duration, stamp } from "../format";
@@ -21,9 +21,9 @@ const windows: Window[] = ["1h", "24h", "7d", "30d", "all"];
 export const spans: Record<Window, string> = { "1h": "last hour", "24h": "last 24 h", "7d": "last 7 days", "30d": "last 30 days", all: "all time" };
 
 export const series = [
-  { key: "stream", label: "Playback", color: "var(--color-chart-playback)" },
-  { key: "queue", label: "Imports", color: "var(--color-chart-imports)" },
-  { key: "health", label: "Health checks", color: "var(--color-primary)" },
+  { key: "stream", bytes: "stream_bytes", label: "Playback", color: "var(--color-chart-playback)" },
+  { key: "queue", bytes: "queue_bytes", label: "Imports", color: "var(--color-chart-imports)" },
+  { key: "health", bytes: "health_bytes", label: "Health checks", color: "var(--color-primary)" },
 ] as const;
 
 export const rate = (bps: number, compact = false) => `${bytes(bps, compact)}/s`;
@@ -47,9 +47,11 @@ export const displayName = (path: string) => {
   return folder && !file.toLowerCase().includes(folder.slice(0, 10).toLowerCase()) ? folder : file;
 };
 const bucketLabel = (ms: number) =>
-  ms >= 86_400_000 ? "day" : ms >= 3_600_000 ? `${ms / 3_600_000} h` : ms === 60_000 ? "min" : `${ms / 60_000} min`;
-export const bucketTime = (ts: number, ms: number) =>
-  new Date(ts).toLocaleString([], ms >= 86_400_000 ? { dateStyle: "medium" } : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  ms > 86_400_000 ? "week" : ms === 86_400_000 ? "day" : ms >= 3_600_000 ? `${ms / 3_600_000} h` : ms === 60_000 ? "min" : `${ms / 60_000} min`;
+export const bucketTime = (ts: number, ms: number) => {
+  const time = new Date(ts).toLocaleString([], ms >= 86_400_000 ? { dateStyle: "medium" } : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return ms > 86_400_000 ? `Week of ${time}` : time;
+};
 
 /** Metrics for one window; Overview and Stats share the cache. */
 export function useHistory(span: Window) {
@@ -477,26 +479,42 @@ const Windowed = memo(function Windowed({ history: h, span }: { history: History
   );
 });
 
-const HEIGHT = 180;
+/** Room above the top gridline for its value, the bars, the gap and the error lane, px. */
+const LABEL = 16;
+const BARS = 148;
+const GAP = 6;
+const LANE = 12;
+const HEIGHT = LABEL + BARS + GAP + LANE;
+
+/** The smallest round number at or above `v`: 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6 or 8 times a power of ten. */
+const nice = (v: number) => {
+  const p = 10 ** Math.floor(Math.log10(v));
+  return p * ([1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8].find((m) => m * p >= v) ?? 10);
+};
+
+type Point = History["points"][number];
 
 const Activity = memo(function Activity({ history: h, span }: { history: History; span: Window }) {
   const [hover, setHover] = useState<number | null>(null);
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
-  const [log, setLog] = useState(true);
   const points = h.points;
   const t = h.totals;
   const unit = bucketLabel(h.bucket_ms);
-  const shown = series.filter((s) => !hidden.has(s.key));
-  const peak = Math.max(1, ...points.map((p) => Math.max(0, ...shown.map((s) => p[s.key]))));
   const n = Math.max(points.length, 1);
-  const scale = (v: number) => Math.min(1, log ? Math.log10(v + 1) / Math.log10(peak + 1) : v / peak);
-  const y = (v: number) => HEIGHT - scale(v) * (HEIGHT - 4);
-  const line = (pick: (p: (typeof points)[number]) => number) => points.map((p, i) => `${i + 0.5},${y(pick(p))}`).join(" ");
-  const sum = (key: "stream" | "queue" | "health" | "errors") => points.reduce((s, p) => s + p[key], 0);
+  const last = points.length - 1;
+  // The last bucket is still filling, so its rates cover only the time it has run.
+  const secs = (i: number) => (i === last ? Math.min(h.bucket_ms, Math.max(1000, h.at - points[i]!.ts)) : h.bucket_ms) / 1000;
+  const shown = series.filter((s) => !hidden.has(s.key));
+  const peak = Math.max(0, ...points.map((p, i) => shown.reduce((sum, s) => sum + p[s.bytes], 0) / secs(i)));
+  const top = peak > 0 ? nice(peak) : 0;
+  const worst = Math.max(0, ...points.map((p) => p.errors));
+  const sum = (key: "errors" | (typeof series)[number]["bytes"]) => points.reduce((s, p) => s + p[key], 0);
   const errors = sum("errors");
   const peakFetch = Math.max(t.peak_fetch_bps, ...points.map((p) => p.peak_fetch_bps));
   const peakRead = Math.max(0, ...points.map((p) => p.peak_bps));
+  const empty = points.every((p) => p.fetched === 0 && p.errors === 0);
   const at = hover == null ? undefined : points[hover];
+  const fade = (i: number) => (hover != null && i !== hover ? 0.35 : 1) * (i === last ? 0.5 : 1);
   const toggle = (key: string) =>
     setHidden((prev) => {
       const next = new Set(prev);
@@ -507,90 +525,53 @@ const Activity = memo(function Activity({ history: h, span }: { history: History
     const r = e.currentTarget.getBoundingClientRect();
     setHover(Math.min(n - 1, Math.max(0, Math.floor(((e.clientX - r.left) / r.width) * n))));
   };
+  const plot = useRef<HTMLDivElement>(null);
+  const tip = useRef<HTMLDivElement>(null);
+  // Beside the hovered bar on its roomier side, pulled in as far as the plot's edges need.
+  useLayoutEffect(() => {
+    const box = plot.current;
+    const el = tip.current;
+    if (hover == null || !box || !el) return;
+    const slot = box.clientWidth / n;
+    const beside = hover < n / 2 ? (hover + 1) * slot + 8 : hover * slot - 8 - el.offsetWidth;
+    el.style.left = `${Math.max(0, Math.min(beside, box.clientWidth - el.offsetWidth))}px`;
+  });
+  /** One bucket's bars from the bottom up, 1 px apart. */
+  const stack = (p: Point, i: number) => {
+    let base = LABEL + BARS;
+    return shown.map((s) => {
+      const gap = base < LABEL + BARS ? 1 : 0;
+      const height = top > 0 ? (p[s.bytes] / secs(i) / top) * BARS - gap : 0;
+      // Thinner than half a pixel would only smudge.
+      if (height < 0.5) return null;
+      base -= height + gap;
+      return <rect key={s.key} x={i + 0.15} y={base} width={0.7} height={height} fill={s.color} />;
+    });
+  };
 
   return (
     <Card
       sub
       title="Activity"
-      description={`Provider requests per ${unit}, ${spans[span]}`}
+      description={`Average download speed per ${unit}, ${spans[span]}`}
       action={
-        <dl className="grid w-full grid-cols-2 gap-x-6 gap-y-2 sm:flex sm:w-auto sm:flex-wrap sm:gap-x-8 sm:text-right">
-          {[
-            ["Peak read", rate(peakRead, true)],
-            ["Peak download", rate(peakFetch, true)],
-            ["Served", bytes(t.served, true)],
-            ["Fetched", bytes(t.fetched, true)],
-          ].map(([label, value]) => (
+        <dl className="grid w-full grid-cols-2 gap-x-6 gap-y-2 sm:flex sm:w-auto sm:gap-x-8 sm:text-right">
+          {(
+            [
+              ["Downloaded", t.fetched, peakFetch],
+              ["Served", t.served, peakRead],
+            ] as const
+          ).map(([label, total, fastest]) => (
             <div key={label}>
               <dt className="text-muted-foreground text-xs">{label}</dt>
-              <dd className="font-mono text-lg font-medium tabular-nums">{value}</dd>
+              <dd className="font-mono text-lg font-medium tabular-nums">{bytes(total, true)}</dd>
+              {fastest > 0 && <dd className="text-muted-foreground text-xs tabular-nums">peak {rate(fastest, true)}</dd>}
             </div>
           ))}
         </dl>
       }
     >
-      <div>
-        <div
-          className="focus-visible:ring-ring/50 relative min-w-0 flex-1 touch-pan-y rounded-sm outline-none focus-visible:ring-[3px]"
-          tabIndex={0}
-          role="group"
-          aria-label="Requests over time. Arrow keys step through the buckets."
-          onPointerDown={pick}
-          onPointerMove={pick}
-          onPointerLeave={(e) => e.pointerType === "mouse" && setHover(null)}
-          onFocus={() => setHover((i) => i ?? n - 1)}
-          onBlur={() => setHover(null)}
-          onKeyDown={(e) => {
-            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-            e.preventDefault();
-            setHover((i) => Math.min(n - 1, Math.max(0, (i ?? n - 1) + (e.key === "ArrowLeft" ? -1 : 1))));
-          }}
-        >
-          <svg viewBox={`0 0 ${n} ${HEIGHT}`} preserveAspectRatio="none" className="block w-full" style={{ height: HEIGHT }} aria-hidden>
-            {[0, 0.5, 1].map((f) => (
-              <line key={f} x1={0} x2={n} y1={HEIGHT - f * (HEIGHT - 4)} y2={HEIGHT - f * (HEIGHT - 4)} stroke="var(--color-border)" vectorEffect="non-scaling-stroke" />
-            ))}
-            {hover != null && <rect x={hover} y={0} width={1} height={HEIGHT} fill="var(--color-muted)" />}
-            {points.map((p, i) =>
-              p.errors > 0 ? (
-                <rect key={p.ts} x={i + 0.2} y={y(p.errors)} width={0.6} height={HEIGHT - y(p.errors)} fill="var(--color-destructive)" opacity={0.8} />
-              ) : null,
-            )}
-            {shown.map((s) => (
-              <polyline key={s.key} points={line((p) => p[s.key])} fill="none" stroke={s.color} strokeWidth={1.5} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-            ))}
-          </svg>
-          <span className="sr-only" aria-live="polite">
-            {at && `${bucketTime(at.ts, h.bucket_ms)}: ${shown.map((s) => `${count(at[s.key])} ${s.label.toLowerCase()}`).join(", ")}, ${count(at.errors, "error")}`}
-          </span>
-          {at && hover != null && (
-            <div
-              className="bg-popover text-popover-foreground pointer-events-none absolute top-2 z-10 w-max rounded-md border px-3 py-2 font-mono text-xs shadow-md"
-              style={hover < n / 2 ? { left: `${((hover + 1) / n) * 100}%`, marginLeft: 8 } : { right: `${((n - hover) / n) * 100}%`, marginRight: 8 }}
-            >
-              <div className="mb-1 font-medium">{bucketTime(at.ts, h.bucket_ms)}</div>
-              {shown.map((s) => (
-                <div key={s.key} className="flex items-center gap-2">
-                  <span className="size-2 rounded-full" style={{ background: s.color }} aria-hidden />
-                  {count(at[s.key])} {s.label.toLowerCase()}
-                </div>
-              ))}
-              {at.errors > 0 && <div className="text-destructive">{count(at.errors, "error")}</div>}
-              <div className="text-muted-foreground mt-1">{rate(at.fetched / (h.bucket_ms / 1000))} downloaded</div>
-              <div className="text-muted-foreground">{bytes(at.served)} served</div>
-              {at.peak_bps > 0 && <div className="text-muted-foreground">{rate(at.peak_bps)} peak read</div>}
-            </div>
-          )}
-          {points.length > 0 && (
-            <div className="text-muted-foreground mt-2 flex justify-between text-xs tabular-nums">
-              <span>{bucketTime(points[0]!.ts, h.bucket_ms)}</span>
-              <span className="hidden sm:inline">{bucketTime(points[Math.floor(points.length / 2)]!.ts, h.bucket_ms)}</span>
-              <span>now</span>
-            </div>
-          )}
-        </div>
-      </div>
-      <div className="mt-4 flex flex-wrap items-center gap-1 text-xs">
+      <div className="-mx-2 mb-2 flex flex-wrap items-center text-xs">
         {series.map((s) => {
           const off = hidden.has(s.key);
           return (
@@ -601,26 +582,89 @@ const Activity = memo(function Activity({ history: h, span }: { history: History
               onClick={() => toggle(s.key)}
               className={cn("hover:bg-muted inline-flex items-center gap-1.5 rounded-md px-2 py-1.5", off && "text-muted-foreground line-through")}
             >
-              <span className={cn("inline-block h-0.5 w-3", off && "opacity-40")} style={{ background: s.color }} aria-hidden />
-              {s.label} · <span className="tabular-nums">{count(sum(s.key))}</span>
+              <span className={cn("size-2 rounded-full", off && "opacity-40")} style={{ background: s.color }} aria-hidden />
+              {s.label} · <span className="tabular-nums">{bytes(sum(s.bytes), true)}</span>
             </button>
           );
         })}
         <span className="inline-flex items-center gap-1.5 px-2 py-1.5">
-          <span className="bg-destructive h-2 w-1 rounded-sm" aria-hidden />
+          <span className="bg-destructive size-2 rounded-full" aria-hidden />
           Errors · <span className={cn("tabular-nums", errors > 0 && "text-destructive")}>{count(errors)}</span>
         </span>
-        <span className="text-muted-foreground ml-auto px-2 tabular-nums">
-          Peak {count(peak)} / {unit}
+      </div>
+      <div
+        ref={plot}
+        className="focus-visible:ring-ring/50 relative min-w-0 touch-pan-y rounded-sm outline-none focus-visible:ring-[3px]"
+        tabIndex={0}
+        role="group"
+        aria-label="Download speed over time. Arrow keys step through the buckets."
+        onPointerDown={pick}
+        onPointerMove={pick}
+        onPointerLeave={(e) => e.pointerType === "mouse" && setHover(null)}
+        onFocus={() => setHover((i) => i ?? n - 1)}
+        onBlur={() => setHover(null)}
+        onKeyDown={(e) => {
+          if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+          e.preventDefault();
+          setHover((i) => Math.min(n - 1, Math.max(0, (i ?? n - 1) + (e.key === "ArrowLeft" ? -1 : 1))));
+        }}
+      >
+        <svg viewBox={`0 0 ${n} ${HEIGHT}`} preserveAspectRatio="none" className="block w-full" style={{ height: HEIGHT }} aria-hidden>
+          {[LABEL, LABEL + BARS / 2, LABEL + BARS].map((y) => (
+            <line key={y} x1={0} x2={n} y1={y} y2={y} stroke="var(--color-border)" vectorEffect="non-scaling-stroke" />
+          ))}
+          {points.map((p, i) => {
+            const lane = p.errors > 0 ? Math.max(2, (p.errors / worst) * LANE) : 0;
+            return (
+              <g key={p.ts} opacity={fade(i)}>
+                {stack(p, i)}
+                {lane > 0 && <rect x={i + 0.15} y={HEIGHT - lane} width={0.7} height={lane} fill="var(--color-destructive)" />}
+              </g>
+            );
+          })}
+        </svg>
+        {top > 0 && <span className="text-muted-foreground pointer-events-none absolute top-0 left-0 text-xs leading-4 tabular-nums">{rate(top, true)}</span>}
+        {empty && (
+          <p className="pointer-events-none absolute inset-x-0 flex items-center justify-center" style={{ top: LABEL, height: BARS }}>
+            <span className="bg-card text-muted-foreground px-2">No data for this window</span>
+          </p>
+        )}
+        <span className="sr-only" aria-live="polite">
+          {at &&
+            hover != null &&
+            `${bucketTime(at.ts, h.bucket_ms)}${hover === last ? " so far" : ""}: ${shown.map((s) => `${s.label} ${rate(at[s.bytes] / secs(hover))}`).join(", ")}, ${count(at.errors, "error")}`}
         </span>
-        <button
-          type="button"
-          aria-pressed={log}
-          onClick={() => setLog(!log)}
-          className={cn("rounded-md border px-2 py-1.5", log ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}
-        >
-          Log scale
-        </button>
+        {at && hover != null && (
+          <div
+            ref={tip}
+            className="bg-popover text-popover-foreground pointer-events-none absolute top-2 z-10 w-max max-w-full rounded-md border px-3 py-2 font-mono text-xs shadow-md"
+          >
+            <div className="mb-1 font-medium">
+              {bucketTime(at.ts, h.bucket_ms)}
+              {hover === last && " · so far"}
+            </div>
+            {shown.map((s) => (
+              <div key={s.key} className="flex items-center gap-2">
+                <span className="size-2 rounded-full" style={{ background: s.color }} aria-hidden />
+                {rate(at[s.bytes] / secs(hover))} {s.label.toLowerCase()}
+              </div>
+            ))}
+            {at.errors > 0 && <div className="text-destructive">{count(at.errors, "error")}</div>}
+            <div className="text-muted-foreground mt-1">
+              {bytes(at.fetched)} downloaded{at.peak_fetch_bps > 0 && `, peak ${rate(at.peak_fetch_bps)}`}
+            </div>
+            <div className="text-muted-foreground">
+              {bytes(at.served)} served{at.peak_bps > 0 && `, peak ${rate(at.peak_bps)}`}
+            </div>
+          </div>
+        )}
+        {points.length > 0 && (
+          <div className="text-muted-foreground mt-2 flex justify-between text-xs tabular-nums">
+            <span>{bucketTime(points[0]!.ts, h.bucket_ms)}</span>
+            <span className="hidden sm:inline">{bucketTime(points[Math.floor(points.length / 2)]!.ts, h.bucket_ms)}</span>
+            <span>now</span>
+          </div>
+        )}
       </div>
     </Card>
   );

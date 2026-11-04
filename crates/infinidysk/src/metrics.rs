@@ -17,7 +17,9 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use infinidysk_core::ItemId;
 use infinidysk_core::trace::Outcome;
-use infinidysk_db::metrics::{BreakerEvent, Grain, Metrics as Store, SessionRecord, Usage};
+use infinidysk_db::metrics::{
+    BreakerEvent, Grain, Metrics as Store, Records, SessionRecord, Usage,
+};
 use infinidysk_health::Health;
 use infinidysk_nntp::{Client, LATENCY_BUCKETS, Phase, ProviderStats, Workload};
 use infinidysk_queue::Queue;
@@ -38,6 +40,8 @@ const SAMPLES_PER_MINUTE: usize = 30;
 const MINUTE_MS: i64 = 60_000;
 const HOUR_MS: i64 = 60 * MINUTE_MS;
 const DAY_MS: i64 = 24 * HOUR_MS;
+/// All-time history draws a bar per day up to this many days, then a bar per week.
+const DAILY_BARS: i64 = 120;
 /// Stale query planner statistics are refreshed at the first prune and then this often.
 const OPTIMIZE_HOURS: i64 = 6;
 /// Finished reads and breaker events kept in memory while the store is failing.
@@ -79,6 +83,8 @@ pub struct Metrics {
 struct Sampled {
     /// Not yet written.
     pending: Pending,
+    /// The minute `pending` is written as next.
+    pending_minute: i64,
     /// Counters since start at the last sample.
     last: HashMap<String, u64>,
     last_at: Option<Instant>,
@@ -331,13 +337,15 @@ pub enum Window {
 }
 
 impl Window {
-    /// Span (none for all), row grain and bucket size.
-    const fn shape(self) -> (Option<i64>, Grain, i64) {
+    /// Span (none for all), row grain and bucket size; `all` sizes its buckets to the `kept`
+    /// history.
+    const fn shape(self, kept: i64) -> (Option<i64>, Grain, i64) {
         match self {
             Self::Hour => (Some(HOUR_MS), Grain::Minute, MINUTE_MS),
             Self::Day => (Some(DAY_MS), Grain::Minute, 15 * MINUTE_MS),
             Self::Week => (Some(7 * DAY_MS), Grain::Hour, 2 * HOUR_MS),
             Self::Month => (Some(30 * DAY_MS), Grain::Hour, 8 * HOUR_MS),
+            Self::All if kept > DAILY_BARS * DAY_MS => (None, Grain::Hour, 7 * DAY_MS),
             Self::All => (None, Grain::Hour, DAY_MS),
         }
     }
@@ -346,6 +354,8 @@ impl Window {
 #[derive(Serialize, ToSchema)]
 pub struct Overview {
     window: Window,
+    /// When this was built, Unix milliseconds: the last point's bucket has filled up to here.
+    at: i64,
     bucket_ms: i64,
     points: Vec<Point>,
     totals: Totals,
@@ -376,6 +386,10 @@ struct Point {
     ts: i64,
     served: u64,
     fetched: u64,
+    /// `fetched` by workload.
+    stream_bytes: u64,
+    queue_bytes: u64,
+    health_bytes: u64,
     /// Fastest 2 s read rate in the bucket, bytes per second.
     peak_bps: u64,
     /// Fastest 2 s rate from providers in the bucket, bytes per second.
@@ -634,6 +648,7 @@ impl Metrics {
         let mut tick = tokio::time::interval(SAMPLE_EVERY);
         tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut minute = now_ms() / MINUTE_MS;
+        self.state().pending_minute = minute * MINUTE_MS;
         let mut pruned = None;
         loop {
             tokio::select! {
@@ -647,6 +662,7 @@ impl Metrics {
             }
             self.write(minute * MINUTE_MS).await;
             minute = now / MINUTE_MS;
+            self.state().pending_minute = minute * MINUTE_MS;
             if pruned != Some(now / HOUR_MS) {
                 let first = pruned.is_none();
                 pruned = Some(now / HOUR_MS);
@@ -1069,12 +1085,17 @@ impl Metrics {
 
     pub async fn overview(&self, window: Window) -> Result<Overview, infinidysk_db::Error> {
         let now = now_ms();
-        let (span, grain, bucket) = window.shape();
+        let records = match self.store.get() {
+            Some(store) => store.records().await?,
+            None => Records::default(),
+        };
+        let kept = records.first_hour.map_or(0, |first| now - first);
+        let (span, grain, bucket) = window.shape(kept);
         let since = span.map_or(0, |span| {
             let since = now - span;
             since - since.rem_euclid(bucket)
         });
-        let (rows, lifetime, stored_reads, top, usage, events, previous_rescues, records) =
+        let (rows, lifetime, stored_reads, top, usage, events, previous_rescues) =
             match self.store.get() {
                 Some(store) => (
                     store.series(grain, since, bucket).await?,
@@ -1087,67 +1108,40 @@ impl Metrics {
                         Some(span) => Some(store.sum(grain, since - span, since, "rescue.").await?),
                         None => None,
                     },
-                    store.records().await?,
                 ),
                 None => Default::default(),
             };
         let catalogue = self.sources.vfs.db().catalogue(now - 7 * DAY_MS).await?;
-        let (pending, error) = {
+        let (pending, error, at, pending_minute) = {
             let state = self.state();
-            (state.pending.clone(), state.error.clone())
+            (
+                state.pending.clone(),
+                state.error.clone(),
+                now_ms(),
+                state.pending_minute,
+            )
         };
 
-        let current = now - now.rem_euclid(bucket);
+        let current = at - at.rem_euclid(bucket);
         let mut points = BTreeMap::new();
         let mut sparks: HashMap<&str, BTreeMap<i64, ProviderPoint>> = HashMap::new();
         let mut sums = HashMap::new();
-        let unwritten = pending.counters.iter().map(|(k, v)| (current, k, *v));
+        let unwritten_at = pending_minute - pending_minute.rem_euclid(bucket);
+        let unwritten = pending.counters.iter().map(|(k, v)| (unwritten_at, k, *v));
         for (ts, key, value) in rows.iter().map(|(t, k, v)| (*t, k, *v)).chain(unwritten) {
-            let point: &mut Point = points.entry(ts).or_default();
-            match key.as_str() {
-                "peak.read_bps" => point.peak_bps = point.peak_bps.max(value),
-                "peak.fetch_bps" => point.peak_fetch_bps = point.peak_fetch_bps.max(value),
-                "reads.ended" => point.reads += value,
-                "reads.stalls" => point.stalls += value,
-                "queue.completed" => point.imports += value,
-                "queue.failed" => point.import_failures += value,
-                "health.healthy" | "health.inconclusive" => point.checks += value,
-                "health.unhealthy" => {
-                    point.checks += value;
-                    point.unhealthy += value;
-                }
-                "cache.memory_hits" | "cache.disk_hits" | "cache.joined" => {
-                    point.cache_hits += value;
-                }
-                "cache.misses" => point.cache_misses += value,
-                k if k.starts_with("served.") => point.served += value,
-                k if k.starts_with("rescue.") => point.rescues += value,
-                _ => {}
-            }
+            tally(points.entry(ts).or_default(), key, value);
             if let Some((provider, field)) = provider_field(key) {
                 let spark = sparks.entry(provider).or_default().entry(ts).or_default();
                 match field {
-                    Field::Bytes(_) => {
-                        point.fetched += value;
-                        spark.bytes += value;
-                    }
+                    Field::Bytes(_) => spark.bytes += value,
                     Field::Attempt(_, Outcome::Cancelled) => {}
-                    Field::Attempt(workload, outcome) => {
-                        match workload {
-                            Workload::Stream => point.stream += value,
-                            Workload::Queue => point.queue += value,
-                            Workload::Health => point.health += value,
-                        }
+                    Field::Attempt(_, outcome) => {
                         spark.requests += value;
                         if outcome == Outcome::NotFound {
-                            point.missing += value;
                             spark.missing += value;
                         }
                     }
-                    Field::Failed(_) => {
-                        point.errors += value;
-                        spark.failures += value;
-                    }
+                    Field::Failed(_) => spark.failures += value,
                     _ => {}
                 }
             }
@@ -1204,6 +1198,7 @@ impl Metrics {
 
         Ok(Overview {
             window,
+            at,
             bucket_ms: bucket,
             points,
             totals: totals(&sums),
@@ -1585,6 +1580,52 @@ fn provider_field(key: &str) -> Option<(&str, Field)> {
         },
     };
     Some((provider, field))
+}
+
+/// Adds counter `key` to the bucket `point`.
+fn tally(point: &mut Point, key: &str, value: u64) {
+    match key {
+        "peak.read_bps" => point.peak_bps = point.peak_bps.max(value),
+        "peak.fetch_bps" => point.peak_fetch_bps = point.peak_fetch_bps.max(value),
+        "reads.ended" => point.reads += value,
+        "reads.stalls" => point.stalls += value,
+        "queue.completed" => point.imports += value,
+        "queue.failed" => point.import_failures += value,
+        "health.healthy" | "health.inconclusive" => point.checks += value,
+        "health.unhealthy" => {
+            point.checks += value;
+            point.unhealthy += value;
+        }
+        "cache.memory_hits" | "cache.disk_hits" | "cache.joined" => {
+            point.cache_hits += value;
+        }
+        "cache.misses" => point.cache_misses += value,
+        k if k.starts_with("served.") => point.served += value,
+        k if k.starts_with("rescue.") => point.rescues += value,
+        _ => {}
+    }
+    match provider_field(key).map(|(_, field)| field) {
+        Some(Field::Bytes(workload)) => {
+            point.fetched += value;
+            match workload {
+                Workload::Stream => point.stream_bytes += value,
+                Workload::Queue => point.queue_bytes += value,
+                Workload::Health => point.health_bytes += value,
+            }
+        }
+        Some(Field::Attempt(workload, outcome)) if outcome != Outcome::Cancelled => {
+            match workload {
+                Workload::Stream => point.stream += value,
+                Workload::Queue => point.queue += value,
+                Workload::Health => point.health += value,
+            }
+            if outcome == Outcome::NotFound {
+                point.missing += value;
+            }
+        }
+        Some(Field::Failed(_)) => point.errors += value,
+        _ => {}
+    }
 }
 
 /// Provider name by key; the key itself for providers no longer configured.
@@ -2292,6 +2333,38 @@ mod tests {
             mem_total("MemTotal:       16 kB\nMemFree: 1 kB\n"),
             Some(16 * 1024)
         );
+    }
+
+    #[test]
+    fn a_bucket_splits_provider_traffic_by_workload() {
+        let (ok, missing) = (Outcome::Retrieved.label(), Outcome::NotFound.label());
+        let mut point = Point::default();
+        for (key, value) in [
+            ("p.a.stream.bytes".to_owned(), 100),
+            ("p.b.stream.bytes".to_owned(), 50),
+            ("p.a.queue.bytes".to_owned(), 7),
+            ("p.a.health.bytes".to_owned(), 3),
+            (format!("p.a.queue.{ok}"), 2),
+            (format!("p.b.stream.{missing}"), 1),
+            ("served.fuse".to_owned(), 90),
+        ] {
+            tally(&mut point, &key, value);
+        }
+        let bytes = (point.stream_bytes, point.queue_bytes, point.health_bytes);
+        assert_eq!(bytes, (150, 7, 3));
+        assert_eq!((point.fetched, point.served), (160, 90));
+        assert_eq!(
+            (point.stream, point.queue, point.health, point.missing),
+            (1, 2, 0, 1)
+        );
+    }
+
+    #[test]
+    fn all_time_history_draws_weeks_once_days_would_crowd_it() {
+        assert_eq!(Window::All.shape(0).2, DAY_MS);
+        assert_eq!(Window::All.shape(DAILY_BARS * DAY_MS).2, DAY_MS);
+        assert_eq!(Window::All.shape(DAILY_BARS * DAY_MS + 1).2, 7 * DAY_MS);
+        assert_eq!(Window::Month.shape(400 * DAY_MS).2, 8 * HOUR_MS);
     }
 
     #[test]
