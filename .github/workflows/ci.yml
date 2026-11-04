@@ -65,7 +65,7 @@ jobs:
           submodules: true
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p infinidysk-db -p infinidysk --locked
+      - run: cargo test -p infinidysk-db -p infinidysk -p infinidysk-import --locked
 
   deny:
     runs-on: ubuntu-latest
