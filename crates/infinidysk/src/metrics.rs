@@ -83,6 +83,8 @@ pub struct Metrics {
 struct Sampled {
     /// Not yet written.
     pending: Pending,
+    /// The minute `pending` is written as next.
+    pending_minute: i64,
     /// Counters since start at the last sample.
     last: HashMap<String, u64>,
     last_at: Option<Instant>,
@@ -646,6 +648,7 @@ impl Metrics {
         let mut tick = tokio::time::interval(SAMPLE_EVERY);
         tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut minute = now_ms() / MINUTE_MS;
+        self.state().pending_minute = minute * MINUTE_MS;
         let mut pruned = None;
         loop {
             tokio::select! {
@@ -659,6 +662,7 @@ impl Metrics {
             }
             self.write(minute * MINUTE_MS).await;
             minute = now / MINUTE_MS;
+            self.state().pending_minute = minute * MINUTE_MS;
             if pruned != Some(now / HOUR_MS) {
                 let first = pruned.is_none();
                 pruned = Some(now / HOUR_MS);
@@ -1108,16 +1112,22 @@ impl Metrics {
                 None => Default::default(),
             };
         let catalogue = self.sources.vfs.db().catalogue(now - 7 * DAY_MS).await?;
-        let (pending, error) = {
+        let (pending, error, at, pending_minute) = {
             let state = self.state();
-            (state.pending.clone(), state.error.clone())
+            (
+                state.pending.clone(),
+                state.error.clone(),
+                now_ms(),
+                state.pending_minute,
+            )
         };
 
-        let current = now - now.rem_euclid(bucket);
+        let current = at - at.rem_euclid(bucket);
         let mut points = BTreeMap::new();
         let mut sparks: HashMap<&str, BTreeMap<i64, ProviderPoint>> = HashMap::new();
         let mut sums = HashMap::new();
-        let unwritten = pending.counters.iter().map(|(k, v)| (current, k, *v));
+        let unwritten_at = pending_minute - pending_minute.rem_euclid(bucket);
+        let unwritten = pending.counters.iter().map(|(k, v)| (unwritten_at, k, *v));
         for (ts, key, value) in rows.iter().map(|(t, k, v)| (*t, k, *v)).chain(unwritten) {
             let point: &mut Point = points.entry(ts).or_default();
             match key.as_str() {
@@ -1225,7 +1235,7 @@ impl Metrics {
 
         Ok(Overview {
             window,
-            at: now,
+            at,
             bucket_ms: bucket,
             points,
             totals: totals(&sums),
