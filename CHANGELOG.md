@@ -1,5 +1,33 @@
 # Changelog
 
+## [2.0.0-beta.2](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.1...v2.0.0-beta.2) (2026-11-04)
+
+
+### Features
+
+* **db:** back up your database nightly and restore it from the Maintenance page ([#1809](https://github.com/infinidysk/infinidysk/issues/1809)) ([0c40be7](https://github.com/infinidysk/infinidysk/commit/0c40be7d06360f75e2bca544b940744212ea6357))
+* **db:** move from SQLite to PostgreSQL from the settings page ([#1807](https://github.com/infinidysk/infinidysk/issues/1807)) ([20a87fb](https://github.com/infinidysk/infinidysk/commit/20a87fbbb770026a549acd335c350ce01cb353c6))
+* **mount:** read history shows which app started ffmpeg or ffprobe ([#1791](https://github.com/infinidysk/infinidysk/issues/1791)) ([25e114a](https://github.com/infinidysk/infinidysk/commit/25e114ac59e4738f9594a30c4ccb30d98d945817))
+* **ui:** overview activity shows download speed by workload as bars ([#1810](https://github.com/infinidysk/infinidysk/issues/1810)) ([dfa8146](https://github.com/infinidysk/infinidysk/commit/dfa81468bc7504bea4c00f7c3f4c3d83849ff93b))
+
+
+### Bug Fixes
+
+* **api:** an unresponsive STRM folder no longer freezes settings and the SAB API ([#1795](https://github.com/infinidysk/infinidysk/issues/1795)) ([a7eb784](https://github.com/infinidysk/infinidysk/commit/a7eb784e4e39b7db6850817a00bac2ef3b2b1332))
+* **api:** Arrs that start after InfiniDysk now connect without a restart ([#1806](https://github.com/infinidysk/infinidysk/issues/1806)) ([ba4972f](https://github.com/infinidysk/infinidysk/commit/ba4972f6a813f765cb49847098e489644735b9d9))
+* **archive:** malformed 7z headers can no longer hang or exhaust memory during import ([#1794](https://github.com/infinidysk/infinidysk/issues/1794)) ([7091745](https://github.com/infinidysk/infinidysk/commit/7091745063ffba6feb7826191f9fea16a219be54))
+* **arr:** files imported by a second Arr are no longer deleted by cleanup of the first ([#1802](https://github.com/infinidysk/infinidysk/issues/1802)) ([3464a0c](https://github.com/infinidysk/infinidysk/commit/3464a0c14d3f0187e113c962b132e267c42ec5de))
+* **import:** migrate large legacy metadata without size-based skips ([#1797](https://github.com/infinidysk/infinidysk/issues/1797)) ([29f8e2f](https://github.com/infinidysk/infinidysk/commit/29f8e2f4b9eb83f4cfc41fc739b1e853321a9534))
+* **import:** migration no longer follows symlinks out of the old config folder ([#1796](https://github.com/infinidysk/infinidysk/issues/1796)) ([a877923](https://github.com/infinidysk/infinidysk/commit/a877923a8bb0cbaacf7f71662bd1f8bd4747c6bf))
+* **import:** reject Arr paths that climb out of a library folder ([#1800](https://github.com/infinidysk/infinidysk/issues/1800)) ([fe058ed](https://github.com/infinidysk/infinidysk/commit/fe058edfa5dcd20dc2b98ce2bce766d2ba54d053))
+* **import:** upgrading from 1.x shows progress while it checks your library instead of looking stuck ([#1799](https://github.com/infinidysk/infinidysk/issues/1799)) ([53bd352](https://github.com/infinidysk/infinidysk/commit/53bd3524485eed2339fe61669eb0985066f356d0))
+* **nntp:** fail over on articles that end before their announced size ([#1805](https://github.com/infinidysk/infinidysk/issues/1805)) ([27ce044](https://github.com/infinidysk/infinidysk/commit/27ce0448d4b6a27f4ffe990dadf2b195c29d72e5))
+* **par2:** index large PAR2 sets without quadratic lookups ([#1801](https://github.com/infinidysk/infinidysk/issues/1801)) ([8c1fdff](https://github.com/infinidysk/infinidysk/commit/8c1fdff880d8693bb1b4081580587aa209794f67))
+* **queue:** bound outstanding import tasks ([#1803](https://github.com/infinidysk/infinidysk/issues/1803)) ([1155315](https://github.com/infinidysk/infinidysk/commit/11553154af8a75c533527c85a6679078115a780c))
+* **queue:** limit concurrent archive key derivations ([#1804](https://github.com/infinidysk/infinidysk/issues/1804)) ([6073369](https://github.com/infinidysk/infinidysk/commit/607336974219104987752825e99fd17ba9c6ae4a))
+* **queue:** STRM and library files are no longer written through symlinked subfolders ([#1798](https://github.com/infinidysk/infinidysk/issues/1798)) ([b030f90](https://github.com/infinidysk/infinidysk/commit/b030f9001a1bccd85ad223533ee7c6cd10753117))
+* **queue:** STRM cleanup and writes no longer follow planted paths out of the STRM folder ([#1793](https://github.com/infinidysk/infinidysk/issues/1793)) ([ce0868e](https://github.com/infinidysk/infinidysk/commit/ce0868e4175c58dba3a9611d462847938482324d))
+
 ## [2.0.0-beta.1](https://github.com/infinidysk/infinidysk/compare/v2.0.0-alpha.17...v2.0.0-beta.1) (2026-11-03)
 
 ### Beta
