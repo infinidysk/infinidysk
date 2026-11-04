@@ -17,7 +17,9 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use infinidysk_core::ItemId;
 use infinidysk_core::trace::Outcome;
-use infinidysk_db::metrics::{BreakerEvent, Grain, Metrics as Store, SessionRecord, Usage};
+use infinidysk_db::metrics::{
+    BreakerEvent, Grain, Metrics as Store, Records, SessionRecord, Usage,
+};
 use infinidysk_health::Health;
 use infinidysk_nntp::{Client, LATENCY_BUCKETS, Phase, ProviderStats, Workload};
 use infinidysk_queue::Queue;
@@ -38,6 +40,8 @@ const SAMPLES_PER_MINUTE: usize = 30;
 const MINUTE_MS: i64 = 60_000;
 const HOUR_MS: i64 = 60 * MINUTE_MS;
 const DAY_MS: i64 = 24 * HOUR_MS;
+/// All-time history draws a bar per day up to this many days, then a bar per week.
+const DAILY_BARS: i64 = 120;
 /// Stale query planner statistics are refreshed at the first prune and then this often.
 const OPTIMIZE_HOURS: i64 = 6;
 /// Finished reads and breaker events kept in memory while the store is failing.
@@ -331,13 +335,15 @@ pub enum Window {
 }
 
 impl Window {
-    /// Span (none for all), row grain and bucket size.
-    const fn shape(self) -> (Option<i64>, Grain, i64) {
+    /// Span (none for all), row grain and bucket size; `all` sizes its buckets to the `kept`
+    /// history.
+    const fn shape(self, kept: i64) -> (Option<i64>, Grain, i64) {
         match self {
             Self::Hour => (Some(HOUR_MS), Grain::Minute, MINUTE_MS),
             Self::Day => (Some(DAY_MS), Grain::Minute, 15 * MINUTE_MS),
             Self::Week => (Some(7 * DAY_MS), Grain::Hour, 2 * HOUR_MS),
             Self::Month => (Some(30 * DAY_MS), Grain::Hour, 8 * HOUR_MS),
+            Self::All if kept > DAILY_BARS * DAY_MS => (None, Grain::Hour, 7 * DAY_MS),
             Self::All => (None, Grain::Hour, DAY_MS),
         }
     }
@@ -1075,12 +1081,17 @@ impl Metrics {
 
     pub async fn overview(&self, window: Window) -> Result<Overview, infinidysk_db::Error> {
         let now = now_ms();
-        let (span, grain, bucket) = window.shape();
+        let records = match self.store.get() {
+            Some(store) => store.records().await?,
+            None => Records::default(),
+        };
+        let kept = records.first_hour.map_or(0, |first| now - first);
+        let (span, grain, bucket) = window.shape(kept);
         let since = span.map_or(0, |span| {
             let since = now - span;
             since - since.rem_euclid(bucket)
         });
-        let (rows, lifetime, stored_reads, top, usage, events, previous_rescues, records) =
+        let (rows, lifetime, stored_reads, top, usage, events, previous_rescues) =
             match self.store.get() {
                 Some(store) => (
                     store.series(grain, since, bucket).await?,
@@ -1093,7 +1104,6 @@ impl Metrics {
                         Some(span) => Some(store.sum(grain, since - span, since, "rescue.").await?),
                         None => None,
                     },
-                    store.records().await?,
                 ),
                 None => Default::default(),
             };
@@ -2304,6 +2314,14 @@ mod tests {
             mem_total("MemTotal:       16 kB\nMemFree: 1 kB\n"),
             Some(16 * 1024)
         );
+    }
+
+    #[test]
+    fn all_time_history_draws_weeks_once_days_would_crowd_it() {
+        assert_eq!(Window::All.shape(0).2, DAY_MS);
+        assert_eq!(Window::All.shape(DAILY_BARS * DAY_MS).2, DAY_MS);
+        assert_eq!(Window::All.shape(DAILY_BARS * DAY_MS + 1).2, 7 * DAY_MS);
+        assert_eq!(Window::Month.shape(400 * DAY_MS).2, 8 * HOUR_MS);
     }
 
     #[test]

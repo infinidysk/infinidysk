@@ -835,6 +835,7 @@ Modals interrupt, so use them sparingly: to confirm, to collect input an action 
 - Header metrics total what is plotted (Supabase `ChartMetric`). Per-series totals sit in the legend above the plot, which also toggles the series.
 - A problem count beside a plot in another unit (errors beside bandwidth) draws in its own lane under the plot, on its own scale, never on the plot's scale.
 - The bucket still filling draws at half opacity; its rates cover the time it has run, and its tooltip says "so far".
+- A window draws at most about 120 bars, so bars stay at least 2 px wide on a phone: all-time history switches from days to weeks past 120 days.
 - Series and category colors follow Colors › Data palettes; a series keeps its color on every chart (Supabase).
 - Status colors only for series that measure a problem (errors, stalls, missing articles, outages), never for neutral metrics; amber on a neutral metric reads as a problem (Supabase).
 - Categories (stall causes, backbones, rescue reasons) always come with a labelled legend; their colors never carry meaning alone.

@@ -47,9 +47,11 @@ export const displayName = (path: string) => {
   return folder && !file.toLowerCase().includes(folder.slice(0, 10).toLowerCase()) ? folder : file;
 };
 const bucketLabel = (ms: number) =>
-  ms >= 86_400_000 ? "day" : ms >= 3_600_000 ? `${ms / 3_600_000} h` : ms === 60_000 ? "min" : `${ms / 60_000} min`;
-export const bucketTime = (ts: number, ms: number) =>
-  new Date(ts).toLocaleString([], ms >= 86_400_000 ? { dateStyle: "medium" } : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  ms > 86_400_000 ? "week" : ms === 86_400_000 ? "day" : ms >= 3_600_000 ? `${ms / 3_600_000} h` : ms === 60_000 ? "min" : `${ms / 60_000} min`;
+export const bucketTime = (ts: number, ms: number) => {
+  const time = new Date(ts).toLocaleString([], ms >= 86_400_000 ? { dateStyle: "medium" } : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return ms > 86_400_000 ? `Week of ${time}` : time;
+};
 
 /** Metrics for one window; Overview and Stats share the cache. */
 export function useHistory(span: Window) {
