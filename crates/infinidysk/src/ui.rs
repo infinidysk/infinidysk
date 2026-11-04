@@ -13,8 +13,9 @@ use std::sync::LazyLock;
 struct Assets;
 
 /// Paths served by the SAB/admin APIs, `WebDAV` and the container health check.
-const BACKEND: [&str; 8] = [
+const BACKEND: [&str; 9] = [
     "/api",
+    "/auth/oidc",
     "/metrics",
     "/view",
     "/.ids",
@@ -92,6 +93,7 @@ mod tests {
     fn backend_prefixes_match_whole_segments() {
         assert!(super::backend("/api"));
         assert!(super::backend("/content/tv/x.mkv"));
+        assert!(super::backend("/auth/oidc/callback"));
         assert!(!super::backend("/apifoo"));
         assert!(!super::backend("/"));
         assert!(!super::backend("/queue"));

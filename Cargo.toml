@@ -31,6 +31,7 @@ jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-sy
 lzma-rs = { version = "0.3.0", default-features = false }
 md-5 = "0.11.0"
 nix = { version = "0.31.3", default-features = false, features = ["mount", "user"] }
+openidconnect = { version = "4.1.0", default-features = false }
 percent-encoding = "2.3.2"
 postcard = { version = "1.1.3", default-features = false, features = ["use-std"] }
 quick-xml = "0.42.0"
