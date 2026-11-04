@@ -119,6 +119,7 @@ pub struct Admin {
         release_notes::get_release_notes,
         post_restart,
         get_arr_status,
+        post_arr_discover,
         post_arr_test,
         get_reconcile,
         post_reconcile_confirm,
@@ -252,6 +253,7 @@ pub fn router(admin: Arc<Admin>, auth: Arc<Auth>) -> Router {
         )
         .route("/api/v1/restart", post(post_restart))
         .route("/api/v1/arr/status", get(get_arr_status))
+        .route("/api/v1/arr/discover", post(post_arr_discover))
         .route("/api/v1/arr/test", post(post_arr_test))
         .route("/api/v1/arr/reconcile", get(get_reconcile))
         .route(
@@ -1284,6 +1286,14 @@ struct DiskCacheStatus {
     responses((status = 200, body = arr::ArrStatus)))]
 async fn get_arr_status(State(admin): State<Arc<Admin>>) -> Json<arr::ArrStatus> {
     Json(admin.arr.status())
+}
+
+/// Checks every enabled Arr instance again now; the results show in the Arr status.
+#[utoipa::path(post, path = "/api/v1/arr/discover", tag = "arr",
+    responses((status = 202, description = "Discovery started")))]
+async fn post_arr_discover(State(admin): State<Arc<Admin>>) -> StatusCode {
+    admin.arr.rediscover();
+    StatusCode::ACCEPTED
 }
 
 #[derive(Serialize, ToSchema)]

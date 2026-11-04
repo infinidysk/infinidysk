@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { CircleAlert, Info, Loader2, Pencil, PlugZap, Plus, Trash2, TriangleAlert } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CircleAlert, Info, Loader2, Pencil, PlugZap, Plus, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 import { api, body, type Schemas } from "../api/client";
 import { ago } from "../format";
 import { MASK, notAPassword, useSaveSettings, useSettings, uuid } from "../settings";
@@ -152,6 +152,7 @@ function Summary({ status }: { status?: ArrStatus }) {
       <div className="flex min-w-0 items-center gap-2 text-xs">
         <Status tone="destructive">Not connected</Status>
         <span className="text-muted-foreground truncate">{status.error}</span>
+        <Retry size="xs" />
       </div>
     );
   const here = status.clients.filter((c) => c.binding === "verified").length;
@@ -164,6 +165,29 @@ function Summary({ status }: { status?: ArrStatus }) {
         {webhook && ` · ${webhook}`}
       </span>
     </div>
+  );
+}
+
+/** Checks every Arr again now, instead of waiting for the next automatic retry. */
+function Retry({ size }: { size: "xs" | "sm" }) {
+  const client = useQueryClient();
+  const retry = useMutation({
+    mutationFn: () => body(api.POST("/api/v1/arr/discover")),
+    // Discovery runs in the background; give it a moment before reading the result.
+    onSuccess: () => setTimeout(() => void client.invalidateQueries({ queryKey: ["arr-status"] }), 1500),
+  });
+  return (
+    <>
+      <Button type="button" variant="outline" size={size} className="shrink-0" disabled={retry.isPending} onClick={() => retry.mutate()}>
+        {retry.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+        Retry
+      </Button>
+      {retry.isError && (
+        <span role="alert" className="text-destructive text-xs">
+          {retry.error.message}
+        </span>
+      )}
+    </>
   );
 }
 
@@ -328,10 +352,13 @@ function Discovered({ status }: { status: ArrStatus }) {
         <span className="text-muted-foreground">· checked {ago(status.checked_at_ms)}</span>
       </p>
       {status.error && (
-        <p className="text-destructive flex items-start gap-2">
-          <CircleAlert className="mt-0.5 size-4 shrink-0" />
-          {status.error}
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <p className="text-destructive flex items-start gap-2">
+            <CircleAlert className="mt-0.5 size-4 shrink-0" />
+            {status.error}
+          </p>
+          <Retry size="sm" />
+        </div>
       )}
       {(!status.error || status.clients.length > 0) && <p className="text-muted-foreground">SABnzbd download clients</p>}
       {status.clients.length === 0 && !status.error && <p>None. Add this install to the Arr as a SABnzbd download client.</p>}

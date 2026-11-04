@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/arr/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Checks every enabled Arr instance again now; the results show in the Arr status. */
+        post: operations["post_arr_discover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/arr/reconcile": {
         parameters: {
             query?: never;
@@ -3684,6 +3701,24 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    post_arr_discover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discovery started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_reconcile: {
         parameters: {
             query?: never;

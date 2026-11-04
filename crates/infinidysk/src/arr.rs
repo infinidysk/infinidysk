@@ -34,6 +34,8 @@ const EVERY: Duration = Duration::from_hours(1);
 const COALESCE: Duration = Duration::from_secs(5);
 const RETRY_MIN: Duration = Duration::from_mins(1);
 const RETRY_MAX: Duration = Duration::from_mins(15);
+/// First retry of a failed discovery; Arrs starting alongside us are often up by then.
+const DISCOVER_RETRY_MIN: Duration = Duration::from_secs(15);
 /// URL-base suffix that marks an Arr's test calls as our probe.
 const MARKER: &str = "infinidysk-probe-";
 
@@ -199,6 +201,8 @@ pub struct Discovery {
     known: Mutex<HashMap<Uuid, Known>>,
     /// Wakes the webhook worker.
     wake: Notify,
+    /// Starts a discovery now.
+    rediscover: Notify,
     install: OnceCell<String>,
     /// Serializes updates of the held reconciliations.
     held_lock: tokio::sync::Mutex<()>,
@@ -224,6 +228,7 @@ impl Discovery {
             queue,
             known: Mutex::default(),
             wake: Notify::new(),
+            rediscover: Notify::new(),
             install: OnceCell::new(),
             held_lock: tokio::sync::Mutex::default(),
             discovered: watch::channel(false).0,
@@ -235,22 +240,38 @@ impl Discovery {
         &self.http
     }
 
-    /// Discovers at start, hourly and whenever `instances` changes; a change cancels a
-    /// discovery in progress.
+    /// Discovers at start, hourly, on request and whenever `instances` changes; a change
+    /// cancels a discovery in progress. A pass where an Arr failed retries with backoff,
+    /// so Arrs that start after us are found without a restart.
     pub async fn run(&self, mut instances: watch::Receiver<Vec<Arr>>) {
+        let mut retry = Duration::ZERO;
         loop {
             let arrs = instances.borrow_and_update().clone();
             tokio::select! {
-                () = self.discover(&arrs) => tokio::select! {
-                    changed = instances.changed() => if changed.is_err() { return },
-                    () = tokio::time::sleep(EVERY) => {}
+                ok = self.discover(&arrs) => {
+                    retry = if ok {
+                        Duration::ZERO
+                    } else {
+                        (retry * 2).clamp(DISCOVER_RETRY_MIN, RETRY_MAX)
+                    };
+                    tokio::select! {
+                        changed = instances.changed() => if changed.is_err() { return },
+                        () = self.rediscover.notified() => {}
+                        () = tokio::time::sleep(if ok { EVERY } else { retry }) => {}
+                    }
                 },
                 changed = instances.changed() => if changed.is_err() { return },
             }
         }
     }
 
-    async fn discover(&self, arrs: &[Arr]) {
+    /// Asks for a discovery now, such as after an Arr came back online.
+    pub fn rediscover(&self) {
+        self.rediscover.notify_one();
+    }
+
+    /// One pass over `arrs`; `true` when every Arr answered and took our webhook.
+    async fn discover(&self, arrs: &[Arr]) -> bool {
         let sab_key = self.config.read().await.settings().sab.api_key.0.clone();
         {
             // Removed instances go at once; changed ones start over.
@@ -281,12 +302,14 @@ impl Discovery {
             }
         }
         self.publish();
+        let mut ok = true;
         for arr in arrs {
             let found = self.check(arr, &sab_key).await;
             let hook = match &found {
                 Ok((_, clients)) => Some(self.register(arr, clients, &sab_key).await),
                 Err(_) => None,
             };
+            ok &= found.is_ok() && !matches!(hook, Some(Err(_)));
             self.record(arr, found);
             if let (Some(hook), Some(k)) = (hook, self.lock().get_mut(&arr.id)) {
                 (k.webhook_url, k.webhook_error) = match hook {
@@ -297,6 +320,7 @@ impl Discovery {
             self.publish();
         }
         self.discovered.send_replace(true);
+        ok
     }
 
     /// Hands the queue what each owned category must contain.
