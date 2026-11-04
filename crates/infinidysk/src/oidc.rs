@@ -16,7 +16,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hmac::{Hmac, KeyInit as _, Mac as _};
 use openidconnect::core::{
-    CoreAuthenticationFlow, CoreClient, CoreErrorResponseType, CoreIdToken,
+    CoreAuthenticationFlow, CoreClient, CoreClientAuthMethod, CoreErrorResponseType, CoreIdToken,
     CoreJwsSigningAlgorithm, CoreProviderMetadata,
 };
 use openidconnect::{
@@ -34,6 +34,9 @@ use crate::config::{self, Settings};
 pub const LOGIN: &str = "/auth/oidc/login";
 pub const CALLBACK: &str = "/auth/oidc/callback";
 const FLOW_COOKIE: &str = "infinidysk_sso";
+/// Marks a login already sent to the redirect URI's host, so a proxy that rewrites `Host`
+/// cannot loop it.
+const CANONICAL: &str = "canonical";
 /// Time to finish signing in at the provider.
 const FLOW_SECS: u64 = 10 * 60;
 /// How long provider metadata and signing keys are reused.
@@ -364,14 +367,23 @@ impl Sso {
             .filter(|a| **a != CoreJwsSigningAlgorithm::None)
             .cloned()
             .collect();
+        // 1.x sent the secret in the form body; only a provider that rules that out gets Basic.
+        let auth_type = match metadata.token_endpoint_auth_methods_supported() {
+            Some(m)
+                if m.contains(&CoreClientAuthMethod::ClientSecretBasic)
+                    && !m.contains(&CoreClientAuthMethod::ClientSecretPost) =>
+            {
+                AuthType::BasicAuth
+            }
+            _ => AuthType::RequestBody,
+        };
         let client = CoreClient::from_provider_metadata(
             metadata,
             ClientId::new(oidc.client_id.clone()),
             Some(ClientSecret::new(oidc.client_secret.0.clone())),
         )
         .set_redirect_uri(RedirectUrl::new(flow.redirect_uri).map_err(|_| SsoError::BadUrl)?)
-        // 1.x sent the secret in the form body; providers that pin the method keep working.
-        .set_auth_type(AuthType::RequestBody);
+        .set_auth_type(auth_type);
         let token = client
             .exchange_code(AuthorizationCode::new(code))
             .map_err(|_| SsoError::NoTokenEndpoint)?
@@ -470,6 +482,29 @@ fn redirect_uri(settings: &Settings, headers: &HeaderMap, peer: Option<IpAddr>) 
     Some(format!("{scheme}://{host}{CALLBACK}"))
 }
 
+/// This login on the redirect URI's host, when the browser came in through another one:
+/// the flow cookie must be set where the callback lands. `None` when the host matches or
+/// the request names none.
+fn elsewhere(redirect: &str, headers: &HeaderMap) -> Option<String> {
+    let here: Vec<&str> = ["x-forwarded-host", "host"]
+        .into_iter()
+        .filter_map(|name| headers.get(name)?.to_str().ok()?.split(',').next())
+        .map(str::trim)
+        .collect();
+    let url = openidconnect::url::Url::parse(redirect).ok()?;
+    let host = url.host_str()?;
+    let host = url
+        .port()
+        .map_or_else(|| host.to_owned(), |p| format!("{host}:{p}"));
+    if here.is_empty() || here.iter().any(|h| h.eq_ignore_ascii_case(&host)) {
+        return None;
+    }
+    Some(format!(
+        "{}{LOGIN}?{CANONICAL}",
+        url.origin().ascii_serialization()
+    ))
+}
+
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Flow {
     state: String,
@@ -533,6 +568,7 @@ fn found<const N: usize>(location: &str, cookies: [String; N]) -> Response {
 /// Starts SSO: redirects to the provider. Public.
 pub(crate) async fn login(
     State(auth): State<Arc<Auth>>,
+    uri: axum::http::Uri,
     headers: HeaderMap,
     extensions: Extensions,
 ) -> Response {
@@ -543,11 +579,17 @@ pub(crate) async fn login(
     let peer = extensions
         .get::<ConnectInfo<SocketAddr>>()
         .map(|ConnectInfo(a)| a.ip());
+    let redirect = redirect_uri(&settings, &headers, peer);
+    if uri.query() != Some(CANONICAL)
+        && let Some(there) = redirect.as_deref().and_then(|r| elsewhere(r, &headers))
+    {
+        return found(&there, []);
+    }
     let started = async {
         if settings.auth.session_key.0.is_empty() {
             return Err(SsoError::NoSessionKey);
         }
-        let redirect = redirect_uri(&settings, &headers, peer).ok_or(SsoError::NoHost)?;
+        let redirect = redirect.ok_or(SsoError::NoHost)?;
         auth.sso.start(&settings, redirect).await
     };
     match started.await {
@@ -692,6 +734,32 @@ mod tests {
     }
 
     #[test]
+    fn elsewhere_moves_only_a_login_on_another_host() {
+        let headers = |pairs: &[(&'static str, &str)]| {
+            let mut h = HeaderMap::new();
+            for (k, v) in pairs {
+                h.insert(*k, v.parse().expect("valid"));
+            }
+            h
+        };
+        let redirect = "https://dysk.example.com:8443/auth/oidc/callback";
+        assert_eq!(
+            elsewhere(redirect, &headers(&[("host", "10.0.0.5:3000")])).as_deref(),
+            Some("https://dysk.example.com:8443/auth/oidc/login?canonical")
+        );
+        for same in [
+            headers(&[("host", "DYSK.example.com:8443")]),
+            headers(&[
+                ("host", "app:3000"),
+                ("x-forwarded-host", "dysk.example.com:8443"),
+            ]),
+            HeaderMap::new(),
+        ] {
+            assert_eq!(elsewhere(redirect, &same), None);
+        }
+    }
+
+    #[test]
     fn flow_cookie_rejects_tampering_and_expiry() {
         let flow = Flow {
             state: "s".to_owned(),
@@ -701,8 +769,12 @@ mod tests {
             settings: "f".to_owned(),
         };
         let now = 1_000;
-        let sealed = flow.seal("key", now + 60);
-        assert_eq!(Flow::open("key", &sealed, now), Some(flow));
+        let (key, other) = (
+            uuid::Uuid::now_v7().to_string(),
+            uuid::Uuid::now_v7().to_string(),
+        );
+        let sealed = flow.seal(&key, now + 60);
+        assert_eq!(Flow::open(&key, &sealed, now), Some(flow));
 
         let (expiry, rest) = sealed.split_once('.').expect("three parts");
         let (body, mac) = rest.split_once('.').expect("three parts");
@@ -712,9 +784,9 @@ mod tests {
             "{expiry}.{}.{mac}",
             String::from_utf8(tampered).expect("ascii")
         );
-        assert_eq!(Flow::open("key", &tampered, now), None);
-        assert_eq!(Flow::open("other", &sealed, now), None);
-        assert_eq!(Flow::open("key", &sealed, now + 60), None);
+        assert_eq!(Flow::open(&key, &tampered, now), None);
+        assert_eq!(Flow::open(&other, &sealed, now), None);
+        assert_eq!(Flow::open(&key, &sealed, now + 60), None);
     }
 
     #[test]

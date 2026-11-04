@@ -627,7 +627,9 @@ pub(crate) fn cookie_header(
 ) -> String {
     let https = headers
         .get("x-forwarded-proto")
-        .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"https"));
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("https"));
     let secure = if https { "; Secure" } else { "" };
     format!("{name}={value}; Path=/; Max-Age={max_age}; HttpOnly; SameSite={same_site}{secure}")
 }

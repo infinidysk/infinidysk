@@ -9,12 +9,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::{ConnectInfo, Form, State};
-use axum::http::{Request, StatusCode, header};
+use axum::http::{HeaderMap, Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use hmac::{Hmac, KeyInit as _, Mac as _};
 use http_body_util::BodyExt;
 use infinidysk::auth::{Auth, require, router};
@@ -41,6 +41,10 @@ struct Idp {
     /// Signs ID tokens; the client secret unless a test wants a bad signature.
     key: String,
     fail_discovery: AtomicBool,
+    /// Advertises and accepts only `client_secret_basic`.
+    basic_only: AtomicBool,
+    /// Issues ID tokens that expired an hour ago.
+    expired: AtomicBool,
     authorization_endpoint: Option<String>,
     arrived: Notify,
     gate: watch::Sender<bool>,
@@ -55,6 +59,8 @@ async fn idp(key: &str, authorization_endpoint: Option<&str>) -> Arc<Idp> {
         token_requests: AtomicUsize::new(0),
         key: key.to_owned(),
         fail_discovery: AtomicBool::new(false),
+        basic_only: AtomicBool::new(false),
+        expired: AtomicBool::new(false),
         authorization_endpoint: authorization_endpoint.map(str::to_owned),
         arrived: Notify::new(),
         gate: watch::Sender::new(true),
@@ -76,8 +82,14 @@ async fn discovery(State(idp): State<Arc<Idp>>) -> Response {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let base = &idp.base;
+    let methods = if idp.basic_only.load(Ordering::SeqCst) {
+        json!(["client_secret_basic"])
+    } else {
+        json!(["client_secret_basic", "client_secret_post"])
+    };
     Json(json!({
         "issuer": base,
+        "token_endpoint_auth_methods_supported": methods,
         "authorization_endpoint": idp
             .authorization_endpoint
             .clone()
@@ -102,12 +114,30 @@ fn b64(bytes: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-async fn token(State(idp): State<Arc<Idp>>, Form(form): Form<HashMap<String, String>>) -> Response {
+async fn token(
+    State(idp): State<Arc<Idp>>,
+    headers: HeaderMap,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
     idp.token_requests.fetch_add(1, Ordering::SeqCst);
     let field = |k: &str| form.get(k).map_or("", String::as_str);
     assert_eq!(field("grant_type"), "authorization_code");
-    assert_eq!(field("client_id"), CLIENT);
-    assert_eq!(field("client_secret"), SECRET, "client_secret_post");
+    let basic = headers
+        .get(header::AUTHORIZATION)
+        .map(|v| v.to_str().unwrap().to_owned());
+    if idp.basic_only.load(Ordering::SeqCst) {
+        let expected = format!("Basic {}", STANDARD.encode(format!("{CLIENT}:{SECRET}")));
+        assert_eq!(
+            basic.as_deref(),
+            Some(expected.as_str()),
+            "client_secret_basic"
+        );
+        assert_eq!(field("client_secret"), "");
+    } else {
+        assert_eq!(basic, None);
+        assert_eq!(field("client_id"), CLIENT);
+        assert_eq!(field("client_secret"), SECRET, "client_secret_post");
+    }
     assert_eq!(field("redirect_uri"), "http://dysk.test/auth/oidc/callback");
     let (nonce, challenge) = idp
         .codes
@@ -122,6 +152,11 @@ async fn token(State(idp): State<Arc<Idp>>, Form(form): Form<HashMap<String, Str
         "PKCE"
     );
     let header = b64(br#"{"alg":"HS256","typ":"JWT"}"#);
+    let issued = if idp.expired.load(Ordering::SeqCst) {
+        now() - 7200
+    } else {
+        now()
+    };
     let claims = b64(&serde_json::to_vec(&json!({
         "iss": idp.base,
         "aud": CLIENT,
@@ -129,8 +164,8 @@ async fn token(State(idp): State<Arc<Idp>>, Form(form): Form<HashMap<String, Str
         "preferred_username": "alice",
         "name_id": "alice-sso",
         "nonce": nonce,
-        "iat": now(),
-        "exp": now() + 300,
+        "iat": issued,
+        "exp": issued + 300,
     }))
     .unwrap());
     let mut mac = Hmac::<Sha256>::new_from_slice(idp.key.as_bytes()).unwrap();
@@ -259,6 +294,11 @@ impl Dysk {
 
     /// Plays the provider's `/authorize` for `authorize` and calls the callback.
     async fn finish(&self, authorize: &Url, flow: &str) -> Reply {
+        self.finish_with_nonce(authorize, flow, None).await
+    }
+
+    /// [`Self::finish`], with the provider putting `nonce` in the ID token instead.
+    async fn finish_with_nonce(&self, authorize: &Url, flow: &str, nonce: Option<&str>) -> Reply {
         let param = |k: &str| {
             authorize
                 .query_pairs()
@@ -268,7 +308,10 @@ impl Dysk {
         };
         self.idp.codes.lock().unwrap().insert(
             "code-1".to_owned(),
-            (param("nonce"), param("code_challenge")),
+            (
+                nonce.map_or_else(|| param("nonce"), str::to_owned),
+                param("code_challenge"),
+            ),
         );
         self.callback(&[("code", "code-1"), ("state", &param("state"))], flow)
             .await
@@ -445,6 +488,61 @@ async fn sso_rejects_a_token_signed_with_another_key() {
             .unwrap()
             .contains("Max-Age=0")
     );
+}
+
+#[tokio::test]
+async fn sso_rejects_an_id_token_with_another_nonce() {
+    let dysk = dysk(idp(SECRET, None).await, true, &[]).await;
+    let (authorize, flow) = dysk.begin().await;
+    failed(
+        &dysk
+            .finish_with_nonce(&authorize, &flow, Some("replayed"))
+            .await,
+    );
+}
+
+#[tokio::test]
+async fn sso_rejects_an_expired_id_token() {
+    let idp = idp(SECRET, None).await;
+    idp.expired.store(true, Ordering::SeqCst);
+    let dysk = dysk(idp, true, &[]).await;
+    let (authorize, flow) = dysk.begin().await;
+    failed(&dysk.finish(&authorize, &flow).await);
+}
+
+#[tokio::test]
+async fn sso_uses_basic_auth_when_the_provider_only_takes_that() {
+    let idp = idp(SECRET, None).await;
+    idp.basic_only.store(true, Ordering::SeqCst);
+    let dysk = dysk(Arc::clone(&idp), true, &[]).await;
+    dysk.sign_in().await;
+    assert_eq!(idp.token_requests.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn sso_starts_on_the_redirect_uri_host() {
+    let dysk = dysk(idp(SECRET, None).await, true, &[]).await;
+    let get = |uri: &'static str, host: &'static str| {
+        let req = Request::get(uri)
+            .header(header::HOST, host)
+            .body(Body::empty())
+            .unwrap();
+        dysk.app.clone().oneshot(req)
+    };
+    let location = |r: &Response| r.headers()[header::LOCATION].to_str().unwrap().to_owned();
+    let cookies = |r: &Response| r.headers().get_all(header::SET_COOKIE).iter().count();
+
+    let r = get("/auth/oidc/login", "192.168.1.5:3000").await.unwrap();
+    assert_eq!(location(&r), "http://dysk.test/auth/oidc/login?canonical");
+    assert_eq!(cookies(&r), 0);
+    // A proxy that rewrites Host does not loop the browser.
+    let r = get("/auth/oidc/login?canonical", "192.168.1.5:3000")
+        .await
+        .unwrap();
+    assert!(location(&r).starts_with(&dysk.idp.base), "{}", location(&r));
+    assert_eq!(cookies(&r), 1);
+    let r = get("/auth/oidc/login", "dysk.test").await.unwrap();
+    assert!(location(&r).starts_with(&dysk.idp.base), "{}", location(&r));
 }
 
 #[tokio::test]
