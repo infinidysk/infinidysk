@@ -378,7 +378,9 @@ function Resources({ live }: { live?: Schemas["LiveView"] }) {
             aria-label="Memory use"
             aria-valuemin={0}
             aria-valuemax={100}
-            aria-valuenow={Math.round(share(r.memory_process_bytes, r.memory_limit_bytes))}
+            aria-valuenow={Math.round(
+              share(r.memory_process_bytes + r.memory_kernel_cache_bytes, r.memory_limit_bytes),
+            )}
           >
             {memory.map((m) => (
               <div key={m.label} className={cn(m.tone, "h-full")} style={{ width: percent(m.size, r.memory_limit_bytes) }} />
