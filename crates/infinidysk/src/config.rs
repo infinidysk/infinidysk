@@ -567,8 +567,8 @@ impl Sab {
     }
 }
 
-/// Admin API secrets; the admin login itself lives in the accounts table.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+/// Sign-in choices and admin API secrets; the admin login itself lives in the accounts table.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct Auth {
     /// `X-Api-Key` for scripts calling the admin API; separate from the SAB key.
@@ -577,6 +577,128 @@ pub struct Auth {
     pub session_key: Secret,
     /// Who must sign in to the web UI and admin API.
     pub mode: AuthMode,
+    /// Sign in with the admin username and password. Turning it off takes effect only
+    /// while SSO is set up.
+    pub local_login: bool,
+    /// Single sign-on through one OIDC provider.
+    pub oidc: Oidc,
+}
+
+impl Default for Auth {
+    fn default() -> Self {
+        Self {
+            api_key: Secret::default(),
+            session_key: Secret::default(),
+            mode: AuthMode::default(),
+            local_login: true,
+            oidc: Oidc::default(),
+        }
+    }
+}
+
+impl Auth {
+    /// Username and password sign-in is accepted; always while SSO is off.
+    #[must_use]
+    pub fn password_login(&self) -> bool {
+        self.local_login || !self.oidc.enabled()
+    }
+}
+
+/// SSO through one OIDC provider; on while `issuer` is set.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct Oidc {
+    /// Issuer URL exactly as the provider publishes it; empty turns SSO off.
+    pub issuer: String,
+    pub client_id: String,
+    pub client_secret: Secret,
+    /// Callback registered at the provider. Empty means `network.public_url`, else the
+    /// address the browser used, plus `/auth/oidc/callback`.
+    pub redirect_uri: String,
+    /// Space-separated; `openid` is always requested.
+    pub scopes: String,
+    /// ID-token claim shown as the username; then `preferred_username`, `email`, `sub`.
+    pub username_claim: String,
+}
+
+impl Default for Oidc {
+    fn default() -> Self {
+        Self {
+            issuer: String::new(),
+            client_id: String::new(),
+            client_secret: Secret::default(),
+            redirect_uri: String::new(),
+            scopes: "openid profile email".to_owned(),
+            username_claim: "preferred_username".to_owned(),
+        }
+    }
+}
+
+impl Oidc {
+    #[must_use]
+    pub fn enabled(&self) -> bool {
+        !self.issuer.is_empty()
+    }
+
+    /// Trims the fields; checks them only while SSO is on, so clearing the issuer alone
+    /// always turns SSO off.
+    pub(crate) fn validate(&mut self) -> Result<(), Error> {
+        self.issuer = self.issuer.trim().to_owned();
+        self.client_id = self.client_id.trim().to_owned();
+        self.redirect_uri = self.redirect_uri.trim().to_owned();
+        self.username_claim = self.username_claim.trim().to_owned();
+        self.scopes = self.scopes.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !self.enabled() {
+            return Ok(());
+        }
+        if !issuer_ok(&self.issuer) {
+            return Err(invalid(
+                "auth.oidc.issuer",
+                format!(
+                    "Issuer {:?} must be an https:// address without a query (http:// only on this machine)",
+                    self.issuer
+                ),
+            ));
+        }
+        if self.client_id.is_empty() {
+            return Err(invalid(
+                "auth.oidc.client_id",
+                "SSO needs the client ID from your identity provider".to_owned(),
+            ));
+        }
+        if self.client_secret.0.is_empty() {
+            return Err(invalid(
+                "auth.oidc.client_secret",
+                "SSO needs the client secret from your identity provider".to_owned(),
+            ));
+        }
+        if !self.redirect_uri.is_empty() && !redirect_ok(&self.redirect_uri) {
+            return Err(invalid(
+                "auth.oidc.redirect_uri",
+                format!(
+                    "Redirect URI {:?} must be an http:// or https:// address without a fragment",
+                    self.redirect_uri
+                ),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// `https://`, or `http://` to this machine ([`crate::oidc::secure`]), with no query or
+/// fragment. The trailing slash stays: discovery compares the issuer exactly.
+fn issuer_ok(issuer: &str) -> bool {
+    reqwest::Url::parse(issuer).is_ok_and(|u| {
+        crate::oidc::secure(u.scheme(), u.host_str().unwrap_or_default())
+            && u.query().is_none()
+            && u.fragment().is_none()
+    })
+}
+
+fn redirect_ok(uri: &str) -> bool {
+    reqwest::Url::parse(uri).is_ok_and(|u| {
+        matches!(u.scheme(), "http" | "https") && u.host_str().is_some() && u.fragment().is_none()
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -944,6 +1066,7 @@ impl Settings {
         out.sab.api_key = out.sab.api_key.masked();
         out.auth.api_key = out.auth.api_key.masked();
         out.auth.session_key = out.auth.session_key.masked();
+        out.auth.oidc.client_secret = out.auth.oidc.client_secret.masked();
         out.webdav.password = out.webdav.password.masked();
         out.webdav.download_key = out.webdav.download_key.masked();
         out.imports.strm_key = out.imports.strm_key.masked();
@@ -961,6 +1084,10 @@ impl Settings {
         self.sab.api_key.restore(&current.sab.api_key);
         self.auth.api_key.restore(&current.auth.api_key);
         self.auth.session_key.restore(&current.auth.session_key);
+        self.auth
+            .oidc
+            .client_secret
+            .restore(&current.auth.oidc.client_secret);
         self.webdav.password.restore(&current.webdav.password);
         self.webdav
             .download_key
@@ -1230,6 +1357,7 @@ impl Settings {
             ));
         }
         self.network.public_url = url.to_owned();
+        self.auth.oidc.validate()?;
         if let Some(limit) = self.network.download_limit_mb_per_s {
             check(
                 "network.download_limit_mb_per_s",

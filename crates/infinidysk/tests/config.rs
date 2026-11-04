@@ -30,6 +30,7 @@ async fn env_overrides_win_are_never_stored_and_masked_secrets_survive_saves() {
         password: Secret("pw".into()),
         ..Provider::default()
     });
+    settings.auth.oidc.client_secret = Secret("sso-secret".into());
     store.save(settings).await.expect("save");
     let provider = &store.settings().providers[0];
     assert_eq!(
@@ -45,10 +46,16 @@ async fn env_overrides_win_are_never_stored_and_masked_secrets_survive_saves() {
     // The UI round-trips masked settings; secrets must survive and never leak.
     let mut masked = store.settings().masked();
     assert_eq!(masked.providers[0].password, Secret(MASK.into()));
+    assert_eq!(masked.auth.oidc.client_secret, Secret(MASK.into()));
     assert!(!format!("{:?}", store.settings()).contains("pw"));
+    assert!(!format!("{:?}", store.settings()).contains("sso-secret"));
     masked.providers[0].priority = 1;
     store.save(masked.clone()).await.expect("save");
     assert_eq!(store.settings().providers[0].password, Secret("pw".into()));
+    assert_eq!(
+        store.settings().auth.oidc.client_secret,
+        Secret("sso-secret".into())
+    );
     assert_eq!(store.settings().providers[0].priority, 1);
 
     masked.sab.api_key = Secret("changed".into());
@@ -63,7 +70,7 @@ async fn env_overrides_win_are_never_stored_and_masked_secrets_survive_saves() {
         .collect();
     assert_eq!(
         keys,
-        ["providers"],
+        ["auth", "providers"],
         "env values and defaults are not stored"
     );
     let reloaded = ConfigStore::load(db.clone(), []).await.expect("reload");
@@ -154,6 +161,72 @@ fn retired_experiments_are_dropped_on_load() {
         serde_json::from_str(r#"{"experiments": ["retired", "win-floor", "win-floor"]}"#)
             .expect("parse");
     assert_eq!(settings.experiments, ["win-floor"]);
+}
+
+#[test]
+fn sso_settings_are_checked_only_while_an_issuer_is_set() {
+    let sso = |issuer: &str| {
+        let mut s = Settings::default();
+        s.auth.oidc.issuer = issuer.to_owned();
+        s.auth.oidc.client_id = "dysk".to_owned();
+        s.auth.oidc.client_secret = Secret("secret".into());
+        s
+    };
+    let path = |mut s: Settings| s.validate().err().and_then(|e| e.path().map(str::to_owned));
+
+    assert_eq!(path(sso("")), None);
+    let authentik = "https://auth.example.com/application/o/dysk/";
+    let mut no_secret = sso(authentik);
+    no_secret.auth.oidc.client_secret = Secret::default();
+    assert_eq!(path(no_secret).as_deref(), Some("auth.oidc.client_secret"));
+    let mut ok = sso(authentik);
+    ok.validate().expect("valid");
+    assert_eq!(ok.auth.oidc.issuer, authentik, "the trailing slash stays");
+
+    for issuer in ["http://auth.example.com", "http://10.0.0.5"] {
+        assert_eq!(
+            path(sso(issuer)).as_deref(),
+            Some("auth.oidc.issuer"),
+            "{issuer}"
+        );
+    }
+    for issuer in [
+        "http://127.0.0.1:9000",
+        "http://localhost:9000",
+        "http://[::1]:9000",
+    ] {
+        assert_eq!(path(sso(issuer)), None, "{issuer}");
+    }
+
+    let mut scopes = sso(authentik);
+    scopes.auth.oidc.scopes = "  profile   email ".to_owned();
+    scopes.validate().expect("valid");
+    assert_eq!(scopes.auth.oidc.scopes, "profile email");
+
+    for (uri, want) in [
+        ("https://dysk.example.com/sso/cb", None),
+        (
+            "https://dysk.example.com/cb#x",
+            Some("auth.oidc.redirect_uri"),
+        ),
+        ("ftp://dysk.example.com/cb", Some("auth.oidc.redirect_uri")),
+    ] {
+        let mut s = sso(authentik);
+        s.auth.oidc.redirect_uri = uri.to_owned();
+        assert_eq!(path(s).as_deref(), want, "{uri}");
+    }
+}
+
+#[test]
+fn password_login_stays_on_while_sso_is_off() {
+    let mut s = Settings::default();
+    s.auth.local_login = false;
+    assert!(s.auth.password_login());
+    s.auth.oidc.issuer = "https://auth.example.com".to_owned();
+    s.auth.oidc.client_id = "dysk".to_owned();
+    s.auth.oidc.client_secret = Secret("secret".into());
+    s.validate().expect("valid");
+    assert!(!s.auth.password_login());
 }
 
 #[test]

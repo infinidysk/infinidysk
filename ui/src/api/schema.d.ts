@@ -168,7 +168,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Changes the admin password (and optionally username); other sessions end. */
+        /** Changes the admin password (and optionally username); other password sessions end. */
         put: operations["change_password"];
         post?: never;
         delete?: never;
@@ -1666,7 +1666,7 @@ export interface components {
         };
         /** @enum {string} */
         AttemptState: "staging" | "restarting" | "failed";
-        /** @description Admin API secrets; the admin login itself lives in the accounts table. */
+        /** @description Sign-in choices and admin API secrets; the admin login itself lives in the accounts table. */
         Auth: {
             /**
              * @description `X-Api-Key` for scripts calling the admin API; separate from the SAB key.
@@ -1674,10 +1674,28 @@ export interface components {
              */
             api_key: components["schemas"]["Secret"];
             /**
+             * @description Sign in with the admin username and password. Turning it off takes effect only
+             *     while SSO is set up.
+             * @default true
+             */
+            local_login: boolean;
+            /**
              * @description Who must sign in to the web UI and admin API.
              * @default required
              */
             mode: components["schemas"]["AuthMode"];
+            /**
+             * @description Single sign-on through one OIDC provider.
+             * @default {
+             *       "client_id": "",
+             *       "client_secret": "",
+             *       "issuer": "",
+             *       "redirect_uri": "",
+             *       "scopes": "openid profile email",
+             *       "username_claim": "preferred_username"
+             *     }
+             */
+            oidc: components["schemas"]["Oidc"];
             /**
              * @description Signs UI session cookies; changing it logs everyone out.
              * @default
@@ -1687,10 +1705,19 @@ export interface components {
         /** @enum {string} */
         AuthMode: "required" | "local" | "disabled";
         AuthStatus: {
+            /** @description An admin account with a password exists. */
+            account: boolean;
+            method?: components["schemas"]["Method"] | null;
+            /** @description The sign-in page offers username and password. */
+            password_login: boolean;
             /** @description This client must sign in; `false` when `auth.mode` exempts it. */
             required: boolean;
-            /** @description No admin account exists yet; `POST /api/v1/auth/setup` creates it. */
+            /** @description No admin account exists and SSO is off; `POST /api/v1/auth/setup` creates it. */
             setup_required: boolean;
+            /** @description The sign-in page offers Sign in with SSO. */
+            sso: boolean;
+            /** @description The SSO session was started under the saved SSO settings, so it proves they work. */
+            sso_current: boolean;
             /** @description The signed-in username. */
             user?: string | null;
         };
@@ -2838,6 +2865,11 @@ export interface components {
             pending: boolean;
             reason?: string | null;
         };
+        /**
+         * @description How a session was started.
+         * @enum {string}
+         */
+        Method: "password" | "sso";
         Metrics: {
             /**
              * @description Serve Prometheus metrics at `/metrics`, behind the admin API key
@@ -2928,6 +2960,34 @@ export interface components {
             password: string;
             /** @description Keeps the current username when absent. */
             username?: string | null;
+        };
+        /** @description SSO through one OIDC provider; on while `issuer` is set. */
+        Oidc: {
+            /** @default  */
+            client_id: string;
+            /** @default  */
+            client_secret: components["schemas"]["Secret"];
+            /**
+             * @description Issuer URL exactly as the provider publishes it; empty turns SSO off.
+             * @default
+             */
+            issuer: string;
+            /**
+             * @description Callback registered at the provider. Empty means `network.public_url`, else the
+             *     address the browser used, plus `/auth/oidc/callback`.
+             * @default
+             */
+            redirect_uri: string;
+            /**
+             * @description Space-separated; `openid` is always requested.
+             * @default openid profile email
+             */
+            scopes: string;
+            /**
+             * @description ID-token claim shown as the username; then `preferred_username`, `email`, `sub`.
+             * @default preferred_username
+             */
+            username_claim: string;
         };
         Overview: {
             /** @description Reads in the window (at most 90 days) by program, most bytes first. */
@@ -3733,7 +3793,16 @@ export interface components {
             /**
              * @default {
              *       "api_key": "",
+             *       "local_login": true,
              *       "mode": "required",
+             *       "oidc": {
+             *         "client_id": "",
+             *         "client_secret": "",
+             *         "issuer": "",
+             *         "redirect_uri": "",
+             *         "scopes": "openid profile email",
+             *         "username_claim": "preferred_username"
+             *       },
              *       "session_key": ""
              *     }
              */
@@ -4373,6 +4442,15 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
+            /** @description Password sign-in is turned off */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
         };
     };
     logout: {
@@ -4406,7 +4484,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Changed; sets a fresh session cookie */
+            /** @description Changed; a password session gets a fresh cookie */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -4444,6 +4522,15 @@ export interface operations {
                 content?: never;
             };
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Sign-in uses SSO */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

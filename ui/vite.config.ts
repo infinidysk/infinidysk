@@ -12,6 +12,7 @@ export default defineConfig({
     proxy: {
       "/api": { target: backend, changeOrigin: false },
       "/view": { target: backend, changeOrigin: false },
+      "/auth/oidc": { target: backend, changeOrigin: false },
     },
   },
 });

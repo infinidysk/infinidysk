@@ -498,6 +498,7 @@ impl Redactor {
             &settings.sab.api_key,
             &settings.auth.api_key,
             &settings.auth.session_key,
+            &settings.auth.oidc.client_secret,
             &settings.webdav.password,
             &settings.webdav.download_key,
             &settings.imports.strm_key,

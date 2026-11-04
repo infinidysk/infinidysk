@@ -9,6 +9,11 @@ all-features = true
 
 [advisories]
 yanked = "deny"
+ignore = [
+    # rsa, through openidconnect: the Marvin timing attack needs private-key operations.
+    # We only verify ID-token signatures with the provider's public keys. No patch exists.
+    { id = "RUSTSEC-2023-0071", reason = "only public-key signature verification of OIDC ID tokens" },
+]
 
 [licenses]
 allow = [
