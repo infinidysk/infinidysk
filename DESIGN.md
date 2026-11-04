@@ -832,7 +832,7 @@ Modals interrupt, so use them sparingly: to confirm, to collect input an action 
 - Plots are hand-drawn SVG, `aria-hidden`, with the same numbers available as text (tiles or a table). No axes by default (Supabase: grid and Y axis off); faint gridlines in `border`, and at most one scale label, the value of the top gridline. Hover shows a tooltip with the exact value and time, kept inside the plot: line charts add a vertical guide in `muted`, bar charts dim the other bars.
 - The data picks the chart: amounts per time bucket (bytes, requests, reads, errors) draw as bars; ratios and gauges (cache hits, missing share) draw as lines or areas.
 - Stacked bars use a linear scale from zero, never a log scale: on a log scale a segment's height depends on what sits under it. Hiding a series in the legend rescales the plot to the rest, which is how small series are inspected.
-- Header metrics total what is plotted (Supabase `ChartMetric`). Per-series totals sit in the legend above the plot, which also toggles the series.
+- Header metrics summarize the whole window in the plot's unit (Supabase `ChartMetric`) and stay put when a series is hidden. Per-series totals sit in the legend above the plot, which also toggles the series.
 - A problem count beside a plot in another unit (errors beside bandwidth) draws in its own lane under the plot, on its own scale, never on the plot's scale.
 - The bucket still filling draws at half opacity; its rates cover the time it has run, and its tooltip says "so far".
 - A window draws at most about 120 bars, so bars stay at least 2 px wide on a phone: all-time history switches from days to weeks past 120 days.
