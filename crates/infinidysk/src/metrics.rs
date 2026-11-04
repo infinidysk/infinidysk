@@ -346,6 +346,8 @@ impl Window {
 #[derive(Serialize, ToSchema)]
 pub struct Overview {
     window: Window,
+    /// When this was built, Unix milliseconds: the last point's bucket has filled up to here.
+    at: i64,
     bucket_ms: i64,
     points: Vec<Point>,
     totals: Totals,
@@ -376,6 +378,10 @@ struct Point {
     ts: i64,
     served: u64,
     fetched: u64,
+    /// `fetched` by workload.
+    stream_bytes: u64,
+    queue_bytes: u64,
+    health_bytes: u64,
     /// Fastest 2 s read rate in the bucket, bytes per second.
     peak_bps: u64,
     /// Fastest 2 s rate from providers in the bucket, bytes per second.
@@ -1127,8 +1133,13 @@ impl Metrics {
             if let Some((provider, field)) = provider_field(key) {
                 let spark = sparks.entry(provider).or_default().entry(ts).or_default();
                 match field {
-                    Field::Bytes(_) => {
+                    Field::Bytes(workload) => {
                         point.fetched += value;
+                        match workload {
+                            Workload::Stream => point.stream_bytes += value,
+                            Workload::Queue => point.queue_bytes += value,
+                            Workload::Health => point.health_bytes += value,
+                        }
                         spark.bytes += value;
                     }
                     Field::Attempt(_, Outcome::Cancelled) => {}
@@ -1204,6 +1215,7 @@ impl Metrics {
 
         Ok(Overview {
             window,
+            at: now,
             bucket_ms: bucket,
             points,
             totals: totals(&sums),

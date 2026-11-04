@@ -2642,6 +2642,11 @@ export interface components {
         Overview: {
             /** @description Reads in the window (at most 90 days) by program, most bytes first. */
             apps: components["schemas"]["AppUsage"][];
+            /**
+             * Format: int64
+             * @description When this was built, Unix milliseconds: the last point's bucket has filled up to here.
+             */
+            at: number;
             /** @description Newest first. */
             breaker_events: components["schemas"]["BreakerView"][];
             /** Format: int64 */
@@ -2758,6 +2763,8 @@ export interface components {
             /** Format: int64 */
             health: number;
             /** Format: int64 */
+            health_bytes: number;
+            /** Format: int64 */
             import_failures: number;
             /** Format: int64 */
             imports: number;
@@ -2778,6 +2785,8 @@ export interface components {
             peak_fetch_bps: number;
             /** Format: int64 */
             queue: number;
+            /** Format: int64 */
+            queue_bytes: number;
             /**
              * Format: int64
              * @description Finished reads and their stalls.
@@ -2794,6 +2803,11 @@ export interface components {
              * @description Finished requests by workload, cancelled ones left out.
              */
             stream: number;
+            /**
+             * Format: int64
+             * @description `fetched` by workload.
+             */
+            stream_bytes: number;
             /** Format: int64 */
             ts: number;
             /** Format: int64 */
