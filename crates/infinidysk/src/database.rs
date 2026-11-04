@@ -219,6 +219,10 @@ const EMPTY_ONLY: &str = "Use a new, empty database for infinidysk.";
 const COLLATION: &str = "Create the database with LC_COLLATE 'C' so folder order matches SQLite \
                          and path searches can use indexes.";
 const MASK: &str = "********";
+const CAPTURE_LEFT: &str =
+    "Change tracking is still on in SQLite. Restart infinidysk to remove it.";
+const TARGET_LEFT: &str =
+    "Could not empty the PostgreSQL database. Empty it before using it again.";
 
 /// Time limits for transfer work; tests pass shorter ones.
 #[derive(Clone, Copy)]
@@ -542,12 +546,13 @@ impl Migrator {
         Ok(())
     }
 
-    /// Stops the move and leaves SQLite as it was.
+    /// Stops the move and leaves SQLite as it was. Returns what could not be cleaned up;
+    /// the move is cancelled either way.
     ///
     /// # Errors
     ///
     /// No move runs, the switch was requested, or the boot file could not be saved.
-    pub async fn cancel(self: &Arc<Self>) -> Result<(), Fail> {
+    pub async fn cancel(self: &Arc<Self>) -> Result<Vec<String>, Fail> {
         let _control = self.control.lock().await;
         let Some(migration) = self.file.lock().await.migration.clone() else {
             return Err(Fail::Conflict(
@@ -571,8 +576,12 @@ impl Migrator {
         *file = next;
         self.publish(&file);
         drop(file);
+        let mut warnings = Vec::new();
+        // Capture goes after the save: a removed capture under a kept Syncing state would
+        // miss changes. A restart removes a leftover capture.
         if let Err(error) = self.db.stop_capture().await {
             warn!(reason = %error, "could not remove change capture");
+            warnings.push(CAPTURE_LEFT.to_owned());
         }
         #[cfg(test)]
         self.trace("cleanup");
@@ -584,9 +593,10 @@ impl Migrator {
         .await;
         if !matches!(cleaned, Ok(Ok(()))) {
             warn!("could not empty the PostgreSQL database; empty it before using it again");
+            warnings.push(TARGET_LEFT.to_owned());
         }
         info!("cancelled the move to PostgreSQL");
-        Ok(())
+        Ok(warnings)
     }
 
     /// Stops the worker and writes state Cutover. The caller then restarts.
@@ -1197,6 +1207,12 @@ pub struct DatabaseCheck {
 }
 
 #[derive(Serialize, ToSchema)]
+pub struct MigrationCancelled {
+    /// Cleanup that did not finish; the move is cancelled either way.
+    warnings: Vec<String>,
+}
+
+#[derive(Serialize, ToSchema)]
 pub struct CutoverStarted {
     /// This process's start, to tell it from the one that switches.
     started_ms: i64,
@@ -1277,12 +1293,15 @@ pub async fn post_migration(
     Ok(StatusCode::ACCEPTED)
 }
 
-/// Cancels the move and empties the PostgreSQL database again.
+/// Cancels the move and tries to empty the PostgreSQL database again.
 #[utoipa::path(delete, path = "/api/v1/database/migration", tag = "database",
-    responses((status = 204), (status = 409, body = ApiError), (status = 503, body = ApiError)))]
-pub async fn delete_migration(State(admin): State<Arc<Admin>>) -> Result<StatusCode, Fail> {
-    admin.database.cancel().await?;
-    Ok(StatusCode::NO_CONTENT)
+    responses((status = 200, body = MigrationCancelled), (status = 409, body = ApiError),
+        (status = 503, body = ApiError)))]
+pub async fn delete_migration(
+    State(admin): State<Arc<Admin>>,
+) -> Result<Json<MigrationCancelled>, Fail> {
+    let warnings = admin.database.cancel().await?;
+    Ok(Json(MigrationCancelled { warnings }))
 }
 
 /// Restarts on PostgreSQL. Playback, `WebDAV` and imports pause until the switch finishes.
@@ -2113,7 +2132,7 @@ mod tests {
         let cancelled = tokio::time::timeout(Duration::from_secs(10), migrator.cancel())
             .await
             .expect("in time");
-        assert!(cancelled.is_ok());
+        assert_eq!(cancelled.ok(), Some(vec![TARGET_LEFT.to_owned()]));
         assert!(BootFile::load(&dir.0).expect("load").migration.is_none());
         assert_eq!(db.capture().await.expect("capture"), transfer::Capture::Off);
 

@@ -274,7 +274,7 @@ export interface paths {
         put?: never;
         /** Starts copying to an empty PostgreSQL database and keeps it in sync. */
         post: operations["post_migration"];
-        /** Cancels the move and empties the PostgreSQL database again. */
+        /** Cancels the move and tries to empty the PostgreSQL database again. */
         delete: operations["delete_migration"];
         options?: never;
         head?: never;
@@ -2556,6 +2556,10 @@ export interface components {
              */
             prometheus: boolean;
         };
+        MigrationCancelled: {
+            /** @description Cleanup that did not finish; the move is cancelled either way. */
+            warnings: string[];
+        };
         /** @enum {string} */
         MigrationState: "copying" | "syncing" | "cutover";
         MigrationView: {
@@ -4303,11 +4307,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["MigrationCancelled"];
+                };
             };
             409: {
                 headers: {
