@@ -319,13 +319,13 @@ pub async fn post_undo(
     let paths = backups
         .paths()
         .ok_or_else(|| Fail::Conflict(POSTGRES.to_owned()))?;
+    let (slot, _cancel) = admin.maintenance.claim("Undoing the restore")?;
     if paths.intent().exists() {
         return Err(Fail::Conflict(UNFINISHED.to_owned()));
     }
     if !paths.undo().exists() {
         return Err(Fail::Conflict("There is no undo copy.".to_owned()));
     }
-    let (slot, _cancel) = admin.maintenance.claim("Undoing the restore")?;
     let id = Uuid::new_v4();
     let staged = backups.stage_undo(id).await;
     drop(slot);
@@ -357,6 +357,7 @@ pub async fn delete_undo(State(admin): State<Arc<Admin>>) -> Result<StatusCode, 
         .backups
         .paths()
         .ok_or_else(|| Fail::Conflict(POSTGRES.to_owned()))?;
+    let (slot, _cancel) = admin.maintenance.claim("Deleting the undo copy")?;
     if paths.intent().exists() {
         return Err(Fail::Conflict(UNFINISHED.to_owned()));
     }
@@ -368,6 +369,7 @@ pub async fn delete_undo(State(admin): State<Arc<Admin>>) -> Result<StatusCode, 
     })
     .await
     .map_err(|e| io_fail(&e))?;
+    drop(slot);
     Ok(StatusCode::NO_CONTENT)
 }
 

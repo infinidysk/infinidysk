@@ -393,10 +393,13 @@ async fn record(db: &Db, intent: &Intent) -> Result<(), infinidysk_db::Error> {
         (Action::Undo, Phase::Opened) => {
             return db.write_config(&[], &[LAST_RESTORE_KEY]).await;
         }
-        (Action::Undo, Phase::RolledBack) => super::last_restore(db).await.map(|mut last| {
+        (Action::Undo, Phase::RolledBack) => {
+            let mut last = super::last_restore(db)
+                .await
+                .unwrap_or_else(|| restored(None));
             last.undo_failed = Some(intent.failed.clone().unwrap_or_default());
-            last
-        }),
+            Some(last)
+        }
         _ => None,
     };
     let Some(last) = last else {

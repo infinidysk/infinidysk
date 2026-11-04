@@ -338,6 +338,24 @@ fn stage(root: &Path, restore: &[u8]) {
 
 /// A backup copy that records a migration newer than this build.
 async fn future_backup(root: &Path) -> Vec<u8> {
+    edited_backup(
+        root,
+        "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) \
+         SELECT max(version) + 1, 'future', 1, x'00', 0 FROM _sqlx_migrations",
+    )
+    .await
+}
+
+/// A backup copy whose stored settings do not parse.
+async fn broken_settings_backup(root: &Path) -> Vec<u8> {
+    edited_backup(
+        root,
+        "INSERT INTO config (key, value) VALUES ('health', 'not json')",
+    )
+    .await
+}
+
+async fn edited_backup(root: &Path, sql: &'static str) -> Vec<u8> {
     use sqlx::ConnectOptions as _;
     let (addr, server, cancel) = start(root).await;
     let name = back_up(addr).await;
@@ -348,13 +366,7 @@ async fn future_backup(root: &Path) -> Vec<u8> {
         .connect()
         .await
         .unwrap();
-    sqlx::query(
-        "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) \
-         SELECT max(version) + 1, 'future', 1, x'00', 0 FROM _sqlx_migrations",
-    )
-    .execute(&mut conn)
-    .await
-    .unwrap();
+    sqlx::query(sql).execute(&mut conn).await.unwrap();
     sqlx::Connection::close(conn).await.unwrap();
     fs::read(path).unwrap()
 }
@@ -365,14 +377,16 @@ fn junk() -> Vec<u8> {
 
 #[tokio::test]
 async fn an_open_failure_records_a_rollback_and_restarts() {
-    for future in [false, true] {
+    for case in ["junk", "future", "settings"] {
         let root = root();
-        let restored = if future {
-            future_backup(&root).await
-        } else {
-            let (_, server, cancel) = start(&root).await;
-            stop(server, &cancel).await;
-            junk()
+        let restored = match case {
+            "future" => future_backup(&root).await,
+            "settings" => broken_settings_backup(&root).await,
+            _ => {
+                let (_, server, cancel) = start(&root).await;
+                stop(server, &cancel).await;
+                junk()
+            }
         };
         let before: Vec<Option<Vec<u8>>> = ["", "-wal", "-shm", "-journal"]
             .iter()
@@ -380,19 +394,19 @@ async fn an_open_failure_records_a_rollback_and_restarts() {
             .collect();
         stage(&root, &restored);
         let (_, server, _) = launch(&root).await;
-        assert_eq!(ended(server).await, Exit::Restart, "future: {future}");
+        assert_eq!(ended(server).await, Exit::Restart, "case: {case}");
         let i = intent(&root).unwrap();
         assert_eq!(i["phase"], "rolling-back", "{i}");
         assert!(i["failed"].is_string());
         // The failed open may still write the header's counters; the page layout stays.
         let now = fs::read(live(&root, "")).unwrap();
-        assert_eq!(now[..18], restored[..18], "future: {future}");
-        assert_eq!(now.len(), restored.len(), "future: {future}");
+        assert_eq!(now[..18], restored[..18], "case: {case}");
+        assert_eq!(now.len(), restored.len(), "case: {case}");
         let undo: Vec<Option<Vec<u8>>> = ["", "-wal", "-shm", "-journal"]
             .iter()
             .map(|s| fs::read(live(&root, &format!(".before-restore{s}"))).ok())
             .collect();
-        assert_eq!(undo, before, "future: {future}");
+        assert_eq!(undo, before, "case: {case}");
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -148,6 +148,7 @@ pub async fn serve(
     cancel: CancellationToken,
 ) -> anyhow::Result<Exit> {
     let pending = crate::backup::boot::apply_pending(boot)?;
+    let vars: Vec<(String, String)> = vars.into_iter().collect();
     let db = match Db::connect(&boot.database_url).await {
         Ok(db) => db,
         Err(error) if pending.swapped() => {
@@ -158,6 +159,19 @@ pub async fn serve(
         }
         Err(error) => return Err(anyhow::Error::from(error).context("opening the database")),
     };
+    // Past `finish` a restore no longer rolls back, so its settings must load first.
+    if pending.swapped()
+        && let Err(error) = ConfigStore::load(db.clone(), vars.iter().cloned()).await
+    {
+        db.close().await;
+        let reason = format!(
+            "{:#}",
+            anyhow::Error::from(error).context("loading settings")
+        );
+        warn!(%reason, "the restored database did not open; putting the previous one back");
+        crate::backup::boot::begin_roll_back(boot, pending, &reason)?;
+        return Ok(Exit::Restart);
+    }
     crate::backup::boot::finish(&db, boot, pending).await?;
     let booted = crate::database::serve_cutover(
         listener,
