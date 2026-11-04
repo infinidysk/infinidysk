@@ -296,8 +296,10 @@ function SecretField({
   readOnly,
   generate,
   reveal,
+  noAutofill,
   hint,
   tip,
+  error,
   action,
   onChange,
 }: {
@@ -310,8 +312,11 @@ function SecretField({
   generate?: boolean;
   /** Settings path of a key the server may reveal. */
   reveal?: "sab.api_key" | "auth.api_key" | "webdav.download_key" | "imports.strm_key";
+  /** Not a sign-in password, so password managers stay away. */
+  noAutofill?: boolean;
   hint?: string;
   tip?: string;
+  error?: string;
   action?: ReactNode;
   onChange: (value: string) => void;
 }) {
@@ -345,14 +350,14 @@ function SecretField({
         </>
       }
       hint={!stored && value && generate && !reveal ? "Copy it now; it is hidden once saved." : hint}
-      error={failed}
+      error={failed ?? error}
     >
       <div className="flex flex-wrap gap-2">
         <Input
           id={id}
           type={shown || (stored && revealed) ? "text" : "password"}
           className={cn("flex-1 font-mono", !short && "min-w-64")}
-          {...(reveal ? notAPassword : { autoComplete: "new-password" })}
+          {...(reveal || noAutofill ? notAPassword : { autoComplete: "new-password" })}
           disabled={locked || readOnly}
           placeholder={stored ? "••••••••" : "Not set"}
           value={stored ? (revealed ?? "") : value}
@@ -647,7 +652,8 @@ export function Settings() {
     !same(draft.auth.oidc, saved.auth.oidc) ||
     (!saved.auth.oidc.redirect_uri && draft.network.public_url !== saved.network.public_url);
   // Only saved-on → off needs proof; with password sign-in already off, SSO stays editable.
-  const passwordOff = saved.auth.local_login && !draft.auth.local_login;
+  const passwordOff =
+    (saved.auth.local_login || !ssoSaved) && !(draft.auth.local_login || draft.auth.oidc.issuer.trim() === "");
   const passwordOffRefusal = !passwordOff
     ? undefined
     : ssoEdited
@@ -655,7 +661,9 @@ export function Settings() {
       : !proven
         ? "Sign in with SSO using the saved settings before turning password sign-in off."
         : undefined;
-  const oidc = (v: Partial<Schemas["Oidc"]>) => patch("auth", { oidc: { ...draft.auth.oidc, ...v } });
+  // Setting SSO up keeps password sign-in on until an SSO sign-in has worked.
+  const oidc = (v: Partial<Schemas["Oidc"]>) =>
+    patch("auth", { oidc: { ...draft.auth.oidc, ...v }, ...(!ssoSaved && { local_login: true }) });
   const callback = `${draft.network.public_url || window.location.origin}/auth/oidc/callback`;
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -1299,17 +1307,17 @@ export function Settings() {
                     label="Client secret"
                     value={draft.auth.oidc.client_secret}
                     locked={locked("auth.oidc.client_secret")}
+                    noAutofill
+                    error={invalid("auth.oidc.client_secret")}
                     onChange={(client_secret) => oidc({ client_secret })}
                   />
-                  {invalid("auth.oidc.client_secret") && (
-                    <p className="text-destructive text-xs">{invalid("auth.oidc.client_secret")}</p>
-                  )}
                   <Field
                     id="oidc-redirect-uri"
                     label={label("Redirect URI", "auth.oidc.redirect_uri")}
                     hint={
                       <>
-                        Register exactly this address at your identity provider. Empty uses <code>{callback}</code>.
+                        Register exactly this address at your identity provider. Empty uses <code>{callback}</code> when the server
+                        sees the same address; behind a TLS proxy, set the public URL or list the proxy under trusted proxies.
                       </>
                     }
                     error={invalid("auth.oidc.redirect_uri")}
@@ -1354,9 +1362,11 @@ export function Settings() {
                         id="local-login"
                         label={label("Password sign-in", "auth.local_login")}
                         hint={
-                          ssoSaved
-                            ? "Off: only SSO signs in. If your identity provider is down, set INFINIDYSK__AUTH__LOCAL_LOGIN=true and restart."
-                            : "Always on while SSO is off."
+                          !ssoSaved
+                            ? "Always on while SSO is off."
+                            : saved.auth.local_login && draft.auth.local_login && !proven
+                              ? "To turn this off, first sign in with SSO using the saved settings."
+                              : "Off: only SSO signs in. If your identity provider is down, set INFINIDYSK__AUTH__LOCAL_LOGIN=true and restart."
                         }
                         checked={draft.auth.local_login || !ssoSaved}
                         disabled={
