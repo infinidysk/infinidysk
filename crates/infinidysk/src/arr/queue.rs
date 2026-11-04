@@ -112,7 +112,13 @@ impl Discovery {
                     continue;
                 }
             }
-            let messages: Vec<String> = entries.iter().flat_map(|e| e.messages.clone()).collect();
+            // A season pack has one entry per episode, each repeating the same messages.
+            let mut messages: Vec<String> = Vec::new();
+            for m in entries.iter().flat_map(|e| &e.messages) {
+                if !messages.contains(m) {
+                    messages.push(m.clone());
+                }
+            }
             let action = if messages.is_empty() {
                 self.ghost(arr, &download_id)
                     .await
