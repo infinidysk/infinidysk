@@ -211,6 +211,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/database": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Which database runs, and any move to PostgreSQL. */
+        get: operations["get_database"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/database/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Connects to a PostgreSQL database and says whether infinidysk can move to it. Read-only. */
+        post: operations["post_database_check"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/database/cutover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether a switch to PostgreSQL runs. No sign-in needed. */
+        get: operations["get_cutover_none"];
+        put?: never;
+        /** Restarts on PostgreSQL. Playback, `WebDAV` and imports pause until the switch finishes. */
+        post: operations["post_cutover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/database/migration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Starts copying to an empty PostgreSQL database and keeps it in sync. */
+        post: operations["post_migration"];
+        /** Cancels the move and tries to empty the PostgreSQL database again. */
+        delete: operations["delete_migration"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -1450,6 +1520,8 @@ export interface components {
             /** @description The signed-in username. */
             user?: string | null;
         };
+        /** @enum {string} */
+        Backend: "sqlite" | "postgres";
         BreakerView: {
             /** Format: int64 */
             at: number;
@@ -1549,6 +1621,39 @@ export interface components {
         };
         /** @enum {string} */
         ConversionState: "idle" | "running" | "waiting" | "cancelled";
+        CutoverProgress: {
+            /** Format: int64 */
+            done: number;
+            stage: components["schemas"]["ProgressStage"];
+            table?: string | null;
+            /** Format: int64 */
+            total: number;
+        };
+        CutoverStarted: {
+            /**
+             * Format: int64
+             * @description This process's start, to tell it from the one that switches.
+             */
+            started_ms: number;
+        };
+        /** @enum {string} */
+        CutoverState: "none" | "running";
+        CutoverStatus: {
+            progress?: components["schemas"]["CutoverProgress"] | null;
+            /**
+             * Format: int64
+             * @description The answering process's start.
+             */
+            started_ms: number;
+            state: components["schemas"]["CutoverState"];
+        };
+        DatabaseCheck: {
+            /** @description Why this database cannot be used; absent when it can. */
+            error?: string | null;
+            /** @description The server version, when it answered. */
+            version?: string | null;
+            warnings: string[];
+        };
         DatabaseCompaction: {
             /**
              * Format: int64
@@ -1567,6 +1672,18 @@ export interface components {
             /** Format: int64 */
             size_bytes_before: number;
             skipped_reason?: string | null;
+        };
+        DatabaseUrl: {
+            /** @description `postgres://user:password@host:5432/database`. */
+            url: string;
+        };
+        DatabaseView: {
+            backend: components["schemas"]["Backend"];
+            /** @description `INFINIDYSK_DATABASE_URL` selects the database; it cannot be moved here. */
+            env_managed: boolean;
+            migration?: components["schemas"]["MigrationView"] | null;
+            /** @description `user@host:port/database` of the PostgreSQL database in use or being copied to. */
+            target?: string | null;
         };
         DefectView: {
             /**
@@ -2439,6 +2556,32 @@ export interface components {
              */
             prometheus: boolean;
         };
+        MigrationCancelled: {
+            /** @description Cleanup that did not finish; the move is cancelled either way. */
+            warnings: string[];
+        };
+        /** @enum {string} */
+        MigrationState: "copying" | "syncing" | "cutover";
+        MigrationView: {
+            /** Format: int64 */
+            done: number;
+            error?: string | null;
+            /**
+             * Format: int64
+             * @description Changes not yet on PostgreSQL after the last sync pass.
+             */
+            pending_changes?: number | null;
+            stage?: components["schemas"]["ProgressStage"] | null;
+            state: components["schemas"]["MigrationState"];
+            /** Format: int64 */
+            synced_at_ms?: number | null;
+            table?: string | null;
+            /**
+             * Format: int64
+             * @description 0 while unknown.
+             */
+            total: number;
+        };
         Mount: {
             /**
              * @description Where the tree is mounted, as Sonarr/Radarr see it; completed downloads are reported
@@ -2740,6 +2883,8 @@ export interface components {
              */
             total: number;
         };
+        /** @enum {string} */
+        ProgressStage: "copying" | "syncing" | "verifying" | "switching";
         Provider: {
             /**
              * @description Catalog backbone id; a custom provider without one is its own group.
@@ -4007,6 +4152,183 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Catalog"];
+                };
+            };
+        };
+    };
+    get_database: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseView"];
+                };
+            };
+        };
+    };
+    post_database_check: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DatabaseUrl"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseCheck"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    get_cutover_none: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CutoverStatus"];
+                };
+            };
+        };
+    };
+    post_cutover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CutoverStarted"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    post_migration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DatabaseUrl"];
+            };
+        };
+        responses: {
+            /** @description Copying */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    delete_migration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationCancelled"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
         };

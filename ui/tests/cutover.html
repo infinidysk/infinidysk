@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Cutover gate regression</title>
+<div id="root"></div>
+<pre id="result">Running</pre>
+<script type="module">
+  import { act, createElement } from "react";
+  import { createRoot } from "react-dom/client";
+  import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const originalFetch = globalThis.fetch;
+  const check = (condition, message) => {
+    if (!condition) throw new Error(message);
+  };
+  let cutover = { state: "none", started_ms: 1, progress: null };
+  let down = false;
+  let asked = 0;
+  globalThis.fetch = async (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/v1/database/cutover") {
+      asked += 1;
+      if (down) throw new TypeError("Failed to fetch");
+      return Response.json(cutover);
+    }
+    if (url.pathname === "/api/v1/upgrade/status") return Response.json({ state: "none", error: null, progress: null });
+    check(url.pathname === "/api/v1/auth", `Unexpected request: ${url.pathname}`);
+    return Response.json({ required: false, setup_required: false, user: null });
+  };
+  const wait = (ms) => act(async () => new Promise(resolve => setTimeout(resolve, ms)));
+  const text = () => document.getElementById("root").textContent;
+  const app = () => document.getElementById("app");
+
+  sessionStorage.removeItem("infinidysk.switch");
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
+  const root = createRoot(document.getElementById("root"));
+  try {
+    const { Gate } = await import("/src/auth.tsx");
+    const { switching } = await import("/src/database.tsx");
+    await act(async () => {
+      root.render(createElement(QueryClientProvider, { client }, createElement(Gate, null, createElement("p", { id: "app" }, "App"))));
+    });
+    await wait(200);
+    check(app(), "1: app did not render");
+    const before = asked;
+    await wait(1500);
+    check(asked === before, `1: polling did not stop (${asked - before} more requests)`);
+
+    await act(async () => switching.begin(1));
+    await wait(1300);
+    check(asked > before, "2: polling did not resume");
+    check(text().includes("Restarting…"), `2: missing Restarting… in "${text()}"`);
+    check(!app(), "2: app still rendered");
+
+    down = true;
+    await wait(1300);
+    check(text().includes("Restarting…"), `3: missing Restarting… while down in "${text()}"`);
+
+    down = false;
+    cutover = { state: "running", started_ms: 2, progress: { stage: "verifying", table: "items", done: 5, total: 10 } };
+    await wait(1300);
+    check(text().includes("Checking"), `4: missing stage in "${text()}"`);
+    check(text().includes("items") && text().includes("50.0%"), `4: missing progress in "${text()}"`);
+
+    cutover = { state: "none", started_ms: 2, progress: null };
+    await wait(1300);
+    await wait(200);
+    check(app(), `5: app did not render: "${text()}"`);
+    check(sessionStorage.getItem("infinidysk.switch") === null, "5: switch still stored");
+
+    document.getElementById("result").textContent = "PASS";
+  } catch (error) {
+    document.getElementById("result").textContent = `FAIL: ${error.message}`;
+  } finally {
+    await act(async () => root.unmount());
+    client.clear();
+    sessionStorage.removeItem("infinidysk.switch");
+    globalThis.fetch = originalFetch;
+    delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+  }
+</script>

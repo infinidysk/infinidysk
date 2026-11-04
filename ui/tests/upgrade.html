@@ -19,9 +19,12 @@
   let failing = false;
   globalThis.fetch = async (request) => {
     const url = new URL(request.url);
+    if (url.pathname === "/api/v1/database/cutover") {
+      return Response.json({ state: "none", started_ms: 1, progress: null });
+    }
     if (url.pathname === "/api/v1/upgrade/status") {
       return Response.json(
-        failing ? { error: "Temporary status failure" } : { state, error: null, progress },
+        failing ? { error: "Temporary status failure" } : { state, error: state === "failed" ? "Provider unreachable" : null, progress },
         { status: failing ? 503 : 200 },
       );
     }
@@ -30,6 +33,7 @@
   };
 
   try {
+    sessionStorage.removeItem("infinidysk.switch");
     const { Gate } = await import("/src/auth.tsx");
     for (const cached of ["done", "none", null]) {
       state = cached ?? "none";
@@ -49,6 +53,7 @@
         )));
         await settle(() => client.invalidateQueries());
         const input = document.getElementById("unsaved");
+        check(client.getQueryState(["cutover"])?.data?.state === "none", `${cached}: cutover was not asked`);
         if (cached) {
           check(input, `${cached}: app did not render`);
           input.value = "Unsaved change";
@@ -109,6 +114,30 @@
           check(!text.includes("%"), `${fixture.stage}: showed a percentage without a total`);
           check(parseFloat(bar.firstElementChild.style.width) > 0, `${fixture.stage}: invisible activity indicator`);
         }
+      } finally {
+        await act(async () => root.unmount());
+        client.clear();
+      }
+    }
+    state = "failed";
+    progress = null;
+    {
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const root = createRoot(document.getElementById("root"));
+      try {
+        await act(async () => {
+          root.render(createElement(QueryClientProvider, { client }, createElement(Gate, null, createElement("input", { id: "unsaved" }))));
+          await new Promise(resolve => setTimeout(resolve, 50));
+        });
+        await act(async () => {
+          await client.invalidateQueries();
+          await new Promise(resolve => setTimeout(resolve, 50));
+        });
+        const text = document.getElementById("root").textContent;
+        check(text.includes("Upgrading from your C# install failed"), `failed: missing title in "${text}"`);
+        check(text.includes("Provider unreachable"), "failed: missing reason");
+        check(text.includes("Retry the import"), "failed: missing retry");
+        check(!document.getElementById("unsaved"), "failed: app rendered");
       } finally {
         await act(async () => root.unmount());
         client.clear();

@@ -36,6 +36,7 @@ use crate::app::Live;
 use crate::arr;
 use crate::auth::{self, Auth};
 use crate::config::{self, ConfigStore, ImportStrategy, Settings};
+use crate::database;
 use crate::files;
 use crate::library;
 use crate::logs::{self, Entry, Level};
@@ -68,6 +69,7 @@ pub struct Admin {
     pub library: Arc<crate::library::Library>,
     pub maintenance: Arc<crate::maintenance::Maintenance>,
     pub updates: Arc<crate::update::Updates>,
+    pub database: Arc<crate::database::Migrator>,
     /// Ends event streams at shutdown.
     pub cancel: CancellationToken,
     /// Set before `cancel` when the process should start again.
@@ -160,6 +162,12 @@ pub struct Admin {
         maintenance::get_report,
         maintenance::post_confirm,
         maintenance::delete_report,
+        database::get_database,
+        database::post_database_check,
+        database::post_migration,
+        database::delete_migration,
+        database::post_cutover,
+        database::get_cutover_none,
     ),
     modifiers(&Security),
     security(("session" = []), ("api_key" = []))
@@ -310,8 +318,19 @@ pub fn router(admin: Arc<Admin>, auth: Arc<Auth>) -> Router {
             "/api/v1/maintenance/{job}/report/confirm",
             post(maintenance::post_confirm),
         )
+        .route("/api/v1/database", get(database::get_database))
+        .route(
+            "/api/v1/database/check",
+            post(database::post_database_check),
+        )
+        .route(
+            "/api/v1/database/migration",
+            post(database::post_migration).delete(database::delete_migration),
+        )
+        .route("/api/v1/database/cutover", post(database::post_cutover))
         .route_layer(axum::middleware::from_fn_with_state(auth, auth::require))
         .route("/api/v1/upgrade/status", get(upgrade::get_upgrade_status))
+        .route("/api/v1/database/cutover", get(database::get_cutover_none))
         .route("/api/v1/openapi.json", get(openapi))
         .with_state(admin)
 }

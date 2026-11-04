@@ -137,6 +137,7 @@ async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
     let boot = Boot {
         listen: addr,
         database_url: format!("sqlite:{}", db_path.display()),
+        database_source: infinidysk::database::Source::Env,
         uid: 0,
         gid: 0,
         trace_minutes: 0,

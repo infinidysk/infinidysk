@@ -35,6 +35,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+toml.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = { workspace = true, features = ["io"] }
 tower.workspace = true
@@ -50,6 +51,7 @@ infinidysk-fuse.workspace = true
 [dev-dependencies]
 http-body-util.workspace = true
 infinidysk-testkit.workspace = true
+sqlx.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "rt"] }
 tower.workspace = true
 

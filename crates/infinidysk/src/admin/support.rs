@@ -387,10 +387,7 @@ fn system(admin: &Admin) -> Value {
         }
     }
     set.sort_unstable();
-    let database = std::env::var("INFINIDYSK_DATABASE_URL")
-        .ok()
-        .and_then(|url| url.split(':').next().map(str::to_owned))
-        .unwrap_or_else(|| "sqlite".to_owned());
+    let database = admin.database.backend();
     let mount = admin.mount.borrow().clone();
     let kernel = mount.as_ref().ok().map(|k| {
         json!({
