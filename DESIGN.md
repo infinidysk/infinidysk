@@ -798,7 +798,7 @@ Modals interrupt, so use them sparingly: to confirm, to collect input an action 
 - Primary nav: the sidebar lists the pages in a fixed order (Overview, Queue, Explorer, Health, Stats, System, Settings), icon and label, one route each. Overview answers "is it working right now" (what needs attention, live reads, recent activity); Stats holds the per-provider, per-workload and per-app breakdowns. Active `bg-sidebar-accent text-sidebar-accent-foreground` with a `text-primary` icon; inactive `text-sidebar-foreground/80`, hover `bg-sidebar-accent/60`. Page names are title case and one or two words.
 - Counters beside nav items show work waiting for the user (jobs in the queue, files that need action).
 - Overview opens with a needs-attention list when something does (files that need action, providers with an open circuit, a paused queue, the mount down): one row per problem with a `Status` and a link to where it is fixed. It renders nothing when all is well.
-- Overview activity starts on a logarithmic scale so isolated spikes do not hide smaller activity. The Log scale toggle restores a linear view; totals, peaks and tooltips always show actual counts.
+- Overview activity plots average download speed per bucket as bars stacked by workload, Playback at the bottom. The header shows what was downloaded and served, each with its fastest 2 s rate; the legend above the plot gives each workload's total and toggles it. Errors draw in a lane under the bars.
 - The live status block (files open, read rate, connections) links to Overview; the version block links to System, which holds the version card and the support pack, and turns `warning` when an update is available.
 - Sub-navigation changes the URL (Supabase NavMenu): settings categories are `/settings/:category`; search and filters worth sharing live in the query string (`/explorer?search=`). Segmented controls only switch view state.
 - Detail routes start with a back link (Layout › Page anatomy).
@@ -829,7 +829,12 @@ Modals interrupt, so use them sparingly: to confirm, to collect input an action 
 
 - Anatomy (Supabase `Chart`): a panel with a header (title, optional `InfoTip`, actions or the time-window control), optional headline metrics, the plot, and an optional footer table.
 - Metric tiles: a caption label, the value in `metric`, an optional hint and sparkline. Tiles share 1px dividers (`grid gap-px bg-border rounded-lg border`, cells `bg-card p-3`): 2 columns on mobile up to 4–6, and the last tile stretches so no row ends in an empty cell.
-- Plots are hand-drawn SVG, `aria-hidden`, with the same numbers available as text (tiles or a table). No axes by default (Supabase: grid and Y axis off); faint gridlines in `border`; hover shows a vertical guide in `muted` and a tooltip with the exact value and time.
+- Plots are hand-drawn SVG, `aria-hidden`, with the same numbers available as text (tiles or a table). No axes by default (Supabase: grid and Y axis off); faint gridlines in `border`, and at most one scale label, the value of the top gridline. Hover shows a tooltip with the exact value and time: line charts add a vertical guide in `muted`, bar charts dim the other bars.
+- The data picks the chart: amounts per time bucket (bytes, requests, reads, errors) draw as bars; ratios and gauges (cache hits, missing share) draw as lines or areas.
+- Stacked bars use a linear scale from zero, never a log scale: on a log scale a segment's height depends on what sits under it. Hiding a series in the legend rescales the plot to the rest, which is how small series are inspected.
+- Header metrics total what is plotted (Supabase `ChartMetric`). Per-series totals sit in the legend above the plot, which also toggles the series.
+- A problem count beside a plot in another unit (errors beside bandwidth) draws in its own lane under the plot, on its own scale, never on the plot's scale.
+- The bucket still filling draws at half opacity; its rates cover the time it has run, and its tooltip says "so far".
 - Series and category colors follow Colors › Data palettes; a series keeps its color on every chart (Supabase).
 - Status colors only for series that measure a problem (errors, stalls, missing articles, outages), never for neutral metrics; amber on a neutral metric reads as a problem (Supabase).
 - Categories (stall causes, backbones, rescue reasons) always come with a labelled legend; their colors never carry meaning alone.
