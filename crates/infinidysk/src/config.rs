@@ -208,6 +208,7 @@ pub struct Maintenance {
     /// Jobs that run in the window, once each per window.
     #[serde(deserialize_with = "known_jobs")]
     pub scheduled: Vec<MaintenanceJob>,
+    pub backup: BackupSettings,
 }
 
 impl Default for Maintenance {
@@ -215,9 +216,31 @@ impl Default for Maintenance {
         Self {
             window: MaintenanceWindow::default(),
             scheduled: vec![MaintenanceJob::RemoveDeadLinks],
+            backup: BackupSettings::default(),
         }
     }
 }
+
+/// Where backups go and how many the backup job keeps.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct BackupSettings {
+    /// Absolute folder; empty means `backups` beside the database.
+    pub dir: String,
+    /// Scheduled and manual backups kept; pinned, uploaded and added ones are extra.
+    pub keep: u16,
+}
+
+impl Default for BackupSettings {
+    fn default() -> Self {
+        Self {
+            dir: String::new(),
+            keep: 3,
+        }
+    }
+}
+
+pub const BACKUP_KEEP: RangeInclusive<u16> = 1..=100;
 
 /// Daily, in server time, as `HH:MM`. An end at or before the start ends the next day.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -260,6 +283,8 @@ impl MaintenanceWindow {
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum MaintenanceJob {
+    /// Writes a checked copy of the SQLite library database and prunes old copies.
+    BackupDatabase,
     /// Deletes downloads nothing in the library folders points to.
     RemoveUnlinked,
     /// Removes library links and STRM files whose download is gone, and has the Arr
@@ -270,7 +295,8 @@ pub enum MaintenanceJob {
 }
 
 impl MaintenanceJob {
-    pub const ALL: [Self; 3] = [
+    pub const ALL: [Self; 4] = [
+        Self::BackupDatabase,
         Self::RemoveUnlinked,
         Self::RemoveDeadLinks,
         Self::CompactDatabase,
@@ -279,6 +305,7 @@ impl MaintenanceJob {
     #[must_use]
     pub const fn id(self) -> &'static str {
         match self {
+            Self::BackupDatabase => "backup-database",
             Self::RemoveUnlinked => "remove-unlinked",
             Self::RemoveDeadLinks => "remove-dead-links",
             Self::CompactDatabase => "compact-database",
@@ -993,6 +1020,12 @@ impl Settings {
             );
             self.maintenance.window = d.maintenance.window;
         }
+        reset(
+            "maintenance.backup.keep",
+            &mut self.maintenance.backup.keep,
+            &BACKUP_KEEP,
+            d.maintenance.backup.keep,
+        );
         self.performance.reset_invalid();
         if let Some(limit) = self.network.download_limit_mb_per_s
             && !DOWNLOAD_LIMIT_MB_PER_S.contains(&limit)
@@ -1087,6 +1120,28 @@ impl Settings {
         }
         self.maintenance.scheduled.sort_unstable();
         self.maintenance.scheduled.dedup();
+        check(
+            "maintenance.backup.keep",
+            "Copies to keep",
+            self.maintenance.backup.keep,
+            &BACKUP_KEEP,
+        )?;
+        let backup_dir = self.maintenance.backup.dir.trim();
+        if !backup_dir.is_empty() {
+            if !backup_dir.starts_with('/') {
+                return Err(invalid(
+                    "maintenance.backup.dir",
+                    format!("Backup folder {backup_dir:?} must be an absolute path"),
+                ));
+            }
+            if std::path::Path::new(backup_dir).starts_with(&self.mount.dir) {
+                return Err(invalid(
+                    "maintenance.backup.dir",
+                    format!("Backup folder {backup_dir:?} must be outside the mount"),
+                ));
+            }
+        }
+        self.maintenance.backup.dir = backup_dir.to_owned();
         let strm_dir = self.imports.strm_dir.trim();
         if !strm_dir.starts_with('/') {
             return Err(invalid(
