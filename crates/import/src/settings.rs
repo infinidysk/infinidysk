@@ -12,14 +12,23 @@ use uuid::Uuid;
 use crate::{Error, legacy_hash, open};
 
 const ENV_PREFIX: &str = "NZBDAV_CONFIG__";
-/// Variables C# read directly when the matching setting was empty.
-const FALLBACK_VARS: [&str; 6] = [
+/// Variables C# read directly when the matching setting was empty, and the 1.x frontend's
+/// OIDC variables.
+const FALLBACK_VARS: [&str; 14] = [
     "FRONTEND_BACKEND_API_KEY",
     "CATEGORIES",
     "MOUNT_DIR",
     "WEBDAV_USER",
     "WEBDAV_PASSWORD",
     "TRUSTED_PROXY_CIDRS",
+    "OIDC_ISSUER",
+    "OIDC_CLIENT_ID",
+    "OIDC_CLIENT_SECRET",
+    "OIDC_REDIRECT_URI",
+    "OIDC_SCOPES",
+    "OIDC_USERNAME_CLAIM",
+    "OIDC_ADMIN_CLAIM",
+    "OIDC_ADMIN_CLAIM_VALUE",
 ];
 
 /// Effective C# settings by key (`api.categories`), and the fallback variables.
