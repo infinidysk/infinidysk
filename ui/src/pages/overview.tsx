@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, CircleAlert, Info } from "lucide-react";
-import { type PointerEvent, type ReactNode, memo, useState } from "react";
+import { type PointerEvent, type ReactNode, memo, useLayoutEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { api, body, type Schemas } from "../api/client";
 import { ago, bytes, duration, stamp } from "../format";
@@ -524,6 +524,17 @@ const Activity = memo(function Activity({ history: h, span }: { history: History
     const r = e.currentTarget.getBoundingClientRect();
     setHover(Math.min(n - 1, Math.max(0, Math.floor(((e.clientX - r.left) / r.width) * n))));
   };
+  const plot = useRef<HTMLDivElement>(null);
+  const tip = useRef<HTMLDivElement>(null);
+  // Beside the hovered bar on its roomier side, pulled in as far as the plot's edges need.
+  useLayoutEffect(() => {
+    const box = plot.current;
+    const el = tip.current;
+    if (hover == null || !box || !el) return;
+    const slot = box.clientWidth / n;
+    const beside = hover < n / 2 ? (hover + 1) * slot + 8 : hover * slot - 8 - el.offsetWidth;
+    el.style.left = `${Math.max(0, Math.min(beside, box.clientWidth - el.offsetWidth))}px`;
+  });
   /** One bucket's bars from the bottom up, 1 px apart. */
   const stack = (p: Point, i: number) => {
     let base = LABEL + BARS;
@@ -581,6 +592,7 @@ const Activity = memo(function Activity({ history: h, span }: { history: History
         </span>
       </div>
       <div
+        ref={plot}
         className="focus-visible:ring-ring/50 relative min-w-0 touch-pan-y rounded-sm outline-none focus-visible:ring-[3px]"
         tabIndex={0}
         role="group"
@@ -623,8 +635,8 @@ const Activity = memo(function Activity({ history: h, span }: { history: History
         </span>
         {at && hover != null && (
           <div
-            className="bg-popover text-popover-foreground pointer-events-none absolute top-2 z-10 w-max rounded-md border px-3 py-2 font-mono text-xs shadow-md"
-            style={hover < n / 2 ? { left: `${((hover + 1) / n) * 100}%`, marginLeft: 8 } : { right: `${((n - hover) / n) * 100}%`, marginRight: 8 }}
+            ref={tip}
+            className="bg-popover text-popover-foreground pointer-events-none absolute top-2 z-10 w-max max-w-full rounded-md border px-3 py-2 font-mono text-xs shadow-md"
           >
             <div className="mb-1 font-medium">
               {bucketTime(at.ts, h.bucket_ms)}
