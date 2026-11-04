@@ -1276,6 +1276,9 @@ async fn backup_into_copies_a_consistent_database() {
     let dir = Item::child(&content, "job", ItemKind::Directory).expect("valid");
     let file = Item::child(&dir, "a.mkv", ItemKind::NzbFile).expect("valid");
     db.insert(&[dir, file], &[]).await.expect("insert");
+    db.write_config(&[("backup.test", "\"kept\"")], &[])
+        .await
+        .expect("config");
     let copy = temp_sqlite();
     db.backup_into(&copy, || false).await.expect("backup");
     let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", path.display()))
@@ -1286,6 +1289,16 @@ async fn backup_into_copies_a_consistent_database() {
         .await
         .expect("count");
     pool.close().await;
+    let copied = sqlx::SqlitePool::connect(&format!("sqlite:{}", copy.display()))
+        .await
+        .expect("open copy");
+    let kept: Option<String> =
+        sqlx::query_scalar("SELECT value FROM config WHERE key = 'backup.test'")
+            .fetch_optional(&copied)
+            .await
+            .expect("config row");
+    copied.close().await;
+    assert_eq!(kept.as_deref(), Some("\"kept\""));
     let check = infinidysk_db::check_file(&copy, || false)
         .await
         .expect("check");
@@ -1351,6 +1364,38 @@ async fn check_file_refuses_a_newer_database() {
             .incompatible
             .as_deref()
             .is_some_and(|w| w.contains("newer")),
+        "{check:?}"
+    );
+    remove_set(&path);
+    remove_set(&copy);
+}
+
+#[tokio::test]
+async fn check_file_refuses_an_unfinished_migration() {
+    let path = temp_sqlite();
+    let db = Db::connect(&format!("sqlite:{}", path.display()))
+        .await
+        .expect("connect");
+    let copy = temp_sqlite();
+    db.backup_into(&copy, || false).await.expect("backup");
+    db.close().await;
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", copy.display()))
+        .await
+        .expect("open");
+    sqlx::query("UPDATE _sqlx_migrations SET success = FALSE WHERE version = $1")
+        .bind(infinidysk_db::latest_sqlite_schema())
+        .execute(&pool)
+        .await
+        .expect("update");
+    pool.close().await;
+    let check = infinidysk_db::check_file(&copy, || false)
+        .await
+        .expect("check");
+    assert!(
+        check
+            .incompatible
+            .as_deref()
+            .is_some_and(|w| w.contains("did not finish")),
         "{check:?}"
     );
     remove_set(&path);

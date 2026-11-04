@@ -168,6 +168,17 @@ async fn inspect(conn: &mut SqliteConnection) -> Result<FileCheck, Error> {
     .fetch_all(&mut *conn)
     .await?;
     let schema_version = applied.last().map_or(0, |(v, _)| *v);
+    let dirty: Option<i64> = sqlx::query_scalar(
+        "SELECT version FROM _sqlx_migrations WHERE NOT success ORDER BY version LIMIT 1",
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    if let Some(version) = dirty {
+        return Ok(FileCheck::incompatible(
+            schema_version,
+            format!("A database change did not finish (version {version}), so it cannot open."),
+        ));
+    }
     let latest = latest_sqlite_schema();
     for (version, checksum) in &applied {
         let known = SQLITE_MIGRATOR.iter().find(|m| m.version == *version);
