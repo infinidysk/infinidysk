@@ -367,15 +367,11 @@ impl Sso {
             .filter(|a| **a != CoreJwsSigningAlgorithm::None)
             .cloned()
             .collect();
-        // 1.x sent the secret in the form body; only a provider that rules that out gets Basic.
+        // 1.x sent the secret in the form body; keep that where the provider allows it.
+        // Discovery says an omitted list means `client_secret_basic`.
         let auth_type = match metadata.token_endpoint_auth_methods_supported() {
-            Some(m)
-                if m.contains(&CoreClientAuthMethod::ClientSecretBasic)
-                    && !m.contains(&CoreClientAuthMethod::ClientSecretPost) =>
-            {
-                AuthType::BasicAuth
-            }
-            _ => AuthType::RequestBody,
+            Some(m) if m.contains(&CoreClientAuthMethod::ClientSecretPost) => AuthType::RequestBody,
+            _ => AuthType::BasicAuth,
         };
         let client = CoreClient::from_provider_metadata(
             metadata,

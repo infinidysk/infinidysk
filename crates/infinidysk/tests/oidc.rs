@@ -43,6 +43,8 @@ struct Idp {
     fail_discovery: AtomicBool,
     /// Advertises and accepts only `client_secret_basic`.
     basic_only: AtomicBool,
+    /// Leaves `token_endpoint_auth_methods_supported` out, which means Basic.
+    no_methods: AtomicBool,
     /// Issues ID tokens that expired an hour ago.
     expired: AtomicBool,
     authorization_endpoint: Option<String>,
@@ -60,6 +62,7 @@ async fn idp(key: &str, authorization_endpoint: Option<&str>) -> Arc<Idp> {
         key: key.to_owned(),
         fail_discovery: AtomicBool::new(false),
         basic_only: AtomicBool::new(false),
+        no_methods: AtomicBool::new(false),
         expired: AtomicBool::new(false),
         authorization_endpoint: authorization_endpoint.map(str::to_owned),
         arrived: Notify::new(),
@@ -82,7 +85,9 @@ async fn discovery(State(idp): State<Arc<Idp>>) -> Response {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let base = &idp.base;
-    let methods = if idp.basic_only.load(Ordering::SeqCst) {
+    let methods = if idp.no_methods.load(Ordering::SeqCst) {
+        Value::Null
+    } else if idp.basic_only.load(Ordering::SeqCst) {
         json!(["client_secret_basic"])
     } else {
         json!(["client_secret_basic", "client_secret_post"])
@@ -125,7 +130,7 @@ async fn token(
     let basic = headers
         .get(header::AUTHORIZATION)
         .map(|v| v.to_str().unwrap().to_owned());
-    if idp.basic_only.load(Ordering::SeqCst) {
+    if idp.basic_only.load(Ordering::SeqCst) || idp.no_methods.load(Ordering::SeqCst) {
         let expected = format!("Basic {}", STANDARD.encode(format!("{CLIENT}:{SECRET}")));
         assert_eq!(
             basic.as_deref(),
@@ -514,6 +519,15 @@ async fn sso_rejects_an_expired_id_token() {
 async fn sso_uses_basic_auth_when_the_provider_only_takes_that() {
     let idp = idp(SECRET, None).await;
     idp.basic_only.store(true, Ordering::SeqCst);
+    let dysk = dysk(Arc::clone(&idp), true, &[]).await;
+    dysk.sign_in().await;
+    assert_eq!(idp.token_requests.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn sso_uses_basic_auth_when_the_provider_lists_no_methods() {
+    let idp = idp(SECRET, None).await;
+    idp.no_methods.store(true, Ordering::SeqCst);
     let dysk = dysk(Arc::clone(&idp), true, &[]).await;
     dysk.sign_in().await;
     assert_eq!(idp.token_requests.load(Ordering::SeqCst), 1);
