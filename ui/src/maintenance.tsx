@@ -251,7 +251,7 @@ function JobCard({
         ) : (
           <label htmlFor={id} className="text-muted-foreground flex shrink-0 items-center gap-2 text-xs">
             Run daily
-            <Switch id={id} checked={scheduled} disabled={locked || !!job.unavailable_reason} onCheckedChange={onScheduled} />
+            <Switch id={id} checked={scheduled} disabled={locked || (!!job.unavailable_reason && !scheduled)} onCheckedChange={onScheduled} />
           </label>
         )}
       </div>

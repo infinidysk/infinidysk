@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { ConfirmButton, Failure, Field, Panel, RowActions, Status, TextConfirmDialog, type Tone } from "./ui";
+import { ConfirmButton, Failure, Field, Panel, RowActions, Status, TextConfirmDialog, type Tone, useDiscardGuard } from "./ui";
 
 type Backup = Schemas["BackupView"];
 type Live = Schemas["LiveMaintenance"];
@@ -221,6 +221,7 @@ export function BackupsPanel({
                   )}
                 </div>
                 {dropUndo.isError && <Failure error={dropUndo.error} />}
+                {dismiss.isError && <Failure error={dismiss.error} />}
               </AlertDescription>
             </Alert>
           )}
@@ -410,9 +411,10 @@ function BackupList({
         <NoteDialog
           backup={noting}
           onClose={() => setNoting(null)}
-          onSave={(note) => {
-            run(body(api.PATCH("/api/v1/backups/{name}", { ...path(noting.name), body: { note } })));
+          onSave={async (note) => {
+            await body(api.PATCH("/api/v1/backups/{name}", { ...path(noting.name), body: { note } }));
             setNoting(null);
+            onChanged();
           }}
         />
       )}
@@ -420,16 +422,27 @@ function BackupList({
   );
 }
 
-function NoteDialog({ backup, onClose, onSave }: { backup: Backup; onClose: () => void; onSave: (note: string) => void }) {
+function NoteDialog({ backup, onClose, onSave }: { backup: Backup; onClose: () => void; onSave: (note: string) => Promise<void> }) {
   const [note, setNote] = useState(backup.note);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const guard = useDiscardGuard(note !== backup.note, onClose);
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <Dialog open onOpenChange={(open) => !open && !saving && guard.requestClose()}>
       <DialogContent>
         <form
           className="space-y-4"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
-            onSave(note);
+            setSaving(true);
+            setError(null);
+            try {
+              await onSave(note);
+            } catch (err) {
+              setError(err instanceof Error ? err : new Error(String(err)));
+            } finally {
+              setSaving(false);
+            }
           }}
         >
           <DialogHeader>
@@ -439,14 +452,16 @@ function NoteDialog({ backup, onClose, onSave }: { backup: Backup; onClose: () =
           <Field id="backup-note" label="Note" hint={`${note.length} / ${NOTE_MAX}`}>
             <Textarea id="backup-note" maxLength={NOTE_MAX} value={note} onChange={(e) => setNote(e.target.value)} />
           </Field>
+          {error && <Failure error={error} />}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>
+            <Button type="button" variant="outline" disabled={saving} onClick={guard.requestClose}>
               Cancel
             </Button>
-            <Button>Save note</Button>
+            <Button disabled={saving}>Save note</Button>
           </DialogFooter>
         </form>
       </DialogContent>
+      {guard.dialog}
     </Dialog>
   );
 }

@@ -57,6 +57,7 @@
     );
     await run("lost attempt", [{ started: 1 }], "rejected: infinidysk has not come back after 5 minutes; check its logs");
     await run("proxy while down", [staging, 502, 502, { started: 2 }], "restarted");
+    await run("staging outlasts deadline", [...Array(100).fill(staging), { started: 2 }], "restarted");
     document.getElementById("result").textContent = "PASS";
   } catch (error) {
     document.getElementById("result").textContent = `FAIL: ${error.message}`;

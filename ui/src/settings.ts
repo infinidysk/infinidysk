@@ -40,6 +40,8 @@ export const notAPassword = {
 } as const;
 
 const RESTART_WAIT_MS = 5 * 60_000;
+// One poll request; a process that accepts the connection but never answers must not stall the wait.
+const POLL_REQUEST_MS = 10_000;
 
 export type Restarted = "restarted" | "signed-out";
 
@@ -75,19 +77,19 @@ export async function waitForRestart(
   for (;;) {
     if (deadline != null && Date.now() >= deadline) throw new Error("infinidysk has not come back after 5 minutes; check its logs");
     await new Promise((resolve) => setTimeout(resolve, pollMs));
-    const status = await get(api.GET("/api/v1/status"));
+    const status = await get(api.GET("/api/v1/status", { signal: AbortSignal.timeout(POLL_REQUEST_MS) }));
     if (status?.status === 401) return "signed-out";
     if (!status || status.status >= 500 || !status.data) {
       start();
       continue;
     }
     if (status.data.started_ms !== before) return "restarted";
-    const maintenance = await get(api.GET("/api/v1/maintenance"));
+    const maintenance = await get(api.GET("/api/v1/maintenance", { signal: AbortSignal.timeout(POLL_REQUEST_MS) }));
     if (maintenance?.status === 401) return "signed-out";
     if (maintenance?.data) onProgress?.(maintenance.data.running ?? null);
     let staging = false;
     if (attempt) {
-      const backups = await get(api.GET("/api/v1/backups"));
+      const backups = await get(api.GET("/api/v1/backups", { signal: AbortSignal.timeout(POLL_REQUEST_MS) }));
       if (backups?.status === 401) return "signed-out";
       const mine = backups?.data?.attempt?.id === attempt ? backups.data.attempt : null;
       if (mine?.state === "failed") throw new Error(mine.reason ?? "The restore failed.");
