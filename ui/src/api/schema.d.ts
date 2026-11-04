@@ -194,6 +194,164 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The backups, the folder and what restore left behind. */
+        get: operations["get_backups"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backups/last-restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Dismisses the last restore notice. */
+        delete: operations["delete_last_restore"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backups/legacy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Deletes the 1.x backup folders. */
+        delete: operations["delete_legacy"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backups/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Puts back the database the last restore replaced, at the next start. */
+        post: operations["post_undo"];
+        /** Deletes the undo copy. */
+        delete: operations["delete_undo"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backups/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Stores an uploaded database file as a backup. It is checked when it is restored or
+         *     verified.
+         */
+        put: operations["put_upload"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backups/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Deletes one backup and its manifest. */
+        delete: operations["delete_backup"];
+        options?: never;
+        head?: never;
+        /** Pins a backup or sets its note. */
+        patch: operations["patch_backup"];
+        trace?: never;
+    };
+    "/api/v1/backups/{name}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Downloads one backup; supports `Range` and `If-Range`. */
+        get: operations["get_backup_file"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backups/{name}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Copies and checks a backup, then restarts into it. */
+        post: operations["post_restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backups/{name}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Compares a backup with its checksum and checks it, in the maintenance slot. */
+        post: operations["post_verify"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/catalog": {
         parameters: {
             query?: never;
@@ -1492,6 +1650,22 @@ export interface components {
             /** @description The Arr's version when it answered with this key and type. */
             version?: string | null;
         };
+        /** @description A restore or undo started in this run. */
+        Attempt: {
+            action: components["schemas"]["AttemptAction"];
+            /** Format: uuid */
+            id: string;
+            reason?: string | null;
+            state: components["schemas"]["AttemptState"];
+        };
+        /** @enum {string} */
+        AttemptAction: "restore" | "undo";
+        AttemptId: {
+            /** Format: uuid */
+            attempt: string;
+        };
+        /** @enum {string} */
+        AttemptState: "staging" | "restarting" | "failed";
         /** @description Admin API secrets; the admin login itself lives in the accounts table. */
         Auth: {
             /**
@@ -1522,6 +1696,93 @@ export interface components {
         };
         /** @enum {string} */
         Backend: "sqlite" | "postgres";
+        /** @enum {string} */
+        BackupKind: "scheduled" | "manual" | "uploaded" | "added";
+        BackupPatch: {
+            /** @description Trimmed; at most 500 characters. */
+            note?: string | null;
+            pinned?: boolean | null;
+        };
+        /** @description The copy the backup job wrote. */
+        BackupReport: {
+            /**
+             * Format: int64
+             * @description Writing, checking and hashing.
+             */
+            duration_ms: number;
+            name: string;
+            /**
+             * Format: int64
+             * @description Old backups deleted after it.
+             */
+            pruned: number;
+            /** Format: int64 */
+            pruned_bytes: number;
+            /** Format: int64 */
+            size_bytes: number;
+        };
+        /** @description Where backups go and how many the backup job keeps. */
+        BackupSettings: {
+            /**
+             * @description Absolute folder; empty means `backups` beside the database.
+             * @default
+             */
+            dir: string;
+            /**
+             * Format: int32
+             * @description Scheduled and manual backups kept; pinned, uploaded and added ones are extra.
+             * @default 3
+             */
+            keep: number;
+        };
+        BackupView: {
+            app_version?: string | null;
+            /** Format: int64 */
+            created_ms: number;
+            /** @description Shorter than its header says: still being copied, or cut off. */
+            incomplete: boolean;
+            /** Format: int64 */
+            items?: number | null;
+            kind: components["schemas"]["BackupKind"];
+            name: string;
+            /** @description Made by a newer infinidysk; restore is refused. */
+            newer: boolean;
+            note: string;
+            pinned: boolean;
+            /** Format: int64 */
+            schema_version?: number | null;
+            sha256?: string | null;
+            /** Format: int64 */
+            size_bytes: number;
+            source_name?: string | null;
+            /** Format: int64 */
+            verified_ms?: number | null;
+            verify_error?: string | null;
+        };
+        BackupsView: {
+            attempt?: components["schemas"]["Attempt"] | null;
+            /** @description Newest first. */
+            backups: components["schemas"]["BackupView"][];
+            /**
+             * Format: int64
+             * @description Used pages of the live database: about the size of one backup.
+             */
+            database_bytes: number;
+            /** @description The resolved folder. */
+            dir: string;
+            /** @description Why the folder cannot be used; backups fail until it is fixed. */
+            dir_error?: string | null;
+            /** Format: int64 */
+            free_bytes?: number | null;
+            /** Format: int32 */
+            keep: number;
+            last_restore?: components["schemas"]["LastRestore"] | null;
+            legacy?: components["schemas"]["LegacyBackups"] | null;
+            task?: components["schemas"]["TaskResult"] | null;
+            /** @description Why backups are unavailable (PostgreSQL); the rest is empty then. */
+            unavailable_reason?: string | null;
+            undo?: components["schemas"]["UndoView"] | null;
+        };
         BreakerView: {
             /** Format: int64 */
             at: number;
@@ -2018,6 +2279,27 @@ export interface components {
         };
         /** @enum {string} */
         Kind: "speed" | "tune";
+        /** @description The last restore, from config key `backup.last_restore`. */
+        LastRestore: {
+            /** Format: int64 */
+            at_ms: number;
+            /** Format: uuid */
+            attempt: string;
+            backup: string;
+            /** Format: int64 */
+            backup_created_ms?: number | null;
+            /** @description Why the restored database did not open; the previous one is back. */
+            failed?: string | null;
+            /** @description Why an undo did not open; the restored database stayed. */
+            undo_failed?: string | null;
+        };
+        /** @description 1.x backup folders under `<config dir>/backups`. */
+        LegacyBackups: {
+            /** Format: int64 */
+            bytes: number;
+            /** Format: int64 */
+            folders: number;
+        };
         LegacyView: {
             /**
              * Format: int64
@@ -2314,6 +2596,13 @@ export interface components {
         /** @description Maintenance jobs and the daily window they run in (`infinidysk-lab:docs/maintenance-policy.md`). */
         Maintenance: {
             /**
+             * @default {
+             *       "dir": "",
+             *       "keep": 3
+             *     }
+             */
+            backup: components["schemas"]["BackupSettings"];
+            /**
              * @description Jobs that run in the window, once each per window.
              * @default [
              *       "remove-dead-links"
@@ -2357,7 +2646,7 @@ export interface components {
          * @description A maintenance job, in the order the window runs them.
          * @enum {string}
          */
-        MaintenanceJob: "remove-unlinked" | "remove-dead-links" | "compact-database";
+        MaintenanceJob: "backup-database" | "remove-unlinked" | "remove-dead-links" | "compact-database";
         MaintenanceJobView: {
             /** @description Runs in every window; `scheduled` cannot be turned off. */
             always_scheduled: boolean;
@@ -2376,6 +2665,7 @@ export interface components {
              * @description When the run started, Unix milliseconds; confirming names the report by it.
              */
             at_ms: number;
+            backup?: components["schemas"]["BackupReport"] | null;
             /**
              * Format: int64
              * @description Files outside the download history when the run started; for dead links, the
@@ -3461,6 +3751,10 @@ export interface components {
             imports: components["schemas"]["Imports"];
             /**
              * @default {
+             *       "backup": {
+             *         "dir": "",
+             *         "keep": 3
+             *       },
              *       "scheduled": [
              *         "remove-dead-links"
              *       ],
@@ -3583,6 +3877,8 @@ export interface components {
             state: components["schemas"]["ItemHealth"];
         };
         Status: {
+            /** @description Why scheduled backups need a look; absent when they are fine or off. */
+            backup_warning?: string | null;
             /** @description The full commit this build came from, when known. */
             commit?: string | null;
             disk_cache?: components["schemas"]["DiskCacheStatus"] | null;
@@ -3604,6 +3900,16 @@ export interface components {
             include_traces?: boolean;
             /** @description What happened and when; at most 10000 characters. */
             note?: string | null;
+        };
+        /** @enum {string} */
+        TaskAction: "verify" | "restore" | "undo";
+        /** @description A backup task that failed. */
+        TaskResult: {
+            action: components["schemas"]["TaskAction"];
+            /** Format: int64 */
+            finished_ms: number;
+            name: string;
+            reason: string;
         };
         TestStatus: {
             job?: components["schemas"]["Job"] | null;
@@ -3737,6 +4043,11 @@ export interface components {
             read_ahead_mb: number;
             /** Format: int32 */
             read_ahead_memory_mb: number;
+        };
+        /** @description The database a restore replaced, kept for undo. */
+        UndoView: {
+            /** Format: int64 */
+            size_bytes: number;
         };
         /** @enum {string} */
         UnownedAction: "delete" | "action_needed";
@@ -4127,6 +4438,354 @@ export interface operations {
                 };
             };
             /** @description An admin account already exists */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    get_backups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupsView"];
+                };
+            };
+        };
+    };
+    delete_last_restore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    delete_legacy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    post_undo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptId"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    delete_undo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    put_upload: {
+        parameters: {
+            query?: {
+                /** @description The file's original name, kept as `source_name`. */
+                name?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": number[];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupView"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    delete_backup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description backup work is running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    patch_backup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackupPatch"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupView"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    get_backup_file: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.sqlite3": number[];
+                };
+            };
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.sqlite3": number[];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    post_restore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptId"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    post_verify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description a job is running */
             409: {
                 headers: {
                     [name: string]: unknown;
