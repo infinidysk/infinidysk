@@ -300,18 +300,7 @@ impl Db {
         if found.is_empty() {
             return Ok(Capture::Off);
         }
-        let mut expected =
-            BTreeSet::from([("table".to_owned(), CHANGES.to_owned(), CHANGES.to_owned())]);
-        for &(table, _) in TABLES {
-            for op in ["insert", "update", "delete"] {
-                expected.insert((
-                    "trigger".to_owned(),
-                    format!("pg_sync_{table}_{op}"),
-                    table.to_owned(),
-                ));
-            }
-        }
-        Ok(if found == expected {
+        Ok(if found == capture_set() {
             Capture::Intact
         } else {
             Capture::Broken
@@ -603,13 +592,37 @@ async fn has_changes(conn: &mut SqliteConnection) -> Result<bool, Error> {
     .await?)
 }
 
+/// `(type, name, tbl_name)` of every object `start_capture` creates.
+fn capture_set() -> BTreeSet<(String, String, String)> {
+    let mut set = BTreeSet::from([("table".to_owned(), CHANGES.to_owned(), CHANGES.to_owned())]);
+    for &(table, _) in TABLES {
+        for op in ["insert", "update", "delete"] {
+            set.insert((
+                "trigger".to_owned(),
+                format!("pg_sync_{table}_{op}"),
+                table.to_owned(),
+            ));
+        }
+    }
+    set
+}
+
+/// The capture objects present, matched by type and name only, so a trigger moved to
+/// another table still counts.
 async fn capture_objects(pool: &SqlitePool) -> Result<BTreeSet<(String, String, String)>, Error> {
+    let ours: BTreeSet<(String, String)> = capture_set()
+        .into_iter()
+        .map(|(kind, name, _)| (kind, name))
+        .collect();
     let rows: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT type, name, tbl_name FROM sqlite_master WHERE substr(name, 1, 8) = 'pg_sync_'",
     )
     .fetch_all(pool)
     .await?;
-    Ok(rows.into_iter().collect())
+    Ok(rows
+        .into_iter()
+        .filter(|(kind, name, _)| ours.contains(&(kind.clone(), name.clone())))
+        .collect())
 }
 
 /// One table as the target's catalog describes it.

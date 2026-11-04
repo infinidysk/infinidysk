@@ -317,6 +317,23 @@ async fn capture_state_follows_objects() {
 }
 
 #[tokio::test]
+async fn capture_ignores_other_pg_sync_objects() {
+    let s = Sqlite::open().await;
+    s.exec("CREATE TABLE pg_sync_notes (note TEXT); INSERT INTO pg_sync_notes VALUES ('kept')")
+        .await;
+    assert_eq!(s.db.capture().await.expect("capture"), Capture::Off);
+    s.db.start_capture().await.expect("start");
+    assert_eq!(s.db.capture().await.expect("capture"), Capture::Intact);
+    s.db.stop_capture().await.expect("stop");
+    let kept: String = sqlx::query_scalar("SELECT note FROM pg_sync_notes")
+        .fetch_one(&s.raw)
+        .await
+        .expect("still there");
+    assert_eq!(kept, "kept");
+    s.close().await;
+}
+
+#[tokio::test]
 async fn copy_needs_capture() {
     let s = Sqlite::open().await;
     let Some(pg) = Pg::create().await else {
