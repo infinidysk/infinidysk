@@ -36,7 +36,7 @@ Decision documents (policies), plans, research, benchmark results and the mainta
 
 Nothing that talks to a Usenet provider ships until everything that talks to a provider is Rust. Rust v1 covers: streaming engine, queue (NZB, stored RAR4/RAR5/7z members, multipart, PAR2 verify + repair), health + repair, SAB API, symlink import, WebDAV, FUSE, SQLite + PostgreSQL, auth, and a one-time importer from C# `/config`.
 
-**Out of v1** (do not build unless asked): on-disk segment cache, STRM, Stremio/addon routes, Watchtower, search, search profiles, indexers, Prowlarr, metrics DB, rclone RC, Arr monitoring, backup/restore, Preflight, Warden, transfer connections (connection management likely returns to a single shared provider pool; final design follows prior-art research).
+**Out of v1** (do not build unless asked): on-disk segment cache, STRM, Stremio/addon routes, Watchtower, search, search profiles, indexers, Prowlarr, metrics DB, rclone RC, Arr monitoring, Preflight, Warden, transfer connections (connection management likely returns to a single shared provider pool; final design follows prior-art research).
 
 ## Project principles
 
