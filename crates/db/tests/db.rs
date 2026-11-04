@@ -1251,3 +1251,137 @@ async fn postgres_storage_round_trips() {
     let drop = sqlx::AssertSqlSafe(format!("DROP DATABASE {name}"));
     sqlx::query(drop).execute(&admin).await.expect("drop");
 }
+
+fn temp_sqlite() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("infinidysk-db-{}.sqlite", ItemId::new()))
+}
+
+fn remove_set(path: &std::path::Path) {
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}
+
+#[tokio::test]
+async fn backup_into_copies_a_consistent_database() {
+    let path = temp_sqlite();
+    let db = Db::connect(&format!("sqlite:{}", path.display()))
+        .await
+        .expect("connect");
+    let content = db
+        .item_by_path("/content")
+        .await
+        .expect("query")
+        .expect("seeded");
+    let dir = Item::child(&content, "job", ItemKind::Directory).expect("valid");
+    let file = Item::child(&dir, "a.mkv", ItemKind::NzbFile).expect("valid");
+    db.insert(&[dir, file], &[]).await.expect("insert");
+    let copy = temp_sqlite();
+    db.backup_into(&copy, || false).await.expect("backup");
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", path.display()))
+        .await
+        .expect("open");
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM items")
+        .fetch_one(&pool)
+        .await
+        .expect("count");
+    pool.close().await;
+    let check = infinidysk_db::check_file(&copy, || false)
+        .await
+        .expect("check");
+    assert_eq!(check.incompatible, None);
+    assert!(check.problems.is_empty(), "{:?}", check.problems);
+    assert_eq!(check.items, u64::try_from(count).expect("positive"));
+    assert_eq!(check.schema_version, infinidysk_db::latest_sqlite_schema());
+    db.close().await;
+    remove_set(&path);
+    remove_set(&copy);
+}
+
+#[tokio::test]
+async fn backup_into_stops_when_asked() {
+    let path = temp_sqlite();
+    let url = format!("sqlite:{}", path.display());
+    let db = Db::connect(&url).await.expect("connect");
+    let pool = sqlx::SqlitePool::connect(&url).await.expect("open");
+    sqlx::query(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 50000) \
+         INSERT INTO config (key, value) SELECT 'k' || i, 'v' FROM n",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed");
+    pool.close().await;
+    let copy = temp_sqlite();
+    assert!(matches!(
+        db.backup_into(&copy, || true).await,
+        Err(Error::Interrupted)
+    ));
+    db.close().await;
+    remove_set(&path);
+    remove_set(&copy);
+}
+
+#[tokio::test]
+async fn check_file_refuses_a_newer_database() {
+    let path = temp_sqlite();
+    let db = Db::connect(&format!("sqlite:{}", path.display()))
+        .await
+        .expect("connect");
+    let copy = temp_sqlite();
+    db.backup_into(&copy, || false).await.expect("backup");
+    db.close().await;
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", copy.display()))
+        .await
+        .expect("open");
+    sqlx::query(
+        "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) \
+         VALUES ($1, 'next', TRUE, X'00', 0)",
+    )
+    .bind(infinidysk_db::latest_sqlite_schema() + 1)
+    .execute(&pool)
+    .await
+    .expect("insert");
+    pool.close().await;
+    let check = infinidysk_db::check_file(&copy, || false)
+        .await
+        .expect("check");
+    assert!(
+        check
+            .incompatible
+            .as_deref()
+            .is_some_and(|w| w.contains("newer")),
+        "{check:?}"
+    );
+    remove_set(&path);
+    remove_set(&copy);
+}
+
+#[tokio::test]
+async fn check_file_names_a_1x_database() {
+    let path = temp_sqlite();
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}?mode=rwc", path.display()))
+        .await
+        .expect("open");
+    sqlx::query(r#"CREATE TABLE "__EFMigrationsHistory" (x)"#)
+        .execute(&pool)
+        .await
+        .expect("create");
+    pool.close().await;
+    let check = infinidysk_db::check_file(&path, || false)
+        .await
+        .expect("check");
+    assert!(
+        check
+            .incompatible
+            .as_deref()
+            .is_some_and(|w| w.contains("1.x")),
+        "{check:?}"
+    );
+    std::fs::write(&path, vec![7u8; 8192]).expect("write");
+    let check = infinidysk_db::check_file(&path, || false)
+        .await
+        .expect("check");
+    assert!(check.incompatible.is_some(), "{check:?}");
+    remove_set(&path);
+}

@@ -19,8 +19,14 @@ use sqlx::sqlite::{
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, broadcast};
 use uuid::Uuid;
 
+mod backup;
 pub mod metrics;
 pub mod transfer;
+
+pub use backup::{FileCheck, check_file, latest_sqlite_schema};
+
+/// The SQLite migrations; [`check_file`] compares a backup's history with them.
+static SQLITE_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/sqlite");
 
 /// Buffered change notices per subscriber before it lags.
 const CHANGES: usize = 256;
@@ -123,6 +129,10 @@ pub enum Error {
     Corrupt(&'static str),
     #[error("this needs a SQLite database")]
     NotSqlite,
+    #[error("stopped on request")]
+    Interrupted,
+    #[error("the disk is full")]
+    DiskFull,
     #[error("this needs a PostgreSQL database")]
     NotPostgres,
     #[error("change capture is not running")]
@@ -1028,7 +1038,7 @@ impl Db {
             return Err(Error::UnsupportedUrl);
         };
         migrated(match &pool {
-            Pool::Sqlite(pool) => sqlx::migrate!("./migrations/sqlite").run(pool).await,
+            Pool::Sqlite(pool) => SQLITE_MIGRATOR.run(pool).await,
             Pool::Postgres(pool) => sqlx::migrate!("./migrations/postgres").run(pool).await,
         })?;
         Ok(Self {
