@@ -396,6 +396,7 @@ async fn deleted_completed_links_go_while_content_stays() {
         let app = &app;
         async move {
             let r = send(app, "PROPFIND", uri, &[auth[0], ("depth", "1")], Vec::new()).await;
+            assert_eq!(r.status(), StatusCode::MULTI_STATUS, "{uri}");
             String::from_utf8(body(r).await).unwrap()
         }
     };
