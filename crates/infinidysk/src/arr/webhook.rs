@@ -264,8 +264,7 @@ impl Discovery {
                 }
             }
             Event::FolderDeleted(folder) => release(db, arr, OwnedFile::Under(folder)).await?,
-            // A failure waits for the daily run instead of holding up later deliveries.
-            Event::Reconcile => self.reconcile_one(arr).await.map_err(Failure::Drop)?,
+            Event::Reconcile => self.request_reconcile(arr.id),
             Event::Renamed(moves) => {
                 for (file, previous) in moves {
                     db.rename_owner(arr.id, &which(file.id, &previous), &file.path)

@@ -80,6 +80,20 @@ pub async fn run(
                 let _writing = db.write_permit().await;
                 expire(&db).await;
             }
+            asked = discovery.requested_reconciles() => {
+                let due: Vec<Arr> = arrs
+                    .borrow()
+                    .iter()
+                    .filter(|a| asked.contains(&a.id))
+                    .cloned()
+                    .collect();
+                let _writing = db.write_permit().await;
+                for id in discovery.reconcile_each(due).await {
+                    if !retry.contains(&id) {
+                        retry.push(id);
+                    }
+                }
+            }
         }
     }
 }
