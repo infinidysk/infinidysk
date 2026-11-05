@@ -112,7 +112,9 @@ fn under(folder: &str) -> String {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("database error")]
+    /// Shows what the driver reported (e.g. `(code: 517) database is locked`,
+    /// `pool timed out …`); a fixed text hid the cause from logs and run reports.
+    #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
     #[error("database migration failed")]
     Migrate(#[from] sqlx::migrate::MigrateError),

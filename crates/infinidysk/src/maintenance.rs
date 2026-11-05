@@ -548,7 +548,7 @@ impl Maintenance {
         };
         match (&report.outcome, &report.reason) {
             (RunOutcome::Stopped, Some(reason)) => {
-                warn!(reason, duration_ms, "maintenance job stopped");
+                warn!(files, bytes, reason, duration_ms, "maintenance job stopped");
             }
             (RunOutcome::Held, _) => warn!(
                 files,
@@ -1526,6 +1526,18 @@ mod tests {
     use std::os::unix::fs::symlink;
 
     use super::*;
+
+    #[test]
+    fn a_database_stop_says_what_the_database_reported() {
+        let reason = |e: sqlx::Error| match Stop::from(infinidysk_db::Error::from(e)) {
+            Stop::Reason(r) => r,
+            _ => unreachable!("a database error is a reason"),
+        };
+        let timeout = reason(sqlx::Error::PoolTimedOut);
+        let closed = reason(sqlx::Error::PoolClosed);
+        assert!(timeout.contains("pool timed out"), "{timeout}");
+        assert_ne!(timeout, closed);
+    }
 
     #[test]
     fn windows_cross_midnight_and_find_the_next() {
