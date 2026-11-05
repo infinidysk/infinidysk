@@ -455,3 +455,113 @@ async fn serves_content_links_ids_and_queued_nzbs() {
     );
     assert!(!names(&vfs, &format!("/.ids/{shards}")).await.contains(&id));
 }
+
+fn completed(job: &Item) -> HistoryEntry {
+    HistoryEntry {
+        id: JobId::new(),
+        created_at: 1,
+        file_name: format!("{}.nzb", job.name),
+        job_name: job.name.clone(),
+        category: "tv".into(),
+        status: JobStatus::Completed,
+        total_bytes: 0,
+        download_seconds: 0,
+        fail_message: None,
+        download_dir: Some(job.id),
+        nzb_blob: None,
+        storage: None,
+    }
+}
+
+#[tokio::test]
+async fn deleted_completed_links_hide_without_changing_what_is_stored() {
+    let path = std::env::temp_dir().join(format!("infinidysk-vfs-{}.sqlite", ItemId::new()));
+    let db = Db::connect(&format!("sqlite:{}", path.display()))
+        .await
+        .unwrap();
+    let content = db.item(ItemId::CONTENT).await.unwrap().unwrap();
+    let tv = Item::child(&content, "tv", ItemKind::Directory).unwrap();
+    let job = Item::child(&tv, "job", ItemKind::Directory).unwrap();
+    let sub = Item::child(&job, "sub", ItemKind::Directory).unwrap();
+    let a = Item::child(&job, "a.mkv", ItemKind::NzbFile).unwrap();
+    let b = Item::child(&job, "b.mkv", ItemKind::NzbFile).unwrap();
+    let c = Item::child(&sub, "c.mkv", ItemKind::NzbFile).unwrap();
+    let other = Item::child(&tv, "other", ItemKind::Directory).unwrap();
+    db.insert(std::slice::from_ref(&tv), &[]).await.unwrap();
+    let history = completed(&job);
+    db.add_history(&history, &[job, sub, a.clone(), b, c], &[])
+        .await
+        .unwrap();
+    db.add_history(&completed(&other), std::slice::from_ref(&other), &[])
+        .await
+        .unwrap();
+    let start = || {
+        Vfs::new(
+            db.clone(),
+            Arc::new(Client::new([])),
+            Budget::new(1),
+            0,
+            "/mnt",
+        )
+    };
+    let vfs = start();
+    let node = |path: &'static str| {
+        let vfs = &vfs;
+        async move { vfs.lookup(path).await.unwrap() }
+    };
+
+    // Moving a link out: the app links the new path, then deletes the old one.
+    let link = node("/completed-symlinks/tv/job/a.mkv").await.unwrap();
+    assert!(vfs.delete_link(&link));
+    assert_eq!(node("/completed-symlinks/tv/job/a.mkv").await, None);
+    assert_eq!(
+        names(&vfs, "/completed-symlinks/tv/job").await,
+        ["b.mkv", "sub"]
+    );
+    assert!(node("/content/tv/job/a.mkv").await.is_some());
+    let target = vfs.id_link(a.id);
+    assert!(vfs.lookup(&target["/mnt".len()..]).await.unwrap().is_some());
+
+    // Then the job folder; everything below it goes with it.
+    let folder = node("/completed-symlinks/tv/job").await.unwrap();
+    assert!(vfs.delete_link(&folder));
+    assert_eq!(node("/completed-symlinks/tv/job").await, None);
+    assert_eq!(node("/completed-symlinks/tv/job/b.mkv").await, None);
+    assert_eq!(node("/completed-symlinks//tv/job/sub/c.mkv").await, None);
+    assert_eq!(names(&vfs, "/completed-symlinks/tv").await, ["other"]);
+    assert!(node("/content/tv/job/sub/c.mkv").await.is_some());
+    assert!(db.history_entry(history.id).await.unwrap().is_some());
+
+    // Only a download's links and folders can go.
+    for path in [
+        "/completed-symlinks/tv",
+        "/completed-symlinks",
+        "/content/tv/other",
+    ] {
+        assert!(!vfs.delete_link(&node(path).await.unwrap()), "{path}");
+    }
+    assert!(node("/completed-symlinks/tv").await.is_some());
+
+    // A restart shows them again, until the history row goes.
+    let restarted = start();
+    assert_eq!(
+        names(&restarted, "/completed-symlinks/tv").await,
+        ["job", "other"]
+    );
+    assert!(
+        restarted
+            .lookup("/completed-symlinks/tv/job/a.mkv")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    db.delete_history(&[history.id]).await.unwrap();
+    assert_eq!(names(&restarted, "/completed-symlinks/tv").await, ["other"]);
+    assert_eq!(
+        restarted
+            .lookup("/completed-symlinks/tv/job")
+            .await
+            .unwrap(),
+        None
+    );
+}

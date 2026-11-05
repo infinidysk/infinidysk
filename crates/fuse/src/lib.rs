@@ -882,8 +882,7 @@ impl Fs {
 
     async fn delete(&self, parent: Inode, name: &OsStr) -> Result<()> {
         let path = child_path(&self.path(parent)?, name)?;
-        self.node(&path).await?;
-        if infinidysk_vfs::ignores_delete(&path) {
+        if self.vfs.delete_link(&self.node(&path).await?) {
             Ok(())
         } else {
             Err(libc::EROFS.into())

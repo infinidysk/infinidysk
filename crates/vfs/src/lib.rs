@@ -15,6 +15,7 @@ use std::hash::RandomState;
 use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use infinidysk_core::{BlobId, FileMeta, ItemId, ItemKind, blob, media};
 use infinidysk_db::{Db, HealthState, Item, QueueEntry};
@@ -165,12 +166,37 @@ impl Node {
 /// 2000-01-01 UTC. Constant so media servers never see fixed folders as changed.
 const FIXED_MODIFIED: i64 = 946_684_800_000;
 
-/// Whether deleting `path` should report success without changing anything: apps delete a
-/// download's links and folder under `/completed-symlinks/<category>/` once they imported it.
-// ponytail: accepted without hiding the entry; hide it for a while if apps retry.
-pub fn ignores_delete(path: &str) -> bool {
-    path.strip_prefix("/completed-symlinks/")
-        .is_some_and(|rest| rest.split('/').filter(|p| !p.is_empty()).count() > 1)
+/// How long a deleted `/completed-symlinks` entry stays hidden after it was last asked for.
+const DELETE_HIDE: Duration = Duration::from_secs(30);
+
+/// `/completed-symlinks` entries apps deleted, by content path, with when they show again.
+/// Nothing stored changes; the history row decides when a download goes for good.
+// ponytail: in memory, 30 s idle like 1.x; a long import can see its first links return. Hide a job's links until its history row goes if apps trip on that.
+#[derive(Default)]
+struct Deleted(Mutex<HashMap<String, Instant>>);
+
+impl Deleted {
+    fn hide(&self, path: &str, now: Instant) {
+        let mut all = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        all.retain(|_, until| *until > now);
+        all.insert(path.to_owned(), now + DELETE_HIDE);
+    }
+
+    /// Whether `path` is hidden; asking keeps it hidden for another [`DELETE_HIDE`].
+    fn hides(&self, path: &str, now: Instant) -> bool {
+        let mut all = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        match all.get_mut(path) {
+            Some(until) if *until > now => {
+                *until = now + DELETE_HIDE;
+                true
+            }
+            Some(_) => {
+                all.remove(path);
+                false
+            }
+            None => false,
+        }
+    }
 }
 
 /// Told which segment (flat index across parts) of which file playback zero-filled.
@@ -194,6 +220,7 @@ pub struct Vfs {
     /// Decoded metadata by blob and [`Db::blob_epoch`], so reopening a file skips
     /// fetching and decoding it.
     metas: Metas,
+    deleted: Deleted,
 }
 
 // ponytail: a fixed 64 MB, about 570k segments; make it a setting if libraries outgrow it.
@@ -255,6 +282,7 @@ impl Vfs {
                 RandomState::new(),
                 quick_cache::sync::DefaultLifecycle::default(),
             ),
+            deleted: Deleted::default(),
         }
     }
 
@@ -392,6 +420,10 @@ impl Vfs {
         if rest.is_empty() {
             return Ok(Some(Node::Links(None)));
         }
+        let now = Instant::now();
+        if (2..=rest.len()).any(|n| self.deleted.hides(&content_path(&rest[..n]), now)) {
+            return Ok(None);
+        }
         let Some(item) = self
             .db
             .item_by_path(&content_path(rest))
@@ -419,6 +451,20 @@ impl Vfs {
             (1 | 2, _) => None,
             _ => Some(self.link(item)),
         })
+    }
+
+    /// Accepts an app deleting a download's links or folders under
+    /// `/completed-symlinks/<category>/` after it imported them: hides `node` for a while.
+    /// `false` for anything else, which stays read-only.
+    pub fn delete_link(&self, node: &Node) -> bool {
+        let (Node::Links(Some(item)) | Node::Link { item, .. }) = node else {
+            return false;
+        };
+        if item.parent == Some(ItemId::CONTENT) {
+            return false;
+        }
+        self.deleted.hide(&item.path, Instant::now());
+        true
     }
 
     fn link(&self, item: Item) -> Node {
@@ -507,6 +553,7 @@ impl Vfs {
                 .completed_dirs(dir.id)
                 .await?
                 .into_iter()
+                .filter(|i| !self.deleted.hides(&i.path, Instant::now()))
                 .map(|i| Node::Links(Some(i)))
                 .collect(),
             Node::Links(Some(dir)) => self
@@ -514,7 +561,7 @@ impl Vfs {
                 .children(dir.id)
                 .await?
                 .into_iter()
-                .filter(visible)
+                .filter(|i| visible(i) && !self.deleted.hides(&i.path, Instant::now()))
                 .map(|i| match i.kind {
                     ItemKind::Directory => Node::Links(Some(i)),
                     _ => self.link(i),
@@ -636,5 +683,26 @@ mod tests {
         assert_eq!(start.0, Uuid::from_u128(0xabcde << 108));
         assert_eq!(end.map(|e| e.0), Some(Uuid::from_u128(0xabcdf << 108)));
         assert_eq!(id_range("fffff").map(|r| r.1).ok(), Some(None));
+    }
+
+    #[test]
+    fn deleted_entries_show_again_after_going_unasked() {
+        let deleted = Deleted::default();
+        let start = Instant::now();
+        let at = |secs| start + Duration::from_secs(secs);
+        deleted.hide("/content/tv/job/a.mkv", start);
+        assert!(!deleted.hides("/content/tv/job/b.mkv", at(1)));
+        assert!(!deleted.hides("/content/tv/job", at(1)));
+
+        // Each ask restarts the 30 s.
+        assert!(deleted.hides("/content/tv/job/a.mkv", at(29)));
+        assert!(deleted.hides("/content/tv/job/a.mkv", at(58)));
+        assert!(!deleted.hides("/content/tv/job/a.mkv", at(88)));
+        assert!(!deleted.hides("/content/tv/job/a.mkv", at(89)));
+
+        deleted.hide("/content/tv/old", at(100));
+        deleted.hide("/content/tv/new", at(131));
+        let all = deleted.0.lock().unwrap_or_else(PoisonError::into_inner);
+        assert_eq!(all.keys().collect::<Vec<_>>(), ["/content/tv/new"]);
     }
 }
