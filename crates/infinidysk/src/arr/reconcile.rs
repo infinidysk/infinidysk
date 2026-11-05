@@ -5,8 +5,8 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 
-use infinidysk_arr::Arr;
 use infinidysk_arr::inventory::{self, LibraryFile};
+use infinidysk_arr::{Arr, Import};
 use infinidysk_core::{ItemId, ItemKind, JobId};
 use infinidysk_db::{ArrOwner, Db, now_ms};
 use serde::{Deserialize, Serialize};
@@ -80,6 +80,30 @@ fn moved(owners: &[ArrOwner], files: &[LibraryFile]) -> Vec<(usize, i64)> {
         .collect()
 }
 
+/// The download ids of the imports that created each library file, by file id.
+fn importers(imports: &[Import]) -> HashMap<i64, Vec<&str>> {
+    let mut by_file: HashMap<i64, Vec<&str>> = HashMap::new();
+    for import in imports {
+        if let Some(id) = import.file_id
+            && !import.download_id.trim().is_empty()
+        {
+            by_file
+                .entry(id)
+                .or_default()
+                .push(import.download_id.trim());
+        }
+    }
+    by_file
+}
+
+/// The Arr's history shows a download other than `job` imported library file `file`.
+fn imported_elsewhere(importers: &HashMap<i64, Vec<&str>>, file: i64, job: Option<JobId>) -> bool {
+    importers.get(&file).is_some_and(|ids| {
+        ids.iter()
+            .any(|id| job.is_none_or(|job| Uuid::parse_str(id).ok() != Some(job.0)))
+    })
+}
+
 /// Holds when more than 5 % of the owned items would go.
 fn judge(owners: &[ArrOwner], files: &[LibraryFile]) -> Verdict {
     let gone = missing(owners, files);
@@ -143,18 +167,46 @@ impl Discovery {
             return Ok(());
         };
         let moves = moved(&owners, &files);
+        let backfill = !files.is_empty() && !categories.is_empty();
+        let imports = if backfill || !moves.is_empty() {
+            infinidysk_arr::all_imports(&self.http, arr)
+                .await
+                .map_err(|e| e.to_string())?
+        } else {
+            Vec::new()
+        };
+        let importers = importers(&imports);
+        let (mut followed, mut kept) = (0, 0);
         for &(i, id) in &moves {
+            let job = db
+                .owner_jobs(owners[i].item)
+                .await
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .find_map(|(instance, job)| (instance == arr.id).then_some(job));
+            if imported_elsewhere(&importers, id, job) {
+                kept += 1;
+                continue;
+            }
             db.refile_owner(arr.id, &owners[i], id)
                 .await
                 .map_err(|e| e.to_string())?;
             owners[i].file_id = Some(id);
+            followed += 1;
         }
-        if !moves.is_empty() {
-            tracing::info!(arr = %arr.name, files = moves.len(), "followed re-imported files to their new ids");
+        if followed > 0 {
+            tracing::info!(arr = %arr.name, files = followed, "followed re-imported files to their new ids");
         }
-        if !files.is_empty() && !categories.is_empty() {
+        if kept > 0 {
+            tracing::info!(
+                arr = %arr.name,
+                files = kept,
+                "left files on their old ids; the Arr imported the file now at their path from another download"
+            );
+        }
+        if backfill {
             let adopted = self
-                .backfill_owners(arr, &categories, &owners, &files)
+                .backfill_owners(arr, &categories, &owners, &files, &imports, &importers)
                 .await?;
             if adopted > 0 {
                 tracing::info!(arr = %arr.name, files = adopted, "recorded the owner of earlier imports");
@@ -205,7 +257,8 @@ impl Discovery {
     /// Records `arr` as the owner of library files it imported from us before owners were
     /// recorded, or whose webhook we missed, from its import history; returns how many.
     /// The item's job must be the download imported, unless the item predates job
-    /// records. ponytail: files renamed since import are skipped; following the
+    /// records; a file the history shows another download imported is not adopted.
+    /// ponytail: files renamed since import are skipped; following the
     /// history's rename events would adopt them too.
     async fn backfill_owners(
         &self,
@@ -213,14 +266,13 @@ impl Discovery {
         categories: &[String],
         owners: &[ArrOwner],
         files: &[LibraryFile],
+        imports: &[Import],
+        importers: &HashMap<i64, Vec<&str>>,
     ) -> Result<usize, String> {
         let db = self.queue.db();
         let mut owned_items: HashSet<ItemId> = owners.iter().map(|o| o.item).collect();
         let mut owned_files: HashSet<i64> = owners.iter().filter_map(|o| o.file_id).collect();
         let library: HashMap<&str, i64> = files.iter().map(|f| (f.path.as_str(), f.id)).collect();
-        let imports = infinidysk_arr::all_imports(&self.http, arr)
-            .await
-            .map_err(|e| e.to_string())?;
         let mut adopted = 0;
         for import in imports {
             let Some(&file_id) = library.get(import.imported.as_str()) else {
@@ -230,6 +282,9 @@ impl Discovery {
                 continue;
             }
             let job = Uuid::parse_str(&import.download_id).ok().map(JobId);
+            if imported_elsewhere(importers, file_id, job) {
+                continue;
+            }
             for (dir, path) in content_paths(&import.dropped, categories) {
                 let Some(item) = item_at(db, &path).await.map_err(|e| e.to_string())? else {
                     continue;
@@ -499,6 +554,49 @@ mod tests {
         let library = [file(1), LibraryFile { id: 9, ..file(2) }];
         assert_eq!(missing(&owners, &library), []);
         assert_eq!(moved(&owners, &library), [(1, 9)]);
+    }
+
+    #[test]
+    fn a_file_another_download_imported_is_not_ours() {
+        let (ours, theirs) = (JobId(Uuid::new_v4()), JobId(Uuid::new_v4()));
+        let import = |download: &str, file| Import {
+            download_id: download.to_owned(),
+            dropped: "/dl/a.mkv".to_owned(),
+            imported: "/lib/a.mkv".to_owned(),
+            file_id: file,
+        };
+        let history = [
+            import(&theirs.to_string(), Some(9)),
+            import(&ours.to_string().to_uppercase(), Some(7)),
+            import(" ", Some(5)),
+            import("SABnzbd_nzo_x", Some(4)),
+            import(&theirs.to_string(), None),
+        ];
+        let by_file = importers(&history);
+        assert!(imported_elsewhere(&by_file, 9, Some(ours)));
+        assert!(!imported_elsewhere(&by_file, 9, Some(theirs)));
+        assert!(
+            !imported_elsewhere(&by_file, 7, Some(ours)),
+            "ids match ignoring case"
+        );
+        assert!(
+            !imported_elsewhere(&by_file, 5, Some(ours)),
+            "no download id, no proof"
+        );
+        assert!(
+            imported_elsewhere(&by_file, 4, Some(ours)),
+            "not one of our downloads"
+        );
+        assert!(
+            imported_elsewhere(&by_file, 9, None),
+            "an owner with no job"
+        );
+        assert!(
+            !imported_elsewhere(&by_file, 8, None),
+            "no record of the file"
+        );
+        // Records of other files, such as the rest of a pack, do not count.
+        assert!(!imported_elsewhere(&by_file, 8, Some(ours)));
     }
 
     #[test]
