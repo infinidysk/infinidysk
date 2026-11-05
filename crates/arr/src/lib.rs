@@ -159,17 +159,7 @@ pub async fn version(http: &reqwest::Client, arr: &Arr) -> Result<String, Error>
         Profile::Sportarr => "api/v3/system/status".to_owned(),
         profile => format!("{}/system/status", profile.root()),
     };
-    let status: SystemStatus = match fetch(request(http, arr, Method::GET, &path)).await {
-        Err(Error::Rejected { status, .. }) if status == reqwest::StatusCode::NOT_FOUND => {
-            let alternate = if arr.profile.root() == "api/v1" {
-                "api/v3/system/status"
-            } else {
-                "api/v1/system/status"
-            };
-            fetch(request(http, arr, Method::GET, alternate)).await?
-        }
-        result => result?,
-    };
+    let status: SystemStatus = fetch(request(http, arr, Method::GET, &path)).await?;
     let found = if status.sportarr_version.is_some() {
         "Sportarr"
     } else {

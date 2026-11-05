@@ -272,11 +272,6 @@ impl Discovery {
 
     /// One pass over `arrs`; `true` when every Arr answered and took our webhook.
     async fn discover(&self, arrs: &[Arr]) -> bool {
-        if let Err(error) =
-            crate::upgrade::remember_arr_profiles(self.queue.db(), &self.config).await
-        {
-            tracing::warn!(reason = %error, "could not record imported Arr profiles for verification");
-        }
         let sab_key = self.config.read().await.settings().sab.api_key.0.clone();
         {
             // Removed instances go at once; changed ones start over.
@@ -365,14 +360,7 @@ impl Discovery {
         arr: &Arr,
         sab_key: &str,
     ) -> Result<(String, Vec<(SabClient, ArrBinding)>), arr::Error> {
-        let version = arr::version(&self.http, arr).await;
-        if let Err(error) =
-            crate::upgrade::reconcile_arr_profile(self.queue.db(), &self.config, arr, &version)
-                .await
-        {
-            tracing::warn!(arr = %arr.name, reason = %error, "could not verify an imported Arr profile");
-        }
-        let version = version?;
+        let version = arr::version(&self.http, arr).await?;
         let mut clients = Vec::new();
         for mut client in arr::sab_clients(&self.http, arr).await? {
             if !client.enabled {

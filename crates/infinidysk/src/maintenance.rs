@@ -49,8 +49,8 @@ const HOLD_PERCENT: u64 = 90;
 /// A remove dead links run that finds more than this share of the links dead waits for
 /// review.
 const DEAD_HOLD_PERCENT: u64 = 5;
-const SKIPPED_PENDING: &str = "Files the C# import skipped may still be recoverable; keep their \
-                               library links and check the import report before removing dead links.";
+const SKIPPED_PENDING: &str = "Files the C# import skipped are not brought back yet; that runs on \
+                               the next start once the library folders are readable.";
 const PAGE_MAX: usize = 1000;
 const NO_LIBRARY: &str = "Set your library folders under Imports first.";
 const MB: u64 = 1_000_000;
@@ -601,9 +601,6 @@ impl Maintenance {
         }
         self.library_settled().await?;
         for arr in crate::app::arr_instances(&settings.arr_instances) {
-            infinidysk_arr::version(self.parts.discovery.http(), &arr)
-                .await
-                .map_err(|error| Stop::Reason(format!("{}: {error}", arr.name)))?;
             let roots = infinidysk_arr::library::root_folders(self.parts.discovery.http(), &arr)
                 .await
                 .map_err(|e| Stop::Reason(format!("{} did not answer: {e}", arr.name)))?;
@@ -740,9 +737,6 @@ impl Maintenance {
         let mut listed: HashMap<PathBuf, Vec<(Arr, MediaFile)>> = HashMap::new();
         let arrs = crate::app::arr_instances(&settings.arr_instances);
         for arr in arrs.into_iter().filter(arr_library::converts) {
-            infinidysk_arr::version(http, &arr)
-                .await
-                .map_err(|error| Stop::Reason(format!("{}: {error}", arr.name)))?;
             let files = arr_library::media_files(http, &arr)
                 .await
                 .map_err(|e| Stop::Reason(format!("{} did not answer: {e}", arr.name)))?;

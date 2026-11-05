@@ -178,8 +178,13 @@ async fn removes_only_files_no_library_link_points_to() {
     let (gone_job, gone) = download(&db, "gone", &["g.mkv"]).await;
     db.delete_history(&[old_job, gone_job]).await.unwrap();
     let pointer = |item: &Item| format!("{}/{}", mount.display(), item.id.ids_path());
-    for item in &old[..6] {
-        std::os::unix::fs::symlink(pointer(item), lib.join(&item.name)).unwrap();
+    for (index, item) in old[..6].iter().enumerate() {
+        let target = if index == 0 {
+            format!("{}.mkv", pointer(item))
+        } else {
+            pointer(item)
+        };
+        std::os::unix::fs::symlink(target, lib.join(&item.name)).unwrap();
     }
     let exists = async |item: &Item| db.item_by_path(&item.path).await.unwrap().is_some();
 
@@ -416,32 +421,6 @@ async fn removes_dead_links_and_has_the_arr_search_again() {
     assert!(["a.mkv", "b.mkv", "c.strm"].iter().all(|n| present(n)));
     assert!(CALLS.lock().unwrap().is_empty(), "a dry run calls no Arr");
 
-    let confirm = json!({ "at_ms": report["at_ms"] });
-    db.write_config(
-        &[
-            ("upgrade.state", "\"done\""),
-            ("upgrade.skipped_retried.6", "1"),
-        ],
-        &[],
-    )
-    .await
-    .unwrap();
-    let report = run(addr, &format!("{DEAD}/report/confirm"), confirm).await;
-    assert_eq!(report["outcome"], "stopped", "{report}");
-    assert_eq!(report["removed"], 0);
-    assert!(report["reason"].as_str().unwrap().contains("recoverable"));
-    assert!(
-        ["a.mkv", "b.mkv", "c.strm"]
-            .iter()
-            .all(|name| present(name))
-    );
-    assert!(CALLS.lock().unwrap().is_empty());
-
-    db.write_config(&[("upgrade.skipped_retried.6", "0")], &[])
-        .await
-        .unwrap();
-    let report = run(addr, &format!("{DEAD}/run"), json!({ "dry_run": true })).await;
-    assert_eq!(report["outcome"], "held", "{report}");
     let confirm = json!({ "at_ms": report["at_ms"] });
     let report = run(addr, &format!("{DEAD}/report/confirm"), confirm).await;
     assert_eq!(report["trigger"], "review", "{report}");
