@@ -27,6 +27,8 @@ pub struct Import {
     pub download_id: String,
     pub dropped: String,
     pub imported: String,
+    /// The library file the import created, where the history names it.
+    pub file_id: Option<i64>,
 }
 
 /// The media an Arr imported from a download, and the file it holds for it now.
@@ -135,6 +137,24 @@ struct Record {
 struct Data {
     dropped_path: Option<String>,
     imported_path: Option<String>,
+    /// Sent as a string; a number is accepted too.
+    file_id: Option<serde_json::Value>,
+}
+
+impl Record {
+    fn into_import(self) -> Option<Import> {
+        let file_id = self
+            .data
+            .file_id
+            .as_ref()
+            .and_then(|v| v.as_i64().or_else(|| v.as_str()?.trim().parse().ok()));
+        Some(Import {
+            download_id: self.download_id?.trim().to_owned(),
+            dropped: self.data.dropped_path?,
+            imported: self.data.imported_path?,
+            file_id,
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -417,13 +437,7 @@ pub async fn all_imports(http: &reqwest::Client, arr: &Arr) -> Result<Vec<Import
         ]))
         .await?;
         let last = found.records.len() < PAGE;
-        imports.extend(found.records.into_iter().filter_map(|r| {
-            Some(Import {
-                download_id: r.download_id?,
-                dropped: r.data.dropped_path?,
-                imported: r.data.imported_path?,
-            })
-        }));
+        imports.extend(found.records.into_iter().filter_map(Record::into_import));
         if last {
             break;
         }
@@ -522,6 +536,24 @@ async fn replacing(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_import_keeps_the_file_id_its_history_names() {
+        let import = |download: &str, file_id: serde_json::Value| {
+            let r: Record = serde_json::from_value(json!({
+                "id": 1, "downloadId": download,
+                "data": { "droppedPath": "/d/a.mkv", "importedPath": "/lib/a.mkv", "fileId": file_id },
+            }))
+            .expect("a history record");
+            r.into_import().expect("an import")
+        };
+        let record = |file_id| import("abc", file_id).file_id;
+        assert_eq!(record(json!("42")), Some(42));
+        assert_eq!(record(json!(42)), Some(42));
+        assert_eq!(record(json!("")), None);
+        assert_eq!(record(serde_json::Value::Null), None);
+        assert_eq!(import(" abc ", json!(1)).download_id, "abc");
+    }
 
     #[test]
     fn a_renamed_file_is_replaced_only_when_added_after_the_import() {
