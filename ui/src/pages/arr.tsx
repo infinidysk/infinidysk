@@ -27,12 +27,11 @@ import {
 type Arr = Schemas["ArrInstance"];
 type ArrStatus = Schemas["ArrInstanceStatus"];
 
-const profiles: Schemas["ArrProfile"][] = ["sonarr", "radarr", "lidarr", "readarr", "chaptarr", "whisparr", "sportarr"];
+const profiles: Schemas["ArrProfile"][] = ["sonarr", "radarr", "lidarr", "chaptarr", "whisparr", "sportarr"];
 const ports: Record<Schemas["ArrProfile"], number> = {
   sonarr: 8989,
   radarr: 7878,
   lidarr: 8686,
-  readarr: 8787,
   chaptarr: 8789,
   whisparr: 6969,
   sportarr: 1867,

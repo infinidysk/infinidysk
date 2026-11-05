@@ -1632,7 +1632,7 @@ export interface components {
          * @description Arr-specific behavior hangs off this, so new Arr types are additive.
          * @enum {string}
          */
-        ArrProfile: "sonarr" | "radarr" | "lidarr" | "readarr" | "chaptarr" | "whisparr" | "sportarr";
+        ArrProfile: "sonarr" | "radarr" | "lidarr" | "chaptarr" | "whisparr" | "sportarr";
         /** @description A download the Arr will not import for a reason only the user can settle. */
         ArrQueueIssue: {
             messages: string[];

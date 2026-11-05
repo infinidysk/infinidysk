@@ -1053,7 +1053,6 @@ pub enum ArrProfile {
     Sonarr,
     Radarr,
     Lidarr,
-    Readarr,
     Chaptarr,
     Whisparr,
     Sportarr,
@@ -1675,10 +1674,31 @@ fn effective(stored: &Map<String, Value>, env: &[Override]) -> Result<Settings, 
     for o in env {
         set(&mut tree, &o.path, o.value.clone());
     }
+    reject_readarr(&tree)?;
     let mut settings: Settings = serde_json::from_value(tree)?;
     settings.reset_invalid();
     settings.validate()?;
     Ok(settings)
+}
+
+/// Readarr support was dropped; an instance left from before stops startup with what
+/// to do, not a parse error.
+fn reject_readarr(tree: &Value) -> Result<(), Error> {
+    let Some(arr) = tree["arr_instances"]
+        .as_array()
+        .and_then(|arrs| arrs.iter().find(|a| a["profile"] == "readarr"))
+    else {
+        return Ok(());
+    };
+    Err(invalid(
+        "arr_instances",
+        format!(
+            "Arr instance \"{}\" is a Readarr, which infinidysk no longer supports. Start \
+             the previous version, remove the instance or change it to Chaptarr, then \
+             upgrade again.",
+            arr["name"].as_str().unwrap_or_default()
+        ),
+    ))
 }
 
 fn lookup<'a>(tree: &'a Value, path: &[String]) -> Option<&'a Value> {

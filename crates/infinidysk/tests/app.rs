@@ -444,8 +444,8 @@ static HOOKS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
 static QUEUE: Mutex<Vec<Value>> = Mutex::new(Vec::new());
 static REMOVED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// Answers like a Sonarr under `/sonarr` holding two masked SAB clients, and a Readarr
-/// under `/readarr` holding two unmasked ones; `app` is our server.
+/// Answers like a Sonarr under `/sonarr` holding two masked SAB clients, and a Chaptarr
+/// under `/chaptarr` holding two unmasked ones; `app` is our server.
 async fn fake_arr(State(app): State<SocketAddr>, req: Request) -> Json<Value> {
     let sab = |id: i64, field: &str, category: &str, key: &str| {
         json!({
@@ -489,13 +489,13 @@ async fn fake_arr(State(app): State<SocketAddr>, req: Request) -> Json<Value> {
             .unwrap();
             json!({})
         }
-        "/readarr/api/v1/system/status" => json!({ "appName": "Readarr", "version": "0.4.0" }),
-        "/sonarr/api/v3/notification" | "/readarr/api/v1/notification"
+        "/chaptarr/api/v1/system/status" => json!({ "appName": "Chaptarr", "version": "0.9.0" }),
+        "/sonarr/api/v3/notification" | "/chaptarr/api/v1/notification"
             if req.method() == axum::http::Method::GET =>
         {
             json!([])
         }
-        "/sonarr/api/v3/notification" | "/readarr/api/v1/notification" => {
+        "/sonarr/api/v3/notification" | "/chaptarr/api/v1/notification" => {
             let body = axum::body::to_bytes(req.into_body(), usize::MAX)
                 .await
                 .unwrap();
@@ -512,12 +512,16 @@ async fn fake_arr(State(app): State<SocketAddr>, req: Request) -> Json<Value> {
             REFRESHES.fetch_add(1, Ordering::SeqCst);
             json!({})
         }
-        "/readarr/api/v1/downloadclient" => json!([
-            sab(1, "musicCategory", "books", "sabkey"),
-            sab(2, "musicCategory", "audiobooks", "otherkey"),
-        ]),
+        "/chaptarr/api/v1/downloadclient" => {
+            let mut books = sab(1, "ebookCategory", "books", "sabkey");
+            books["fields"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({ "name": "audiobookCategory", "value": "audiobooks" }));
+            json!([books, sab(2, "audiobookCategory", "other", "otherkey")])
+        }
         "/sonarr/api/v3/queue" => json!({ "records": QUEUE.lock().unwrap().clone() }),
-        "/readarr/api/v1/queue" => json!({ "records": [] }),
+        "/chaptarr/api/v1/queue" => json!({ "records": [] }),
         removed if removed.starts_with("/sonarr/api/v3/queue/") => {
             assert_eq!(req.method(), axum::http::Method::DELETE);
             let query = req.uri().query().unwrap_or_default();
@@ -597,7 +601,7 @@ async fn discovers_which_arr_download_clients_are_this_installation() {
     let mut settings = serde_json::from_str::<Value>(&body).unwrap()["settings"].take();
     settings["arr_instances"] = json!([
         { "name": "series", "profile": "sonarr", "url": format!("http://{arr}/sonarr"), "api_key": "k" },
-        { "name": "books", "profile": "readarr", "url": format!("http://{arr}/readarr"), "api_key": "k" },
+        { "name": "books", "profile": "chaptarr", "url": format!("http://{arr}/chaptarr"), "api_key": "k" },
         { "name": "mislabeled", "profile": "whisparr", "url": format!("http://{arr}/sonarr"), "api_key": "k" },
         { "name": "off", "profile": "radarr", "url": format!("http://{arr}/off"), "api_key": "k", "enabled": false },
     ]);
@@ -660,7 +664,7 @@ async fn discovers_which_arr_download_clients_are_this_installation() {
     );
     assert_eq!(
         clients("books"),
-        pairs(&[("books", "verified"), ("audiobooks", "other")])
+        pairs(&[("audiobooks,books", "verified"), ("other", "other")])
     );
     assert_eq!(clients("mislabeled"), pairs(&[]));
     let mislabeled = found["instances"]
@@ -684,7 +688,8 @@ async fn discovers_which_arr_download_clients_are_this_installation() {
     assert_eq!(
         categories,
         [
-            ("books".to_owned(), json!(["audio", "book"])),
+            ("audiobooks".to_owned(), json!(["audio"])),
+            ("books".to_owned(), json!(["book"])),
             ("tv".to_owned(), json!(["video"])),
         ]
     );

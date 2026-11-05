@@ -67,7 +67,7 @@ async fn shape(http: &reqwest::Client, arr: &Arr) -> Result<Option<Shape>, Error
         } else {
             Shape::Series
         }),
-        Profile::Readarr | Profile::Sportarr => None,
+        Profile::Sportarr => None,
     })
 }
 

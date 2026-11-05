@@ -36,7 +36,6 @@ pub enum Profile {
     Sonarr,
     Radarr,
     Lidarr,
-    Readarr,
     Chaptarr,
     Whisparr,
     Sportarr,
@@ -46,7 +45,7 @@ impl Profile {
     /// Root of the endpoints we call; Sportarr's are its native ones.
     const fn root(self) -> &'static str {
         match self {
-            Self::Lidarr | Self::Readarr | Self::Chaptarr => "api/v1",
+            Self::Lidarr | Self::Chaptarr => "api/v1",
             Self::Sportarr => "api",
             Self::Sonarr | Self::Radarr | Self::Whisparr => "api/v3",
         }
@@ -58,7 +57,6 @@ impl Profile {
             Self::Sonarr => "Sonarr",
             Self::Radarr => "Radarr",
             Self::Lidarr => "Lidarr",
-            Self::Readarr => "Readarr",
             Self::Chaptarr => "Chaptarr",
             Self::Whisparr => "Whisparr",
             Self::Sportarr => "Sportarr",
@@ -70,14 +68,14 @@ impl Profile {
     pub const fn media(self) -> &'static [Kind] {
         match self {
             Self::Lidarr => &[Kind::Audio],
-            Self::Readarr | Self::Chaptarr => &[Kind::Book, Kind::Audio],
+            Self::Chaptarr => &[Kind::Book, Kind::Audio],
             Self::Sonarr | Self::Radarr | Self::Whisparr | Self::Sportarr => &[Kind::Video],
         }
     }
 
     /// Health repair can ask it for a replacement.
-    // ponytail: Readarr (bookfile + BookSearch, unmaintained upstream) and Sportarr (own
-    // API, no download ids in history) have no repair; add a `repair::Shape` for each.
+    // ponytail: Sportarr (own API, no download ids in history) has no repair; add a
+    // `repair::Shape` for it.
     #[must_use]
     pub const fn repairs(self) -> bool {
         matches!(

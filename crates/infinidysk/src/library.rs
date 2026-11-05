@@ -2330,16 +2330,11 @@ fn warnings(before: &Settings, after: &Settings) -> Vec<String> {
         && after.arr_instances.iter().any(|a| {
             matches!(
                 a.profile,
-                config::ArrProfile::Lidarr
-                    | config::ArrProfile::Readarr
-                    | config::ArrProfile::Chaptarr
+                config::ArrProfile::Lidarr | config::ArrProfile::Chaptarr
             )
         })
     {
-        w.push(
-            "Lidarr, Readarr and Chaptarr libraries keep symlinks, which need the mount."
-                .to_owned(),
-        );
+        w.push("Lidarr and Chaptarr libraries keep symlinks, which need the mount.".to_owned());
     }
     if before.network.public_url != after.network.public_url
         && after.imports.strategy == ImportStrategy::Strm

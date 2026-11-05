@@ -132,8 +132,6 @@ impl Config {
             sonarr: Vec<ArrInstance>,
             #[serde(rename = "LidarrInstances")]
             lidarr: Vec<ArrInstance>,
-            #[serde(rename = "ReadarrInstances")]
-            readarr: Vec<ArrInstance>,
             #[serde(rename = "WhisparrInstances")]
             whisparr: Vec<ArrInstance>,
         }
@@ -145,7 +143,6 @@ impl Config {
             (ArrKind::Radarr, i.radarr),
             (ArrKind::Sonarr, i.sonarr),
             (ArrKind::Lidarr, i.lidarr),
-            (ArrKind::Readarr, i.readarr),
             (ArrKind::Whisparr, i.whisparr),
         ]
         .into_iter()
@@ -254,7 +251,6 @@ pub enum ArrKind {
     Radarr,
     Sonarr,
     Lidarr,
-    Readarr,
     Whisparr,
 }
 
