@@ -105,6 +105,10 @@ async fn a_readarr_instance_stops_loading_with_what_to_do() {
         .await
         .expect("write");
     stopped(ConfigStore::load(db.clone(), []).await);
+    let cleared = [("INFINIDYSK__ARR_INSTANCES".to_owned(), "[]".to_owned())];
+    ConfigStore::load(db.clone(), cleared)
+        .await
+        .expect("the env list replaces the stored Readarr");
 
     db.close().await;
     for suffix in ["", "-wal", "-shm"] {
