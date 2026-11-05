@@ -661,6 +661,8 @@ pub async fn report(config: &Path) -> anyhow::Result<String> {
     ) {
         return Ok(POSTGRES_REPORT.to_owned());
     }
+    // A copy left by an earlier PostgreSQL attempt would be read instead of db.sqlite.
+    infinidysk_import::postgres::remove_staged(config)?;
     let survey = infinidysk_import::survey(config).await?;
     let cs = Config::read(config, std::env::vars()).await?;
     describe(&survey, &cs, &settings(&cs)?)
@@ -750,12 +752,10 @@ pub async fn import(db: &Db, config: &Path) -> anyhow::Result<()> {
     import_with_progress(db, config, &vars, |_| {}).await
 }
 
-/// Whether an import runs. A 1.x install whose source cannot be read counts, so its
-/// reason shows on the upgrade screen instead of an empty start.
+/// Whether an import runs. An interrupted import always resumes, so a source that
+/// disappeared shows its reason instead of a half-imported start. A 1.x install whose
+/// source cannot be read counts too, so its reason shows on the upgrade screen.
 async fn import_needed(db: &Db, config: &Path, vars: &[(String, String)]) -> anyhow::Result<bool> {
-    if matches!(infinidysk_import::source(config, vars), Ok(Source::None)) {
-        return Ok(false);
-    }
     let state = db
         .config()
         .await?
@@ -764,6 +764,7 @@ async fn import_needed(db: &Db, config: &Path, vars: &[(String, String)]) -> any
     match state.as_deref() {
         Some("\"done\"") => Ok(false),
         Some(_) => Ok(true),
+        None if matches!(infinidysk_import::source(config, vars), Ok(Source::None)) => Ok(false),
         None => Ok(db.is_fresh().await?),
     }
 }
@@ -780,14 +781,20 @@ async fn import_with_progress(
     tracing::info!(config = %config.display(), "importing or resuming the C# install");
     let from_postgres = match infinidysk_import::source(config, vars)? {
         Source::Postgres(connection) => {
-            Box::pin(copy_v1_postgres(
+            let copied = Box::pin(copy_v1_postgres(
                 config,
                 &connection,
                 vars,
                 crate::database::LIMITS.stall,
                 &progress,
             ))
-            .await?;
+            .await;
+            if let Err(error) = copied {
+                if let Err(error) = infinidysk_import::postgres::remove_staged(config) {
+                    tracing::warn!(reason = %error, "could not remove a partial copy of the 1.x PostgreSQL database");
+                }
+                return Err(error);
+            }
             true
         }
         Source::Sqlite | Source::None => {
@@ -865,10 +872,9 @@ async fn import_with_progress(
         set.push((WEBDAV_KEY, serde_json::to_string(&legacy)?));
     }
     let set: Vec<(&str, &str)> = set.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    // Before "done": a later import never runs again to remove it.
+    infinidysk_import::postgres::remove_staged(config)?;
     db.write_config(&set, &[]).await?;
-    if let Err(error) = infinidysk_import::postgres::remove_staged(config) {
-        tracing::warn!(reason = %error, "could not remove the copy of the 1.x PostgreSQL database");
-    }
     tracing::info!(
         files = imported.files,
         skipped = imported.skipped_count,
@@ -1822,6 +1828,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_interrupted_import_resumes_after_its_source_is_gone() {
+        let dir = v1_dir();
+        let db = Db::connect("sqlite::memory:").await.unwrap();
+        db.write_config(&[(STATE_KEY, "\"started\"")], &[])
+            .await
+            .unwrap();
+        assert!(import_needed(&db, &dir, &[]).await.unwrap());
+        assert!(import_with_progress(&db, &dir, &[], |_| {}).await.is_err());
+        db.close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
     async fn a_postgres_install_is_not_imported_as_empty() {
         let dir = v1_dir();
         std::fs::write(dir.join("db-contract.json"), r#"{"provider":"postgres"}"#).unwrap();
@@ -1965,6 +1984,10 @@ mod tests {
         let report: String = serde_json::from_str(&config[REPORT_KEY]).unwrap();
         assert!(report.contains("Settings > System > Database"), "{report}");
         assert!(!dir.join(infinidysk_import::postgres::STAGED).exists());
+        let job = db.item_by_path("/content/tv/job").await.unwrap().unwrap();
+        let history = db.history().await.unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].0.download_dir, Some(job.id));
 
         db.close().await;
         std::fs::remove_dir_all(dir).unwrap();
