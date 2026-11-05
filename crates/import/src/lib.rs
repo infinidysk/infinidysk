@@ -101,9 +101,7 @@ pub fn source(config: &Path, vars: &[(String, String)]) -> Result<Source, Error>
             .filter(|v| !v.is_empty())
     };
     let provider = match var(PROVIDER_VAR).map(str::to_ascii_lowercase) {
-        Some(provider) if matches!(provider.as_str(), "sqlite" | "postgres" | "postgresql") => {
-            Some(provider)
-        }
+        Some(provider) if known_provider(&provider) => Some(provider),
         Some(_) => return Err(Error::InvalidProvider),
         None => contract_provider(config)?,
     };
@@ -118,6 +116,10 @@ pub fn source(config: &Path, vars: &[(String, String)]) -> Result<Source, Error>
     }
 }
 
+fn known_provider(provider: &str) -> bool {
+    matches!(provider, "sqlite" | "postgres" | "postgresql")
+}
+
 /// The lowercased `provider` in `db-contract.json`; `None` when the file is missing.
 fn contract_provider(config: &Path) -> Result<Option<String>, Error> {
     #[derive(serde::Deserialize)]
@@ -130,9 +132,16 @@ fn contract_provider(config: &Path) -> Result<Option<String>, Error> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(Error::Contract(path, error.to_string())),
     };
-    let contract: Contract =
-        serde_json::from_str(&text).map_err(|error| Error::Contract(path, error.to_string()))?;
-    Ok(Some(contract.provider.trim().to_ascii_lowercase()))
+    let contract: Contract = serde_json::from_str(&text)
+        .map_err(|error| Error::Contract(path.clone(), error.to_string()))?;
+    let provider = contract.provider.trim().to_ascii_lowercase();
+    if !known_provider(&provider) {
+        return Err(Error::Contract(
+            path,
+            format!("unknown provider {provider:?}"),
+        ));
+    }
+    Ok(Some(provider))
 }
 
 /// What a C# `/config` holds, and what importing it involves.
@@ -653,6 +662,10 @@ mod tests {
         assert!(matches!(
             case(Some("not json"), true, &[(PROVIDER_VAR, "sqlite")]),
             Ok(Source::Sqlite)
+        ));
+        assert!(matches!(
+            case(Some(r#"{"provider":"postgre"}"#), true, &[conn]),
+            Err(Error::Contract(..))
         ));
         assert!(matches!(
             case(Some(pg), true, &[(PROVIDER_VAR, "postgre"), conn]),
