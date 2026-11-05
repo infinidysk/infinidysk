@@ -60,7 +60,9 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.platform }}
-          build-args: COMMIT=${{ github.sha }}
+          build-args: |
+            COMMIT=${{ github.sha }}
+            VERSION=${{ needs.release-please.outputs.tag_name }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,scope=${{ matrix.platform }},mode=max
@@ -94,7 +96,15 @@ jobs:
           # The server's update check needs every pushed image to carry a new version tag and `sha-<12>`.
           tags=(-t "$IMAGE:edge" -t "$IMAGE:sha-${GITHUB_SHA::12}" -t "$IMAGE:$RELEASE_TAG")
           mapfile -t refs < <(sed "s|^|$IMAGE@|" digest-*)
-          docker buildx imagetools create "${tags[@]}" "${refs[@]}"
+          # GHCR reads these from the multi-arch index, not from the per-platform labels.
+          annotations=(
+            --annotation "index:org.opencontainers.image.source=https://github.com/infinidysk/infinidysk"
+            --annotation "index:org.opencontainers.image.description=Usenet-backed virtual filesystem with a SABnzbd-compatible API, FUSE and WebDAV"
+            --annotation "index:org.opencontainers.image.licenses=MIT"
+            --annotation "index:org.opencontainers.image.revision=$GITHUB_SHA"
+            --annotation "index:org.opencontainers.image.version=$RELEASE_TAG"
+          )
+          docker buildx imagetools create "${annotations[@]}" "${tags[@]}" "${refs[@]}"
 
   announce:
     needs: [release-please, image-manifest]

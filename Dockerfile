@@ -39,6 +39,17 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates ffmpeg fuse3 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /usr/local/bin/infinidysk /usr/local/bin/infinidysk
+# Declared after the layers above so a new commit does not rebuild them.
+ARG COMMIT=""
+ARG VERSION=""
+LABEL org.opencontainers.image.title="infinidysk" \
+      org.opencontainers.image.description="Usenet-backed virtual filesystem with a SABnzbd-compatible API, FUSE and WebDAV" \
+      org.opencontainers.image.source="https://github.com/infinidysk/infinidysk" \
+      org.opencontainers.image.url="https://www.infinidysk.com/" \
+      org.opencontainers.image.documentation="https://www.infinidysk.com/v2/" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.revision="$COMMIT" \
+      org.opencontainers.image.version="$VERSION"
 VOLUME /config
 EXPOSE 3000
 # Healthy once the database, the FUSE mount (when /dev/fuse is there) and the import worker

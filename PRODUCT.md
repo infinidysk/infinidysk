@@ -8,7 +8,7 @@ web
 
 ## Users
 
-Self-hosters running a Sonarr/Radarr plus Plex/Jellyfin stack in Docker, often upgrading from InfiniDysk 1.x. They open the UI to add providers and Arr instances, watch imports and playback, and troubleshoot when a read stalls or an import fails. Most visits are short check-ins; long visits happen while debugging.
+Self-hosters running a Sonarr/Radarr plus Plex/Jellyfin stack in Docker, often upgrading from infinidysk 1.x. They open the UI to add providers and Arr instances, watch imports and playback, and troubleshoot when a read stalls or an import fails. Most visits are short check-ins; long visits happen while debugging.
 
 ## Product Purpose
 
@@ -40,7 +40,7 @@ infinidysk is a Usenet-backed virtual filesystem. It takes NZBs from Arr instanc
 
 ## Brand Commitments
 
-- Name: infinidysk, written lowercase in the UI.
+- Name: infinidysk, written lowercase everywhere (UI, docs, code, commits, PRs), even at the start of a sentence.
 - Voice: plain, direct, and specific; say what happened and what to do next.
 - Never write movie, show, episode, album, book or release names anywhere; describe files generically (for example "stored RAR5 episode").
 - Never name competing or upstream-fork projects.

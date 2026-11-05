@@ -1,6 +1,8 @@
 # AGENTS.md
 
-Quick-start guide for AI agents working on **InfiniDysk 2.x**, the from-scratch Rust rewrite of InfiniDysk on `main`.
+Quick-start guide for AI agents working on **infinidysk 2.x**, the from-scratch Rust rewrite of infinidysk on `main`.
+
+The name is always written lowercase: `infinidysk`, even at the start of a sentence. Never "InfiniDysk".
 
 ## What this project is
 
@@ -168,7 +170,7 @@ We cannot verify which media is public domain. **Never** write movie, show, epis
 
 ## Never merge pull requests
 
-Agents never merge PRs, in this repo or any InfiniDysk repo: no `gh pr merge`, no UI/API merge, no auto-merge. Opening the PR and reporting its URL ends the handoff. Never force-push shared branches or amend pushed commits.
+Agents never merge PRs, in this repo or any infinidysk repo: no `gh pr merge`, no UI/API merge, no auto-merge. Opening the PR and reporting its URL ends the handoff. Never force-push shared branches or amend pushed commits.
 
 ## Vendored agent skills
 
