@@ -8,7 +8,7 @@ use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::{Arr, Error, Profile, call, fetch, send};
+use crate::{Arr, Error, Profile, Session, fetch, send};
 
 /// File fields a rescan resets and the bulk editor takes back.
 const DETAILS: [&str; 7] = [
@@ -50,12 +50,13 @@ pub async fn media_files(http: &reqwest::Client, arr: &Arr) -> Result<Vec<MediaF
         Profile::Radarr => ("movie", Media::Movie),
         _ => return Ok(Vec::new()),
     };
+    let s = Session::open(http, arr).await?;
     let mut files = Vec::new();
-    for media in fetch::<Vec<Value>>(call(http, arr, Method::GET, list)).await? {
+    for media in fetch::<Vec<Value>>(s.call(Method::GET, list)).await? {
         let id = media["id"]
             .as_i64()
             .ok_or(Error::Unexpected("library entry without id"))?;
-        files.extend(files_of(http, arr, kind(id)).await?);
+        files.extend(files_in(&s, kind(id)).await?);
     }
     Ok(files)
 }
@@ -66,9 +67,15 @@ pub async fn files_of(
     arr: &Arr,
     media: Media,
 ) -> Result<Vec<MediaFile>, Error> {
+    files_in(&Session::open(http, arr).await?, media).await
+}
+
+async fn files_in(s: &Session<'_>, media: Media) -> Result<Vec<MediaFile>, Error> {
     let request = match media {
-        Media::Series(id) => call(http, arr, Method::GET, "episodefile").query(&[("seriesId", id)]),
-        Media::Movie(id) => call(http, arr, Method::GET, "moviefile").query(&[("movieId", id)]),
+        Media::Series(id) => s
+            .call(Method::GET, "episodefile")
+            .query(&[("seriesId", id)]),
+        Media::Movie(id) => s.call(Method::GET, "moviefile").query(&[("movieId", id)]),
     };
     fetch::<Vec<Value>>(request)
         .await?
@@ -100,13 +107,13 @@ pub async fn monitored(
     arr: &Arr,
     media: Media,
 ) -> Result<Vec<(i64, i64)>, Error> {
+    let s = Session::open(http, arr).await?;
     let entries = match media {
         Media::Series(id) => {
-            fetch::<Vec<Value>>(call(http, arr, Method::GET, "episode").query(&[("seriesId", id)]))
-                .await?
+            fetch::<Vec<Value>>(s.call(Method::GET, "episode").query(&[("seriesId", id)])).await?
         }
         Media::Movie(id) => {
-            vec![fetch::<Value>(call(http, arr, Method::GET, &format!("movie/{id}"))).await?]
+            vec![fetch::<Value>(s.call(Method::GET, &format!("movie/{id}"))).await?]
         }
     };
     let file = match media {
@@ -126,7 +133,8 @@ pub async fn rescan(http: &reqwest::Client, arr: &Arr, media: Media) -> Result<i
         Media::Series(id) => json!({ "name": "RescanSeries", "seriesId": id }),
         Media::Movie(id) => json!({ "name": "RescanMovie", "movieId": id }),
     };
-    let command: Value = fetch(call(http, arr, Method::POST, "command").json(&body)).await?;
+    let s = Session::open(http, arr).await?;
+    let command: Value = fetch(s.call(Method::POST, "command").json(&body)).await?;
     command["id"]
         .as_i64()
         .ok_or(Error::Unexpected("command without id"))
@@ -138,7 +146,8 @@ pub async fn command_done(
     arr: &Arr,
     id: i64,
 ) -> Result<Option<bool>, Error> {
-    let command: Value = fetch(call(http, arr, Method::GET, &format!("command/{id}"))).await?;
+    let s = Session::open(http, arr).await?;
+    let command: Value = fetch(s.call(Method::GET, &format!("command/{id}"))).await?;
     Ok(match command["status"].as_str().unwrap_or_default() {
         "queued" | "started" => None,
         status => Some(status == "completed"),
@@ -159,7 +168,13 @@ pub async fn restore(
         Media::Series(_) => "episodefile/bulk",
         Media::Movie(_) => "moviefile/bulk",
     };
-    send(call(http, arr, Method::PUT, path).json(&[file])).await
+    send(
+        Session::open(http, arr)
+            .await?
+            .call(Method::PUT, path)
+            .json(&[file]),
+    )
+    .await
 }
 
 /// Monitors the episodes or movie `ids` of `media` again.
@@ -172,10 +187,13 @@ pub async fn monitor(
     if ids.is_empty() {
         return Ok(());
     }
+    let s = Session::open(http, arr).await?;
     let request = match media {
-        Media::Series(_) => call(http, arr, Method::PUT, "episode/monitor")
+        Media::Series(_) => s
+            .call(Method::PUT, "episode/monitor")
             .json(&json!({ "episodeIds": ids, "monitored": true })),
-        Media::Movie(_) => call(http, arr, Method::PUT, "movie/editor")
+        Media::Movie(_) => s
+            .call(Method::PUT, "movie/editor")
             .json(&json!({ "movieIds": ids, "monitored": true })),
     };
     send(request).await
@@ -199,8 +217,9 @@ pub async fn replace_file(
             json!({ "name": "MoviesSearch", "movieIds": ids }),
         ),
     };
+    let s = Session::open(http, arr).await?;
     let at = format!("{kind}/{}", file.id);
-    let current: Value = match fetch(call(http, arr, Method::GET, &at)).await {
+    let current: Value = match fetch(s.call(Method::GET, &at)).await {
         Err(Error::Rejected {
             status: reqwest::StatusCode::NOT_FOUND,
             ..
@@ -212,16 +231,17 @@ pub async fn replace_file(
     if current["path"].as_str() != Some(file.path.as_str()) {
         return Ok(false);
     }
-    send(call(http, arr, Method::DELETE, &at)).await?;
+    send(s.call(Method::DELETE, &at)).await?;
     if !ids.is_empty() {
-        send(call(http, arr, Method::POST, "command").json(&search)).await?;
+        send(s.call(Method::POST, "command").json(&search)).await?;
     }
     Ok(true)
 }
 
 /// The instance's root folders.
 pub async fn root_folders(http: &reqwest::Client, arr: &Arr) -> Result<Vec<String>, Error> {
-    let roots: Vec<Value> = fetch(call(http, arr, Method::GET, "rootfolder")).await?;
+    let s = Session::open(http, arr).await?;
+    let roots: Vec<Value> = fetch(s.call(Method::GET, "rootfolder")).await?;
     Ok(roots
         .iter()
         .filter_map(|r| r["path"].as_str())

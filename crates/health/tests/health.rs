@@ -212,6 +212,7 @@ async fn sonarr(State(state): State<Log>, req: Request) -> Json<Value> {
     }
     let replaced = state.1.load(Ordering::Relaxed);
     Json(match req.uri().path() {
+        "/api" => json!({ "current": "v3", "deprecated": [] }),
         "/api/v3/history" if event => json!({ "records": [{
             "id": 21, "episodeId": 5,
             "data": { "droppedPath": "/data/strm/tv/job/job.strm", "importedPath": "/tv/Show/a.strm" },
@@ -329,9 +330,11 @@ async fn missing_article_is_replaced_through_sonarr() {
     assert_eq!(
         log.0.lock().unwrap().clone(),
         [
+            "GET /api".to_owned(),
             format!("GET /api/v3/history?downloadId={job}&eventType=3&pageSize=1000"),
             "GET /api/v3/episode/5".to_owned(),
             "GET /api/v3/episodefile/7".to_owned(),
+            "GET /api".to_owned(),
             "GET /api/v3/queue/details?episodeIds=5".to_owned(),
             format!("GET /api/v3/history?downloadId={job}&eventType=1&pageSize=1"),
             "POST /api/v3/history/failed/11".to_owned(),
@@ -599,7 +602,7 @@ async fn carried_over_file_is_repaired_through_its_recorded_download() {
     let (_, status) = db.health(item.id).await.unwrap().unwrap();
     assert_eq!(status.state, HealthState::Hidden);
     assert_eq!(
-        log.0.lock().unwrap()[0],
+        log.0.lock().unwrap()[1],
         format!("GET /api/v3/history?downloadId={job}&eventType=3&pageSize=1000")
     );
 }
@@ -650,8 +653,10 @@ async fn carried_over_file_without_a_download_is_replaced_by_search() {
     assert_eq!(
         log.0.lock().unwrap().clone(),
         [
+            "GET /api",
             "GET /api/v3/episodefile/7",
             "GET /api/v3/episode?episodeFileId=7",
+            "GET /api",
             "GET /api/v3/queue/details?episodeIds=5",
             "DELETE /api/v3/episodefile/7",
             "POST /api/v3/command",

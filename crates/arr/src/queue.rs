@@ -1,10 +1,10 @@
 //! An Arr's download queue: reading it, judging its import messages, and removing
 //! entries (`infinidysk-lab:docs/import-policy.md` §10.3).
 
-use reqwest::Method;
+use reqwest::{Method, RequestBuilder};
 use serde_json::Value;
 
-use crate::{Arr, Error, Profile, fetch, request, send};
+use crate::{Api, Arr, Error, Profile, Session, fetch, request, send};
 
 const PAGE: usize = 200;
 /// ponytail: queues past 10,000 entries are read only in part; page further if one shows up.
@@ -13,7 +13,8 @@ const MAX_PAGES: usize = 50;
 /// rejections follow as their own entries.
 const PARTIAL: &str = "expected in this release were not imported or missing";
 
-/// One queue entry. A multi-episode download lists one entry per episode.
+/// One queue entry. On Sonarr's v3 API a multi-episode download lists one entry per
+/// episode; on v5 one entry lists them all.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub id: i64,
@@ -27,7 +28,7 @@ pub struct Entry {
     pub state: String,
     pub messages: Vec<String>,
     /// The media it stands for, as the search limit counts it.
-    pub media: Option<(&'static str, i64)>,
+    pub media: Vec<(&'static str, i64)>,
 }
 
 /// What to do with an entry whose import is stuck; the stronger one wins.
@@ -35,8 +36,8 @@ pub struct Entry {
 pub enum Action {
     /// Remove it from the queue.
     Remove,
-    /// Remove it, blocklist the release and search for another.
-    Replace,
+    /// Remove it, blocklist the release with this reason and search for another.
+    Replace(&'static str),
 }
 
 const REMOVE: &[&str] = &[
@@ -46,13 +47,32 @@ const REMOVE: &[&str] = &[
     "not a custom format upgrade",
     "not a quality revision upgrade",
 ];
-const REPLACE: &[&str] = &[
-    "unable to determine if file is a sample",
-    "no files found are eligible for import in",
-    "unsupported extension",
-    "no audio tracks detected",
-    "found archive file, might need to be extracted",
-    "unable to parse file",
+/// Each with the reason the Arr's blocklist shows; it carries no paths or names.
+const REPLACE: &[(&str, &str)] = &[
+    (
+        "unable to determine if file is a sample",
+        "Import blocked: could not check for a sample",
+    ),
+    (
+        "no files found are eligible for import in",
+        "Import blocked: no eligible files",
+    ),
+    (
+        "unsupported extension",
+        "Import blocked: unsupported file type",
+    ),
+    (
+        "no audio tracks detected",
+        "Import blocked: no audio tracks",
+    ),
+    (
+        "found archive file, might need to be extracted",
+        "Import blocked: archive not extracted",
+    ),
+    (
+        "unable to parse file",
+        "Import blocked: file name not recognized",
+    ),
 ];
 
 /// The action every message agrees on, or `None` when any message has no rule (or there
@@ -61,8 +81,10 @@ const REPLACE: &[&str] = &[
 pub fn action(messages: &[String]) -> Option<Action> {
     let rule = |message: &String| {
         let lower = message.to_lowercase();
-        if lower.trim() == "sample" || REPLACE.iter().any(|p| lower.contains(p)) {
-            Some(Action::Replace)
+        if lower.trim() == "sample" {
+            Some(Action::Replace("Import blocked: sample"))
+        } else if let Some((_, reason)) = REPLACE.iter().find(|(p, _)| lower.contains(p)) {
+            Some(Action::Replace(reason))
         } else if REMOVE.iter().any(|p| lower.contains(p)) {
             Some(Action::Remove)
         } else {
@@ -79,10 +101,10 @@ pub fn action(messages: &[String]) -> Option<Action> {
 
 /// Every entry in the queue, unknown media included.
 pub async fn queue(http: &reqwest::Client, arr: &Arr) -> Result<Vec<Entry>, Error> {
-    let path = format!("{}/queue", root(arr.profile));
+    let s = Session::open(http, arr).await?;
     let mut entries = Vec::new();
     for page in 1..=MAX_PAGES {
-        let body: Value = fetch(request(http, arr, Method::GET, &path).query(&[
+        let body: Value = fetch(call(&s, Method::GET, "queue").query(&[
             ("page", page.to_string().as_str()),
             ("pageSize", PAGE.to_string().as_str()),
             ("includeUnknownSeriesItems", "true"),
@@ -102,29 +124,55 @@ pub async fn queue(http: &reqwest::Client, arr: &Arr) -> Result<Vec<Entry>, Erro
     Ok(entries)
 }
 
-/// Removes entry `id` and the download from our client (which keeps its content),
-/// optionally blocklisting the release and letting the Arr search for another.
+/// Removes entry `id` and the download from our client (which keeps its content). With a
+/// `blocklist` reason it blocklists the release and, if `search` yields `true`, lets the
+/// Arr search for another. `search` runs only once the Arr is reached and with a reason,
+/// so a failed lookup spends no search budget. Returns whether it asked for a search.
 pub async fn remove(
     http: &reqwest::Client,
     arr: &Arr,
     id: i64,
-    blocklist: bool,
-    search: bool,
-) -> Result<(), Error> {
-    let path = format!("{}/queue/{id}", root(arr.profile));
-    send(request(http, arr, Method::DELETE, &path).query(&[
-        ("removeFromClient", "true"),
-        ("blocklist", if blocklist { "true" } else { "false" }),
-        ("skipRedownload", if search { "false" } else { "true" }),
-    ]))
-    .await
+    blocklist: Option<&str>,
+    search: impl Future<Output = bool>,
+) -> Result<bool, Error> {
+    let s = Session::open(http, arr).await?;
+    let search = blocklist.is_some() && search.await;
+    let request = call(&s, Method::DELETE, &format!("queue/{id}"));
+    let request = match (s.api, blocklist) {
+        (Api::Classic, _) => request.query(&[
+            ("removeFromClient", "true"),
+            (
+                "blocklist",
+                if blocklist.is_some() { "true" } else { "false" },
+            ),
+            ("skipRedownload", if search { "false" } else { "true" }),
+        ]),
+        (Api::V5, None) => request.query(&[
+            ("removalMethod", "removeFromClient"),
+            ("blocklistMethod", "doNotBlocklist"),
+        ]),
+        (Api::V5, Some(reason)) => request.query(&[
+            ("removalMethod", "removeFromClient"),
+            (
+                "blocklistMethod",
+                if search {
+                    "blocklistAndSearch"
+                } else {
+                    "blocklistOnly"
+                },
+            ),
+            ("message", reason),
+        ]),
+    };
+    send(request).await?;
+    Ok(search)
 }
 
 /// Sportarr's queue lives in its Sonarr-compatible API, not its native one.
-const fn root(profile: Profile) -> &'static str {
-    match profile {
-        Profile::Sportarr => "api/v3",
-        profile => profile.root(),
+fn call(s: &Session<'_>, method: Method, path: &str) -> RequestBuilder {
+    match s.arr.profile {
+        Profile::Sportarr => request(s.http, s.arr, method, &format!("api/v3/{path}")),
+        _ => s.call(method, path),
     }
 }
 
@@ -151,19 +199,24 @@ fn entry(record: &Value) -> Option<Entry> {
             }
         })
         .collect();
-    let media = [
-        ("episodeId", "episode"),
-        ("movieId", "movie"),
-        ("albumId", "album"),
-        ("bookId", "book"),
-    ]
-    .into_iter()
-    .find_map(|(key, kind)| {
-        record[key]
-            .as_i64()
-            .filter(|&id| id > 0)
-            .map(|id| (kind, id))
-    });
+    let id = |key: &str| record[key].as_i64().filter(|&id| id > 0);
+    let media = match record["episodeIds"].as_array() {
+        Some(ids) => ids
+            .iter()
+            .filter_map(|id| id.as_i64().filter(|&id| id > 0))
+            .map(|id| ("episode", id))
+            .collect(),
+        None => [
+            ("episodeId", "episode"),
+            ("movieId", "movie"),
+            ("albumId", "album"),
+            ("bookId", "book"),
+        ]
+        .into_iter()
+        .find_map(|(key, kind)| Some((kind, id(key)?)))
+        .into_iter()
+        .collect(),
+    };
     Some(Entry {
         id: record["id"].as_i64()?,
         title: text("title"),
@@ -186,7 +239,10 @@ mod tests {
     fn judges_messages() {
         let judge =
             |messages: &[&str]| action(&messages.iter().map(|&m| m.to_owned()).collect::<Vec<_>>());
-        assert_eq!(judge(&["Sample"]), Some(Action::Replace));
+        assert_eq!(
+            judge(&["Sample"]),
+            Some(Action::Replace("Import blocked: sample"))
+        );
         assert_eq!(judge(&["Sample rate too low"]), None);
         assert_eq!(
             judge(&["Not an upgrade for existing episode file(s)"]),
@@ -194,7 +250,7 @@ mod tests {
         );
         assert_eq!(
             judge(&["Has already been imported", "Unable to parse file"]),
-            Some(Action::Replace)
+            Some(Action::Replace("Import blocked: file name not recognized"))
         );
         assert_eq!(
             judge(&["Has already been imported", "Unknown Series"]),
@@ -216,6 +272,12 @@ mod tests {
             entry.messages,
             ["Sample", "No files found are eligible for import in /x"]
         );
-        assert_eq!(entry.media, Some(("episode", 3)));
+        assert_eq!(entry.media, [("episode", 3)]);
+
+        let pack = json!({ "id": 8, "downloadId": "abc", "episodeIds": [3, 4, 0] });
+        assert_eq!(
+            super::entry(&pack).unwrap().media,
+            [("episode", 3), ("episode", 4)]
+        );
     }
 }

@@ -9,7 +9,7 @@ use reqwest::Method;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{Arr, Error, Profile, call, fetch, send, version};
+use crate::{Arr, Error, Profile, Session, fetch, send, version};
 
 /// History `eventType` values shared by Sonarr, Radarr, Lidarr and Chaptarr.
 const GRABBED: &str = "1";
@@ -211,7 +211,8 @@ pub async fn owner(
     let Some(shape) = shape(http, arr).await? else {
         return Ok(None);
     };
-    let call = |method, path: String| call(http, arr, method, &path);
+    let s = Session::open(http, arr).await?;
+    let call = |method, path: String| s.call(method, &path);
     let imported: Page = fetch(call(Method::GET, "history".to_owned()).query(&[
         ("downloadId", job),
         ("eventType", IMPORTED),
@@ -344,27 +345,28 @@ pub async fn owner_of_file(
     let Some(shape) = shape(http, arr).await? else {
         return Ok(None);
     };
+    let s = Session::open(http, arr).await?;
     let kind = match shape {
         Shape::Series => "episodefile",
         Shape::Movies => "moviefile",
         Shape::Music => "trackfile",
         Shape::Books => "bookfile",
     };
-    let current: MediaFile =
-        match fetch(call(http, arr, Method::GET, &format!("{kind}/{file}"))).await {
-            Err(Error::Rejected {
-                status: reqwest::StatusCode::NOT_FOUND,
-                ..
-            }) => {
-                return Ok(None);
-            }
-            other => other?,
-        };
+    let current: MediaFile = match fetch(s.call(Method::GET, &format!("{kind}/{file}"))).await {
+        Err(Error::Rejected {
+            status: reqwest::StatusCode::NOT_FOUND,
+            ..
+        }) => {
+            return Ok(None);
+        }
+        other => other?,
+    };
     let media = match shape {
         Shape::Series => {
             let file = file.to_string();
             let episodes: Vec<Id> = fetch(
-                call(http, arr, Method::GET, "episode").query(&[("episodeFileId", file.as_str())]),
+                s.call(Method::GET, "episode")
+                    .query(&[("episodeFileId", file.as_str())]),
             )
             .await?;
             if episodes.is_empty() {
@@ -407,7 +409,8 @@ pub async fn imports(
     if arr.profile == Profile::Sportarr {
         return Ok(Vec::new());
     }
-    let page: Page = fetch(call(http, arr, Method::GET, "history").query(&[
+    let s = Session::open(http, arr).await?;
+    let page: Page = fetch(s.call(Method::GET, "history").query(&[
         ("downloadId", job),
         ("eventType", IMPORTED),
         ("pageSize", "1000"),
@@ -427,10 +430,11 @@ pub async fn all_imports(http: &reqwest::Client, arr: &Arr) -> Result<Vec<Import
     if arr.profile == Profile::Sportarr {
         return Ok(imports);
     }
+    let s = Session::open(http, arr).await?;
     let size = PAGE.to_string();
     for page in 1_u32.. {
         let page = page.to_string();
-        let found: Page = fetch(call(http, arr, Method::GET, "history").query(&[
+        let found: Page = fetch(s.call(Method::GET, "history").query(&[
             ("eventType", IMPORTED),
             ("page", &page),
             ("pageSize", &size),
@@ -457,8 +461,12 @@ pub async fn replace(
     owner: &Owner,
     wait: Duration,
 ) -> Result<(), Error> {
-    let call = |method, path: String| call(http, arr, method, &path);
-    if owner.replaced() || replacing(http, arr, job, owner).await? {
+    if owner.replaced() {
+        return Ok(());
+    }
+    let s = Session::open(http, arr).await?;
+    let call = |method, path: String| s.call(method, &path);
+    if replacing(&s, job, owner).await? {
         return Ok(());
     }
     if let Some(job) = job {
@@ -476,7 +484,7 @@ pub async fn replace(
             let deadline = tokio::time::Instant::now() + wait;
             while tokio::time::Instant::now() < deadline {
                 tokio::time::sleep(QUEUE_POLL.min(deadline - tokio::time::Instant::now())).await;
-                if replacing(http, arr, Some(job), owner).await? {
+                if replacing(&s, Some(job), owner).await? {
                     return Ok(());
                 }
             }
@@ -512,12 +520,7 @@ pub async fn replace(
 }
 
 /// Whether the Arr queue holds a download other than `job` for the owner's media.
-async fn replacing(
-    http: &reqwest::Client,
-    arr: &Arr,
-    job: Option<&str>,
-    owner: &Owner,
-) -> Result<bool, Error> {
+async fn replacing(s: &Session<'_>, job: Option<&str>, owner: &Owner) -> Result<bool, Error> {
     let query: Vec<(&str, i64)> = match &owner.media {
         Media::Episodes(ids) => ids.iter().map(|&id| ("episodeIds", id)).collect(),
         Media::Movie(id) => vec![("movieId", *id)],
@@ -525,7 +528,7 @@ async fn replacing(
         Media::Book(id) => vec![("bookIds", *id)],
     };
     let queued: Vec<QueueRecord> =
-        fetch(call(http, arr, Method::GET, "queue/details").query(&query)).await?;
+        fetch(s.call(Method::GET, "queue/details").query(&query)).await?;
     Ok(queued.iter().any(|r| {
         r.download_id
             .as_deref()

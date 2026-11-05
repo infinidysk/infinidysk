@@ -462,6 +462,8 @@ async fn fake_arr(State(app): State<SocketAddr>, req: Request) -> Json<Value> {
     };
     let path = req.uri().path().to_owned();
     Json(match path.as_str() {
+        // Sonarr v4: only the v3 API.
+        "/sonarr/api" => json!({ "current": "v3", "deprecated": [] }),
         "/sonarr/api/v3/system/status" => json!({ "appName": "Sonarr", "version": "4.0.0" }),
         "/sonarr/api/v3/downloadclient" => json!([
             sab(1, "tvCategory", "TV", "********"),
