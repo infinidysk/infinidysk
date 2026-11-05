@@ -254,10 +254,9 @@ pub async fn owner(
                 .ok_or(Error::Unexpected("import record without bookId"))?;
             let files: Vec<MediaFile> =
                 fetch(call(Method::GET, "bookfile".to_owned()).query(&[("bookId", id)])).await?;
-            (
-                Media::Book(id),
-                current_book_file(files, &imported_path, recorded_file),
-            )
+            let current =
+                current_book_file(files, &imported_path, imported_at.as_deref(), recorded_file);
+            (Media::Book(id), current)
         }
     };
     Ok(Some(Owner {
@@ -270,30 +269,35 @@ pub async fn owner(
 }
 
 /// The file a book holds now in place of the one imported at `imported_path`. A book can
-/// hold an audiobook and an ebook, and an audiobook many files; only files of the same
-/// media kind stand in for each other. Prefers the recorded file, then the imported path,
-/// then the newest.
+/// hold an audiobook and an ebook, and an audiobook many files: the other chapters of the
+/// same import are no replacement. Prefers the recorded file, then the imported path, then
+/// the newest of the same format added after the import.
 fn current_book_file(
     files: Vec<MediaFile>,
     imported_path: &str,
+    imported_at: Option<&str>,
     recorded_file: Option<i64>,
 ) -> Option<MediaFile> {
-    let kind = media::kind(imported_path);
+    let ebook = |path: &str| media::kind(path) == Some(media::Kind::Book);
+    let parse = |d: Option<&str>| d.and_then(|d| d.parse::<jiff::Timestamp>().ok());
+    let imported = parse(imported_at);
+    let added = |f: &MediaFile| parse(f.date_added.as_deref());
     let mut files: Vec<MediaFile> = files
         .into_iter()
-        .filter(|f| media::kind(&f.path) == kind)
+        .filter(|f| ebook(&f.path) == ebook(imported_path))
         .collect();
     let at = files
         .iter()
         .position(|f| Some(f.id) == recorded_file)
         .or_else(|| files.iter().position(|f| f.path == imported_path))
         .or_else(|| {
-            let parse = |f: &MediaFile| {
-                f.date_added
-                    .as_deref()
-                    .and_then(|d| d.parse::<jiff::Timestamp>().ok())
-            };
-            (0..files.len()).max_by_key(|&i| parse(&files[i]))
+            (0..files.len())
+                .filter(|&i| {
+                    imported
+                        .zip(added(&files[i]))
+                        .is_some_and(|(t, a)| a.duration_since(t) > DATE_SLACK)
+                })
+                .max_by_key(|&i| added(&files[i]))
         })?;
     Some(files.swap_remove(at))
 }
@@ -544,12 +548,19 @@ mod tests {
                 file(3, "/books/a/02.mp3", "2024-06-01T00:00:00Z"),
             ]
         };
-        let pick = |path, recorded| current_book_file(files(), path, recorded).map(|f| f.id);
-        assert_eq!(pick("/books/a/01.mp3", Some(2)), Some(2));
-        assert_eq!(pick("/books/a/01.mp3", None), Some(2));
-        assert_eq!(pick("/books/a/gone.mp3", Some(9)), Some(3));
-        assert_eq!(pick("/books/a/gone.epub", None), Some(1));
-        assert_eq!(pick("/books/a/gone.m4b", None), Some(3));
-        assert_eq!(pick("/books/a/gone.nfo", None), None);
+        let pick = |path, recorded, imported| {
+            current_book_file(files(), path, Some(imported), recorded).map(|f| f.id)
+        };
+        let early = "2024-04-01T00:00:00Z";
+        assert_eq!(pick("/books/a/01.mp3", Some(2), early), Some(2));
+        assert_eq!(pick("/books/a/01.mp3", None, early), Some(2));
+        assert_eq!(pick("/books/a/gone.mp3", Some(9), early), Some(3));
+        assert_eq!(pick("/books/a/gone.epub", None, early), Some(1));
+        assert_eq!(pick("/books/a/gone.m4b", None, early), Some(3));
+        // A missing chapter: the chapters imported with it are no replacement.
+        assert_eq!(
+            pick("/books/a/gone.mp3", Some(9), "2024-06-01T00:00:00Z"),
+            None
+        );
     }
 }
