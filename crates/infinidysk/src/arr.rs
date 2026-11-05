@@ -211,6 +211,9 @@ pub struct Discovery {
     held_lock: tokio::sync::Mutex<()>,
     /// Whether a discovery pass has finished since start.
     discovered: watch::Sender<bool>,
+    /// Instances a webhook asked the cleanup task to reconcile.
+    reconcile_requests: Mutex<BTreeSet<Uuid>>,
+    reconcile_wake: Notify,
     /// Library paths Arrs imported from us since the library converter last looked, as
     /// the Arrs see them.
     pub imported: Mutex<Vec<String>>,
@@ -235,6 +238,8 @@ impl Discovery {
             install: OnceCell::new(),
             held_lock: tokio::sync::Mutex::default(),
             discovered: watch::channel(false).0,
+            reconcile_requests: Mutex::default(),
+            reconcile_wake: Notify::new(),
             imported: Mutex::default(),
         })
     }
@@ -314,7 +319,7 @@ impl Discovery {
                 Err(_) => None,
             };
             let warnings = match &found {
-                Ok(_) => Some(self.warnings(arr).await),
+                Ok(_) => self.warnings(arr).await,
                 Err(_) => None,
             };
             ok &= found.is_ok() && !matches!(hook, Some(Err(_)));
@@ -388,18 +393,18 @@ impl Discovery {
         Ok((version, clients))
     }
 
-    /// Settings of `arr` that work against us; read only, never changed. A failed read
-    /// warns nothing.
-    async fn warnings(&self, arr: &Arr) -> Vec<String> {
+    /// Settings of `arr` that work against us; read only, never changed. `None` when the
+    /// read failed, keeping the previous warnings.
+    async fn warnings(&self, arr: &Arr) -> Option<Vec<String>> {
         match arr::writes_audio_tags(&self.http, arr).await {
-            Ok(false) => Vec::new(),
-            Ok(true) => vec![
+            Ok(false) => Some(Vec::new()),
+            Ok(true) => Some(vec![
                 "It writes metadata into audio files, which cannot change here. Set Write Metadata to Audio Files to Never in its metadata settings."
                     .to_owned(),
-            ],
+            ]),
             Err(error) => {
                 tracing::debug!(arr = %arr.name, reason = %error, "reading the Arr's metadata settings failed");
-                Vec::new()
+                None
             }
         }
     }
