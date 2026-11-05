@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.0.0-beta.3](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.2...v2.0.0-beta.3) (2026-11-05)
+
+
+### Features
+
+* **auth:** sign in with single sign-on (OIDC), carried over from 1.x ([#1812](https://github.com/infinidysk/infinidysk/issues/1812)) ([4fc3b6a](https://github.com/infinidysk/infinidysk/commit/4fc3b6a4e834c478313466e1af95aa9bbf0b7350))
+* **import:** upgrade 1.x installs that keep their data in PostgreSQL ([#1815](https://github.com/infinidysk/infinidysk/issues/1815)) ([6ee6cbf](https://github.com/infinidysk/infinidysk/commit/6ee6cbfc686a4be55d4f04afcc4ce74af634d35a))
+
+
+### Bug Fixes
+
+* **arr:** skip the automatic-search wait when no release was blocklisted ([#1817](https://github.com/infinidysk/infinidysk/issues/1817)) ([23be919](https://github.com/infinidysk/infinidysk/commit/23be9194448dbb028bee7cb4c21378f2357610c2))
+* **ui:** memory overview no longer counts reclaimable kernel cache as app memory ([#1813](https://github.com/infinidysk/infinidysk/issues/1813)) ([d4f5daf](https://github.com/infinidysk/infinidysk/commit/d4f5daf5991447d2726a5b22d9232c5d9c265c94))
+* **ui:** season packs no longer repeat the same Arr import message per episode ([#1811](https://github.com/infinidysk/infinidysk/issues/1811)) ([c141857](https://github.com/infinidysk/infinidysk/commit/c1418571699a19c0ac9c60c2b60ba3353aa24c25))
+
 ## [2.0.0-beta.2](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.1...v2.0.0-beta.2) (2026-11-04)
 
 
