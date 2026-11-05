@@ -9,7 +9,7 @@ use infinidysk_nntp::{
     Client, Downloads, Endpoint, Error, Phase, Pool, PoolConfig, Progress, Provider, TlsMode,
     Usage, Workload,
 };
-use infinidysk_testkit::{Corpus, Impairment, LoopbackServer, post};
+use infinidysk_testkit::{Article, Corpus, Impairment, LoopbackServer, post};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
@@ -242,6 +242,92 @@ async fn only_failures_the_caller_sees_count_as_failed() {
     assert!(body(&client, &corpus.articles[0].message_id).await.is_err());
     let stats = &client.stats()[0].workloads[0];
     assert_eq!((stats.attempts[5], stats.failed), (3, 1));
+}
+
+/// The article with one digit of its `pcrc32` flipped, so it decodes with a CRC mismatch.
+fn corrupted(article: &Article) -> Article {
+    let mut article = article.clone();
+    let at = article
+        .wire
+        .windows(7)
+        .position(|w| w == b"pcrc32=")
+        .unwrap()
+        + 7;
+    article.wire[at] = if article.wire[at] == b'0' { b'1' } else { b'0' };
+    article
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Kind {
+    Dropping,
+    Refusing,
+    Corrupt,
+    Missing,
+    Full,
+}
+
+async fn start(kind: Kind, corpus: &Corpus) -> LoopbackServer {
+    let articles = corpus.articles.clone();
+    match kind {
+        Kind::Dropping => LoopbackServer::start_dropping(articles, 0).await,
+        Kind::Refusing => LoopbackServer::start_limited(articles, 0).await,
+        Kind::Corrupt => LoopbackServer::start([corrupted(&articles[0])]).await,
+        Kind::Missing => LoopbackServer::start([]).await,
+        Kind::Full => LoopbackServer::start(articles).await,
+    }
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_corrupt_copy_is_damage_only_when_no_provider_failed() {
+    use Kind::{Corrupt, Dropping, Full, Missing, Refusing};
+    type Check = fn(&Result<Vec<u8>, Error>, &[u8]) -> bool;
+    let corpus = Corpus::generate(1025, 1, ARTICLE_SIZE);
+    let id = &corpus.articles[0].message_id;
+    let cases: [(&[Kind], Check); 7] = [
+        (&[Corrupt], |r, _| {
+            matches!(r, Err(Error::CrcMismatch { .. }))
+        }),
+        (&[Missing, Corrupt], |r, _| {
+            matches!(r, Err(Error::CrcMismatch { .. }))
+        }),
+        (&[Dropping, Corrupt], |r, _| {
+            matches!(r, Err(Error::Unavailable))
+        }),
+        (&[Refusing, Corrupt], |r, _| {
+            matches!(r, Err(Error::Unavailable))
+        }),
+        (&[Corrupt, Dropping], |r, _| matches!(r, Err(Error::Closed))),
+        (&[Corrupt, Refusing], |r, _| {
+            matches!(r, Err(Error::Status { code: 502, .. }))
+        }),
+        (&[Dropping, Corrupt, Full], |r, data| {
+            r.as_deref().ok() == Some(data)
+        }),
+    ];
+    for (kinds, check) in cases {
+        let downloads = Downloads::new(4);
+        let mut servers = Vec::new();
+        for &kind in kinds {
+            servers.push(start(kind, &corpus).await);
+        }
+        let priorities = (0..).zip(&servers);
+        let client = Client::new(
+            priorities.map(|(priority, s)| provider(s.addr().port(), priority, None, &downloads)),
+        );
+
+        let result = body(&client, id).await.map(|b| b.data.to_vec());
+        assert!(
+            check(&result, &corpus.data),
+            "{kinds:?}: {:?}",
+            result.map(|d| d.len())
+        );
+        let corrupt = kinds.iter().position(|k| matches!(k, Corrupt)).unwrap();
+        assert_eq!(servers[corrupt].body_commands(), 1, "{kinds:?}");
+        let rescued = matches!(kinds.last(), Some(Full));
+        assert_eq!(client.rescues().len(), usize::from(rescued), "{kinds:?}");
+        assert_eq!(downloads.available_permits(), 4, "{kinds:?}");
+    }
 }
 
 #[tokio::test]

@@ -330,7 +330,8 @@ impl Client {
     /// [`Error::NotFound`] only when every provider (or a backbone sibling) answered
     /// that it lacks the article, or the id is empty (an article the NZB never listed);
     /// otherwise the last provider error, or [`Error::Unavailable`] when open circuits
-    /// were skipped.
+    /// were skipped. A corrupt copy is final only if no provider was skipped or failed;
+    /// otherwise [`Error::Unavailable`].
     pub async fn body(
         &self,
         message_id: &str,
@@ -479,6 +480,8 @@ impl Client {
 
         let mut last_error = None;
         let mut skipped = false;
+        // Some attempt ended in a provider failure rather than an answer.
+        let mut failed = false;
         // The first provider that missed or failed, for rescue counts.
         let mut first_miss: Option<(u16, trace::Outcome)> = None;
         // Backbones whose stored copy is missing or corrupt.
@@ -566,6 +569,7 @@ impl Client {
                     ) => (Outcome::Fatal, Some(error)),
                     Err(Failure::Request(error)) => (Outcome::Failure, Some(error)),
                 };
+                failed |= matches!(outcome, Outcome::Failure | Outcome::Fatal);
                 if matches!(outcome, Outcome::Miss) {
                     missed.extend(backbone);
                     if error.is_none() {
@@ -591,9 +595,9 @@ impl Client {
         // ponytail: a request that never reached a provider (all skipped) is not
         // counted; give the client its own counter if quota cut-offs need showing.
         Err(match last_error {
-            // A skipped provider may hold an intact copy.
+            // A skipped or failed provider may hold an intact copy.
             Some((Error::CrcMismatch { .. } | Error::Yenc(_) | Error::TooLarge, stats))
-                if skipped =>
+                if skipped || failed =>
             {
                 stats.failed(workload);
                 Error::Unavailable
