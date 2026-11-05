@@ -47,6 +47,11 @@ const RELATION: &str = "SELECT quote_ident(n.nspname) || '.' || quote_ident(c.re
 const COLUMNS: &str = "SELECT a.attname::text, format_type(a.atttypid, NULL) \
                        FROM pg_attribute a WHERE a.attrelid = to_regclass(quote_ident($1)) \
                        AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum";
+/// The planner's row estimate for a table: instant, where `count(*)` scans the whole
+/// table and can outlast the stall watchdog. 0 when never analyzed; progress then
+/// grows the total with the rows copied.
+const ESTIMATE: &str = "SELECT greatest(c.reltuples, 0)::bigint FROM pg_class c \
+                        WHERE c.oid = to_regclass(quote_ident($1))";
 
 /// Why `DATABASE_CONNECTION_STRING` cannot be used. Never carries a value from it.
 #[derive(Debug, thiserror::Error)]
@@ -747,11 +752,10 @@ pub async fn stage(
             .bind(name)
             .fetch_all(&mut pg)
             .await?;
-        let rows: i64 =
-            sqlx::query_scalar(AssertSqlSafe(format!("SELECT count(*) FROM {relation}")))
-                .persistent(false)
-                .fetch_one(&mut pg)
-                .await?;
+        let rows: i64 = sqlx::query_scalar(ESTIMATE)
+            .bind(name)
+            .fetch_one(&mut pg)
+            .await?;
         total += u64::try_from(rows).unwrap_or_default();
         tables.push(Table {
             name,
