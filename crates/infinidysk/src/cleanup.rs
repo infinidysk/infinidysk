@@ -9,6 +9,7 @@ use infinidysk_arr::Arr;
 use infinidysk_db::{Db, now_ms};
 use tokio::sync::{Notify, watch};
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use crate::arr::Discovery;
 use crate::handoff::Writer;
@@ -40,6 +41,8 @@ pub async fn run(
     };
     // Arrs whose reconciliation failed, retried hourly instead of at the next daily run.
     let mut retry = Vec::new();
+    // Failed requested runs; kept apart because only daily retries may mark the backfill done.
+    let mut retry_asked: Vec<Uuid> = Vec::new();
     loop {
         let wait = last + DAY_MS - now_ms();
         if wait <= 0 {
@@ -49,6 +52,7 @@ pub async fn run(
             let enabled = arrs.borrow().clone();
             let writing = db.write_permit().await;
             retry = discovery.reconcile(enabled).await;
+            retry_asked.clear();
             drop(writing);
             let writing = db.write_permit().await;
             handoff.sweep(&db).await;
@@ -58,22 +62,23 @@ pub async fn run(
         }
         // ponytail: not aligned with the hourly discovery, so a recovered Arr can wait
         // up to two hours; wake on discovery if that proves too slow.
-        let sleep = if retry.is_empty() {
+        let sleep = if retry.is_empty() && retry_asked.is_empty() {
             wait
         } else {
             wait.min(RETRY_MS)
         };
         tokio::select! {
             () = tokio::time::sleep(Duration::from_millis(sleep.cast_unsigned())) => {
-                if !retry.is_empty() && last + DAY_MS > now_ms() {
-                    let due: Vec<Arr> = arrs
-                        .borrow()
-                        .iter()
-                        .filter(|a| retry.contains(&a.id))
-                        .cloned()
-                        .collect();
+                if (!retry.is_empty() || !retry_asked.is_empty()) && last + DAY_MS > now_ms() {
+                    let pick = |ids: &[Uuid]| -> Vec<Arr> {
+                        arrs.borrow().iter().filter(|a| ids.contains(&a.id)).cloned().collect()
+                    };
+                    let due = pick(&retry);
+                    retry_asked.retain(|id| !retry.contains(id));
+                    let asked = pick(&retry_asked);
                     let _writing = db.write_permit().await;
                     retry = discovery.reconcile(due).await;
+                    retry_asked = discovery.reconcile_each(asked).await;
                 }
             }
             () = wake.notified() => {
@@ -88,9 +93,11 @@ pub async fn run(
                     .cloned()
                     .collect();
                 let _writing = db.write_permit().await;
-                for id in discovery.reconcile_each(due).await {
-                    if !retry.contains(&id) {
-                        retry.push(id);
+                let failed = discovery.reconcile_each(due).await;
+                retry_asked.retain(|id| !asked.contains(id));
+                for id in failed {
+                    if !retry_asked.contains(&id) {
+                        retry_asked.push(id);
                     }
                 }
             }
