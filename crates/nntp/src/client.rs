@@ -330,8 +330,8 @@ impl Client {
     /// [`Error::NotFound`] only when every provider (or a backbone sibling) answered
     /// that it lacks the article, or the id is empty (an article the NZB never listed);
     /// otherwise the last provider error, or [`Error::Unavailable`] when open circuits
-    /// were skipped. A corrupt copy is final only if no provider was skipped or failed;
-    /// otherwise [`Error::Unavailable`].
+    /// were skipped. A final corrupt copy becomes [`Error::Unavailable`] when another
+    /// provider was skipped or failed.
     pub async fn body(
         &self,
         message_id: &str,
