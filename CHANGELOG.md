@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.0.0-beta.4](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.3...v2.0.0-beta.4) (2026-11-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **api:** infinidysk no longer starts while a Readarr Arr instance is configured. Before upgrading, remove Readarr instances or change them to Chaptarr in Settings > Arr instances. If already upgraded, start the previous version to do so, or override the list with INFINIDYSK__ARR_INSTANCES.
+
+### Features
+
+* **api:** support Chaptarr instead of the abandoned Readarr ([#1827](https://github.com/infinidysk/infinidysk/issues/1827)) ([24e55b5](https://github.com/infinidysk/infinidysk/commit/24e55b51b6843a7df13364c2a310d77cf36a999c))
+* **nntp:** add the news-central.giganews.com server to the Giganews profile ([#1824](https://github.com/infinidysk/infinidysk/issues/1824)) ([028d6fb](https://github.com/infinidysk/infinidysk/commit/028d6fb3663d9a266396ecd39cf7cc17e94bb98d))
+* **ui:** backups get their own settings page ([#1826](https://github.com/infinidysk/infinidysk/issues/1826)) ([343cd7f](https://github.com/infinidysk/infinidysk/commit/343cd7f3340c5a0b3320cdec91f65c8e6a54d058))
+
+
+### Bug Fixes
+
+* **health:** a provider outage no longer marks good files as damaged ([#1829](https://github.com/infinidysk/infinidysk/issues/1829)) ([e8963ed](https://github.com/infinidysk/infinidysk/commit/e8963edac9355be750a6073988403993cd3986a9))
+* **health:** repairs no longer replace a newer file the Arr imported from another download ([#1832](https://github.com/infinidysk/infinidysk/issues/1832)) ([107cabe](https://github.com/infinidysk/infinidysk/commit/107cabe2704dcb0ad23e703c4a36fc816ed64b57))
+* **mount:** keep files referenced by legacy library links ([#1828](https://github.com/infinidysk/infinidysk/issues/1828)) ([4e1c914](https://github.com/infinidysk/infinidysk/commit/4e1c914b7ad927bbf205126199ff9955981ef2bc))
+* **ui:** stalls on the overview count only pauses a viewer would notice ([#1830](https://github.com/infinidysk/infinidysk/issues/1830)) ([317497d](https://github.com/infinidysk/infinidysk/commit/317497d5cc93c013315f95b24172db5f271533e5))
+* **webdav:** completed downloads no longer reappear right after an Arr import deletes them ([#1821](https://github.com/infinidysk/infinidysk/issues/1821)) ([41fb2f0](https://github.com/infinidysk/infinidysk/commit/41fb2f0d1878b80a2197dafe332e0d7a11a4bdf4))
+
 ## [2.0.0-beta.3](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.2...v2.0.0-beta.3) (2026-11-05)
 
 
