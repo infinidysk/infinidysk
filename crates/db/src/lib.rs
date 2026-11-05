@@ -1165,6 +1165,15 @@ impl Db {
         on!(self, pool => pool.close().await);
     }
 
+    /// Starts a transaction that reads, then writes. A deferred SQLite one fails with
+    /// `SQLITE_BUSY_SNAPSHOT` (517) when another writer commits between the two.
+    const fn begin_write(&self) -> &'static str {
+        match self.pool {
+            Pool::Sqlite(_) => "BEGIN IMMEDIATE",
+            Pool::Postgres(_) => "BEGIN",
+        }
+    }
+
     pub async fn item(&self, id: ItemId) -> Result<Option<Item>, Error> {
         let sql = select_items!("WHERE id = $1");
         let row: Option<ItemRow> =
@@ -1882,7 +1891,7 @@ impl Db {
     /// Returns whether it went.
     pub async fn delete_unlinked(&self, id: ItemId, before: i64) -> Result<bool, Error> {
         let deleted = on!(self, pool => {
-            let mut tx = pool.begin().await?;
+            let mut tx = pool.begin_with(self.begin_write()).await?;
             let still: Option<i32> = sqlx::query_scalar(STILL_OUTSIDE_HISTORY)
                 .bind(id.0)
                 .bind(before)
@@ -1904,7 +1913,7 @@ impl Db {
     /// same transaction. Returns whether it went.
     pub async fn delete_without_files(&self, id: ItemId) -> Result<bool, Error> {
         let deleted = on!(self, pool => {
-            let mut tx = pool.begin().await?;
+            let mut tx = pool.begin_with(self.begin_write()).await?;
             let holds: Option<i32> = sqlx::query_scalar(HOLDS_FILES)
                 .bind(id.0)
                 .fetch_optional(&mut *tx)
@@ -1932,7 +1941,7 @@ impl Db {
                                AND NOT EXISTS (SELECT 1 FROM arr_owners WHERE item_id = $1)";
         let postgres = matches!(self.pool, Pool::Postgres(_));
         let deleted = on!(self, pool => {
-            let mut tx = pool.begin().await?;
+            let mut tx = pool.begin_with(self.begin_write()).await?;
             if postgres {
                 sqlx::query(ISOLATION).execute(&mut *tx).await?;
                 sqlx::query(LOCK).bind(id.0).execute(&mut *tx).await?;
@@ -1960,7 +1969,7 @@ impl Db {
         let mut removed = 0;
         loop {
             let found = on!(self, pool => {
-                let mut tx = pool.begin().await?;
+                let mut tx = pool.begin_with(self.begin_write()).await?;
                 let dirs: Vec<Uuid> = sqlx::query_scalar(EMPTY_DIRS_OUTSIDE_HISTORY)
                     .bind(before)
                     .fetch_all(&mut *tx)
@@ -3332,4 +3341,79 @@ pub fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    /// Reads in a transaction while another connection writes, then writes.
+    async fn read_then_write(
+        pool: &sqlx::SqlitePool,
+        begin: &'static str,
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = pool.begin_with(begin).await?;
+        sqlx::query("SELECT COUNT(*) FROM t")
+            .execute(&mut *tx)
+            .await?;
+        let other = pool.clone();
+        let mut writer = Some(tokio::spawn(async move {
+            sqlx::query("INSERT INTO t VALUES (1)")
+                .execute(&other)
+                .await
+        }));
+        if begin == "BEGIN" {
+            // A deferred read holds no write lock, so the other writer commits first.
+            writer
+                .take()
+                .expect("spawned")
+                .await
+                .expect("writer task")?;
+        } else {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let wrote = sqlx::query("INSERT INTO t VALUES (2)")
+            .execute(&mut *tx)
+            .await;
+        if wrote.is_ok() {
+            tx.commit().await?;
+        }
+        if let Some(writer) = writer {
+            writer.await.expect("writer task")?;
+        }
+        wrote.map(drop)
+    }
+
+    #[tokio::test]
+    async fn a_read_then_write_survives_a_concurrent_sqlite_writer() {
+        let path = std::env::temp_dir().join(format!("infinidysk-db-{}.sqlite", ItemId::new()));
+        let db = Db::connect(&format!("sqlite:{}", path.display()))
+            .await
+            .expect("connect");
+        let Pool::Sqlite(pool) = &db.pool else {
+            unreachable!("the test opens SQLite")
+        };
+        sqlx::query("CREATE TABLE t (x INTEGER)")
+            .execute(pool)
+            .await
+            .expect("create");
+
+        let deferred = read_then_write(pool, "BEGIN")
+            .await
+            .expect_err("snapshot is stale");
+        let code = deferred
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::code);
+        assert_eq!(code.as_deref(), Some("517"), "{deferred}");
+        read_then_write(pool, db.begin_write())
+            .await
+            .expect("an immediate transaction waits for the other writer");
+
+        db.close().await;
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
 }
