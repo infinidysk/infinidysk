@@ -65,6 +65,10 @@ pub enum Error {
          file to start empty", .0.display()
     )]
     PostgresNotConfigured(PathBuf),
+    #[error("DATABASE_PROVIDER must be either 'sqlite' or 'postgres', as 1.x required")]
+    InvalidProvider,
+    #[error("{path} cannot be read ({1}); fix or delete it", path = .0.display())]
+    Contract(PathBuf, String),
     #[error(transparent)]
     ConnectionString(#[from] postgres::ConnectionError),
     #[error("the 1.x PostgreSQL database did not answer within 15 s")]
@@ -96,9 +100,13 @@ pub fn source(config: &Path, vars: &[(String, String)]) -> Result<Source, Error>
             .map(|(_, v)| v.trim())
             .filter(|v| !v.is_empty())
     };
-    let provider = var(PROVIDER_VAR)
-        .map(str::to_ascii_lowercase)
-        .or_else(|| contract_provider(config));
+    let provider = match var(PROVIDER_VAR).map(str::to_ascii_lowercase) {
+        Some(provider) if matches!(provider.as_str(), "sqlite" | "postgres" | "postgresql") => {
+            Some(provider)
+        }
+        Some(_) => return Err(Error::InvalidProvider),
+        None => contract_provider(config)?,
+    };
     match provider.as_deref() {
         Some("postgres" | "postgresql") => match var(CONNECTION_VAR) {
             Some(connection) => Ok(Source::Postgres(connection.to_owned())),
@@ -110,24 +118,21 @@ pub fn source(config: &Path, vars: &[(String, String)]) -> Result<Source, Error>
     }
 }
 
-/// The lowercased `provider` in `db-contract.json`; `None` when it is missing or unreadable.
-fn contract_provider(config: &Path) -> Option<String> {
+/// The lowercased `provider` in `db-contract.json`; `None` when the file is missing.
+fn contract_provider(config: &Path) -> Result<Option<String>, Error> {
     #[derive(serde::Deserialize)]
     struct Contract {
         provider: String,
     }
     let path = config.join(CONTRACT);
-    if !path.is_file() {
-        return None;
-    }
-    let text = std::fs::read_to_string(path).ok()?;
-    Some(
-        serde_json::from_str::<Contract>(&text)
-            .ok()?
-            .provider
-            .trim()
-            .to_ascii_lowercase(),
-    )
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(Error::Contract(path, error.to_string())),
+    };
+    let contract: Contract =
+        serde_json::from_str(&text).map_err(|error| Error::Contract(path, error.to_string()))?;
+    Ok(Some(contract.provider.trim().to_ascii_lowercase()))
 }
 
 /// What a C# `/config` holds, and what importing it involves.
@@ -642,8 +647,16 @@ mod tests {
         assert!(matches!(case(None, true, &[]), Ok(Source::Sqlite)));
         assert!(matches!(case(None, false, &[conn]), Ok(Source::None)));
         assert!(matches!(
-            case(Some("not json"), false, &[]),
-            Ok(Source::None)
+            case(Some("not json"), true, &[]),
+            Err(Error::Contract(..))
+        ));
+        assert!(matches!(
+            case(Some("not json"), true, &[(PROVIDER_VAR, "sqlite")]),
+            Ok(Source::Sqlite)
+        ));
+        assert!(matches!(
+            case(Some(pg), true, &[(PROVIDER_VAR, "postgre"), conn]),
+            Err(Error::InvalidProvider)
         ));
         assert!(matches!(
             case(Some(r#"{"provider":" PostgreSQL "}"#), false, &[conn]),
