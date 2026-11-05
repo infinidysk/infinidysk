@@ -198,6 +198,11 @@ pub async fn owner(
         ("pageSize", "1000"),
     ]))
     .await?;
+    let from_job: Vec<String> = imported
+        .records
+        .iter()
+        .filter_map(|r| r.data.imported_path.clone())
+        .collect();
     let records: Vec<_> = imported
         .records
         .into_iter()
@@ -254,8 +259,13 @@ pub async fn owner(
                 .ok_or(Error::Unexpected("import record without bookId"))?;
             let files: Vec<MediaFile> =
                 fetch(call(Method::GET, "bookfile".to_owned()).query(&[("bookId", id)])).await?;
-            let current =
-                current_book_file(files, &imported_path, imported_at.as_deref(), recorded_file);
+            let current = current_book_file(
+                files,
+                &imported_path,
+                imported_at.as_deref(),
+                recorded_file,
+                &from_job,
+            );
             (Media::Book(id), current)
         }
     };
@@ -270,21 +280,27 @@ pub async fn owner(
 
 /// The file a book holds now in place of the one imported at `imported_path`. A book can
 /// hold an audiobook and an ebook, and an audiobook many files: the other chapters of the
-/// same import are no replacement. Prefers the recorded file, then the imported path, then
-/// the newest of the same format added after the import.
+/// same download (`from_job`) are no replacement. Prefers the recorded file, then the
+/// imported path, then the newest of the same format added after the import.
 fn current_book_file(
     files: Vec<MediaFile>,
     imported_path: &str,
     imported_at: Option<&str>,
     recorded_file: Option<i64>,
+    from_job: &[String],
 ) -> Option<MediaFile> {
-    let ebook = |path: &str| media::kind(path) == Some(media::Kind::Book);
+    let format = |path: &str| match media::kind(path) {
+        Some(media::Kind::Book) => Some(media::Kind::Book),
+        _ if media::fits(path, media::Kind::Audio) => Some(media::Kind::Audio),
+        _ => None,
+    };
+    let wanted = format(imported_path)?;
     let parse = |d: Option<&str>| d.and_then(|d| d.parse::<jiff::Timestamp>().ok());
     let imported = parse(imported_at);
     let added = |f: &MediaFile| parse(f.date_added.as_deref());
     let mut files: Vec<MediaFile> = files
         .into_iter()
-        .filter(|f| ebook(&f.path) == ebook(imported_path))
+        .filter(|f| format(&f.path) == Some(wanted))
         .collect();
     let at = files
         .iter()
@@ -293,9 +309,10 @@ fn current_book_file(
         .or_else(|| {
             (0..files.len())
                 .filter(|&i| {
-                    imported
-                        .zip(added(&files[i]))
-                        .is_some_and(|(t, a)| a.duration_since(t) > DATE_SLACK)
+                    !from_job.contains(&files[i].path)
+                        && imported
+                            .zip(added(&files[i]))
+                            .is_some_and(|(t, a)| a.duration_since(t) > DATE_SLACK)
                 })
                 .max_by_key(|&i| added(&files[i]))
         })?;
@@ -548,18 +565,25 @@ mod tests {
                 file(3, "/books/a/02.mp3", "2024-06-01T00:00:00Z"),
             ]
         };
-        let pick = |path, recorded, imported| {
-            current_book_file(files(), path, Some(imported), recorded).map(|f| f.id)
+        let pick_from = |path, recorded, imported, from_job: &[String]| {
+            current_book_file(files(), path, Some(imported), recorded, from_job).map(|f| f.id)
         };
+        let pick = |path, recorded, imported| pick_from(path, recorded, imported, &[]);
         let early = "2024-04-01T00:00:00Z";
         assert_eq!(pick("/books/a/01.mp3", Some(2), early), Some(2));
         assert_eq!(pick("/books/a/01.mp3", None, early), Some(2));
         assert_eq!(pick("/books/a/gone.mp3", Some(9), early), Some(3));
         assert_eq!(pick("/books/a/gone.epub", None, early), Some(1));
         assert_eq!(pick("/books/a/gone.m4b", None, early), Some(3));
+        assert_eq!(pick("/books/a/gone.nfo", None, early), None);
         // A missing chapter: the chapters imported with it are no replacement.
         assert_eq!(
             pick("/books/a/gone.mp3", Some(9), "2024-06-01T00:00:00Z"),
+            None
+        );
+        let slow_import = ["/books/a/01.mp3".to_owned(), "/books/a/02.mp3".to_owned()];
+        assert_eq!(
+            pick_from("/books/a/gone.mp3", Some(9), early, &slow_import),
             None
         );
     }

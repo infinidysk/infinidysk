@@ -678,7 +678,7 @@ async fn other_arr(State(log): State<Log>, req: Request) -> Json<Value> {
         "/system/status" => json!({ "appName": "Whisparr", "version": "3.0.0.1" }),
         "/history" if query.contains("eventType=3") && v1 => json!({ "records": [{
             "id": 22, "trackId": 31, "albumId": 9, "bookId": 5,
-            "data": { "droppedPath": dropped, "importedPath": "/music/A/01.mkv" },
+            "data": { "droppedPath": dropped, "importedPath": "/music/A/01.mp4" },
         }]}),
         "/history" if query.contains("eventType=3") => json!({ "records": [{
             "id": 22, "movieId": 3,
@@ -686,11 +686,11 @@ async fn other_arr(State(log): State<Log>, req: Request) -> Json<Value> {
         }]}),
         "/history" => json!({ "records": [{ "id": 12, "data": {} }] }),
         "/track/31" => json!({ "trackFileId": 41 }),
-        "/trackfile/41" => json!({ "id": 41, "albumId": 9, "path": "/music/A/01.mkv" }),
+        "/trackfile/41" => json!({ "id": 41, "albumId": 9, "path": "/music/A/01.mp4" }),
         // An ebook of the same book does not stand in for the broken file.
         "/bookfile" => json!([
             { "id": 52, "bookId": 5, "path": "/music/A/a.epub", "dateAdded": "2030-01-01T00:00:00Z" },
-            { "id": 51, "bookId": 5, "path": "/music/A/01.mkv" },
+            { "id": 51, "bookId": 5, "path": "/music/A/01.mp4" },
         ]),
         "/movie/3" => json!({ "movieFile": { "id": 7, "path": "/movies/A/a.mkv" } }),
         "/queue/details" => json!([]),
