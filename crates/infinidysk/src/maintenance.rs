@@ -49,8 +49,8 @@ const HOLD_PERCENT: u64 = 90;
 /// A remove dead links run that finds more than this share of the links dead waits for
 /// review.
 const DEAD_HOLD_PERCENT: u64 = 5;
-const SKIPPED_PENDING: &str = "Files the C# import skipped are not brought back yet; that runs on \
-                               the next start once the library folders are readable.";
+const SKIPPED_PENDING: &str = "Files the C# import skipped may still be recoverable; keep their \
+                               library links and check the import report before removing dead links.";
 const PAGE_MAX: usize = 1000;
 const NO_LIBRARY: &str = "Set your library folders under Imports first.";
 const MB: u64 = 1_000_000;
@@ -601,6 +601,9 @@ impl Maintenance {
         }
         self.library_settled().await?;
         for arr in crate::app::arr_instances(&settings.arr_instances) {
+            infinidysk_arr::version(self.parts.discovery.http(), &arr)
+                .await
+                .map_err(|error| Stop::Reason(format!("{}: {error}", arr.name)))?;
             let roots = infinidysk_arr::library::root_folders(self.parts.discovery.http(), &arr)
                 .await
                 .map_err(|e| Stop::Reason(format!("{} did not answer: {e}", arr.name)))?;
@@ -737,6 +740,9 @@ impl Maintenance {
         let mut listed: HashMap<PathBuf, Vec<(Arr, MediaFile)>> = HashMap::new();
         let arrs = crate::app::arr_instances(&settings.arr_instances);
         for arr in arrs.into_iter().filter(arr_library::converts) {
+            infinidysk_arr::version(http, &arr)
+                .await
+                .map_err(|error| Stop::Reason(format!("{}: {error}", arr.name)))?;
             let files = arr_library::media_files(http, &arr)
                 .await
                 .map_err(|e| Stop::Reason(format!("{} did not answer: {e}", arr.name)))?;
@@ -1198,7 +1204,8 @@ impl Pointers {
     fn add(&mut self, target: &str) {
         let target = target.split(['?', '#']).next().unwrap_or_default();
         if let Some((_, rest)) = target.rsplit_once("/.ids/")
-            && let Some(Ok(id)) = rest.rsplit('/').next().map(str::parse)
+            && let Some(name) = Path::new(rest).file_stem().and_then(|name| name.to_str())
+            && let Ok(id) = name.parse()
         {
             self.ids.insert(id);
         }
@@ -1586,6 +1593,12 @@ mod tests {
 
     #[test]
     fn library_pointers_keep_their_files() {
+        let item = ItemId(Uuid::new_v4());
+        for suffix in ["", ".mkv", ".strm?k=1", ".mkv#fragment"] {
+            let mut pointers = Pointers::default();
+            pointers.add(&format!("/mnt/x/.ids/a/b/c/d/e/{}{suffix}", item.0));
+            assert!(pointers.keep(item, "/content/job/file.mkv"), "{suffix}");
+        }
         let root = std::env::temp_dir().join(format!("infinidysk-maint-{}", Uuid::new_v4()));
         let (library, mount) = (root.join("library"), root.join("library/mount"));
         fs::create_dir_all(library.join("show")).unwrap();
@@ -1596,7 +1609,7 @@ mod tests {
             ItemId(Uuid::new_v4()),
         );
         symlink(
-            format!("/mnt/x/.ids/a/b/c/d/e/{}", linked.0),
+            format!("/mnt/x/.ids/a/b/c/d/e/{}.mkv", linked.0),
             library.join("show/a.mkv"),
         )
         .unwrap();
@@ -1607,7 +1620,7 @@ mod tests {
         .unwrap();
         fs::write(
             library.join("show/c.STRM"),
-            format!("https://h/view/.ids/a/b/c/d/e/{}?k=1", streamed.0),
+            format!("https://h/view/.ids/a/b/c/d/e/{}.strm?k=1", streamed.0),
         )
         .unwrap();
         fs::write(

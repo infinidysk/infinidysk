@@ -650,6 +650,94 @@ fn arr_instances(
     out
 }
 
+const ARR_PROFILES_KEY: &str = "upgrade.arr_profiles.1";
+
+pub(crate) async fn remember_arr_profiles(
+    db: &Db,
+    config: &tokio::sync::RwLock<ConfigStore>,
+) -> anyhow::Result<()> {
+    let stored = db.config().await?;
+    if stored.iter().any(|(key, _)| key == ARR_PROFILES_KEY)
+        || !stored
+            .iter()
+            .any(|(key, value)| key == STATE_KEY && value == "\"done\"")
+    {
+        return Ok(());
+    }
+    let store = config.read().await;
+    let pending: std::collections::BTreeMap<_, _> = store
+        .settings()
+        .arr_instances
+        .iter()
+        .map(|instance| (instance.id, (instance.profile, instance.url.clone())))
+        .collect();
+    drop(store);
+    db.write_config(
+        &[(ARR_PROFILES_KEY, &serde_json::to_string(&pending)?)],
+        &[],
+    )
+    .await?;
+    Ok(())
+}
+
+pub(crate) async fn reconcile_arr_profile(
+    db: &Db,
+    config: &tokio::sync::RwLock<ConfigStore>,
+    arr: &infinidysk_arr::Arr,
+    version: &Result<String, infinidysk_arr::Error>,
+) -> anyhow::Result<()> {
+    let stored = db.config().await?;
+    let Some((_, value)) = stored.iter().find(|(key, _)| key == ARR_PROFILES_KEY) else {
+        return Ok(());
+    };
+    let mut store = config.write().await;
+    let mut pending: std::collections::BTreeMap<Uuid, (ArrProfile, String)> =
+        serde_json::from_str(value)?;
+    let Some((profile, url)) = pending.get(&arr.id) else {
+        return Ok(());
+    };
+    let unchanged = store.settings().arr_instances.iter().any(|instance| {
+        instance.id == arr.id
+            && instance.enabled
+            && instance.profile == *profile
+            && instance.url == *url
+            && crate::app::to_arr(instance) == *arr
+    });
+    let resolved = if !unchanged || version.is_ok() {
+        true
+    } else if let Err(infinidysk_arr::Error::WrongApp { found, .. }) = version {
+        if let Ok(profile) = serde_json::from_value::<ArrProfile>(serde_json::Value::String(
+            found.to_ascii_lowercase(),
+        )) {
+            let mut next = store.settings().clone();
+            if let Some(instance) = next
+                .arr_instances
+                .iter_mut()
+                .find(|instance| instance.id == arr.id)
+            {
+                instance.profile = profile;
+            }
+            store.save(next).await?;
+            tracing::info!(arr = %arr.name, ?profile, "corrected an imported Arr profile from its system status");
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    drop(store);
+    if resolved {
+        pending.remove(&arr.id);
+        db.write_config(
+            &[(ARR_PROFILES_KEY, &serde_json::to_string(&pending)?)],
+            &[],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 /// The survey of the C# `/config` at `config` plus the settings it would become, as
 /// text without secrets or usernames.
 pub async fn report(config: &Path) -> anyhow::Result<String> {
@@ -865,7 +953,7 @@ async fn import_with_progress(
         ),
         (DOWNLOAD_IDS_KEY, "true".to_owned()),
         (UNOWNED_KEPT_KEY, "true".to_owned()),
-        (SKIPPED_RETRIED_KEY, "true".to_owned()),
+        (SKIPPED_RETRIED_KEY, imported.skipped_count.to_string()),
     ];
     if let Some(legacy) = legacy {
         set.push((WEBDAV_KEY, serde_json::to_string(&legacy)?));
@@ -979,9 +1067,8 @@ pub async fn keep_unowned_migrated(db: &Db, store: &mut ConfigStore) {
     }
 }
 
-/// Config key set once files an earlier C# import skipped were retried. Bumped when the
-/// importer learns to carry over files it used to skip, so installs retry once more.
-const SKIPPED_RETRIED_KEY: &str = "upgrade.skipped_retried.5";
+/// Stores unresolved skips after import or retry; bump when more files can be recovered.
+const SKIPPED_RETRIED_KEY: &str = "upgrade.skipped_retried.6";
 
 /// Whether files an earlier C# import skipped may still be brought back.
 pub(crate) async fn skipped_pending(db: &Db) -> Result<bool, infinidysk_db::Error> {
@@ -989,7 +1076,9 @@ pub(crate) async fn skipped_pending(db: &Db) -> Result<bool, infinidysk_db::Erro
     Ok(stored
         .iter()
         .any(|(k, v)| k == STATE_KEY && v == "\"done\"")
-        && !stored.iter().any(|(k, _)| k == SKIPPED_RETRIED_KEY))
+        && !stored
+            .iter()
+            .any(|(k, v)| k == SKIPPED_RETRIED_KEY && v == "0"))
 }
 
 /// Brings back files an earlier C# import skipped that a library symlink or STRM file
@@ -1023,7 +1112,7 @@ pub async fn retry_skipped(
         .find(|(k, _)| k == REPORT_KEY)
         .and_then(|(_, v)| serde_json::from_str(v).ok())
         .unwrap_or_default();
-    let mut set = vec![(SKIPPED_RETRIED_KEY, "true".to_owned())];
+    let mut set = Vec::new();
     if config.join("db.sqlite").is_file() {
         match infinidysk_import::restore_nzb_downloads(&config, &db).await {
             Ok(restored) => tracing::info!(restored, "restored missing C# NZB download links"),
@@ -1086,12 +1175,14 @@ pub async fn retry_skipped(
             return;
         }
         let text = format!("{report}\nFiles the library links to, retried:\n{imported}");
+        set.push((SKIPPED_RETRIED_KEY, imported.skipped_count.to_string()));
         set.push((REPORT_KEY, serde_json::to_string(&text).unwrap_or_default()));
     } else {
         tracing::warn!(
             reason = "the C# database is gone",
             "could not bring back files the C# import skipped"
         );
+        return;
     }
     let set: Vec<(&str, &str)> = set.iter().map(|(k, v)| (*k, v.as_str())).collect();
     if let Err(error) = db.write_config(&set, &[]).await {
@@ -1793,20 +1884,153 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn skipped_files_are_retried_after_the_previous_pass() {
+    async fn imported_arr_profiles_follow_identity_without_overwriting_edits() {
+        let db = Db::connect("sqlite::memory:").await.unwrap();
+        let mut store = ConfigStore::load(db.clone(), std::iter::empty())
+            .await
+            .unwrap();
+        let mut settings = store.settings().clone();
+        settings.arr_instances = (0..4)
+            .map(|index| ArrInstance {
+                id: Uuid::new_v4(),
+                name: format!("Arr {index}"),
+                profile: ArrProfile::Radarr,
+                url: format!("http://127.0.0.1/arr{index}"),
+                api_key: Secret("key".to_owned()),
+                enabled: true,
+            })
+            .collect();
+        let instances = crate::app::arr_instances(&settings.arr_instances);
+        store.save(settings).await.unwrap();
+        let config = tokio::sync::RwLock::new(store);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let app = axum::Router::new()
+            .route(
+                "/api/v3/system/status",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({"appName": "Whisparr", "version": "3.0.0"}))
+                }),
+            )
+            .route(
+                "/legacy/api/v1/system/status",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({"appName": "Lidarr", "version": "3.0.0"}))
+                }),
+            );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut probe = instances[0].clone();
+        probe.url = url.clone();
+        let mismatch = infinidysk_arr::version(&reqwest::Client::new(), &probe).await;
+        assert!(matches!(
+            mismatch,
+            Err(infinidysk_arr::Error::WrongApp { .. })
+        ));
+        remember_arr_profiles(&db, &config).await.unwrap();
+        reconcile_arr_profile(&db, &config, &instances[0], &mismatch)
+            .await
+            .unwrap();
+        assert_eq!(
+            config.read().await.settings().arr_instances[0].profile,
+            ArrProfile::Radarr
+        );
+
+        db.write_config(&[(STATE_KEY, "\"done\"")], &[])
+            .await
+            .unwrap();
+        remember_arr_profiles(&db, &config).await.unwrap();
+        reconcile_arr_profile(&db, &config, &instances[0], &mismatch)
+            .await
+            .unwrap();
+        assert_eq!(
+            config.read().await.settings().arr_instances[0].profile,
+            ArrProfile::Whisparr
+        );
+        let unknown = Err(infinidysk_arr::Error::WrongApp {
+            expected: "Radarr",
+            found: "Unknown".to_owned(),
+        });
+        reconcile_arr_profile(&db, &config, &instances[1], &unknown)
+            .await
+            .unwrap();
+        assert_eq!(
+            config.read().await.settings().arr_instances[1].profile,
+            ArrProfile::Radarr
+        );
+        probe.url = format!("{url}/legacy");
+        let mismatch_v1 = infinidysk_arr::version(&reqwest::Client::new(), &probe).await;
+        assert!(
+            matches!(&mismatch_v1, Err(infinidysk_arr::Error::WrongApp { found, .. }) if found == "Lidarr")
+        );
+        reconcile_arr_profile(&db, &config, &instances[1], &mismatch_v1)
+            .await
+            .unwrap();
+        assert_eq!(
+            config.read().await.settings().arr_instances[1].profile,
+            ArrProfile::Lidarr
+        );
+        reconcile_arr_profile(&db, &config, &instances[2], &Ok("1".to_owned()))
+            .await
+            .unwrap();
+        reconcile_arr_profile(&db, &config, &instances[2], &mismatch)
+            .await
+            .unwrap();
+        assert_eq!(
+            config.read().await.settings().arr_instances[2].profile,
+            ArrProfile::Radarr
+        );
+
+        let mut store = config.write().await;
+        let mut edited = store.settings().clone();
+        edited.arr_instances[3].profile = ArrProfile::Sonarr;
+        let mut added = edited.arr_instances[2].clone();
+        added.id = Uuid::new_v4();
+        added.name = "Added later".to_owned();
+        let added_arr = crate::app::to_arr(&added);
+        edited.arr_instances.push(added);
+        store.save(edited).await.unwrap();
+        drop(store);
+        reconcile_arr_profile(&db, &config, &instances[3], &mismatch)
+            .await
+            .unwrap();
+        assert_eq!(
+            config.read().await.settings().arr_instances[3].profile,
+            ArrProfile::Sonarr
+        );
+        remember_arr_profiles(&db, &config).await.unwrap();
+        reconcile_arr_profile(&db, &config, &added_arr, &mismatch)
+            .await
+            .unwrap();
+        assert_eq!(
+            config.read().await.settings().arr_instances[4].profile,
+            ArrProfile::Radarr
+        );
+        server.abort();
+        assert!(server.await.unwrap_err().is_cancelled());
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn skipped_files_stay_protected_until_recovery_succeeds() {
         let db = Db::connect("sqlite::memory:").await.unwrap();
         assert!(!skipped_pending(&db).await.unwrap());
         db.write_config(
             &[
                 (STATE_KEY, "\"done\""),
-                ("upgrade.skipped_retried.4", "true"),
+                ("upgrade.skipped_retried.5", "true"),
             ],
             &[],
         )
         .await
         .unwrap();
         assert!(skipped_pending(&db).await.unwrap());
-        db.write_config(&[(SKIPPED_RETRIED_KEY, "true")], &[])
+        for remaining in ["1", "true", "invalid"] {
+            db.write_config(&[(SKIPPED_RETRIED_KEY, remaining)], &[])
+                .await
+                .unwrap();
+            assert!(skipped_pending(&db).await.unwrap(), "{remaining}");
+        }
+        db.write_config(&[(SKIPPED_RETRIED_KEY, "0")], &[])
             .await
             .unwrap();
         assert!(!skipped_pending(&db).await.unwrap());

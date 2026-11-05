@@ -417,6 +417,32 @@ async fn removes_dead_links_and_has_the_arr_search_again() {
     assert!(CALLS.lock().unwrap().is_empty(), "a dry run calls no Arr");
 
     let confirm = json!({ "at_ms": report["at_ms"] });
+    db.write_config(
+        &[
+            ("upgrade.state", "\"done\""),
+            ("upgrade.skipped_retried.6", "1"),
+        ],
+        &[],
+    )
+    .await
+    .unwrap();
+    let report = run(addr, &format!("{DEAD}/report/confirm"), confirm).await;
+    assert_eq!(report["outcome"], "stopped", "{report}");
+    assert_eq!(report["removed"], 0);
+    assert!(report["reason"].as_str().unwrap().contains("recoverable"));
+    assert!(
+        ["a.mkv", "b.mkv", "c.strm"]
+            .iter()
+            .all(|name| present(name))
+    );
+    assert!(CALLS.lock().unwrap().is_empty());
+
+    db.write_config(&[("upgrade.skipped_retried.6", "0")], &[])
+        .await
+        .unwrap();
+    let report = run(addr, &format!("{DEAD}/run"), json!({ "dry_run": true })).await;
+    assert_eq!(report["outcome"], "held", "{report}");
+    let confirm = json!({ "at_ms": report["at_ms"] });
     let report = run(addr, &format!("{DEAD}/report/confirm"), confirm).await;
     assert_eq!(report["trigger"], "review", "{report}");
     assert_eq!(report["removed"], 3);
