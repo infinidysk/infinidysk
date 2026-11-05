@@ -70,6 +70,8 @@ pub fn parse(body: &[u8]) -> Result<Event, serde_json::Error> {
         {
             Event::Ignored
         }
+        // Chaptarr sends no reason, so the file may only be missing from disk.
+        "BookFileDelete" if v["deleteReason"].is_null() => Event::Ignored,
         kind if kind.ends_with("FileDelete") => Event::Deleted(files(&[
             "episodeFile",
             "movieFile",
@@ -225,6 +227,12 @@ mod tests {
             read(json!({
                 "eventType": "EpisodeFileDelete", "deleteReason": "MissingFromDisk",
                 "episodeFile": { "id": 3, "path": "/tv/a.mkv" },
+            })),
+            Event::Ignored
+        );
+        assert_eq!(
+            read(json!({
+                "eventType": "BookFileDelete", "bookFile": { "id": 3, "path": "/b/a.mp3" },
             })),
             Event::Ignored
         );
