@@ -59,7 +59,7 @@ When explaining code or systems to the maintainer, use Simple Technical English.
 
 ## Rust guidelines
 
-The maintainer's Rust rules live in the private skill repo [`hoivikaj/rust-skills`](https://github.com/hoivikaj/rust-skills), checked out at `../rust-skills` and installed as a user-level `rust-skills` skill. When it is present, use it when writing or reviewing Rust: read its `SKILL.md` index, then open only the rule files relevant to the code in front of you. Contributors without access can ignore it; the project rules below are binding either way.
+The maintainer's Rust rules live in the private skill repo [`hoivikaj/rust-skills`](https://github.com/hoivikaj/rust-skills), checked out at `../rust-skills` (sibling of this repo). When it is present, use it when writing or reviewing Rust: read `../rust-skills/SKILL.md`, then open only the files under `../rust-skills/rules/` relevant to the code in front of you. Contributors without access can ignore it; the project rules below are binding either way.
 
 Project rules (these override rust-skills where they differ):
 
