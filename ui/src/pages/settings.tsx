@@ -19,6 +19,7 @@ import { api, body, HttpError, type Schemas } from "../api/client";
 import { useAuth } from "../auth";
 import { copyText, MASK, notAPassword, type Settings as Doc, useRestart, useSaveSettings, useSettings } from "../settings";
 import { LibraryPanel, PreviewDialog, type PreviewRequest, previewTitle } from "../library";
+import { BackupsPanel } from "../backups";
 import { MaintenancePanel } from "../maintenance";
 import { DatabasePanel } from "../database";
 import { Alert, AlertAction, AlertDescription } from "@/components/ui/alert";
@@ -210,6 +211,12 @@ const categories = [
     slug: "database",
     title: "Database",
     description: "Where infinidysk keeps its library, queue and history, and moving it to PostgreSQL",
+  },
+  {
+    group: "System",
+    slug: "backups",
+    title: "Backups",
+    description: "Copies of the library database you can download, upload and restore",
   },
   {
     group: "System",
@@ -1092,6 +1099,16 @@ export function Settings() {
                   />
                 </SettingsPanel>
               </Section>
+            )}
+
+            {category.slug === "backups" && (
+              <BackupsPanel
+                title={category.title}
+                description={category.description}
+                value={draft.maintenance}
+                locked={locked}
+                onChange={(maintenance) => setDraft((d) => (d ? { ...d, maintenance } : d))}
+              />
             )}
 
             {category.slug === "maintenance" && (

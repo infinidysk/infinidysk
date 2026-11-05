@@ -1,11 +1,10 @@
 import { useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, Loader2, ScrollText, TriangleAlert } from "lucide-react";
+import { ArrowRight, CircleAlert, Loader2, ScrollText, TriangleAlert } from "lucide-react";
 import { Link } from "react-router";
 import { api, body, type Schemas } from "./api/client";
 import { ago, bytes, duration, stamp } from "./format";
 import type { Settings as Doc } from "./settings";
-import { BackupsPanel } from "./backups";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -171,35 +170,100 @@ export function MaintenancePanel({
 
       <div className="space-y-3">
         <h3 className="font-medium">Jobs</h3>
-        {(view.data?.jobs ?? []).map((j, i) => (
-          <JobCard
-            key={j.job}
-            job={j}
-            step={i + 1}
-            running={view.data?.running ?? null}
-            scheduled={j.always_scheduled || value.scheduled.includes(j.job)}
-            locked={locked("maintenance.scheduled")}
-            onScheduled={(on) =>
-              onChange({ ...value, scheduled: on ? [...value.scheduled, j.job] : value.scheduled.filter((s) => s !== j.job) })
-            }
-          />
-        ))}
+        {(view.data?.jobs ?? []).map((j, i) =>
+          j.job === "backup-database" ? (
+            <BackupStep
+              key={j.job}
+              job={j}
+              step={i + 1}
+              running={view.data?.running ?? null}
+              scheduled={j.always_scheduled || value.scheduled.includes(j.job)}
+            />
+          ) : (
+            <JobCard
+              key={j.job}
+              job={j}
+              step={i + 1}
+              running={view.data?.running ?? null}
+              scheduled={j.always_scheduled || value.scheduled.includes(j.job)}
+              locked={locked("maintenance.scheduled")}
+              onScheduled={(on) =>
+                onChange({ ...value, scheduled: on ? [...value.scheduled, j.job] : value.scheduled.filter((s) => s !== j.job) })
+              }
+            />
+          ),
+        )}
         {view.isError && <p className="text-destructive">{view.error.message}</p>}
       </div>
-
-      <BackupsPanel
-        value={value.backup}
-        locked={locked}
-        running={view.data?.running ?? null}
-        onChange={(backup) => onChange({ ...value, backup })}
-      />
 
       <Runs runs={view.data?.runs ?? []} />
     </div>
   );
 }
 
-function JobCard({
+/** The backup job's place in the window order; its controls live on Settings → Backups. */
+function BackupStep({
+  job,
+  step,
+  running,
+  scheduled,
+}: {
+  job: Schemas["MaintenanceJobView"];
+  step: number;
+  running: Schemas["LiveMaintenance"] | null;
+  scheduled: boolean;
+}) {
+  const mine = running?.job === job.job ? running : null;
+  const r = job.report;
+  return (
+    <div className="bg-card flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border p-4">
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5 font-medium">
+          <StepNumber step={step} />
+          {jobCopy[job.job].title}
+        </div>
+        <p className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+          {mine ? (
+            <span className="flex items-center gap-1.5">
+              <Loader2 className="text-primary size-3.5 animate-spin" />
+              {mine.step} {progress(job.job, mine)}
+            </span>
+          ) : (
+            <>
+              {job.unavailable_reason ? (
+                <span className="text-warning-text">{job.unavailable_reason}</span>
+              ) : (
+                <span>{job.always_scheduled ? "Always runs daily" : scheduled ? "Runs daily" : "Not scheduled"}</span>
+              )}
+              {r && (
+                <>
+                  <span aria-hidden>·</span>
+                  <Status tone={outcomes[r.outcome][1]}>{outcomes[r.outcome][0]}</Status>
+                  <span title={stamp(r.finished_ms)}>{ago(r.finished_ms)}</span>
+                </>
+              )}
+            </>
+          )}
+        </p>
+      </div>
+      <Button type="button" variant="outline" size="sm" asChild>
+        <Link to="/settings/backups">
+          Backups <ArrowRight />
+        </Link>
+      </Button>
+    </div>
+  );
+}
+
+function StepNumber({ step }: { step: number }) {
+  return (
+    <span className="bg-muted text-muted-foreground mr-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded text-xs tabular-nums">
+      {step}
+    </span>
+  );
+}
+
+export function JobCard({
   job,
   step,
   running,
@@ -209,7 +273,7 @@ function JobCard({
 }: {
   job: Schemas["MaintenanceJobView"];
   /** Its place in the window's run order. */
-  step: number;
+  step?: number;
   running: Schemas["LiveMaintenance"] | null;
   scheduled: boolean;
   locked: boolean;
@@ -238,9 +302,7 @@ function JobCard({
       <div className="flex items-start justify-between gap-4 p-4">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5 font-medium">
-            <span className="bg-muted text-muted-foreground mr-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded text-xs tabular-nums">
-              {step}
-            </span>
+            {step != null && <StepNumber step={step} />}
             {copy.title}
             <InfoTip label={`About ${copy.title}`}>{copy.tip}</InfoTip>
           </div>
@@ -506,7 +568,7 @@ export function MaintenanceNow({ live }: { live: Schemas["LiveMaintenance"] }) {
   const percent = live.total ? Math.round((live.done / live.total) * 100) : null;
   return (
     <Link
-      to="/settings/maintenance"
+      to={live.job === "backup-database" ? "/settings/backups" : "/settings/maintenance"}
       className="hover:bg-sidebar-accent/60 flex items-center gap-2 rounded-md px-2 py-1.5 text-xs"
     >
       <Loader2 className="text-primary size-3.5 shrink-0 animate-spin" />

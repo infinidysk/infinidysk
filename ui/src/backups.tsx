@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, Download, Loader2, NotebookPen, Pin, PinOff, RotateCcw, ShieldCheck, Trash2, Upload } from "lucide-react";
 import { api, body, type Schemas } from "./api/client";
 import { ago, bytes, stamp } from "./format";
+import { JobCard, useMaintenance } from "./maintenance";
 import { type Settings as Doc, waitForRestart } from "./settings";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +12,20 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { ConfirmButton, Failure, Field, Panel, RowActions, Status, TextConfirmDialog, type Tone, useDiscardGuard } from "./ui";
+import {
+  ConfirmButton,
+  Empty,
+  Failure,
+  Field,
+  Panel,
+  RowActions,
+  SettingsPanel,
+  SettingsSection,
+  Status,
+  TextConfirmDialog,
+  type Tone,
+  useDiscardGuard,
+} from "./ui";
 
 type Backup = Schemas["BackupView"];
 type Live = Schemas["LiveMaintenance"];
@@ -44,18 +58,25 @@ function check(b: Backup): [string, Tone, string | undefined] {
   return ["Not checked", "muted", undefined];
 }
 
-/** Backup settings, the backup list, restore and undo, on the Maintenance page. */
+/** Settings → Backups: the backup job, where copies go, the backup list, restore and undo. */
 export function BackupsPanel({
-  value,
+  title,
+  description,
+  value: maintenance,
   locked,
-  running,
   onChange,
 }: {
-  value: Doc["maintenance"]["backup"];
+  title: string;
+  description: string;
+  value: Doc["maintenance"];
   locked: (path: string) => boolean;
-  running: Live | null;
-  onChange: (value: Doc["maintenance"]["backup"]) => void;
+  onChange: (value: Doc["maintenance"]) => void;
 }) {
+  const value = maintenance.backup;
+  const jobsView = useMaintenance();
+  const jobs = jobsView.data;
+  const running = jobs?.running ?? null;
+  const job = jobs?.jobs.find((j) => j.job === "backup-database");
   const client = useQueryClient();
   const [wait, setWait] = useState<Wait | null>(null);
   const [applied, setApplied] = useState<Wait | null>(null);
@@ -105,51 +126,15 @@ export function BackupsPanel({
   const need = (v?.database_bytes ?? 0) * value.keep;
   const last = v?.last_restore;
 
+  const setBackup = (backup: Partial<Doc["maintenance"]["backup"]>) => onChange({ ...maintenance, backup: { ...value, ...backup } });
+  const upload = useUpload(busy, done);
+
   return (
-    <section aria-labelledby="backups" className="space-y-4">
-      <h3 id="backups" className="font-medium">
-        Backups
-      </h3>
+    <SettingsSection title={title} description={description} actions={!v?.unavailable_reason && upload.button}>
       {v?.unavailable_reason ? (
-        <p className="text-muted-foreground text-xs">{v.unavailable_reason}</p>
+        <Empty title="No backups for this database">{v.unavailable_reason}</Empty>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-[1fr_10rem]">
-            <Field
-              id="backup-dir"
-              label="Backup folder"
-              error={v?.dir_error}
-              hint="Changing the folder does not move existing backups. Files you copy in must end in .sqlite and use letters, digits, spaces, dots, dashes or underscores."
-            >
-              <Input
-                id="backup-dir"
-                className="font-mono"
-                placeholder={v?.dir}
-                disabled={locked("maintenance.backup.dir")}
-                value={value.dir}
-                onChange={(e) => onChange({ ...value, dir: e.target.value })}
-              />
-            </Field>
-            <Field id="backup-keep" label="Copies to keep" hint="Pinned, uploaded and added backups do not count.">
-              <Input
-                id="backup-keep"
-                type="number"
-                min={1}
-                max={100}
-                required
-                disabled={locked("maintenance.backup.keep")}
-                value={value.keep}
-                onChange={(e) => onChange({ ...value, keep: Number(e.target.value) })}
-              />
-            </Field>
-          </div>
-          {v && v.database_bytes > 0 && (
-            <p className={free != null && need > free ? "text-warning-text text-xs" : "text-muted-foreground text-xs"}>
-              Each backup is about {bytes(v.database_bytes)}. Keeping {value.keep} needs about {bytes(need)}
-              {free != null && <>; the folder has {bytes(free)} free</>}.
-            </p>
-          )}
-
           {wait && (
             <Alert>
               <Loader2 className="animate-spin" />
@@ -263,17 +248,81 @@ export function BackupsPanel({
             onConfirm={() => dropLegacy.mutate()}
           />
 
-          {view.isError ? (
-            <Failure error={view.error} />
-          ) : v && v.backups.length > 0 ? (
-            <BackupList backups={v.backups} busy={busy} onRestore={restore} onChanged={done} />
-          ) : (
-            <p className="text-muted-foreground text-xs">{v ? "No backups yet." : "Loading…"}</p>
+          {jobsView.isError && <Failure error={jobsView.error} />}
+          {job && (
+            <JobCard
+              job={job}
+              running={running}
+              scheduled={job.always_scheduled || maintenance.scheduled.includes(job.job)}
+              locked={locked("maintenance.scheduled")}
+              onScheduled={(on) =>
+                onChange({
+                  ...maintenance,
+                  scheduled: on ? [...maintenance.scheduled, job.job] : maintenance.scheduled.filter((s) => s !== job.job),
+                })
+              }
+            />
           )}
-          <UploadBackup busy={busy} onUploaded={done} />
+
+          <section aria-labelledby="backup-list" className="space-y-2">
+            <h3 id="backup-list" className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+              Saved backups
+            </h3>
+            {upload.status}
+            {view.isError ? (
+              <Failure error={view.error} />
+            ) : !v ? (
+              <p className="text-muted-foreground text-xs">Loading…</p>
+            ) : v.backups.length > 0 ? (
+              <BackupList backups={v.backups} busy={busy} onRestore={restore} onChanged={done} />
+            ) : (
+              <Empty title="No backups yet">Run the backup now, turn on Run daily, or upload a backup you downloaded.</Empty>
+            )}
+          </section>
+
+          <SettingsPanel title="Storage">
+            <Field
+              id="backup-keep"
+              layout="row"
+              label="Copies to keep"
+              hint="Scheduled and manual backups. Pinned, uploaded and added backups do not count."
+            >
+              <Input
+                id="backup-keep"
+                type="number"
+                min={1}
+                max={100}
+                required
+                disabled={locked("maintenance.backup.keep")}
+                value={value.keep}
+                onChange={(e) => setBackup({ keep: Number(e.target.value) })}
+              />
+              {v && v.database_bytes > 0 && (
+                <p className={free != null && need > free ? "text-warning-text text-xs" : "text-muted-foreground text-xs"}>
+                  About {bytes(v.database_bytes)} each, {bytes(need)} in all
+                  {free != null && <>; {bytes(free)} free</>}.
+                </p>
+              )}
+            </Field>
+            <Field
+              id="backup-dir"
+              label="Backup folder"
+              error={v?.dir_error}
+              hint="Changing the folder does not move existing backups. Files you copy in must end in .sqlite and use letters, digits, spaces, dots, dashes or underscores; they then show up in the list."
+            >
+              <Input
+                id="backup-dir"
+                className="font-mono"
+                placeholder={v?.dir}
+                disabled={locked("maintenance.backup.dir")}
+                value={value.dir}
+                onChange={(e) => setBackup({ dir: e.target.value })}
+              />
+            </Field>
+          </SettingsPanel>
         </>
       )}
-    </section>
+    </SettingsSection>
   );
 }
 
@@ -303,10 +352,10 @@ function BackupList({
           <TableHeader>
             <TableRow>
               <TableHead>Created</TableHead>
-              <TableHead className="hidden md:table-cell">Kind</TableHead>
-              <TableHead className="hidden text-right md:table-cell">Size</TableHead>
-              <TableHead className="hidden text-right md:table-cell">Items</TableHead>
-              <TableHead className="hidden md:table-cell">Check</TableHead>
+              <TableHead className="hidden xl:table-cell">Kind</TableHead>
+              <TableHead className="hidden text-right xl:table-cell">Size</TableHead>
+              <TableHead className="hidden text-right xl:table-cell">Items</TableHead>
+              <TableHead className="hidden xl:table-cell">Check</TableHead>
               <TableHead className="w-0">
                 <span className="sr-only">Actions</span>
               </TableHead>
@@ -328,7 +377,7 @@ function BackupList({
                       {b.name}
                     </div>
                     {b.note && <div className="text-muted-foreground text-xs break-words">{b.note}</div>}
-                    <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs md:hidden">
+                    <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs xl:hidden">
                       <Badge variant="outline">{kinds[b.kind]}</Badge>
                       <span>{bytes(b.size_bytes)}</span>
                       <span title={tip}>
@@ -336,12 +385,12 @@ function BackupList({
                       </span>
                     </div>
                   </TableCell>
-                  <TableCell className="hidden md:table-cell">
+                  <TableCell className="hidden xl:table-cell">
                     <Badge variant="outline">{kinds[b.kind]}</Badge>
                   </TableCell>
-                  <TableCell className="hidden text-right tabular-nums md:table-cell">{bytes(b.size_bytes)}</TableCell>
-                  <TableCell className="hidden text-right tabular-nums md:table-cell">{b.items?.toLocaleString() ?? "–"}</TableCell>
-                  <TableCell className="hidden md:table-cell">
+                  <TableCell className="hidden text-right tabular-nums xl:table-cell">{bytes(b.size_bytes)}</TableCell>
+                  <TableCell className="hidden text-right tabular-nums xl:table-cell">{b.items?.toLocaleString() ?? "–"}</TableCell>
+                  <TableCell className="hidden xl:table-cell">
                     <span title={tip}>
                       <Status tone={tone}>{label}</Status>
                     </span>
@@ -467,24 +516,23 @@ function NoteDialog({ backup, onClose, onSave }: { backup: Backup; onClose: () =
 }
 
 /** Uploads with `XMLHttpRequest`: `fetch` reports no upload progress. */
-function UploadBackup({ busy, onUploaded }: { busy: boolean; onUploaded: () => void }) {
+function useUpload(busy: boolean, onUploaded: () => void) {
   const input = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [sent, setSent] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const upload = () => {
-    if (!file) return;
+  const upload = (picked: File) => {
+    setFile(picked);
     setError(null);
     setSent(0);
     const xhr = new XMLHttpRequest();
-    xhr.open("PUT", `/api/v1/backups/upload?name=${encodeURIComponent(file.name)}`);
+    xhr.open("PUT", `/api/v1/backups/upload?name=${encodeURIComponent(picked.name)}`);
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.upload.onprogress = (e) => setSent(e.loaded);
     xhr.onload = () => {
       setSent(null);
       if (xhr.status === 201) {
         setFile(null);
-        if (input.current) input.current.value = "";
         onUploaded();
         return;
       }
@@ -500,33 +548,42 @@ function UploadBackup({ busy, onUploaded }: { busy: boolean; onUploaded: () => v
       setSent(null);
       setError("The upload did not reach infinidysk.");
     };
-    xhr.send(file);
+    xhr.send(picked);
   };
   const percent = file && sent != null && file.size > 0 ? (sent / file.size) * 100 : 0;
-  return (
-    <div className="space-y-2">
-      <Field id="backup-upload" label="Upload backup" hint="A .sqlite file from a backup download. It shows up in the list; restore checks it first.">
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            ref={input}
-            id="backup-upload"
-            type="file"
-            accept=".sqlite"
-            className="min-w-0 flex-1"
-            disabled={sent != null}
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          />
-          <Button type="button" variant="outline" size="sm" disabled={!file || busy || sent != null} onClick={upload}>
-            {sent != null ? <Loader2 className="animate-spin" /> : <Upload />}
-            Upload
-          </Button>
-        </div>
-      </Field>
+  const button = (
+    <>
+      <input
+        ref={input}
+        type="file"
+        accept=".sqlite"
+        hidden
+        aria-label="Backup file"
+        onChange={(e) => {
+          const picked = e.target.files?.[0];
+          e.target.value = "";
+          if (picked) upload(picked);
+        }}
+      />
+      <Button
+        type="button"
+        variant="outline"
+        title="A .sqlite file from a backup download. It shows up in the list; restore checks it first."
+        disabled={busy || sent != null}
+        onClick={() => input.current?.click()}
+      >
+        {sent != null ? <Loader2 className="animate-spin" /> : <Upload />}
+        Upload backup
+      </Button>
+    </>
+  );
+  const status = (
+    <>
       {file && sent != null && (
         <div className="space-y-1">
-          <div className="text-muted-foreground flex justify-between text-xs tabular-nums">
-            <span>Uploading {file.name}</span>
-            <span>
+          <div className="text-muted-foreground flex justify-between gap-2 text-xs tabular-nums">
+            <span className="min-w-0 truncate">Uploading {file.name}</span>
+            <span className="shrink-0">
               {bytes(sent)} / {bytes(file.size)}
             </span>
           </div>
@@ -539,11 +596,14 @@ function UploadBackup({ busy, onUploaded }: { busy: boolean; onUploaded: () => v
         <Alert variant="destructive">
           <CircleAlert />
           <AlertDescription>
-            <p>{error}</p>
+            <p className="wrap-anywhere">
+              Uploading {file?.name} failed: {error}
+            </p>
             <p className="text-xs">{UPLOAD_HINT}</p>
           </AlertDescription>
         </Alert>
       )}
-    </div>
+    </>
   );
+  return { button, status };
 }
