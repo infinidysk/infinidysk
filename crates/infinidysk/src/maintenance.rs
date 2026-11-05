@@ -1198,7 +1198,8 @@ impl Pointers {
     fn add(&mut self, target: &str) {
         let target = target.split(['?', '#']).next().unwrap_or_default();
         if let Some((_, rest)) = target.rsplit_once("/.ids/")
-            && let Some(Ok(id)) = rest.rsplit('/').next().map(str::parse)
+            && let Some(name) = Path::new(rest).file_stem().and_then(|name| name.to_str())
+            && let Ok(id) = name.parse()
         {
             self.ids.insert(id);
         }
@@ -1586,6 +1587,12 @@ mod tests {
 
     #[test]
     fn library_pointers_keep_their_files() {
+        let item = ItemId(Uuid::new_v4());
+        for suffix in ["", ".mkv", ".strm?k=1", ".mkv#fragment"] {
+            let mut pointers = Pointers::default();
+            pointers.add(&format!("/mnt/x/.ids/a/b/c/d/e/{}{suffix}", item.0));
+            assert!(pointers.keep(item, "/content/job/file.mkv"), "{suffix}");
+        }
         let root = std::env::temp_dir().join(format!("infinidysk-maint-{}", Uuid::new_v4()));
         let (library, mount) = (root.join("library"), root.join("library/mount"));
         fs::create_dir_all(library.join("show")).unwrap();
@@ -1596,7 +1603,7 @@ mod tests {
             ItemId(Uuid::new_v4()),
         );
         symlink(
-            format!("/mnt/x/.ids/a/b/c/d/e/{}", linked.0),
+            format!("/mnt/x/.ids/a/b/c/d/e/{}.mkv", linked.0),
             library.join("show/a.mkv"),
         )
         .unwrap();
@@ -1607,7 +1614,7 @@ mod tests {
         .unwrap();
         fs::write(
             library.join("show/c.STRM"),
-            format!("https://h/view/.ids/a/b/c/d/e/{}?k=1", streamed.0),
+            format!("https://h/view/.ids/a/b/c/d/e/{}.strm?k=1", streamed.0),
         )
         .unwrap();
         fs::write(

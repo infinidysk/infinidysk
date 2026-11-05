@@ -178,8 +178,13 @@ async fn removes_only_files_no_library_link_points_to() {
     let (gone_job, gone) = download(&db, "gone", &["g.mkv"]).await;
     db.delete_history(&[old_job, gone_job]).await.unwrap();
     let pointer = |item: &Item| format!("{}/{}", mount.display(), item.id.ids_path());
-    for item in &old[..6] {
-        std::os::unix::fs::symlink(pointer(item), lib.join(&item.name)).unwrap();
+    for (index, item) in old[..6].iter().enumerate() {
+        let target = if index == 0 {
+            format!("{}.mkv", pointer(item))
+        } else {
+            pointer(item)
+        };
+        std::os::unix::fs::symlink(target, lib.join(&item.name)).unwrap();
     }
     let exists = async |item: &Item| db.item_by_path(&item.path).await.unwrap().is_some();
 
