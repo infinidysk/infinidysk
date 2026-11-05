@@ -85,12 +85,12 @@ fn importers(imports: &[Import]) -> HashMap<i64, Vec<&str>> {
     let mut by_file: HashMap<i64, Vec<&str>> = HashMap::new();
     for import in imports {
         if let Some(id) = import.file_id
-            && !import.download_id.trim().is_empty()
+            && !import.download_id.is_empty()
         {
             by_file
                 .entry(id)
                 .or_default()
-                .push(import.download_id.trim());
+                .push(import.download_id.as_str());
         }
     }
     by_file
@@ -102,6 +102,38 @@ fn imported_elsewhere(importers: &HashMap<i64, Vec<&str>>, file: i64, job: Optio
         ids.iter()
             .any(|id| job.is_none_or(|job| Uuid::parse_str(id).ok() != Some(job.0)))
     })
+}
+
+/// The `moves` to follow, and how many were left because another download imported
+/// their new file; `jobs` holds the owners' recorded downloads.
+fn follow(
+    mut moves: Vec<(usize, i64)>,
+    owners: &[ArrOwner],
+    jobs: &HashMap<ItemId, JobId>,
+    importers: &HashMap<i64, Vec<&str>>,
+) -> (Vec<(usize, i64)>, usize) {
+    let found = moves.len();
+    moves.retain(|&(i, id)| !imported_elsewhere(importers, id, jobs.get(&owners[i].item).copied()));
+    let kept = found - moves.len();
+    (moves, kept)
+}
+
+/// The imports backfill may adopt, with the library file now at their imported path and
+/// their job: not those whose file the history shows another download imported.
+fn adoptable<'a>(
+    imports: &'a [Import],
+    files: &[LibraryFile],
+    importers: &HashMap<i64, Vec<&str>>,
+) -> Vec<(&'a Import, i64, Option<JobId>)> {
+    let library: HashMap<&str, i64> = files.iter().map(|f| (f.path.as_str(), f.id)).collect();
+    imports
+        .iter()
+        .filter_map(|import| {
+            let file_id = *library.get(import.imported.as_str())?;
+            let job = Uuid::parse_str(&import.download_id).ok().map(JobId);
+            (!imported_elsewhere(importers, file_id, job)).then_some((import, file_id, job))
+        })
+        .collect()
 }
 
 /// Holds when more than 5 % of the owned items would go.
@@ -176,26 +208,23 @@ impl Discovery {
             Vec::new()
         };
         let importers = importers(&imports);
-        let (mut followed, mut kept) = (0, 0);
-        for &(i, id) in &moves {
-            let job = db
-                .owner_jobs(owners[i].item)
-                .await
-                .map_err(|e| e.to_string())?
-                .into_iter()
-                .find_map(|(instance, job)| (instance == arr.id).then_some(job));
-            if imported_elsewhere(&importers, id, job) {
-                kept += 1;
-                continue;
+        let mut jobs = HashMap::new();
+        for &(i, _) in &moves {
+            let item = owners[i].item;
+            let job = db.owner_jobs(item).await.map_err(|e| e.to_string())?;
+            if let Some((_, job)) = job.into_iter().find(|(instance, _)| *instance == arr.id) {
+                jobs.insert(item, job);
             }
+        }
+        let (moves, kept) = follow(moves, &owners, &jobs, &importers);
+        for &(i, id) in &moves {
             db.refile_owner(arr.id, &owners[i], id)
                 .await
                 .map_err(|e| e.to_string())?;
             owners[i].file_id = Some(id);
-            followed += 1;
         }
-        if followed > 0 {
-            tracing::info!(arr = %arr.name, files = followed, "followed re-imported files to their new ids");
+        if !moves.is_empty() {
+            tracing::info!(arr = %arr.name, files = moves.len(), "followed re-imported files to their new ids");
         }
         if kept > 0 {
             tracing::info!(
@@ -272,17 +301,9 @@ impl Discovery {
         let db = self.queue.db();
         let mut owned_items: HashSet<ItemId> = owners.iter().map(|o| o.item).collect();
         let mut owned_files: HashSet<i64> = owners.iter().filter_map(|o| o.file_id).collect();
-        let library: HashMap<&str, i64> = files.iter().map(|f| (f.path.as_str(), f.id)).collect();
         let mut adopted = 0;
-        for import in imports {
-            let Some(&file_id) = library.get(import.imported.as_str()) else {
-                continue;
-            };
+        for (import, file_id, job) in adoptable(imports, files, importers) {
             if owned_files.contains(&file_id) {
-                continue;
-            }
-            let job = Uuid::parse_str(&import.download_id).ok().map(JobId);
-            if imported_elsewhere(importers, file_id, job) {
                 continue;
             }
             for (dir, path) in content_paths(&import.dropped, categories) {
@@ -568,7 +589,7 @@ mod tests {
         let history = [
             import(&theirs.to_string(), Some(9)),
             import(&ours.to_string().to_uppercase(), Some(7)),
-            import(" ", Some(5)),
+            import("", Some(5)),
             import("SABnzbd_nzo_x", Some(4)),
             import(&theirs.to_string(), None),
         ];
@@ -597,6 +618,55 @@ mod tests {
         );
         // Records of other files, such as the rest of a pack, do not count.
         assert!(!imported_elsewhere(&by_file, 8, Some(ours)));
+    }
+
+    /// Our item at `/lib/2.mkv` was file 2; the Arr now holds file 9 there.
+    #[test]
+    fn a_newer_file_from_another_download_stays_unclaimed() {
+        let (ours, theirs) = (JobId(Uuid::new_v4()), JobId(Uuid::new_v4()));
+        let owners = [owner(1), owner(2)];
+        let library = [file(1), LibraryFile { id: 9, ..file(2) }];
+        let jobs = HashMap::from([(owners[1].item, ours)]);
+        let import = |job: JobId, file| Import {
+            download_id: job.to_string(),
+            dropped: "/dl/tv/job/2.mkv".to_owned(),
+            imported: "/lib/2.mkv".to_owned(),
+            file_id: Some(file),
+        };
+        let follows = |jobs: &HashMap<ItemId, JobId>, history: &[Import]| {
+            follow(moved(&owners, &library), &owners, jobs, &importers(history))
+        };
+        let adopts = |history: &[Import]| {
+            adoptable(history, &library, &importers(history))
+                .into_iter()
+                .map(|(i, file, _)| (i.download_id.clone(), file))
+                .collect::<Vec<_>>()
+        };
+
+        let replaced = [import(theirs, 9), import(ours, 2)];
+        assert_eq!(
+            follows(&jobs, &replaced),
+            (vec![], 1),
+            "the owner keeps file 2"
+        );
+        assert_eq!(
+            follows(&HashMap::new(), &replaced),
+            (vec![], 1),
+            "an owner with no job"
+        );
+        assert_eq!(
+            adopts(&replaced),
+            [(theirs.to_string(), 9)],
+            "our older import does not claim file 9"
+        );
+
+        let rescanned = [import(ours, 2)];
+        assert_eq!(
+            follows(&jobs, &rescanned),
+            (vec![(1, 9)], 0),
+            "a rescan is followed"
+        );
+        assert_eq!(adopts(&rescanned), [(ours.to_string(), 9)]);
     }
 
     #[test]

@@ -149,7 +149,7 @@ impl Record {
             .as_ref()
             .and_then(|v| v.as_i64().or_else(|| v.as_str()?.trim().parse().ok()));
         Some(Import {
-            download_id: self.download_id?,
+            download_id: self.download_id?.trim().to_owned(),
             dropped: self.data.dropped_path?,
             imported: self.data.imported_path?,
             file_id,
@@ -539,18 +539,20 @@ mod tests {
 
     #[test]
     fn an_import_keeps_the_file_id_its_history_names() {
-        let record = |file_id: serde_json::Value| {
+        let import = |download: &str, file_id: serde_json::Value| {
             let r: Record = serde_json::from_value(json!({
-                "id": 1, "downloadId": "abc",
+                "id": 1, "downloadId": download,
                 "data": { "droppedPath": "/d/a.mkv", "importedPath": "/lib/a.mkv", "fileId": file_id },
             }))
             .expect("a history record");
-            r.into_import().and_then(|i| i.file_id)
+            r.into_import().expect("an import")
         };
+        let record = |file_id| import("abc", file_id).file_id;
         assert_eq!(record(json!("42")), Some(42));
         assert_eq!(record(json!(42)), Some(42));
         assert_eq!(record(json!("")), None);
         assert_eq!(record(serde_json::Value::Null), None);
+        assert_eq!(import(" abc ", json!(1)).download_id, "abc");
     }
 
     #[test]
