@@ -42,7 +42,7 @@ COPY --from=build /usr/local/bin/infinidysk /usr/local/bin/infinidysk
 # Declared after the layers above so a new commit does not rebuild them.
 ARG COMMIT=""
 ARG VERSION=""
-LABEL org.opencontainers.image.title="InfiniDysk" \
+LABEL org.opencontainers.image.title="infinidysk" \
       org.opencontainers.image.description="Usenet-backed virtual filesystem with a SABnzbd-compatible API, FUSE and WebDAV" \
       org.opencontainers.image.source="https://github.com/infinidysk/infinidysk" \
       org.opencontainers.image.url="https://www.infinidysk.com/" \
