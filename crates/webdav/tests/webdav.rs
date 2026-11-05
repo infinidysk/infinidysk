@@ -384,6 +384,48 @@ async fn serves_the_tree_over_webdav() {
 }
 
 #[tokio::test]
+async fn deleted_completed_links_go_while_content_stays() {
+    let data = vec![7; ARTICLE + 5];
+    let (_server, app, _file, _) = setup(&data).await;
+    let auth = [("authorization", BASIC)];
+    let status = |method: &'static str, uri: &'static str| {
+        let app = &app;
+        async move { send(app, method, uri, &auth, Vec::new()).await.status() }
+    };
+    let listing = |uri: &'static str| {
+        let app = &app;
+        async move {
+            let r = send(app, "PROPFIND", uri, &[auth[0], ("depth", "1")], Vec::new()).await;
+            String::from_utf8(body(r).await).unwrap()
+        }
+    };
+    let job = "/completed-symlinks/tv/my%20job";
+    let link = "/completed-symlinks/tv/my%20job/a.mkv.rclonelink";
+
+    for uri in ["/completed-symlinks", "/completed-symlinks/tv"] {
+        assert_eq!(status("DELETE", uri).await, StatusCode::FORBIDDEN, "{uri}");
+    }
+    for uri in [
+        "/completed-symlinks/tv/my%20job/a.mkv",
+        "/completed-symlinks/tv/missing",
+    ] {
+        assert_eq!(status("DELETE", uri).await, StatusCode::NOT_FOUND, "{uri}");
+    }
+
+    assert_eq!(status("DELETE", link).await, StatusCode::NO_CONTENT);
+    assert_eq!(status("GET", link).await, StatusCode::NOT_FOUND);
+    assert_eq!(status("DELETE", link).await, StatusCode::NOT_FOUND);
+    assert!(!listing(job).await.contains("a.mkv"));
+
+    assert_eq!(status("DELETE", job).await, StatusCode::NO_CONTENT);
+    assert_eq!(status("PROPFIND", job).await, StatusCode::NOT_FOUND);
+    assert!(!listing("/completed-symlinks/tv").await.contains("my%20job"));
+
+    let r = send(&app, "GET", "/content/tv/my%20job/a.mkv", &auth, Vec::new()).await;
+    assert!(body(r).await == data, "content stays readable");
+}
+
+#[tokio::test]
 async fn unreachable_providers_answer_retryable_503_before_the_body() {
     let data = vec![7; 2 * ARTICLE];
     let (server, app, _, _) = setup(&data).await;

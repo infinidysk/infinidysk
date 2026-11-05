@@ -723,10 +723,15 @@ async fn delete(vfs: &Vfs, path: &str) -> Result<Response, infinidysk_vfs::Error
         }
         .into_response());
     }
-    if infinidysk_vfs::ignores_delete(path) {
-        return Ok(StatusCode::NO_CONTENT.into_response());
+    let Some(node) = resolve(vfs, path).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+    Ok(if vfs.delete_link(&node) {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::FORBIDDEN
     }
-    Ok(StatusCode::FORBIDDEN.into_response())
+    .into_response())
 }
 
 /// By extension; unknown types are `application/octet-stream`.
