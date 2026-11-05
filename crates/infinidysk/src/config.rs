@@ -1054,6 +1054,7 @@ pub enum ArrProfile {
     Radarr,
     Lidarr,
     Readarr,
+    Chaptarr,
     Whisparr,
     Sportarr,
 }

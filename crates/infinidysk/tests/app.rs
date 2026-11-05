@@ -636,8 +636,16 @@ async fn discovers_which_arr_download_clients_are_this_installation() {
             .unwrap()
             .iter()
             .map(|c| {
-                let category = c["category"].as_str().unwrap().to_owned();
-                (category, c["binding"].as_str().unwrap().to_owned())
+                let categories: Vec<&str> = c["categories"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|c| c.as_str().unwrap())
+                    .collect();
+                (
+                    categories.join(","),
+                    c["binding"].as_str().unwrap().to_owned(),
+                )
             })
             .collect()
     };

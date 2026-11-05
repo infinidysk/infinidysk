@@ -828,12 +828,14 @@ export function Settings() {
                 </div>
                 <LibraryPanel onPreview={previewChange} />
                 {saved.imports.strategy === "strm" &&
-                  draft.arr_instances.some((a) => a.enabled && (a.profile === "lidarr" || a.profile === "readarr")) && (
+                  draft.arr_instances.some(
+                    (a) => a.enabled && (a.profile === "lidarr" || a.profile === "readarr" || a.profile === "chaptarr"),
+                  ) && (
                     <Alert>
                       <TriangleAlert className="text-warning-text" />
                       <AlertDescription>
-                        Lidarr and Readarr cannot import STRM files, so their downloads still arrive as symlinks, which need the
-                        mount.
+                        Lidarr, Readarr and Chaptarr cannot import STRM files, so their downloads still arrive as symlinks,
+                        which need the mount.
                       </AlertDescription>
                     </Alert>
                   )}

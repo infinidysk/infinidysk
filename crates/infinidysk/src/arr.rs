@@ -181,7 +181,7 @@ pub struct ArrInstanceStatus {
 #[derive(Serialize, ToSchema)]
 pub struct ArrClientStatus {
     pub name: String,
-    pub category: Option<String>,
+    pub categories: Vec<String>,
     pub binding: ArrBinding,
 }
 
@@ -485,7 +485,7 @@ impl Discovery {
                     .iter()
                     .map(|(c, binding)| ArrClientStatus {
                         name: c.name.clone(),
-                        category: c.category.clone(),
+                        categories: c.categories.iter().map(|(c, _)| c.clone()).collect(),
                         binding: *binding,
                     })
                     .collect(),
@@ -515,17 +515,16 @@ impl Discovery {
     }
 }
 
-/// Lowercased categories of verified clients, with the media their Arrs import.
+/// Lowercased categories of verified clients, with the media their Arrs import there.
 fn owners(known: &[Known]) -> BTreeMap<String, (BTreeSet<Kind>, BTreeSet<Uuid>)> {
     let mut owners: BTreeMap<String, (BTreeSet<Kind>, BTreeSet<Uuid>)> = BTreeMap::new();
     for k in known {
         for (client, _) in k.clients.iter().filter(|(_, b)| *b == ArrBinding::Verified) {
-            let Some(category) = &client.category else {
-                continue;
-            };
-            let (media, ids) = owners.entry(category.to_lowercase()).or_default();
-            media.extend(k.arr.profile.media().iter().copied());
-            ids.insert(k.arr.id);
+            for (category, kinds) in &client.categories {
+                let (media, ids) = owners.entry(category.to_lowercase()).or_default();
+                media.extend(kinds.iter().copied());
+                ids.insert(k.arr.id);
+            }
         }
     }
     owners

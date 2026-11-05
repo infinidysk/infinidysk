@@ -1,16 +1,17 @@
 //! The few Arr calls repair needs: find the media file imported from a download,
 //! blocklist the release, and get a replacement searched. Sonarr, Radarr, Whisparr
-//! (shaped like one of those) and Lidarr.
+//! (shaped like one of those), Lidarr and Chaptarr.
 
 use std::time::Duration;
 
+use infinidysk_core::media;
 use reqwest::Method;
 use serde::Deserialize;
 use serde_json::json;
 
 use crate::{Arr, Error, Profile, call, fetch, send, version};
 
-/// History `eventType` values shared by Sonarr, Radarr and Lidarr.
+/// History `eventType` values shared by Sonarr, Radarr, Lidarr and Chaptarr.
 const GRABBED: &str = "1";
 const IMPORTED: &str = "3";
 /// How often the Arr queue is polled while waiting for its own search.
@@ -43,6 +44,7 @@ enum Media {
     Episodes(Vec<i64>),
     Movie(i64),
     Album(i64),
+    Book(i64),
 }
 
 /// Which API an instance repairs through.
@@ -51,6 +53,7 @@ enum Shape {
     Series,
     Movies,
     Music,
+    Books,
 }
 
 async fn shape(http: &reqwest::Client, arr: &Arr) -> Result<Option<Shape>, Error> {
@@ -58,6 +61,7 @@ async fn shape(http: &reqwest::Client, arr: &Arr) -> Result<Option<Shape>, Error
         Profile::Sonarr => Some(Shape::Series),
         Profile::Radarr => Some(Shape::Movies),
         Profile::Lidarr => Some(Shape::Music),
+        Profile::Chaptarr => Some(Shape::Books),
         Profile::Whisparr => Some(if crate::whisparr_has_movies(&version(http, arr).await?) {
             Shape::Movies
         } else {
@@ -95,6 +99,7 @@ impl Owner {
             Media::Episodes(ids) => ("episode", ids),
             Media::Movie(id) => ("movie", std::slice::from_ref(id)),
             Media::Album(id) => ("album", std::slice::from_ref(id)),
+            Media::Book(id) => ("book", std::slice::from_ref(id)),
         }
     }
 }
@@ -119,6 +124,7 @@ struct Record {
     movie_id: Option<i64>,
     track_id: Option<i64>,
     album_id: Option<i64>,
+    book_id: Option<i64>,
     date: Option<String>,
     #[serde(default)]
     data: Data,
@@ -143,6 +149,9 @@ struct MediaFile {
     /// Lidarr's name their album.
     #[serde(default)]
     album_id: Option<i64>,
+    /// Chaptarr's name their book.
+    #[serde(default)]
+    book_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -238,6 +247,18 @@ pub async fn owner(
             };
             (Media::Album(album), current)
         }
+        Shape::Books => {
+            let id = records
+                .iter()
+                .find_map(|r| r.book_id)
+                .ok_or(Error::Unexpected("import record without bookId"))?;
+            let files: Vec<MediaFile> =
+                fetch(call(Method::GET, "bookfile".to_owned()).query(&[("bookId", id)])).await?;
+            (
+                Media::Book(id),
+                current_book_file(files, &imported_path, recorded_file),
+            )
+        }
     };
     Ok(Some(Owner {
         media,
@@ -246,6 +267,35 @@ pub async fn owner(
         recorded_file,
         current,
     }))
+}
+
+/// The file a book holds now in place of the one imported at `imported_path`. A book can
+/// hold an audiobook and an ebook, and an audiobook many files; only files of the same
+/// media kind stand in for each other. Prefers the recorded file, then the imported path,
+/// then the newest.
+fn current_book_file(
+    files: Vec<MediaFile>,
+    imported_path: &str,
+    recorded_file: Option<i64>,
+) -> Option<MediaFile> {
+    let kind = media::kind(imported_path);
+    let mut files: Vec<MediaFile> = files
+        .into_iter()
+        .filter(|f| media::kind(&f.path) == kind)
+        .collect();
+    let at = files
+        .iter()
+        .position(|f| Some(f.id) == recorded_file)
+        .or_else(|| files.iter().position(|f| f.path == imported_path))
+        .or_else(|| {
+            let parse = |f: &MediaFile| {
+                f.date_added
+                    .as_deref()
+                    .and_then(|d| d.parse::<jiff::Timestamp>().ok())
+            };
+            (0..files.len()).max_by_key(|&i| parse(&files[i]))
+        })?;
+    Some(files.swap_remove(at))
 }
 
 /// The media this instance's library file `file` holds, found without its import
@@ -262,6 +312,7 @@ pub async fn owner_of_file(
         Shape::Series => "episodefile",
         Shape::Movies => "moviefile",
         Shape::Music => "trackfile",
+        Shape::Books => "bookfile",
     };
     let current: MediaFile =
         match fetch(call(http, arr, Method::GET, &format!("{kind}/{file}"))).await {
@@ -294,6 +345,11 @@ pub async fn owner_of_file(
             current
                 .album_id
                 .ok_or(Error::Unexpected("track file without albumId"))?,
+        ),
+        Shape::Books => Media::Book(
+            current
+                .book_id
+                .ok_or(Error::Unexpected("book file without bookId"))?,
         ),
     };
     Ok(Some(Owner {
@@ -416,6 +472,7 @@ pub async fn replace(
             "trackfile",
             json!({ "name": "AlbumSearch", "albumIds": [id] }),
         ),
+        Media::Book(id) => ("bookfile", json!({ "name": "BookSearch", "bookIds": [id] })),
     };
     if let Some(file) = &owner.current {
         send(call(Method::DELETE, format!("{kind}/{}", file.id))).await?;
@@ -435,6 +492,7 @@ async fn replacing(
         Media::Episodes(ids) => ids.iter().map(|&id| ("episodeIds", id)).collect(),
         Media::Movie(id) => vec![("movieId", *id)],
         Media::Album(id) => vec![("albumIds", *id)],
+        Media::Book(id) => vec![("bookIds", *id)],
     };
     let queued: Vec<QueueRecord> =
         fetch(call(http, arr, Method::GET, "queue/details").query(&query)).await?;
@@ -462,9 +520,36 @@ mod tests {
                 date_added: Some(added.to_owned()),
                 movie_id: None,
                 album_id: None,
+                book_id: None,
             }),
         };
         assert!(!owner("2024-05-01T12:00:00.5Z").replaced());
         assert!(owner("2024-06-01T00:00:00Z").replaced());
+    }
+
+    #[test]
+    fn a_book_file_stands_in_only_for_one_of_its_own_kind() {
+        let file = |id, path: &str, added: &str| MediaFile {
+            id,
+            path: path.to_owned(),
+            date_added: Some(added.to_owned()),
+            movie_id: None,
+            album_id: None,
+            book_id: Some(7),
+        };
+        let files = || {
+            vec![
+                file(1, "/books/a/a.epub", "2024-07-01T00:00:00Z"),
+                file(2, "/books/a/01.mp3", "2024-05-01T00:00:00Z"),
+                file(3, "/books/a/02.mp3", "2024-06-01T00:00:00Z"),
+            ]
+        };
+        let pick = |path, recorded| current_book_file(files(), path, recorded).map(|f| f.id);
+        assert_eq!(pick("/books/a/01.mp3", Some(2)), Some(2));
+        assert_eq!(pick("/books/a/01.mp3", None), Some(2));
+        assert_eq!(pick("/books/a/gone.mp3", Some(9)), Some(3));
+        assert_eq!(pick("/books/a/gone.epub", None), Some(1));
+        assert_eq!(pick("/books/a/gone.m4b", None), Some(3));
+        assert_eq!(pick("/books/a/gone.nfo", None), None);
     }
 }

@@ -25,7 +25,7 @@ pub async fn files(http: &reqwest::Client, arr: &Arr) -> Result<Option<Vec<Libra
     let movies = match arr.profile {
         Profile::Radarr => true,
         Profile::Whisparr => crate::whisparr_has_movies(&version),
-        Profile::Sonarr | Profile::Lidarr | Profile::Readarr => false,
+        Profile::Sonarr | Profile::Lidarr | Profile::Readarr | Profile::Chaptarr => false,
         Profile::Sportarr => return Ok(None),
     };
     let mut files = Vec::new();
@@ -41,7 +41,7 @@ pub async fn files(http: &reqwest::Client, arr: &Arr) -> Result<Option<Vec<Libra
     }
     let (parents, param, endpoint) = match arr.profile {
         Profile::Lidarr => ("artist", "artistId", "trackfile"),
-        Profile::Readarr => ("author", "authorId", "bookfile"),
+        Profile::Readarr | Profile::Chaptarr => ("author", "authorId", "bookfile"),
         _ => ("series", "seriesId", "episodefile"),
     };
     for id in ids(&fetch::<Vec<Value>>(call(http, arr, Method::GET, parents)).await?)? {
