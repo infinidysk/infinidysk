@@ -790,6 +790,33 @@ async fn whisparr_v3_repairs_like_radarr() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_file_an_arr_owns_but_cannot_repair_is_kept() {
+    let (articles, len) = mkv("s");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, job) = import(&server, &articles, len).await;
+    let sportarr = uuid::Uuid::from_u128(1);
+    db.record_owner(sportarr, item.id, None, "/sports/a.mkv", Some(job))
+        .await
+        .unwrap();
+    // Nothing listens; any call would leave the file waiting on a retry.
+    let (_tx, arr) = watch::channel(vec![Arr {
+        id: sportarr,
+        name: "sportarr".to_owned(),
+        profile: Profile::Sportarr,
+        url: "http://127.0.0.1:9".to_owned(),
+        api_key: "k".to_owned(),
+    }]);
+    let (_settings_tx, settings) = watch::channel(Settings::default());
+    let health = Health::new(db.clone(), client(&server), arr, settings).unwrap();
+
+    assert!(health.request_repair(item.id).await.unwrap());
+    assert!(health.step().await.unwrap());
+    let (_, status) = db.health(item.id).await.unwrap().unwrap();
+    assert_eq!(status.state, HealthState::ActionNeeded);
+    assert!(db.item(item.id).await.unwrap().is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn carried_over_file_waits_for_the_owner_backfill_before_deletion() {
     let (articles, len) = mkv("g");
     let server = LoopbackServer::start(articles.clone()).await.unwrap();
