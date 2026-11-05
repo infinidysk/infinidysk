@@ -59,7 +59,7 @@ When explaining code or systems to the maintainer, use Simple Technical English.
 
 ## Rust guidelines
 
-Use the vendored rust-skills rules when writing or reviewing Rust: [`.agents/skills/rust-skills/SKILL.md`](.agents/skills/rust-skills/SKILL.md). Read the index, then open only the rule files relevant to the code in front of you.
+The maintainer's Rust rules live in the private skill repo [`hoivikaj/rust-skills`](https://github.com/hoivikaj/rust-skills), checked out at `../rust-skills` (sibling of this repo). When it is present, use it when writing or reviewing Rust: read `../rust-skills/SKILL.md`, then open only the files under `../rust-skills/rules/` relevant to the code in front of you. Contributors without access can ignore it; the project rules below are binding either way.
 
 Project rules (these override rust-skills where they differ):
 
@@ -171,11 +171,3 @@ We cannot verify which media is public domain. **Never** write movie, show, epis
 ## Never merge pull requests
 
 Agents never merge PRs, in this repo or any infinidysk repo: no `gh pr merge`, no UI/API merge, no auto-merge. Opening the PR and reporting its URL ends the handoff. Never force-push shared branches or amend pushed commits.
-
-## Vendored agent skills
-
-| Skill | Path | Source | License |
-|-------|------|--------|---------|
-| rust-skills | `.agents/skills/rust-skills/` | `github.com/leonardomso/rust-skills` @ `fd2a861ab0406a4ac536a55274d14ea6fd1ca9c9` | MIT (`LICENSE` in the skill dir) |
-
-Only `SKILL.md`, `rules/` and `LICENSE` are vendored. Its upstream `AGENTS.md` / `CLAUDE.md` symlinks are intentionally dropped so they do not shadow this file. To update, re-copy those three paths from a newer upstream commit and bump the SHA above.

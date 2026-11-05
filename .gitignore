@@ -11,3 +11,6 @@ db.sqlite-wal
 
 # Local scratch space (plans, notes, dumps); never committed.
 /scrap/
+
+# The Rust skill is private and installed per user; never vendor it here.
+/.agents/skills/rust-skills/
