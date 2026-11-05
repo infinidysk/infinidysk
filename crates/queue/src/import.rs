@@ -1802,8 +1802,8 @@ fn require(outputs: &[Output], kinds: &[media::Kind]) -> Result<(), Error> {
     if kinds.is_empty()
         || outputs
             .iter()
-            .filter_map(|o| o.path.last().and_then(|n| media::kind(n)))
-            .any(|k| kinds.contains(&k))
+            .filter_map(|o| o.path.last())
+            .any(|n| kinds.iter().any(|&k| media::fits(n, k)))
     {
         return Ok(());
     }
@@ -2039,6 +2039,11 @@ mod tests {
         }];
         assert!(require(&disc, &[media::Kind::Video]).is_err());
         assert!(require(&disc, &[]).is_ok(), "unowned categories keep it");
+        let audiobook = [Output {
+            path: ["Release", "book.mp4"].map(str::to_owned).to_vec(),
+            ..disc[0].clone()
+        }];
+        assert!(require(&audiobook, &[media::Kind::Audio]).is_ok());
     }
 
     #[tokio::test]
