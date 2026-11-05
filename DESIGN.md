@@ -894,7 +894,7 @@ Voice: direct (say what it does), action-oriented (what happens, not what we bui
 - No italics; bold rarely; technical terms in mono.
 - Terms:
   - **infinidysk** is always lowercase, even at the start of a sentence.
-  - **Arr** and **Arrs** for Sonarr, Radarr, Lidarr, Readarr, Whisparr and the rest; "Arr instance".
+  - **Arr** and **Arrs** for Sonarr, Radarr, Lidarr, Chaptarr, Whisparr and the rest; "Arr instance".
   - **SABnzbd**, **WebDAV**, **NZB**/**NZBs**, **STRM file**, **PAR2**, **yEnc**, **Usenet**, provider, backbone, mount, library.
   - **Unowned** (no Arr imported it) and **unlinked** (no symlink or STRM file points to it and it's no longer in the download history). Never "orphan".
   - **Sign in**, **Sign out** in the UI; "login" only in code and routes.

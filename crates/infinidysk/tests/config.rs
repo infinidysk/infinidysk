@@ -84,6 +84,39 @@ async fn env_overrides_win_are_never_stored_and_masked_secrets_survive_saves() {
 }
 
 #[tokio::test]
+async fn a_readarr_instance_stops_loading_with_what_to_do() {
+    let path =
+        std::env::temp_dir().join(format!("infinidysk-config-{}.sqlite", uuid::Uuid::now_v7()));
+    let db = Db::connect(&format!("sqlite:{}", path.display()))
+        .await
+        .expect("connect");
+    let readarr = r#"[{"id":"0192f0a0-0000-7000-8000-000000000001","name":"books","profile":"readarr","url":"http://readarr:8787","api_key":"k"}]"#;
+    let stopped = |result: Result<ConfigStore, Error>| match result {
+        Err(Error::Invalid { path, message }) => {
+            assert_eq!(path, "arr_instances");
+            assert!(message.contains("\"books\" is a Readarr"), "{message}");
+        }
+        other => panic!("loaded: {:?}", other.err()),
+    };
+
+    let env = [("INFINIDYSK__ARR_INSTANCES".to_owned(), readarr.to_owned())];
+    stopped(ConfigStore::load(db.clone(), env).await);
+    db.write_config(&[("arr_instances", readarr)], &[])
+        .await
+        .expect("write");
+    stopped(ConfigStore::load(db.clone(), []).await);
+    let cleared = [("INFINIDYSK__ARR_INSTANCES".to_owned(), "[]".to_owned())];
+    ConfigStore::load(db.clone(), cleared)
+        .await
+        .expect("the env list replaces the stored Readarr");
+
+    db.close().await;
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}
+
+#[tokio::test]
 async fn out_of_range_stored_values_load_as_defaults_but_never_save() {
     let path =
         std::env::temp_dir().join(format!("infinidysk-config-{}.sqlite", uuid::Uuid::now_v7()));

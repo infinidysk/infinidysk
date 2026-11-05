@@ -334,7 +334,7 @@ impl Discovery {
             k.clients
                 .iter()
                 .filter(|(_, b)| *b == ArrBinding::Verified)
-                .filter_map(|(c, _)| c.category.as_deref().map(str::to_lowercase))
+                .flat_map(|(c, _)| c.categories.iter().map(|(c, _)| c.to_lowercase()))
                 .collect()
         })
     }

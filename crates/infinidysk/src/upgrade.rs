@@ -618,7 +618,6 @@ fn arr_instances(
             ArrKind::Radarr => (ArrProfile::Radarr, "Radarr"),
             ArrKind::Sonarr => (ArrProfile::Sonarr, "Sonarr"),
             ArrKind::Lidarr => (ArrProfile::Lidarr, "Lidarr"),
-            ArrKind::Readarr => (ArrProfile::Readarr, "Readarr"),
             ArrKind::Whisparr => (ArrProfile::Whisparr, "Whisparr"),
         };
         let base = a

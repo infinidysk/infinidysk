@@ -27,12 +27,12 @@ import {
 type Arr = Schemas["ArrInstance"];
 type ArrStatus = Schemas["ArrInstanceStatus"];
 
-const profiles: Schemas["ArrProfile"][] = ["sonarr", "radarr", "lidarr", "readarr", "whisparr", "sportarr"];
+const profiles: Schemas["ArrProfile"][] = ["sonarr", "radarr", "lidarr", "chaptarr", "whisparr", "sportarr"];
 const ports: Record<Schemas["ArrProfile"], number> = {
   sonarr: 8989,
   radarr: 7878,
   lidarr: 8686,
-  readarr: 8787,
+  chaptarr: 8789,
   whisparr: 6969,
   sportarr: 1867,
 };
@@ -366,9 +366,9 @@ function Discovered({ status }: { status: ArrStatus }) {
         <ul className="divide-y rounded-md border">
           {status.clients.map((c) => (
             <li key={c.name} className="flex items-center justify-between gap-2 px-3 py-2">
-              <span className="min-w-0 truncate">
+              <span className="min-w-0 break-words">
                 {c.name}
-                <span className="text-muted-foreground ml-2 font-mono">{c.category ?? "no category"}</span>
+                <span className="text-muted-foreground ml-2 font-mono break-all">{c.categories.join(", ") || "no category"}</span>
               </span>
               <span className="flex shrink-0 items-center gap-1.5">
                 <Badge variant={bindings[c.binding].variant}>{bindings[c.binding].label}</Badge>

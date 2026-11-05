@@ -659,8 +659,8 @@ async fn carried_over_file_without_a_download_is_replaced_by_search() {
     );
 }
 
-/// Answers like Lidarr (`/api/v1`) or Whisparr v3 (`/api/v3`) for one file imported
-/// from `job/job.mkv`, and logs every call with its body.
+/// Answers like Lidarr or Chaptarr (`/api/v1`) or Whisparr v3 (`/api/v3`) for one file
+/// imported from `job/job.mkv`, and logs every call with its body.
 async fn other_arr(State(log): State<Log>, req: Request) -> Json<Value> {
     let (parts, body) = req.into_parts();
     let body = axum::body::to_bytes(body, 1 << 16).await.unwrap();
@@ -673,12 +673,12 @@ async fn other_arr(State(log): State<Log>, req: Request) -> Json<Value> {
     let dropped = "/data/completed/tv/job/job.mkv";
     let path = parts.uri.path();
     let (root, path) = path.split_at(7);
-    let lidarr = root == "/api/v1";
+    let v1 = root == "/api/v1";
     Json(match path {
         "/system/status" => json!({ "appName": "Whisparr", "version": "3.0.0.1" }),
-        "/history" if query.contains("eventType=3") && lidarr => json!({ "records": [{
-            "id": 22, "trackId": 31, "albumId": 9,
-            "data": { "droppedPath": dropped, "importedPath": "/music/A/01.mkv" },
+        "/history" if query.contains("eventType=3") && v1 => json!({ "records": [{
+            "id": 22, "trackId": 31, "albumId": 9, "bookId": 5,
+            "data": { "droppedPath": dropped, "importedPath": "/music/A/01.mp4" },
         }]}),
         "/history" if query.contains("eventType=3") => json!({ "records": [{
             "id": 22, "movieId": 3,
@@ -686,7 +686,12 @@ async fn other_arr(State(log): State<Log>, req: Request) -> Json<Value> {
         }]}),
         "/history" => json!({ "records": [{ "id": 12, "data": {} }] }),
         "/track/31" => json!({ "trackFileId": 41 }),
-        "/trackfile/41" => json!({ "id": 41, "albumId": 9, "path": "/music/A/01.mkv" }),
+        "/trackfile/41" => json!({ "id": 41, "albumId": 9, "path": "/music/A/01.mp4" }),
+        // An ebook of the same book does not stand in for the broken file.
+        "/bookfile" => json!([
+            { "id": 52, "bookId": 5, "path": "/music/A/a.epub", "dateAdded": "2030-01-01T00:00:00Z" },
+            { "id": 51, "bookId": 5, "path": "/music/A/01.mp4" },
+        ]),
         "/movie/3" => json!({ "movieFile": { "id": 7, "path": "/movies/A/a.mkv" } }),
         "/queue/details" => json!([]),
         _ => json!({}),
@@ -740,6 +745,23 @@ async fn a_broken_track_gets_its_album_searched_through_lidarr() {
             "POST /api/v1/history/failed/12 {}".to_owned(),
             "DELETE /api/v1/trackfile/41".to_owned(),
             r#"POST /api/v1/command {"albumIds":[9],"name":"AlbumSearch"}"#.to_owned(),
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_broken_book_file_gets_its_book_searched_through_chaptarr() {
+    let (calls, job) = repair_through(Profile::Chaptarr).await;
+    assert_eq!(
+        calls,
+        [
+            format!("GET /api/v1/history?downloadId={job}&eventType=3&pageSize=1000"),
+            "GET /api/v1/bookfile?bookId=5".to_owned(),
+            "GET /api/v1/queue/details?bookIds=5".to_owned(),
+            format!("GET /api/v1/history?downloadId={job}&eventType=1&pageSize=1"),
+            "POST /api/v1/history/failed/12 {}".to_owned(),
+            "DELETE /api/v1/bookfile/51".to_owned(),
+            r#"POST /api/v1/command {"bookIds":[5],"name":"BookSearch"}"#.to_owned(),
         ]
     );
 }

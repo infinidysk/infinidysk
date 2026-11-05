@@ -36,7 +36,7 @@ pub enum Profile {
     Sonarr,
     Radarr,
     Lidarr,
-    Readarr,
+    Chaptarr,
     Whisparr,
     Sportarr,
 }
@@ -45,7 +45,7 @@ impl Profile {
     /// Root of the endpoints we call; Sportarr's are its native ones.
     const fn root(self) -> &'static str {
         match self {
-            Self::Lidarr | Self::Readarr => "api/v1",
+            Self::Lidarr | Self::Chaptarr => "api/v1",
             Self::Sportarr => "api",
             Self::Sonarr | Self::Radarr | Self::Whisparr => "api/v3",
         }
@@ -57,7 +57,7 @@ impl Profile {
             Self::Sonarr => "Sonarr",
             Self::Radarr => "Radarr",
             Self::Lidarr => "Lidarr",
-            Self::Readarr => "Readarr",
+            Self::Chaptarr => "Chaptarr",
             Self::Whisparr => "Whisparr",
             Self::Sportarr => "Sportarr",
         }
@@ -68,19 +68,19 @@ impl Profile {
     pub const fn media(self) -> &'static [Kind] {
         match self {
             Self::Lidarr => &[Kind::Audio],
-            Self::Readarr => &[Kind::Book, Kind::Audio],
+            Self::Chaptarr => &[Kind::Book, Kind::Audio],
             Self::Sonarr | Self::Radarr | Self::Whisparr | Self::Sportarr => &[Kind::Video],
         }
     }
 
     /// Health repair can ask it for a replacement.
-    // ponytail: Readarr (bookfile + BookSearch, unmaintained upstream) and Sportarr (own
-    // API, no download ids in history) have no repair; add a `repair::Shape` for each.
+    // ponytail: Sportarr (own API, no download ids in history) has no repair; add a
+    // `repair::Shape` for it.
     #[must_use]
     pub const fn repairs(self) -> bool {
         matches!(
             self,
-            Self::Sonarr | Self::Radarr | Self::Lidarr | Self::Whisparr
+            Self::Sonarr | Self::Radarr | Self::Lidarr | Self::Chaptarr | Self::Whisparr
         )
     }
 }
@@ -135,7 +135,8 @@ pub struct SabClient {
     pub id: i64,
     pub name: String,
     pub enabled: bool,
-    pub category: Option<String>,
+    /// The categories it downloads into, each with the media the Arr imports from it.
+    pub categories: Vec<(String, &'static [Kind])>,
     pub host: String,
     pub port: u16,
     pub use_ssl: bool,
@@ -191,13 +192,14 @@ pub async fn sab_clients(http: &reqwest::Client, arr: &Arr) -> Result<Vec<SabCli
     let clients: Vec<Value> = fetch(call(http, arr, Method::GET, "downloadclient")).await?;
     Ok(clients
         .iter()
-        .filter_map(|c| sab_client(c, arr.profile == Profile::Sportarr))
+        .filter_map(|c| sab_client(c, arr.profile))
         .collect())
 }
 
 /// Reads one download client: Servarr resources keep settings in `fields`, Sportarr's
 /// native ones at the top level.
-fn sab_client(client: &Value, native: bool) -> Option<SabClient> {
+fn sab_client(client: &Value, profile: Profile) -> Option<SabClient> {
+    let native = profile == Profile::Sportarr;
     let sab = if native {
         client["type"].as_i64() == Some(5)
             || client["type"]
@@ -222,11 +224,35 @@ fn sab_client(client: &Value, native: bool) -> Option<SabClient> {
         }
     };
     let text = |name: &str| get(name).as_str().unwrap_or_default().to_owned();
-    let category = ["category", "tvCategory", "movieCategory", "musicCategory"]
-        .into_iter()
-        .find_map(|k| get(k).as_str())
-        .filter(|c| !c.is_empty())
-        .map(str::to_owned);
+    let category = |keys: &[&str]| {
+        keys.iter()
+            .find_map(|k| get(k).as_str())
+            .filter(|c| !c.is_empty())
+            .map(str::to_owned)
+    };
+    let mut categories: Vec<(String, &'static [Kind])> = Vec::new();
+    if profile == Profile::Chaptarr {
+        // Each falls back to the hidden `musicCategory`; one category may serve both.
+        for (key, media) in [
+            ("audiobookCategory", &[Kind::Audio][..]),
+            ("ebookCategory", &[Kind::Book][..]),
+        ] {
+            let Some(name) = category(&[key, "musicCategory"]) else {
+                continue;
+            };
+            match categories
+                .iter_mut()
+                .find(|(c, _)| c.eq_ignore_ascii_case(&name))
+            {
+                Some(both) => both.1 = profile.media(),
+                None => categories.push((name, media)),
+            }
+        }
+    } else if let Some(name) =
+        category(&["category", "tvCategory", "movieCategory", "musicCategory"])
+    {
+        categories.push((name, profile.media()));
+    }
     let api_key = text("apiKey");
     Some(SabClient {
         id: client["id"].as_i64()?,
@@ -234,7 +260,7 @@ fn sab_client(client: &Value, native: bool) -> Option<SabClient> {
         enabled: client[if native { "enabled" } else { "enable" }]
             .as_bool()
             .unwrap_or(false),
-        category,
+        categories,
         host: text("host"),
         port: get("port")
             .as_u64()
@@ -377,14 +403,14 @@ mod tests {
             "id": 4, "name": "sab", "type": 5, "enabled": true, "host": "h", "port": 3000,
             "useSsl": true, "urlBase": "/x", "apiKey": "key", "category": "sports",
         });
-        let client = sab_client(&sab, true).unwrap();
+        let client = sab_client(&sab, Profile::Sportarr).unwrap();
         assert_eq!(
             client,
             SabClient {
                 id: 4,
                 name: "sab".to_owned(),
                 enabled: true,
-                category: Some("sports".to_owned()),
+                categories: vec![("sports".to_owned(), &[Kind::Video][..])],
                 host: "h".to_owned(),
                 port: 3000,
                 use_ssl: true,
@@ -392,6 +418,33 @@ mod tests {
                 api_key: Some("key".to_owned()),
             }
         );
-        assert!(sab_client(&json!({ "id": 5, "type": 1 }), true).is_none());
+        assert!(sab_client(&json!({ "id": 5, "type": 1 }), Profile::Sportarr).is_none());
+    }
+
+    #[test]
+    fn chaptarr_clients_split_audiobook_and_ebook_categories() {
+        let sab = |audio: &str, ebook: &str| {
+            let client = json!({
+                "id": 1, "name": "sab", "implementation": "Sabnzbd", "enable": true,
+                "fields": [
+                    { "name": "audiobookCategory", "value": audio },
+                    { "name": "ebookCategory", "value": ebook },
+                    { "name": "musicCategory", "value": "books" },
+                ],
+            });
+            sab_client(&client, Profile::Chaptarr).unwrap().categories
+        };
+        assert_eq!(
+            sab("audiobooks", "ebooks"),
+            [
+                ("audiobooks".to_owned(), &[Kind::Audio][..]),
+                ("ebooks".to_owned(), &[Kind::Book][..]),
+            ]
+        );
+        assert_eq!(
+            sab("books", "Books"),
+            [("books".to_owned(), &[Kind::Book, Kind::Audio][..])]
+        );
+        assert_eq!(sab("", ""), []);
     }
 }

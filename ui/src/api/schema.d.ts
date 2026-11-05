@@ -1573,7 +1573,7 @@ export interface components {
         ArrBinding: "verified" | "unverified" | "other";
         ArrClientStatus: {
             binding: components["schemas"]["ArrBinding"];
-            category?: string | null;
+            categories: string[];
             name: string;
         };
         ArrCount: {
@@ -1632,7 +1632,7 @@ export interface components {
          * @description Arr-specific behavior hangs off this, so new Arr types are additive.
          * @enum {string}
          */
-        ArrProfile: "sonarr" | "radarr" | "lidarr" | "readarr" | "whisparr" | "sportarr";
+        ArrProfile: "sonarr" | "radarr" | "lidarr" | "chaptarr" | "whisparr" | "sportarr";
         /** @description A download the Arr will not import for a reason only the user can settle. */
         ArrQueueIssue: {
             messages: string[];

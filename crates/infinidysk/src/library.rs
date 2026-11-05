@@ -1103,7 +1103,12 @@ impl Library {
                     }
                     Pointer::Link(_) => Action::Keep,
                 },
-                Some(item) => plan(&f, item, target, &mut stems),
+                Some(item) => {
+                    let action = plan(&f, item, target, &mut stems);
+                    self.hold(&settings.arr_instances, target, &f, action)
+                        .await
+                        .map_err(Stop::Wait)?
+                }
                 None => Action::Dangling,
             };
             let outcome = match (action, item) {
@@ -1129,6 +1134,39 @@ impl Library {
             self.progress(|p| p.done += 1);
         }
         Ok(())
+    }
+
+    /// Keeps a symlink Lidarr or Chaptarr owns, enabled or not: they import symlinks only.
+    async fn hold(
+        &self,
+        arrs: &[config::ArrInstance],
+        target: &Target,
+        f: &Found,
+        action: Action,
+    ) -> Result<Action, String> {
+        if !matches!(action, Action::Move(_, Pointer::Strm(_))) {
+            return Ok(action);
+        }
+        let owners = self
+            .parts
+            .db
+            .item_owners(f.item)
+            .await
+            .map_err(|e| e.to_string())?;
+        let stays = owners.iter().any(|(instance, _)| {
+            arrs.iter().any(|a| {
+                a.id == *instance
+                    && matches!(
+                        a.profile,
+                        config::ArrProfile::Lidarr | config::ArrProfile::Chaptarr
+                    )
+            })
+        });
+        Ok(if stays {
+            kept_link(f, target, "its Arr keeps symlinks")
+        } else {
+            action
+        })
     }
 
     async fn rewrite(&self, settings: &Settings, f: &Found, to: Pointer) -> Result<(), Fault> {
@@ -1720,7 +1758,12 @@ impl Library {
                 Ok(found) => {
                     for f in &found {
                         let action = match self.parts.db.item(f.item).await {
-                            Ok(Some(item)) => plan(f, &item, &target, &mut stems),
+                            Ok(Some(item)) => {
+                                let action = plan(f, &item, &target, &mut stems);
+                                self.hold(&next.arr_instances, &target, f, action)
+                                    .await
+                                    .unwrap_or(Action::Skip("database unavailable"))
+                            }
                             Ok(None) => Action::Dangling,
                             Err(_) => Action::Skip("database unavailable"),
                         };
@@ -2000,13 +2043,13 @@ fn plan(f: &Found, item: &Item, target: &Target, stems: &mut Stems) -> Action {
         (ImportStrategy::Strm, Pointer::Link(_)) => {
             if handoff::is_subtitle(&item.name) {
                 return if item.size.unwrap_or_default() > MAX_SUBTITLE_BYTES {
-                    Action::Skip("subtitle larger than 10 MB stays a symlink")
+                    kept_link(f, target, "subtitle larger than 10 MB stays a symlink")
                 } else {
                     Action::Copy
                 };
             }
             if !video || !media::is_video(&name) {
-                return Action::Skip("not a video; stays a symlink");
+                return kept_link(f, target, "not a video; stays a symlink");
             }
             let stem = stem_of(&name);
             let strm = if stems.shared(dir, stem) {
@@ -2029,6 +2072,18 @@ fn plan(f: &Found, item: &Item, target: &Target, stems: &mut Stems) -> Action {
         }
     } else {
         Action::Move(path, want)
+    }
+}
+
+/// A symlink that stays one under STRM, pointed at the current mount once it is up.
+fn kept_link(f: &Found, target: &Target, reason: &'static str) -> Action {
+    let want = target.link(f.item);
+    if f.pointer == want {
+        Action::Skip(reason)
+    } else if !Path::new(&target.mount_dir).join(".ids").is_dir() {
+        Action::Skip("the mount is not up; the symlink keeps its target")
+    } else {
+        Action::Rewrite(want)
     }
 }
 
@@ -2330,11 +2385,11 @@ fn warnings(before: &Settings, after: &Settings) -> Vec<String> {
         && after.arr_instances.iter().any(|a| {
             matches!(
                 a.profile,
-                config::ArrProfile::Lidarr | config::ArrProfile::Readarr
+                config::ArrProfile::Lidarr | config::ArrProfile::Chaptarr
             )
         })
     {
-        w.push("Lidarr and Readarr libraries keep symlinks, which need the mount.".to_owned());
+        w.push("Lidarr and Chaptarr libraries keep symlinks, which need the mount.".to_owned());
     }
     if before.network.public_url != after.network.public_url
         && after.imports.strategy == ImportStrategy::Strm
@@ -2660,5 +2715,33 @@ mod tests {
             panic!("{action:?}")
         };
         assert_eq!(path, PathBuf::from("/lib/Show/Episode"));
+    }
+
+    #[test]
+    fn a_kept_symlink_follows_the_mount_only_once_it_is_up() {
+        let mount = std::env::temp_dir().join(format!("infinidysk-kept-{}", ItemId::new()));
+        let id = ItemId::new();
+        let found = Found {
+            path: PathBuf::from("/lib/Album/01.mp3"),
+            item: id,
+            pointer: Pointer::Link(format!("/old/{}", id.ids_path())),
+            legacy: false,
+        };
+        let target = Target {
+            strategy: ImportStrategy::Strm,
+            public_url: "http://x".into(),
+            key: "k".into(),
+            mount_dir: mount.display().to_string(),
+        };
+        assert!(matches!(
+            kept_link(&found, &target, "kept"),
+            Action::Skip(r) if r != "kept"
+        ));
+        fs::create_dir_all(mount.join(".ids")).unwrap();
+        assert!(matches!(
+            kept_link(&found, &target, "kept"),
+            Action::Rewrite(p) if p == target.link(id)
+        ));
+        fs::remove_dir_all(mount).unwrap();
     }
 }

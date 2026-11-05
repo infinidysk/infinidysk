@@ -6,8 +6,10 @@ const VIDEO: &[&str] = &[
 ];
 const AUDIO: &[&str] = &[
     "flac", "mp3", "m4a", "m4b", "aac", "ogg", "opus", "wav", "wma", "alac", "ape", "dsf", "dff",
-    "mka",
+    "mka", "mp2", "m4p", "mp4a", "oga", "vorbis", "wavpack",
 ];
+/// Video containers that also hold audio-only media, such as `.mp4` audiobooks.
+const AUDIO_TOO: &[&str] = &["mp4"];
 /// Ebook formats the book Arr imports.
 const BOOK: &[&str] = &["epub", "kepub", "mobi", "azw", "azw3", "pdf"];
 const ARCHIVE: &[&str] = &["rar", "7z", "zip"];
@@ -43,6 +45,12 @@ pub fn kind(name: &str) -> Option<Kind> {
     ]
     .into_iter()
     .find_map(|(list, kind)| listed(name, list).then_some(kind))
+}
+
+/// Whether a file of this name can be media of kind `wanted`.
+#[must_use]
+pub fn fits(name: &str, wanted: Kind) -> bool {
+    kind(name) == Some(wanted) || (wanted == Kind::Audio && listed(name, AUDIO_TOO))
 }
 
 /// Media worth health checks: video, audio, ebooks, archives and their volumes (`.r00`,
@@ -188,6 +196,16 @@ mod tests {
         for name in ["a.srt", "b.nfo", "c.jpg", "readme", "x.r0a"] {
             assert!(!is_checkable(name), "{name}");
         }
+    }
+
+    #[test]
+    fn audio_categories_take_mp4_audiobooks() {
+        for name in ["a.mp4", "b.m4b", "c.oga", "d.MP2", "e.wavpack"] {
+            assert!(fits(name, Kind::Audio), "{name}");
+        }
+        assert!(fits("a.mp4", Kind::Video));
+        assert!(!fits("a.mkv", Kind::Audio));
+        assert!(!fits("a.mp3", Kind::Book));
     }
 
     #[test]

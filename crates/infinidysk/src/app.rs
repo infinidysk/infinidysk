@@ -678,7 +678,7 @@ pub(crate) fn to_arr(a: &config::ArrInstance) -> Arr {
             config::ArrProfile::Sonarr => Profile::Sonarr,
             config::ArrProfile::Radarr => Profile::Radarr,
             config::ArrProfile::Lidarr => Profile::Lidarr,
-            config::ArrProfile::Readarr => Profile::Readarr,
+            config::ArrProfile::Chaptarr => Profile::Chaptarr,
             config::ArrProfile::Whisparr => Profile::Whisparr,
             config::ArrProfile::Sportarr => Profile::Sportarr,
         },
