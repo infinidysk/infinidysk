@@ -9,5 +9,9 @@ hostname = "news.giganews.com"
 region = "US"
 
 [[servers]]
+hostname = "news-central.giganews.com"
+region = "US"
+
+[[servers]]
 hostname = "news-europe.giganews.com"
 region = "NL"
