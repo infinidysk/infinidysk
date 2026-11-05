@@ -79,6 +79,7 @@
     }
     state = "importing";
     const stages = [
+      [{ stage: "copying", done: 1200, total: 4800, skipped: 0, eta_seconds: 30 }, ["Copying 1.x PostgreSQL data", "Rows copied", "1,200", "Rows to copy", "4,800"], "25.0%"],
       [{ stage: "checking", done: 0, total: null, skipped: 0, eta_seconds: null }, ["Checking 1.x files", "Step 1 of 4", "Counting…"], ""],
       [{ stage: "checking", done: 250000, total: 781067, skipped: 0, eta_seconds: 120 }, ["Files checked", "250,000", "781,067"], "32.0%"],
       [{ stage: "checking", done: 10, total: 10, skipped: 0, eta_seconds: null }, ["Checking 1.x files", "Finishing…"], "100.0%"],
@@ -105,7 +106,7 @@
         const text = document.getElementById("root").textContent;
         for (const expected of texts) check(text.includes(expected), `${fixture.stage}: missing "${expected}" in "${text}"`);
         check(fixture.stage === "files" || !text.includes("Skipped"), `${fixture.stage}: showed skipped files`);
-        check(fixture.stage !== "finishing" || !text.includes("Step"), "finishing: showed a step number");
+        check(!["finishing", "copying"].includes(fixture.stage) || !text.includes("Step"), `${fixture.stage}: showed a step number`);
         const bar = document.querySelector('[role="progressbar"]');
         const value = bar.getAttribute("aria-valuenow");
         check(percent === "" ? value === null : value !== null && Math.abs(Number(value) - parseFloat(percent)) < 0.05, `${fixture.stage}: wrong progressbar value ${value}`);

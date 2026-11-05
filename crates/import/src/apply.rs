@@ -75,6 +75,8 @@ pub struct Imported {
 /// What an import is doing, in order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Stage {
+    /// Copying the tables the import reads from a 1.x PostgreSQL database.
+    Copying,
     /// Reading the C# database and every file's metadata blob.
     #[default]
     Checking,

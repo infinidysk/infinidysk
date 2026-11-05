@@ -77,12 +77,14 @@ export function Gate({ children }: { children: ReactNode }) {
 
 type CountedStage = Exclude<Schemas["UpgradeStage"], "finishing">;
 const upgradeStages: Record<CountedStage, { phase: string; done: string; total: string }> = {
+  copying: { phase: "Copying 1.x PostgreSQL data", done: "Rows copied", total: "Rows to copy" },
   checking: { phase: "Checking 1.x files", done: "Files checked", total: "Files to check" },
   directories: { phase: "Writing folders", done: "Folders written", total: "Total folders" },
   nzbs: { phase: "Storing NZBs", done: "NZBs processed", total: "Total NZBs" },
   files: { phase: "Importing files", done: "Files written", total: "Total files" },
 };
-const upgradeSteps = Object.keys(upgradeStages) as CountedStage[];
+// SQLite installs skip the copy, so it is not a numbered step.
+const upgradeSteps: CountedStage[] = ["checking", "directories", "nzbs", "files"];
 
 function UpgradeProgress({ status, reconnecting }: { status: Schemas["UpgradeStatus"]; reconnecting: boolean }) {
   useTitle("Upgrading");

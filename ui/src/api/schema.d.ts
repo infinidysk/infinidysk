@@ -4166,7 +4166,7 @@ export interface components {
             total?: number | null;
         };
         /** @enum {string} */
-        UpgradeStage: "checking" | "directories" | "nzbs" | "files" | "finishing";
+        UpgradeStage: "copying" | "checking" | "directories" | "nzbs" | "files" | "finishing";
         /** @enum {string} */
         UpgradeState: "none" | "importing" | "done" | "failed";
         UpgradeStatus: {

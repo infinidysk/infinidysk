@@ -244,14 +244,14 @@ pub const LIMITS: Limits = Limits {
 
 /// When progress was last reported; the progress callbacks touch it.
 #[derive(Clone)]
-struct Beat(Arc<Mutex<Instant>>);
+pub(crate) struct Beat(Arc<Mutex<Instant>>);
 
 impl Beat {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(Arc::new(Mutex::new(Instant::now())))
     }
 
-    fn touch(&self) {
+    pub(crate) fn touch(&self) {
         *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Instant::now();
     }
 
@@ -264,7 +264,7 @@ impl Beat {
 }
 
 /// Runs `work` until it ends, or until `beat` has not moved for `stall`.
-async fn watchdog<T>(
+pub(crate) async fn watchdog<T>(
     stall: Duration,
     beat: &Beat,
     work: impl Future<Output = anyhow::Result<T>>,
