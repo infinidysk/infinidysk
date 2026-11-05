@@ -512,3 +512,39 @@ impl AsyncSeek for Handle {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+    use super::*;
+
+    /// Reads one byte after a simulated wait of `MIN_STALL`.
+    async fn read_after_wait(handle: &mut Handle) {
+        handle.waiting = Instant::now().checked_sub(MIN_STALL);
+        handle.read_exact(&mut [0; 1]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_wait_after_a_seek_is_not_a_stall() {
+        let sessions = Arc::new(Sessions::default());
+        let origin = Origin {
+            delivery: Delivery::WebDav,
+            client: "test".into(),
+            player: None,
+        };
+        let guard = sessions.start(ItemId::new(), "/f".into(), 8, origin);
+        let mut handle = Handle::new(Reader::Memory(Cursor::new(vec![0; 8])), Some(guard));
+        let session = Arc::clone(handle.session().unwrap());
+        handle.read_exact(&mut [0; 1]).await.unwrap();
+
+        handle.seek(SeekFrom::Start(4)).await.unwrap();
+        read_after_wait(&mut handle).await;
+        assert_eq!(session.stalls().0, 0, "first byte after a seek");
+
+        read_after_wait(&mut handle).await;
+        assert_eq!(session.stalls().0, 1, "bytes clear the seek");
+    }
+}

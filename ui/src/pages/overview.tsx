@@ -763,7 +763,8 @@ const Reads = memo(function Reads({ reads }: { reads: Read[] }) {
                     <InfoTip label="About stalls">
                       A stall is a read that waited 1 s or more for data after the first byte arrived. The wait for the first byte
                       after a seek is not a stall. Shown as the number of stalls and their total wait. 0 is ideal. Several stalls
-                      likely means the player paused to buffer.
+                      likely means the player paused to buffer. Reads from older versions may also count shorter waits
+                      and waits after a seek.
                     </InfoTip>
                   </span>
                 </TableHead>
