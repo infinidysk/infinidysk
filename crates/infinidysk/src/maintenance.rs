@@ -548,7 +548,14 @@ impl Maintenance {
         };
         match (&report.outcome, &report.reason) {
             (RunOutcome::Stopped, Some(reason)) => {
-                warn!(files, bytes, reason, duration_ms, "maintenance job stopped");
+                warn!(
+                    files,
+                    bytes,
+                    dry_run = run.dry_run,
+                    reason,
+                    duration_ms,
+                    "maintenance job stopped"
+                );
             }
             (RunOutcome::Held, _) => warn!(
                 files,
@@ -1527,8 +1534,8 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn a_database_stop_says_what_the_database_reported() {
+    #[tokio::test]
+    async fn a_database_stop_says_what_the_database_reported() {
         let reason = |e: sqlx::Error| match Stop::from(infinidysk_db::Error::from(e)) {
             Stop::Reason(r) => r,
             _ => unreachable!("a database error is a reason"),
@@ -1536,7 +1543,18 @@ mod tests {
         let timeout = reason(sqlx::Error::PoolTimedOut);
         let closed = reason(sqlx::Error::PoolClosed);
         assert!(timeout.contains("pool timed out"), "{timeout}");
-        assert_ne!(timeout, closed);
+        assert!(closed.contains("closed pool"), "{closed}");
+
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("open");
+        let missing = sqlx::query("SELECT * FROM missing")
+            .execute(&pool)
+            .await
+            .expect_err("no such table");
+        let missing = reason(missing);
+        assert!(missing.contains("(code: 1)"), "{missing}");
+        assert!(missing.contains("no such table"), "{missing}");
     }
 
     #[test]
