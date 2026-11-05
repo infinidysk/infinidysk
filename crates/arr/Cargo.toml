@@ -19,5 +19,9 @@ tokio = { workspace = true, features = ["time"] }
 tracing.workspace = true
 uuid.workspace = true
 
+[dev-dependencies]
+axum = { workspace = true, features = ["http1", "json", "tokio"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
+
 [lints]
 workspace = true
