@@ -172,7 +172,7 @@ impl Discovery {
         failed
     }
 
-    async fn reconcile_one(&self, arr: &Arr) -> Result<(), String> {
+    pub(super) async fn reconcile_one(&self, arr: &Arr) -> Result<(), String> {
         let discovery = self.lock().get(&arr.id).and_then(|k| k.error.clone());
         if let Some(error) = discovery {
             return Err(format!("its discovery failed: {error}"));
