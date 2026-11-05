@@ -1292,6 +1292,22 @@ export function Settings() {
                 </SettingsPanel>
                 <SettingsPanel title="Single sign-on">
                   <Field
+                    id="oidc-display-name"
+                    label={label("Display name", "auth.oidc.display_name")}
+                    hint="Shown on the sign-in page as Sign in with this name."
+                    error={invalid("auth.oidc.display_name")}
+                  >
+                    <Input
+                      id="oidc-display-name"
+                      autoComplete="off"
+                      maxLength={40}
+                      placeholder="SSO"
+                      disabled={locked("auth.oidc.display_name")}
+                      value={draft.auth.oidc.display_name}
+                      onChange={(e) => oidc({ display_name: e.target.value })}
+                    />
+                  </Field>
+                  <Field
                     id="oidc-issuer"
                     label={label(
                       "Issuer URL",

@@ -705,6 +705,10 @@ async fn password_sign_in_turns_off_only_while_sso_is_on() {
         (&s["setup_required"], &s["password_login"], &s["sso"]),
         (&json!(false), &json!(false), &json!(true))
     );
+    assert_eq!(s["sso_name"], "SSO");
+    dysk.save(|s: &mut Settings| "Acme".clone_into(&mut s.auth.oidc.display_name))
+        .await;
+    assert_eq!(dysk.status(None, None).await["sso_name"], "Acme");
 
     let sso_off = |s: &mut Settings| s.auth.oidc.issuer.clear();
     dysk.save(sso_off).await;

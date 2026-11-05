@@ -1689,6 +1689,7 @@ export interface components {
              * @default {
              *       "client_id": "",
              *       "client_secret": "",
+             *       "display_name": "",
              *       "issuer": "",
              *       "redirect_uri": "",
              *       "scopes": "openid profile email",
@@ -1718,6 +1719,8 @@ export interface components {
             sso: boolean;
             /** @description The SSO session was started under the saved SSO settings, so it proves they work. */
             sso_current: boolean;
+            /** @description Identity provider name for the SSO button; `SSO` unless `auth.oidc.display_name` is set. */
+            sso_name: string;
             /** @description The signed-in username. */
             user?: string | null;
         };
@@ -2968,6 +2971,11 @@ export interface components {
             /** @default  */
             client_secret: components["schemas"]["Secret"];
             /**
+             * @description Shown on the sign-in page as "Sign in with <name>"; empty shows `SSO`.
+             * @default
+             */
+            display_name: string;
+            /**
              * @description Issuer URL exactly as the provider publishes it; empty turns SSO off.
              * @default
              */
@@ -3262,7 +3270,7 @@ export interface components {
             /**
              * Format: uuid
              * @description Stable across edits, so masked secrets can be matched back.
-             * @default 01a197d7-c8d3-77b0-9bed-a029e2c4747e
+             * @default 01a1ad49-969b-7045-9993-0f813acb78a5
              */
             id: string;
             /**
@@ -3800,6 +3808,7 @@ export interface components {
              *       "oidc": {
              *         "client_id": "",
              *         "client_secret": "",
+             *         "display_name": "",
              *         "issuer": "",
              *         "redirect_uri": "",
              *         "scopes": "openid profile email",

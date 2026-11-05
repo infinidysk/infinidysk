@@ -298,6 +298,7 @@ function Credentials({ setup, status }: { setup: boolean; status?: Schemas["Auth
   }, [params, setParams]);
   const passwordLogin = setup || !!status?.password_login;
   const sso = !setup && !!status?.sso;
+  const ssoName = status?.sso_name || "SSO";
   const [username, setUsername] = useState(setup ? "admin" : "");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -335,7 +336,7 @@ function Credentials({ setup, status }: { setup: boolean; status?: Schemas["Auth
               {setup
                 ? "Create the admin account to finish setting up."
                 : sso && passwordLogin
-                  ? "Use single sign-on or the admin account."
+                  ? `Use ${ssoName} or the admin account.`
                   : sso
                     ? "Use your identity provider."
                     : "Use the admin account created during setup."}
@@ -347,7 +348,7 @@ function Credentials({ setup, status }: { setup: boolean; status?: Schemas["Auth
             <Alert variant="destructive">
               <CircleAlert />
               <AlertDescription>
-                SSO sign-in failed. Try again{passwordLogin ? ", or use your password" : ""}. The server log says why.
+                {ssoName} sign-in failed. Try again{passwordLogin ? ", or use your password" : ""}. The server log says why.
               </AlertDescription>
             </Alert>
           )}
@@ -438,7 +439,7 @@ function Credentials({ setup, status }: { setup: boolean; status?: Schemas["Auth
                 </div>
               )}
               <Button asChild className="w-full" variant={passwordLogin ? "outline" : "default"}>
-                <a href="/auth/oidc/login">Sign in with SSO</a>
+                <a href="/auth/oidc/login">Sign in with {ssoName}</a>
               </Button>
             </>
           )}

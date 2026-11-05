@@ -334,6 +334,8 @@ pub(crate) struct AuthStatus {
     password_login: bool,
     /// The sign-in page offers Sign in with SSO.
     sso: bool,
+    /// Identity provider name for the SSO button; `SSO` unless `auth.oidc.display_name` is set.
+    sso_name: String,
     /// The signed-in username.
     user: Option<String>,
     /// How `user` signed in.
@@ -363,6 +365,7 @@ pub(crate) async fn status(
     let config = auth.config.read().await;
     let a = &config.settings().auth;
     let (sso, password) = (a.oidc.enabled(), a.password_login());
+    let sso_name = a.oidc.display_name().to_owned();
     drop(config);
     let session = auth.session(&headers).await;
     Json(AuthStatus {
@@ -371,6 +374,7 @@ pub(crate) async fn status(
         account,
         password_login: account && password,
         sso,
+        sso_name,
         method: session.as_ref().map(|s| s.method),
         sso_current: session
             .as_ref()
