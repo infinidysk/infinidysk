@@ -4,7 +4,7 @@
 use reqwest::Method;
 use serde_json::{Value, json};
 
-use crate::{Arr, Error, Profile, call, fetch, send};
+use crate::{Api, Arr, Error, Profile, Session, fetch, send};
 
 /// A library file an Arr reports.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,7 +131,12 @@ pub struct Hook<'a> {
 /// Creates or updates the webhook named `hook.name`; saved even when the Arr cannot reach
 /// it yet.
 pub async fn register(http: &reqwest::Client, arr: &Arr, hook: &Hook<'_>) -> Result<(), Error> {
-    let existing: Vec<Value> = fetch(call(http, arr, Method::GET, "notification")).await?;
+    let s = Session::open(http, arr).await?;
+    let list = match s.api {
+        Api::Classic => "notification",
+        Api::V5 => "connection",
+    };
+    let existing: Vec<Value> = fetch(s.call(Method::GET, list)).await?;
     let id = existing
         .iter()
         // Arrs require names unique ignoring case.
@@ -172,13 +177,14 @@ pub async fn register(http: &reqwest::Client, arr: &Arr, hook: &Hook<'_>) -> Res
         })
     };
     let request = match id {
-        Some(id) => call(http, arr, Method::PUT, &format!("notification/{id}")),
-        None => call(http, arr, Method::POST, "notification"),
+        Some(id) => s.call(Method::PUT, &format!("{list}/{id}")),
+        None => s.call(Method::POST, list),
     };
-    let request = if arr.profile == Profile::Sportarr {
-        request
-    } else {
-        request.query(&[("forceSave", "true")])
+    // Skips the test and warnings, but not errors.
+    let request = match (arr.profile, s.api) {
+        (Profile::Sportarr, _) => request,
+        (_, Api::Classic) => request.query(&[("forceSave", "true")]),
+        (_, Api::V5) => request.query(&[("skipTesting", "true"), ("skipValidation", "warnings")]),
     };
     send(request.json(&body)).await
 }

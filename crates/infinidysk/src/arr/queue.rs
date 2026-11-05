@@ -112,7 +112,8 @@ impl Discovery {
                     continue;
                 }
             }
-            // A season pack has one entry per episode, each repeating the same messages.
+            // On Sonarr's v3 API a season pack has one entry per episode, each repeating
+            // the same messages.
             let mut messages: Vec<String> = Vec::new();
             for m in entries.iter().flat_map(|e| &e.messages) {
                 if !messages.contains(m) {
@@ -151,14 +152,14 @@ impl Discovery {
 
     async fn act(&self, db: &Db, arr: &Arr, entries: &[Entry], action: Action) {
         let (blocklist, search) = match action {
-            Action::Remove => (false, false),
-            Action::Replace => (true, self.reserve(db, arr, entries).await),
+            Action::Remove => (None, false),
+            Action::Replace(reason) => (Some(reason), self.reserve(db, arr, entries).await),
         };
         let first = &entries[0];
         match arr_queue::remove(&self.http, arr, first.id, blocklist, search).await {
             Ok(()) => tracing::info!(
-                arr = %arr.name, download = %first.download_id, blocklist, search,
-                "removed a stuck download from the Arr queue"
+                arr = %arr.name, download = %first.download_id, blocklist = blocklist.is_some(),
+                search, "removed a stuck download from the Arr queue"
             ),
             Err(error) => tracing::warn!(
                 arr = %arr.name, download = %first.download_id, reason = %error,
@@ -170,14 +171,19 @@ impl Discovery {
     /// Takes the shared search budget for the download's media; `false` (blocklist only)
     /// when it is spent, unknown, or the Arr cannot search.
     async fn reserve(&self, db: &Db, arr: &Arr, entries: &[Entry]) -> bool {
-        if arr.profile == Profile::Sportarr {
+        if arr.profile == Profile::Sportarr || entries.iter().any(|e| e.media.is_empty()) {
             return false;
         }
-        let media: Vec<(&str, i64)> = entries.iter().filter_map(|e| e.media).collect();
+        let mut media: Vec<(&str, i64)> = entries
+            .iter()
+            .flat_map(|e| e.media.iter().copied())
+            .collect();
+        media.sort_unstable();
+        media.dedup();
         let Some(&(kind, _)) = media.first() else {
             return false;
         };
-        if media.len() != entries.len() || media.iter().any(|(k, _)| *k != kind) {
+        if media.iter().any(|(k, _)| *k != kind) {
             return false;
         }
         let ids: Vec<i64> = media.iter().map(|(_, id)| *id).collect();
