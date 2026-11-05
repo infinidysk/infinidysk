@@ -439,7 +439,9 @@ function Credentials({ setup, status }: { setup: boolean; status?: Schemas["Auth
                 </div>
               )}
               <Button asChild className="w-full" variant={passwordLogin ? "outline" : "default"}>
-                <a href="/auth/oidc/login">Sign in with {ssoName}</a>
+                <a href="/auth/oidc/login" title={`Sign in with ${ssoName}`}>
+                  <span className="min-w-0 truncate">Sign in with {ssoName}</span>
+                </a>
               </Button>
             </>
           )}

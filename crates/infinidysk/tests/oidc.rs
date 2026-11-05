@@ -450,6 +450,11 @@ async fn sso_sign_in_starts_a_session() {
         .await;
     assert_eq!(dysk.status(Some(&session), None).await["sso_current"], true);
 
+    // The display name is only a label, so renaming keeps the proof.
+    dysk.save(|s| s.auth.oidc.display_name = "Acme".to_owned())
+        .await;
+    assert_eq!(dysk.status(Some(&session), None).await["sso_current"], true);
+
     dysk.save(|s| s.auth.oidc.scopes = "openid profile".to_owned())
         .await;
     let s = dysk.status(Some(&session), None).await;
