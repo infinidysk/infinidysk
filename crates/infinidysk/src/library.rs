@@ -1081,6 +1081,7 @@ impl Library {
         cancel: &CancellationToken,
     ) -> Result<(), Stop> {
         let mut stems = Stems::default();
+        let arrs = crate::app::arr_instances(&settings.arr_instances);
         for f in found {
             if cancel.is_cancelled() {
                 return Err(Stop::Cancelled);
@@ -1103,7 +1104,10 @@ impl Library {
                     }
                     Pointer::Link(_) => Action::Keep,
                 },
-                Some(item) => plan(&f, item, target, &mut stems),
+                Some(item) => {
+                    let action = plan(&f, item, target, &mut stems);
+                    self.hold(&arrs, &f, action).await.map_err(Stop::Wait)?
+                }
                 None => Action::Dangling,
             };
             let outcome = match (action, item) {
@@ -1129,6 +1133,29 @@ impl Library {
             self.progress(|p| p.done += 1);
         }
         Ok(())
+    }
+
+    /// Keeps a symlink an Arr that cannot follow a conversion owns, so the Arr still
+    /// finds its file.
+    async fn hold(&self, arrs: &[Arr], f: &Found, action: Action) -> Result<Action, String> {
+        if !matches!(action, Action::Move(_, Pointer::Strm(_))) {
+            return Ok(action);
+        }
+        let owners = self
+            .parts
+            .db
+            .item_owners(f.item)
+            .await
+            .map_err(|e| e.to_string())?;
+        let stays = owners.iter().any(|(instance, _)| {
+            arrs.iter()
+                .any(|a| a.id == *instance && !arr_library::converts(a))
+        });
+        Ok(if stays {
+            Action::Skip("its Arr keeps symlinks")
+        } else {
+            action
+        })
     }
 
     async fn rewrite(&self, settings: &Settings, f: &Found, to: Pointer) -> Result<(), Fault> {
@@ -1720,7 +1747,12 @@ impl Library {
                 Ok(found) => {
                     for f in &found {
                         let action = match self.parts.db.item(f.item).await {
-                            Ok(Some(item)) => plan(f, &item, &target, &mut stems),
+                            Ok(Some(item)) => {
+                                let action = plan(f, &item, &target, &mut stems);
+                                self.hold(&arrs, f, action)
+                                    .await
+                                    .unwrap_or(Action::Skip("database unavailable"))
+                            }
                             Ok(None) => Action::Dangling,
                             Err(_) => Action::Skip("database unavailable"),
                         };

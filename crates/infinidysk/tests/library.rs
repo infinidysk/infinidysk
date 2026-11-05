@@ -165,9 +165,13 @@ async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
     let (_, view) = admin(addr, "GET", "/api/v1/settings", "").await;
     let mut settings = view["settings"].clone();
     let sonarr_id = ItemId::new().0;
+    let chaptarr_id = ItemId::new().0;
     settings["arr_instances"] = json!([{
         "id": sonarr_id, "name": "series", "profile": "sonarr",
         "url": format!("http://{sonarr}"), "api_key": "k",
+    }, {
+        "id": chaptarr_id, "name": "books", "profile": "chaptarr",
+        "url": "http://127.0.0.1:9", "api_key": "k",
     }]);
     settings["imports"]["library_dirs"] = json!([{ "path": lib, "arr_path": "/tv" }]);
     settings["imports"]["strm_dir"] = json!(strm);
@@ -178,13 +182,13 @@ async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
     assert_eq!(code, "HTTP/1.1 200 OK");
 
     // Items: an episode Sonarr owns, a video nobody owns, one whose STRM name is taken,
-    // and one a crash left half converted.
+    // one a crash left half converted, and an audiobook Chaptarr owns.
     let db = Db::connect(&format!("sqlite:{}", db_path.display()))
         .await
         .unwrap();
     let tv = db.item_by_path("/content/tv").await.unwrap().unwrap();
     let dir = Item::child(&tv, "job", ItemKind::Directory).unwrap();
-    let [e, f, g, h, k] = ["e.mkv", "f.mkv", "g.mkv", "h.mkv", "k.mkv"]
+    let [e, f, g, h, k, b] = ["e.mkv", "f.mkv", "g.mkv", "h.mkv", "k.mkv", "b.mp4"]
         .map(|name| Item::child(&dir, name, ItemKind::NzbFile).unwrap());
     let job = JobId::new();
     let history = HistoryEntry {
@@ -201,10 +205,18 @@ async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
         nzb_blob: None,
         storage: None,
     };
-    let items = [dir, e.clone(), f.clone(), g.clone(), h.clone(), k.clone()];
+    let items = [
+        dir,
+        e.clone(),
+        f.clone(),
+        g.clone(),
+        h.clone(),
+        k.clone(),
+        b.clone(),
+    ];
     db.add_history(&history, &items, &[]).await.unwrap();
     let pointer = |item: &Item| format!("{}/{}", mount.display(), item.id.ids_path());
-    for item in [&e, &f, &g, &h] {
+    for item in [&e, &f, &g, &h, &b] {
         link(&season.join(&item.name), &pointer(item));
     }
     fs::write(lib.join("x.mkv"), "a real file").unwrap();
@@ -215,6 +227,15 @@ async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
         e.id,
         Some(9),
         "/tv/Show/Season 1/e.mkv",
+        Some(job),
+    )
+    .await
+    .unwrap();
+    db.record_owner(
+        chaptarr_id,
+        b.id,
+        Some(4),
+        "/tv/Show/Season 1/b.mp4",
         Some(job),
     )
     .await
@@ -286,6 +307,11 @@ async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
         "a foreign file is never replaced"
     );
     assert!(fs::symlink_metadata(season.join("g.mkv")).is_ok());
+    assert!(
+        fs::read_link(season.join("b.mp4")).is_ok(),
+        "Chaptarr's file stays a symlink"
+    );
+    assert!(fs::symlink_metadata(season.join("b.strm")).is_err());
     assert_eq!(strm_of("h.strm"), "written before the crash");
     assert!(
         fs::symlink_metadata(season.join("h.mkv")).is_err(),
