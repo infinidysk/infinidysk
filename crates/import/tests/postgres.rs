@@ -275,15 +275,36 @@ async fn tables_resolve_through_the_search_path() {
         return;
     };
     let pool = sqlx::PgPool::connect(&url).await.unwrap();
-    sqlx::raw_sql("CREATE SCHEMA app")
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::raw_sql(
+        "CREATE SCHEMA app; \
+         CREATE TABLE app.\"ConfigItems\" (\"ConfigName\" text PRIMARY KEY, \"ConfigValue\" text NOT NULL); \
+         INSERT INTO app.\"ConfigItems\" VALUES ('api.key', 'from-app-schema')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     pool.close().await;
     let dir = temp_dir();
-    let (result, reports) = copy(&dir, &format!("{};Search Path=app,public", npgsql(&url))).await;
+    let (result, _) = copy(&dir, &format!("{};Search Path=app,public", npgsql(&url))).await;
     result.unwrap();
-    ends_complete(&reports);
+
+    let mut c = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(dir.join(STAGED))
+        .read_only(true)
+        .connect()
+        .await
+        .unwrap();
+    let values: Vec<String> = sqlx::query_scalar("SELECT ConfigValue FROM ConfigItems")
+        .fetch_all(&mut c)
+        .await
+        .unwrap();
+    assert_eq!(values, ["from-app-schema"]);
+    let davitems: i64 = sqlx::query_scalar("SELECT count(*) FROM DavItems")
+        .fetch_one(&mut c)
+        .await
+        .unwrap();
+    assert!(davitems > 0, "the other tables still come from public");
+    drop(c);
     std::fs::remove_dir_all(&dir).unwrap();
     drop_database(&name).await;
 }
