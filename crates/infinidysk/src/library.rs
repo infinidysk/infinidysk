@@ -1081,7 +1081,6 @@ impl Library {
         cancel: &CancellationToken,
     ) -> Result<(), Stop> {
         let mut stems = Stems::default();
-        let arrs = crate::app::arr_instances(&settings.arr_instances);
         for f in found {
             if cancel.is_cancelled() {
                 return Err(Stop::Cancelled);
@@ -1106,7 +1105,9 @@ impl Library {
                 },
                 Some(item) => {
                     let action = plan(&f, item, target, &mut stems);
-                    self.hold(&arrs, &f, action).await.map_err(Stop::Wait)?
+                    self.hold(&settings.arr_instances, target, &f, action)
+                        .await
+                        .map_err(Stop::Wait)?
                 }
                 None => Action::Dangling,
             };
@@ -1135,9 +1136,14 @@ impl Library {
         Ok(())
     }
 
-    /// Keeps a symlink an Arr that cannot follow a conversion owns, so the Arr still
-    /// finds its file.
-    async fn hold(&self, arrs: &[Arr], f: &Found, action: Action) -> Result<Action, String> {
+    /// Keeps a symlink Lidarr or Chaptarr owns, enabled or not: they import symlinks only.
+    async fn hold(
+        &self,
+        arrs: &[config::ArrInstance],
+        target: &Target,
+        f: &Found,
+        action: Action,
+    ) -> Result<Action, String> {
         if !matches!(action, Action::Move(_, Pointer::Strm(_))) {
             return Ok(action);
         }
@@ -1148,11 +1154,16 @@ impl Library {
             .await
             .map_err(|e| e.to_string())?;
         let stays = owners.iter().any(|(instance, _)| {
-            arrs.iter()
-                .any(|a| a.id == *instance && !arr_library::converts(a))
+            arrs.iter().any(|a| {
+                a.id == *instance
+                    && matches!(
+                        a.profile,
+                        config::ArrProfile::Lidarr | config::ArrProfile::Chaptarr
+                    )
+            })
         });
         Ok(if stays {
-            Action::Skip("its Arr keeps symlinks")
+            kept_link(f, target, "its Arr keeps symlinks")
         } else {
             action
         })
@@ -1749,7 +1760,7 @@ impl Library {
                         let action = match self.parts.db.item(f.item).await {
                             Ok(Some(item)) => {
                                 let action = plan(f, &item, &target, &mut stems);
-                                self.hold(&arrs, f, action)
+                                self.hold(&next.arr_instances, &target, f, action)
                                     .await
                                     .unwrap_or(Action::Skip("database unavailable"))
                             }
@@ -2032,13 +2043,13 @@ fn plan(f: &Found, item: &Item, target: &Target, stems: &mut Stems) -> Action {
         (ImportStrategy::Strm, Pointer::Link(_)) => {
             if handoff::is_subtitle(&item.name) {
                 return if item.size.unwrap_or_default() > MAX_SUBTITLE_BYTES {
-                    Action::Skip("subtitle larger than 10 MB stays a symlink")
+                    kept_link(f, target, "subtitle larger than 10 MB stays a symlink")
                 } else {
                     Action::Copy
                 };
             }
             if !video || !media::is_video(&name) {
-                return Action::Skip("not a video; stays a symlink");
+                return kept_link(f, target, "not a video; stays a symlink");
             }
             let stem = stem_of(&name);
             let strm = if stems.shared(dir, stem) {
@@ -2061,6 +2072,16 @@ fn plan(f: &Found, item: &Item, target: &Target, stems: &mut Stems) -> Action {
         }
     } else {
         Action::Move(path, want)
+    }
+}
+
+/// A symlink that stays one under STRM, pointed at the current mount.
+fn kept_link(f: &Found, target: &Target, reason: &'static str) -> Action {
+    let want = target.link(f.item);
+    if f.pointer == want {
+        Action::Skip(reason)
+    } else {
+        Action::Rewrite(want)
     }
 }
 

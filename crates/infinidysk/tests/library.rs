@@ -216,9 +216,14 @@ async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
     ];
     db.add_history(&history, &items, &[]).await.unwrap();
     let pointer = |item: &Item| format!("{}/{}", mount.display(), item.id.ids_path());
-    for item in [&e, &f, &g, &h, &b] {
+    for item in [&e, &f, &g, &h] {
         link(&season.join(&item.name), &pointer(item));
     }
+    // Written by hand, relative to the mount.
+    link(
+        &season.join(&b.name),
+        &format!("../../../mnt/{}", b.id.ids_path()),
+    );
     fs::write(lib.join("x.mkv"), "a real file").unwrap();
     fs::write(season.join("g.strm"), "not ours").unwrap();
 
@@ -307,9 +312,13 @@ async fn converts_a_library_both_ways_and_rewrites_on_key_rotation() {
         "a foreign file is never replaced"
     );
     assert!(fs::symlink_metadata(season.join("g.mkv")).is_ok());
-    assert!(
-        fs::read_link(season.join("b.mp4")).is_ok(),
-        "Chaptarr's file stays a symlink"
+    assert_eq!(
+        fs::read_link(season.join("b.mp4"))
+            .unwrap()
+            .display()
+            .to_string(),
+        pointer(&b),
+        "Chaptarr's file stays a symlink, pointed at the mount"
     );
     assert!(fs::symlink_metadata(season.join("b.strm")).is_err());
     assert_eq!(strm_of("h.strm"), "written before the crash");
