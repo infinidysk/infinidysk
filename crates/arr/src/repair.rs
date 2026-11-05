@@ -361,8 +361,9 @@ pub async fn all_imports(http: &reqwest::Client, arr: &Arr) -> Result<Vec<Import
 
 /// Gets `owner` a replacement for download `job`: blocklist the release, give the Arr's
 /// own search `wait` to queue one, else delete our file and search. With no download
-/// known there is nothing to blocklist, so it deletes and searches at once. Returns at
-/// once if a replacement is already imported or queued.
+/// known, or no grab of it in the Arr's history, nothing gets blocklisted and so nothing
+/// triggers the Arr's search; it deletes and searches at once. Returns at once if a
+/// replacement is already imported or queued.
 pub async fn replace(
     http: &reqwest::Client,
     arr: &Arr,
@@ -384,19 +385,21 @@ pub async fn replace(
         if let Some(grab) = grabbed.records.first() {
             send(call(Method::POST, format!("history/failed/{}", grab.id)).json(&json!({})))
                 .await?;
+            // ponytail: also waits when the Arr's automatic redownload is off; reading its
+            // download-client config and the grab's release source would skip that too.
+            let deadline = tokio::time::Instant::now() + wait;
+            while tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(QUEUE_POLL.min(deadline - tokio::time::Instant::now())).await;
+                if replacing(http, arr, Some(job), owner).await? {
+                    return Ok(());
+                }
+            }
         } else {
             tracing::warn!(
                 arr = %arr.name,
                 reason = "no grab in its history",
-                "could not blocklist the broken release"
+                "could not blocklist the broken release; deleting the file and searching now"
             );
-        }
-        let deadline = tokio::time::Instant::now() + wait;
-        while tokio::time::Instant::now() < deadline {
-            tokio::time::sleep(QUEUE_POLL.min(deadline - tokio::time::Instant::now())).await;
-            if replacing(http, arr, Some(job), owner).await? {
-                return Ok(());
-            }
         }
     }
     let (kind, search) = match &owner.media {

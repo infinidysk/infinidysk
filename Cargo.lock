@@ -1496,6 +1496,7 @@ dependencies = [
 name = "infinidysk-arr"
 version = "0.0.0"
 dependencies = [
+ "axum",
  "infinidysk-core",
  "jiff",
  "reqwest",
