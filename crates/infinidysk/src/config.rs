@@ -1693,9 +1693,9 @@ fn reject_readarr(tree: &Value) -> Result<(), Error> {
     Err(invalid(
         "arr_instances",
         format!(
-            "Arr instance \"{}\" is a Readarr, which infinidysk no longer supports. Start \
-             the previous version, remove the instance or change it to Chaptarr, then \
-             upgrade again.",
+            "Arr instance \"{}\" is a Readarr, which infinidysk no longer supports. Remove \
+             it first: in the previous version under Settings > Automation > Arr \
+             instances, or from INFINIDYSK__ARR_INSTANCES. Then upgrade and add Chaptarr.",
             arr["name"].as_str().unwrap_or_default()
         ),
     ))
