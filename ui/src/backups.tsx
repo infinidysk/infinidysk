@@ -73,7 +73,8 @@ export function BackupsPanel({
   onChange: (value: Doc["maintenance"]) => void;
 }) {
   const value = maintenance.backup;
-  const jobs = useMaintenance().data;
+  const jobsView = useMaintenance();
+  const jobs = jobsView.data;
   const running = jobs?.running ?? null;
   const job = jobs?.jobs.find((j) => j.job === "backup-database");
   const client = useQueryClient();
@@ -247,6 +248,7 @@ export function BackupsPanel({
             onConfirm={() => dropLegacy.mutate()}
           />
 
+          {jobsView.isError && <Failure error={jobsView.error} />}
           {job && (
             <JobCard
               job={job}
@@ -594,7 +596,7 @@ function useUpload(busy: boolean, onUploaded: () => void) {
         <Alert variant="destructive">
           <CircleAlert />
           <AlertDescription>
-            <p>
+            <p className="wrap-anywhere">
               Uploading {file?.name} failed: {error}
             </p>
             <p className="text-xs">{UPLOAD_HINT}</p>

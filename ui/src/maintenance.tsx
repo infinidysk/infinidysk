@@ -230,7 +230,11 @@ function BackupStep({
             </span>
           ) : (
             <>
-              <span>{job.always_scheduled ? "Always runs daily" : scheduled ? "Runs daily" : "Not scheduled"}</span>
+              {job.unavailable_reason ? (
+                <span className="text-warning-text">{job.unavailable_reason}</span>
+              ) : (
+                <span>{job.always_scheduled ? "Always runs daily" : scheduled ? "Runs daily" : "Not scheduled"}</span>
+              )}
               {r && (
                 <>
                   <span aria-hidden>·</span>
