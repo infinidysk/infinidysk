@@ -6,7 +6,7 @@ const VIDEO: &[&str] = &[
 ];
 const AUDIO: &[&str] = &[
     "flac", "mp3", "m4a", "m4b", "aac", "ogg", "opus", "wav", "wma", "alac", "ape", "dsf", "dff",
-    "mka", "mp2", "m4p", "mp4a", "oga", "vorbis", "wavpack",
+    "mka", "mp2", "m4p", "mp4a", "oga", "vorbis", "wavpack", "wv", "aif", "aiff", "aifc",
 ];
 /// Video containers that also hold audio-only media, such as `.mp4` audiobooks.
 const AUDIO_TOO: &[&str] = &["mp4"];
@@ -200,7 +200,17 @@ mod tests {
 
     #[test]
     fn audio_categories_take_mp4_audiobooks() {
-        for name in ["a.mp4", "b.m4b", "c.oga", "d.MP2", "e.wavpack"] {
+        for name in [
+            "a.mp4",
+            "b.m4b",
+            "c.oga",
+            "d.MP2",
+            "e.wavpack",
+            "f.wv",
+            "g.aif",
+            "h.AIFF",
+            "i.aifc",
+        ] {
             assert!(fits(name, Kind::Audio), "{name}");
         }
         assert!(fits("a.mp4", Kind::Video));
