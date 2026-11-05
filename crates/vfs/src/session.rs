@@ -19,8 +19,8 @@ use crate::Reader;
 const KEPT_TRACES: usize = 20;
 /// Finished reads kept for [`Sessions::take_ended`] before the oldest are dropped.
 const KEPT_ENDED: usize = 10_000;
-/// Shorter waits for data are normal pipelining, not stalls.
-const MIN_STALL: Duration = Duration::from_millis(50);
+/// Shorter waits for data are covered by a player's buffer, not stalls.
+const MIN_STALL: Duration = Duration::from_secs(1);
 /// Shorter pauses between a reader's requests are not traced as idle.
 const MIN_IDLE: Duration = Duration::from_millis(50);
 
@@ -150,7 +150,8 @@ impl Session {
         }
     }
 
-    /// Waits for data after the first byte of at least 50 ms: how many, and their total.
+    /// Waits for data of at least 1 s, other than for the first byte and the first byte
+    /// after a seek: how many, and their total.
     pub fn stalls(&self) -> (u64, Duration) {
         (
             self.stalls.load(Ordering::Relaxed),
@@ -396,6 +397,8 @@ pub struct Handle {
     waiting: Option<Instant>,
     /// When the last read returned, to trace pauses between reads.
     returned: Option<Instant>,
+    /// A seek moved the position and no byte came since: the wait is seek latency.
+    seeked: bool,
 }
 
 impl Handle {
@@ -405,6 +408,7 @@ impl Handle {
             session,
             waiting: None,
             returned: None,
+            seeked: false,
         }
     }
 
@@ -464,10 +468,13 @@ impl AsyncRead for Handle {
                     session
                         .first_byte_ns
                         .store(u64::try_from(ns).unwrap_or(u64::MAX - 1), Ordering::Relaxed);
-                } else if let Some(waited) = waited.filter(|w| *w >= MIN_STALL) {
+                } else if let Some(waited) = waited.filter(|w| *w >= MIN_STALL && !this.seeked) {
                     let ns = u64::try_from(waited.as_nanos()).unwrap_or(u64::MAX);
                     session.stall_ns.fetch_add(ns, Ordering::Relaxed);
                     session.stalls.fetch_add(1, Ordering::Relaxed);
+                }
+                if n > 0 {
+                    this.seeked = false;
                 }
                 this.returned = Some(now);
             }
@@ -496,6 +503,7 @@ impl AsyncSeek for Handle {
                 session.seeks.fetch_add(1, Ordering::Relaxed);
                 // A seek is the reader's request, not a pause.
                 this.returned = None;
+                this.seeked = true;
                 if let Some(trace) = &session.trace {
                     trace.record(Event::Seek { from, to: *to });
                 }

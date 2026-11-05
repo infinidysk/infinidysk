@@ -3517,7 +3517,8 @@ export interface components {
             stall_ms: number;
             /**
              * Format: int64
-             * @description Waits for data of at least 50 ms after the first byte.
+             * @description Waits for data of at least 1 s, other than for the first byte and the first byte
+             *     after a seek.
              */
             stalls: number;
             traced: boolean;

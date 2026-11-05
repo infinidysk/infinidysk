@@ -1666,7 +1666,8 @@ struct ReadView {
     player: Option<String>,
     /// From open to the first byte served.
     first_byte_ms: Option<u64>,
-    /// Waits for data of at least 50 ms after the first byte.
+    /// Waits for data of at least 1 s, other than for the first byte and the first byte
+    /// after a seek.
     stalls: u64,
     stall_ms: u64,
     seeks: u64,
