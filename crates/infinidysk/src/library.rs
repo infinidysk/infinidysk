@@ -2075,11 +2075,13 @@ fn plan(f: &Found, item: &Item, target: &Target, stems: &mut Stems) -> Action {
     }
 }
 
-/// A symlink that stays one under STRM, pointed at the current mount.
+/// A symlink that stays one under STRM, pointed at the current mount once it is up.
 fn kept_link(f: &Found, target: &Target, reason: &'static str) -> Action {
     let want = target.link(f.item);
     if f.pointer == want {
         Action::Skip(reason)
+    } else if !Path::new(&target.mount_dir).join(".ids").is_dir() {
+        Action::Skip("the mount is not up; the symlink keeps its target")
     } else {
         Action::Rewrite(want)
     }
@@ -2713,5 +2715,33 @@ mod tests {
             panic!("{action:?}")
         };
         assert_eq!(path, PathBuf::from("/lib/Show/Episode"));
+    }
+
+    #[test]
+    fn a_kept_symlink_follows_the_mount_only_once_it_is_up() {
+        let mount = std::env::temp_dir().join(format!("infinidysk-kept-{}", ItemId::new()));
+        let id = ItemId::new();
+        let found = Found {
+            path: PathBuf::from("/lib/Album/01.mp3"),
+            item: id,
+            pointer: Pointer::Link(format!("/old/{}", id.ids_path())),
+            legacy: false,
+        };
+        let target = Target {
+            strategy: ImportStrategy::Strm,
+            public_url: "http://x".into(),
+            key: "k".into(),
+            mount_dir: mount.display().to_string(),
+        };
+        assert!(matches!(
+            kept_link(&found, &target, "kept"),
+            Action::Skip(r) if r != "kept"
+        ));
+        fs::create_dir_all(mount.join(".ids")).unwrap();
+        assert!(matches!(
+            kept_link(&found, &target, "kept"),
+            Action::Rewrite(p) if p == target.link(id)
+        ));
+        fs::remove_dir_all(mount).unwrap();
     }
 }
