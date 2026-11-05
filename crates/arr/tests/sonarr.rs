@@ -1,6 +1,7 @@
 //! Which API we talk to a Sonarr through, and the calls that differ between v3 and v5.
 #![allow(clippy::unwrap_used)] // Test helpers outside `#[test]` fns; panics are the assertions.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::Json;
@@ -101,13 +102,22 @@ async fn sonarr_v5_is_spoken_to_through_its_v5_api() {
             media: vec![("episode", 11), ("episode", 12), ("episode", 21)],
         }]
     );
-    queue::remove(&http, &arr, 7, Some("Import blocked: sample"), true)
-        .await
-        .unwrap();
-    queue::remove(&http, &arr, 7, Some("Import blocked: sample"), false)
-        .await
-        .unwrap();
-    queue::remove(&http, &arr, 7, None, false).await.unwrap();
+    let sample = Some("Import blocked: sample");
+    assert!(
+        queue::remove(&http, &arr, 7, sample, async { true })
+            .await
+            .unwrap()
+    );
+    assert!(
+        !queue::remove(&http, &arr, 7, sample, async { false })
+            .await
+            .unwrap()
+    );
+    assert!(
+        !queue::remove(&http, &arr, 7, None, async { true })
+            .await
+            .unwrap()
+    );
     refresh_downloads(&http, &arr).await.unwrap();
     let hook = Hook {
         name: "infinidysk",
@@ -152,9 +162,11 @@ async fn sonarr_v4_and_older_keep_the_v3_api() {
     let http = reqwest::Client::new();
     for info in [Some(v4()), None, Some(json!({}))] {
         let (arr, log) = sonarr(info, queue_page).await;
-        queue::remove(&http, &arr, 7, Some("Import blocked: sample"), true)
-            .await
-            .unwrap();
+        queue::remove(&http, &arr, 7, Some("Import blocked: sample"), async {
+            true
+        })
+        .await
+        .unwrap();
         let hook = Hook {
             name: "infinidysk",
             url: "http://x/hook",
@@ -197,9 +209,18 @@ async fn a_rejected_api_key_is_not_taken_for_an_older_sonarr() {
     let http = reqwest::Client::new();
     let (mut arr, log) = sonarr(Some(v5()), queue_page).await;
     arr.api_key = "bad".to_owned();
-    let error = queue::remove(&http, &arr, 7, None, false)
+    let reserved = AtomicBool::new(false);
+    let reserve = async {
+        reserved.store(true, Ordering::Relaxed);
+        true
+    };
+    let error = queue::remove(&http, &arr, 7, Some("Import blocked: sample"), reserve)
         .await
         .unwrap_err();
+    assert!(
+        !reserved.load(Ordering::Relaxed),
+        "no search is reserved for a removal that never reached the Arr"
+    );
     assert!(
         matches!(
             &error,

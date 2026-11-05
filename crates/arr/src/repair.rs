@@ -461,9 +461,12 @@ pub async fn replace(
     owner: &Owner,
     wait: Duration,
 ) -> Result<(), Error> {
+    if owner.replaced() {
+        return Ok(());
+    }
     let s = Session::open(http, arr).await?;
     let call = |method, path: String| s.call(method, &path);
-    if owner.replaced() || replacing(&s, job, owner).await? {
+    if replacing(&s, job, owner).await? {
         return Ok(());
     }
     if let Some(job) = job {

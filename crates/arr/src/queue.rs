@@ -125,16 +125,18 @@ pub async fn queue(http: &reqwest::Client, arr: &Arr) -> Result<Vec<Entry>, Erro
 }
 
 /// Removes entry `id` and the download from our client (which keeps its content). With a
-/// `blocklist` reason it blocklists the release, and with `search` lets the Arr search
-/// for another.
+/// `blocklist` reason it blocklists the release and, if `search` yields `true`, lets the
+/// Arr search for another. `search` runs only once the Arr is reached and with a reason,
+/// so a failed lookup spends no search budget. Returns whether it asked for a search.
 pub async fn remove(
     http: &reqwest::Client,
     arr: &Arr,
     id: i64,
     blocklist: Option<&str>,
-    search: bool,
-) -> Result<(), Error> {
+    search: impl Future<Output = bool>,
+) -> Result<bool, Error> {
     let s = Session::open(http, arr).await?;
+    let search = blocklist.is_some() && search.await;
     let request = call(&s, Method::DELETE, &format!("queue/{id}"));
     let request = match (s.api, blocklist) {
         (Api::Classic, _) => request.query(&[
@@ -162,7 +164,8 @@ pub async fn remove(
             ("message", reason),
         ]),
     };
-    send(request).await
+    send(request).await?;
+    Ok(search)
 }
 
 /// Sportarr's queue lives in its Sonarr-compatible API, not its native one.

@@ -151,13 +151,14 @@ impl Discovery {
     }
 
     async fn act(&self, db: &Db, arr: &Arr, entries: &[Entry], action: Action) {
-        let (blocklist, search) = match action {
-            Action::Remove => (None, false),
-            Action::Replace(reason) => (Some(reason), self.reserve(db, arr, entries).await),
+        let blocklist = match action {
+            Action::Remove => None,
+            Action::Replace(reason) => Some(reason),
         };
         let first = &entries[0];
-        match arr_queue::remove(&self.http, arr, first.id, blocklist, search).await {
-            Ok(()) => tracing::info!(
+        let reserve = self.reserve(db, arr, entries);
+        match arr_queue::remove(&self.http, arr, first.id, blocklist, reserve).await {
+            Ok(search) => tracing::info!(
                 arr = %arr.name, download = %first.download_id, blocklist = blocklist.is_some(),
                 search, "removed a stuck download from the Arr queue"
             ),
