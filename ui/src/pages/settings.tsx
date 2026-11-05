@@ -654,9 +654,10 @@ export function Settings() {
   const saved = view.settings;
   const ssoSaved = saved.auth.oidc.issuer !== "";
   const proven = auth.data?.method === "sso" && auth.data.sso_current;
-  // What the SSO proof covers: the public URL only while it supplies the redirect URI.
+  // What the SSO proof covers: not the display name, and the public URL only while it supplies the redirect URI.
+  const proofFields = ({ display_name: _, ...rest }: Schemas["Oidc"]) => rest;
   const ssoEdited =
-    !same(draft.auth.oidc, saved.auth.oidc) ||
+    !same(proofFields(draft.auth.oidc), proofFields(saved.auth.oidc)) ||
     (!saved.auth.oidc.redirect_uri && draft.network.public_url !== saved.network.public_url);
   // Only saved-on → off needs proof; with password sign-in already off, SSO stays editable.
   const passwordOff =
@@ -1291,6 +1292,21 @@ export function Settings() {
                   <Password />
                 </SettingsPanel>
                 <SettingsPanel title="Single sign-on">
+                  <Field
+                    id="oidc-display-name"
+                    label={label("Display name", "auth.oidc.display_name")}
+                    hint="Shown on the sign-in page as Sign in with this name."
+                    error={invalid("auth.oidc.display_name")}
+                  >
+                    <Input
+                      id="oidc-display-name"
+                      autoComplete="off"
+                      placeholder="SSO"
+                      disabled={locked("auth.oidc.display_name")}
+                      value={draft.auth.oidc.display_name}
+                      onChange={(e) => oidc({ display_name: e.target.value })}
+                    />
+                  </Field>
                   <Field
                     id="oidc-issuer"
                     label={label(

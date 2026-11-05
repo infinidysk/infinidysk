@@ -236,6 +236,17 @@ fn sso_settings_are_checked_only_while_an_issuer_is_set() {
     scopes.validate().expect("valid");
     assert_eq!(scopes.auth.oidc.scopes, "profile email");
 
+    let mut name = sso(authentik);
+    name.auth.oidc.display_name = "  Acme   Account ".to_owned();
+    name.validate().expect("valid");
+    assert_eq!(name.auth.oidc.display_name(), "Acme Account");
+    assert_eq!(sso(authentik).auth.oidc.display_name(), "SSO");
+    for bad in ["a".repeat(41), "Acme\u{7}".to_owned()] {
+        let mut s = sso(authentik);
+        s.auth.oidc.display_name = bad;
+        assert_eq!(path(s).as_deref(), Some("auth.oidc.display_name"));
+    }
+
     for (uri, want) in [
         ("https://dysk.example.com/sso/cb", None),
         (

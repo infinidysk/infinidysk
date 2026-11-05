@@ -619,6 +619,8 @@ pub struct Oidc {
     pub scopes: String,
     /// ID-token claim shown as the username; then `preferred_username`, `email`, `sub`.
     pub username_claim: String,
+    /// Shown on the sign-in page as "Sign in with <name>"; empty shows `SSO`.
+    pub display_name: String,
 }
 
 impl Default for Oidc {
@@ -630,6 +632,7 @@ impl Default for Oidc {
             redirect_uri: String::new(),
             scopes: "openid profile email".to_owned(),
             username_claim: "preferred_username".to_owned(),
+            display_name: String::new(),
         }
     }
 }
@@ -640,6 +643,16 @@ impl Oidc {
         !self.issuer.is_empty()
     }
 
+    /// The provider name the sign-in page shows.
+    #[must_use]
+    pub fn display_name(&self) -> &str {
+        if self.display_name.is_empty() {
+            "SSO"
+        } else {
+            &self.display_name
+        }
+    }
+
     /// Trims the fields; checks them only while SSO is on, so clearing the issuer alone
     /// always turns SSO off.
     pub(crate) fn validate(&mut self) -> Result<(), Error> {
@@ -647,7 +660,20 @@ impl Oidc {
         self.client_id = self.client_id.trim().to_owned();
         self.redirect_uri = self.redirect_uri.trim().to_owned();
         self.username_claim = self.username_claim.trim().to_owned();
+        self.display_name = self
+            .display_name
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         self.scopes = self.scopes.split_whitespace().collect::<Vec<_>>().join(" ");
+        if self.display_name.chars().count() > MAX_DISPLAY_NAME
+            || self.display_name.chars().any(char::is_control)
+        {
+            return Err(invalid(
+                "auth.oidc.display_name",
+                format!("Display name must be plain text of at most {MAX_DISPLAY_NAME} characters"),
+            ));
+        }
         if !self.enabled() {
             return Ok(());
         }
@@ -684,6 +710,9 @@ impl Oidc {
         Ok(())
     }
 }
+
+/// Fits the sign-in button on a phone screen.
+const MAX_DISPLAY_NAME: usize = 40;
 
 /// `https://`, or `http://` to this machine ([`crate::oidc::secure`]), with no query or
 /// fragment. The trailing slash stays: discovery compares the issuer exactly.
