@@ -366,9 +366,9 @@ function Discovered({ status }: { status: ArrStatus }) {
         <ul className="divide-y rounded-md border">
           {status.clients.map((c) => (
             <li key={c.name} className="flex items-center justify-between gap-2 px-3 py-2">
-              <span className="min-w-0 truncate">
+              <span className="min-w-0 break-words">
                 {c.name}
-                <span className="text-muted-foreground ml-2 font-mono">{c.categories.join(", ") || "no category"}</span>
+                <span className="text-muted-foreground ml-2 font-mono break-all">{c.categories.join(", ") || "no category"}</span>
               </span>
               <span className="flex shrink-0 items-center gap-1.5">
                 <Badge variant={bindings[c.binding].variant}>{bindings[c.binding].label}</Badge>
