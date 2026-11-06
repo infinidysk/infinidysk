@@ -817,6 +817,54 @@ async fn a_file_an_arr_owns_but_cannot_repair_is_kept() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_co_owner_that_cannot_repair_does_not_stop_one_that_can() {
+    let (articles, len) = mkv("m");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, job) = import(&server, &articles, len).await;
+    let sportarr = uuid::Uuid::from_u128(1);
+    db.record_owner(sportarr, item.id, None, "/sports/a.mkv", Some(job))
+        .await
+        .unwrap();
+    db.record_owner(
+        uuid::Uuid::nil(),
+        item.id,
+        Some(7),
+        "/tv/Show/S01E01.strm",
+        Some(job),
+    )
+    .await
+    .unwrap();
+    let (log, sonarr) = fake_sonarr().await;
+    let mut instances = vec![Arr {
+        id: sportarr,
+        name: "sportarr".to_owned(),
+        profile: Profile::Sportarr,
+        url: "http://127.0.0.1:9".to_owned(),
+        api_key: "k".to_owned(),
+    }];
+    instances.extend(sonarr.borrow().iter().cloned());
+    let (_tx, arr) = watch::channel(instances);
+    let (_settings_tx, settings) = watch::channel(Settings::default());
+    let health = Health::new(db.clone(), client(&server), arr, settings)
+        .unwrap()
+        .with_arr_wait(Duration::ZERO);
+
+    assert!(health.request_repair(item.id).await.unwrap());
+    assert!(health.step().await.unwrap());
+    let (_, status) = db.health(item.id).await.unwrap().unwrap();
+    assert_eq!(status.state, HealthState::Hidden);
+    let calls = log.0.lock().unwrap().clone();
+    assert!(
+        calls.iter().any(|c| c == "DELETE /api/v3/episodefile/7"),
+        "{calls:?}"
+    );
+    assert!(
+        calls.iter().any(|c| c == "POST /api/v3/command"),
+        "{calls:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn carried_over_file_waits_for_the_owner_backfill_before_deletion() {
     let (articles, len) = mkv("g");
     let server = LoopbackServer::start(articles.clone()).await.unwrap();
