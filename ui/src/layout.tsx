@@ -39,6 +39,7 @@ import { api, body } from "./api/client";
 import { authKey, useAuth, Wordmark } from "./auth";
 import { bytes } from "./format";
 import { LibraryBanner } from "./library";
+import { liveRefresh } from "./live";
 import { MaintenanceNow } from "./maintenance";
 import { setTheme, type Theme, useTheme } from "./theme";
 import { Loading } from "./ui";
@@ -59,17 +60,18 @@ function useLiveUpdates() {
   useEffect(() => {
     let source: EventSource;
     let retry: number | undefined;
+    const refresh = liveRefresh(client);
     const connect = () => {
       source = new EventSource("/api/v1/events");
-      for (const list of ["queue", "history", "health"]) {
-        source.addEventListener(list, () => void client.invalidateQueries({ queryKey: [list] }));
+      for (const name of ["queue", "history", "health", "resync"]) {
+        source.addEventListener(name, () => refresh.change(name));
       }
-      // Deleting a file reports a history change only.
-      source.addEventListener("history", () => void client.invalidateQueries({ queryKey: ["health", "summary"] }));
-      source.addEventListener("resync", () => void client.invalidateQueries());
       source.addEventListener("live", (e) => client.setQueryData(["live"], JSON.parse((e as MessageEvent<string>).data)));
-      // Reconnecting usually means the server restarted, perhaps on a new version.
-      source.onopen = () => void client.invalidateQueries({ queryKey: ["status"] });
+      source.onopen = () => {
+        // Reconnecting usually means the server restarted, perhaps on a new version.
+        void client.invalidateQueries({ queryKey: ["status"] });
+        refresh.opened();
+      };
       source.onerror = () => {
         // The browser retries dropped streams itself, but gives up on HTTP errors.
         if (source.readyState !== EventSource.CLOSED) return;
@@ -81,6 +83,7 @@ function useLiveUpdates() {
     return () => {
       source.close();
       window.clearTimeout(retry);
+      refresh.dispose();
     };
   }, [client]);
 }
