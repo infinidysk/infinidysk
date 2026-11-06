@@ -90,6 +90,7 @@ export function DatabasePanel({ title, description }: { title: string; descripti
             <p className="flex flex-wrap items-center gap-x-2">
               <Status tone="success">{data.backend === "postgres" ? "PostgreSQL" : "SQLite"}</Status>
               {data.backend === "postgres" && data.target && <span className="text-muted-foreground font-mono break-all">{data.target}</span>}
+              {data.env_managed && data.backend === "sqlite" && data.sqlite_path && <span className="text-muted-foreground font-mono break-all">{data.sqlite_path}</span>}
             </p>
             {data.env_managed ? (
               <p className="text-muted-foreground text-xs">
