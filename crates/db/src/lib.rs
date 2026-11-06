@@ -1891,6 +1891,14 @@ impl Db {
     /// Returns whether it went.
     pub async fn delete_unlinked(&self, id: ItemId, before: i64) -> Result<bool, Error> {
         let deleted = on!(self, pool => {
+            let still: Option<i32> = sqlx::query_scalar(STILL_OUTSIDE_HISTORY)
+                .bind(id.0)
+                .bind(before)
+                .fetch_optional(pool)
+                .await?;
+            if still.is_none() {
+                return Ok(false);
+            }
             let mut tx = pool.begin_with(self.begin_write()).await?;
             let still: Option<i32> = sqlx::query_scalar(STILL_OUTSIDE_HISTORY)
                 .bind(id.0)
@@ -1913,6 +1921,13 @@ impl Db {
     /// same transaction. Returns whether it went.
     pub async fn delete_without_files(&self, id: ItemId) -> Result<bool, Error> {
         let deleted = on!(self, pool => {
+            let holds: Option<i32> = sqlx::query_scalar(HOLDS_FILES)
+                .bind(id.0)
+                .fetch_optional(pool)
+                .await?;
+            if holds.is_some() {
+                return Ok(false);
+            }
             let mut tx = pool.begin_with(self.begin_write()).await?;
             let holds: Option<i32> = sqlx::query_scalar(HOLDS_FILES)
                 .bind(id.0)
@@ -1941,6 +1956,13 @@ impl Db {
                                AND NOT EXISTS (SELECT 1 FROM arr_owners WHERE item_id = $1)";
         let postgres = matches!(self.pool, Pool::Postgres(_));
         let deleted = on!(self, pool => {
+            let unowned: Option<i32> = sqlx::query_scalar(UNOWNED)
+                .bind(id.0)
+                .fetch_optional(pool)
+                .await?;
+            if unowned.is_none() {
+                return Ok(false);
+            }
             let mut tx = pool.begin_with(self.begin_write()).await?;
             if postgres {
                 sqlx::query(ISOLATION).execute(&mut *tx).await?;
@@ -1969,16 +1991,24 @@ impl Db {
         let mut removed = 0;
         loop {
             let found = on!(self, pool => {
-                let mut tx = pool.begin_with(self.begin_write()).await?;
-                let dirs: Vec<Uuid> = sqlx::query_scalar(EMPTY_DIRS_OUTSIDE_HISTORY)
+                let any: Vec<Uuid> = sqlx::query_scalar(EMPTY_DIRS_OUTSIDE_HISTORY)
                     .bind(before)
-                    .fetch_all(&mut *tx)
+                    .fetch_all(pool)
                     .await?;
-                for &dir in &dirs {
-                    delete_subtree!(self, tx, dir);
+                if any.is_empty() {
+                    0
+                } else {
+                    let mut tx = pool.begin_with(self.begin_write()).await?;
+                    let dirs: Vec<Uuid> = sqlx::query_scalar(EMPTY_DIRS_OUTSIDE_HISTORY)
+                        .bind(before)
+                        .fetch_all(&mut *tx)
+                        .await?;
+                    for &dir in &dirs {
+                        delete_subtree!(self, tx, dir);
+                    }
+                    tx.commit().await?;
+                    dirs.len() as u64
                 }
-                tx.commit().await?;
-                dirs.len() as u64
             });
             if found == 0 {
                 break;
