@@ -1874,7 +1874,10 @@ async fn trace_body(admin: &Admin, id: u64, redact: bool) -> Result<String, Fail
             *name = format!("provider-{}", i + 1);
         }
         header["version"] = json!(crate::update::VERSION);
-        header["tuning"] = json!(admin.config.read().await.settings().performance.effective());
+        header["tuning"] = json!(crate::app::effective_tuning(
+            &admin.config.read().await.settings().performance,
+            admin.live.default_cache_dir(),
+        ));
     }
     header["read"] = json!(read);
     header["providers"] = json!(providers);
