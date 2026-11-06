@@ -145,6 +145,7 @@ struct Known {
     delivery_at_ms: Option<i64>,
     delivery_error: Option<String>,
     queue_issues: Vec<ArrQueueIssue>,
+    warnings: Vec<String>,
 }
 
 /// What discovery last found; secret-free.
@@ -176,6 +177,8 @@ pub struct ArrInstanceStatus {
     pub delivery_error: Option<String>,
     /// Downloads in its queue whose import only the user can settle.
     pub queue_issues: Vec<ArrQueueIssue>,
+    /// Settings of this Arr that work against this app.
+    pub warnings: Vec<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -208,6 +211,9 @@ pub struct Discovery {
     held_lock: tokio::sync::Mutex<()>,
     /// Whether a discovery pass has finished since start.
     discovered: watch::Sender<bool>,
+    /// Instances a webhook asked the cleanup task to reconcile.
+    reconcile_requests: Mutex<BTreeSet<Uuid>>,
+    reconcile_wake: Notify,
     /// Library paths Arrs imported from us since the library converter last looked, as
     /// the Arrs see them.
     pub imported: Mutex<Vec<String>>,
@@ -232,6 +238,8 @@ impl Discovery {
             install: OnceCell::new(),
             held_lock: tokio::sync::Mutex::default(),
             discovered: watch::channel(false).0,
+            reconcile_requests: Mutex::default(),
+            reconcile_wake: Notify::new(),
             imported: Mutex::default(),
         })
     }
@@ -296,6 +304,7 @@ impl Discovery {
                             delivery_at_ms: None,
                             delivery_error: None,
                             queue_issues: Vec::new(),
+                            warnings: Vec::new(),
                         },
                     );
                 }
@@ -309,8 +318,15 @@ impl Discovery {
                 Ok((_, clients)) => Some(self.register(arr, clients, &sab_key).await),
                 Err(_) => None,
             };
+            let warnings = match &found {
+                Ok(_) => self.warnings(arr).await,
+                Err(_) => None,
+            };
             ok &= found.is_ok() && !matches!(hook, Some(Err(_)));
             self.record(arr, found);
+            if let (Some(warnings), Some(k)) = (warnings, self.lock().get_mut(&arr.id)) {
+                k.warnings = warnings;
+            }
             if let (Some(hook), Some(k)) = (hook, self.lock().get_mut(&arr.id)) {
                 (k.webhook_url, k.webhook_error) = match hook {
                     Ok(url) => (url, None),
@@ -375,6 +391,22 @@ impl Discovery {
             clients.push((client, binding));
         }
         Ok((version, clients))
+    }
+
+    /// Settings of `arr` that work against us; read only, never changed. `None` when the
+    /// read failed, keeping the previous warnings.
+    async fn warnings(&self, arr: &Arr) -> Option<Vec<String>> {
+        match arr::writes_audio_tags(&self.http, arr).await {
+            Ok(false) => Some(Vec::new()),
+            Ok(true) => Some(vec![
+                "It writes metadata into audio files, which cannot change here. Set Write Metadata to Audio Files to Never in its metadata settings."
+                    .to_owned(),
+            ]),
+            Err(error) => {
+                tracing::debug!(arr = %arr.name, reason = %error, "reading the Arr's metadata settings failed");
+                None
+            }
+        }
     }
 
     async fn probe(&self, arr: &Arr, id: i64) -> ArrBinding {
@@ -494,6 +526,7 @@ impl Discovery {
                 delivery_at_ms: k.delivery_at_ms,
                 delivery_error: k.delivery_error.clone(),
                 queue_issues: k.queue_issues.clone(),
+                warnings: k.warnings.clone(),
             })
             .collect();
         instances.sort_by(|a, b| a.name.cmp(&b.name));

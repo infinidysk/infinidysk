@@ -264,6 +264,7 @@ impl Discovery {
                 }
             }
             Event::FolderDeleted(folder) => release(db, arr, OwnedFile::Under(folder)).await?,
+            Event::Reconcile => self.request_reconcile(arr.id),
             Event::Renamed(moves) => {
                 for (file, previous) in moves {
                     db.rename_owner(arr.id, &which(file.id, &previous), &file.path)

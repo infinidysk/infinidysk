@@ -157,12 +157,13 @@ function Summary({ status }: { status?: ArrStatus }) {
     );
   const here = status.clients.filter((c) => c.binding === "verified").length;
   const webhook = status.webhook_error ? "webhook not registered" : status.delivery_error ? "last webhook delivery failed" : null;
+  const issue = webhook ?? (status.warnings.length > 0 ? "a setting needs changing" : null);
   return (
     <div className="flex min-w-0 items-center gap-2 text-xs">
-      <Status tone={webhook || here === 0 ? "warning" : "success"}>Connected</Status>
+      <Status tone={issue || here === 0 ? "warning" : "success"}>Connected</Status>
       <span className="text-muted-foreground truncate">
         {here === 0 ? "add InfiniDysk as a SABnzbd download client in this Arr" : `sends to InfiniDysk through ${here} download client${here === 1 ? "" : "s"}`}
-        {webhook && ` · ${webhook}`}
+        {issue && ` · ${issue}`}
       </span>
     </div>
   );
@@ -378,6 +379,12 @@ function Discovered({ status }: { status: ArrStatus }) {
           ))}
         </ul>
       )}
+      {status.warnings.map((w) => (
+        <p key={w} className="flex items-start gap-2 text-warning-text">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+          {w}
+        </p>
+      ))}
       <Webhook status={status} />
     </div>
   );

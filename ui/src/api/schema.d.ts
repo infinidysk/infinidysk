@@ -1612,6 +1612,8 @@ export interface components {
             /** @description Downloads in its queue whose import only the user can settle. */
             queue_issues: components["schemas"]["ArrQueueIssue"][];
             version?: string | null;
+            /** @description Settings of this Arr that work against this app. */
+            warnings: string[];
             /** @description Why registering the webhook failed. */
             webhook_error?: string | null;
             /**
@@ -3270,7 +3272,7 @@ export interface components {
             /**
              * Format: uuid
              * @description Stable across edits, so masked secrets can be matched back.
-             * @default 01a1ad49-969b-7045-9993-0f813acb78a5
+             * @default 01a1ad68-894a-75ea-aef8-427ee3c82983
              */
             id: string;
             /**

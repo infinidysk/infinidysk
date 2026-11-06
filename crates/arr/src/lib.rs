@@ -275,6 +275,24 @@ fn sab_client(client: &Value, profile: Profile) -> Option<SabClient> {
     })
 }
 
+/// Whether Lidarr writes tags into the audio files it imports; files here cannot change.
+/// Always `false` for other profiles.
+pub async fn writes_audio_tags(http: &reqwest::Client, arr: &Arr) -> Result<bool, Error> {
+    if arr.profile != Profile::Lidarr {
+        return Ok(false);
+    }
+    let config: Value = fetch(request(
+        http,
+        arr,
+        Method::GET,
+        "api/v1/config/metadataprovider",
+    ))
+    .await?;
+    Ok(config["writeAudioTags"]
+        .as_str()
+        .is_some_and(|v| !v.eq_ignore_ascii_case("no")))
+}
+
 /// Has the Arr test its download client `id` with `marker` appended to the client's URL
 /// base, so the test's calls arrive at `…/<marker>/api`. The test's verdict is ignored:
 /// whether those calls arrived is the evidence.

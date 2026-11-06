@@ -29,6 +29,9 @@ pub enum Event {
     Deleted(Vec<File>),
     /// A series/movie/artist/author folder was deleted with its files.
     FolderDeleted(String),
+    /// Files were deleted without their paths (Lidarr's album delete); only a
+    /// reconciliation with the library can tell which.
+    Reconcile,
     /// Files moved: each at its new path, with its previous one.
     Renamed(Vec<(File, String)>),
     /// Nothing we act on.
@@ -92,6 +95,8 @@ pub fn parse(body: &[u8]) -> Result<Event, serde_json::Error> {
             .filter(|p| !p.is_empty())
             .map_or(Event::Ignored, |p| Event::FolderDeleted(p.to_owned()))
         }
+        // The album shares its artist's folder, and the delivery lists no files.
+        "AlbumDelete" if v["deletedFiles"] == true => Event::Reconcile,
         "Rename" => Event::Renamed(
             [
                 "renamedEpisodeFiles",
@@ -172,8 +177,8 @@ pub async fn register(http: &reqwest::Client, arr: &Arr, hook: &Hook<'_>) -> Res
             "onSeriesDelete": true, "onEpisodeFileDelete": true,
             "onEpisodeFileDeleteForUpgrade": true, "onMovieDelete": true,
             "onMovieFileDelete": true, "onMovieFileDeleteForUpgrade": true,
-            "onArtistDelete": true, "onAuthorDelete": true, "onBookFileDelete": true,
-            "onBookFileDeleteForUpgrade": true,
+            "onArtistDelete": true, "onAlbumDelete": true, "onAuthorDelete": true,
+            "onBookFileDelete": true, "onBookFileDeleteForUpgrade": true,
         })
     };
     let request = match id {
@@ -252,6 +257,20 @@ mod tests {
             read(
                 json!({ "eventType": "SeriesDelete", "deletedFiles": false, "series": { "path": "/tv/A" } })
             ),
+            Event::Ignored
+        );
+        assert_eq!(
+            read(json!({
+                "eventType": "AlbumDelete", "deletedFiles": true,
+                "artist": { "id": 1, "path": "/music/A" }, "album": { "id": 2 },
+            })),
+            Event::Reconcile
+        );
+        assert_eq!(
+            read(json!({
+                "eventType": "AlbumDelete", "deletedFiles": false,
+                "artist": { "id": 1, "path": "/music/A" }, "album": { "id": 2 },
+            })),
             Event::Ignored
         );
         assert_eq!(

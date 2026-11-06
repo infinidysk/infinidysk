@@ -38,7 +38,8 @@ const MAX_STREAMS: usize = 64;
 const MAX_TEXT: usize = 128;
 const CHUNK: usize = 64 * 1024;
 /// Demuxers for the extensions `media::is_analyzable` accepts.
-const FORMATS: &str = "matroska,webm,mov,avi,mpegts,asf,mpeg,flv,ogg,flac,mp3,aac,wav,ape,dsf,iff";
+const FORMATS: &str =
+    "matroska,webm,mov,avi,mpegts,asf,mpeg,flv,ogg,flac,mp3,aac,wav,ape,dsf,iff,wv,aiff";
 const ENTRIES: &str = "format=format_name,duration,bit_rate:\
     stream=codec_type,codec_name,profile,width,height,avg_frame_rate,bit_rate,channels,\
     channel_layout,sample_rate,color_transfer:\

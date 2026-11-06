@@ -152,16 +152,8 @@ impl Discovery {
     /// Reconciles each of `arrs` once, after the first discovery found their clients;
     /// returns those that failed.
     pub async fn reconcile(&self, arrs: Vec<Arr>) -> Vec<Uuid> {
-        // Cannot fail: `self` holds the sender.
-        let _ = self.discovered.subscribe().wait_for(|d| *d).await;
-        let mut failed = Vec::new();
         let any = !arrs.is_empty();
-        for arr in arrs {
-            if let Err(error) = self.reconcile_one(&arr).await {
-                tracing::warn!(arr = %arr.name, reason = %error, "skipped reconciling with the Arr library");
-                failed.push(arr.id);
-            }
-        }
+        let failed = self.reconcile_each(arrs).await;
         if any && failed.is_empty() {
             let now = now_ms().to_string();
             let key = infinidysk_health::BACKFILLED_KEY;
@@ -170,6 +162,45 @@ impl Discovery {
             }
         }
         failed
+    }
+
+    /// Reconciles each of `arrs` once; returns those that failed.
+    pub async fn reconcile_each(&self, arrs: Vec<Arr>) -> Vec<Uuid> {
+        // Cannot fail: `self` holds the sender.
+        let _ = self.discovered.subscribe().wait_for(|d| *d).await;
+        let mut failed = Vec::new();
+        for arr in arrs {
+            if let Err(error) = self.reconcile_one(&arr).await {
+                tracing::warn!(arr = %arr.name, reason = %error, "skipped reconciling with the Arr library");
+                failed.push(arr.id);
+            }
+        }
+        failed
+    }
+
+    /// Asks the cleanup task to reconcile `instance` soon, so runs for it never overlap.
+    pub(super) fn request_reconcile(&self, instance: Uuid) {
+        self.reconcile_requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(instance);
+        self.reconcile_wake.notify_one();
+    }
+
+    /// Waits for reconcile requests and takes them. Cancel safe.
+    pub async fn requested_reconciles(&self) -> BTreeSet<Uuid> {
+        loop {
+            let taken = std::mem::take(
+                &mut *self
+                    .reconcile_requests
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
+            if !taken.is_empty() {
+                return taken;
+            }
+            self.reconcile_wake.notified().await;
+        }
     }
 
     async fn reconcile_one(&self, arr: &Arr) -> Result<(), String> {
