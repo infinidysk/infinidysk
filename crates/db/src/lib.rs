@@ -1198,6 +1198,12 @@ impl Db {
         rows.into_iter().map(Item::try_from).collect()
     }
 
+    /// Names of the children of `parent`, in no particular order.
+    pub async fn child_names(&self, parent: ItemId) -> Result<Vec<String>, Error> {
+        let sql = "SELECT name FROM items WHERE parent_id = $1";
+        Ok(on!(self, pool => sqlx::query_scalar(sql).bind(parent.0).fetch_all(pool).await?))
+    }
+
     /// Files (not directories) with ids in `start..end`, ordered by id.
     pub async fn files_in_id_range(
         &self,

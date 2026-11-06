@@ -50,6 +50,9 @@ async fn exercise(db: &Db) {
         .map(|i| i.name)
         .collect();
     assert_eq!(names, ["a.mkv", "b.mkv"]);
+    let mut names = db.child_names(dir.id).await.expect("query");
+    names.sort();
+    assert_eq!(names, ["a.mkv", "b.mkv"]);
     let ids = |items: Vec<Item>| items.into_iter().map(|i| i.id).collect::<Vec<_>>();
     assert_eq!(
         ids(db.files_in_id_range(dir.id, None).await.expect("query")),
