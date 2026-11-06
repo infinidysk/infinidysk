@@ -808,13 +808,18 @@ impl Queue {
 
     /// A not yet existing job directory: `name`, then `name (2)` … `name (99)`, compared
     /// case-insensitively as Windows clients do.
+    // A WARN span so slow-query warnings name the caller even when logs are filtered to warnings.
+    #[tracing::instrument(level = "warn", skip_all)]
     async fn free_dir(&self, parent: &Item, name: &str) -> Result<Option<Item>, Error> {
+        // ponytail: reads every sibling name for each import, so the cost grows with the
+        // category's folder count. Upgrade: store a case-folded name and look up only the
+        // candidates.
         let taken: HashSet<String> = self
             .db
-            .children(parent.id)
+            .child_names(parent.id)
             .await?
             .into_iter()
-            .map(|c| c.name.to_lowercase())
+            .map(|n| n.to_lowercase())
             .collect();
         let handoff = self.handoff.get();
         for n in 1..=MAX_DUPLICATES {
