@@ -30,6 +30,9 @@ static SQLITE_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/s
 
 /// Buffered change notices per subscriber before it lags.
 const CHANGES: usize = 256;
+/// Files per health state; `items_health_summary` covers it.
+const HEALTH_SUMMARY: &str = "SELECT health_state, CAST(COUNT(*) AS BIGINT) FROM items \
+                              WHERE kind <> $1 AND meta_blob IS NOT NULL GROUP BY health_state";
 /// Searches we may ask an Arr to run for one piece of media per [`SEARCH_WINDOW_MS`],
 /// shared by health repair and queue management.
 pub const SEARCH_LIMIT: i64 = 3;
@@ -2214,9 +2217,7 @@ impl Db {
 
     /// Files per health state.
     pub async fn health_summary(&self) -> Result<Vec<(HealthState, u64)>, Error> {
-        let sql = "SELECT health_state, CAST(COUNT(*) AS BIGINT) FROM items \
-                   WHERE kind <> $1 AND meta_blob IS NOT NULL GROUP BY health_state";
-        let rows: Vec<(i16, i64)> = on!(self, pool => sqlx::query_as(sql)
+        let rows: Vec<(i16, i64)> = on!(self, pool => sqlx::query_as(HEALTH_SUMMARY)
             .bind(ItemKind::Directory as i16)
             .fetch_all(pool)
             .await?);
@@ -3416,6 +3417,31 @@ mod tests {
             writer.await.expect("writer task")?;
         }
         wrote.map(drop)
+    }
+
+    #[tokio::test]
+    async fn the_health_summary_reads_its_index() {
+        let path = std::env::temp_dir().join(format!("infinidysk-db-{}.sqlite", ItemId::new()));
+        let db = Db::connect(&format!("sqlite:{}", path.display()))
+            .await
+            .expect("connect");
+        let Pool::Sqlite(pool) = &db.pool else {
+            unreachable!("the test opens SQLite")
+        };
+        let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN QUERY PLAN {HEALTH_SUMMARY}"
+        )))
+        .bind(ItemKind::Directory as i16)
+        .fetch_all(pool)
+        .await
+        .expect("plan");
+        let plan: Vec<_> = plan.into_iter().map(|row| row.3).collect();
+        assert_eq!(plan, ["SCAN items USING INDEX items_health_summary"]);
+
+        db.close().await;
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
     }
 
     #[tokio::test]
