@@ -1485,6 +1485,15 @@ mod tests {
             assert!(file.is_file(), "{url}");
         }
         assert!(!dir.0.join("percentA").exists());
+
+        // A leading `//` stays absolute instead of reading as a URL authority.
+        let home = PathBuf::from(format!("/{}", dir.0.join("slashes").display()));
+        fs::create_dir_all(&home).expect("create");
+        let (url, _) = choose(None, &BootFile::default(), &home).expect("choose");
+        let file = home.join(DEFAULT_SQLITE);
+        assert_eq!(crate::app::sqlite_path(&url), Some(file.clone()), "{url}");
+        Db::connect(&url).await.expect("slashes").close().await;
+        assert!(file.is_file(), "{url}");
     }
 
     #[test]

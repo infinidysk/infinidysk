@@ -170,8 +170,13 @@ const SQLITE_PATH: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS.add
 /// The `sqlite:` URL that opens `path`; [`sqlite_path`] turns it back into `path`.
 pub(crate) fn sqlite_url(path: &Path) -> String {
     let encoded =
-        percent_encoding::percent_encode(path.as_os_str().as_encoded_bytes(), SQLITE_PATH);
-    format!("sqlite:{encoded}")
+        percent_encoding::percent_encode(path.as_os_str().as_encoded_bytes(), SQLITE_PATH)
+            .to_string();
+    // sqlx and `sqlite_path` drop a leading `//`, which would make `//dir` relative.
+    match encoded.strip_prefix("//") {
+        Some(rest) => format!("sqlite:%2F/{rest}"),
+        None => format!("sqlite:{encoded}"),
+    }
 }
 
 /// The file of a `sqlite:` URL, decoded the way sqlx opens it; `None` for any other database.
