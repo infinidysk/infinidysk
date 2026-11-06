@@ -21,14 +21,14 @@ const REGISTRY: &str = "https://ghcr.io";
 const IMAGE: &str = "infinidysk/infinidysk-next";
 /// Bounds a registry that keeps answering with a next page; 1000 tags each.
 const MAX_PAGES: usize = 100;
-const PACKAGE_URL: &str =
-    "https://github.com/orgs/infinidysk/packages/container/package/infinidysk-next";
+/// The release workflow publishes this page before it pushes the image tag.
+const RELEASE_URL: &str = "https://github.com/infinidysk/infinidysk/releases/tag/";
 
 #[derive(Clone, Serialize, ToSchema)]
 pub struct Update {
     /// Image tag of the newer release.
     pub version: String,
-    /// The image's package page.
+    /// The GitHub release notes of that release.
     pub url: String,
 }
 
@@ -154,7 +154,7 @@ fn update(commit: &str, current: &Version, tags: &[String]) -> Option<Update> {
         .max_by(|(a, _), (b, _)| a.cmp(b))
         .map(|(_, tag)| Update {
             version: tag.clone(),
-            url: PACKAGE_URL.to_owned(),
+            url: format!("{RELEASE_URL}{tag}"),
         })
 }
 
@@ -193,6 +193,16 @@ mod tests {
         assert_eq!(
             newest("2.0.0-alpha.3", &tags).as_deref(),
             Some("v2.1.0-alpha.1")
+        );
+    }
+
+    #[test]
+    fn links_the_release_notes_of_the_newer_tag() {
+        let tags = ["sha-cbc5d44f01df".to_owned(), "v2.0.0-beta.6".to_owned()];
+        let found = update(COMMIT, &Version::parse("2.0.0-beta.5").unwrap(), &tags).unwrap();
+        assert_eq!(
+            found.url,
+            "https://github.com/infinidysk/infinidysk/releases/tag/v2.0.0-beta.6"
         );
     }
 
