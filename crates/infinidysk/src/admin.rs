@@ -464,8 +464,8 @@ struct SettingsView {
     settings: Settings,
     /// Dotted paths fixed by environment variables.
     locked: Vec<String>,
-    /// Saved changes that apply only after a restart (mount directory, read-ahead memory,
-    /// FUSE tuning, experiments).
+    /// Saved changes that apply only after a restart (mount directory, built-in FUSE
+    /// mount on or off, read-ahead memory, FUSE tuning, experiments).
     restart_required: bool,
     /// What `settings.experiments` may name.
     experiments: &'static [config::Experiment],
@@ -1312,6 +1312,9 @@ struct Status {
 #[derive(Serialize, ToSchema)]
 struct MountStatus {
     dir: String,
+    /// This process serves the built-in FUSE mount (on in the settings it started with,
+    /// and Linux). Off means nothing to warn about.
+    enabled: bool,
     mounted: bool,
     /// Why it is not mounted.
     reason: Option<String>,
@@ -1503,6 +1506,7 @@ async fn get_status(State(admin): State<Arc<Admin>>) -> Json<Status> {
         update: admin.updates.get(),
         mount: MountStatus {
             dir: admin.live.mount_dir().to_owned(),
+            enabled: admin.live.fuse_enabled(),
             mounted: mount.is_ok(),
             reason: mount.err(),
         },

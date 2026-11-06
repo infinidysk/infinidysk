@@ -389,30 +389,36 @@ pub async fn serve(
             capacity: admin::TRACE_CAPACITY,
         }));
     }
-    #[cfg(target_os = "linux")]
-    let (mount_tx, mount_rx) = watch::channel(Err(crate::healthcheck::MOUNTING.to_owned()));
+    let fuse = fuse_enabled(settings.mount.fuse);
+    let (mount_tx, mount_rx) = watch::channel(Err(if fuse {
+        crate::healthcheck::MOUNTING.to_owned()
+    } else {
+        fuse_off_reason(settings.mount.fuse).to_owned()
+    }));
     #[cfg(not(target_os = "linux"))]
-    let (_, mount_rx) = watch::channel(Err("FUSE mounts need Linux; use WebDAV".to_owned()));
+    drop(mount_tx);
     #[cfg(target_os = "linux")]
-    let mount = tokio::spawn(infinidysk_fuse::run(
-        Arc::clone(&vfs),
-        infinidysk_fuse::Config {
-            mount_dir: settings.mount.dir.clone().into(),
-            uid: boot.uid,
-            gid: boot.gid,
-            max_read: 1 << 20,
-            max_readahead: tuning.fuse_max_readahead_kb * 1000,
-            max_background: tuning.fuse_max_background,
-            epoch_times: settings.mount.epoch_times,
-        },
-        mount_tx,
-        cancel.clone(),
-    ));
+    let mount = fuse.then(|| {
+        tokio::spawn(infinidysk_fuse::run(
+            Arc::clone(&vfs),
+            infinidysk_fuse::Config {
+                mount_dir: settings.mount.dir.clone().into(),
+                uid: boot.uid,
+                gid: boot.gid,
+                max_read: 1 << 20,
+                max_readahead: tuning.fuse_max_readahead_kb * 1000,
+                max_background: tuning.fuse_max_background,
+                epoch_times: settings.mount.epoch_times,
+            },
+            mount_tx,
+            cancel.clone(),
+        ))
+    });
     let maintenance_live = Arc::new(crate::maintenance::Tracker::default());
     let healthcheck = Arc::new(crate::healthcheck::Healthcheck::new(
         db.clone(),
         mount_rx.clone(),
-        settings.mount.dir.clone().into(),
+        fuse.then(|| settings.mount.dir.clone().into()),
         worker.abort_handle(),
     ));
     let metrics = Arc::new(Metrics::new(
@@ -453,6 +459,7 @@ pub async fn serve(
         bandwidth,
         cleanup,
         mount_dir: settings.mount.dir.clone(),
+        fuse: settings.mount.fuse,
         epoch_times: settings.mount.epoch_times,
         tuning,
         experiments: settings.experiments.clone(),
@@ -623,7 +630,9 @@ pub async fn serve(
     let _ = metrics_task.await;
     let _ = quota_task.await;
     #[cfg(target_os = "linux")]
-    let _ = mount.await;
+    if let Some(mount) = mount {
+        let _ = mount.await;
+    }
     db.close().await;
     info!("stopped");
     served.map(|()| {
@@ -749,6 +758,8 @@ pub struct Live {
     cleanup: Arc<Notify>,
     /// What FUSE mounted; changing it needs a restart.
     mount_dir: String,
+    /// `mount.fuse` as saved at startup.
+    fuse: bool,
     epoch_times: bool,
     /// Tuning at startup, for the parts that need a restart.
     tuning: Tuning,
@@ -830,6 +841,7 @@ impl Live {
     pub fn restart_required(&self, settings: &Settings) -> bool {
         let tuning = settings.performance.effective();
         settings.mount.dir != self.mount_dir
+            || settings.mount.fuse != self.fuse
             || settings.mount.epoch_times != self.epoch_times
             || tuning.read_ahead_memory_mb != self.tuning.read_ahead_memory_mb
             || tuning.fuse_max_readahead_kb != self.tuning.fuse_max_readahead_kb
@@ -849,9 +861,27 @@ impl Live {
         &self.mount_dir
     }
 
+    /// Whether this process serves the built-in FUSE mount; not whether it is mounted.
+    pub const fn fuse_enabled(&self) -> bool {
+        fuse_enabled(self.fuse)
+    }
+
     /// Checks that STRM files can be written in `dir`.
     pub async fn probe_strm_dir(&self, dir: &str) -> Result<(), String> {
         self.handoff.probe(dir).await
+    }
+}
+
+const fn fuse_enabled(setting: bool) -> bool {
+    setting && cfg!(target_os = "linux")
+}
+
+/// Why the built-in mount is not served.
+const fn fuse_off_reason(setting: bool) -> &'static str {
+    if setting {
+        "FUSE mounts need Linux; use WebDAV"
+    } else {
+        "turned off in Settings → Mount"
     }
 }
 

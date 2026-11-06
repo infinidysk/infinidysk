@@ -157,7 +157,7 @@ function Attention({ live }: { live?: Live }) {
     items.push({ to: "/settings/providers", tone: "destructive", text: `${p.name} is paused for ${Math.ceil((p.open_for_ms ?? 0) / 1000)} s after errors` });
   }
   if (paused) items.push({ to: "/queue", tone: "warning", text: "The queue is paused" });
-  if (status && !status.mount.mounted) {
+  if (status?.mount.enabled && !status.mount.mounted) {
     items.push({ to: "/system", tone: "warning", text: `Not mounted${status.mount.reason ? `: ${status.mount.reason}` : ""}` });
   }
   if (status?.backup_warning) items.push({ to: "/settings/backups", tone: "warning", text: status.backup_warning });

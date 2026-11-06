@@ -407,6 +407,7 @@ fn system(admin: &Admin) -> Value {
         "database": database,
         "mount": {
             "dir": admin.live.mount_dir(),
+            "enabled": admin.live.fuse_enabled(),
             "mounted": mount.is_ok(),
             "reason": mount.err(),
             "kernel": kernel,
