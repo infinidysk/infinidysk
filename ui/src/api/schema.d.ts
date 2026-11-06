@@ -1975,6 +1975,8 @@ export interface components {
             /** @description `INFINIDYSK_DATABASE_URL` selects the database; it cannot be moved here. */
             env_managed: boolean;
             migration?: components["schemas"]["MigrationView"] | null;
+            /** @description The SQLite file in use; absent on PostgreSQL. */
+            sqlite_path?: string | null;
             /** @description `user@host:port/database` of the PostgreSQL database in use or being copied to. */
             target?: string | null;
         };

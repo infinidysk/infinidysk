@@ -1582,7 +1582,11 @@ async fn get_performance(
     State(admin): State<Arc<Admin>>,
     Query(query): Query<PerformanceQuery>,
 ) -> Json<PerformanceView> {
-    let effective = admin.config.read().await.settings().performance.effective();
+    let default_cache_dir = admin.live.default_cache_dir();
+    let effective = crate::app::effective_tuning(
+        &admin.config.read().await.settings().performance,
+        default_cache_dir,
+    );
     let dir = query
         .dir
         .unwrap_or_else(|| effective.disk_cache_dir.clone());
@@ -1597,7 +1601,10 @@ async fn get_performance(
             .into_iter()
             .map(|preset| PresetView {
                 preset,
-                tuning: preset.tuning(),
+                tuning: config::Tuning {
+                    disk_cache_dir: default_cache_dir.to_owned(),
+                    ..preset.tuning()
+                },
             })
             .collect(),
         effective,
@@ -1867,7 +1874,19 @@ async fn trace_body(admin: &Admin, id: u64, redact: bool) -> Result<String, Fail
             *name = format!("provider-{}", i + 1);
         }
         header["version"] = json!(crate::update::VERSION);
-        header["tuning"] = json!(admin.config.read().await.settings().performance.effective());
+        let default_cache_dir = admin.live.default_cache_dir();
+        let mut tuning = crate::app::effective_tuning(
+            &admin.config.read().await.settings().performance,
+            default_cache_dir,
+        );
+        // Folder names can carry a user name; whether it is the default is what helps.
+        let shown = if tuning.disk_cache_dir == default_cache_dir {
+            "<config>/cache"
+        } else {
+            "<custom>"
+        };
+        shown.clone_into(&mut tuning.disk_cache_dir);
+        header["tuning"] = json!(tuning);
     }
     header["read"] = json!(read);
     header["providers"] = json!(providers);

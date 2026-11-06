@@ -90,6 +90,7 @@ export function DatabasePanel({ title, description }: { title: string; descripti
             <p className="flex flex-wrap items-center gap-x-2">
               <Status tone="success">{data.backend === "postgres" ? "PostgreSQL" : "SQLite"}</Status>
               {data.backend === "postgres" && data.target && <span className="text-muted-foreground font-mono break-all">{data.target}</span>}
+              {data.env_managed && data.backend === "sqlite" && data.sqlite_path && <span className="text-muted-foreground font-mono break-all">{data.sqlite_path}</span>}
             </p>
             {data.env_managed ? (
               <p className="text-muted-foreground text-xs">
@@ -97,19 +98,19 @@ export function DatabasePanel({ title, description }: { title: string; descripti
               </p>
             ) : data.backend === "sqlite" && !data.migration ? (
               <p className="text-muted-foreground text-xs">
-                Kept in <code>/config/infinidysk.sqlite</code>. Copy it to PostgreSQL to run on a database server instead.
+                Kept in <code className="break-all">{data.sqlite_path}</code>. Copy it to PostgreSQL to run on a database server instead.
               </p>
             ) : null}
           </div>
-          {!data.env_managed && data.backend === "sqlite" && (data.migration ? <Move migration={data.migration} target={data.target} /> : <Start />)}
+          {!data.env_managed && data.backend === "sqlite" && (data.migration ? <Move migration={data.migration} target={data.target} /> : <Start folder={data.sqlite_path?.replace(/\/[^/]*$/, "") || "/"} />)}
         </SettingsPanel>
       )}
     </SettingsSection>
   );
 }
 
-/** No move yet: a URL, a read-only test, and the start of the copy. */
-function Start() {
+/** No move yet: a URL, a read-only test, and the start of the copy. `folder` holds the SQLite file. */
+function Start({ folder }: { folder: string }) {
   const client = useQueryClient();
   const [url, setUrl] = useState("");
   const [confirming, setConfirming] = useState(false);
@@ -173,7 +174,7 @@ function Start() {
         onConfirm={() => start.mutate(url)}
       >
         infinidysk copies the library, queue, history and settings to PostgreSQL, then keeps the copy in sync while you keep using
-        it. Nothing switches until you choose Switch to PostgreSQL. Back up <code>/config</code> before switching.
+        it. Nothing switches until you choose Switch to PostgreSQL. Back up <code className="break-all">{folder}</code> before switching.
       </Confirm>
     </div>
   );
