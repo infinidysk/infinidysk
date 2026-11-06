@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Live refresh regression</title>
+<pre id="result">Running</pre>
+<script type="module">
+  import { QueryClient, QueryObserver } from "@tanstack/react-query";
+  import { liveRefresh } from "/src/live.ts";
+
+  const GAP = 2000;
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const check = (condition, message) => {
+    if (!condition) throw new Error(message);
+  };
+
+  function harness() {
+    let now = 0;
+    let nextId = 1;
+    const timers = new Map();
+    const timer = {
+      now: () => now,
+      setTimeout(run, ms) {
+        timers.set(nextId, { at: now + ms, run });
+        return nextId++;
+      },
+      clearTimeout: (id) => timers.delete(id),
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
+    const refresh = liveRefresh(client, timer, GAP);
+    const unsubscribes = [];
+    /** A query some page shows, backed by a fake server value whose fetches finish on demand. */
+    const watch = (queryKey) => {
+      const query = { value: 0, started: 0, calls: [] };
+      query.cached = () => client.getQueryData(queryKey);
+      query.finish = async () => {
+        query.calls.shift().resolve();
+        await settle();
+      };
+      query.fail = async () => {
+        query.calls.shift().reject(new Error("Fixture failure"));
+        await settle();
+      };
+      client.setQueryData(queryKey, 0);
+      const observer = new QueryObserver(client, {
+        queryKey,
+        refetchOnMount: false,
+        queryFn: () => {
+          query.started += 1;
+          const snapshot = query.value;
+          return new Promise((resolve, reject) => query.calls.push({ resolve: () => resolve(snapshot), reject }));
+        },
+      });
+      unsubscribes.push(observer.subscribe(() => {}));
+      return query;
+    };
+    const advance = async (ms) => {
+      const end = now + ms;
+      for (;;) {
+        await settle();
+        const due = [...timers].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!due) break;
+        timers.delete(due[0]);
+        now = Math.max(now, due[1].at);
+        due[1].run();
+      }
+      now = end;
+      await settle();
+    };
+    const close = () => {
+      refresh.dispose();
+      unsubscribes.forEach((unsubscribe) => unsubscribe());
+      client.clear();
+    };
+    return { client, refresh, watch, advance, timers, close };
+  }
+
+  async function a_burst_during_a_fetch_gives_one_follow_up_with_the_latest_value() {
+    const h = harness();
+    const queue = h.watch(["queue"]);
+    queue.value = 1;
+    h.refresh.change("queue");
+    await h.advance(0);
+    check(queue.started === 1, "first event refreshes at once");
+    for (const value of [2, 3, 4, 5]) {
+      queue.value = value;
+      h.refresh.change("queue");
+      await h.advance(100);
+    }
+    check(queue.started === 1, "burst waits for the running fetch");
+    await queue.finish();
+    await h.advance(GAP - 1);
+    check(queue.started === 1, "follow-up waits for the gap");
+    await h.advance(1);
+    check(queue.started === 2, "one follow-up after the gap");
+    await queue.finish();
+    await h.advance(10 * GAP);
+    check(queue.started === 2 && queue.cached() === 5, "follow-up shows the latest value");
+    h.close();
+  }
+
+  async function one_event_during_a_pre_existing_fetch_gives_one_follow_up() {
+    const h = harness();
+    const summary = h.watch(["health", "summary"]);
+    void h.client.refetchQueries({ queryKey: ["health", "summary"] });
+    check(summary.started === 1, "external fetch started");
+    summary.value = 1;
+    h.refresh.change("health");
+    await h.advance(0);
+    check(summary.started === 1, "event joins the running fetch");
+    await summary.finish();
+    check(summary.cached() === 0, "joined fetch returns the old value");
+    await h.advance(GAP);
+    check(summary.started === 2, "a follow-up runs");
+    await summary.finish();
+    await h.advance(10 * GAP);
+    check(summary.started === 2 && summary.cached() === 1, "follow-up shows the change");
+    h.close();
+  }
+
+  async function history_and_health_events_fetch_the_summary_once() {
+    const h = harness();
+    const summary = h.watch(["health", "summary"]);
+    const rejected = h.watch(["health", "rejected"]);
+    const history = h.watch(["history", "page"]);
+    h.refresh.change("history");
+    h.refresh.change("health");
+    await h.advance(0);
+    check(summary.started === 1 && rejected.started === 1 && history.started === 1, "each list fetches once");
+    await Promise.all([summary.finish(), rejected.finish(), history.finish()]);
+    await h.advance(10 * GAP);
+    check(summary.started === 1 && rejected.started === 1 && history.started === 1, "no extra fetches");
+    h.close();
+  }
+
+  async function resync_respects_the_gap() {
+    const h = harness();
+    const summary = h.watch(["health", "summary"]);
+    const other = h.watch(["backups"]);
+    h.refresh.change("health");
+    await h.advance(0);
+    await summary.finish();
+    await h.advance(100);
+    h.refresh.change("resync");
+    await h.advance(0);
+    check(other.started === 1, "other queries refresh at once");
+    await other.finish();
+    check(summary.started === 1, "summary waits for the gap");
+    await h.advance(GAP - 101);
+    check(summary.started === 1, "summary still waits");
+    await h.advance(1);
+    check(summary.started === 2, "summary refreshes after the gap");
+    await summary.finish();
+    await h.advance(10 * GAP);
+    check(summary.started === 2 && other.started === 1, "no extra fetches");
+    h.close();
+  }
+
+  async function reconnect_after_a_drop_refreshes_each_target_once() {
+    const h = harness();
+    const lists = [["queue"], ["history", "page"], ["health", "rejected"], ["health", "summary"]].map(h.watch);
+    h.refresh.opened();
+    await h.advance(10 * GAP);
+    check(lists.every((list) => list.started === 0), "first open refreshes nothing");
+    h.refresh.opened();
+    await h.advance(0);
+    check(lists.every((list) => list.started === 1), "reconnect refreshes each list");
+    await Promise.all(lists.map((list) => list.finish()));
+    await h.advance(10 * GAP);
+    check(lists.every((list) => list.started === 1), "each list refreshes once");
+    h.close();
+  }
+
+  async function the_next_event_refreshes_after_a_failure() {
+    const h = harness();
+    const queue = h.watch(["queue"]);
+    queue.value = 1;
+    h.refresh.change("queue");
+    await h.advance(0);
+    await queue.fail();
+    await h.advance(10 * GAP);
+    check(queue.started === 1 && queue.cached() === 0, "a failure is not retried");
+    queue.value = 2;
+    h.refresh.change("queue");
+    await h.advance(0);
+    check(queue.started === 2, "the next event refreshes");
+    await queue.finish();
+    check(queue.cached() === 2, "the refresh shows the change");
+    h.close();
+  }
+
+  async function a_fetch_finishing_after_teardown_starts_nothing() {
+    const h = harness();
+    const queue = h.watch(["queue"]);
+    const summary = h.watch(["health", "summary"]);
+    h.refresh.change("queue");
+    h.refresh.change("health");
+    await h.advance(0);
+    await summary.finish();
+    h.refresh.change("health");
+    h.refresh.change("queue");
+    await h.advance(0);
+    check(h.timers.size > 0, "follow-ups are waiting for the gap");
+    h.refresh.dispose();
+    check(h.timers.size === 0, "teardown clears waiting timers");
+    await queue.finish();
+    await h.advance(10 * GAP);
+    check(h.timers.size === 0 && queue.started === 1 && summary.started === 1, "a late fetch starts nothing");
+    h.close();
+  }
+
+  const tests = [
+    a_burst_during_a_fetch_gives_one_follow_up_with_the_latest_value,
+    one_event_during_a_pre_existing_fetch_gives_one_follow_up,
+    history_and_health_events_fetch_the_summary_once,
+    resync_respects_the_gap,
+    reconnect_after_a_drop_refreshes_each_target_once,
+    the_next_event_refreshes_after_a_failure,
+    a_fetch_finishing_after_teardown_starts_nothing,
+  ];
+  const failures = [];
+  for (const test of tests) {
+    try {
+      await test();
+    } catch (error) {
+      failures.push(`${test.name}: ${error.message}`);
+    }
+  }
+  document.getElementById("result").textContent = failures.length ? `FAIL\n${failures.join("\n")}` : "PASS";
+</script>
+</html>
