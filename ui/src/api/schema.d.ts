@@ -2920,9 +2920,19 @@ export interface components {
              * @default false
              */
             epoch_times: boolean;
+            /**
+             * @description Serve the built-in FUSE mount at `dir`. Off leaves `dir` to an external mount.
+             * @default true
+             */
+            fuse: boolean;
         };
         MountStatus: {
             dir: string;
+            /**
+             * @description This process serves the built-in FUSE mount (on in the settings it started with,
+             *     and Linux). Off means nothing to warn about.
+             */
+            enabled: boolean;
             mounted: boolean;
             /** @description Why it is not mounted. */
             reason?: string | null;
@@ -3868,7 +3878,8 @@ export interface components {
             /**
              * @default {
              *       "dir": "/mnt/infinidysk",
-             *       "epoch_times": false
+             *       "epoch_times": false,
+             *       "fuse": true
              *     }
              */
             mount: components["schemas"]["Mount"];
@@ -3945,8 +3956,8 @@ export interface components {
             /** @description Dotted paths fixed by environment variables. */
             locked: string[];
             /**
-             * @description Saved changes that apply only after a restart (mount directory, read-ahead memory,
-             *     FUSE tuning, experiments).
+             * @description Saved changes that apply only after a restart (mount directory, built-in FUSE
+             *     mount on or off, read-ahead memory, FUSE tuning, experiments).
              */
             restart_required: boolean;
             /** @description Secrets are masked; send the mask back to keep them. */

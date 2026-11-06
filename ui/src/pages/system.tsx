@@ -65,8 +65,10 @@ export function System() {
             <Version status={status.data} />
             <Card icon={HardDrive}>
               <div className="flex flex-wrap items-center gap-x-3">
-                <Status tone={status.data.mount.mounted ? "success" : "warning"}>
-                  <span className="font-medium">{status.data.mount.mounted ? "Mounted" : "Not mounted"}</span>
+                <Status tone={!status.data.mount.enabled ? "muted" : status.data.mount.mounted ? "success" : "warning"}>
+                  <span className="font-medium">
+                    {!status.data.mount.enabled ? "Built-in FUSE mount off" : status.data.mount.mounted ? "Mounted" : "Not mounted"}
+                  </span>
                 </Status>
                 <span className="text-muted-foreground truncate font-mono text-xs" title={status.data.mount.dir}>
                   {status.data.mount.dir}

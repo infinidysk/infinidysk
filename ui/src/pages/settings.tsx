@@ -1209,12 +1209,22 @@ export function Settings() {
                 <SettingsPanel>
                   {status && (
                     <div className="space-y-0.5">
-                      <Status tone={status.mount.mounted ? "success" : "warning"}>
-                        <span className="font-medium">{status.mount.mounted ? "Mounted" : "Not mounted"}</span>
+                      <Status tone={!status.mount.enabled ? "muted" : status.mount.mounted ? "success" : "warning"}>
+                        <span className="font-medium">
+                          {!status.mount.enabled ? "Built-in FUSE mount off" : status.mount.mounted ? "Mounted" : "Not mounted"}
+                        </span>
                       </Status>
                       {status.mount.reason && <p className="text-muted-foreground text-xs">{status.mount.reason}</p>}
                     </div>
                   )}
+                  <Toggle
+                    id="mount-fuse"
+                    label={label("Built-in FUSE mount", "mount.fuse")}
+                    hint="Turn off if you do not use the built-in FUSE mount. Takes effect after a restart."
+                    disabled={locked("mount.fuse")}
+                    checked={draft.mount.fuse}
+                    onChange={(fuse) => patch("mount", { fuse })}
+                  />
                   <Field
                     id="mount-dir"
                     label={label("Directory", "mount.dir")}
