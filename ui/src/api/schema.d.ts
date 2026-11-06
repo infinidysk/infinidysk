@@ -4161,7 +4161,7 @@ export interface components {
         /** @enum {string} */
         UnownedAction: "delete" | "action_needed";
         Update: {
-            /** @description The image's package page. */
+            /** @description The GitHub release notes of that release. */
             url: string;
             /** @description Image tag of the newer release. */
             version: string;
