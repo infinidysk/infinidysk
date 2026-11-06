@@ -1874,10 +1874,19 @@ async fn trace_body(admin: &Admin, id: u64, redact: bool) -> Result<String, Fail
             *name = format!("provider-{}", i + 1);
         }
         header["version"] = json!(crate::update::VERSION);
-        header["tuning"] = json!(crate::app::effective_tuning(
+        let default_cache_dir = admin.live.default_cache_dir();
+        let mut tuning = crate::app::effective_tuning(
             &admin.config.read().await.settings().performance,
-            admin.live.default_cache_dir(),
-        ));
+            default_cache_dir,
+        );
+        // Folder names can carry a user name; whether it is the default is what helps.
+        let shown = if tuning.disk_cache_dir == default_cache_dir {
+            "<config>/cache"
+        } else {
+            "<custom>"
+        };
+        shown.clone_into(&mut tuning.disk_cache_dir);
+        header["tuning"] = json!(tuning);
     }
     header["read"] = json!(read);
     header["providers"] = json!(providers);
