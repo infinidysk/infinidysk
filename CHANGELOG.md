@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.0.0-beta.5](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.4...v2.0.0-beta.5) (2026-11-06)
+
+
+### Features
+
+* **api:** better Lidarr support: more audio formats, faster cleanup after album deletes, and a tagging warning ([#1838](https://github.com/infinidysk/infinidysk/issues/1838)) ([e138a06](https://github.com/infinidysk/infinidysk/commit/e138a062aa1df9f9a85a0aaecf532a2e060fbc98))
+* **arr:** support Sonarr v5 ([#1833](https://github.com/infinidysk/infinidysk/issues/1833)) ([b743f54](https://github.com/infinidysk/infinidysk/commit/b743f544313a0ad447687c8bcd7a678abab56a63))
+* **auth:** show your identity provider's name on the SSO sign-in button ([#1835](https://github.com/infinidysk/infinidysk/issues/1835)) ([1845fe8](https://github.com/infinidysk/infinidysk/commit/1845fe8182b8f084da671ca399a12bff028500d0))
+* **mount:** turn off the built-in FUSE mount when you do not need it, without warnings ([#1841](https://github.com/infinidysk/infinidysk/issues/1841)) ([d721677](https://github.com/infinidysk/infinidysk/commit/d721677513bc8f0e23005450114a2a6f93ea7379))
+
+
+### Bug Fixes
+
+* **db:** cleanup runs on SQLite no longer stop when other work writes to the database ([#1840](https://github.com/infinidysk/infinidysk/issues/1840)) ([6d676ab](https://github.com/infinidysk/infinidysk/commit/6d676ab28a308139bcf8c3d12e3446c91fd11837))
+* **db:** failed maintenance runs and API errors now say what the database reported ([#1839](https://github.com/infinidysk/infinidysk/issues/1839)) ([43ac7fd](https://github.com/infinidysk/infinidysk/commit/43ac7fd1f399ef79ae9032c01e4276ef487a3924))
+* **deps:** Bump the npm-minor-patch group in /ui with 3 updates ([#1844](https://github.com/infinidysk/infinidysk/issues/1844)) ([ba17029](https://github.com/infinidysk/infinidysk/commit/ba17029c9e28fd63a39ec257dbbed551f71c31cb))
+* **health:** broken files from an Arr that cannot repair them are kept for you instead of deleted ([#1837](https://github.com/infinidysk/infinidysk/issues/1837)) ([c3bd0ba](https://github.com/infinidysk/infinidysk/commit/c3bd0baf90b13846da6aca35e26f945b106385e4))
+
 ## [2.0.0-beta.4](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.3...v2.0.0-beta.4) (2026-11-05)
 
 
