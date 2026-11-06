@@ -1235,6 +1235,19 @@ impl Settings {
                 format!("Mount dir {:?} must be an absolute path", self.mount.dir),
             ));
         }
+        // A mount over the config folder would hide its files once it mounts.
+        if let Some(config_dir) = std::path::Path::new(default_cache_dir).parent()
+            && config_dir.starts_with(&self.mount.dir)
+        {
+            return Err(invalid(
+                "mount.dir",
+                format!(
+                    "Mount dir {:?} must not contain the config folder {}",
+                    self.mount.dir,
+                    config_dir.display()
+                ),
+            ));
+        }
         if self.webdav.user.trim().is_empty() {
             return Err(invalid(
                 "webdav.user",

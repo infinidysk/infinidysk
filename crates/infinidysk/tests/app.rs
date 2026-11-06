@@ -222,16 +222,21 @@ async fn keeps_the_boot_file_and_disk_cache_in_the_config_folder() {
         assert_eq!(preset["tuning"]["disk_cache_dir"], cache);
     }
 
-    // A mount over the config folder would hold the default disk cache; it is refused.
+    // A mount over the config folder would hide its files, even with the disk cache elsewhere.
     let (_, body) = send(addr, &admin_request("GET", "/api/v1/settings", "")).await;
     let mut settings = serde_json::from_str::<Value>(&body).unwrap()["settings"].take();
     settings["mount"]["dir"] = home.display().to_string().into();
+    settings["performance"]["disk_cache_dir"] = std::env::temp_dir()
+        .join("infinidysk-elsewhere")
+        .display()
+        .to_string()
+        .into();
     let put = admin_request("PUT", "/api/v1/settings", &settings.to_string());
     let (code, body) = send(addr, &put).await;
     assert_eq!(code, "HTTP/1.1 400 Bad Request");
     assert_eq!(
         serde_json::from_str::<Value>(&body).unwrap()["path"],
-        "performance.disk_cache_dir"
+        "mount.dir"
     );
 
     let cancel_move = admin_request("DELETE", "/api/v1/database/migration", "");
@@ -271,11 +276,11 @@ async fn an_unusable_config_dir_stops_startup_with_one_warning() {
     let cases = [
         (file.display().to_string(), None, "creating"),
         ("relative".to_owned(), None, "absolute path"),
-        // A mount over the config folder would hold its default disk cache.
+        // A mount over the config folder would hide its files.
         (
             home_text.clone(),
             Some(home_text.clone()),
-            "outside the mount dir",
+            "must not contain the config folder",
         ),
     ];
     for (dir, mount, reason) in cases {
