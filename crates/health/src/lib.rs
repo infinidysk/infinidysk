@@ -167,6 +167,8 @@ enum Lookup {
     },
     /// No Arr imported it; the reason why.
     Unowned(String),
+    /// An Arr owns it but cannot be asked for a replacement; the reason why.
+    Unrepairable(String),
     /// An Arr failed; `transient` when retrying later may work.
     Failed { message: String, transient: bool },
 }
@@ -720,6 +722,7 @@ impl Health {
                     UnownedAction::ActionNeeded => self.give_up(item, status, &reason).await,
                 };
             }
+            Lookup::Unrepairable(reason) => return self.give_up(item, status, &reason).await,
             Lookup::Failed { message, transient } => {
                 return self.retry(item, status, &message, transient).await;
             }
@@ -880,22 +883,28 @@ impl Health {
             Some(_) => Vec::new(),
             None => self.db.owner_jobs(item.id).await?,
         };
-        let instances: Vec<Arr> = self
+        let recorded = self.db.owner_instances(item.id).await?;
+        let (mut instances, unrepairable): (Vec<Arr>, Vec<Arr>) = self
             .arr
             .borrow()
             .iter()
-            .filter(|a| a.profile.repairs())
+            .filter(|a| a.profile.repairs() || recorded.contains(&a.id))
             .cloned()
-            .collect();
+            .partition(|a| a.profile.repairs());
+        // A recorded owner that cannot repair still owns it, so it is never unowned.
+        let unrepairable = unrepairable.first().map(|a| {
+            Lookup::Unrepairable(format!(
+                "{} owns it but cannot be asked for a replacement",
+                a.name
+            ))
+        });
         if instances.is_empty() {
-            return Ok(Lookup::Unowned(
-                "no Arr instance is configured to replace it".to_owned(),
-            ));
+            return Ok(unrepairable.unwrap_or_else(|| {
+                Lookup::Unowned("no Arr instance is configured to replace it".to_owned())
+            }));
         }
         let dir_name = job_dir.rsplit('/').next().unwrap_or_default();
         // Instances whose webhook told us they own it go first.
-        let recorded = self.db.owner_instances(item.id).await?;
-        let mut instances = instances;
         instances.sort_by_key(|a| !recorded.contains(&a.id));
         let (mut failures, mut transient) = (Vec::new(), true);
         for instance in instances {
@@ -939,6 +948,9 @@ impl Health {
                 message: failures.join("; "),
                 transient,
             });
+        }
+        if let Some(unrepairable) = unrepairable {
+            return Ok(unrepairable);
         }
         if stamped.is_none() && recorded_jobs.is_empty() {
             // The owner backfill may still adopt it.

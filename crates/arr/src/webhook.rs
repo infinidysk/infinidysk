@@ -267,4 +267,43 @@ mod tests {
         assert_eq!(read(json!({ "eventType": "Test" })), Event::Test);
         assert_eq!(read(json!({ "eventType": "Grab" })), Event::Ignored);
     }
+
+    /// Sportarr sends no file ids, and the same `EpisodeFileDelete` for a removal and
+    /// for an upgrade's replaced file, often at the new file's path. Until its ownership
+    /// is recorded, none of its deletes may release anything.
+    #[test]
+    fn sportarr_deliveries_release_nothing_by_themselves() {
+        let read = |v: Value| parse(v.to_string().as_bytes()).unwrap();
+        let f = |path: &str| File {
+            id: None,
+            path: path.to_owned(),
+            source: None,
+        };
+        assert_eq!(
+            read(json!({
+                "eventType": "Download", "downloadId": "abc", "isUpgrade": true,
+                "episodeFile": { "relativePath": "a.mkv", "path": "/sports/L/a.mkv" },
+                "deletedFiles": [{ "relativePath": "a.mkv", "path": "/sports/L/a.mkv" }],
+            })),
+            Event::Imported {
+                download_id: Some("abc".to_owned()),
+                files: vec![f("/sports/L/a.mkv")],
+                replaced: vec![f("/sports/L/a.mkv")],
+            }
+        );
+        assert_eq!(
+            read(json!({
+                "eventType": "EpisodeFileDelete",
+                "deletedFiles": [{ "relativePath": "a.mkv", "path": "/sports/L/a.mkv" }],
+            })),
+            Event::Deleted(vec![])
+        );
+        assert_eq!(
+            read(json!({
+                "eventType": "SeriesDelete", "series": { "path": "/sports/L" },
+                "deletedFiles": [{ "relativePath": "a.mkv", "path": "/sports/L/a.mkv" }],
+            })),
+            Event::Ignored
+        );
+    }
 }
