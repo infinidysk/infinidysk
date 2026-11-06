@@ -336,6 +336,10 @@ public static class FetchFirstSegmentsStep
         }
         catch (UsenetArticleNotFoundException e)
         {
+            if (e.InconclusiveReason is { } reason && DeadNzbFailFast.IsImportantNzbFile(nzbFile))
+                throw new RetryableDownloadException(
+                    $"First segment of `{nzbFile.GetSubjectFileName()}` could not be confirmed missing: {reason}");
+
             return BuildMissingFirstSegment(nzbFile, e.ProviderGeneration);
         }
         catch (Exception e) when (

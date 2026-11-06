@@ -1,9 +1,9 @@
-name: Mutation
+name: v1 Mutation
 
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [v1]
     paths:
       - frontend/app/clients/**
       - frontend/app/auth/**
@@ -159,7 +159,7 @@ jobs:
 
       - name: Set up Node.js
         if: github.event_name != 'pull_request' || steps.mutate.outputs.skip != 'true'
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
           cache: npm
@@ -175,11 +175,11 @@ jobs:
         uses: actions/cache@v6
         with:
           path: frontend/reports/stryker-incremental.json
-          # PR caches are not readable from other PRs; the push-to-main run seeds the shared fallback.
+          # PR caches are not readable from other PRs; the push-to-v1 run seeds the shared fallback.
           key: stryker-js-${{ hashFiles('frontend/stryker.config.json', 'frontend/package-lock.json') }}-${{ github.ref_name }}-${{ github.sha }}
           restore-keys: |
             stryker-js-${{ hashFiles('frontend/stryker.config.json', 'frontend/package-lock.json') }}-${{ github.ref_name }}-
-            stryker-js-${{ hashFiles('frontend/stryker.config.json', 'frontend/package-lock.json') }}-main-
+            stryker-js-${{ hashFiles('frontend/stryker.config.json', 'frontend/package-lock.json') }}-v1-
 
       - name: Run StrykerJS
         if: github.event_name != 'pull_request' || steps.mutate.outputs.skip != 'true'

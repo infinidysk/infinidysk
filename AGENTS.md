@@ -116,8 +116,8 @@ Backend tests use xUnit and live in `tests/NzbWebDAV.Tests/`. They cover streams
 NZB/PAR2 parsing, NNTP caching and concurrency, queue logic, and SQLite-backed
 database behavior. Frontend tests use Vitest and are colocated as `*.test.ts`.
 Performance benchmarks live in `backend.Benchmarks/`; the deterministic
-streaming/SAB reports are compared in PR CI and against floored envelopes in
-`performance.yml`.
+streaming/SAB reports are compared in PR CI. Timing envelopes are a manual
+local run.
 
 ## In-tree libraries (UsenetSharp / SharpCompress / RapidYencSharp)
 
@@ -203,7 +203,7 @@ dotnet ef database update   # or: ./publish/NzbWebDAV --db-migration
 
 Migration files go in `backend/Database/Migrations/`. `DavDatabaseContextFactory` exists for design-time tooling.
 
-**Only irreversible or destructive migrations are breaking changes.** A migration that rewrites or drops existing data, changes schema in a way that cannot be rolled back, or otherwise makes downgrading unsafe must be marked breaking (see [Breaking changes](#breaking-changes) below) so release-please performs a major version bump. Routine additive migrations (new tables, new nullable columns, new indexes) ship as plain `feat(db)` / `fix(db)` — but the PR description and release announcement must still include a "back up `/config` before upgrading" note, since migrations auto-apply on startup.
+**Only irreversible or destructive migrations are breaking changes.** A migration that rewrites or drops existing data, changes schema in a way that cannot be rolled back, or otherwise makes downgrading unsafe must be marked breaking (see [Breaking changes](#breaking-changes) below) so it surfaces under Breaking Changes in the changelog (the 1.x maintenance line bumps patch only; see [Releases](#releases)). Routine additive migrations (new tables, new nullable columns, new indexes) ship as plain `feat(db)` / `fix(db)` — but the PR description and release announcement must still include a "back up `/config` before upgrading" note, since migrations auto-apply on startup.
 
 ## Commit conventions (required)
 
@@ -318,7 +318,7 @@ refactor(queue): extract rar aggregator helpers
 
 ### Do not use
 
-- `chore(main): release …` — reserved for release-please automation
+- `chore(v1): release …` — reserved for release-please automation
 - Bare `docs` / `ci` / `test` / `tests` types for non-behavior work — use `chore(<scope>)` instead so the change stays out of release notes
 - Vague messages: `update stuff`, `fix bug`, `wip`
 - Mixed unrelated changes in one commit
@@ -381,7 +381,7 @@ Set `Priority` and `Effort` on the project item (not org Issue Fields, not label
 
 ### Votes (project field)
 
-`Votes` is a **Number** field auto-synced by [`.github/workflows/sync-issue-votes.yml`](.github/workflows/sync-issue-votes.yml) (every 6 hours, plus `workflow_dispatch`). It stores the count of **thumbs-up (👍)** reactions on the issue body only — not comments, and not other reaction types. Do **not** set `Votes` manually; the cron overwrites it.
+`Votes` is a **Number** field auto-synced by `sync-issue-votes.yml` on the default branch (every 6 hours, plus `workflow_dispatch`; scheduled workflows only run there, so `v1` does not carry it). It stores the count of **thumbs-up (👍)** reactions on the issue body only — not comments, and not other reaction types. Do **not** set `Votes` manually; the cron overwrites it.
 
 The same workflow appends an upvote footer (marker `<!-- nzbdav-votes-footer -->`) to open **Feature** issues when missing (via the workflow `GITHUB_TOKEN` with `issues: write`). The feature request issue template includes that footer for new issues. Do **not** remove the marker; the cron treats it as already present.
 
@@ -430,9 +430,9 @@ If the pull request branch has advanced since checkout, fetch it and replay the 
 When a task that changed the repo is done (unless the user explicitly said not to commit, push, or open a PR):
 
 1. **Commit** any remaining changes using Conventional Commits (see above).
-2. **Push a new branch** — never commit or push to `main`. Name it `<type>/<short-kebab-description>` (e.g. `fix/db-startup-guards`, `chore/agents-post-task`).
-3. **Open a PR** to `main` with `gh pr create` (short summary + test plan). Report the PR URL in the final response.
-4. **Reset the workspace** for the next agent: `git checkout main` && `git pull`, then confirm a clean working tree on `main`.
+2. **Push a new branch** — never commit or push to `v1` or `main`. Branch from `origin/v1` and name it `<type>/<short-kebab-description>` (e.g. `fix/db-startup-guards`, `chore/agents-post-task`).
+3. **Open a PR** to `v1` with `gh pr create --base v1` (short summary + test plan). Report the PR URL in the final response.
+4. **Reset the workspace** for the next agent: `git checkout v1` && `git pull`, then confirm a clean working tree on `v1`.
 
 ### Never merge pull requests
 
@@ -455,39 +455,34 @@ PR titles use the same `<type>(<scope>): <description>` format as commits, but w
 
 Keep the type/scope accurate — release tooling and reviewers still rely on them. If the change has no user-visible effect (`chore`, internal refactors), a concise technical title is fine.
 
-Skip this handoff if there are no local changes and nothing to push or PR. Do not force-push, amend pushed commits, or leave uncommitted work behind when switching to `main` (commit it onto the PR branch first).
+Skip this handoff if there are no local changes and nothing to push or PR. Do not force-push, amend pushed commits, or leave uncommitted work behind when switching to `v1` (commit it onto the PR branch first).
 
 ## CI/CD
 
+1.x lives on the `v1` branch; `main` is 2.x. Every workflow here is prefixed `v1-` (and its `name:` with `v1 `) so its runs stay apart from the 2.x workflows in the Actions list. Scheduled workflows only run on the default branch, so `v1` has none.
+
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `ci.yml` | PRs and pushes to `main` | Frontend lint/typecheck/build/tests + backend build/tests |
-| `codeql.yml` | PRs, pushes to `main`, and weekly schedule | CodeQL security analysis for C#, TypeScript, and GitHub Actions |
-| `refresh-dev.yml` | Manual `workflow_dispatch` | Publishes `ghcr.io/.../infinidysk:dev`, builds Linux archives, creates/updates the rolling `dev` GitHub pre-release, and moves the git `dev` tag to that commit (unversioned snapshot); Discord announcement is LLM-summarized with raw-list fallback (`OPENAI_API_KEY` optional) |
-| `cut-prerelease.yml` | Manual `workflow_dispatch` | Creates numbered and rolling `rc` GitHub Pre-releases with Linux archives; pushes versioned RC tags to canonical and legacy GHCR and the rolling `:rc` tag to canonical GHCR (pre-release images are not published to Docker Hub); refreshes the rolling `dev` image on canonical GHCR and Docker Hub and the rolling `dev` pre-release with the RC's archives; moves git `rc` and `dev` tags (`dev` first, so `rc` is never ahead of `dev`); Discord announcement is LLM-summarized with raw-list fallback (`OPENAI_API_KEY` optional) |
-| `release.yml` | Push to `main` | release-please versioning; publishes Linux archives and stable Docker tags to every registry, plus `dev` and `rc` tags to canonical GHCR and `dev` to Docker Hub; refreshes the rolling `dev` pre-release; moves git `dev` and `rc` tags (`dev` first); deletes versioned `v*-rc.*` pre-releases and their image tags; Discord announcement is LLM-summarized from `CHANGELOG.md` with raw-list fallback (`OPENAI_API_KEY` optional) |
-| `release.yml` | Manual `workflow_dispatch` | Republishes Linux archives and stable Docker tags to every registry, plus `dev` and `rc` tags to canonical GHCR and `dev` to Docker Hub, for an existing version; refreshes the rolling `dev` pre-release; moves git `dev` and `rc` tags (`dev` first); deletes versioned `v*-rc.*` pre-releases and their image tags |
-| `promote-lts.yml` | Manual `workflow_dispatch` | Moves git `lts` and GHCR `:lts` to an existing published version (no rebuild) |
-| `performance.yml` | Nightly cron (`17 5 * * *`) + `workflow_dispatch` | Streaming and SAB API report compare (deterministic + floored timing envelopes); optional re-baseline PR |
-| `dependency-submission.yml` | GitHub Release `published` (plus manual `workflow_dispatch`) | Dependency graph submission (NuGet + npm) |
-| `docker-build-push.yml` | Reusable (called by refresh-dev/cut-prerelease/release) | Multi-arch Docker build with GHA cache |
-| `build-release-assets.yml` | Reusable/manual (called by refresh-dev/cut-prerelease/release) | Builds linux-x64/arm64 archives and attaches them to GitHub Releases |
-| `move-movable-tag.yml` | Reusable (called by refresh-dev/cut-prerelease/release) | Force-moves a movable git tag (`dev`, `rc`, …) to a given commit |
+| `v1-ci.yml` | PRs and pushes to `v1` | Frontend lint/typecheck/build/tests + backend build/tests |
+| `v1-codeql.yml` | PRs and pushes to `v1` | CodeQL security analysis for C#, TypeScript, and GitHub Actions |
+| `v1-mutation.yml` | PRs and pushes to `v1` (pilot paths) | Mutation testing of the pilot files |
+| `v1-release.yml` | Push to `v1` | release-please versioning; publishes Linux archives and stable Docker tags to every registry, plus `dev`, `rc` and `lts` tags to canonical GHCR and `dev` to Docker Hub; moves git `dev`, `rc` and `lts` tags (in that order); deletes versioned `v1.*-rc.*` pre-releases and their image tags; Discord announcement is LLM-summarized from `CHANGELOG.md` with raw-list fallback (`OPENAI_API_KEY` optional) |
+| `v1-release.yml` | Manual `workflow_dispatch` | Republishes the same artifacts and tags for an existing version |
+| `v1-docker-build-push.yml` | Reusable (called by v1-release) | Multi-arch Docker build with GHA cache |
+| `v1-build-release-assets.yml` | Reusable/manual (called by v1-release) | Builds linux-x64/arm64 archives and attaches them to GitHub Releases |
+| `v1-move-movable-tag.yml` | Reusable (called by v1-release) | Force-moves a movable git tag (`dev`, `rc`, `lts`) to a given commit |
 
-Docker image builds are shared via the reusable workflow. Branch and dependabot image pipelines were removed — PRs are validated by `ci.yml` instead of publishing throwaway images.
+Docker image builds are shared via the reusable workflow. Branch and dependabot image pipelines were removed — PRs are validated by `v1-ci.yml` instead of publishing throwaway images.
 
 ## Releases
 
-- Merging to `main` triggers **release-please** (`.github/workflows/release.yml`) which maintains `CHANGELOG.md` + `version.txt` and creates GitHub releases.
-- Standard SemVer: breaking commits (`feat!` / `fix!` / `BREAKING CHANGE` footer) → major version bump (and Breaking Changes changelog section). Reserve these for genuine breaks — user-visible breaking changes and irreversible/destructive database migrations — so major versions stay meaningful; routine additive migrations are plain `feat(db)` / `fix(db)`.
-- `feat` → minor bump; `fix` → patch bump (standard SemVer in `.release-please-config.json`). Other conventional types that still appear in notes (`perf`, `refactor`, `ux`, `revert`, `build`, and legacy `docs` / `tests`) do not bump the version by themselves. **`chore` commits are omitted from release notes** — use `chore(<scope>)` for CI, tests, docs, agents/skills, and other non-behavior work (do not use bare `docs` / `ci` / `test` / `tests` types).
-- When release-please creates a release on merge to `main`, the same workflow run attaches prebuilt linux-x64/arm64 archives, publishes stable tags (`latest`, exact `vMAJOR.MINOR.PATCH`, and rolling `vMAJOR` / `vMAJOR.MINOR`) to every registry, and updates `dev` and `rc` on canonical `ghcr.io/infinidysk/infinidysk` and `dev` on Docker Hub; it also moves the git `dev` and `rc` tags to that release commit.
-- After a stable publish (release-please or manual republish), the workflow deletes all versioned `vX.Y.Z-rc.N` GitHub Pre-releases (and their git tags) plus matching image tags on GHCR (`infinidysk` and legacy `nzbdav`). Pre-release images are not published to Docker Hub, so no Docker Hub cleanup is needed. The rolling `rc` GitHub release and tag are kept.
-- To republish images and archives for an existing release (e.g. after fixing CI), run **Release** workflow manually with the `version` input (e.g. `0.6.5`); this also moves the git `dev` and `rc` tags to that version.
-- Between releases, refresh the unversioned Docker image (`:dev`), rolling `dev` GitHub pre-release (with Linux archives), and git `dev` tag on demand via **Actions → Refresh :dev → Run workflow**. The rolling `dev` release carries stable-named archives (`infinidysk-dev-*`) that are overwritten on each refresh; there are no versioned dev releases or tags.
-- Cut a versioned release candidate via **Actions → Cut pre-release → Run workflow**. The stable version defaults to the open release-please PR; pass `version` only to override it. This creates a `vX.Y.Z-rc.N` GitHub Pre-release with versioned images and archives, updates the rolling `rc` Pre-release with stable-named archives, pushes the rolling `:rc` and `:dev` images, moves the git `rc` and `dev` tags, and announces the release candidate to the announcements Discord channel. Release notes come from GitHub `--generate-notes` (vs the previous GitHub Release, which may be another rc). Versioned RC artifacts are removed on the next stable release.
-- Promote a curated LTS pointer (`:lts` on GHCR and git tag `lts`) to an existing version via **Actions → Promote LTS → Run workflow** with a `version` input (e.g. `0.6.5`). This retags the existing multi-arch image (no rebuild) and is not updated automatically on release.
-- Dependency graph submission runs when a GitHub Release is published (and can be re-run manually via `workflow_dispatch`). Keep GitHub **Automatic dependency submission** disabled to avoid duplicates.
+- Merging to `v1` triggers **release-please** (`.github/workflows/v1-release.yml`, `target-branch: v1`) which maintains `CHANGELOG.md` + `version.txt` and creates GitHub releases. Its PR is titled `chore(v1): release X.Y.Z`.
+- **Maintenance mode (1.x):** `.release-please-config.json` uses `"versioning": "always-bump-patch"`, so every release — `feat`, `fix`, and even breaking commits — bumps only the patch version. Breaking commits (`feat!` / `fix!` / `BREAKING CHANGE` footer) still land under the Breaking Changes changelog section, but should not happen on a maintenance line; reserve them for genuine breaks (user-visible breaking changes and irreversible/destructive database migrations). Routine additive migrations are plain `feat(db)` / `fix(db)`.
+- `feat` and `fix` → patch bump. Other conventional types that still appear in notes (`perf`, `refactor`, `ux`, `revert`, `build`, and legacy `docs` / `tests`) do not bump the version by themselves. **`chore` commits are omitted from release notes** — use `chore(<scope>)` for CI, tests, docs, agents/skills, and other non-behavior work (do not use bare `docs` / `ci` / `test` / `tests` types).
+- When release-please creates a release on merge to `v1`, the same workflow run attaches prebuilt linux-x64/arm64 archives, publishes stable tags (`latest`, exact `vMAJOR.MINOR.PATCH`, and rolling `vMAJOR` / `vMAJOR.MINOR`) to every registry, and updates `dev`, `rc` and `lts` on canonical `ghcr.io/infinidysk/infinidysk` and `dev` on Docker Hub; it also points the git `dev`, `rc` and `lts` tags at that release commit. There are no rolling `dev` / `rc` GitHub releases; archives live only on the versioned release. On 1.x every release is the LTS; there are no release candidates or between-release `:dev` refreshes.
+- GitHub has refused `GITHUB_TOKEN` moves of the `lts` tag before (HTTP 403). That job does not fail the release; if its log shows the 403, move the tag by hand: `git push -f origin <release-sha>:refs/tags/lts`.
+- After a stable publish (release-please or manual republish), the workflow deletes all versioned `vX.Y.Z-rc.N` GitHub Pre-releases (and their git tags) plus matching image tags on GHCR (`infinidysk` and legacy `nzbdav`). Pre-release images are not published to Docker Hub, so no Docker Hub cleanup is needed. The movable `rc` tag is kept.
+- To republish images and archives for an existing release (e.g. after fixing CI), run `gh workflow run v1-release.yml --ref v1 -f version=1.7.1`. A manual run needs a file with the same path on the default branch; `main` carries a `v1-release.yml` stub for this.
 
 ## Coding guidelines
 

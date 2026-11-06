@@ -36,7 +36,7 @@ public sealed class EffectiveStreamingConfigManifestTests
         Assert.Equal(10L * 1024 * 1024 * 1024, document.SegmentCache.MaxBytes);
         Assert.Equal(0, document.SegmentCache.WriteBehindBytes);
         Assert.True(document.Repair.BackgroundEnabled);
-        Assert.True(document.Repair.Par2Enabled);
+        Assert.False(document.Repair.Par2Enabled);
         Assert.True(document.Repair.DegradedToleranceEnabled);
         Assert.True(document.Repair.CorruptionTrackingEnabled);
         Assert.Empty(document.Providers);

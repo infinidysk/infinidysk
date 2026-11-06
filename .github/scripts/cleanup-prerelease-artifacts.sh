@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Deletes versioned pre-release GitHub releases (vX.Y.Z-rc.N) and their image
-# tags after a stable release. Leaves the rolling `rc` release and tag alone.
+# Deletes versioned 1.x pre-release GitHub releases (v1.Y.Z-rc.N) and their
+# image tags after a stable release. Leaves the movable `rc` tag alone.
+# 2.x releases share this repo, so the pattern must stay pinned to v1.
 #
 # Required env:
 #   GH_TOKEN              — GitHub token with contents:write + packages:write
@@ -18,7 +19,7 @@ ORG="${REPO%%/*}"
 PACKAGE="${REPO##*/}"
 LEGACY_GHCR_ORG="${LEGACY_GHCR_ORG:-nzbdav}"
 LEGACY_GHCR_PACKAGE="${LEGACY_GHCR_PACKAGE:-nzbdav}"
-RC_TAG_RE='^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$'
+RC_TAG_RE='^v1\.[0-9]+\.[0-9]+-rc\.[0-9]+$'
 
 if [[ -z "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]]; then
   echo "GH_TOKEN or GITHUB_TOKEN is required" >&2
@@ -126,7 +127,7 @@ delete_github_releases() {
 mapfile -t RC_TAGS < <(list_rc_tags)
 
 if [[ ${#RC_TAGS[@]} -eq 0 || -z "${RC_TAGS[0]:-}" ]]; then
-  echo "No versioned pre-release artifacts (v*-rc.*) to clean up."
+  echo "No versioned pre-release artifacts (v1.*-rc.*) to clean up."
   exit 0
 fi
 

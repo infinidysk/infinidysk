@@ -25,7 +25,30 @@ vi.mock("~/utils/shared-websocket", () => ({
 }));
 
 vi.mock("./components/health-table/health-table", () => ({
-  HealthTable: () => <div data-testid="health-table" />,
+  HealthTable: ({
+    healthCheckItems,
+    onStop,
+    stoppingIds,
+  }: {
+    healthCheckItems: { id: string }[];
+    onStop?: (davItemId: string) => void;
+    stoppingIds?: ReadonlySet<string>;
+  }) => (
+    <div data-testid="health-table">
+      {healthCheckItems.map((item) => (
+        <div key={item.id}>{item.id}</div>
+      ))}
+      {onStop && (
+        <button
+          type="button"
+          disabled={stoppingIds?.has("queue-0") ?? false}
+          onClick={() => onStop("queue-0")}
+        >
+          Stop check
+        </button>
+      )}
+    </div>
+  ),
 }));
 
 vi.mock("./components/health-stats/health-stats", () => ({
@@ -169,6 +192,73 @@ function mockActionResponse(response: Response | Error) {
     return response instanceof Error ? Promise.reject(response) : Promise.resolve(response);
   });
 }
+
+describe("Health stop active check", () => {
+  it("stops a running check and revalidates the page", async () => {
+    mockActionResponse(jsonResponse({ status: true }));
+    renderHealth();
+    expect(screen.getByText("queue-0")).toBeTruthy();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Stop check" }));
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/stop-health-check?davItemId=queue-0", {
+      method: "POST",
+    });
+    expect((await screen.findByRole("status")).textContent).toContain("Stopped.");
+    expect(screen.queryByText("queue-0")).toBeNull();
+    expect(revalidateMock).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the row while a slow stop is still finishing", async () => {
+    mockActionResponse(jsonResponse({ status: true }, 202));
+    renderHealth();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Stop check" }));
+
+    expect((await screen.findByRole("status")).textContent).toContain("still finishing");
+    expect(screen.getByText("queue-0")).toBeTruthy();
+    expect(revalidateMock).toHaveBeenCalledOnce();
+  });
+
+  it("keeps stop disabled while the request is pending", async () => {
+    let resolveStop: (response: Response) => void = () => {};
+    fetchMock.mockImplementation((input: unknown) => {
+      if (String(input).includes("/api/get-active-health-checks"))
+        return Promise.resolve(jsonResponse({ items: [] }));
+      return new Promise<Response>((resolve) => (resolveStop = resolve));
+    });
+    renderHealth();
+    const stop = screen.getByRole("button", { name: "Stop check" });
+
+    await userEvent.setup().click(stop);
+
+    expect((stop as HTMLButtonElement).disabled).toBe(true);
+    resolveStop(
+      jsonResponse({ status: false, error: "This health check is no longer running." }, 404),
+    );
+    await waitFor(() => expect((stop as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it("shows the backend reason when the check already finished", async () => {
+    mockActionResponse(
+      jsonResponse({ status: false, error: "This health check is no longer running." }, 404),
+    );
+    renderHealth();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Stop check" }));
+
+    expect((await screen.findByRole("status")).textContent).toContain(
+      "This health check is no longer running.",
+    );
+    expect(revalidateMock).not.toHaveBeenCalled();
+  });
+
+  it("hides stop for read-only users", () => {
+    isReadOnlyMock.mockReturnValue(true);
+    renderHealth();
+    expect(screen.queryByRole("button", { name: "Stop check" })).toBeNull();
+  });
+});
 
 describe("Health action-needed re-check", () => {
   it("previews and confirms deletion even when background repairs are disabled", async () => {

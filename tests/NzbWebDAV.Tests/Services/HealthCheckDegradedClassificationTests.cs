@@ -19,6 +19,7 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Queue.PostProcessors;
 using NzbWebDAV.Services;
 using NzbWebDAV.Services.Metrics;
 using NzbWebDAV.Services.Repair;
@@ -82,6 +83,7 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
                 ConfigValue = JsonSerializer.Serialize(new UsenetProviderConfig()),
             },
             new ConfigItem { ConfigName = ConfigKeys.RepairEnable, ConfigValue = "true" },
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" },
             new ConfigItem { ConfigName = ConfigKeys.RepairDegradedToleranceEnabled, ConfigValue = "true" },
             new ConfigItem
             {
@@ -319,6 +321,146 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
         Assert.Equal(2, par2.Requests.Count);
         Assert.DoesNotContain(GetHealthRows(item.Id), row => row.Result == HealthCheckResult.HealthResult.Healthy);
+    }
+
+    [Fact]
+    public async Task StopHealthCheck_CancelsRunningRepairAndDefersRetry()
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" },
+        ]);
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, [10_000, 10_000, 10_000]);
+        item.HealthRepairPending = true;
+        await _context.SaveChangesAsync();
+        var now = new DateTimeOffset(2026, 9, 16, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new ControllableTimeProvider(now);
+        var (service, par2) = await NewServiceAsync(
+            NewFakeClient(segments, missing: [0, 1, 2]), Par2RepairOutcome.NotRepaired, timeProvider);
+        service.CreateDbContextOverride = () => new DavDatabaseContext(_options);
+        par2.Hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.NotRunning, await service.StopHealthCheckAsync(item.Id));
+
+        var check = service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+        await par2.Hang.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.Stopped, await service.StopHealthCheckAsync(item.Id));
+        await check.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Empty(GetHealthRows(item.Id));
+        var reloaded = ReloadItem(item.Id);
+        Assert.True(reloaded.HealthRepairPending);
+        Assert.Equal(now + TimeSpan.FromDays(1), reloaded.NextHealthCheck);
+        Assert.Empty(await service.SelectNextHealthCheckIdsAsync(
+            [], allowChecks: true, allowRepairs: true, maximumCount: 1, CancellationToken.None));
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.NotRunning, await service.StopHealthCheckAsync(item.Id));
+    }
+
+    [Fact]
+    public async Task StopHealthCheck_ReturnsOnlyAfterTheWorkerLeavesTheActiveList()
+    {
+        var (service, item, attemptReturned, workerTail) = await StartBlockedRepairWorkerAsync();
+
+        var stop = service.StopHealthCheckAsync(item.Id);
+        await attemptReturned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(stop.IsCompleted);
+        Assert.Single(service.GetActiveHealthCheckProgress());
+
+        workerTail.SetResult();
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.Stopped, await stop.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Empty(service.GetActiveHealthCheckProgress());
+        await service.ReapCompletedWorkersAsync();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StopHealthCheck_ReportsStoppingWhenTheWorkerOutlivesTheWait(bool requestAborted)
+    {
+        var (service, item, attemptReturned, workerTail) = await StartBlockedRepairWorkerAsync();
+        service.StopWorkerExitWait = TimeSpan.FromMilliseconds(50);
+
+        var outcome = await service.StopHealthCheckAsync(item.Id, new CancellationToken(requestAborted))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.Stopping, outcome);
+        Assert.Single(service.GetActiveHealthCheckProgress());
+        await attemptReturned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        workerTail.SetResult();
+        await service.ReapCompletedWorkersAsync().WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    private async Task<(HealthCheckService Service, DavItem Item, TaskCompletionSource AttemptReturned, TaskCompletionSource WorkerTail)>
+        StartBlockedRepairWorkerAsync()
+    {
+        // Workers only start with an enabled provider; NewServiceAsync then swaps in the fake client.
+        var providers = new UsenetProviderConfig();
+        providers.Providers.Add(new UsenetProviderConfig.ConnectionDetails
+        {
+            ProviderId = Guid.NewGuid(),
+            Type = ProviderType.BackupOnly,
+            Host = "provider.example",
+            Port = 563,
+            UseSsl = true,
+            User = "user",
+            Pass = "pass",
+            MaxConnections = 1,
+        });
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" },
+            new ConfigItem { ConfigName = ConfigKeys.UsenetProviders, ConfigValue = JsonSerializer.Serialize(providers) },
+        ]);
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, [10_000, 10_000, 10_000]);
+        var (service, par2) = await NewServiceAsync(
+            NewFakeClient(segments, missing: [0, 1, 2]), Par2RepairOutcome.NotRepaired);
+        service.CreateDbContextOverride = () => new DavDatabaseContext(_options);
+        par2.Hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var attemptReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var workerTail = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        service.SelectCandidateOverride = (_, _, _) => Task.FromResult<Guid?>(item.Id);
+        service.ProcessCandidateOverride = async (_, ct) =>
+        {
+            await service.PerformHealthCheck(item, _dbClient, concurrency: 4, ct);
+            attemptReturned.SetResult();
+            await workerTail.Task;
+        };
+        Assert.Equal(HealthCheckRefillOutcome.Started, await service.RefillWorkerSlotsAsync(CancellationToken.None));
+        await par2.Hang.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        return (service, item, attemptReturned, workerTail);
+    }
+
+    [Fact]
+    public async Task StopHealthCheck_DefersRepairFlaggedUrgentByStreamingDuringAttempt()
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "true" },
+        ]);
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, [10_000, 10_000, 10_000]);
+        var now = new DateTimeOffset(2026, 9, 16, 12, 0, 0, TimeSpan.Zero);
+        var (service, par2) = await NewServiceAsync(
+            NewFakeClient(segments, missing: [0, 1, 2]), Par2RepairOutcome.NotRepaired,
+            new ControllableTimeProvider(now));
+        service.CreateDbContextOverride = () => new DavDatabaseContext(_options);
+        par2.Hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var check = service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+        await par2.Hang.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await using (var streaming = new DavDatabaseContext(_options))
+            await streaming.Items.Where(x => x.Id == item.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.NextHealthCheck, DateTimeOffset.UnixEpoch));
+        Assert.Equal(HealthCheckService.StopHealthCheckOutcome.Stopped, await service.StopHealthCheckAsync(item.Id));
+        await check.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(DateTimeOffset.UnixEpoch, ReloadItem(item.Id).NextHealthCheck);
+        Assert.Empty(await service.SelectNextHealthCheckIdsAsync(
+            [], allowChecks: true, allowRepairs: true, maximumCount: 1, CancellationToken.None));
     }
 
     [Fact]
@@ -657,6 +799,37 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task UnlinkedFile_RemovedOnlyWhenArrConfirmsUpgradeReplacedIt(bool arrReachable)
+    {
+        var segments = NewSegmentIds(3);
+        var (item, _) = await AddVideoFileAsync("unlinked.mkv", segments, [10_000, 10_000, 10_000]);
+        item.ArrDownloadId = Guid.NewGuid();
+        await _context.SaveChangesAsync();
+        var (service, _) = await NewServiceAsync(NewFakeClient(segments, missing: [0]), par2Outcome: false);
+        var arrClient = new SupersededHistoryArrClient(item.ArrDownloadId.Value, item.Path, arrReachable);
+        service.CreateRepairArrClientsOverride = () => [arrClient];
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        var row = Assert.Single(GetHealthRows(item.Id));
+        _context.ChangeTracker.Clear();
+        if (arrReachable)
+        {
+            Assert.Equal(HealthCheckResult.RepairAction.Deleted, row.RepairStatus);
+            Assert.Contains("replaced its import with an upgrade", row.Message, StringComparison.Ordinal);
+            Assert.False(await _context.Items.AnyAsync(candidate => candidate.Id == item.Id));
+        }
+        else
+        {
+            Assert.Equal(HealthCheckResult.RepairAction.ActionNeeded, row.RepairStatus);
+            Assert.Contains("No corresponding imported symlink", row.Message, StringComparison.Ordinal);
+            Assert.True(await _context.Items.AnyAsync(candidate => candidate.Id == item.Id));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task BoundedHole_OmittedSegment_MarksDegraded_PersistsHoles_AndSkipsRepair(bool omitted)
     {
         var segments = NewSegmentIds(6);
@@ -929,6 +1102,26 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
         var row = Assert.Single(GetHealthRows(item.Id));
         Assert.Equal(HealthCheckResult.RepairAction.RepairedViaPar2, row.RepairStatus);
         Assert.Equal([segments[2]], Assert.Single(par2.Requests));
+    }
+
+    [Fact]
+    public async Task Par2Unset_DefaultsOff_AndMakesNoPar2Request()
+    {
+        _configManager.UpdateValues(
+        [
+            new ConfigItem { ConfigName = ConfigKeys.RepairPar2Enabled, ConfigValue = "" },
+        ]);
+        var segments = NewSegmentIds(6);
+        var sizes = new long[] { 10_000, 10_000, 50, 10_000, 10_000, 10_000 };
+        var (item, _) = await AddVideoFileAsync(
+            "movie.mkv", segments, sizes, preExistingHoles: [2]);
+        var fake = NewFakeClient(segments, missing: [2]);
+        _failureTracker.RecordFailure(item.Id);
+        var (service, par2) = await NewServiceAsync(fake, par2Outcome: true);
+
+        await service.PerformHealthCheck(item, _dbClient, concurrency: 4, CancellationToken.None);
+
+        Assert.Empty(par2.Requests);
     }
 
     [Fact]
@@ -2291,6 +2484,55 @@ public sealed class HealthCheckDegradedClassificationTests : IAsyncLifetime
             cancellation.Cancel();
             return Task.FromResult(outcome);
         }
+    }
+
+    private sealed class SupersededHistoryArrClient(Guid downloadId, string davPath, bool reachable)
+        : ArrClient("http://sonarr.test", "test-key")
+    {
+        private static readonly DateTimeOffset ImportedAt = DateTimeOffset.UtcNow.AddDays(-3);
+
+        public override Task<ArrHistory> GetDownloadHistoryAsync(Guid id, CancellationToken ct = default)
+        {
+            if (!reachable)
+                throw new HttpRequestException("connection refused");
+            Assert.Equal(downloadId, id);
+            return Task.FromResult(new ArrHistory
+            {
+                TotalRecords = 1,
+                Records =
+                [
+                    new ArrHistoryRecord
+                    {
+                        EventType = 3,
+                        Date = ImportedAt,
+                        EpisodeId = 7,
+                        Data = new ArrHistoryData
+                        {
+                            DroppedPath = "/mnt/completed/" +
+                                CreateStrmFilesPostProcessor.GetPathRelativeToContentRoot(davPath),
+                            ImportedPath = "/tv/Series/Season 01/Episode.mkv",
+                        },
+                    },
+                ],
+            });
+        }
+
+        public override Task<ArrHistory> GetFileDeletionHistoryAsync(
+            ArrHistoryRecord importRecord,
+            CancellationToken ct = default) =>
+            Task.FromResult(new ArrHistory
+            {
+                TotalRecords = 1,
+                Records =
+                [
+                    new ArrHistoryRecord
+                    {
+                        Date = ImportedAt.AddDays(1),
+                        SourceTitle = "Season 01/Episode.mkv",
+                        Data = new ArrHistoryData { Reason = "Upgrade" },
+                    },
+                ],
+            });
     }
 
     private sealed class BlockingLookupArrClient() : ArrClient("http://radarr.test", "test-key")

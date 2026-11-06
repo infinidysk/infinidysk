@@ -1,6 +1,11 @@
+// @vitest-environment jsdom
+import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { HealthTable } from "./health-table";
+
+afterEach(cleanup);
 
 describe("HealthTable", () => {
   it.each([0, 35])("shows active progress at %i percent on desktop and mobile", (progress) => {
@@ -52,5 +57,92 @@ describe("HealthTable", () => {
     expect(markup).not.toContain("0%");
     expect(markup.match(/Repairing for 12m/g)).toHaveLength(2);
     expect(markup).toContain("not a countdown");
+  });
+
+  it("offers stop only on active rows when a stop handler is provided", () => {
+    const items = [
+      {
+        id: "active",
+        name: "active.mkv",
+        path: "/content/active.mkv",
+        releaseDate: null,
+        lastHealthCheck: null,
+        nextHealthCheck: null,
+        countsTowardUncheckedCount: true,
+        progress: 10,
+      },
+      {
+        id: "queued",
+        name: "queued.mkv",
+        path: "/content/queued.mkv",
+        releaseDate: null,
+        lastHealthCheck: null,
+        nextHealthCheck: null,
+        countsTowardUncheckedCount: true,
+      },
+    ];
+    const withStop = renderToStaticMarkup(
+      <HealthTable isEnabled healthCheckItems={items} onStop={() => {}} />,
+    );
+    const withoutStop = renderToStaticMarkup(<HealthTable isEnabled healthCheckItems={items} />);
+
+    expect(withStop.match(/aria-label="Stop health check for active.mkv"/g)).toHaveLength(2);
+    expect(withStop).not.toContain("Stop health check for queued.mkv");
+    expect(withoutStop).not.toContain("Stop health check");
+  });
+
+  it("stops the clicked row by its id", async () => {
+    const onStop = vi.fn();
+    render(
+      <HealthTable
+        isEnabled
+        healthCheckItems={[
+          {
+            id: "active-id",
+            name: "active.mkv",
+            path: "/content/active.mkv",
+            releaseDate: null,
+            lastHealthCheck: null,
+            nextHealthCheck: null,
+            countsTowardUncheckedCount: true,
+            progress: 10,
+          },
+        ]}
+        onStop={onStop}
+      />,
+    );
+
+    const [stop] = screen.getAllByRole("button", { name: "Stop health check for active.mkv" });
+    await userEvent.setup().click(stop!);
+
+    expect(onStop).toHaveBeenCalledExactlyOnceWith("active-id");
+  });
+
+  it("disables the stop control while its stop request is pending", () => {
+    const markup = renderToStaticMarkup(
+      <HealthTable
+        isEnabled
+        healthCheckItems={[
+          {
+            id: "active",
+            name: "active.mkv",
+            path: "/content/active.mkv",
+            releaseDate: null,
+            lastHealthCheck: null,
+            nextHealthCheck: null,
+            countsTowardUncheckedCount: true,
+            progress: 10,
+          },
+        ]}
+        onStop={() => {}}
+        stoppingIds={new Set(["active"])}
+      />,
+    );
+
+    const buttons = markup.match(
+      /<button[^>]*aria-label="Stop health check for active\.mkv"[^>]*>/g,
+    );
+    expect(buttons).toHaveLength(2);
+    for (const button of buttons ?? []) expect(button).toContain('disabled=""');
   });
 });

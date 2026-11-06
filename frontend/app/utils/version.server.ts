@@ -4,6 +4,10 @@ import { resolve } from "node:path";
 const versionFilePath = resolve(process.cwd(), "..", "version.txt");
 const gitDirPath = resolve(process.cwd(), "..", ".git");
 
+/** 1.x lives on the `v1` branch; `main` is 2.x. */
+const TRACK_BRANCH = "v1";
+const LOCAL_TRACKED_REFS = new Set(["refs/heads/v1", "refs/heads/main"]);
+
 export type BuildCommit = {
   sha: string;
   branch: string;
@@ -33,14 +37,16 @@ export async function getAppVersion(): Promise<string | undefined> {
  *
  * Preference order:
  * 1. `NZBDAV_COMMIT_SHA` env (baked into Docker images)
- * 2. Local `.git` checkout when HEAD is on `main`
- * 3. Commit SHA embedded in the version label (`main-<sha>` builds)
+ * 2. Local `.git` checkout when HEAD is on `v1` (or a 1.x `main` from before
+ *    the branch split)
+ * 3. Commit SHA embedded in the version label (`v1-<sha>` / `main-<sha>`)
  *
- * Non-main branches and detached HEAD return undefined so feature-branch /
- * fork checkouts do not produce false update notifications.
+ * Other branches and detached HEAD return undefined so feature-branch /
+ * fork checkouts do not produce false update notifications. Every 1.x build
+ * compares against `v1`.
  *
  * Env builds use a track ref derived from the version label: `dev-*` images
- * compare against the movable `dev` tag (which tracks `:dev`), not `main`.
+ * compare against the movable `dev` tag (which tracks `:dev`), not `v1`.
  */
 export async function getBuildCommit(
   options: BuildCommitOptions = {},
@@ -56,7 +62,7 @@ export async function getBuildCommit(
     };
   }
 
-  const local = await readLocalMainCommit(gitDir);
+  const local = await readLocalTrackedCommit(gitDir);
   if (local) return local;
 
   return parseBuildCommitFromVersion(version);
@@ -64,27 +70,27 @@ export async function getBuildCommit(
 
 /**
  * GitHub compare target for a build. Docker `:dev` images (`dev-<sha>`) track
- * the movable `dev` tag; everything else compares against `main`.
+ * the movable `dev` tag; everything else compares against `v1`.
  */
 export function resolveTrackRef(version?: string | null): string {
   const label = (version ?? process.env["NZBDAV_VERSION"])?.trim() ?? "";
   if (/^dev-/i.test(label)) return "dev";
-  return "main";
+  return TRACK_BRANCH;
 }
 
-/** Parse a commit SHA embedded in a `main-<sha>` version label. */
+/** Parse a commit SHA embedded in a `v1-<sha>` or `main-<sha>` version label. */
 export function parseBuildCommitFromVersion(
   version: string | undefined | null,
 ): BuildCommit | undefined {
   if (!version) return undefined;
-  const match = /^main-([0-9a-f]{7,40})$/i.exec(version.trim());
+  const match = /^(?:v1|main)-([0-9a-f]{7,40})$/i.exec(version.trim());
   if (!match) return undefined;
   const sha = match[1];
   if (!sha) return undefined;
-  return { sha: sha.toLowerCase(), branch: "main", source: "version" };
+  return { sha: sha.toLowerCase(), branch: TRACK_BRANCH, source: "version" };
 }
 
-async function readLocalMainCommit(gitDir: string): Promise<BuildCommit | undefined> {
+async function readLocalTrackedCommit(gitDir: string): Promise<BuildCommit | undefined> {
   try {
     const head = (await readFile(resolve(gitDir, "HEAD"), "utf8")).trim();
     const refMatch = /^ref:\s*(.+)$/i.exec(head);
@@ -94,14 +100,14 @@ async function readLocalMainCommit(gitDir: string): Promise<BuildCommit | undefi
     }
 
     const ref = refMatch[1]?.trim();
-    if (!ref || ref !== "refs/heads/main") {
+    if (!ref || !LOCAL_TRACKED_REFS.has(ref)) {
       return undefined;
     }
 
     const sha = await resolveGitRef(gitDir, ref);
     if (!sha) return undefined;
 
-    return { sha, branch: "main", source: "git" };
+    return { sha, branch: TRACK_BRANCH, source: "git" };
   } catch {
     return undefined;
   }

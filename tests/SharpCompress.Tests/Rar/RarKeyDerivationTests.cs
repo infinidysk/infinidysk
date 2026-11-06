@@ -17,6 +17,11 @@ public class RarKeyDerivationTests : TestBase
 {
     private const string Password = "test";
 
+    // 129 characters; the 127- and 126-character prefixes differ in their last character.
+    private static readonly string LongPassword = new string('\u00e9', 120) + "abcdefghi";
+
+    private static readonly byte[] Rar5Salt = Enumerable.Range(1, 16).Select(i => (byte)i).ToArray();
+
     private static RarHeaderFactory NewFactory() =>
         new(
             StreamingMode.Seekable,
@@ -125,6 +130,54 @@ public class RarKeyDerivationTests : TestBase
 
         Assert.Equal(16, derived.Key.Length);
         Assert.Equal(16, derived.Iv.Length);
+        Assert.Equal(expectedKey, derived.Key);
+        Assert.Equal(expectedIv, derived.Iv);
+    }
+
+    [Fact]
+    public void DeriveKey_Rar5_PasswordOver127Characters_UsesFirst127()
+    {
+        var initV = new byte[16];
+        // Password check a RAR tool stores for LongPassword: it keeps only 127 characters.
+        var archiveKey = new CryptKey5(
+            LongPassword[..127],
+            Rar5CryptoInfo.FromValues(4, Rar5Salt, initV, usePswCheck: false, pswCheck: null)
+        );
+        var expectedKey = (byte[])archiveKey.GetAesKey(Rar5Salt).Clone();
+        var archiveInfo = RarCryptoInfoView.ForRar5(
+            Rar5CryptoInfo.FromValues(4, Rar5Salt, initV, usePswCheck: true, pswCheck: archiveKey.PswCheck)
+        );
+
+        Assert.Equal(expectedKey, RarKeyDerivation.DeriveKey(archiveInfo, LongPassword).Key);
+        Assert.Throws<SharpCompress.Common.CryptographicException>(() =>
+            RarKeyDerivation.DeriveKey(archiveInfo, LongPassword[..126])
+        );
+    }
+
+    [Fact]
+    public void DeriveKey_Rar5_SupplementaryCharacter_CountsAsOneCharacter()
+    {
+        // 127 code points but 128 UTF-16 units: unrar on Linux keeps the whole password.
+        var password = new string('a', 126) + "\U0001F600";
+        var info = RarCryptoInfoView.ForRar5(
+            Rar5CryptoInfo.FromValues(4, Rar5Salt, new byte[16], usePswCheck: false, pswCheck: null)
+        );
+
+        Assert.NotEqual(
+            RarKeyDerivation.DeriveKey(info, password[..127]).Key,
+            RarKeyDerivation.DeriveKey(info, password).Key
+        );
+    }
+
+    [Fact]
+    public void DeriveKey_Rar3_PasswordOver127Characters_UsesFirst127()
+    {
+        var salt = new byte[] { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
+        var info = RarCryptoInfoView.ForRar3(salt);
+
+        var derived = RarKeyDerivation.DeriveKey(info, LongPassword);
+        var (expectedKey, expectedIv) = new CryptKey3(LongPassword[..127]).DeriveKeyAndIv(salt);
+
         Assert.Equal(expectedKey, derived.Key);
         Assert.Equal(expectedIv, derived.Iv);
     }

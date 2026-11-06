@@ -31,6 +31,7 @@ import { StreamTracingBanner } from "./components/stream-tracing-banner";
 import { LegacyImageBanner } from "./components/legacy-image-banner";
 import { ResetAdminPasswordBanner } from "./components/reset-admin-password-banner";
 import { RcloneProxyWarningBanner } from "./components/rclone-proxy-warning-banner";
+import { V2BetaNotice } from "./components/v2-beta-notice";
 import { isOidcEnabled } from "../server/oidc.server";
 import { isRcloneProxyWarningActive } from "../server/rclone-proxy-warning.server";
 import { getServiceProvider } from "./utils/service-provider.server";
@@ -202,6 +203,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
                   <LegacyImageBanner isLegacyImage={isLegacyImage ?? false} />
                   <RcloneProxyWarningBanner active={rcloneProxyWarningActive ?? false} />
                   <StreamTracingBanner isReadOnly={role === "readonly"} />
+                  <V2BetaNotice />
                 </div>
                 {outlet}
               </>

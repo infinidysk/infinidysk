@@ -1,4 +1,4 @@
-name: Docker build and push
+name: v1 Docker build and push
 
 on:
   workflow_call:
@@ -69,7 +69,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -77,7 +77,7 @@ jobs:
 
       - name: Log in to Docker Hub
         if: inputs.dockerhub_username != ''
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@v4.7.0
         with:
           username: ${{ inputs.dockerhub_username }}
           password: ${{ secrets.dockerhub_token }}
@@ -122,7 +122,7 @@ jobs:
       # above — the new-namespace push has already completed by this point.
       - name: Log in to GHCR (legacy namespace)
         if: inputs.legacy_tags != ''
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

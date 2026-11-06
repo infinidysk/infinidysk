@@ -41,7 +41,7 @@ describe("getBuildCommit", () => {
 
     await expect(getBuildCommit({ gitDir: tempGitDir })).resolves.toEqual({
       sha: "abcdef0123456789abcdef0123456789abcdef01",
-      branch: "main",
+      branch: "v1",
       source: "env",
     });
   });
@@ -77,7 +77,22 @@ describe("getBuildCommit", () => {
     await expect(getBuildCommit({ gitDir: tempGitDir })).resolves.toBeUndefined();
   });
 
-  it("resolves SHA from refs/heads/main", async () => {
+  it("resolves SHA from refs/heads/v1", async () => {
+    await writeFile(join(tempGitDir, "HEAD"), "ref: refs/heads/v1\n");
+    await mkdir(join(tempGitDir, "refs", "heads"), { recursive: true });
+    await writeFile(
+      join(tempGitDir, "refs", "heads", "v1"),
+      "abcdef0123456789abcdef0123456789abcdef01\n",
+    );
+
+    await expect(getBuildCommit({ gitDir: tempGitDir })).resolves.toEqual({
+      sha: "abcdef0123456789abcdef0123456789abcdef01",
+      branch: "v1",
+      source: "git",
+    });
+  });
+
+  it("compares a 1.x checkout still on refs/heads/main against v1", async () => {
     await writeFile(join(tempGitDir, "HEAD"), "ref: refs/heads/main\n");
     await mkdir(join(tempGitDir, "refs", "heads"), { recursive: true });
     await writeFile(
@@ -87,18 +102,18 @@ describe("getBuildCommit", () => {
 
     await expect(getBuildCommit({ gitDir: tempGitDir })).resolves.toEqual({
       sha: "abcdef0123456789abcdef0123456789abcdef01",
-      branch: "main",
+      branch: "v1",
       source: "git",
     });
   });
 
   it("resolves SHA from packed-refs when loose ref is missing", async () => {
-    await writeFile(join(tempGitDir, "HEAD"), "ref: refs/heads/main\n");
+    await writeFile(join(tempGitDir, "HEAD"), "ref: refs/heads/v1\n");
     await writeFile(
       join(tempGitDir, "packed-refs"),
       [
         "# pack-refs with: peeled fully-peeled sorted",
-        "abcdef0123456789abcdef0123456789abcdef01 refs/heads/main",
+        "abcdef0123456789abcdef0123456789abcdef01 refs/heads/v1",
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb refs/heads/other",
         "",
       ].join("\n"),
@@ -106,7 +121,7 @@ describe("getBuildCommit", () => {
 
     await expect(getBuildCommit({ gitDir: tempGitDir })).resolves.toEqual({
       sha: "abcdef0123456789abcdef0123456789abcdef01",
-      branch: "main",
+      branch: "v1",
       source: "git",
     });
   });
@@ -117,7 +132,7 @@ describe("getBuildCommit", () => {
     await expect(getBuildCommit({ gitDir: tempGitDir })).resolves.toBeUndefined();
   });
 
-  it("returns undefined for non-main branches", async () => {
+  it("returns undefined for other branches", async () => {
     await writeFile(join(tempGitDir, "HEAD"), "ref: refs/heads/feature/foo\n");
     await mkdir(join(tempGitDir, "refs", "heads", "feature"), { recursive: true });
     await writeFile(
@@ -137,7 +152,7 @@ describe("getBuildCommit", () => {
       getBuildCommit({ gitDir: join(tempGitDir, "missing"), version: "main-E0EEF520" }),
     ).resolves.toEqual({
       sha: "e0eef520",
-      branch: "main",
+      branch: "v1",
       source: "version",
     });
   });
@@ -149,7 +164,7 @@ describe("getBuildCommit", () => {
       getBuildCommit({ gitDir: join(tempGitDir, "missing"), version: "main-e0eef520" }),
     ).resolves.toEqual({
       sha: "abcdef0123456789abcdef0123456789abcdef01",
-      branch: "main",
+      branch: "v1",
       source: "env",
     });
   });
@@ -165,7 +180,7 @@ describe("getBuildCommit", () => {
     await expect(getBuildCommit({ gitDir: tempGitDir, version: "main-e0eef520" })).resolves.toEqual(
       {
         sha: "abcdef0123456789abcdef0123456789abcdef01",
-        branch: "main",
+        branch: "v1",
         source: "git",
       },
     );
@@ -184,6 +199,7 @@ describe("parseBuildCommitFromVersion", () => {
   it.each([
     ["main-e0eef520", "e0eef520"],
     ["Main-E0EEF520", "e0eef520"],
+    ["v1-e0eef520", "e0eef520"],
     [
       "  main-abcdef0123456789abcdef0123456789abcdef01  ",
       "abcdef0123456789abcdef0123456789abcdef01",
@@ -191,7 +207,7 @@ describe("parseBuildCommitFromVersion", () => {
   ])("parses %s", (version, expectedSha) => {
     expect(parseBuildCommitFromVersion(version)).toEqual({
       sha: expectedSha,
-      branch: "main",
+      branch: "v1",
       source: "version",
     });
   });
@@ -206,6 +222,7 @@ describe("parseBuildCommitFromVersion", () => {
     ["main-xyz123"],
     ["main-abc123"], // 6 hex chars — too short
     ["feature-e0eef520"],
+    ["v2-e0eef520"],
   ])("returns undefined for %s", (version) => {
     expect(parseBuildCommitFromVersion(version)).toBeUndefined();
   });
@@ -225,11 +242,11 @@ describe("resolveTrackRef", () => {
   it.each([
     ["dev-e0eef52", "dev"],
     ["DEV-abcdef0", "dev"],
-    ["main-e0eef520", "main"],
-    ["0.8.0", "main"],
-    ["pre-42", "main"],
-    [undefined, "main"],
-    [null, "main"],
+    ["main-e0eef520", "v1"],
+    ["0.8.0", "v1"],
+    ["pre-42", "v1"],
+    [undefined, "v1"],
+    [null, "v1"],
   ])("maps version %s to track %s", (version, expected) => {
     delete process.env["NZBDAV_VERSION"];
     expect(resolveTrackRef(version)).toBe(expected);

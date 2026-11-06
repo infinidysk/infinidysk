@@ -1,4 +1,4 @@
-name: Build release assets
+name: v1 Build release assets
 
 on:
   workflow_call:
@@ -15,11 +15,6 @@ on:
         description: Existing GitHub release tag to receive the archives
         required: true
         type: string
-      rolling_tag:
-        description: Optional space-separated rolling GitHub release tags to receive stable-named copies
-        required: false
-        default: ""
-        type: string
   workflow_dispatch:
     inputs:
       version:
@@ -33,11 +28,6 @@ on:
       release_tag:
         description: Existing GitHub release tag to receive the archives
         required: true
-        type: string
-      rolling_tag:
-        description: Optional space-separated rolling GitHub release tags to receive stable-named copies
-        required: false
-        default: ""
         type: string
 
 permissions:
@@ -53,7 +43,7 @@ jobs:
           ref: ${{ inputs.checkout_ref || inputs.release_tag }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
           cache: npm
@@ -159,28 +149,15 @@ jobs:
           cp -a "$archive_name" "$compat_name"
           tar -czf "${compat_name}.tar.gz" "$compat_name"
 
-      - name: Attach archives to releases
+      - name: Attach archives to the release
         env:
           GH_TOKEN: ${{ github.token }}
           RID: ${{ matrix.rid }}
           VERSION: ${{ inputs.version }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-          ROLLING_TAG: ${{ inputs.rolling_tag }}
         run: |
           set -euo pipefail
           prefix=""; [[ "$VERSION" =~ ^[0-9] ]] && prefix="v"
           archive="infinidysk-${prefix}${VERSION}-${RID}.tar.gz"
           compat_archive="nzbdav-${prefix}${VERSION}-${RID}.tar.gz"
           gh release upload "$RELEASE_TAG" "$archive" "$compat_archive" --clobber
-
-          # Skip a rolling tag when it is the same release (e.g. dev): the
-          # stable-named copy would duplicate the archives uploaded above.
-          read -ra ROLLING_TAGS <<< "$ROLLING_TAG"
-          for ROLLING in ${ROLLING_TAGS[@]+"${ROLLING_TAGS[@]}"}; do
-            [[ -z "$ROLLING" || "$ROLLING" == "$RELEASE_TAG" ]] && continue
-            rolling_archive="infinidysk-${ROLLING}-${RID}.tar.gz"
-            compat_rolling_archive="nzbdav-${ROLLING}-${RID}.tar.gz"
-            cp "$archive" "$rolling_archive"
-            cp "$compat_archive" "$compat_rolling_archive"
-            gh release upload "$ROLLING" "$rolling_archive" "$compat_rolling_archive" --clobber
-          done

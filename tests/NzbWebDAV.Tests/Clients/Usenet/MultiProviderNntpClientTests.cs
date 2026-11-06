@@ -470,6 +470,44 @@ public class MultiProviderNntpClientTests
     }
 
     [Fact]
+    public async Task BatchResponse_RescuedProtocolFailure_LogsOneRedactedWarningPerProvider()
+    {
+        var providerKey = $"protocol-{Guid.NewGuid():N}.example";
+        var current = "";
+        var connection = new ScriptedNntpClient
+        {
+            BatchResponseCode = 222,
+            SingularResponseCode = 222,
+            FaultBatchResponsesWith = () =>
+                new UsenetUnexpectedResponseException(current, $"400 idle timeout <{current}>"),
+        };
+
+        var events = await CaptureLogsAsync(async () =>
+        {
+            using var client = new MultiProviderNntpClient([CreateProvider(connection, host: providerKey)]);
+            foreach (var segmentId in new[] { "first@protocol.example", "second@protocol.example" })
+            {
+                current = segmentId;
+                var batch = await client.DecodedBodiesAsync(
+                    [segmentId], onConnectionReadyAgain: null, CancellationToken.None);
+                var response = await batch.Responses[0];
+                Assert.Equal(UsenetResponseType.ArticleRetrievedBodyFollows, response.ResponseType);
+                await response.Stream!.DisposeAsync();
+                await batch.Completion;
+            }
+        });
+
+        var warning = Assert.Single(events, e =>
+            e.Level == LogEventLevel.Warning
+            && e.MessageTemplate.Text.StartsWith("Usenet protocol failure.", StringComparison.Ordinal));
+        Assert.Equal(providerKey, PropertyText(warning, "ProviderKey"));
+        Assert.Equal("pipelined-body", PropertyText(warning, "Operation"));
+        Assert.Equal(
+            "Unexpected NNTP response while fetching article [segment]: 400 idle timeout [segment]",
+            PropertyText(warning, "Reason"));
+    }
+
+    [Fact]
     public async Task BatchResponse_TimeoutWithBackup_SkipsPrimaryReprobeAndUsesBackup()
     {
         // After an exhausted streaming/read timeout the primary already burned its

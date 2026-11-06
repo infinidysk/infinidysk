@@ -34,7 +34,6 @@ public class DatabaseBackupSchedulerService : BackgroundService
     // NOTE: swapped-out instances are intentionally not disposed (ExecuteAsync may
     // still read .Token after the swap); the current instance is disposed in Dispose.
 
-    private static readonly TimeSpan MaxSleepSlice = TimeSpan.FromMinutes(30);
     private DateTime? _lastLoggedNextRun;
     private DateTime? _lastRun;
     private DateTimeOffset? _nextInitializationWarningAt;
@@ -109,7 +108,6 @@ public class DatabaseBackupSchedulerService : BackgroundService
                 var todayRun = now.Date + scheduleTime;
                 var lastRun = _lastRun ?? DateTime.MinValue;
                 var nextRun = todayRun > now && todayRun > lastRun ? todayRun : todayRun.AddDays(1);
-                var delay = nextRun - now;
 
                 if (_lastLoggedNextRun != nextRun)
                 {
@@ -119,10 +117,8 @@ public class DatabaseBackupSchedulerService : BackgroundService
 
                 using var delayLinked = CancellationTokenSource
                     .CreateLinkedTokenSource(stoppingToken, reschedule.Token);
-                await Task.Delay(delay < MaxSleepSlice ? delay : MaxSleepSlice, delayLinked.Token)
+                await ScheduleUtil.DelayUntilAsync(nextRun, TimeProvider.System, delayLinked.Token)
                     .ConfigureAwait(false);
-
-                if (DateTime.Now < nextRun) continue;
 
                 Log.Information("DatabaseBackupScheduler: running scheduled database backup");
                 var task = new DatabaseBackupTask(
@@ -133,16 +129,14 @@ public class DatabaseBackupSchedulerService : BackgroundService
                 var executed = await task.Execute().ConfigureAwait(false);
                 if (!executed)
                 {
-                    // BaseTask's single-flight slot is shared across all maintenance tasks.
-                    // Do not mark the slot as completed — retry shortly so a concurrent
-                    // orphaned-files/strm task does not silently skip the day's run.
+                    // BaseTask's single-flight slot is shared across all maintenance tasks; retry this slot in place.
                     Log.Warning(
                         "DatabaseBackupScheduler: another maintenance task is running; " +
-                        "will retry in 5 minutes");
+                        "will retry every 5 minutes until it finishes");
                     using var retryLinked = CancellationTokenSource
                         .CreateLinkedTokenSource(stoppingToken, reschedule.Token);
-                    await Task.Delay(TimeSpan.FromMinutes(5), retryLinked.Token).ConfigureAwait(false);
-                    continue;
+                    await ScheduleUtil.RetryWhileBusyAsync(task.Execute, TimeProvider.System, retryLinked.Token)
+                        .ConfigureAwait(false);
                 }
 
                 _lastRun = nextRun;
