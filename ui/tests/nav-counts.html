@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Nav counter regression</title>
+<div id="root"></div>
+<pre id="result">Running</pre>
+<script type="module">
+  import { act, createElement } from "react";
+  import { createRoot } from "react-dom/client";
+  import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+  import { MemoryRouter } from "react-router";
+
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
+  const root = createRoot(document.getElementById("root"));
+  const check = (condition, message) => {
+    if (!condition) throw new Error(message);
+  };
+  const issue = (title) => ({ title, messages: ["Needs a manual import"] });
+  const queueLink = () => document.querySelector('a[href="/queue"]');
+
+  try {
+    const { Nav } = await import("/src/layout.tsx");
+    client.setQueryData(["queue"], [{ id: "a" }, { id: "b" }, { id: "c" }]);
+    client.setQueryData(["health", "summary"], []);
+    client.setQueryData(["arr-status"], {
+      instances: [
+        { name: "first", queue_issues: [issue("one")] },
+        { name: "second", queue_issues: [issue("two"), issue("three")] },
+      ],
+      categories: [],
+    });
+    await act(async () => root.render(createElement(QueryClientProvider, { client },
+      createElement(MemoryRouter, null, createElement(Nav)),
+    )));
+    const text = queueLink().textContent;
+    check(text.includes("3 in queue"), `Missing queue count: ${text}`);
+    check(text.includes("3 downloads need you in the Arr"), `Issues from every Arr must add up: ${text}`);
+    check(queueLink().querySelectorAll(".bg-warning\\/15").length === 1, "Expected one warning counter");
+
+    await act(async () => {
+      client.setQueryData(["queue"], []);
+      client.setQueryData(["arr-status"], { instances: [{ name: "first", queue_issues: [issue("one")] }], categories: [] });
+    });
+    check(queueLink().textContent.includes("1 download needs you in the Arr"), "One issue must read in the singular");
+    check(!queueLink().textContent.includes("in queue"), "An empty queue must not show a queue count");
+
+    await act(async () => client.setQueryData(["arr-status"], { instances: [], categories: [] }));
+    check(queueLink().querySelectorAll("span.rounded-full").length === 0, "No issues must leave no counters");
+    document.getElementById("result").textContent = "PASS";
+  } catch (error) {
+    document.getElementById("result").textContent = `FAIL: ${error.message}`;
+  } finally {
+    await act(async () => root.unmount());
+    client.clear();
+    delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+  }
+</script>
+</html>
