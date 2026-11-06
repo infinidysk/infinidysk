@@ -808,8 +808,8 @@ impl Queue {
 
     /// A not yet existing job directory: `name`, then `name (2)` … `name (99)`, compared
     /// case-insensitively as Windows clients do.
-    // The span names the caller in slow-query warnings.
-    #[tracing::instrument(skip_all)]
+    // A WARN span so slow-query warnings name the caller even when logs are filtered to warnings.
+    #[tracing::instrument(level = "warn", skip_all)]
     async fn free_dir(&self, parent: &Item, name: &str) -> Result<Option<Item>, Error> {
         // ponytail: reads every sibling name for each import, so the cost grows with the
         // category's folder count. Upgrade: store a case-folded name and look up only the
