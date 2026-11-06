@@ -201,6 +201,10 @@ async fn keeps_the_boot_file_and_disk_cache_in_the_config_folder() {
             "adminkey".to_owned(),
         ),
         ("INFINIDYSK__SAB__API_KEY".to_owned(), "sabkey".to_owned()),
+        (
+            "INFINIDYSK__PERFORMANCE__DISK_CACHE_ENABLED".to_owned(),
+            "true".to_owned(),
+        ),
     ];
     let cancel = CancellationToken::new();
     let server = tokio::spawn({
@@ -212,6 +216,17 @@ async fn keeps_the_boot_file_and_disk_cache_in_the_config_folder() {
     assert_eq!(code, "HTTP/1.1 200 OK");
     let database: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(database["migration"]["state"], "copying");
+
+    let (_, body) = send(addr, &admin_request("GET", "/api/v1/status", "")).await;
+    let status_body: Value = serde_json::from_str(&body).unwrap();
+    // The running cache reports its folder resolved (`/var` is `/private/var` on macOS).
+    assert_eq!(
+        status_body["disk_cache"]["dir"],
+        std::fs::canonicalize(home.join("cache"))
+            .unwrap()
+            .display()
+            .to_string()
+    );
     assert_eq!(database["sqlite_path"], sqlite.display().to_string());
 
     let (_, body) = send(addr, &admin_request("GET", "/api/v1/performance", "")).await;
