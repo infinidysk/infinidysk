@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.7.2](https://github.com/infinidysk/infinidysk/compare/v1.7.1...v1.7.2) (2026-11-06)
+
+
+### Bug Fixes
+
+* **deps:** Bump docker/login-action ([#1842](https://github.com/infinidysk/infinidysk/issues/1842)) ([ab11aca](https://github.com/infinidysk/infinidysk/commit/ab11acaf6297407eb528450fcef77eb6977365c8))
+* **deps:** Bump the npm-minor-and-patch group ([#1845](https://github.com/infinidysk/infinidysk/issues/1845)) ([2714ecf](https://github.com/infinidysk/infinidysk/commit/2714ecf945a8c4d64c659dc05fd8f9958d89fbe4))
+* **deps:** Bump the nuget-minor-and-patch group with 9 updates ([#1846](https://github.com/infinidysk/infinidysk/issues/1846)) ([69fa8ae](https://github.com/infinidysk/infinidysk/commit/69fa8ae2fb809a0e849f864aeb76c86972e62815))
+* **deps:** Bump the react-router group in /frontend with 5 updates ([#1843](https://github.com/infinidysk/infinidysk/issues/1843)) ([db82801](https://github.com/infinidysk/infinidysk/commit/db82801869d24ae477284bf6da3df847dd2d5def))
+
 ## [1.7.1](https://github.com/infinidysk/infinidysk/compare/v1.7.0...v1.7.1) (2026-11-03)
 
 
