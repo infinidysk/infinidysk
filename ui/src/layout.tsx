@@ -288,15 +288,18 @@ function useNavCounts(): Record<string, NavCount[]> {
   const actionNeeded = summary?.find((s) => s.state === "action_needed")?.files ?? 0;
   const arrIssues = arr?.instances.reduce((n, i) => n + i.queue_issues.length, 0) ?? 0;
   const queueCounts: NavCount[] = [];
-  if (queue?.length) queueCounts.push({ count: queue.length, label: `${queue.length} in queue` });
-  if (arrIssues) queueCounts.push({ count: arrIssues, label: `${arrIssues} need you in the Arr`, warning: true });
+  if (queue?.length) queueCounts.push({ count: queue.length, label: `${queue.length.toLocaleString()} in queue` });
+  if (arrIssues) {
+    const label = arrIssues === 1 ? "1 download needs" : `${arrIssues.toLocaleString()} downloads need`;
+    queueCounts.push({ count: arrIssues, label: `${label} you in the Arr`, warning: true });
+  }
   return {
     "/queue": queueCounts,
     "/health": actionNeeded ? [{ count: actionNeeded, label: `${actionNeeded} need action`, warning: true }] : [],
   };
 }
 
-function Nav() {
+export function Nav() {
   const counts = useNavCounts();
   return (
     <nav aria-label="Main" className="flex flex-col gap-0.5">
