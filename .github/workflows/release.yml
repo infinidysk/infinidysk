@@ -39,9 +39,14 @@ jobs:
         include:
           - runner: ubuntu-26.04
             platform: linux/amd64
+            arch: x64
           - runner: ubuntu-26.04-arm
             platform: linux/arm64
+            arch: arm64
     runs-on: ${{ matrix.runner }}
+    env:
+      ARCH: ${{ matrix.arch }}
+      ARCHIVE: infinidysk-${{ needs.release-please.outputs.tag_name }}-linux-${{ matrix.arch }}
     permissions:
       contents: read
       packages: write
@@ -66,6 +71,68 @@ jobs:
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,scope=${{ matrix.platform }},mode=max
+      # Reuses the image build's cache (same context and COMMIT); keep it before any step that writes to the checkout.
+      - name: Export the binary for the release archive
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          target: binary
+          build-args: |
+            COMMIT=${{ github.sha }}
+          outputs: type=local,dest=${{ runner.temp }}/binary
+          cache-from: type=gha,scope=${{ matrix.platform }}
+      - name: Stage the release archive
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/$ARCHIVE"
+          mkdir "$dir"
+          install -m 0755 "$RUNNER_TEMP/binary/infinidysk" "$dir/infinidysk"
+          install -m 0644 LICENSE version.txt "$dir/"
+          printf '%s\n' "$GITHUB_SHA" > "$dir/commit.txt"
+      - name: Check the glibc floor
+        run: |
+          set -euo pipefail
+          # ponytail: holds while the Dockerfile's ubuntu:26.04 `rust` stage links nothing newer than GLIBC_2.39; past that, move that build stage (not the runtime stage) to an older Ubuntu.
+          floor=2.39
+          newest=$(objdump -T "$RUNNER_TEMP/$ARCHIVE/infinidysk" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sed 's/^GLIBC_//' | sort -uV | tail -n 1 || true)
+          if [[ -z "$newest" ]]; then
+            echo "::error::linux-$ARCH: objdump found no GLIBC symbol versions in the binary"
+            exit 1
+          fi
+          if [[ "$(printf '%s\n%s\n' "$floor" "$newest" | sort -V | tail -n 1)" != "$floor" ]]; then
+            echo "::error::linux-$ARCH: the binary needs GLIBC_$newest; the floor is GLIBC_$floor"
+            exit 1
+          fi
+          echo "linux-$ARCH: the binary needs at most GLIBC_$newest (floor GLIBC_$floor)"
+      - name: Smoke run on Debian 13 and Ubuntu 24.04
+        run: |
+          set -euo pipefail
+          for image in debian:trixie ubuntu:24.04; do
+            # Into a file, not a pipe, so the binary's own exit code decides.
+            if ! docker run --rm -v "$RUNNER_TEMP/$ARCHIVE:/opt/infinidysk:ro" "$image" \
+                /opt/infinidysk/infinidysk openapi > "$RUNNER_TEMP/openapi.json"; then
+              echo "::error::linux-$ARCH: 'infinidysk openapi' failed on $image"
+              exit 1
+            fi
+            if ! jq -e '.openapi | type == "string"' "$RUNNER_TEMP/openapi.json" > /dev/null; then
+              echo "::error::linux-$ARCH: 'infinidysk openapi' printed no OpenAPI JSON on $image"
+              exit 1
+            fi
+            echo "linux-$ARCH: 'infinidysk openapi' passed on $image"
+          done
+      - name: Pack the release archive
+        run: |
+          set -euo pipefail
+          # Root-owned entries, so extracting as root does not hand the files to the runner's uid.
+          tar -czf "$RUNNER_TEMP/$ARCHIVE.tar.gz" -C "$RUNNER_TEMP" --owner=0 --group=0 --numeric-owner "$ARCHIVE"
+          tar -tvzf "$RUNNER_TEMP/$ARCHIVE.tar.gz"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: archive-${{ matrix.arch }}
+          path: ${{ runner.temp }}/${{ env.ARCHIVE }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1
       - run: echo "${{ steps.build.outputs.digest }}" > "digest-${{ strategy.job-index }}"
       - uses: actions/upload-artifact@v7
         with:
@@ -106,8 +173,24 @@ jobs:
           )
           docker buildx imagetools create "${annotations[@]}" "${tags[@]}" "${refs[@]}"
 
-  announce:
+  # After image-manifest, so every attached archive's commit is published as `sha-<12>`.
+  archives:
     needs: [release-please, image-manifest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: archive-*
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: gh release upload "$RELEASE_TAG" infinidysk-*.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
+
+  announce:
+    needs: [release-please, image-manifest, archives]
     runs-on: ubuntu-latest
     permissions:
       contents: read
