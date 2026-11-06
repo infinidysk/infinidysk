@@ -1262,6 +1262,83 @@ fn remove_set(path: &std::path::Path) {
     }
 }
 
+/// Runs `op` while another connection holds an uncommitted write, then commits it.
+/// A cleanup that reads in a deferred transaction fails here with code 517.
+async fn under_contention<T: Send + 'static>(
+    url: &str,
+    op: impl Future<Output = Result<T, infinidysk_db::Error>> + Send + 'static,
+) -> T {
+    let raw = sqlx::SqlitePool::connect(url).await.expect("open");
+    sqlx::query("CREATE TABLE IF NOT EXISTS contention (x INTEGER)")
+        .execute(&raw)
+        .await
+        .expect("create");
+    let mut tx = raw.begin().await.expect("begin");
+    sqlx::query("INSERT INTO contention VALUES (1)")
+        .execute(&mut *tx)
+        .await
+        .expect("write");
+    let op = tokio::spawn(op);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    tx.commit().await.expect("commit");
+    let out = op
+        .await
+        .expect("join")
+        .expect("cleanup survives the other writer");
+    raw.close().await;
+    out
+}
+
+#[tokio::test]
+async fn cleanup_survives_a_concurrent_sqlite_writer() {
+    let path = temp_sqlite();
+    let url = format!("sqlite:{}", path.display());
+    let db = Db::connect(&url).await.expect("connect");
+    let content = db
+        .item_by_path("/content")
+        .await
+        .expect("query")
+        .expect("seeded");
+    let cat = Item::child(&content, "contention", ItemKind::Directory).expect("valid");
+    let job = Item::child(&cat, "job", ItemKind::Directory).expect("valid");
+    let file = Item::child(&job, "a.mkv", ItemKind::NzbFile).expect("valid");
+    let folder = Item::child(&cat, "nofiles", ItemKind::Directory).expect("valid");
+    let unowned = Item::child(&content, "unowned.mkv", ItemKind::NzbFile).expect("valid");
+    let empty = Item::child(&cat, "empty", ItemKind::Directory).expect("valid");
+    db.insert(
+        &[
+            cat,
+            job,
+            file.clone(),
+            folder.clone(),
+            unowned.clone(),
+            empty,
+        ],
+        &[],
+    )
+    .await
+    .expect("insert");
+    let before = infinidysk_db::now_ms() + 1;
+
+    let d = db.clone();
+    assert!(under_contention(&url, async move { d.delete_unowned(unowned.id).await }).await);
+    let d = db.clone();
+    assert!(under_contention(&url, async move { d.delete_without_files(folder.id).await }).await);
+    let d = db.clone();
+    assert!(
+        under_contention(
+            &url,
+            async move { d.delete_unlinked(file.id, before).await }
+        )
+        .await
+    );
+    let d = db.clone();
+    assert!(under_contention(&url, async move { d.delete_empty_dirs(before).await }).await >= 1);
+
+    db.close().await;
+    remove_set(&path);
+}
+
 #[tokio::test]
 async fn backup_into_copies_a_consistent_database() {
     let path = temp_sqlite();
