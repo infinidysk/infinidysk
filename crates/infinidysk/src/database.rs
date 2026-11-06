@@ -1,6 +1,6 @@
 //! Which database the app runs on, and moving it from SQLite to PostgreSQL.
 //!
-//! `/config/database.toml` (the boot file) selects PostgreSQL after a move. The
+//! `database.toml` (the boot file) in the config folder selects PostgreSQL after a move. The
 //! `INFINIDYSK_DATABASE_URL` environment variable, when set, overrides it.
 
 use std::fs::{self, File, OpenOptions};
@@ -30,7 +30,6 @@ use utoipa::ToSchema;
 use crate::admin::{Admin, ApiError, Fail};
 use crate::app::Boot;
 
-pub const CONFIG_DIR: &str = "/config";
 pub const BOOT_FILE: &str = "database.toml";
 pub const DEFAULT_SQLITE: &str = "infinidysk.sqlite";
 pub const PRE_POSTGRES: &str = "infinidysk.sqlite.pre-postgres";
@@ -38,7 +37,7 @@ pub const PRE_POSTGRES: &str = "infinidysk.sqlite.pre-postgres";
 const HEADER: &str =
     "# Written by infinidysk. INFINIDYSK_DATABASE_URL, when set, overrides this file.\n";
 
-/// `/config/database.toml`. Holds a password: no `Debug`, never logged.
+/// `database.toml` in the config folder. Holds a password: no `Debug`, never logged.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct BootFile {
     pub url: Option<String>,
@@ -103,9 +102,12 @@ impl BootFile {
             file.sync_all()?;
             fs::rename(&tmp, &path)
         };
-        publish().map_err(SaveError::Unpublished)?;
+        publish().map_err(|error| SaveError::Unpublished {
+            path: path.clone(),
+            error,
+        })?;
         own(&path, owner);
-        sync_dir(dir).map_err(SaveError::NotDurable)
+        sync_dir(dir).map_err(|error| SaveError::NotDurable { path, error })
     }
 }
 
@@ -113,11 +115,11 @@ impl BootFile {
 #[derive(Debug, thiserror::Error)]
 pub enum SaveError {
     /// The temp write, its fsync or the rename failed: `database.toml` is unchanged.
-    #[error("could not write /config/{BOOT_FILE}: {0}")]
-    Unpublished(io::Error),
+    #[error("could not write {}: {error}", .path.display())]
+    Unpublished { path: PathBuf, error: io::Error },
     /// Renamed, but the directory fsync failed: visible now, possibly lost on a host crash.
-    #[error("could not make /config/{BOOT_FILE} durable: {0}")]
-    NotDurable(io::Error),
+    #[error("could not make {} durable: {error}", .path.display())]
+    NotDurable { path: PathBuf, error: io::Error },
 }
 
 /// Hands a file root created to the configured owner, as log files are.
@@ -181,8 +183,9 @@ pub fn choose(
     let sqlite = config.join(DEFAULT_SQLITE);
     if !sqlite.exists() && config.join(PRE_POSTGRES).exists() {
         bail!(
-            "This install moved to PostgreSQL, but /config/{BOOT_FILE} is missing. Restore it, \
-             or rename {PRE_POSTGRES} to {DEFAULT_SQLITE} to go back to SQLite."
+            "This install moved to PostgreSQL, but {} is missing. Restore it, \
+             or rename {PRE_POSTGRES} to {DEFAULT_SQLITE} to go back to SQLite.",
+            config.join(BOOT_FILE).display()
         );
     }
     Ok((format!("sqlite:{}", sqlite.display()), Source::Default))
@@ -203,7 +206,9 @@ pub fn select(env_url: Option<String>, dir: &Path) -> anyhow::Result<(BootFile, 
             .and_then(|()| sync_dir(dir))
             .with_context(|| {
                 format!(
-                    "could not make /config/{BOOT_FILE} durable; fix the /config volume and restart"
+                    "could not make {} durable; fix the volume that holds {} and restart",
+                    path.display(),
+                    dir.display()
                 )
             })?;
     }
@@ -385,6 +390,8 @@ pub struct Migrator {
     source: Source,
     /// The PostgreSQL database in use, for display.
     current: Option<String>,
+    /// The SQLite file in use, for display; `None` on PostgreSQL.
+    sqlite: Option<String>,
     config: PathBuf,
     owner: (u32, u32),
     limits: Limits,
@@ -420,6 +427,11 @@ impl Migrator {
                 (_, Some(url)) => url,
             })
         });
+        let sqlite = if db.is_postgres() {
+            None
+        } else {
+            crate::app::sqlite_path(&boot.database_url).map(|path| path.display().to_string())
+        };
         let status = watch::channel(Status {
             error: cutover_error,
             ..Status::default()
@@ -430,6 +442,7 @@ impl Migrator {
             db,
             source: boot.database_source,
             current,
+            sqlite,
             config: config.to_path_buf(),
             owner: (boot.uid, boot.gid),
             limits,
@@ -456,7 +469,8 @@ impl Migrator {
         };
         if self.source == Source::Env || self.db.is_postgres() {
             warn!(
-                "dropping a move to PostgreSQL left in /config/{BOOT_FILE}: INFINIDYSK_DATABASE_URL selects the database"
+                path = %self.config.join(BOOT_FILE).display(),
+                "dropping a move to PostgreSQL left in the boot file: INFINIDYSK_DATABASE_URL selects the database"
             );
             if !self.db.is_postgres()
                 && let Err(error) = self.db.stop_capture().await
@@ -528,12 +542,12 @@ impl Migrator {
             schema_version,
         });
         match self.save(&next) {
-            Err(SaveError::Unpublished(error)) => {
+            Err(unpublished @ SaveError::Unpublished { .. }) => {
                 drop(file);
                 if let Err(error) = self.db.stop_capture().await {
                     warn!(reason = %error, "could not remove change capture");
                 }
-                return Err(Fail::Unavailable(SaveError::Unpublished(error).to_string()));
+                return Err(Fail::Unavailable(unpublished.to_string()));
             }
             Err(error) => warn!(reason = %error, "the boot file may not survive a host crash"),
             Ok(()) => {}
@@ -617,10 +631,10 @@ impl Migrator {
             migration.state = MigrationState::Cutover;
         }
         match self.save(&next) {
-            Err(SaveError::Unpublished(error)) => {
+            Err(unpublished @ SaveError::Unpublished { .. }) => {
                 drop(file);
                 self.spawn_run();
-                return Err(Fail::Unavailable(SaveError::Unpublished(error).to_string()));
+                return Err(Fail::Unavailable(unpublished.to_string()));
             }
             Err(error) => warn!(reason = %error, "the boot file may not survive a host crash"),
             Ok(()) => {}
@@ -651,6 +665,7 @@ impl Migrator {
                 Backend::Sqlite
             },
             env_managed: self.source == Source::Env,
+            sqlite_path: self.sqlite.clone(),
             target: self
                 .current
                 .clone()
@@ -1114,12 +1129,12 @@ pub async fn serve_cutover(
                     info!("switched to PostgreSQL");
                     return Ok(booted(listener, target_db, switched, None));
                 }
-                Err(SaveError::NotDurable(error)) => {
+                Err(error @ SaveError::NotDurable { .. }) => {
                     tracing::error!(
                         reason = %error,
-                        "could not make /config/{BOOT_FILE} durable; stopping before either database takes writes"
+                        "could not make the boot file durable; stopping before either database takes writes"
                     );
-                    return Err(SaveError::NotDurable(error).into());
+                    return Err(error.into());
                 }
                 Err(error) => anyhow::Error::from(error),
             }
@@ -1172,6 +1187,8 @@ pub struct DatabaseView {
     backend: Backend,
     /// `INFINIDYSK_DATABASE_URL` selects the database; it cannot be moved here.
     env_managed: bool,
+    /// The SQLite file in use; absent on PostgreSQL.
+    sqlite_path: Option<String>,
     /// `user@host:port/database` of the PostgreSQL database in use or being copied to.
     target: Option<String>,
     migration: Option<MigrationView>,
@@ -1412,7 +1429,7 @@ mod tests {
         fs::create_dir(dir.0.join(format!("{BOOT_FILE}.tmp"))).expect("block tmp");
         assert!(matches!(
             switched().save(&dir.0, owner()),
-            Err(SaveError::Unpublished(_))
+            Err(SaveError::Unpublished { .. })
         ));
         let loaded = BootFile::load(&dir.0).expect("load");
         assert_eq!(
@@ -1428,7 +1445,7 @@ mod tests {
         fail_next_dir_sync();
         assert!(matches!(
             switched().save(&dir.0, owner()),
-            Err(SaveError::NotDurable(_))
+            Err(SaveError::NotDurable { .. })
         ));
         let loaded = BootFile::load(&dir.0).expect("load");
         assert!(loaded.migration.is_none());
@@ -1489,6 +1506,7 @@ mod tests {
             trace_minutes: 0,
             metrics_path: dir.join("metrics.sqlite"),
             log_dir: dir.join("logs"),
+            home: dir.to_path_buf(),
             config_dir: dir.join("csharp"),
             ffprobe: "ffprobe".to_owned(),
         }
@@ -2052,6 +2070,56 @@ mod tests {
         assert!(booted.db.is_postgres());
         assert!(renamed(&dir.0));
         booted.db.close().await;
+        pg.drop().await;
+    }
+
+    /// The whole switch through `serve` with `home` = a custom folder: the boot file and the
+    /// retired SQLite file stay there, and the next start picks PostgreSQL from it.
+    #[tokio::test]
+    async fn serve_switches_to_postgresql_in_its_config_folder() {
+        let Some(pg) = Pg::create().await else {
+            return;
+        };
+        let dir = Dir::new();
+        let db = sqlite(&dir.0).await;
+        copy_to(&db, &pg).await;
+        request(&db, &dir.0, &pg.url, MigrationState::Cutover).await;
+        db.close().await;
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let vars = vec![
+            (
+                "INFINIDYSK__AUTH__API_KEY".to_owned(),
+                "adminkey".to_owned(),
+            ),
+            (
+                "INFINIDYSK__MOUNT__DIR".to_owned(),
+                dir.0.join("mnt").display().to_string(),
+            ),
+        ];
+        let cancel = CancellationToken::new();
+        let server = tokio::spawn({
+            let (boot, cancel) = (boot(&dir.0), cancel.clone());
+            async move { crate::app::serve(listener, &boot, vars, cancel).await }
+        });
+        tokio::time::timeout(Duration::from_secs(60), async {
+            while !renamed(&dir.0) {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the switch did not finish");
+        cancel.cancel();
+        let exit = tokio::time::timeout(Duration::from_secs(60), server)
+            .await
+            .expect("the server did not stop")
+            .expect("join")
+            .expect("serve");
+        assert_eq!(exit, crate::app::Exit::Stopped);
+        assert!(!dir.0.join(DEFAULT_SQLITE).exists());
+        // What `Boot::from_env` asks at the next start, with `home` = this folder.
+        let (_, url, source) = select(None, &dir.0).expect("select");
+        assert_eq!(url, pg.url);
+        assert_eq!(source, Source::BootFile);
         pg.drop().await;
     }
 

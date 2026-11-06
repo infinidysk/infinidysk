@@ -19,10 +19,15 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     if std::env::args().nth(1).as_deref() == Some("import-report") {
+        let home = app::home_from_env()?;
         let config = std::env::args()
             .nth(2)
-            .unwrap_or_else(|| "/config".to_owned());
-        print!("{}", infinidysk::upgrade::report(config.as_ref()).await?);
+            .map_or_else(|| home.clone(), std::path::PathBuf::from);
+        let default_cache_dir = home.join("cache").display().to_string();
+        print!(
+            "{}",
+            infinidysk::upgrade::report(&config, &default_cache_dir).await?
+        );
         return Ok(());
     }
     if std::env::args().nth(1).as_deref() == Some("healthcheck") {
@@ -37,7 +42,20 @@ async fn main() -> anyhow::Result<()> {
         }
         return Ok(());
     }
-    let boot = Boot::from_env()?;
+    // Checked before anything reads it, so a folder infinidysk cannot use stops with one line.
+    let setting = match app::config_dir_from_env() {
+        Ok(setting) => setting,
+        Err(error) => {
+            tracing_subscriber::fmt().init();
+            let reason = format!("{error:#}");
+            tracing::warn!(
+                %reason,
+                "cannot use INFINIDYSK_CONFIG_DIR; fix the setting or the folder's permissions, then restart"
+            );
+            std::process::exit(1);
+        }
+    };
+    let boot = Boot::from_env(setting.as_deref())?;
     let (capture, unkept) = match Capture::persisted(&boot.log_dir, (boot.uid, boot.gid)) {
         Ok(capture) => (capture, None),
         Err(error) => (Capture::MEMORY, Some(error)),
@@ -48,6 +66,7 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .with(capture)
         .init();
+    tracing::info!(dir = %boot.home.display(), "using the config folder");
     if let Some(error) = unkept {
         tracing::warn!(
             dir = %boot.log_dir.display(),
@@ -72,7 +91,24 @@ async fn main() -> anyhow::Result<()> {
         signal_seen.store(true, Ordering::Relaxed);
         stop.cancel();
     });
-    let exit = app::serve(listener, &boot, std::env::vars(), cancel).await?;
+    let exit = match app::serve(listener, &boot, std::env::vars(), cancel).await {
+        Ok(exit) => exit,
+        // Invalid saved settings are a known failure: one line, no backtrace.
+        Err(error)
+            if matches!(
+                error.downcast_ref::<infinidysk::config::Error>(),
+                Some(infinidysk::config::Error::Invalid { .. })
+            ) =>
+        {
+            let reason = format!("{error:#}");
+            tracing::warn!(
+                %reason,
+                "the saved settings are invalid; fix them or override them with INFINIDYSK__ variables, then restart"
+            );
+            std::process::exit(1);
+        }
+        Err(error) => return Err(error),
+    };
     // A stop signal during a restart wins: the container is being stopped.
     if exit == Exit::Restart && !signalled.load(Ordering::Relaxed) {
         let exe = std::env::current_exe().context("finding the binary to restart")?;

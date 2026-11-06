@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::future::{Future, IntoFuture as _};
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -50,6 +51,8 @@ const WARM_FLOOR: usize = 2;
 const DRAIN: Duration = Duration::from_secs(5);
 /// How often stale query planner statistics are refreshed, starting at startup.
 const OPTIMIZE_EVERY: Duration = Duration::from_hours(6);
+/// Where infinidysk keeps its files when `INFINIDYSK_CONFIG_DIR` is unset: the image's volume.
+const DEFAULT_HOME: &str = "/config";
 
 /// Process settings needed before the database is open.
 pub struct Boot {
@@ -66,33 +69,34 @@ pub struct Boot {
     pub metrics_path: std::path::PathBuf,
     /// Where log files are kept across restarts.
     pub log_dir: std::path::PathBuf,
-    /// Where a C# install kept its data, imported on first boot.
+    /// Where infinidysk keeps its own files: the boot file, the default SQLite file and the
+    /// default disk cache folder. `INFINIDYSK_CONFIG_DIR`, else `/config`.
+    pub home: std::path::PathBuf,
+    /// `INFINIDYSK_CONFIG_DIR`, else beside a SQLite database, else `/config`. Metrics and
+    /// logs default to it; a 1.x install found here is imported on first boot.
     pub config_dir: std::path::PathBuf,
     /// The ffprobe binary for media analysis.
     pub ffprobe: String,
 }
 
 impl Boot {
-    /// `INFINIDYSK_LISTEN`, `INFINIDYSK_DATABASE_URL` (default: the URL in
-    /// `/config/database.toml`, else `/config/infinidysk.sqlite`), `PUID`, `PGID`,
-    /// `INFINIDYSK_TRACE_MINUTES`, `INFINIDYSK_METRICS_PATH` (default: `metrics.sqlite`
-    /// beside a SQLite database, else in `/config`), `INFINIDYSK_LOG_DIR` (default: `logs`
-    /// in that same directory) and `INFINIDYSK_FFPROBE` (default:
-    /// `ffprobe` on `PATH`).
-    pub fn from_env() -> anyhow::Result<Self> {
-        let (_, database_url, database_source) = crate::database::select(
-            std::env::var("INFINIDYSK_DATABASE_URL").ok(),
-            std::path::Path::new(crate::database::CONFIG_DIR),
-        )?;
-        let beside = sqlite_path(&database_url)
-            .as_deref()
-            .and_then(std::path::Path::parent)
-            .filter(|dir| !dir.as_os_str().is_empty())
-            .map_or_else(|| "/config".into(), std::path::Path::to_path_buf);
+    /// `setting` is `INFINIDYSK_CONFIG_DIR` as [`config_dir_from_env`] checked it; it sets
+    /// [`Self::home`] and [`Self::config_dir`]. Also reads `INFINIDYSK_LISTEN`,
+    /// `INFINIDYSK_DATABASE_URL` (default: the URL in `<home>/database.toml`, else
+    /// `<home>/infinidysk.sqlite`), `PUID`, `PGID`, `INFINIDYSK_TRACE_MINUTES`,
+    /// `INFINIDYSK_METRICS_PATH` (default: `metrics.sqlite` in `config_dir`),
+    /// `INFINIDYSK_LOG_DIR` (default: `logs` in `config_dir`) and `INFINIDYSK_FFPROBE`
+    /// (default: `ffprobe` on `PATH`).
+    pub fn from_env(setting: Option<&Path>) -> anyhow::Result<Self> {
+        let home = setting.map_or_else(|| DEFAULT_HOME.into(), Path::to_path_buf);
+        let (_, database_url, database_source) =
+            crate::database::select(std::env::var("INFINIDYSK_DATABASE_URL").ok(), &home)?;
+        let beside = base_dir(setting, &database_url);
         Ok(Self {
             listen: listen_from_env()?,
             metrics_path: var("INFINIDYSK_METRICS_PATH", beside.join("metrics.sqlite"))?,
             log_dir: var("INFINIDYSK_LOG_DIR", beside.join("logs"))?,
+            home,
             config_dir: beside,
             database_url,
             database_source,
@@ -102,6 +106,61 @@ impl Boot {
             ffprobe: var("INFINIDYSK_FFPROBE", "ffprobe".to_owned())?,
         })
     }
+}
+
+/// The base folder: `INFINIDYSK_CONFIG_DIR` (`setting`), else the folder of a `sqlite:`
+/// `database_url`, else `/config`.
+fn base_dir(setting: Option<&Path>, database_url: &str) -> PathBuf {
+    setting.map_or_else(
+        || {
+            sqlite_path(database_url)
+                .as_deref()
+                .and_then(Path::parent)
+                .filter(|dir| !dir.as_os_str().is_empty())
+                .map_or_else(|| DEFAULT_HOME.into(), Path::to_path_buf)
+        },
+        Path::to_path_buf,
+    )
+}
+
+/// `INFINIDYSK_CONFIG_DIR`, checked: an absolute folder infinidysk can write in, created
+/// when missing. `None` when unset; `/config` is then used as is, as before.
+pub fn config_dir_from_env() -> anyhow::Result<Option<PathBuf>> {
+    let setting = config_dir_setting(std::env::var("INFINIDYSK_CONFIG_DIR").ok().as_deref())?;
+    if let Some(dir) = &setting {
+        prepare(dir)?;
+    }
+    Ok(setting)
+}
+
+/// Creates `dir` when missing and checks that files can be written there.
+fn prepare(dir: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let probe = dir.join(format!(".infinidysk-probe-{}", ItemId::new()));
+    std::fs::write(&probe, b"")
+        .and_then(|()| std::fs::remove_file(&probe))
+        .with_context(|| format!("writing in {}", dir.display()))
+}
+
+/// [`Boot::home`] without creating or checking it, for `import-report`.
+pub fn home_from_env() -> anyhow::Result<PathBuf> {
+    Ok(
+        config_dir_setting(std::env::var("INFINIDYSK_CONFIG_DIR").ok().as_deref())?
+            .unwrap_or_else(|| DEFAULT_HOME.into()),
+    )
+}
+
+/// `INFINIDYSK_CONFIG_DIR` (`value`): an absolute folder, or `None` when unset.
+fn config_dir_setting(value: Option<&str>) -> anyhow::Result<Option<PathBuf>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let dir = Path::new(value);
+    // An empty value is not absolute either.
+    if !dir.is_absolute() {
+        anyhow::bail!("INFINIDYSK_CONFIG_DIR must be an absolute path, not {value:?}");
+    }
+    Ok(Some(dir.to_path_buf()))
 }
 
 /// The file of a `sqlite:` URL; `None` for any other database.
@@ -149,6 +208,7 @@ pub async fn serve(
 ) -> anyhow::Result<Exit> {
     let pending = crate::backup::boot::apply_pending(boot)?;
     let vars: Vec<(String, String)> = vars.into_iter().collect();
+    let default_cache_dir = boot.home.join("cache").display().to_string();
     let db = match Db::connect(&boot.database_url).await {
         Ok(db) => db,
         Err(error) if pending.swapped() => {
@@ -161,7 +221,8 @@ pub async fn serve(
     };
     // Past `finish` a restore no longer rolls back, so its settings must load first.
     if pending.swapped()
-        && let Err(error) = ConfigStore::load(db.clone(), vars.iter().cloned()).await
+        && let Err(error) =
+            ConfigStore::load_in(db.clone(), vars.iter().cloned(), default_cache_dir.clone()).await
     {
         db.close().await;
         let reason = format!(
@@ -177,7 +238,7 @@ pub async fn serve(
         listener,
         db,
         boot,
-        std::path::Path::new(crate::database::CONFIG_DIR),
+        &boot.home,
         crate::database::LIMITS,
         &cancel,
     )
@@ -188,15 +249,16 @@ pub async fn serve(
         db.close().await;
         return Ok(Exit::Stopped);
     }
-    let listener = crate::upgrade::serve_import(listener, &db, &boot.config_dir, &cancel)
-        .await
-        .context("serving the C# import")?;
+    let listener =
+        crate::upgrade::serve_import(listener, &db, &boot.config_dir, &default_cache_dir, &cancel)
+            .await
+            .context("serving the C# import")?;
     if cancel.is_cancelled() {
         db.close().await;
         return Ok(Exit::Stopped);
     }
     crate::upgrade::stamp_migrated(&db, &boot.config_dir).await;
-    let mut store = ConfigStore::load(db.clone(), vars)
+    let mut store = ConfigStore::load_in(db.clone(), vars, default_cache_dir.clone())
         .await
         .context("loading settings")?;
     store
@@ -207,7 +269,7 @@ pub async fn serve(
     crate::maintenance::schedule_dead_links(&db, &mut store).await;
     let settings = store.settings().clone();
     infinidysk_core::enable_experiments(&settings.experiments);
-    let tuning = settings.performance.effective();
+    let tuning = effective_tuning(&settings.performance, &default_cache_dir);
 
     let quotas = Arc::new(
         Quotas::load(db.clone())
@@ -462,6 +524,7 @@ pub async fn serve(
         fuse: settings.mount.fuse,
         epoch_times: settings.mount.epoch_times,
         tuning,
+        default_cache_dir,
         experiments: settings.experiments.clone(),
         handoff: Arc::clone(&handoff),
     };
@@ -556,7 +619,7 @@ pub async fn serve(
     let database = crate::database::Migrator::new(
         db.clone(),
         boot,
-        std::path::Path::new(crate::database::CONFIG_DIR),
+        &boot.home,
         booted.file,
         crate::database::LIMITS,
         booted.error,
@@ -763,6 +826,8 @@ pub struct Live {
     epoch_times: bool,
     /// Tuning at startup, for the parts that need a restart.
     tuning: Tuning,
+    /// The disk cache folder when none is saved: `cache` in the config folder.
+    default_cache_dir: String,
     experiments: Vec<String>,
     handoff: Arc<crate::handoff::Writer>,
 }
@@ -825,7 +890,7 @@ impl Live {
         set_rules(&self.dav.queue, settings);
         self.handoff.configure(settings);
         add_categories(&self.dav.queue, settings).await;
-        let tuning = settings.performance.effective();
+        let tuning = effective_tuning(&settings.performance, &self.default_cache_dir);
         self.dav
             .vfs
             .set_read_ahead(u64::from(tuning.read_ahead_mb) * MB);
@@ -861,6 +926,11 @@ impl Live {
         &self.mount_dir
     }
 
+    /// The disk cache folder when none is saved.
+    pub fn default_cache_dir(&self) -> &str {
+        &self.default_cache_dir
+    }
+
     /// Whether this process serves the built-in FUSE mount; not whether it is mounted.
     pub const fn fuse_enabled(&self) -> bool {
         fuse_enabled(self.fuse)
@@ -883,6 +953,19 @@ const fn fuse_off_reason(setting: bool) -> &'static str {
     } else {
         "turned off in Settings → Mount"
     }
+}
+
+/// [`config::Performance::effective`], with the disk cache in `default_cache_dir` unless a
+/// folder is saved.
+pub(crate) fn effective_tuning(
+    performance: &config::Performance,
+    default_cache_dir: &str,
+) -> Tuning {
+    let mut tuning = performance.effective();
+    if performance.disk_cache_dir.is_none() {
+        default_cache_dir.clone_into(&mut tuning.disk_cache_dir);
+    }
+    tuning
 }
 
 fn cache_config(tuning: &Tuning) -> CacheConfig {
@@ -1007,4 +1090,72 @@ pub(crate) fn endpoint(p: &config::Provider) -> Result<Endpoint, infinidysk_nntp
         credentials,
         PROVIDER_TIMEOUT,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PG: &str = "postgres://u:p@127.0.0.1:1/x";
+
+    #[test]
+    fn the_base_folder_follows_the_setting_then_the_sqlite_file() {
+        let setting = Some(Path::new("/srv/infinidysk"));
+        assert_eq!(
+            base_dir(None, "sqlite:/config/infinidysk.sqlite"),
+            Path::new("/config")
+        );
+        assert_eq!(
+            base_dir(None, "sqlite:/data/infinidysk.sqlite"),
+            Path::new("/data")
+        );
+        assert_eq!(base_dir(None, PG), Path::new("/config"));
+        assert_eq!(base_dir(setting, PG), Path::new("/srv/infinidysk"));
+        assert_eq!(
+            base_dir(setting, "sqlite:/data/infinidysk.sqlite"),
+            Path::new("/srv/infinidysk")
+        );
+    }
+
+    #[test]
+    fn the_setting_must_be_an_absolute_path() {
+        assert!(config_dir_setting(None).expect("unset").is_none());
+        assert_eq!(
+            config_dir_setting(Some("/srv/infinidysk")).expect("absolute"),
+            Some(PathBuf::from("/srv/infinidysk"))
+        );
+        for value in ["", "config", "./config"] {
+            let error = config_dir_setting(Some(value)).expect_err(value);
+            assert!(
+                error.to_string().contains("INFINIDYSK_CONFIG_DIR"),
+                "{error:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn prepare_creates_the_folder_and_leaves_nothing_behind() {
+        let root = std::env::temp_dir().join(format!("infinidysk-home-{}", ItemId::new()));
+        let dir = root.join("data");
+        prepare(&dir).expect("prepared");
+        assert_eq!(std::fs::read_dir(&dir).expect("created").count(), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_saved_disk_cache_folder_wins_over_the_config_folder() {
+        let saved = config::Performance {
+            disk_cache_dir: Some("/fast/cache".to_owned()),
+            ..config::Performance::default()
+        };
+        assert_eq!(
+            effective_tuning(&saved, "/srv/infinidysk/cache").disk_cache_dir,
+            "/fast/cache"
+        );
+        assert_eq!(
+            effective_tuning(&config::Performance::default(), "/srv/infinidysk/cache")
+                .disk_cache_dir,
+            "/srv/infinidysk/cache"
+        );
+    }
 }

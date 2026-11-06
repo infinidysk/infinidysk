@@ -216,7 +216,7 @@ pub struct Upgrade {
 }
 
 /// These settings in place of the C# ones in `cs`.
-pub fn settings(cs: &Config) -> anyhow::Result<Upgrade> {
+pub fn settings(cs: &Config, default_cache_dir: &str) -> anyhow::Result<Upgrade> {
     let mut s = Settings::default();
     // C# often did not record a file's download, so no Arr can be asked to replace it.
     s.health.unowned_action = UnownedAction::ActionNeeded;
@@ -351,7 +351,7 @@ pub fn settings(cs: &Config) -> anyhow::Result<Upgrade> {
         )),
     }
     s.auth.oidc = oidc(|n| cs.var(n), cs.admin.is_some(), &mut notes)?;
-    keep_valid(&mut s, &mut notes);
+    keep_valid(&mut s, &mut notes, default_cache_dir);
     let dropped: Vec<&str> = cs.keys().filter(|k| !MAPPED.contains(k)).collect();
     if !dropped.is_empty() {
         notes.push(format!(
@@ -427,7 +427,7 @@ type Fallback = (&'static str, fn(&mut Settings));
 
 /// Saving invalid settings keeps none of them, so this leaves out the values C# accepted
 /// and we reject, one at a time, until the rest is valid.
-fn keep_valid(s: &mut Settings, notes: &mut Vec<String>) {
+fn keep_valid(s: &mut Settings, notes: &mut Vec<String>, default_cache_dir: &str) {
     let fallbacks: [Fallback; 3] = [
         ("library folders", |s| s.imports.library_dirs.clear()),
         ("public URL", |s| s.network.public_url.clear()),
@@ -436,14 +436,18 @@ fn keep_valid(s: &mut Settings, notes: &mut Vec<String>) {
         }),
     ];
     let mut fallbacks = fallbacks.into_iter();
-    while let Err(error) = s.validate() {
+    while let Err(error) = s.validate_in(default_cache_dir) {
         let Some((what, reset)) = fallbacks.next() else {
             notes.push(format!("the carried-over settings are invalid: {error}"));
             return;
         };
         let mut next = s.clone();
         reset(&mut next);
-        if next.validate().map_err(|e| e.to_string()) != Err(error.to_string()) {
+        if next
+            .validate_in(default_cache_dir)
+            .map_err(|e| e.to_string())
+            != Err(error.to_string())
+        {
             notes.push(format!("{what} not carried over: {error}"));
             *s = next;
         }
@@ -652,7 +656,7 @@ fn arr_instances(
 
 /// The survey of the C# `/config` at `config` plus the settings it would become, as
 /// text without secrets or usernames.
-pub async fn report(config: &Path) -> anyhow::Result<String> {
+pub async fn report(config: &Path, default_cache_dir: &str) -> anyhow::Result<String> {
     let vars: Vec<(String, String)> = std::env::vars().collect();
     if !matches!(
         infinidysk_import::source(config, &vars),
@@ -664,7 +668,7 @@ pub async fn report(config: &Path) -> anyhow::Result<String> {
     infinidysk_import::postgres::remove_staged(config)?;
     let survey = infinidysk_import::survey(config).await?;
     let cs = Config::read(config, std::env::vars()).await?;
-    describe(&survey, &cs, &settings(&cs)?)
+    describe(&survey, &cs, &settings(&cs, default_cache_dir)?)
 }
 
 /// Config key: `"started"` while an import from C# runs, `"done"` once it finished.
@@ -748,7 +752,7 @@ pub async fn legacy_strm(db: &Db) -> Option<Arc<AtomicU64>> {
 /// finishes an import a restart interrupted.
 pub async fn import(db: &Db, config: &Path) -> anyhow::Result<()> {
     let vars: Vec<(String, String)> = std::env::vars().collect();
-    import_with_progress(db, config, &vars, |_| {}).await
+    import_with_progress(db, config, &vars, crate::config::DEFAULT_CACHE_DIR, |_| {}).await
 }
 
 /// Whether an import runs. An interrupted import always resumes, so a source that
@@ -772,6 +776,7 @@ async fn import_with_progress(
     db: &Db,
     config: &Path,
     vars: &[(String, String)],
+    default_cache_dir: &str,
     progress: impl Fn(infinidysk_import::Progress) + Sync,
 ) -> anyhow::Result<()> {
     if !import_needed(db, config, vars).await? {
@@ -808,7 +813,7 @@ async fn import_with_progress(
          start it once, then switch"
     );
     let cs = Config::read(config, vars.iter().cloned()).await?;
-    let mut upgrade = settings(&cs)?;
+    let mut upgrade = settings(&cs, default_cache_dir)?;
     if from_postgres && !db.is_postgres() {
         upgrade.notes.push(POSTGRES_NOTE.to_owned());
     }
@@ -834,7 +839,8 @@ async fn import_with_progress(
             .await?;
     drop(client);
 
-    let mut store = ConfigStore::load(db.clone(), std::iter::empty()).await?;
+    let mut store =
+        ConfigStore::load_in(db.clone(), std::iter::empty(), default_cache_dir.to_owned()).await?;
     if let Err(error) = store.save(upgrade.settings.clone()).await {
         // Defaults without an admin account would open setup to anyone.
         anyhow::ensure!(
@@ -1354,6 +1360,7 @@ pub async fn serve_import(
     listener: TcpListener,
     db: &Db,
     config: &Path,
+    default_cache_dir: &str,
     cancel: &CancellationToken,
 ) -> anyhow::Result<TcpListener> {
     let vars: Vec<(String, String)> = std::env::vars().collect();
@@ -1377,7 +1384,7 @@ pub async fn serve_import(
     let importing = async {
         loop {
             let clock = std::sync::Mutex::new(ProgressClock::default());
-            let result = import_with_progress(db, config, &vars, |progress| {
+            let result = import_with_progress(db, config, &vars, default_cache_dir, |progress| {
                 let elapsed = clock
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
@@ -1834,7 +1841,11 @@ mod tests {
             .await
             .unwrap();
         assert!(import_needed(&db, &dir, &[]).await.unwrap());
-        assert!(import_with_progress(&db, &dir, &[], |_| {}).await.is_err());
+        assert!(
+            import_with_progress(&db, &dir, &[], crate::config::DEFAULT_CACHE_DIR, |_| {})
+                .await
+                .is_err()
+        );
         db.close().await;
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -1845,7 +1856,7 @@ mod tests {
         std::fs::write(dir.join("db-contract.json"), r#"{"provider":"postgres"}"#).unwrap();
         let db = Db::connect("sqlite::memory:").await.unwrap();
         assert!(import_needed(&db, &dir, &[]).await.unwrap());
-        let error = import_with_progress(&db, &dir, &[], |_| {})
+        let error = import_with_progress(&db, &dir, &[], crate::config::DEFAULT_CACHE_DIR, |_| {})
             .await
             .unwrap_err();
         assert!(
@@ -1860,9 +1871,10 @@ mod tests {
                 "Host=127.0.0.1;Port=1;Username=u;Password=hunter2",
             ),
         ]);
-        let error = import_with_progress(&db, &dir, &vars, |_| {})
-            .await
-            .unwrap_err();
+        let error =
+            import_with_progress(&db, &dir, &vars, crate::config::DEFAULT_CACHE_DIR, |_| {})
+                .await
+                .unwrap_err();
         let error = format!("{error:#}");
         assert!(error.contains("PostgreSQL"), "{error}");
         assert!(!error.contains("hunter2"), "{error}");
@@ -1877,7 +1889,12 @@ mod tests {
         let dir = v1_dir();
         std::fs::write(dir.join("db-contract.json"), r#"{"provider":"postgres"}"#).unwrap();
         std::fs::write(dir.join("db.sqlite"), "not a database").unwrap();
-        assert_eq!(report(&dir).await.unwrap(), POSTGRES_REPORT);
+        assert_eq!(
+            report(&dir, crate::config::DEFAULT_CACHE_DIR)
+                .await
+                .unwrap(),
+            POSTGRES_REPORT
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1888,7 +1905,7 @@ mod tests {
         let staged = dir.join(infinidysk_import::postgres::STAGED);
         std::fs::write(&staged, "left over").unwrap();
         let db = Db::connect("sqlite::memory:").await.unwrap();
-        import_with_progress(&db, &dir, &[], |_| {})
+        import_with_progress(&db, &dir, &[], crate::config::DEFAULT_CACHE_DIR, |_| {})
             .await
             .unwrap_err();
         assert!(!staged.exists());
@@ -1964,38 +1981,62 @@ mod tests {
         );
 
         let dir = v1_dir();
-        let db = Db::connect("sqlite::memory:").await.unwrap();
+        // The cache folder this import checks; a 1.x mount at /config/cache does not hold it.
+        let cache = dir.join("cache").display().to_string();
         let vars = vars(&[
             ("DATABASE_PROVIDER", "postgres"),
             ("DATABASE_CONNECTION_STRING", &connection),
+            ("MOUNT_DIR", "/config/cache"),
         ]);
-        let stages = std::sync::Mutex::new(Vec::new());
-        import_with_progress(&db, &dir, &vars, |p| {
-            stages.lock().unwrap().push(p.stage);
-        })
-        .await
-        .unwrap();
-        let stages = stages.into_inner().unwrap();
-        assert_eq!(stages.first(), Some(&infinidysk_import::Stage::Copying));
-        assert!(stages.contains(&infinidysk_import::Stage::Checking));
-        let config: HashMap<String, String> = db.config().await.unwrap().into_iter().collect();
-        assert_eq!(config[STATE_KEY], "\"done\"");
-        let report: String = serde_json::from_str(&config[REPORT_KEY]).unwrap();
-        assert!(report.contains("Settings > System > Database"), "{report}");
-        assert!(!dir.join(infinidysk_import::postgres::STAGED).exists());
-        let job = db.item_by_path("/content/tv/job").await.unwrap().unwrap();
-        let history = db.history().await.unwrap();
-        assert_eq!(history.len(), 1);
-        assert_eq!(history[0].0.download_dir, Some(job.id));
-
-        db.close().await;
+        let target = format!("infinidysk_test_{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {target}")))
+            .execute(&admin)
+            .await
+            .unwrap();
+        for destination in ["sqlite::memory:".to_owned(), format!("{base}/{target}")] {
+            let db = Db::connect(&destination).await.unwrap();
+            let stages = std::sync::Mutex::new(Vec::new());
+            import_with_progress(&db, &dir, &vars, &cache, |p| {
+                stages.lock().unwrap().push(p.stage);
+            })
+            .await
+            .unwrap();
+            let stages = stages.into_inner().unwrap();
+            assert_eq!(stages.first(), Some(&infinidysk_import::Stage::Copying));
+            assert!(stages.contains(&infinidysk_import::Stage::Checking));
+            let config: HashMap<String, String> = db.config().await.unwrap().into_iter().collect();
+            assert_eq!(config[STATE_KEY], "\"done\"");
+            let report: String = serde_json::from_str(&config[REPORT_KEY]).unwrap();
+            assert_eq!(
+                report.contains("Settings > System > Database"),
+                !db.is_postgres(),
+                "{report}"
+            );
+            assert!(
+                !report.contains("carried-over settings are invalid")
+                    && !report.contains("settings not carried over"),
+                "{report}"
+            );
+            let store = ConfigStore::load_in(db.clone(), std::iter::empty(), cache.clone())
+                .await
+                .unwrap();
+            assert_eq!(store.settings().mount.dir, "/config/cache");
+            assert!(!dir.join(infinidysk_import::postgres::STAGED).exists());
+            let job = db.item_by_path("/content/tv/job").await.unwrap().unwrap();
+            let history = db.history().await.unwrap();
+            assert_eq!(history.len(), 1);
+            assert_eq!(history[0].0.download_dir, Some(job.id));
+            db.close().await;
+        }
         std::fs::remove_dir_all(dir).unwrap();
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "DROP DATABASE {name} WITH (FORCE)"
-        )))
-        .execute(&admin)
-        .await
-        .unwrap();
+        for database in [name, target] {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DROP DATABASE {database} WITH (FORCE)"
+            )))
+            .execute(&admin)
+            .await
+            .unwrap();
+        }
         admin.close().await;
     }
 
@@ -2057,7 +2098,7 @@ mod tests {
         s.network.public_url = "not a url".to_owned();
         s.sab.categories = vec!["kept".to_owned()];
         let mut notes = Vec::new();
-        keep_valid(&mut s, &mut notes);
+        keep_valid(&mut s, &mut notes, crate::config::DEFAULT_CACHE_DIR);
         assert!(s.clone().validate().is_ok(), "{notes:?}");
         assert!(s.imports.library_dirs.is_empty() && s.network.public_url.is_empty());
         assert_eq!(s.sab.categories, ["kept"]);

@@ -1582,7 +1582,11 @@ async fn get_performance(
     State(admin): State<Arc<Admin>>,
     Query(query): Query<PerformanceQuery>,
 ) -> Json<PerformanceView> {
-    let effective = admin.config.read().await.settings().performance.effective();
+    let default_cache_dir = admin.live.default_cache_dir();
+    let effective = crate::app::effective_tuning(
+        &admin.config.read().await.settings().performance,
+        default_cache_dir,
+    );
     let dir = query
         .dir
         .unwrap_or_else(|| effective.disk_cache_dir.clone());
@@ -1597,7 +1601,10 @@ async fn get_performance(
             .into_iter()
             .map(|preset| PresetView {
                 preset,
-                tuning: preset.tuning(),
+                tuning: config::Tuning {
+                    disk_cache_dir: default_cache_dir.to_owned(),
+                    ..preset.tuning()
+                },
             })
             .collect(),
         effective,

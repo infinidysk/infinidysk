@@ -85,6 +85,7 @@ async fn start(
         trace_minutes: 0,
         metrics_path: root.join("metrics.sqlite"),
         log_dir: root.join("logs"),
+        home: root.join("config"),
         config_dir: root.join("config"),
         ffprobe: "ffprobe".to_owned(),
     };
