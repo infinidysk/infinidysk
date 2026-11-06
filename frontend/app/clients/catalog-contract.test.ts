@@ -19,8 +19,12 @@ const summary = {
 describe("catalog row contract", () => {
   it("accepts a title row and a people row", () => {
     expect(
-      catalogRowSchema.safeParse({ id: "trending", title: "Trending Now", items: [summary], people: null })
-        .success,
+      catalogRowSchema.safeParse({
+        id: "trending",
+        title: "Trending Now",
+        items: [summary],
+        people: null,
+      }).success,
     ).toBe(true);
     expect(
       catalogRowSchema.safeParse({
@@ -62,14 +66,14 @@ describe("watch history contract", () => {
 
   it("parses a history item", () => {
     expect(catalogHistoryItemSchema.safeParse(item).success).toBe(true);
-    expect(
-      catalogHistoryResponseSchema.safeParse({ status: true, items: [item] }).success,
-    ).toBe(true);
+    expect(catalogHistoryResponseSchema.safeParse({ status: true, items: [item] }).success).toBe(
+      true,
+    );
   });
 
   it("rejects a negative position", () => {
-    expect(
-      catalogHistoryItemSchema.safeParse({ ...item, positionSeconds: -1 }).success,
-    ).toBe(false);
+    expect(catalogHistoryItemSchema.safeParse({ ...item, positionSeconds: -1 }).success).toBe(
+      false,
+    );
   });
 });

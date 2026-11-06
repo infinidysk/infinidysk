@@ -1,4 +1,4 @@
-import { useLoaderData, useNavigate } from "react-router";
+import { data, useLoaderData, useNavigate } from "react-router";
 import { useEffect, useRef, useState } from "react";
 import type { Route } from "./+types/route";
 import { Button, Icon, Label } from "~/components/ui";
@@ -13,19 +13,19 @@ import type { CatalogEpisode, CatalogTitleResponse } from "~/clients/catalog-con
 export async function loader({ params, request }: Route.LoaderArgs) {
   const type = params.type;
   if (type !== "movie" && type !== "series") {
-    throw new Response("Title not found.", { status: 404 });
+    throw data("Title not found.", { status: 404 });
   }
 
   const tmdbId = Number(params.id);
   if (!Number.isInteger(tmdbId) || tmdbId <= 0) {
-    throw new Response("Title not found.", { status: 404 });
+    throw data("Title not found.", { status: 404 });
   }
 
   const searchParams = new URL(request.url).searchParams;
   const seasonRaw = searchParams.get("season");
   const season = seasonRaw === null ? undefined : Number(seasonRaw);
   if (season !== undefined && (!Number.isInteger(season) || season < 0)) {
-    throw new Response("Season must be zero or greater.", { status: 404 });
+    throw data("Season must be zero or greater.", { status: 404 });
   }
 
   // Continue Watching deep-links carry the episode so the resume lands on the right row.
@@ -33,10 +33,10 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   const resumeEpisode = episodeRaw === null ? null : Number(episodeRaw);
   if (resumeEpisode !== null) {
     if (!Number.isInteger(resumeEpisode) || resumeEpisode < 1) {
-      throw new Response("Episode must be one or greater.", { status: 404 });
+      throw data("Episode must be one or greater.", { status: 404 });
     }
     if (season === undefined) {
-      throw new Response("Episode requires a season.", { status: 404 });
+      throw data("Episode requires a season.", { status: 404 });
     }
   }
 
@@ -46,10 +46,9 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   } catch (cause) {
     const notFound =
       cause instanceof Error && /404|not found/i.test(`${cause.message} ${String(cause.name)}`);
-    throw new Response(
-      cause instanceof Error ? cause.message : "The title could not be loaded.",
-      { status: notFound ? 404 : 500 },
-    );
+    throw data(cause instanceof Error ? cause.message : "The title could not be loaded.", {
+      status: notFound ? 404 : 500,
+    });
   }
 }
 
@@ -60,11 +59,13 @@ export default function WatchTitleRoute() {
   const title = catalogTitle.title;
 
   if (!title) {
-    throw new Response("Title not found.", { status: 404 });
+    throw data("Title not found.", { status: 404 });
   }
 
   const runtime =
-    title.runtimeMinutes !== null && title.runtimeMinutes > 0 ? `${title.runtimeMinutes} min` : null;
+    title.runtimeMinutes !== null && title.runtimeMinutes > 0
+      ? `${title.runtimeMinutes} min`
+      : null;
   const meta = [
     title.year !== null ? String(title.year) : null,
     title.rating !== null ? `${title.rating.toFixed(1)}/10` : null,
@@ -97,71 +98,71 @@ export default function WatchTitleRoute() {
   return (
     <>
       <section className="relative mt-4 overflow-hidden rounded-xl border border-base-content/10 bg-base-200">
-          {title.backdropUrl && (
-            <img
-              src={title.backdropUrl}
-              alt=""
-              className="absolute inset-0 h-full w-full object-cover opacity-40"
-            />
-          )}
-          <div className="relative flex flex-col gap-5 bg-gradient-to-t from-base-100 via-base-100/70 to-transparent p-6 md:flex-row md:p-10">
-            {title.posterUrl && (
-              <img
-                src={title.posterUrl}
-                alt=""
-                loading="lazy"
-                className="hidden w-40 shrink-0 rounded-lg shadow-lg md:block"
-              />
-            )}
-            <div className="flex min-w-0 flex-col gap-3">
-              <h1 className="text-3xl font-bold tracking-tight md:text-4xl">{title.title}</h1>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-base-content/60">
-                {meta.map((entry) => (
-                  <span key={entry}>{entry}</span>
-                ))}
-                {title.genres.map((genre) => (
-                  <span key={genre} className="badge badge-ghost badge-sm">
-                    {genre}
-                  </span>
-                ))}
-              </div>
-              {title.overview && (
-                <p className="max-w-3xl text-sm leading-relaxed text-base-content/80">
-                  {title.overview}
-                </p>
-              )}
-              {title.type === "movie" && (
-                <div>
-                  <Button
-                    variant="primary"
-                    size="medium"
-                    onClick={() =>
-                      setTarget({ type: "movie", tmdbId: title.tmdbId, label: title.title })
-                    }
-                  >
-                    <Icon name="play_arrow" className="!text-[20px]" />
-                    Play
-                  </Button>
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-
-        {title.type === "series" && (
-          <SeriesEpisodes
-            catalogTitle={catalogTitle}
-            onSeasonChange={(season) =>
-              void navigate(
-                season === null
-                  ? `/watch/title/series/${title.tmdbId}`
-                  : `/watch/title/series/${title.tmdbId}?season=${season}`,
-              )
-            }
-            onPlay={openEpisode}
-            resumeEpisode={resumeEpisode}
+        {title.backdropUrl && (
+          <img
+            src={title.backdropUrl}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover opacity-40"
           />
         )}
+        <div className="relative flex flex-col gap-5 bg-gradient-to-t from-base-100 via-base-100/70 to-transparent p-6 md:flex-row md:p-10">
+          {title.posterUrl && (
+            <img
+              src={title.posterUrl}
+              alt=""
+              loading="lazy"
+              className="hidden w-40 shrink-0 rounded-lg shadow-lg md:block"
+            />
+          )}
+          <div className="flex min-w-0 flex-col gap-3">
+            <h1 className="text-3xl font-bold tracking-tight md:text-4xl">{title.title}</h1>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-base-content/60">
+              {meta.map((entry) => (
+                <span key={entry}>{entry}</span>
+              ))}
+              {title.genres.map((genre) => (
+                <span key={genre} className="badge badge-ghost badge-sm">
+                  {genre}
+                </span>
+              ))}
+            </div>
+            {title.overview && (
+              <p className="max-w-3xl text-sm leading-relaxed text-base-content/80">
+                {title.overview}
+              </p>
+            )}
+            {title.type === "movie" && (
+              <div>
+                <Button
+                  variant="primary"
+                  size="medium"
+                  onClick={() =>
+                    setTarget({ type: "movie", tmdbId: title.tmdbId, label: title.title })
+                  }
+                >
+                  <Icon name="play_arrow" className="!text-[20px]" />
+                  Play
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {title.type === "series" && (
+        <SeriesEpisodes
+          catalogTitle={catalogTitle}
+          onSeasonChange={(season) =>
+            void navigate(
+              season === null
+                ? `/watch/title/series/${title.tmdbId}`
+                : `/watch/title/series/${title.tmdbId}?season=${season}`,
+            )
+          }
+          onPlay={openEpisode}
+          resumeEpisode={resumeEpisode}
+        />
+      )}
       {target && <PlaybackDialog target={target} onClose={() => setTarget(null)} />}
     </>
   );
@@ -224,56 +225,62 @@ function SeriesEpisodes({
               episode.episodeNumber === resumeEpisode &&
               episode.seasonNumber === selectedSeason;
             return (
-            <li
-              key={`${episode.seasonNumber}:${episode.episodeNumber}`}
-              ref={isResume ? resumeRef : undefined}
-              aria-current={isResume ? "true" : undefined}
-              data-resume={isResume ? "true" : undefined}
-              className={`flex gap-3 rounded-lg border bg-base-200/60 p-3 ${
-                isResume ? "border-primary/60 ring-1 ring-primary/30" : "border-base-content/10"
-              }`}
-            >
-              <div className="aspect-video w-32 shrink-0 overflow-hidden rounded bg-base-300">
-                {episode.stillUrl ? (
-                  <img
-                    src={episode.stillUrl}
-                    alt=""
-                    loading="lazy"
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center">
-                    <Icon name="image_not_supported" className="!text-[20px] text-base-content/40" />
-                  </div>
-                )}
-              </div>
-              <div className="flex min-w-0 flex-1 flex-col gap-1">
-                <p className="truncate text-sm font-medium" title={episode.name}>
-                  {String(episode.episodeNumber).padStart(2, "0")}. {episode.name}
-                </p>
-                <p className="text-xs text-base-content/50">
-                  {[episode.airDate, episode.runtimeMinutes ? `${episode.runtimeMinutes} min` : null]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </p>
-                {episode.overview && (
-                  <p className="line-clamp-2 text-xs text-base-content/60">{episode.overview}</p>
-                )}
-                <div className="mt-auto flex items-center gap-2 pt-1">
-                  <Button variant="primary" size="xsmall" onClick={() => onPlay(episode)}>
-                    <Icon name="play_arrow" className="!text-[16px]" />
-                    {isResume ? "Resume" : "Play"}
-                  </Button>
-                  {isResume && (
-                    <span className="text-xs font-medium text-primary">
-                      {`Resume · S${String(episode.seasonNumber).padStart(2, "0")}E${String(
-                        episode.episodeNumber,
-                      ).padStart(2, "0")}`}
-                    </span>
+              <li
+                key={`${episode.seasonNumber}:${episode.episodeNumber}`}
+                ref={isResume ? resumeRef : undefined}
+                aria-current={isResume ? "true" : undefined}
+                data-resume={isResume ? "true" : undefined}
+                className={`flex gap-3 rounded-lg border bg-base-200/60 p-3 ${
+                  isResume ? "border-primary/60 ring-1 ring-primary/30" : "border-base-content/10"
+                }`}
+              >
+                <div className="aspect-video w-32 shrink-0 overflow-hidden rounded bg-base-300">
+                  {episode.stillUrl ? (
+                    <img
+                      src={episode.stillUrl}
+                      alt=""
+                      loading="lazy"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center">
+                      <Icon
+                        name="image_not_supported"
+                        className="!text-[20px] text-base-content/40"
+                      />
+                    </div>
                   )}
                 </div>
-              </div>
-            </li>
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  <p className="truncate text-sm font-medium" title={episode.name}>
+                    {String(episode.episodeNumber).padStart(2, "0")}. {episode.name}
+                  </p>
+                  <p className="text-xs text-base-content/50">
+                    {[
+                      episode.airDate,
+                      episode.runtimeMinutes ? `${episode.runtimeMinutes} min` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                  {episode.overview && (
+                    <p className="line-clamp-2 text-xs text-base-content/60">{episode.overview}</p>
+                  )}
+                  <div className="mt-auto flex items-center gap-2 pt-1">
+                    <Button variant="primary" size="xsmall" onClick={() => onPlay(episode)}>
+                      <Icon name="play_arrow" className="!text-[16px]" />
+                      {isResume ? "Resume" : "Play"}
+                    </Button>
+                    {isResume && (
+                      <span className="text-xs font-medium text-primary">
+                        {`Resume · S${String(episode.seasonNumber).padStart(2, "0")}E${String(
+                          episode.episodeNumber,
+                        ).padStart(2, "0")}`}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </li>
             );
           })}
         </ul>

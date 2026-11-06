@@ -173,7 +173,6 @@ describe("PlaybackDialog episode navigation", () => {
     );
   });
 
-
   it("rolls a season finale into the next season's first episode", async () => {
     mocks.fetchCatalogSeason.mockResolvedValue({
       status: true,
@@ -206,20 +205,22 @@ describe("PlaybackDialog episode navigation", () => {
       mocks.mediaRef.current!.dispatchEvent(new Event("ended"));
     });
 
-    await waitFor(() => expect(mocks.fetchCatalogSeason).toHaveBeenCalledWith(1930, 2, expect.anything()));
+    await waitFor(() =>
+      expect(mocks.fetchCatalogSeason).toHaveBeenCalledWith(1930, 2, expect.anything()),
+    );
     await waitFor(() =>
       expect(mocks.createCatalogPlayback).toHaveBeenLastCalledWith(
         { type: "series", tmdbId: 1930, season: 2, episode: 1 },
         expect.anything(),
       ),
     );
-    expect(await screen.findByRole("heading", { name: /S02E01 · The Clampetts in New York/ })).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", { name: /S02E01 · The Clampetts in New York/ }),
+    ).toBeTruthy();
   });
 
   it("stops at the end of the last season instead of autoplaying", async () => {
-    render(
-      <PlaybackDialog target={{ ...seriesTarget(3), seasons: [1] }} onClose={vi.fn()} />,
-    );
+    render(<PlaybackDialog target={{ ...seriesTarget(3), seasons: [1] }} onClose={vi.fn()} />);
     await screen.findByRole("heading", { name: /S01E03/ });
     await act(async () => {});
 

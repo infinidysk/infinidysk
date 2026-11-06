@@ -420,6 +420,7 @@ export function useMediaPlayer({ src, hlsFallbackSrc }: UseMediaPlayerArgs) {
     reloadToken,
     beginRecovery,
     applyPendingSeek,
+    requestResume,
     destroyHls,
     log,
     switchToDirectMode,

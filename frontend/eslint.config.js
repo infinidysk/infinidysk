@@ -113,7 +113,13 @@ export default tseslint.config(
     ...tseslint.configs.disableTypeChecked,
   },
   {
-    files: ["app/routes/resources.files/route.ts", "app/routes/explore/route.tsx"],
+    files: [
+      "app/routes/resources.files/route.ts",
+      "app/routes/explore/route.tsx",
+      // Catalog detail pages throw data() so a status reaches the root error boundary.
+      "app/routes/watch.person.$id/route.tsx",
+      "app/routes/watch.title.$type.$id/route.tsx",
+    ],
     rules: {
       "@typescript-eslint/only-throw-error": [
         "error",

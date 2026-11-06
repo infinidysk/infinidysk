@@ -135,7 +135,6 @@ describe("watch title loader", () => {
     expect(mocks.getCatalogTitle).toHaveBeenCalledWith("series", 1930, 1);
   });
 
-
   it("carries the resume episode from the deep link", async () => {
     const data = await loader(
       loaderArgs("/watch/title/series/1930?season=1&episode=2", "series", "1930"),
@@ -148,22 +147,26 @@ describe("watch title loader", () => {
   it("rejects an episode without a season and an out-of-range episode", async () => {
     await expect(
       loader(loaderArgs("/watch/title/series/1930?episode=2", "series", "1930")),
-    ).rejects.toMatchObject({ status: 404 });
+    ).rejects.toMatchObject({ init: { status: 404 } });
     await expect(
       loader(loaderArgs("/watch/title/series/1930?season=1&episode=0", "series", "1930")),
-    ).rejects.toMatchObject({ status: 404 });
+    ).rejects.toMatchObject({ init: { status: 404 } });
   });
 
   it("rejects invalid types and ids as 404s", async () => {
-    await expect(loader(loaderArgs("/watch/title/person/1930", "person", "1930"))).rejects.toMatchObject({
-      status: 404,
+    await expect(
+      loader(loaderArgs("/watch/title/person/1930", "person", "1930")),
+    ).rejects.toMatchObject({
+      init: { status: 404 },
     });
-    await expect(loader(loaderArgs("/watch/title/movie/abc", "movie", "abc"))).rejects.toMatchObject({
-      status: 404,
+    await expect(
+      loader(loaderArgs("/watch/title/movie/abc", "movie", "abc")),
+    ).rejects.toMatchObject({
+      init: { status: 404 },
     });
     await expect(
       loader(loaderArgs("/watch/title/movie/10331?season=-1", "movie", "10331")),
-    ).rejects.toMatchObject({ status: 404 });
+    ).rejects.toMatchObject({ init: { status: 404 } });
     expect(mocks.getCatalogTitle).not.toHaveBeenCalled();
   });
 });
@@ -198,7 +201,9 @@ describe("watch title view", () => {
   });
 
   it("reports an empty release list with a retry action", async () => {
-    mocks.createCatalogPlayback.mockRejectedValue(new Error("No Usenet releases found for this title."));
+    mocks.createCatalogPlayback.mockRejectedValue(
+      new Error("No Usenet releases found for this title."),
+    );
     renderTitle({ catalogTitle: movieTitle });
 
     (await screen.findByRole("button", { name: /^play$/i })).click();
@@ -210,8 +215,6 @@ describe("watch title view", () => {
     );
     expect(screen.getByRole("button", { name: /retry/i })).toBeTruthy();
   });
-
-
 
   it("marks the resume episode and plays it from the primary action", async () => {
     const firstEpisode = seriesTitle.episodes[0]!;

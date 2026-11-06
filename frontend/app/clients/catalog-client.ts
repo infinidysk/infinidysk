@@ -21,7 +21,7 @@ async function readCatalogResponse<T>(
   schema: z.ZodType<T>,
   fallback: string,
 ): Promise<T> {
-  let payload: unknown = null;
+  let payload: unknown;
   try {
     payload = await response.json();
   } catch {
@@ -45,9 +45,9 @@ async function readCatalogResponse<T>(
  */
 function reportedMessage(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;
+  const record = payload as Record<string, unknown>;
   for (const key of ["detail", "title", "error"]) {
-    if (!(key in payload)) continue;
-    const value = Reflect.get(payload, key);
+    const value = record[key];
     if (typeof value === "string" && value.length > 0) return value;
   }
   return null;
@@ -115,10 +115,10 @@ export async function fetchCatalogSeason(
   signal: AbortSignal,
 ): Promise<CatalogTitleResponse> {
   const parameters = new URLSearchParams({ season: String(season) });
-  const response = await fetch(
-    withUrlBase(`/api/catalog/titles/series/${tmdbId}?${parameters}`),
-    { signal, headers: { Accept: "application/json" } },
-  );
+  const response = await fetch(withUrlBase(`/api/catalog/titles/series/${tmdbId}?${parameters}`), {
+    signal,
+    headers: { Accept: "application/json" },
+  });
   return readCatalogResponse(
     response,
     catalogTitleResponseSchema,

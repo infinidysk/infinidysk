@@ -64,8 +64,14 @@ beforeEach(() => {
   currentTimeWrites = [];
   playMock = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
   loadMock = vi.fn<() => void>();
-  Object.defineProperty(HTMLMediaElement.prototype, "play", { configurable: true, value: playMock });
-  Object.defineProperty(HTMLMediaElement.prototype, "load", { configurable: true, value: loadMock });
+  Object.defineProperty(HTMLMediaElement.prototype, "play", {
+    configurable: true,
+    value: playMock,
+  });
+  Object.defineProperty(HTMLMediaElement.prototype, "load", {
+    configurable: true,
+    value: loadMock,
+  });
   // jsdom has no media pipeline: stand in for the parts the hook reads and writes.
   Object.defineProperty(HTMLMediaElement.prototype, "canPlayType", {
     configurable: true,
@@ -73,7 +79,10 @@ beforeEach(() => {
   });
   hlsMock.FakeHls.isSupported = () => true;
   // Code-4 handling probes the source: served bytes mean the browser is at fault.
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200, headers: new Headers() }));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({ ok: true, status: 200, headers: new Headers() }),
+  );
 });
 
 afterEach(() => {
@@ -105,7 +114,9 @@ function renderPlayer(options: { src?: string; hlsFallbackSrc?: string } = {}) {
   const view = render(
     <Harness
       src={options.src ?? DIRECT_SRC}
-      {...(options.hlsFallbackSrc === undefined ? { hlsFallbackSrc: HLS_SRC } : { hlsFallbackSrc: options.hlsFallbackSrc })}
+      {...(options.hlsFallbackSrc === undefined
+        ? { hlsFallbackSrc: HLS_SRC }
+        : { hlsFallbackSrc: options.hlsFallbackSrc })}
       playerRef={playerRef}
     />,
   );
@@ -116,7 +127,9 @@ function renderPlayer(options: { src?: string; hlsFallbackSrc?: string } = {}) {
 
 function installMediaProperties(el: HTMLVideoElement, initialDuration = 600) {
   let duration = initialDuration;
-  const setDuration = (next: number) => { duration = next; };
+  const setDuration = (next: number) => {
+    duration = next;
+  };
   let currentTime = 0;
   Object.defineProperty(el, "currentTime", {
     configurable: true,
@@ -258,7 +271,11 @@ describe("useMediaPlayer playback modes", () => {
     const instance = hlsMock.FakeHls.instances[0]!;
 
     first.rerender(
-      <Harness src="/api/search/token/play/other.mkv" hlsFallbackSrc={HLS_SRC} playerRef={first.playerRef} />,
+      <Harness
+        src="/api/search/token/play/other.mkv"
+        hlsFallbackSrc={HLS_SRC}
+        playerRef={first.playerRef}
+      />,
     );
     await waitFor(() => expect(instance.destroyed).toBeGreaterThan(0));
     // The new source keeps the default mode, so the pipeline is rebuilt.

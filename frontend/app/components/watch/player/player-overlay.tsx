@@ -15,7 +15,9 @@ const RATES = [0.75, 1, 1.25, 1.5, 2] as const;
 // Painting translucent fills over the video forces a full-area composite every frame,
 // which drops frames in browsers without GPU compositing. Chrome therefore carries no
 // background; contrast comes from text shadows, which are rasterised once.
-const CHROME_SHADOW = { textShadow: "0 1px 3px rgba(0, 0, 0, 0.95), 0 2px 10px rgba(0, 0, 0, 0.7)" };
+const CHROME_SHADOW = {
+  textShadow: "0 1px 3px rgba(0, 0, 0, 0.95), 0 2px 10px rgba(0, 0, 0, 0.7)",
+};
 
 const RING = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white";
 const CHROME_BUTTON = `grid h-10 w-10 place-items-center rounded-full text-white/75 transition hover:bg-white/10 hover:text-white ${RING}`;
@@ -113,7 +115,8 @@ export function PlayerOverlay({
       } catch {
         // Resource timing is unavailable in some engines.
       }
-      const ahead = el.buffered.length > 0 ? el.buffered.end(el.buffered.length - 1) - el.currentTime : 0;
+      const ahead =
+        el.buffered.length > 0 ? el.buffered.end(el.buffered.length - 1) - el.currentTime : 0;
       setStats({
         mode: player.mode,
         width: video?.videoWidth ?? 0,
@@ -410,7 +413,12 @@ export function PlayerOverlay({
         }`}
       >
         <div className="flex min-w-0 items-center gap-2" style={CHROME_SHADOW}>
-          <button type="button" onClick={onClose} aria-label="Exit player" className={CHROME_BUTTON}>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Exit player"
+            className={CHROME_BUTTON}
+          >
             <Icon name="arrow_back" className="!text-[22px]" />
           </button>
           <div className="min-w-0">
@@ -446,7 +454,9 @@ export function PlayerOverlay({
               className={`flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-medium text-white/75 transition hover:bg-white/10 hover:text-white ${RING}`}
             >
               <Icon name={player.mode === "hls" ? "link" : "transform"} className="!text-[18px]" />
-              <span className="hidden sm:inline">{player.mode === "hls" ? "Direct" : "Compat"}</span>
+              <span className="hidden sm:inline">
+                {player.mode === "hls" ? "Direct" : "Compat"}
+              </span>
             </button>
           )}
           <button type="button" onClick={onClose} aria-label="Close" className={CHROME_BUTTON}>
@@ -467,152 +477,154 @@ export function PlayerOverlay({
         )}
 
         <div className="px-3 py-2" style={CHROME_SHADOW}>
-        <div className="flex items-center gap-3">
-          <span className="w-12 shrink-0 text-right font-mono text-xs tabular-nums text-white/70">
-            {formatClock(ui.time)}
-          </span>
-          <Timeline
-            time={ui.time}
-            duration={ui.duration}
-            bufferedEnd={ui.bufferedEnd}
-            onSeek={seekTo}
-          />
-          <span className="w-12 shrink-0 font-mono text-xs tabular-nums text-white/70">
-            {formatClock(ui.duration)}
-          </span>
-        </div>
+          <div className="flex items-center gap-3">
+            <span className="w-12 shrink-0 text-right font-mono text-xs tabular-nums text-white/70">
+              {formatClock(ui.time)}
+            </span>
+            <Timeline
+              time={ui.time}
+              duration={ui.duration}
+              bufferedEnd={ui.bufferedEnd}
+              onSeek={seekTo}
+            />
+            <span className="w-12 shrink-0 font-mono text-xs tabular-nums text-white/70">
+              {formatClock(ui.duration)}
+            </span>
+          </div>
 
-        <div className="mt-1 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-0.5">
-            {episodeNav && (
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-0.5">
+              {episodeNav && (
+                <button
+                  type="button"
+                  onClick={episodeNav.onPrevious ?? undefined}
+                  disabled={!episodeNav.onPrevious}
+                  aria-label="Previous episode"
+                  title="Previous episode"
+                  className={`${CHROME_BUTTON} disabled:pointer-events-none disabled:opacity-30`}
+                >
+                  <Icon name="skip_previous" className="!text-[22px]" />
+                </button>
+              )}
               <button
                 type="button"
-                onClick={episodeNav.onPrevious ?? undefined}
-                disabled={!episodeNav.onPrevious}
-                aria-label="Previous episode"
-                title="Previous episode"
-                className={`${CHROME_BUTTON} disabled:pointer-events-none disabled:opacity-30`}
+                onClick={() => seekBy(-SKIP_BACK_SECONDS)}
+                aria-label={`Back ${SKIP_BACK_SECONDS} seconds`}
+                title={`Back ${SKIP_BACK_SECONDS}s`}
+                className={CHROME_BUTTON}
               >
-                <Icon name="skip_previous" className="!text-[22px]" />
+                <Icon name="replay_10" className="!text-[24px]" />
               </button>
-            )}
-            <button
-              type="button"
-              onClick={() => seekBy(-SKIP_BACK_SECONDS)}
-              aria-label={`Back ${SKIP_BACK_SECONDS} seconds`}
-              title={`Back ${SKIP_BACK_SECONDS}s`}
-              className={CHROME_BUTTON}
-            >
-              <Icon name="replay_10" className="!text-[24px]" />
-            </button>
-            <button
-              type="button"
-              onClick={togglePlay}
-              aria-label={ui.playing ? "Pause" : "Play"}
-              className={`${CHROME_BUTTON} h-11 w-11`}
-            >
-              <Icon name={ui.playing ? "pause" : "play_arrow"} className="!text-[30px]" />
-            </button>
-            <button
-              type="button"
-              onClick={() => seekBy(SKIP_FORWARD_SECONDS)}
-              aria-label={`Forward ${SKIP_FORWARD_SECONDS} seconds`}
-              title={`Forward ${SKIP_FORWARD_SECONDS}s`}
-              className={CHROME_BUTTON}
-            >
-              <Icon name="forward_30" className="!text-[24px]" />
-            </button>
-            {episodeNav && (
               <button
                 type="button"
-                onClick={episodeNav.onNext ?? undefined}
-                disabled={!episodeNav.onNext}
-                aria-label="Next episode"
-                title="Next episode"
-                className={`${CHROME_BUTTON} disabled:pointer-events-none disabled:opacity-30`}
+                onClick={togglePlay}
+                aria-label={ui.playing ? "Pause" : "Play"}
+                className={`${CHROME_BUTTON} h-11 w-11`}
               >
-                <Icon name="skip_next" className="!text-[22px]" />
+                <Icon name={ui.playing ? "pause" : "play_arrow"} className="!text-[30px]" />
               </button>
-            )}
-            <div className="ml-1 flex items-center gap-1">
               <button
                 type="button"
-                onClick={toggleMute}
-                aria-label={ui.muted || ui.volume === 0 ? "Unmute" : "Mute"}
+                onClick={() => seekBy(SKIP_FORWARD_SECONDS)}
+                aria-label={`Forward ${SKIP_FORWARD_SECONDS} seconds`}
+                title={`Forward ${SKIP_FORWARD_SECONDS}s`}
+                className={CHROME_BUTTON}
+              >
+                <Icon name="forward_30" className="!text-[24px]" />
+              </button>
+              {episodeNav && (
+                <button
+                  type="button"
+                  onClick={episodeNav.onNext ?? undefined}
+                  disabled={!episodeNav.onNext}
+                  aria-label="Next episode"
+                  title="Next episode"
+                  className={`${CHROME_BUTTON} disabled:pointer-events-none disabled:opacity-30`}
+                >
+                  <Icon name="skip_next" className="!text-[22px]" />
+                </button>
+              )}
+              <div className="ml-1 flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={toggleMute}
+                  aria-label={ui.muted || ui.volume === 0 ? "Unmute" : "Mute"}
+                  className={CHROME_BUTTON}
+                >
+                  <Icon
+                    name={ui.muted || ui.volume === 0 ? "volume_off" : "volume_up"}
+                    className="!text-[22px]"
+                  />
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={VOLUME_STEP}
+                  value={volume}
+                  onChange={(event) => setVolume(Number(event.target.value))}
+                  aria-label="Volume"
+                  className="h-1 w-20 cursor-pointer accent-white max-sm:hidden"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-0.5">
+              <div ref={rateMenuRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setRateMenuOpen((open) => !open)}
+                  aria-label={`Playback speed, ${ui.rate}x`}
+                  aria-expanded={rateMenuOpen}
+                  className={`${CHROME_BUTTON} w-auto px-2 text-xs font-semibold`}
+                >
+                  {ui.rate}×
+                </button>
+                {rateMenuOpen && (
+                  <div
+                    role="menu"
+                    className="absolute right-0 bottom-12 w-28 rounded-lg bg-black/95 p-1 shadow-xl ring-1 ring-white/15"
+                  >
+                    {RATES.map((rate) => (
+                      <button
+                        key={rate}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={ui.rate === rate}
+                        onClick={() => setRate(rate)}
+                        className="flex w-full items-center justify-between rounded px-3 py-1.5 text-left text-sm text-white/85 hover:bg-white/10"
+                      >
+                        {rate}×{ui.rate === rate && <Icon name="check" className="!text-[16px]" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {pipAvailable && (
+                <button
+                  type="button"
+                  onClick={() => void togglePip()}
+                  aria-label="Picture in picture"
+                  title="Picture in picture"
+                  className={`${CHROME_BUTTON} max-sm:hidden`}
+                >
+                  <Icon name="picture_in_picture_alt" className="!text-[22px]" />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void toggleFullscreen()}
+                aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+                title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
                 className={CHROME_BUTTON}
               >
                 <Icon
-                  name={ui.muted || ui.volume === 0 ? "volume_off" : "volume_up"}
-                  className="!text-[22px]"
+                  name={fullscreen ? "fullscreen_exit" : "fullscreen"}
+                  className="!text-[24px]"
                 />
               </button>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={VOLUME_STEP}
-                value={volume}
-                onChange={(event) => setVolume(Number(event.target.value))}
-                aria-label="Volume"
-                className="h-1 w-20 cursor-pointer accent-white max-sm:hidden"
-              />
             </div>
           </div>
-
-          <div className="flex items-center gap-0.5">
-            <div ref={rateMenuRef} className="relative">
-              <button
-                type="button"
-                onClick={() => setRateMenuOpen((open) => !open)}
-                aria-label={`Playback speed, ${ui.rate}x`}
-                aria-expanded={rateMenuOpen}
-                className={`${CHROME_BUTTON} w-auto px-2 text-xs font-semibold`}
-              >
-                {ui.rate}×
-              </button>
-              {rateMenuOpen && (
-                <div
-                  role="menu"
-                  className="absolute right-0 bottom-12 w-28 rounded-lg bg-black/95 p-1 shadow-xl ring-1 ring-white/15"
-                >
-                  {RATES.map((rate) => (
-                    <button
-                      key={rate}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={ui.rate === rate}
-                      onClick={() => setRate(rate)}
-                      className="flex w-full items-center justify-between rounded px-3 py-1.5 text-left text-sm text-white/85 hover:bg-white/10"
-                    >
-                      {rate}×
-                      {ui.rate === rate && <Icon name="check" className="!text-[16px]" />}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            {pipAvailable && (
-              <button
-                type="button"
-                onClick={() => void togglePip()}
-                aria-label="Picture in picture"
-                title="Picture in picture"
-                className={`${CHROME_BUTTON} max-sm:hidden`}
-              >
-                <Icon name="picture_in_picture_alt" className="!text-[22px]" />
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => void toggleFullscreen()}
-              aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
-              title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
-              className={CHROME_BUTTON}
-            >
-              <Icon name={fullscreen ? "fullscreen_exit" : "fullscreen"} className="!text-[24px]" />
-            </button>
-          </div>
-        </div>
         </div>
       </div>
 
@@ -662,7 +674,10 @@ function StatsPanel({ stats, releaseTitle }: { stats: PlaybackStats; releaseTitl
         {rows.map(([label, value]) => (
           <div key={label} className="contents">
             <dt className="text-white/45">{label}</dt>
-            <dd className={value === "—" ? "text-white/35" : "truncate text-white/85"} title={value}>
+            <dd
+              className={value === "—" ? "text-white/35" : "truncate text-white/85"}
+              title={value}
+            >
               {value}
             </dd>
           </div>

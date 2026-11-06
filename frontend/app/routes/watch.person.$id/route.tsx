@@ -1,4 +1,4 @@
-import { Link, useLoaderData } from "react-router";
+import { data, Link, useLoaderData } from "react-router";
 import { useState } from "react";
 import type { Route } from "./+types/route";
 import { Icon } from "~/components/ui";
@@ -9,7 +9,7 @@ import type { CatalogPersonDetails, CatalogSummary } from "~/clients/catalog-con
 export async function loader({ params }: Route.LoaderArgs) {
   const personId = params.id;
   if (!personId || !/^\d+$/.test(personId)) {
-    throw new Response("Person not found.", { status: 404 });
+    throw data("Person not found.", { status: 404 });
   }
 
   let person: CatalogPersonDetails | null;
@@ -19,14 +19,14 @@ export async function loader({ params }: Route.LoaderArgs) {
     person = response.person;
     credits = response.credits;
   } catch (cause) {
-    throw new Response(
+    throw data(
       cause instanceof Error ? cause.message : "The person could not be loaded right now.",
       { status: 502 },
     );
   }
 
   if (!person) {
-    throw new Response("Person not found.", { status: 404 });
+    throw data("Person not found.", { status: 404 });
   }
 
   return { person, credits };
@@ -69,9 +69,7 @@ export default function WatchPersonRoute() {
 
         <div className="flex min-w-0 flex-col gap-2">
           <h1 className="text-2xl font-bold tracking-tight md:text-3xl">{person.name}</h1>
-          {facts.length > 0 && (
-            <p className="text-sm text-base-content/60">{facts.join(" · ")}</p>
-          )}
+          {facts.length > 0 && <p className="text-sm text-base-content/60">{facts.join(" · ")}</p>}
           {biography.length > 0 && (
             <div className="max-w-3xl">
               <p
