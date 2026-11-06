@@ -15,7 +15,9 @@ const browserTimer: Timer = {
   clearTimeout: (id) => window.clearTimeout(id),
 };
 
-type Target = "queue" | "history" | "health" | "summary";
+type Target = "queue" | "history" | "health" | "summary" | "other";
+
+const lists = new Set(["queue", "history", "health"]);
 
 const targets: Record<Target, InvalidateQueryFilters> = {
   queue: { queryKey: ["queue"] },
@@ -23,6 +25,8 @@ const targets: Record<Target, InvalidateQueryFilters> = {
   // The summary is its own target: it is the slow query, and both history and health changes move it.
   health: { queryKey: ["health"], predicate: (query) => query.queryKey[1] !== "summary" },
   summary: { queryKey: ["health", "summary"], exact: true },
+  // Everything else, refreshed only on resync.
+  other: { predicate: (query) => !lists.has(String(query.queryKey[0])) },
 };
 
 const marks: Record<string, Target[]> = {
@@ -30,6 +34,9 @@ const marks: Record<string, Target[]> = {
   // Deleting a file reports a history change only.
   history: ["history", "summary"],
   health: ["health", "summary"],
+  resync: ["queue", "history", "health", "summary", "other"],
+  // Only list changes are sent as events, so only lists can have been missed.
+  reconnect: ["queue", "history", "health", "summary"],
 };
 
 /** Refreshes one target at most once per gap, and once more for changes that arrive while it runs. */
@@ -48,14 +55,17 @@ function limiter(client: QueryClient, filters: InvalidateQueryFilters, timer: Ti
     pending = false;
     running = true;
     // A fetch already in flight may have started before the change, and the invalidation joins it.
-    const joined = client.isFetching(filters) > 0;
+    const joined = client
+      .getQueryCache()
+      .findAll(filters)
+      .filter((query) => query.state.fetchStatus === "fetching");
     try {
       // This swallows fetch errors; the next change refreshes again.
       await client.invalidateQueries(filters, { cancelRefetch: false });
     } finally {
       running = false;
       lastEnd = timer.now();
-      if (joined) pending = true;
+      if (joined.some((query) => query.state.status !== "error")) pending = true;
       schedule();
     }
   };
@@ -77,22 +87,14 @@ export function liveRefresh(client: QueryClient, timer: Timer = browserTimer, ga
   const limiters = Object.fromEntries(
     Object.entries(targets).map(([name, filters]) => [name, limiter(client, filters, timer, gap)]),
   ) as Record<Target, ReturnType<typeof limiter>>;
-  const markAll = () => Object.values(limiters).forEach((l) => l.mark());
+  const mark = (event: string) => marks[event]?.forEach((target) => limiters[target].mark());
   let opened = false;
   return {
     /** Handles a `queue`, `history`, `health` or `resync` event. */
-    change(name: string) {
-      if (name !== "resync") return marks[name]?.forEach((target) => limiters[target].mark());
-      markAll();
-      const limited = new Set(["queue", "history", "health"]);
-      void client.invalidateQueries(
-        { predicate: (query) => !limited.has(String(query.queryKey[0])) },
-        { cancelRefetch: false },
-      );
-    },
+    change: mark,
     /** Handles the stream opening; changes made while it was down were never sent. */
     opened() {
-      if (opened) markAll();
+      if (opened) mark("reconnect");
       opened = true;
     },
     dispose() {

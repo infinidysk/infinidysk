@@ -140,18 +140,24 @@
     await h.advance(0);
     await summary.finish();
     await h.advance(100);
+    void h.client.refetchQueries({ queryKey: ["backups"] });
+    other.value = 1;
     h.refresh.change("resync");
     await h.advance(0);
-    check(other.started === 1, "other queries refresh at once");
+    check(other.started === 1, "other queries join the running fetch");
     await other.finish();
+    check(other.cached() === 0, "joined fetch returns the old value");
     check(summary.started === 1, "summary waits for the gap");
     await h.advance(GAP - 101);
     check(summary.started === 1, "summary still waits");
     await h.advance(1);
     check(summary.started === 2, "summary refreshes after the gap");
-    await summary.finish();
+    await h.advance(100);
+    check(other.started === 2, "other queries follow up after the gap");
+    await Promise.all([summary.finish(), other.finish()]);
     await h.advance(10 * GAP);
-    check(summary.started === 2 && other.started === 1, "no extra fetches");
+    check(summary.started === 2 && other.started === 2, "no extra fetches");
+    check(other.cached() === 1, "other queries show the change");
     h.close();
   }
 
@@ -185,6 +191,14 @@
     check(queue.started === 2, "the next event refreshes");
     await queue.finish();
     check(queue.cached() === 2, "the refresh shows the change");
+    await h.advance(10 * GAP);
+    void h.client.refetchQueries({ queryKey: ["queue"] });
+    h.refresh.change("queue");
+    await h.advance(0);
+    check(queue.started === 3, "the event joins the running fetch");
+    await queue.fail();
+    await h.advance(10 * GAP);
+    check(queue.started === 3, "a failed joined fetch is not retried");
     h.close();
   }
 
