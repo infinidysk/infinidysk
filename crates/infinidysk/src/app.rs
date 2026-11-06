@@ -163,14 +163,27 @@ fn config_dir_setting(value: Option<&str>) -> anyhow::Result<Option<PathBuf>> {
     Ok(Some(dir.to_path_buf()))
 }
 
-/// The file of a `sqlite:` URL; `None` for any other database.
-pub(crate) fn sqlite_path(url: &str) -> Option<std::path::PathBuf> {
+/// Bytes a path cannot carry raw in a `sqlite:` URL: sqlx percent-decodes the path and splits
+/// parameters off at `?`.
+const SQLITE_PATH: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS.add(b'%').add(b'?');
+
+/// The `sqlite:` URL that opens `path`; [`sqlite_path`] turns it back into `path`.
+pub(crate) fn sqlite_url(path: &Path) -> String {
+    let encoded =
+        percent_encoding::percent_encode(path.as_os_str().as_encoded_bytes(), SQLITE_PATH);
+    format!("sqlite:{encoded}")
+}
+
+/// The file of a `sqlite:` URL, decoded the way sqlx opens it; `None` for any other database.
+pub(crate) fn sqlite_path(url: &str) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStringExt as _;
     url.strip_prefix("sqlite:").map(|p| {
-        p.trim_start_matches("//")
+        let encoded = p
+            .trim_start_matches("//")
             .split('?')
             .next()
-            .unwrap_or_default()
-            .into()
+            .unwrap_or_default();
+        std::ffi::OsString::from_vec(percent_encoding::percent_decode_str(encoded).collect()).into()
     })
 }
 

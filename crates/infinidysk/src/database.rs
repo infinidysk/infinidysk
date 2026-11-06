@@ -188,7 +188,7 @@ pub fn choose(
             config.join(BOOT_FILE).display()
         );
     }
-    Ok((format!("sqlite:{}", sqlite.display()), Source::Default))
+    Ok((crate::app::sqlite_url(&sqlite), Source::Default))
 }
 
 /// Loads the boot file, makes it durable, then picks the database with [`choose`].
@@ -1468,6 +1468,23 @@ mod tests {
             format!("sqlite:{}", dir.0.join(DEFAULT_SQLITE).display())
         );
         assert_eq!(source, Source::Default);
+    }
+
+    /// `%` and `?` in the config folder name open the file in that folder, and the path read
+    /// back from the URL (restore, the database page) is the same file.
+    #[tokio::test]
+    async fn the_default_database_opens_in_a_folder_named_with_url_characters() {
+        let dir = Dir::new();
+        for name in ["percent%41", "question?dir"] {
+            let home = dir.0.join(name);
+            fs::create_dir_all(&home).expect("create");
+            let (url, _) = choose(None, &BootFile::default(), &home).expect("choose");
+            let file = home.join(DEFAULT_SQLITE);
+            assert_eq!(crate::app::sqlite_path(&url), Some(file.clone()), "{url}");
+            Db::connect(&url).await.expect(name).close().await;
+            assert!(file.is_file(), "{url}");
+        }
+        assert!(!dir.0.join("percentA").exists());
     }
 
     #[test]
