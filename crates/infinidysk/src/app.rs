@@ -126,7 +126,7 @@ fn base_dir(setting: Option<&Path>, database_url: &str) -> PathBuf {
 /// `INFINIDYSK_CONFIG_DIR`, checked: an absolute folder infinidysk can write in, created
 /// when missing. `None` when unset; `/config` is then used as is, as before.
 pub fn config_dir_from_env() -> anyhow::Result<Option<PathBuf>> {
-    let setting = config_dir_setting(std::env::var("INFINIDYSK_CONFIG_DIR").ok().as_deref())?;
+    let setting = config_dir_setting(config_dir_var()?.as_deref())?;
     if let Some(dir) = &setting {
         prepare(dir)?;
     }
@@ -144,10 +144,21 @@ fn prepare(dir: &Path) -> anyhow::Result<()> {
 
 /// [`Boot::home`] without creating or checking it, for `import-report`.
 pub fn home_from_env() -> anyhow::Result<PathBuf> {
-    Ok(
-        config_dir_setting(std::env::var("INFINIDYSK_CONFIG_DIR").ok().as_deref())?
-            .unwrap_or_else(|| DEFAULT_HOME.into()),
-    )
+    Ok(config_dir_setting(config_dir_var()?.as_deref())?.unwrap_or_else(|| DEFAULT_HOME.into()))
+}
+
+/// The raw `INFINIDYSK_CONFIG_DIR`; a value that is not UTF-8 is an error, not unset.
+fn config_dir_var() -> anyhow::Result<Option<String>> {
+    match std::env::var("INFINIDYSK_CONFIG_DIR") {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(value)) => {
+            anyhow::bail!(
+                "INFINIDYSK_CONFIG_DIR must be valid UTF-8, not {}",
+                value.display()
+            )
+        }
+    }
 }
 
 /// `INFINIDYSK_CONFIG_DIR` (`value`): an absolute folder, or `None` when unset.
