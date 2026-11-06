@@ -115,7 +115,8 @@ pub async fn run(
             reason = "/dev/fuse is missing",
             "FUSE mount disabled; in docker compose add `devices: [/dev/fuse]`, \
              `cap_add: [SYS_ADMIN]`, `security_opt: [apparmor:unconfined]` and mount the \
-             volume with `:rshared`"
+             volume with `:rshared`; or, using WebDAV only, turn the built-in mount off \
+             in Settings → Mount or set `INFINIDYSK__MOUNT__FUSE=false`"
         );
         return;
     }

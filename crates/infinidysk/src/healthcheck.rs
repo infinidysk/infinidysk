@@ -96,7 +96,8 @@ const fn pass() -> Outcome {
 pub struct Healthcheck {
     db: Db,
     mount: watch::Receiver<Result<Kernel, String>>,
-    mount_dir: PathBuf,
+    /// `None` when this process does not serve the built-in FUSE mount.
+    mount_dir: Option<PathBuf>,
     queue: AbortHandle,
     /// A mount check still waits on the kernel.
     asking: Arc<AtomicBool>,
@@ -108,7 +109,7 @@ impl Healthcheck {
     pub fn new(
         db: Db,
         mount: watch::Receiver<Result<Kernel, String>>,
-        mount_dir: PathBuf,
+        mount_dir: Option<PathBuf>,
         queue: AbortHandle,
     ) -> Self {
         Self {
@@ -182,11 +183,14 @@ impl Healthcheck {
 
     #[cfg(target_os = "linux")]
     async fn mount(&self) -> Outcome {
+        // Turned off: never touch `/dev/fuse` or whatever is mounted at the folder.
+        let Some(dir) = self.mount_dir.clone() else {
+            return (Check::Off, None);
+        };
         let device = std::path::Path::new("/dev/fuse").exists();
         if let Some(outcome) = mount_state(device, &self.mount.borrow()) {
             return outcome;
         }
-        let dir = self.mount_dir.clone();
         match bounded(&self.asking, CHECK_TIMEOUT, move || {
             infinidysk_fuse::answers(&dir)
         })
@@ -412,6 +416,10 @@ mod tests {
     }
 
     async fn healthcheck(queue: AbortHandle) -> Healthcheck {
+        healthcheck_with(queue, Some(PathBuf::from("/nonexistent"))).await
+    }
+
+    async fn healthcheck_with(queue: AbortHandle, mount_dir: Option<PathBuf>) -> Healthcheck {
         let path = std::env::temp_dir().join(format!(
             "infinidysk-healthcheck-{}.sqlite",
             infinidysk_core::ItemId::new()
@@ -420,7 +428,17 @@ mod tests {
             .await
             .unwrap();
         let (_, mount) = watch::channel(Err(MOUNTING.to_owned()));
-        Healthcheck::new(db, mount, PathBuf::from("/nonexistent"), queue)
+        Healthcheck::new(db, mount, mount_dir, queue)
+    }
+
+    #[tokio::test]
+    async fn a_turned_off_mount_is_off_and_healthy() {
+        let worker = tokio::spawn(std::future::pending::<()>());
+        let check = healthcheck_with(worker.abort_handle(), None).await;
+        let report = check.report().await;
+        assert_eq!(report.checks["mount"], Check::Off);
+        assert_eq!(report.status, Status::Healthy);
+        worker.abort();
     }
 
     #[tokio::test]

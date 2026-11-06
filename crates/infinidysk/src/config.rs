@@ -766,6 +766,8 @@ pub struct Mount {
     /// Where the tree is mounted, as Sonarr/Radarr see it; completed downloads are reported
     /// under `<dir>/completed-symlinks`.
     pub dir: String,
+    /// Serve the built-in FUSE mount at `dir`. Off leaves `dir` to an external mount.
+    pub fuse: bool,
     /// Media files on the mount report 1970 dates, matching an rclone mount that used
     /// `--no-modtime`, so media servers that stored those dates do not rescan.
     pub epoch_times: bool,
@@ -775,6 +777,7 @@ impl Default for Mount {
     fn default() -> Self {
         Self {
             dir: "/mnt/infinidysk".to_owned(),
+            fuse: true,
             epoch_times: false,
         }
     }
