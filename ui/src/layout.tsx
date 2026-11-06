@@ -272,18 +272,27 @@ function Account() {
   );
 }
 
-function useNavCounts(): Record<string, { count: number; label: string; warning?: boolean } | undefined> {
+type NavCount = { count: number; label: string; warning?: boolean };
+
+function useNavCounts(): Record<string, NavCount[]> {
   const queue = useQuery({ queryKey: ["queue"], queryFn: () => body(api.GET("/api/v1/queue")) }).data;
   const summary = useQuery({
     queryKey: ["health", "summary"],
     queryFn: () => body(api.GET("/api/v1/health/summary")),
   }).data;
+  const arr = useQuery({
+    queryKey: ["arr-status"],
+    queryFn: () => body(api.GET("/api/v1/arr/status")),
+    refetchInterval: 30_000,
+  }).data;
   const actionNeeded = summary?.find((s) => s.state === "action_needed")?.files ?? 0;
+  const arrIssues = arr?.instances.reduce((n, i) => n + i.queue_issues.length, 0) ?? 0;
+  const queueCounts: NavCount[] = [];
+  if (queue?.length) queueCounts.push({ count: queue.length, label: `${queue.length} in queue` });
+  if (arrIssues) queueCounts.push({ count: arrIssues, label: `${arrIssues} need you in the Arr`, warning: true });
   return {
-    "/queue": queue?.length ? { count: queue.length, label: `${queue.length} in queue` } : undefined,
-    "/health": actionNeeded
-      ? { count: actionNeeded, label: `${actionNeeded} need action`, warning: true }
-      : undefined,
+    "/queue": queueCounts,
+    "/health": actionNeeded ? [{ count: actionNeeded, label: `${actionNeeded} need action`, warning: true }] : [],
   };
 }
 
@@ -308,20 +317,20 @@ function Nav() {
             <>
               <Icon className={cn("size-4", isActive && "text-primary")} />
               <span className="flex-1">{label}</span>
-              {counts[to] && (
-                <>
+              {counts[to]?.map((c) => (
+                <span key={c.label} className="contents">
                   <span
                     aria-hidden
                     className={cn(
                       "min-w-5 rounded-full px-1.5 text-center text-xs leading-5 tabular-nums",
-                      counts[to].warning ? "bg-warning/15 text-warning-text" : "bg-foreground/10 text-muted-foreground",
+                      c.warning ? "bg-warning/15 text-warning-text" : "bg-foreground/10 text-muted-foreground",
                     )}
                   >
-                    {counts[to].count.toLocaleString()}
+                    {c.count.toLocaleString()}
                   </span>
-                  <span className="sr-only">, {counts[to].label}</span>
-                </>
-              )}
+                  <span className="sr-only">, {c.label}</span>
+                </span>
+              ))}
             </>
           )}
         </NavLink>
