@@ -101,10 +101,13 @@ async fn main() -> anyhow::Result<()> {
             ) =>
         {
             let reason = format!("{error:#}");
-            tracing::warn!(
-                %reason,
-                "the saved settings are invalid; fix them or override them with INFINIDYSK__ variables, then restart"
-            );
+            let message = "the saved settings are invalid; fix them or override them with INFINIDYSK__ variables, then restart";
+            // A stricter RUST_LOG must not hide why startup stopped.
+            if tracing::enabled!(tracing::Level::WARN) {
+                tracing::warn!(%reason, "{message}");
+            } else {
+                eprintln!("{message}: {reason}");
+            }
             std::process::exit(1);
         }
         Err(error) => return Err(error),
