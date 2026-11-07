@@ -714,7 +714,17 @@ async fn fake_arr(State(app): State<SocketAddr>, req: Request) -> Json<Value> {
             let body = axum::body::to_bytes(req.into_body(), usize::MAX)
                 .await
                 .unwrap();
-            let hook = serde_json::from_slice(&body).unwrap();
+            let hook: Value = serde_json::from_slice(&body).unwrap();
+            // Created disabled, so the Arr does not test it.
+            assert_eq!(hook["onDownload"], false);
+            json!({ "id": 9 })
+        }
+        "/sonarr/api/v3/notification/9" | "/chaptarr/api/v1/notification/9" => {
+            let body = axum::body::to_bytes(req.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let hook: Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(hook["id"], 9);
             HOOKS.lock().unwrap().push((path.clone(), hook));
             json!({})
         }
