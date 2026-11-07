@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.0-beta.7](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.6...v2.0.0-beta.7) (2026-11-07)
+
+
+### Bug Fixes
+
+* **arr:** Radarr and other Arrs save the infinidysk webhook even when they cannot reach it yet ([#1861](https://github.com/infinidysk/infinidysk/issues/1861)) ([e3e0507](https://github.com/infinidysk/infinidysk/commit/e3e0507366d9e17abda275018644d3aa92f069f2))
+
 ## [2.0.0-beta.6](https://github.com/infinidysk/infinidysk/compare/v2.0.0-beta.5...v2.0.0-beta.6) (2026-11-06)
 
 
