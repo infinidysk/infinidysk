@@ -657,6 +657,15 @@ static HOOKS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
 static QUEUE: Mutex<Vec<Value>> = Mutex::new(Vec::new());
 static REMOVED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
+/// The distinct values of a webhook's `on*` event flags.
+fn events(hook: &Value) -> std::collections::BTreeSet<bool> {
+    let flags = hook.as_object().unwrap().iter();
+    flags
+        .filter(|(k, _)| k.starts_with("on"))
+        .map(|(_, v)| v.as_bool().unwrap())
+        .collect()
+}
+
 /// Answers like a Sonarr under `/sonarr` holding two masked SAB clients, and a Chaptarr
 /// under `/chaptarr` holding two unmasked ones; `app` is our server.
 async fn fake_arr(State(app): State<SocketAddr>, req: Request) -> Json<Value> {
@@ -711,20 +720,25 @@ async fn fake_arr(State(app): State<SocketAddr>, req: Request) -> Json<Value> {
             json!([])
         }
         "/sonarr/api/v3/notification" | "/chaptarr/api/v1/notification" => {
+            assert_eq!(req.method(), axum::http::Method::POST);
+            assert_eq!(req.uri().query(), Some("forceSave=true"));
             let body = axum::body::to_bytes(req.into_body(), usize::MAX)
                 .await
                 .unwrap();
             let hook: Value = serde_json::from_slice(&body).unwrap();
-            // Created disabled, so the Arr does not test it.
-            assert_eq!(hook["onDownload"], false);
+            // Any event left on enables it, and the Arr tests an enabled create.
+            assert_eq!(events(&hook), [false].into());
             json!({ "id": 9 })
         }
         "/sonarr/api/v3/notification/9" | "/chaptarr/api/v1/notification/9" => {
+            assert_eq!(req.method(), axum::http::Method::PUT);
+            assert_eq!(req.uri().query(), Some("forceSave=true"));
             let body = axum::body::to_bytes(req.into_body(), usize::MAX)
                 .await
                 .unwrap();
             let hook: Value = serde_json::from_slice(&body).unwrap();
             assert_eq!(hook["id"], 9);
+            assert_eq!(events(&hook), [true].into());
             HOOKS.lock().unwrap().push((path.clone(), hook));
             json!({})
         }
