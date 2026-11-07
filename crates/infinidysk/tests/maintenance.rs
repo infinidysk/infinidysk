@@ -65,6 +65,24 @@ async fn run(addr: SocketAddr, path: &str, body: Value) -> Value {
     }
 }
 
+/// A one-minute maintenance window half a day away, so a scheduled job never holds the slot.
+fn closed_window() -> [(String, String); 2] {
+    let start = jiff::Zoned::now()
+        .time()
+        .wrapping_add(jiff::Span::new().hours(12));
+    let end = start.wrapping_add(jiff::Span::new().minutes(1));
+    [
+        (
+            "INFINIDYSK__MAINTENANCE__WINDOW__START".to_owned(),
+            start.strftime("%H:%M").to_string(),
+        ),
+        (
+            "INFINIDYSK__MAINTENANCE__WINDOW__END".to_owned(),
+            end.strftime("%H:%M").to_string(),
+        ),
+    ]
+}
+
 /// Serves an install whose database is `root/infinidysk.sqlite` and mount `root/mnt`.
 async fn start(
     root: &Path,
@@ -99,6 +117,7 @@ async fn start(
             root.join("mnt").display().to_string(),
         ),
     ];
+    vars.extend(closed_window());
     vars.extend(
         extra
             .iter()

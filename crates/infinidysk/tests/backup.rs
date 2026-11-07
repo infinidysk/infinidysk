@@ -130,6 +130,7 @@ async fn launch(root: &Path, mount: Option<&Path>) -> (SocketAddr, Server, Cance
         "INFINIDYSK__AUTH__API_KEY".to_owned(),
         "adminkey".to_owned(),
     )];
+    vars.extend(closed_window());
     if let Some(mount) = mount {
         vars.push((
             "INFINIDYSK__MOUNT__DIR".to_owned(),
@@ -142,6 +143,24 @@ async fn launch(root: &Path, mount: Option<&Path>) -> (SocketAddr, Server, Cance
         async move { serve(listener, &boot, vars, cancel).await }
     });
     (addr, server, cancel)
+}
+
+/// A one-minute maintenance window half a day away, so a scheduled job never holds the slot.
+fn closed_window() -> [(String, String); 2] {
+    let start = jiff::Zoned::now()
+        .time()
+        .wrapping_add(jiff::Span::new().hours(12));
+    let end = start.wrapping_add(jiff::Span::new().minutes(1));
+    [
+        (
+            "INFINIDYSK__MAINTENANCE__WINDOW__START".to_owned(),
+            start.strftime("%H:%M").to_string(),
+        ),
+        (
+            "INFINIDYSK__MAINTENANCE__WINDOW__END".to_owned(),
+            end.strftime("%H:%M").to_string(),
+        ),
+    ]
 }
 
 /// [`launch`], once the server answers.

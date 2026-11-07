@@ -151,7 +151,7 @@ pub async fn register(http: &reqwest::Client, arr: &Arr, hook: &Hook<'_>) -> Res
                 .is_some_and(|name| name.eq_ignore_ascii_case(hook.name))
         })
         .and_then(|n| n["id"].as_i64());
-    let body = if arr.profile == Profile::Sportarr {
+    let mut body = if arr.profile == Profile::Sportarr {
         let config = json!({
             "webhook": hook.url, "method": "POST", "username": hook.username,
             "password": hook.password, "onDownload": true, "onUpgrade": true,
@@ -181,11 +181,37 @@ pub async fn register(http: &reqwest::Client, arr: &Arr, hook: &Hook<'_>) -> Res
             "onBookFileDelete": true, "onBookFileDeleteForUpgrade": true,
         })
     };
+    // forceSave still tests a new enabled webhook, so one the Arr cannot reach would not
+    // save: create it with every event off (disabled, untested), then turn them on.
+    let id = match (id, arr.profile, s.api) {
+        (None, profile, Api::Classic) if profile != Profile::Sportarr => {
+            let mut off = body.clone();
+            if let Some(fields) = off.as_object_mut() {
+                for (key, value) in fields.iter_mut() {
+                    if key.starts_with("on") {
+                        *value = Value::Bool(false);
+                    }
+                }
+            }
+            let created: Value = fetch(
+                s.call(Method::POST, list)
+                    .query(&[("forceSave", "true")])
+                    .json(&off),
+            )
+            .await?;
+            let id = created["id"]
+                .as_i64()
+                .ok_or(Error::Unexpected("the created webhook has no id"))?;
+            body["id"] = id.into();
+            Some(id)
+        }
+        (id, ..) => id,
+    };
     let request = match id {
         Some(id) => s.call(Method::PUT, &format!("{list}/{id}")),
         None => s.call(Method::POST, list),
     };
-    // Skips the test and warnings, but not errors.
+    // On update, skips the test and warnings, but not errors.
     let request = match (arr.profile, s.api) {
         (Profile::Sportarr, _) => request,
         (_, Api::Classic) => request.query(&[("forceSave", "true")]),
