@@ -384,7 +384,7 @@ export function Queue() {
         <Failure error={error} />
       ) : !queue.data || !history.data || (blank && !anyHistory.data && !anyHistory.isError) ? (
         <Loading />
-      ) : blank && anyHistory.data?.length === 0 ? (
+      ) : blank && !anyHistory.isError && anyHistory.data?.length === 0 ? (
         <Empty title="No imports yet">NZBs sent by Sonarr, Radarr and the other Arrs show up here while they import. Use Add NZBs to queue one yourself.</Empty>
       ) : (
         <>
@@ -419,6 +419,7 @@ export function Queue() {
               </SelectContent>
             </Select>
           </div>
+          {blank && anyHistory.error && <Failure error={anyHistory.error} className="mb-3" />}
           {blank ? (
             <div className="rounded-lg border border-dashed px-6 py-10 text-center">
               <p className="font-medium">Nothing in the last day</p>
