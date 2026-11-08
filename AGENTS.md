@@ -171,3 +171,7 @@ We cannot verify which media is public domain. **Never** write movie, show, epis
 ## Never merge pull requests
 
 Agents never merge PRs, in this repo or any infinidysk repo: no `gh pr merge`, no UI/API merge, no auto-merge. Opening the PR and reporting its URL ends the handoff. Never force-push shared branches or amend pushed commits.
+
+## Addressing CodeRabbit reviews
+
+When you address a CodeRabbit review, reply to every comment with what you fixed (with the commit) or why you skipped or declined it. Then resolve **every** CodeRabbit thread, including the ones you skipped or declined. CodeRabbit starts a new review only after all its threads are resolved; one open thread holds the PR at "changes requested". After resolving, check that no CodeRabbit thread is still open, for example with the `reviewThreads { isResolved }` GraphQL query and `resolveReviewThread`.
