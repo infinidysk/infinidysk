@@ -175,3 +175,5 @@ Agents never merge PRs, in this repo or any infinidysk repo: no `gh pr merge`, n
 ## Addressing CodeRabbit reviews
 
 When you address a CodeRabbit review, reply to every comment with what you fixed (with the commit) or why you skipped or declined it. Then resolve **every** CodeRabbit thread, including the ones you skipped or declined. CodeRabbit starts a new review only after all its threads are resolved; one open thread holds the PR at "changes requested". After resolving, check that no CodeRabbit thread is still open, for example with the `reviewThreads { isResolved }` GraphQL query and `resolveReviewThread`.
+
+In the same pass, address every GitHub Code Quality and Advanced Security (code scanning) finding reported on the PR. List them with `gh api "repos/<owner>/<repo>/code-scanning/alerts?ref=refs/pull/<n>/head&state=open"` and read the PR's review threads from the GitHub bots. Fix each finding, or dismiss it with a stated reason when it is a false positive or will not be fixed. Then resolve its PR thread, so no finding is left open.
