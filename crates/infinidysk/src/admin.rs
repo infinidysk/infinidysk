@@ -849,8 +849,7 @@ struct HistoryFilter {
     /// Case-insensitive part of the job or file name.
     search: Option<String>,
     status: Option<HistoryStatus>,
-    /// Leaves out jobs stored as failed that are older than this many milliseconds; they
-    /// stay in history. A completed job whose folder is gone is reported as failed but kept.
+    /// Hides old stored failures without deleting them; missing-folder completed jobs still match `status=failed` at any age but return `completed`.
     failed_max_age_ms: Option<u64>,
 }
 

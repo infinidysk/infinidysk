@@ -558,6 +558,16 @@ async fn exercise(db: &Db) {
         ..recent
     };
     assert_eq!(history_ids(db, recent_ids).await, (vec![gone], 1));
+    let recent_failed = HistoryQuery {
+        status: Some(JobStatus::Failed),
+        ..recent
+    };
+    assert_eq!(history_ids(db, recent_failed).await, (vec![gone], 1));
+    let recent_failed_ids = HistoryQuery {
+        ids: Some(&[stored_failure, gone]),
+        ..recent_failed
+    };
+    assert_eq!(history_ids(db, recent_failed_ids).await, (vec![gone], 1));
     let old = HistoryQuery {
         failed_since: Some(i64::MIN),
         ..all
@@ -567,7 +577,9 @@ async fn exercise(db: &Db) {
         failed_since: Some(history.created_at),
         ..all
     };
-    assert_eq!(history_ids(db, at_cutoff).await.1, 3);
+    let (rows, total) = history_ids(db, at_cutoff).await;
+    assert_eq!(total, 3);
+    assert!(rows.contains(&stored_failure));
     let at_cutoff_ids = HistoryQuery {
         ids: Some(&[stored_failure]),
         ..at_cutoff

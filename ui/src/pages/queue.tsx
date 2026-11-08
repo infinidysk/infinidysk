@@ -314,6 +314,7 @@ export function Queue() {
     queryKey: ["history", historyQuery],
     queryFn: () => body(api.GET("/api/v1/history", { params: { query: historyQuery } })),
     enabled: queue.isSuccess,
+    refetchInterval: filtered ? false : 60_000,
     placeholderData: keepPreviousData,
   });
   const removeJob = useMutation({
