@@ -339,7 +339,7 @@ export function Queue() {
     queryFn: () => body(api.GET("/api/v1/history", { params: { query: { limit: 1 } } })),
     enabled: blank && history.isSuccess,
   });
-  const error = queue.error ?? history.error ?? anyHistory.error;
+  const error = queue.error ?? history.error;
   const clearFilters = () => {
     setSearch("");
     setStatus("any");
@@ -382,7 +382,7 @@ export function Queue() {
       <ArrIssues />
       {error ? (
         <Failure error={error} />
-      ) : !queue.data || !history.data || (blank && !anyHistory.data) ? (
+      ) : !queue.data || !history.data || (blank && !anyHistory.data && !anyHistory.isError) ? (
         <Loading />
       ) : blank && anyHistory.data?.length === 0 ? (
         <Empty title="No imports yet">NZBs sent by Sonarr, Radarr and the other Arrs show up here while they import. Use Add NZBs to queue one yourself.</Empty>
@@ -422,7 +422,7 @@ export function Queue() {
           {blank ? (
             <div className="rounded-lg border border-dashed px-6 py-10 text-center">
               <p className="font-medium">Nothing in the last day</p>
-              <p className="text-muted-foreground mt-1">Older failed imports are still in history.</p>
+              <p className="text-muted-foreground mt-1">Failed imports older than a day are hidden here.</p>
               <Button variant="outline" size="sm" className="mt-4" onClick={() => setStatus("failed")}>
                 Show failed imports
               </Button>

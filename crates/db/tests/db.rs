@@ -563,6 +563,19 @@ async fn exercise(db: &Db) {
         ..all
     };
     assert_eq!(history_ids(db, old).await.1, 3);
+    let at_cutoff = HistoryQuery {
+        failed_since: Some(history.created_at),
+        ..all
+    };
+    assert_eq!(history_ids(db, at_cutoff).await.1, 3);
+    let at_cutoff_ids = HistoryQuery {
+        ids: Some(&[stored_failure]),
+        ..at_cutoff
+    };
+    assert_eq!(
+        history_ids(db, at_cutoff_ids).await,
+        (vec![stored_failure], 1)
+    );
     assert_eq!(
         db.delete_history(&[stored_failure]).await.expect("delete"),
         1
