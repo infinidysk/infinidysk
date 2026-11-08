@@ -534,6 +534,11 @@ async fn exercise(db: &Db) {
         ..all
     };
     assert_eq!(history_ids(db, failed).await, (vec![gone], 1));
+    let recent = HistoryQuery {
+        failed_since: Some(i64::MAX),
+        ..all
+    };
+    assert_eq!(history_ids(db, recent).await, (vec![job.id], 1));
     let by_id = HistoryQuery {
         ids: Some(&[gone, JobId::new(), job.id]),
         offset: 1,

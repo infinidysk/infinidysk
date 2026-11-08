@@ -5550,6 +5550,8 @@ export interface operations {
                 /** @description Case-insensitive part of the job or file name. */
                 search?: string;
                 status?: components["schemas"]["HistoryStatus"];
+                /** @description Leaves out failed jobs created before this (Unix milliseconds); they stay in history. */
+                failed_since?: number;
             };
             header?: never;
             path?: never;

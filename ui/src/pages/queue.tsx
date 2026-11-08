@@ -15,6 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Empty, Failure, IconButton, Loading, PAGE, PageHeader, Pager, Panel, ReleaseName, RowActions, Status } from "../ui";
 
 const RING = 2 * Math.PI * 6;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function Importing({ id }: { id: string }) {
   // Kept fresh by the `live` server-sent event every 2 s.
@@ -306,6 +307,8 @@ export function Queue() {
     offset: historyOffset,
     search: term || undefined,
     status: status === "any" ? undefined : status,
+    // Old failures stay in history; only the unfiltered view leaves them out.
+    failed_since: filtered ? undefined : Math.floor(Date.now() / 60_000) * 60_000 - DAY_MS,
   };
   const history = useQuery({
     queryKey: ["history", historyQuery],
@@ -338,7 +341,10 @@ export function Queue() {
 
   return (
     <>
-      <PageHeader title="Queue" description="NZBs importing now, then finished imports, newest first">
+      <PageHeader
+        title="Queue"
+        description="NZBs importing now, then finished imports, newest first. Failures older than a day show under the Failed filter."
+      >
         {queue.data && queue.data.length > 0 && (
           <span className="text-muted-foreground whitespace-nowrap tabular-nums">
             {queue.data.length} {queue.data.length === 1 ? "job" : "jobs"} ·{" "}
