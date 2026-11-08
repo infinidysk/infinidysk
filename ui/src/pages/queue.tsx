@@ -308,7 +308,7 @@ export function Queue() {
     search: term || undefined,
     status: status === "any" ? undefined : status,
     // Old failures stay in history; only the unfiltered view leaves them out.
-    failed_since: filtered ? undefined : Math.floor(Date.now() / 60_000) * 60_000 - DAY_MS,
+    failed_max_age_ms: filtered ? undefined : DAY_MS,
   };
   const history = useQuery({
     queryKey: ["history", historyQuery],
@@ -329,10 +329,17 @@ export function Queue() {
     onSuccess: () => toast.success("Queued again"),
     onSettled: () => client.invalidateQueries({ queryKey: ["queue"] }),
   });
-  const error = queue.error ?? history.error;
   const removeError = removeJob.error ?? removeHistory.error ?? retry.error ?? setPaused.error ?? pauseJob.error;
   const finished = history.data?.slice(0, historyLimit) ?? [];
   const more = queued.length > offset + PAGE || (history.data?.length ?? 0) > historyLimit;
+  const blank = offset === 0 && active.length === 0 && finished.length === 0 && !filtered;
+  // An empty default view can still hide old failures; the filters must stay reachable then.
+  const anyHistory = useQuery({
+    queryKey: ["history", { limit: 1 }],
+    queryFn: () => body(api.GET("/api/v1/history", { params: { query: { limit: 1 } } })),
+    enabled: blank && history.isSuccess,
+  });
+  const error = queue.error ?? history.error ?? anyHistory.error;
   const clearFilters = () => {
     setSearch("");
     setStatus("any");
@@ -375,9 +382,9 @@ export function Queue() {
       <ArrIssues />
       {error ? (
         <Failure error={error} />
-      ) : !queue.data || !history.data ? (
+      ) : !queue.data || !history.data || (blank && !anyHistory.data) ? (
         <Loading />
-      ) : offset === 0 && active.length === 0 && finished.length === 0 && !filtered ? (
+      ) : blank && anyHistory.data?.length === 0 ? (
         <Empty title="No imports yet">NZBs sent by Sonarr, Radarr and the other Arrs show up here while they import. Use Add NZBs to queue one yourself.</Empty>
       ) : (
         <>
@@ -412,7 +419,15 @@ export function Queue() {
               </SelectContent>
             </Select>
           </div>
-          {offset === 0 && active.length === 0 && finished.length === 0 ? (
+          {blank ? (
+            <div className="rounded-lg border border-dashed px-6 py-10 text-center">
+              <p className="font-medium">Nothing in the last day</p>
+              <p className="text-muted-foreground mt-1">Older failed imports are still in history.</p>
+              <Button variant="outline" size="sm" className="mt-4" onClick={() => setStatus("failed")}>
+                Show failed imports
+              </Button>
+            </div>
+          ) : offset === 0 && active.length === 0 && finished.length === 0 ? (
             <div className="rounded-lg border border-dashed px-6 py-10 text-center">
               <p className="font-medium">No results found</p>
               <p className="text-muted-foreground mt-1">{term ? <>No imports match “{term}” with this status.</> : "No imports have this status."}</p>

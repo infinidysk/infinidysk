@@ -559,7 +559,7 @@ pub struct HistoryQuery<'a> {
     pub search: Option<&'a str>,
     /// As reported: a completed job whose folder is gone counts as failed.
     pub status: Option<JobStatus>,
-    /// Leaves out jobs reported as failed that were created before this (Unix ms).
+    /// Leaves out jobs stored as failed that were created before this (Unix ms).
     pub failed_since: Option<i64>,
     pub offset: usize,
     /// `None` means all.
@@ -584,8 +584,7 @@ macro_rules! history_filter {
                   OR LOWER(h.file_name) LIKE $2 ESCAPE '\\') \
              AND ($3 IS NULL \
                   OR (CASE WHEN h.status = 1 AND i.id IS NOT NULL THEN 1 ELSE 2 END) = $3) \
-             AND ($4 IS NULL OR h.created_at >= $4 \
-                  OR (h.status = 1 AND i.id IS NOT NULL))",
+             AND ($4 IS NULL OR h.created_at >= $4 OR h.status <> 2)",
             $extra
         )
     };

@@ -849,8 +849,8 @@ struct HistoryFilter {
     /// Case-insensitive part of the job or file name.
     search: Option<String>,
     status: Option<HistoryStatus>,
-    /// Leaves out failed jobs created before this (Unix milliseconds); they stay in history.
-    failed_since: Option<i64>,
+    /// Leaves out failed jobs older than this many milliseconds; they stay in history.
+    failed_max_age_ms: Option<u64>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -883,7 +883,9 @@ async fn get_history(
             HistoryStatus::Completed => JobStatus::Completed,
             HistoryStatus::Failed => JobStatus::Failed,
         }),
-        failed_since: filter.failed_since,
+        failed_since: filter.failed_max_age_ms.map(|age| {
+            infinidysk_db::now_ms().saturating_sub(i64::try_from(age).unwrap_or(i64::MAX))
+        }),
         offset: page.offset.unwrap_or(0),
         limit: Some(page.limit.unwrap_or(DEFAULT_PAGE).min(MAX_PAGE)),
         ..HistoryQuery::default()
