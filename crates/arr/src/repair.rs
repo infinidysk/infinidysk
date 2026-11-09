@@ -14,6 +14,7 @@ use crate::{Arr, Error, Profile, Session, fetch, send, version};
 /// History `eventType` values shared by Sonarr, Radarr, Lidarr and Chaptarr.
 const GRABBED: &str = "1";
 const IMPORTED: &str = "3";
+const FAILED: &str = "4";
 /// How often the Arr's commands are read while it searches the media being repaired.
 const SEARCH_POLL: Duration = Duration::from_secs(5);
 /// History records per page.
@@ -564,7 +565,14 @@ pub async fn replace(
                 let since = if wait.is_zero() {
                     None
                 } else {
-                    Some(newest_grab(&s, owner).await?)
+                    Some(
+                        newest_grabs(&s, owner)
+                            .await?
+                            .iter()
+                            .map(|grab| grab.id)
+                            .max()
+                            .unwrap_or(0),
+                    )
                 };
                 send(call(Method::POST, format!("history/failed/{}", grab.id)).json(&json!({})))
                     .await?;
@@ -625,9 +633,9 @@ async fn replacing(s: &Session<'_>, job: Option<&str>, owner: &Owner) -> Result<
 }
 
 /// Waits while the Arr searches the owner's media after the blocklist; `true` once a
-/// replacement is queued, or was grabbed after `since` (the newest grab id read before the
-/// blocklist). A search still queued or running after `wait` is [`Error::Searching`], so
-/// the file is never deleted under it.
+/// replacement is queued, or was grabbed after `since` without a later download failure.
+/// A search still queued or running after `wait` is [`Error::Searching`], so the file is
+/// never deleted under it.
 async fn own_search(
     s: &Session<'_>,
     job: &str,
@@ -639,11 +647,27 @@ async fn own_search(
     loop {
         let commands: Vec<Command> = fetch(s.call(Method::GET, "command")).await?;
         if !commands.iter().any(|c| searching(&owner.media, c)) {
-            // The queue shows a grab only after a refresh; history has it at once. The queue
-            // still catches one made before `since` that it showed only since our first read.
-            return Ok(
-                newest_grab(s, owner).await? > since || replacing(s, Some(job), owner).await?
-            );
+            // History precedes queue refresh, but a later failure invalidates its grab.
+            for grab in newest_grabs(s, owner).await? {
+                if grab.id <= since {
+                    continue;
+                }
+                let download = grab
+                    .download_id
+                    .as_deref()
+                    .filter(|id| !id.trim().is_empty())
+                    .ok_or(Error::Unexpected("grab history without downloadId"))?;
+                let failed: Page = fetch(s.call(Method::GET, "history").query(&[
+                    ("downloadId", download),
+                    ("eventType", FAILED),
+                    ("pageSize", "1"),
+                ]))
+                .await?;
+                if !failed.records.iter().any(|failure| failure.id > grab.id) {
+                    return Ok(true);
+                }
+            }
+            return replacing(s, Some(job), owner).await;
         }
         if replacing(s, Some(job), owner).await? {
             return Ok(true);
@@ -656,15 +680,15 @@ async fn own_search(
     }
 }
 
-/// The id of the Arr's newest grab of any of the owner's media; 0 without one.
-async fn newest_grab(s: &Session<'_>, owner: &Owner) -> Result<i64, Error> {
+/// The Arr's newest grab of each of the owner's media.
+async fn newest_grabs(s: &Session<'_>, owner: &Owner) -> Result<Vec<Record>, Error> {
     let filters: Vec<(&str, i64)> = match &owner.media {
         Media::Episodes { ids, .. } => ids.iter().map(|&id| ("episodeId", id)).collect(),
         Media::Movie(id) => vec![("movieIds", *id)],
         Media::Album { id, .. } => vec![("albumId", *id)],
         Media::Book(id) => vec![("bookId", *id)],
     };
-    let mut newest = 0;
+    let mut newest = Vec::new();
     for filter in filters {
         let page: Page = fetch(
             s.call(Method::GET, "history")
@@ -672,7 +696,7 @@ async fn newest_grab(s: &Session<'_>, owner: &Owner) -> Result<i64, Error> {
                 .query(&[filter]),
         )
         .await?;
-        newest = newest.max(page.records.first().map_or(0, |r| r.id));
+        newest.extend(page.records.into_iter().take(1));
     }
     Ok(newest)
 }

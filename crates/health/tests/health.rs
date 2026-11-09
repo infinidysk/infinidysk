@@ -866,10 +866,18 @@ async fn a_co_owner_that_cannot_repair_does_not_stop_one_that_can() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_repair_resumes_the_arr_search_it_stopped_waiting_for() {
-    // `sonarr` for a file of episodes 5 and 6, season 1 of series 9. Phase 0: its season
-    // search runs. 1: its command list fails. 2: the search ended, having grabbed episode 6.
+    resumed_repair(true).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_resumed_repair_without_a_grab_deletes_and_searches() {
+    resumed_repair(false).await;
+}
+
+async fn resumed_repair(grabbed: bool) {
+    // Phase 0 runs, phase 1 fails, phase 2 ends with no grab or one failed and one pending.
     async fn slow(
-        State((log, phase)): State<(Log, Arc<AtomicU8>)>,
+        State((log, phase, grabbed)): State<(Log, Arc<AtomicU8>, bool)>,
         req: Request,
     ) -> Result<Json<Value>, axum::http::StatusCode> {
         let call = format!("{} {}", req.method(), req.uri());
@@ -894,8 +902,17 @@ async fn a_repair_resumes_the_arr_search_it_stopped_waiting_for() {
                 }));
                 json!({ "records": records })
             }
-            c if c.ends_with("&episodeId=6") && phase == 2 => {
-                json!({ "records": [{ "id": 30, "data": {} }] })
+            c if c.ends_with("&episodeId=5") && phase == 2 && grabbed => {
+                json!({ "records": [{ "id": 31, "downloadId": "failed", "data": {} }] })
+            }
+            c if c.ends_with("&episodeId=6") && phase == 2 && grabbed => {
+                json!({ "records": [{ "id": 30, "downloadId": "pending", "data": {} }] })
+            }
+            "GET /api/v3/history?downloadId=failed&eventType=4&pageSize=1" => {
+                json!({ "records": [{ "id": 32, "downloadId": "failed", "data": {} }] })
+            }
+            "GET /api/v3/history?downloadId=pending&eventType=4&pageSize=1" => {
+                json!({ "records": [] })
             }
             _ => return Ok(sonarr(State(log), req).await),
         };
@@ -919,9 +936,11 @@ async fn a_repair_resumes_the_arr_search_it_stopped_waiting_for() {
     let phase: Arc<AtomicU8> = Arc::default();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    let app = axum::Router::new()
-        .fallback(slow)
-        .with_state((Arc::clone(&log), Arc::clone(&phase)));
+    let app = axum::Router::new().fallback(slow).with_state((
+        Arc::clone(&log),
+        Arc::clone(&phase),
+        grabbed,
+    ));
     tokio::spawn(async move { axum::serve(listener, app).await });
     let (_arr_tx, arr) = watch::channel(vec![Arr {
         id: uuid::Uuid::nil(),
@@ -935,9 +954,7 @@ async fn a_repair_resumes_the_arr_search_it_stopped_waiting_for() {
         .unwrap()
         .with_arr_wait(Duration::from_secs(1));
 
-    // Phase 0 blocklists and polls, then spends an attempt (the search outlasts the wait);
-    // phase 1 resumes at the poll without blocklisting again, and spends none (a 503). Both
-    // keep the file.
+    // The running search spends an attempt; the unavailable command list does not.
     let count = |f: fn(&str) -> bool| log.0.lock().unwrap().iter().filter(|c| f(c)).count();
     let blocklist = |c: &str| c.starts_with("POST /api/v3/history/failed/");
     let poll = |c: &str| c == "GET /api/v3/command";
@@ -964,13 +981,23 @@ async fn a_repair_resumes_the_arr_search_it_stopped_waiting_for() {
         phase.store(next, Ordering::Relaxed);
     }
 
-    // Phase 2: the grab of episode 6 is newer than the boundary step 1 read.
+    let polled = count(poll);
     assert!(health.step().await.unwrap());
+    assert_eq!(count(poll), polled + 1);
     let (_, status) = db.health(item.id).await.unwrap().unwrap();
     assert_eq!(status.state, HealthState::Hidden);
     let calls = log.0.lock().unwrap().clone();
     assert_eq!(count(blocklist), 1, "{calls:?}");
-    assert!(!calls.iter().any(|c| c.starts_with("DELETE ")), "{calls:?}");
+    assert_eq!(
+        count(|call| call == "DELETE /api/v3/episodefile/7"),
+        usize::from(!grabbed),
+        "{calls:?}"
+    );
+    assert_eq!(
+        count(|call| call == "POST /api/v3/command"),
+        usize::from(!grabbed),
+        "{calls:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

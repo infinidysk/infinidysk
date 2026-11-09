@@ -22,6 +22,10 @@ enum Search {
     /// Its search has ended by the first command read and grabbed a replacement that the
     /// queue does not show yet.
     Grabs,
+    FailedGrab,
+    OlderFailure,
+    FailureUnavailable,
+    MissingDownloadId,
     /// Its search runs until the second command read, then ends with no grab.
     FindsNothing,
     /// Its search has ended by the first command read with no grab, but the queue shows a
@@ -55,7 +59,7 @@ type Shared = (Grab, Arc<Mutex<Calls>>);
 fn page(ids: &[i64]) -> Response {
     let records: Vec<_> = ids
         .iter()
-        .map(|id| json!({ "id": id, "data": {} }))
+        .map(|id| json!({ "id": id, "downloadId": "other", "data": {} }))
         .collect();
     Json(json!({ "records": records })).into_response()
 }
@@ -98,9 +102,26 @@ async fn radarr(State((grab, calls)): State<Shared>, req: Request) -> Response {
             _ => page(&[12]),
         },
         "GET /api/v3/history?eventType=1&pageSize=1&movieIds=3" => {
-            let grabbed = matches!(search, Some(Search::Grabs)) && reads > 0;
+            if matches!(search, Some(Search::MissingDownloadId)) && reads > 0 {
+                return Json(json!({ "records": [{ "id": 20, "data": {} }] })).into_response();
+            }
+            let grabbed = matches!(
+                search,
+                Some(
+                    Search::Grabs
+                        | Search::FailedGrab
+                        | Search::OlderFailure
+                        | Search::FailureUnavailable
+                )
+            ) && reads > 0;
             page(&[if grabbed { 20 } else { 12 }])
         }
+        "GET /api/v3/history?downloadId=other&eventType=4&pageSize=1" => match search {
+            Some(Search::FailedGrab) => page(&[21]),
+            Some(Search::OlderFailure) => page(&[19]),
+            Some(Search::FailureUnavailable) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+            _ => page(&[]),
+        },
         "POST /api/v3/history/failed/12" => match grab {
             Grab::BlocklistFails => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             _ => Json(json!({})).into_response(),
@@ -110,7 +131,14 @@ async fn radarr(State((grab, calls)): State<Shared>, req: Request) -> Response {
             match search {
                 Some(Search::Off) => commands.push(movies_search(2, 4, "started")),
                 Some(Search::Queues) => commands.push(movies_search(2, 3, "started")),
-                Some(Search::Grabs | Search::QueuesLate) => {
+                Some(
+                    Search::Grabs
+                    | Search::FailedGrab
+                    | Search::QueuesLate
+                    | Search::OlderFailure
+                    | Search::FailureUnavailable
+                    | Search::MissingDownloadId,
+                ) => {
                     commands.push(movies_search(2, 3, "completed"));
                 }
                 Some(Search::FindsNothing) => {
@@ -219,6 +247,7 @@ async fn a_grab_by_the_arr_search_is_left_to_it() {
             "POST /api/v3/history/failed/12",
             "GET /api/v3/command",
             "GET /api/v3/history?eventType=1&pageSize=1&movieIds=3",
+            "GET /api/v3/history?downloadId=other&eventType=4&pageSize=1",
         ]
     );
 }
@@ -341,7 +370,98 @@ async fn a_resumed_repair_does_not_blocklist_again() {
             "GET /api/v3/queue/details?movieId=3",
             "GET /api/v3/command",
             "GET /api/v3/history?eventType=1&pageSize=1&movieIds=3",
+            "GET /api/v3/history?downloadId=other&eventType=4&pageSize=1",
         ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_newer_grab_does_not_count_as_a_replacement() {
+    for resume in [None, Some(12)] {
+        let (result, _, calls, _) = repair(
+            Grab::Blocklists(Search::FailedGrab),
+            Duration::from_secs(60),
+            resume,
+        )
+        .await;
+        result.unwrap();
+        assert!(
+            calls.ends_with(&[
+                "DELETE /api/v3/moviefile/7".to_owned(),
+                "POST /api/v3/command".to_owned(),
+            ]),
+            "{calls:?}"
+        );
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| call.starts_with("POST /api/v3/history/failed/"))
+                .count(),
+            usize::from(resume.is_none()),
+            "{calls:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_older_failure_does_not_invalidate_a_newer_grab() {
+    let (result, _, calls, _) = repair(
+        Grab::Blocklists(Search::OlderFailure),
+        Duration::from_secs(60),
+        Some(12),
+    )
+    .await;
+    result.unwrap();
+    assert_eq!(
+        calls.last().unwrap(),
+        "GET /api/v3/history?downloadId=other&eventType=4&pageSize=1"
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|call| call.starts_with("DELETE ") || call.starts_with("POST ")),
+        "{calls:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unreadable_failure_history_keeps_the_file_and_resume() {
+    let (result, resume, calls, _) = repair(
+        Grab::Blocklists(Search::FailureUnavailable),
+        Duration::from_secs(60),
+        Some(12),
+    )
+    .await;
+    let error = result.unwrap_err();
+    assert!(error.is_transient());
+    assert!(matches!(error, Error::Rejected { status, .. } if status == 503));
+    assert_eq!(resume, Some(12));
+    assert!(
+        !calls
+            .iter()
+            .any(|call| call.starts_with("DELETE ") || call.starts_with("POST ")),
+        "{calls:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_grab_without_a_download_id_keeps_the_file() {
+    let (result, resume, calls, _) = repair(
+        Grab::Blocklists(Search::MissingDownloadId),
+        Duration::from_secs(60),
+        Some(12),
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(Error::Unexpected("grab history without downloadId"))
+    ));
+    assert_eq!(resume, Some(12));
+    assert!(
+        !calls
+            .iter()
+            .any(|call| call.starts_with("DELETE ") || call.starts_with("POST ")),
+        "{calls:?}"
     );
 }
 
