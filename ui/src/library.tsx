@@ -401,7 +401,7 @@ export function LibraryPanel({ onPreview }: { onPreview: (req: PreviewRequest) =
       {v.legacy && (v.legacy.uses > 0 || v.legacy.rewritten > 0) && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs">
           <span>
-            STRM links made by InfiniDysk 1.x still play: {count(v.legacy.uses, "use")}
+            STRM links made by infinidysk 1.x still play: {count(v.legacy.uses, "use")}
             {v.legacy.last_used_ms ? `, last ${ago(v.legacy.last_used_ms)}` : ""}; {v.legacy.rewritten} rewritten in the
             library.{" "}
             {v.legacy.retires_ms
@@ -412,7 +412,7 @@ export function LibraryPanel({ onPreview }: { onPreview: (req: PreviewRequest) =
             variant="outline"
             label="Stop accepting now"
             title="Stop accepting old STRM links?"
-            message="STRM files made by InfiniDysk 1.x that were not rewritten stop playing right away."
+            message="STRM files made by infinidysk 1.x that were not rewritten stop playing right away."
             confirm="Stop accepting"
             onConfirm={() => stop.mutate()}
           />
