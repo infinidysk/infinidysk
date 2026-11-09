@@ -508,7 +508,7 @@ async fn exercise(db: &Db) {
     assert_eq!(db.queue().await.expect("query"), []);
     assert_eq!(
         db.history_entry(job.id).await.expect("query"),
-        Some(history)
+        Some(history.clone())
     );
     assert_eq!(
         db.completed_dirs(ItemId::CONTENT).await.expect("query"),
@@ -534,6 +534,64 @@ async fn exercise(db: &Db) {
         ..all
     };
     assert_eq!(history_ids(db, failed).await, (vec![gone], 1));
+    // The cutoff drops stored failures only; a missing folder cannot be retried.
+    let stored_failure = JobId::new();
+    db.add_history(
+        &HistoryEntry {
+            id: stored_failure,
+            status: JobStatus::Failed,
+            download_dir: None,
+            ..history.clone()
+        },
+        &[],
+        &[],
+    )
+    .await
+    .expect("history");
+    let recent = HistoryQuery {
+        failed_since: Some(i64::MAX),
+        ..all
+    };
+    assert_eq!(history_ids(db, recent).await, (both.clone(), 2));
+    let recent_ids = HistoryQuery {
+        ids: Some(&[stored_failure, gone]),
+        ..recent
+    };
+    assert_eq!(history_ids(db, recent_ids).await, (vec![gone], 1));
+    let recent_failed = HistoryQuery {
+        status: Some(JobStatus::Failed),
+        ..recent
+    };
+    assert_eq!(history_ids(db, recent_failed).await, (vec![gone], 1));
+    let recent_failed_ids = HistoryQuery {
+        ids: Some(&[stored_failure, gone]),
+        ..recent_failed
+    };
+    assert_eq!(history_ids(db, recent_failed_ids).await, (vec![gone], 1));
+    let old = HistoryQuery {
+        failed_since: Some(i64::MIN),
+        ..all
+    };
+    assert_eq!(history_ids(db, old).await.1, 3);
+    let at_cutoff = HistoryQuery {
+        failed_since: Some(history.created_at),
+        ..all
+    };
+    let (rows, total) = history_ids(db, at_cutoff).await;
+    assert_eq!(total, 3);
+    assert!(rows.contains(&stored_failure));
+    let at_cutoff_ids = HistoryQuery {
+        ids: Some(&[stored_failure]),
+        ..at_cutoff
+    };
+    assert_eq!(
+        history_ids(db, at_cutoff_ids).await,
+        (vec![stored_failure], 1)
+    );
+    assert_eq!(
+        db.delete_history(&[stored_failure]).await.expect("delete"),
+        1
+    );
     let by_id = HistoryQuery {
         ids: Some(&[gone, JobId::new(), job.id]),
         offset: 1,

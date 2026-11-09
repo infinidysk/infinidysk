@@ -15,6 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Empty, Failure, IconButton, Loading, PAGE, PageHeader, Pager, Panel, ReleaseName, RowActions, Status } from "../ui";
 
 const RING = 2 * Math.PI * 6;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function Importing({ id }: { id: string }) {
   // Kept fresh by the `live` server-sent event every 2 s.
@@ -306,11 +307,14 @@ export function Queue() {
     offset: historyOffset,
     search: term || undefined,
     status: status === "any" ? undefined : status,
+    // Old failures stay in history; only the unfiltered view leaves them out.
+    failed_max_age_ms: filtered ? undefined : DAY_MS,
   };
   const history = useQuery({
     queryKey: ["history", historyQuery],
     queryFn: () => body(api.GET("/api/v1/history", { params: { query: historyQuery } })),
     enabled: queue.isSuccess,
+    refetchInterval: filtered ? false : 60_000,
     placeholderData: keepPreviousData,
   });
   const removeJob = useMutation({
@@ -326,10 +330,17 @@ export function Queue() {
     onSuccess: () => toast.success("Queued again"),
     onSettled: () => client.invalidateQueries({ queryKey: ["queue"] }),
   });
-  const error = queue.error ?? history.error;
   const removeError = removeJob.error ?? removeHistory.error ?? retry.error ?? setPaused.error ?? pauseJob.error;
   const finished = history.data?.slice(0, historyLimit) ?? [];
   const more = queued.length > offset + PAGE || (history.data?.length ?? 0) > historyLimit;
+  const blank = offset === 0 && active.length === 0 && finished.length === 0 && !filtered;
+  // An empty default view can still hide old failures; the filters must stay reachable then.
+  const anyHistory = useQuery({
+    queryKey: ["history", { limit: 1 }],
+    queryFn: () => body(api.GET("/api/v1/history", { params: { query: { limit: 1 } } })),
+    enabled: blank && history.isSuccess,
+  });
+  const error = queue.error ?? history.error;
   const clearFilters = () => {
     setSearch("");
     setStatus("any");
@@ -338,7 +349,10 @@ export function Queue() {
 
   return (
     <>
-      <PageHeader title="Queue" description="NZBs importing now, then finished imports, newest first">
+      <PageHeader
+        title="Queue"
+        description="NZBs importing now, then finished imports, newest first. Failures older than a day show under the Failed filter."
+      >
         {queue.data && queue.data.length > 0 && (
           <span className="text-muted-foreground whitespace-nowrap tabular-nums">
             {queue.data.length} {queue.data.length === 1 ? "job" : "jobs"} ·{" "}
@@ -369,9 +383,9 @@ export function Queue() {
       <ArrIssues />
       {error ? (
         <Failure error={error} />
-      ) : !queue.data || !history.data ? (
+      ) : !queue.data || !history.data || (blank && !anyHistory.data && !anyHistory.isError) ? (
         <Loading />
-      ) : offset === 0 && active.length === 0 && finished.length === 0 && !filtered ? (
+      ) : blank && !anyHistory.isError && !anyHistory.isFetching && anyHistory.data?.length === 0 ? (
         <Empty title="No imports yet">NZBs sent by Sonarr, Radarr and the other Arrs show up here while they import. Use Add NZBs to queue one yourself.</Empty>
       ) : (
         <>
@@ -406,7 +420,16 @@ export function Queue() {
               </SelectContent>
             </Select>
           </div>
-          {offset === 0 && active.length === 0 && finished.length === 0 ? (
+          {blank && anyHistory.error && <Failure error={anyHistory.error} className="mb-3 break-all" />}
+          {blank ? (
+            <div className="rounded-lg border border-dashed px-6 py-10 text-center">
+              <p className="font-medium">Nothing in the last day</p>
+              <p className="text-muted-foreground mt-1">Failed imports older than a day are hidden here.</p>
+              <Button variant="outline" size="sm" className="mt-4" onClick={() => setStatus("failed")}>
+                Show failed imports
+              </Button>
+            </div>
+          ) : offset === 0 && active.length === 0 && finished.length === 0 ? (
             <div className="rounded-lg border border-dashed px-6 py-10 text-center">
               <p className="font-medium">No results found</p>
               <p className="text-muted-foreground mt-1">{term ? <>No imports match “{term}” with this status.</> : "No imports have this status."}</p>

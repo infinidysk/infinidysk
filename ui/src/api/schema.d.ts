@@ -5550,6 +5550,8 @@ export interface operations {
                 /** @description Case-insensitive part of the job or file name. */
                 search?: string;
                 status?: components["schemas"]["HistoryStatus"];
+                /** @description Hides old stored failures without deleting them; missing-folder completed jobs still match `status=failed` at any age but return `completed`. */
+                failed_max_age_ms?: number;
             };
             header?: never;
             path?: never;

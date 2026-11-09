@@ -849,6 +849,8 @@ struct HistoryFilter {
     /// Case-insensitive part of the job or file name.
     search: Option<String>,
     status: Option<HistoryStatus>,
+    /// Hides old stored failures without deleting them; missing-folder completed jobs still match `status=failed` at any age but return `completed`.
+    failed_max_age_ms: Option<u64>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -880,6 +882,9 @@ async fn get_history(
         status: filter.status.map(|s| match s {
             HistoryStatus::Completed => JobStatus::Completed,
             HistoryStatus::Failed => JobStatus::Failed,
+        }),
+        failed_since: filter.failed_max_age_ms.map(|age| {
+            infinidysk_db::now_ms().saturating_sub(i64::try_from(age).unwrap_or(i64::MAX))
         }),
         offset: page.offset.unwrap_or(0),
         limit: Some(page.limit.unwrap_or(DEFAULT_PAGE).min(MAX_PAGE)),

@@ -559,6 +559,8 @@ pub struct HistoryQuery<'a> {
     pub search: Option<&'a str>,
     /// As reported: a completed job whose folder is gone counts as failed.
     pub status: Option<JobStatus>,
+    /// Leaves out jobs stored as failed that were created before this (Unix ms).
+    pub failed_since: Option<i64>,
     pub offset: usize,
     /// `None` means all.
     pub limit: Option<usize>,
@@ -572,7 +574,7 @@ pub struct HealthFilter<'a> {
     pub result: Option<HealthResult>,
 }
 
-/// `FROM … WHERE …` of [`Db::history_page`], then `$extra`; binds `$1`-`$3`.
+/// `FROM … WHERE …` of [`Db::history_page`], then `$extra`; binds `$1`-`$4`.
 macro_rules! history_filter {
     ($extra:literal) => {
         concat!(
@@ -581,7 +583,8 @@ macro_rules! history_filter {
              AND ($2 IS NULL OR LOWER(h.job_name) LIKE $2 ESCAPE '\\' \
                   OR LOWER(h.file_name) LIKE $2 ESCAPE '\\') \
              AND ($3 IS NULL \
-                  OR (CASE WHEN h.status = 1 AND i.id IS NOT NULL THEN 1 ELSE 2 END) = $3)",
+                  OR (CASE WHEN h.status = 1 AND i.id IS NOT NULL THEN 1 ELSE 2 END) = $3) \
+             AND ($4 IS NULL OR h.created_at >= $4 OR h.status <> 2)",
             $extra
         )
     };
@@ -1787,10 +1790,11 @@ impl Db {
             let mut rows: Vec<HistoryListRow> = Vec::with_capacity(ids.len());
             on!(self, pool => for id in ids {
                 rows.extend(
-                    sqlx::query_as(select!(" AND h.id = $4"))
+                    sqlx::query_as(select!(" AND h.id = $5"))
                         .bind(q.category)
                         .bind(search.as_deref())
                         .bind(status)
+                        .bind(q.failed_since)
                         .bind(id.0)
                         .fetch_optional(pool)
                         .await?,
@@ -1803,13 +1807,14 @@ impl Db {
             let rows = rows.into_iter().skip(q.offset).take(limit).collect();
             (rows, total)
         } else {
-            let page = select!(" ORDER BY h.created_at DESC, h.id LIMIT $4 OFFSET $5");
+            let page = select!(" ORDER BY h.created_at DESC, h.id LIMIT $5 OFFSET $6");
             let count = concat!("SELECT COUNT(*) ", history_filter!(""));
             let (rows, total): (Vec<HistoryListRow>, i64) = on!(self, pool => {
                 let rows = sqlx::query_as(page)
                     .bind(q.category)
                     .bind(search.as_deref())
                     .bind(status)
+                    .bind(q.failed_since)
                     .bind(i64::try_from(limit).unwrap_or(i64::MAX))
                     .bind(i64::try_from(q.offset).unwrap_or(i64::MAX))
                     .fetch_all(pool)
@@ -1818,6 +1823,7 @@ impl Db {
                     .bind(q.category)
                     .bind(search.as_deref())
                     .bind(status)
+                    .bind(q.failed_since)
                     .fetch_one(pool)
                     .await?;
                 (rows, total)
