@@ -108,7 +108,7 @@ function Name({ name, href, reason }: { name: string; href?: string; reason?: st
         </div>
       )}
       {reason && (
-        <div className="text-muted-foreground line-clamp-2 text-xs whitespace-normal wrap-anywhere sm:line-clamp-1" title={reason}>
+        <div className="text-muted-foreground text-xs whitespace-normal wrap-anywhere">
           {reason}
         </div>
       )}
