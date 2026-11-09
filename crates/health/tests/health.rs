@@ -935,8 +935,13 @@ async fn a_repair_resumes_the_arr_search_it_stopped_waiting_for() {
         .unwrap()
         .with_arr_wait(Duration::from_secs(1));
 
-    // Phase 0 spends an attempt (the search outlasts the wait), phase 1 none (a 503); both
+    // Phase 0 blocklists and polls, then spends an attempt (the search outlasts the wait);
+    // phase 1 resumes at the poll without blocklisting again, and spends none (a 503). Both
     // keep the file.
+    let count = |f: fn(&str) -> bool| log.0.lock().unwrap().iter().filter(|c| f(c)).count();
+    let blocklist = |c: &str| c.starts_with("POST /api/v3/history/failed/");
+    let poll = |c: &str| c == "GET /api/v3/command";
+    let failed = |c: &str| c.ends_with(" 503");
     assert!(health.request_repair(item.id).await.unwrap());
     for next in 1..=2 {
         assert!(health.step().await.unwrap());
@@ -945,31 +950,26 @@ async fn a_repair_resumes_the_arr_search_it_stopped_waiting_for() {
             (status.state, status.repair_attempts),
             (HealthState::Repairing, 1)
         );
+        if next == 1 {
+            assert!(count(poll) > 0, "phase 0 polled the command list");
+        }
+        assert_eq!(
+            (count(blocklist), count(failed)),
+            (1, usize::from(next - 1))
+        );
         status.next_check = Some(0);
         db.set_health(item.id, &status, Recheck::None)
             .await
             .unwrap();
         phase.store(next, Ordering::Relaxed);
     }
-    let failed = log
-        .0
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|c| c.ends_with(" 503"))
-        .count();
-    assert_eq!(failed, 1, "phase 1 reached the failing command list");
 
     // Phase 2: the grab of episode 6 is newer than the boundary step 1 read.
     assert!(health.step().await.unwrap());
     let (_, status) = db.health(item.id).await.unwrap().unwrap();
     assert_eq!(status.state, HealthState::Hidden);
     let calls = log.0.lock().unwrap().clone();
-    let blocklists = calls
-        .iter()
-        .filter(|c| c.starts_with("POST /api/v3/history/failed/"))
-        .count();
-    assert_eq!(blocklists, 1, "{calls:?}");
+    assert_eq!(count(blocklist), 1, "{calls:?}");
     assert!(!calls.iter().any(|c| c.starts_with("DELETE ")), "{calls:?}");
 }
 
