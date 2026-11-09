@@ -798,7 +798,7 @@ const Reads = memo(function Reads({ reads }: { reads: Read[] }) {
                       >
                         <ChevronRight className={cn("text-muted-foreground mt-0.5 size-4 shrink-0 transition-transform", expanded && "rotate-90")} />
                         <span className="min-w-0">
-                          <span className="line-clamp-2 font-medium wrap-anywhere sm:line-clamp-1" title={latest.path}>
+                          <span className="line-clamp-2 font-medium whitespace-normal wrap-anywhere sm:line-clamp-1" title={latest.path}>
                             <ReleaseName name={displayName(latest.path)} />
                           </span>
                           <span className="text-muted-foreground block text-xs whitespace-normal wrap-anywhere">
@@ -867,7 +867,7 @@ function ReadRow({ read: r, nested }: { read: Read; nested?: boolean }) {
             {/* Lines up with the chevron on rows that expand. */}
             <span className="size-4 shrink-0" aria-hidden />
             <div className="min-w-0">
-              <div className="line-clamp-2 font-medium wrap-anywhere sm:line-clamp-1" title={r.path}>
+              <div className="line-clamp-2 font-medium whitespace-normal wrap-anywhere sm:line-clamp-1" title={r.path}>
                 <ReleaseName name={displayName(r.path)} />
               </div>
               <div className="text-muted-foreground text-xs whitespace-normal wrap-anywhere">

@@ -94,7 +94,7 @@ function JobStatus({ job }: { job: Schemas["QueueJob"] }) {
   }
 }
 
-/** The release name, with an optional one-line reason under it, such as why an import failed. */
+/** The release name, with an optional reason under it, such as why an import failed. */
 function Name({ name, href, reason }: { name: string; href?: string; reason?: string }) {
   return (
     <TableCell className="w-full max-w-0">
@@ -107,7 +107,11 @@ function Name({ name, href, reason }: { name: string; href?: string; reason?: st
           <ReleaseName name={name} />
         </div>
       )}
-      {reason && <div className="text-muted-foreground truncate text-xs">{reason}</div>}
+      {reason && (
+        <div className="text-muted-foreground line-clamp-2 text-xs whitespace-normal wrap-anywhere sm:line-clamp-1" title={reason}>
+          {reason}
+        </div>
+      )}
     </TableCell>
   );
 }
