@@ -451,8 +451,8 @@ const Windowed = memo(function Windowed({ history: h, span }: { history: History
             <span className="inline-flex items-center gap-1">
               Provider misses
               <InfoTip label="About provider misses">
-                Playback requests a provider answered without the article. Most are then fetched from the next provider, so the
-                viewer may not notice them.
+                Playback requests a provider answered without the article. Another provider may still fetch it, so the viewer may
+                not notice a miss.
               </InfoTip>
             </span>,
             pct(play?.missing ?? 0, play?.requests ?? 0),
