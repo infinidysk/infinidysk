@@ -55,7 +55,10 @@ enum Media {
         id: i64,
         artist: i64,
     },
-    Book(i64),
+    Book {
+        id: i64,
+        author: i64,
+    },
 }
 
 /// Which API an instance repairs through.
@@ -110,7 +113,7 @@ impl Owner {
             Media::Episodes { ids, .. } => ("episode", ids),
             Media::Movie(id) => ("movie", std::slice::from_ref(id)),
             Media::Album { id, .. } => ("album", std::slice::from_ref(id)),
-            Media::Book(id) => ("book", std::slice::from_ref(id)),
+            Media::Book { id, .. } => ("book", std::slice::from_ref(id)),
         }
     }
 }
@@ -142,6 +145,7 @@ struct CommandBody {
     album_ids: Vec<i64>,
     artist_id: i64,
     book_ids: Vec<i64>,
+    author_id: i64,
 }
 
 /// Whether `command` is a queued or running search that covers `media`.
@@ -156,10 +160,14 @@ fn searching(media: &Media, command: &Command) -> bool {
             (Media::Episodes { series, season, .. }, "SeasonSearch") => {
                 body.series_id == *series && body.season_number == Some(*season)
             }
+            (Media::Episodes { series, .. }, "SeriesSearch") => body.series_id == *series,
             (Media::Movie(id), "MoviesSearch") => body.movie_ids.contains(id),
             (Media::Album { id, .. }, "AlbumSearch") => body.album_ids.contains(id),
             (Media::Album { artist, .. }, "ArtistSearch") => body.artist_id == *artist,
-            (Media::Book(id), "BookSearch") => body.book_ids.contains(id),
+            (Media::Book { id, .. }, "BookSearch") => body.book_ids.contains(id),
+            (Media::Book { author, .. }, "AuthorSearch") => {
+                body.author_id != 0 && body.author_id == *author
+            }
             _ => false,
         }
 }
@@ -227,6 +235,8 @@ struct MediaFile {
     /// Chaptarr's name their book.
     #[serde(default)]
     book_id: Option<i64>,
+    #[serde(default)]
+    author_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -355,8 +365,12 @@ pub async fn owner(
                 .ok_or(Error::Unexpected("import record without bookId"))?;
             let files: Vec<MediaFile> =
                 fetch(call(Method::GET, "bookfile".to_owned()).query(&[("bookId", id)])).await?;
+            let author = files
+                .iter()
+                .find_map(|file| file.author_id)
+                .unwrap_or_default();
             let current = current_book_file(files, &imported_path, last_import, recorded_file);
-            (Media::Book(id), current)
+            (Media::Book { id, author }, current)
         }
     };
     Ok(Some(Owner {
@@ -464,11 +478,12 @@ pub async fn owner_of_file(
                 .ok_or(Error::Unexpected("track file without albumId"))?,
             artist: current.artist_id.unwrap_or_default(),
         },
-        Shape::Books => Media::Book(
-            current
+        Shape::Books => Media::Book {
+            id: current
                 .book_id
                 .ok_or(Error::Unexpected("book file without bookId"))?,
-        ),
+            author: current.author_id.unwrap_or_default(),
+        },
     };
     Ok(Some(Owner {
         media,
@@ -606,7 +621,7 @@ pub async fn replace(
             "trackfile",
             json!({ "name": "AlbumSearch", "albumIds": [id] }),
         ),
-        Media::Book(id) => ("bookfile", json!({ "name": "BookSearch", "bookIds": [id] })),
+        Media::Book { id, .. } => ("bookfile", json!({ "name": "BookSearch", "bookIds": [id] })),
     };
     if let Some(file) = &owner.current {
         send(call(Method::DELETE, format!("{kind}/{}", file.id))).await?;
@@ -621,7 +636,7 @@ async fn replacing(s: &Session<'_>, job: Option<&str>, owner: &Owner) -> Result<
         Media::Episodes { ids, .. } => ids.iter().map(|&id| ("episodeIds", id)).collect(),
         Media::Movie(id) => vec![("movieId", *id)],
         Media::Album { id, .. } => vec![("albumIds", *id)],
-        Media::Book(id) => vec![("bookIds", *id)],
+        Media::Book { id, .. } => vec![("bookIds", *id)],
     };
     let queued: Vec<QueueRecord> =
         fetch(s.call(Method::GET, "queue/details").query(&query)).await?;
@@ -686,7 +701,7 @@ async fn newest_grabs(s: &Session<'_>, owner: &Owner) -> Result<Vec<Record>, Err
         Media::Episodes { ids, .. } => ids.iter().map(|&id| ("episodeId", id)).collect(),
         Media::Movie(id) => vec![("movieIds", *id)],
         Media::Album { id, .. } => vec![("albumId", *id)],
-        Media::Book(id) => vec![("bookId", *id)],
+        Media::Book { id, .. } => vec![("bookId", *id)],
     };
     let mut newest = Vec::new();
     for filter in filters {
@@ -738,6 +753,7 @@ mod tests {
                 album_id: None,
                 artist_id: None,
                 book_id: None,
+                author_id: None,
             }),
         };
         assert!(!owner("2024-05-01T12:00:00.5Z").replaced());
@@ -754,6 +770,7 @@ mod tests {
             album_id: None,
             artist_id: None,
             book_id: Some(7),
+            author_id: None,
         };
         let files = || {
             vec![
@@ -812,6 +829,20 @@ mod tests {
         assert!(!searching(&episodes, &started("EpisodeSearch", ids(&[7]))));
         assert!(searching(&episodes, &started("SeasonSearch", season(1))));
         assert!(!searching(&episodes, &started("SeasonSearch", season(2))));
+        for (series, status, expected) in [
+            (9, "started", true),
+            (9, "queued", true),
+            (10, "started", false),
+            (9, "completed", false),
+        ] {
+            assert_eq!(
+                searching(
+                    &episodes,
+                    &command("SeriesSearch", status, json!({ "seriesId": series }))
+                ),
+                expected
+            );
+        }
         assert!(searching(
             &movie,
             &started("MoviesSearch", json!({ "movieIds": [3] }))
@@ -829,10 +860,28 @@ mod tests {
             &album,
             &started("ArtistSearch", json!({ "artistId": 3 }))
         ));
-        let book = Media::Book(8);
+        let book = Media::Book { id: 8, author: 2 };
         assert!(searching(
             &book,
             &started("BookSearch", json!({ "bookIds": [8] }))
+        ));
+        for (author, status, expected) in [
+            (2, "started", true),
+            (2, "queued", true),
+            (3, "started", false),
+            (2, "completed", false),
+        ] {
+            assert_eq!(
+                searching(
+                    &book,
+                    &command("AuthorSearch", status, json!({ "authorId": author }))
+                ),
+                expected
+            );
+        }
+        assert!(!searching(
+            &Media::Book { id: 8, author: 0 },
+            &started("AuthorSearch", json!({}))
         ));
     }
 }

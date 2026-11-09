@@ -8,14 +8,14 @@ use axum::Json;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use infinidysk_arr::{Arr, Error, Profile, owner_of_file, replace};
+use infinidysk_arr::{Arr, Error, Profile, owner, owner_of_file, replace};
 use serde_json::json;
 use tokio::net::TcpListener;
 
 /// What the Arr does about movie 3 once the release is blocklisted.
 #[derive(Clone, Copy)]
 enum Search {
-    /// It starts no search (automatic redownload is off); a search of movie 4 runs instead.
+    /// Interactive redownload is off; it only has an unrelated search of movie 4.
     Off,
     /// Its search keeps running, but a replacement shows up in the queue.
     Queues,
@@ -253,10 +253,11 @@ async fn a_grab_by_the_arr_search_is_left_to_it() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn without_its_own_search_it_deletes_and_searches_at_once() {
-    let (result, _, calls, _) =
+async fn an_interactive_grab_with_redownload_off_searches_at_once() {
+    let (result, _, calls, elapsed) =
         repair(Grab::Blocklists(Search::Off), Duration::from_secs(60), None).await;
     result.unwrap();
+    assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
     assert_eq!(
         calls,
         [
@@ -271,6 +272,72 @@ async fn without_its_own_search_it_deletes_and_searches_at_once() {
             "DELETE /api/v3/moviefile/7",
             "POST /api/v3/command",
         ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_book_keeps_its_file_while_its_author_is_searched() {
+    async fn chaptarr(State(calls): State<Arc<Mutex<Calls>>>, req: Request) -> Response {
+        let call = format!("{} {}", req.method(), req.uri());
+        calls.lock().unwrap().log.push(call.clone());
+        let file = json!({ "id": 7, "bookId": 8, "authorId": 2, "path": "/books/a.epub" });
+        Json(match call.as_str() {
+            "GET /api/v1/bookfile/7" => file,
+            "GET /api/v1/bookfile?bookId=8" => json!([file]),
+            "GET /api/v1/history?downloadId=job&eventType=3&pageSize=1000" => {
+                json!({ "records": [{ "id": 11, "bookId": 8, "data": {
+                    "droppedPath": "/completed/job/a.epub", "importedPath": "/books/a.epub"
+                } }] })
+            }
+            "GET /api/v1/queue/details?bookIds=8" => json!([]),
+            "GET /api/v1/command" => json!([{
+                "name": "AuthorSearch", "status": "started", "body": { "authorId": 2 }
+            }]),
+            _ => return StatusCode::NOT_FOUND.into_response(),
+        })
+        .into_response()
+    }
+
+    let calls = Arc::new(Mutex::new(Calls::default()));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let app = axum::Router::new()
+        .fallback(chaptarr)
+        .with_state(Arc::clone(&calls));
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    let arr = Arr {
+        id: uuid::Uuid::nil(),
+        name: "chaptarr".to_owned(),
+        profile: Profile::Chaptarr,
+        url,
+        api_key: "k".to_owned(),
+    };
+    let http = reqwest::Client::new();
+    let dropped = ["job/a.epub".to_owned()];
+    for owner in [
+        owner_of_file(&http, &arr, 7).await.unwrap().unwrap(),
+        owner(&http, &arr, "job", &dropped, Some(7))
+            .await
+            .unwrap()
+            .unwrap(),
+    ] {
+        let result = replace(
+            &http,
+            &arr,
+            Some("job"),
+            &owner,
+            Duration::from_millis(1),
+            &mut Some(12),
+        )
+        .await;
+        assert!(matches!(result, Err(Error::Searching)), "{result:?}");
+    }
+    let calls = &calls.lock().unwrap().log;
+    assert!(
+        !calls
+            .iter()
+            .any(|call| call.starts_with("DELETE ") || call.starts_with("POST ")),
+        "{calls:?}"
     );
 }
 

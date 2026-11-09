@@ -881,6 +881,14 @@ async fn resumed_repair(grabbed: bool) {
         req: Request,
     ) -> Result<Json<Value>, axum::http::StatusCode> {
         let call = format!("{} {}", req.method(), req.uri());
+        if call == "POST /api/v3/command" {
+            let body = axum::body::to_bytes(req.into_body(), 1 << 16)
+                .await
+                .unwrap();
+            let command: Value = serde_json::from_slice(&body).unwrap();
+            log.0.lock().unwrap().push(format!("{call} {command}"));
+            return Ok(Json(json!({})));
+        }
         let phase = phase.load(Ordering::Relaxed);
         let answer = match call.as_str() {
             "GET /api/v3/command" if phase == 1 => {
@@ -994,10 +1002,17 @@ async fn resumed_repair(grabbed: bool) {
         "{calls:?}"
     );
     assert_eq!(
-        count(|call| call == "POST /api/v3/command"),
+        count(|call| call.starts_with("POST /api/v3/command ")),
         usize::from(!grabbed),
         "{calls:?}"
     );
+    if !grabbed {
+        let command = json!({ "name": "EpisodeSearch", "episodeIds": [5, 6] });
+        assert!(
+            calls.contains(&format!("POST /api/v3/command {command}")),
+            "{calls:?}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
