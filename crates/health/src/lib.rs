@@ -136,6 +136,9 @@ pub struct Health {
     arr_wait: Duration,
     counters: [AtomicU64; 4],
     inconclusive: Mutex<HashMap<ItemId, u32>>,
+    /// Repairs whose release is blocklisted but not yet replaced: the Arr's id and the
+    /// newest grab id read before the blocklist.
+    searching: Mutex<HashMap<ItemId, (uuid::Uuid, i64)>>,
     wake: Notify,
 }
 
@@ -198,6 +201,7 @@ impl Health {
             arr_wait: ARR_WAIT,
             counters: Default::default(),
             inconclusive: Mutex::default(),
+            searching: Mutex::default(),
             wake: Notify::new(),
         })
     }
@@ -739,7 +743,29 @@ impl Health {
             return Ok(());
         }
         let job_id = job.map(|j| j.to_string());
-        match arr::replace(&self.http, &arr, job_id.as_deref(), &owner, self.arr_wait).await {
+        let mut resume = self
+            .searching
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&item.id)
+            .and_then(|(id, since)| (id == arr.id).then_some(since));
+        let replaced = arr::replace(
+            &self.http,
+            &arr,
+            job_id.as_deref(),
+            &owner,
+            self.arr_wait,
+            &mut resume,
+        )
+        .await;
+        if let Some(since) = resume {
+            // ponytail: memory only, so a restart re-blocklists; a health column would keep it.
+            self.searching
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(item.id, (arr.id, since));
+        }
+        match replaced {
             Ok(()) => {
                 self.reject(item, &job_name).await?;
                 self.count(REPAIRED);
@@ -760,6 +786,10 @@ impl Health {
                     ..status
                 };
                 self.db.set_health(item.id, &next, status.recheck).await?;
+                self.searching
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .remove(&item.id);
                 Ok(())
             }
             Err(error) => {
@@ -810,6 +840,10 @@ impl Health {
             ..status
         };
         self.db.set_health(item.id, &next, status.recheck).await?;
+        self.searching
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&item.id);
         Ok(())
     }
 
