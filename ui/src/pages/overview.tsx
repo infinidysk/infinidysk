@@ -448,7 +448,13 @@ const Windowed = memo(function Windowed({ history: h, span }: { history: History
             trend(p.map((x) => x.stalls), "var(--color-warning)", { bars: true }),
           ],
           [
-            "Missing articles",
+            <span className="inline-flex items-center gap-1">
+              Provider misses
+              <InfoTip label="About provider misses">
+                Playback requests a provider answered without the article. Most are then fetched from the next provider, so the
+                viewer may not notice them.
+              </InfoTip>
+            </span>,
             pct(play?.missing ?? 0, play?.requests ?? 0),
             `${count(play?.missing ?? 0)} of ${count(play?.requests ?? 0)} playback requests`,
           ],
