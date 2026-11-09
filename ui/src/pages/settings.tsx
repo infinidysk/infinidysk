@@ -10,7 +10,6 @@ import {
   Plus,
   Trash2,
   TriangleAlert,
-  X,
 } from "lucide-react";
 import { Link, Navigate, NavLink, useBlocker, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
@@ -40,6 +39,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { TagInput } from "@/components/ui/tag-input";
 import {
   choiceCard,
   DiscardDialog,
@@ -67,68 +67,6 @@ const strategies: { value: Schemas["ImportStrategy"]; title: string; blurb: stri
 ];
 
 const inlineLink = "hover:text-foreground relative underline underline-offset-4 after:absolute after:-inset-y-1 after:inset-x-0";
-
-/** Chips with a trailing input; Enter, comma or space adds, Backspace on empty removes the last. */
-function TagInput({
-  id,
-  value,
-  disabled,
-  onChange,
-}: {
-  id: string;
-  value: string[];
-  disabled: boolean;
-  onChange: (value: string[]) => void;
-}) {
-  const [text, setText] = useState("");
-  const add = () => {
-    if (text && !value.includes(text)) onChange([...value, text]);
-    setText("");
-  };
-  return (
-    <div
-      className={cn(
-        "flex min-h-8 w-full flex-wrap items-center gap-1.5 rounded-lg border border-input px-1.5 py-1 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 dark:bg-input/30",
-        disabled && "pointer-events-none cursor-not-allowed opacity-50",
-      )}
-    >
-      {value.map((tag) => (
-        <span key={tag} className="flex h-6 items-center gap-1 rounded-full border border-input pr-1 pl-2.5 text-sm">
-          {tag}
-          <button
-            type="button"
-            aria-label={`Remove ${tag}`}
-            className="text-muted-foreground hover:text-foreground -my-1 grid size-6 place-items-center rounded-full"
-            onClick={() => onChange(value.filter((t) => t !== tag))}
-          >
-            <X className="size-3.5" />
-          </button>
-        </span>
-      ))}
-      <input
-        id={id}
-        disabled={disabled}
-        value={text}
-        onChange={(e) => {
-          // Android keyboards report commas and spaces as "Unidentified" keys, so split here too.
-          const parts = e.target.value.split(/[\s,]+/).map((p) => p.replace(/[^A-Za-z0-9-]/g, ""));
-          const rest = parts.pop() ?? "";
-          const added = parts.filter((p) => p && !value.includes(p));
-          if (added.length) onChange([...value, ...new Set(added)]);
-          setText(rest);
-        }}
-        onBlur={add}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === "," || e.key === " ") {
-            e.preventDefault();
-            add();
-          } else if (e.key === "Backspace" && !text && value.length) onChange(value.slice(0, -1));
-        }}
-        className="h-6 min-w-24 flex-1 bg-transparent px-1 text-sm outline-none"
-      />
-    </div>
-  );
-}
 
 function randomKey(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
