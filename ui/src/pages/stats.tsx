@@ -126,7 +126,15 @@ function Providers({ history: h, live, span }: { history: History; live?: Live; 
             <TableHead className="text-right">Requests</TableHead>
             <TableHead className="hidden xl:table-cell">Rate</TableHead>
             <TableHead className="hidden md:table-cell">Errors</TableHead>
-            <TableHead className="hidden md:table-cell">Missing</TableHead>
+            <TableHead className="hidden md:table-cell">
+              <span className="inline-flex items-center gap-1">
+                Missing
+                <InfoTip label="About missing">
+                  Articles the provider did not have. A backup is asked only for what the providers before it missed, so a
+                  high share there is expected.
+                </InfoTip>
+              </span>
+            </TableHead>
             <TableHead className="text-right">
               <span className="inline-flex items-center gap-1">
                 Latency
@@ -514,6 +522,7 @@ const Catalogue = memo(function Catalogue({ history: h }: { history: History }) 
   return (
     <Card title="Library" description="Every file you can play, right now">
       <Tiles
+        flush
         tiles={[
           ["Files", count(c.files)],
           ["Total size", bytes(c.bytes)],
@@ -545,6 +554,7 @@ const Lifetime = memo(function Lifetime({ history: h }: { history: History }) {
   return (
     <Card title="All time" description={h.records.since == null ? "No history yet" : since(h.records.since)}>
       <Tiles
+        flush
         tiles={[
         ["Read", bytes(l.served), `${bytes(l.fetched)} from providers`],
         ["Articles", count(l.requests), `${count(l.rescues)} rescued`],
