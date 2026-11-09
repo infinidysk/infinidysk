@@ -496,15 +496,12 @@ const dots: Record<Tone, string> = {
   muted: "bg-muted-foreground/50",
 };
 
-/** A coloured dot followed by a label; `compact` shows only the dot below `sm`, with the label on hover and for screen readers. */
+/** A coloured dot followed by a label; `compact` sets the label in `text-xs` below `sm`. */
 export function Status({ tone, className, children, compact }: { tone: Tone; className?: string; children: ReactNode; compact?: boolean }) {
   return (
-    <span
-      className={cn("inline-flex items-center gap-2 whitespace-nowrap", className)}
-      title={compact && typeof children === "string" ? children : undefined}
-    >
+    <span className={cn("inline-flex items-center whitespace-nowrap", compact ? "gap-1.5 text-xs sm:gap-2 sm:text-sm" : "gap-2", className)}>
       <span className={cn("size-2 shrink-0 rounded-full", dots[tone])} aria-hidden />
-      {compact ? <span className="sr-only sm:not-sr-only">{children}</span> : children}
+      {children}
     </span>
   );
 }

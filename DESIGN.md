@@ -601,7 +601,7 @@ Reuse these before writing new markup; a second hand-rolled copy of an existing 
 
 (Supabase: [Badge](https://supabase.com/design-system/docs/components/badge), Status Codes)
 
-- `Status`: an 8px dot and a label (`gap-2`, no wrap), toned per Colors › Status. Extra detail follows a middle dot in muted text ("Failed · Replacement requested", `CheckStatus`). In table state columns pass `compact`: below `sm` only the dot shows, the label stays for screen readers and on hover, and the column head goes `sr-only` too.
+- `Status`: an 8px dot and a label (`gap-2`, no wrap), toned per Colors › Status. Extra detail follows a middle dot in muted text ("Failed · Replacement requested", `CheckStatus`). In table state columns pass `compact`: below `sm` the label drops to `text-xs` with a tighter gap but always shows, and the column head goes `sr-only`.
 - `Badge` (`h-5 rounded-full text-xs font-medium`): static qualifiers of one or two words (Set by environment, Dry run, Backup, Custom, Removed). `outline` for neutral qualifiers, `secondary` for quiet categories, `destructive` for blocking problems (Quota used up). Badges stand out by design, so use them sparingly; never restyle them at the call site (case, radius, size) and never use them for live state (that is `Status`).
 - Nav counters: `min-w-5 rounded-full px-1.5 text-xs leading-5 tabular-nums`; neutral `bg-foreground/10 text-muted-foreground`, needs action `bg-warning/15 text-warning-text`. The pill is `aria-hidden` and `sr-only` text inside the link states the meaning ("Health, 3 need action"); an `aria-label` on a plain `span` is not announced.
 
