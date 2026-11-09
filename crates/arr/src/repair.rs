@@ -639,8 +639,11 @@ async fn own_search(
     loop {
         let commands: Vec<Command> = fetch(s.call(Method::GET, "command")).await?;
         if !commands.iter().any(|c| searching(&owner.media, c)) {
-            // The queue shows a grab only after a refresh; history has it at once.
-            return Ok(newest_grab(s, owner).await? > since);
+            // The queue shows a grab only after a refresh; history has it at once. The queue
+            // still catches one made before `since` that it showed only since our first read.
+            return Ok(
+                newest_grab(s, owner).await? > since || replacing(s, Some(job), owner).await?
+            );
         }
         if replacing(s, Some(job), owner).await? {
             return Ok(true);

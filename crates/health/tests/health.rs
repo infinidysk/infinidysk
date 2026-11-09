@@ -876,6 +876,7 @@ async fn a_repair_resumes_the_arr_search_it_stopped_waiting_for() {
         let phase = phase.load(Ordering::Relaxed);
         let answer = match call.as_str() {
             "GET /api/v3/command" if phase == 1 => {
+                log.0.lock().unwrap().push(format!("{call} 503"));
                 return Err(axum::http::StatusCode::SERVICE_UNAVAILABLE);
             }
             "GET /api/v3/command" => {
@@ -950,6 +951,14 @@ async fn a_repair_resumes_the_arr_search_it_stopped_waiting_for() {
             .unwrap();
         phase.store(next, Ordering::Relaxed);
     }
+    let failed = log
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| c.ends_with(" 503"))
+        .count();
+    assert_eq!(failed, 1, "phase 1 reached the failing command list");
 
     // Phase 2: the grab of episode 6 is newer than the boundary step 1 read.
     assert!(health.step().await.unwrap());

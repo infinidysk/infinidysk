@@ -24,6 +24,9 @@ enum Search {
     Grabs,
     /// Its search runs until the second command read, then ends with no grab.
     FindsNothing,
+    /// Its search has ended by the first command read with no grab, but the queue shows a
+    /// replacement grabbed before the blocklist only from then on.
+    QueuesLate,
     /// It reuses a search of movie 3 that stays queued.
     Queued,
 }
@@ -84,7 +87,7 @@ async fn radarr(State((grab, calls)): State<Shared>, req: Request) -> Response {
             Json(json!({ "id": 7, "movieId": 3, "path": "/movies/A/a.mkv" })).into_response()
         }
         "GET /api/v3/queue/details?movieId=3" => {
-            if matches!(search, Some(Search::Queues)) && reads > 0 {
+            if matches!(search, Some(Search::Queues | Search::QueuesLate)) && reads > 0 {
                 Json(json!([{ "downloadId": "other" }])).into_response()
             } else {
                 Json(json!([])).into_response()
@@ -107,7 +110,9 @@ async fn radarr(State((grab, calls)): State<Shared>, req: Request) -> Response {
             match search {
                 Some(Search::Off) => commands.push(movies_search(2, 4, "started")),
                 Some(Search::Queues) => commands.push(movies_search(2, 3, "started")),
-                Some(Search::Grabs) => commands.push(movies_search(2, 3, "completed")),
+                Some(Search::Grabs | Search::QueuesLate) => {
+                    commands.push(movies_search(2, 3, "completed"));
+                }
                 Some(Search::FindsNothing) => {
                     let status = if reads < 2 { "started" } else { "completed" };
                     commands.push(movies_search(2, 3, status));
@@ -233,8 +238,33 @@ async fn without_its_own_search_it_deletes_and_searches_at_once() {
             "POST /api/v3/history/failed/12",
             "GET /api/v3/command",
             "GET /api/v3/history?eventType=1&pageSize=1&movieIds=3",
+            "GET /api/v3/queue/details?movieId=3",
             "DELETE /api/v3/moviefile/7",
             "POST /api/v3/command",
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_replacement_queued_by_the_time_the_search_ends_is_left_to_it() {
+    let (result, _, calls, _) = repair(
+        Grab::Blocklists(Search::QueuesLate),
+        Duration::from_secs(60),
+        None,
+    )
+    .await;
+    result.unwrap();
+    assert_eq!(
+        calls,
+        [
+            "GET /api/v3/moviefile/7",
+            "GET /api/v3/queue/details?movieId=3",
+            "GET /api/v3/history?downloadId=job&eventType=1&pageSize=1",
+            "GET /api/v3/history?eventType=1&pageSize=1&movieIds=3",
+            "POST /api/v3/history/failed/12",
+            "GET /api/v3/command",
+            "GET /api/v3/history?eventType=1&pageSize=1&movieIds=3",
+            "GET /api/v3/queue/details?movieId=3",
         ]
     );
 }
@@ -260,6 +290,7 @@ async fn it_deletes_only_after_the_arr_search_ends() {
             "GET /api/v3/queue/details?movieId=3",
             "GET /api/v3/command",
             "GET /api/v3/history?eventType=1&pageSize=1&movieIds=3",
+            "GET /api/v3/queue/details?movieId=3",
             "DELETE /api/v3/moviefile/7",
             "POST /api/v3/command",
         ]
