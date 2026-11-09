@@ -300,7 +300,7 @@ async fn unmount_stale(dir: &Path) -> bool {
     }
 }
 
-/// Readahead and background limits live in sysfs, not the init reply. Best effort: a
+/// Applies readahead and background limits through sysfs. Best effort: a
 /// container's read-only `/sys` keeps the kernel's readahead. Returns what the kernel
 /// ended up with.
 async fn tune(config: &Config) -> Kernel {
@@ -927,9 +927,12 @@ impl Fs {
 impl Filesystem for Fs {
     async fn init(&self, _req: Request) -> Result<ReplyInit> {
         // Writes always fail, so the write size is moot; any valid value will do.
-        Ok(ReplyInit {
-            max_write: NonZeroU32::MIN.saturating_add(128 * 1024 - 1),
-        })
+        // ponytail: keep INIT limits at 12/9 until `tune` applies config via fusectl.
+        // To avoid that startup window and support unwritable fusectl, pass both
+        // configured limits through `ReplyInit`; keep readahead tuning in sysfs.
+        Ok(ReplyInit::new(
+            NonZeroU32::MIN.saturating_add(128 * 1024 - 1),
+        ))
     }
 
     async fn destroy(&self, _req: Request) {
@@ -958,13 +961,10 @@ impl Filesystem for Fs {
         lock(&self.inodes).forget(inode, nlookup);
     }
 
-    async fn batch_forget(&self, _req: Request, inodes: &[Inode]) {
-        // ponytail: the batch arrives without lookup counts. The kernel forgets an inode
-        // only when evicting it, so dropping it whole is right unless a lookup races the
-        // eviction; that inode then answers ENOENT and the kernel looks the name up again.
+    async fn batch_forget(&self, _req: Request, inodes: &[(Inode, u64)]) {
         let mut table = lock(&self.inodes);
-        for &inode in inodes {
-            table.forget(inode, u64::MAX);
+        for &(inode, nlookup) in inodes {
+            table.forget(inode, nlookup);
         }
     }
 
@@ -1302,9 +1302,10 @@ const fn ttls(node: &Node) -> (Duration, Duration) {
     }
 }
 
-// ponytail: no kernel notify invalidation; the 1 s entry TTL bounds how long a new or
-// removed name stays stale. Send `Notify` entry invalidations from the import path if
-// that ever proves too slow.
+// ponytail: mutable entries rely on the 1 s TTL, not kernel cache invalidation.
+// If stale listings become a problem, retain the notifier from `Filesystem::ready`
+// and invalidate entries after imports/deletions in session-scoped background work,
+// outside request handlers and locks.
 
 /// Unix milliseconds for `node`'s times; `epoch` zeroes media files and leaves the rest.
 fn modified(node: &Node, epoch: bool) -> i64 {
@@ -1315,6 +1316,50 @@ fn modified(node: &Node, epoch: bool) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn init_and_batch_forget_preserve_limits_and_live_lookups() {
+        let fs = Fs::new(
+            Arc::new(Vfs::new(
+                infinidysk_db::Db::connect("sqlite::memory:").await.unwrap(),
+                Arc::new(infinidysk_nntp::Client::new([])),
+                infinidysk_stream::Budget::new(1 << 20),
+                1 << 20,
+                "/mnt",
+            )),
+            0,
+            0,
+            CancellationToken::new(),
+        );
+        let reply = fs.init(Request::default()).await.unwrap();
+        assert_eq!(reply.max_write.get(), 128 * 1024);
+        assert_eq!(reply.max_background, None);
+        assert_eq!(reply.congestion_threshold, None);
+
+        let (retained, forgotten) = {
+            let mut table = lock(&fs.inodes);
+            let retained = table.remember("/retained");
+            assert_eq!(table.remember("/retained"), retained);
+            (retained, table.remember("/forgotten"))
+        };
+        fs.batch_forget(
+            Request::default(),
+            &[(retained, 1), (forgotten, 1), (ROOT, u64::MAX)],
+        )
+        .await;
+        {
+            let table = lock(&fs.inodes);
+            assert_eq!(table.path(retained).as_deref(), Some("/retained"));
+            assert_eq!(table.path(forgotten), None);
+            assert_eq!(table.path(ROOT).as_deref(), Some("/"));
+        }
+        fs.batch_forget(Request::default(), &[(retained, 1)]).await;
+        let table = lock(&fs.inodes);
+        assert_eq!(table.path(retained), None);
+        assert!(!table.by_path.contains_key("/retained"));
+        assert!(!table.by_path.contains_key("/forgotten"));
+        drop(table);
+    }
 
     #[test]
     fn only_path_computed_nodes_keep_long_ttls() {
