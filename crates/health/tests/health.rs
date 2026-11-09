@@ -6,7 +6,7 @@
 use std::fmt::Write as _;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -862,6 +862,106 @@ async fn a_co_owner_that_cannot_repair_does_not_stop_one_that_can() {
         calls.iter().any(|c| c == "POST /api/v3/command"),
         "{calls:?}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_repair_resumes_the_arr_search_it_stopped_waiting_for() {
+    // `sonarr` for a file of episodes 5 and 6, season 1 of series 9. Phase 0: its season
+    // search runs. 1: its command list fails. 2: the search ended, having grabbed episode 6.
+    async fn slow(
+        State((log, phase)): State<(Log, Arc<AtomicU8>)>,
+        req: Request,
+    ) -> Result<Json<Value>, axum::http::StatusCode> {
+        let call = format!("{} {}", req.method(), req.uri());
+        let phase = phase.load(Ordering::Relaxed);
+        let answer = match call.as_str() {
+            "GET /api/v3/command" if phase == 1 => {
+                return Err(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+            }
+            "GET /api/v3/command" => {
+                let status = if phase == 0 { "started" } else { "completed" };
+                json!([{ "id": 1, "name": "SeasonSearch", "status": status,
+                         "body": { "seriesId": 9, "seasonNumber": 1 } }])
+            }
+            "GET /api/v3/episode/5" => {
+                json!({ "episodeFileId": 7, "seriesId": 9, "seasonNumber": 1 })
+            }
+            c if c.contains("eventType=3") => {
+                let records = [5, 6].map(|episode| json!({
+                    "id": 20 + episode, "episodeId": episode,
+                    "data": { "droppedPath": "/data/strm/tv/job/job.strm", "importedPath": "/tv/Show/a.strm" },
+                }));
+                json!({ "records": records })
+            }
+            c if c.ends_with("&episodeId=6") && phase == 2 => {
+                json!({ "records": [{ "id": 30, "data": {} }] })
+            }
+            _ => return Ok(sonarr(State(log), req).await),
+        };
+        log.0.lock().unwrap().push(call);
+        Ok(Json(answer))
+    }
+
+    let (articles, len) = mkv("r");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, job) = import(&server, &articles, len).await;
+    db.record_owner(
+        uuid::Uuid::nil(),
+        item.id,
+        Some(7),
+        "/tv/Show/S01E01.strm",
+        Some(job),
+    )
+    .await
+    .unwrap();
+    let log: Log = Arc::default();
+    let phase: Arc<AtomicU8> = Arc::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let app = axum::Router::new()
+        .fallback(slow)
+        .with_state((Arc::clone(&log), Arc::clone(&phase)));
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    let (_arr_tx, arr) = watch::channel(vec![Arr {
+        id: uuid::Uuid::nil(),
+        name: "sonarr".to_owned(),
+        profile: Profile::Sonarr,
+        url,
+        api_key: "k".to_owned(),
+    }]);
+    let (_settings_tx, settings) = watch::channel(Settings::default());
+    let health = Health::new(db.clone(), client(&server), arr, settings)
+        .unwrap()
+        .with_arr_wait(Duration::from_secs(1));
+
+    // Phase 0 spends an attempt (the search outlasts the wait), phase 1 none (a 503); both
+    // keep the file.
+    assert!(health.request_repair(item.id).await.unwrap());
+    for next in 1..=2 {
+        assert!(health.step().await.unwrap());
+        let (_, mut status) = db.health(item.id).await.unwrap().unwrap();
+        assert_eq!(
+            (status.state, status.repair_attempts),
+            (HealthState::Repairing, 1)
+        );
+        status.next_check = Some(0);
+        db.set_health(item.id, &status, Recheck::None)
+            .await
+            .unwrap();
+        phase.store(next, Ordering::Relaxed);
+    }
+
+    // Phase 2: the grab of episode 6 is newer than the boundary step 1 read.
+    assert!(health.step().await.unwrap());
+    let (_, status) = db.health(item.id).await.unwrap().unwrap();
+    assert_eq!(status.state, HealthState::Hidden);
+    let calls = log.0.lock().unwrap().clone();
+    let blocklists = calls
+        .iter()
+        .filter(|c| c.starts_with("POST /api/v3/history/failed/"))
+        .count();
+    assert_eq!(blocklists, 1, "{calls:?}");
+    assert!(!calls.iter().any(|c| c.starts_with("DELETE ")), "{calls:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
