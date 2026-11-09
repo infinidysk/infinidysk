@@ -93,6 +93,9 @@ function outages(provider: string, h: History) {
   });
 }
 
+const MISSING_TIP =
+  "Articles the provider did not have. A backup is asked only for what the providers before it missed, so a high share there is expected.";
+
 function Providers({ history: h, live, span }: { history: History; live?: Live; span: Window }) {
   const now = new Map(live?.providers.map((p) => [p.key, p]));
   const scores = new Map(h.providers.map((p) => [p.key, p]));
@@ -129,10 +132,7 @@ function Providers({ history: h, live, span }: { history: History; live?: Live; 
             <TableHead className="hidden md:table-cell">
               <span className="inline-flex items-center gap-1">
                 Missing
-                <InfoTip label="About missing">
-                  Articles the provider did not have. A backup is asked only for what the providers before it missed, so a
-                  high share there is expected.
-                </InfoTip>
+                <InfoTip label="About missing">{MISSING_TIP}</InfoTip>
               </span>
             </TableHead>
             <TableHead className="text-right">
@@ -170,7 +170,10 @@ function Providers({ history: h, live, span }: { history: History; live?: Live; 
                   {s && (s.failures > 0 || s.missing > 0 || s.trips > 0) && (
                     <div className="text-muted-foreground mt-0.5 font-mono text-xs whitespace-normal tabular-nums md:hidden">
                       <span className={cn(s.failures > 0 && "text-destructive")}>{count(s.failures, "error")}</span> ·{" "}
-                      <span className={cn(s.missing > 0 && "text-warning-text")}>{count(s.missing)} missing</span>
+                      <span className="whitespace-nowrap">
+                        <span className={cn(s.missing > 0 && "text-warning-text")}>{count(s.missing)} missing</span>{" "}
+                        <InfoTip label="About missing">{MISSING_TIP}</InfoTip>
+                      </span>
                       {s.trips > 0 && ` · ${count(s.trips, "trip")}`}
                     </div>
                   )}
