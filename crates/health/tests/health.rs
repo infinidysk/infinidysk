@@ -21,7 +21,7 @@ use infinidysk_queue::{Queue, Submission};
 use infinidysk_testkit::{Article, LoopbackServer, post};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
-use tokio::sync::watch;
+use tokio::sync::{Notify, watch};
 
 const ARTICLE: usize = 16 << 10;
 
@@ -553,6 +553,90 @@ async fn open_file_is_not_repaired() {
     assert_eq!(status.state, HealthState::Repairing);
     assert!(status.next_check.unwrap() > infinidysk_db::now_ms());
     assert!(log.0.lock().unwrap().is_empty(), "no Arr call");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_repair_waiting_on_the_arr_lets_compaction_pause_writes() {
+    // `sonarr`, holding the blocklist response until `release` once it has `arrived`.
+    async fn gated(
+        State((log, arrived, release)): State<(Log, Arc<Notify>, Arc<Notify>)>,
+        req: Request,
+    ) -> Json<Value> {
+        if req.uri().path() == "/api/v3/history/failed/11" {
+            arrived.notify_one();
+            release.notified().await;
+        }
+        sonarr(State(log), req).await
+    }
+
+    let (articles, len) = mkv("w");
+    let server = LoopbackServer::start(articles.clone()).await.unwrap();
+    let (db, item, job) = import(&server, &articles, len).await;
+    db.record_owner(
+        uuid::Uuid::nil(),
+        item.id,
+        Some(7),
+        "/tv/Show/S01E01.strm",
+        Some(job),
+    )
+    .await
+    .unwrap();
+    let (arrived, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    let log = Log::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let app = axum::Router::new().fallback(gated).with_state((
+        Arc::clone(&log),
+        Arc::clone(&arrived),
+        Arc::clone(&release),
+    ));
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    let (_arr_tx, arr) = watch::channel(vec![Arr {
+        id: uuid::Uuid::nil(),
+        name: "sonarr".to_owned(),
+        profile: Profile::Sonarr,
+        url,
+        api_key: "k".to_owned(),
+    }]);
+    let (_settings_tx, settings) = watch::channel(Settings::default());
+    let health = Health::new(db.clone(), client(&server), arr, settings)
+        .unwrap()
+        .with_arr_wait(Duration::ZERO);
+
+    assert!(health.request_repair(item.id).await.unwrap());
+    let mut repair = tokio::spawn(async move { health.step().await.unwrap() });
+    tokio::time::timeout(Duration::from_secs(10), arrived.notified())
+        .await
+        .expect("the repair blocklists the grab");
+    let paused = tokio::time::timeout(Duration::from_secs(1), db.pause_writes())
+        .await
+        .expect("a repair waiting on the Arr holds no write permit");
+    release.notify_one();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !log
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c == "POST /api/v3/command")
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the repair asks the Arr to search");
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), &mut repair)
+            .await
+            .is_err(),
+        "the repair's result waits for the pause"
+    );
+    let (_, status) = db.health(item.id).await.unwrap().unwrap();
+    assert_eq!(status.state, HealthState::Repairing);
+    drop(paused);
+    assert!(repair.await.unwrap());
+    let (_, status) = db.health(item.id).await.unwrap().unwrap();
+    assert_eq!(status.state, HealthState::Hidden);
 }
 
 #[tokio::test(flavor = "multi_thread")]
