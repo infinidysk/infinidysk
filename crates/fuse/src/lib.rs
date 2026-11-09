@@ -325,8 +325,9 @@ async fn tune(config: &Config) -> Kernel {
     if let Err(error) = written {
         warn!(
             reason = %error,
-            "FUSE readahead stays at the kernel default; in docker compose add the volume \
-             `/sys/devices/virtual/bdi:/sys/devices/virtual/bdi:rw`"
+            "FUSE readahead could not be set from this process; in rootful Docker add the volume \
+             `/sys/devices/virtual/bdi:/sys/devices/virtual/bdi:rw`; rootless Docker may need \
+             host-side tuning by an administrator"
         );
     }
     let connection = connection_dir((major << 20) | minor);
@@ -342,8 +343,9 @@ async fn tune(config: &Config) -> Kernel {
     if let Err(error) = written.await {
         warn!(
             reason = %error,
-            "FUSE background limit stays at the kernel default, which caps parallel reads; \
-             setting it needs root and, in Docker, `cap_add: [SYS_ADMIN]`"
+            "FUSE background limits could not all be set from this process; fusectl must be \
+             accessible and writable; in rootful Docker use `cap_add: [SYS_ADMIN]`; \
+             rootless Docker may need host-side tuning by an administrator"
         );
     }
     let kernel = Kernel {
