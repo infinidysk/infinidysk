@@ -78,18 +78,25 @@ export function Stats() {
   );
 }
 
+/** Smallest bar for a bucket with an outage, so a short one in a long bucket stays visible. */
+const MIN_OUTAGE = 0.25;
+
 /** Share of each bucket a provider's circuit breaker was open. */
-function outages(provider: string, h: History) {
+function outages(key: string, name: string, score: Score | undefined, h: History) {
   const bucket = h.bucket_ms;
-  return h.points.map((p) => {
+  return h.points.map((p, i) => {
     let open = 0;
+    let hit = (score?.points[i]?.trips ?? 0) > 0;
     for (const e of h.breaker_events) {
-      if (e.provider !== provider) continue;
+      // Outages stored before keys were carry only the name.
+      if (e.provider_key != null ? e.provider_key !== key : e.provider !== name) continue;
+      const end = p.ts + bucket;
       const from = Math.max(e.at, p.ts);
-      const to = Math.min(e.at + Math.max(e.open_ms, bucket / 50), p.ts + bucket);
+      const to = Math.min(e.at + e.open_ms, end);
       if (to > from) open += to - from;
+      if (to > from || (e.at >= p.ts && e.at < end)) hit = true;
     }
-    return Math.min(1, open / bucket);
+    return hit ? Math.min(1, Math.max(MIN_OUTAGE, open / bucket)) : 0;
   });
 }
 
@@ -179,7 +186,7 @@ function Providers({ history: h, live, span }: { history: History; live?: Live; 
                   )}
                 </TableCell>
                 <TableCell className="hidden 2xl:table-cell">
-                  <Spark values={outages(name, h)} max={1} color="var(--color-destructive)" bars />
+                  <Spark values={outages(key, name, s, h)} max={1} color="var(--color-destructive)" bars />
                 </TableCell>
                 <TableCell className="text-right font-mono tabular-nums">
                   {s ? count(s.attempts) : "–"}
