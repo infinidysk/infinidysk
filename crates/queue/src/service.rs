@@ -672,6 +672,8 @@ impl Queue {
         let count = files.len();
         let mut history = history(job, started, JobStatus::Completed, None, Some(items[0].id));
         if let Some(inner) = inner {
+            // A retry from history must not open the inner NZB's files with the wrapper's password.
+            history.file_name = names::without_password(&job.file_name);
             history.nzb_blob = Some(nzb_blob);
             history.total_bytes = inner.total_bytes;
             blobs.push((

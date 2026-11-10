@@ -220,6 +220,11 @@ pub fn password(file_name: &str) -> Option<&str> {
     split_password(file_name).1
 }
 
+/// `file_name` without directories and password.
+pub fn without_password(file_name: &str) -> String {
+    format!("{}.nzb", split_password(file_name).0)
+}
+
 /// The file name without directories, `.nzb` and password, and the password.
 fn split_password(file_name: &str) -> (&str, Option<&str>) {
     let base = file_name.rsplit(['/', '\\']).next().unwrap_or(file_name);
@@ -296,6 +301,7 @@ mod tests {
         assert_eq!(job_name("a.b - Password=s3cret.nzb"), "a.b");
         assert_eq!(password("a.b - Password=s3cret.nzb"), Some("s3cret"));
         assert_eq!(password("a.b{{}}.nzb"), None);
+        assert_eq!(without_password("dir/a.b{{pw}}.NZB"), "a.b.nzb");
         assert_eq!(sanitize(".."), None);
     }
 

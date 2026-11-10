@@ -1211,6 +1211,85 @@ async fn an_nzb_inside_a_stored_archive_is_followed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_nzb_inside_a_rar_or_gzipped_is_followed() {
+    use std::io::Write as _;
+
+    let clip = post("c", "Clip.mkv", &mkv(4000, 1), 1000);
+    let release = nzb(&[("Clip.mkv", &clip, 4000, 1000)]);
+    let chunk = Chunk {
+        name: "release.nzb",
+        total: release.len() as u64,
+        data: &release,
+        split_before: false,
+        split_after: false,
+    };
+    let rar = rar5_volume(0, true, &[chunk]);
+    let packed = post("r", "pack.rar", &rar, 1000);
+    let in_rar = nzb(&[("pack.rar", &packed, rar.len(), 1000)]);
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gz.write_all(&release).unwrap();
+    let mut articles = [clip, packed].concat();
+    let gzipped = wrap("g", &gz.finish().unwrap(), &mut articles);
+    let (_server, queue) = setup(articles).await;
+    let db = queue.db().clone();
+
+    for outer in [in_rar, gzipped] {
+        let history = run(&queue, &db, &outer).await;
+        assert_eq!(
+            history.status,
+            JobStatus::Completed,
+            "{:?}",
+            history.fail_message
+        );
+        db.delete_item(history.download_dir.unwrap()).await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retried_inner_nzb_opens_with_its_own_password() {
+    let archive = fixture("archive/tests/fixtures/aes-5.rar");
+    let packed = post("a", "pack.rar", &archive, 1000);
+    let release = String::from_utf8(nzb(&[("pack.rar", &packed, archive.len(), 1000)]))
+        .unwrap()
+        .replacen(
+            "<nzb>",
+            "<nzb><head><meta type=\"password\">test</meta></head>",
+            1,
+        );
+    let mut articles = packed;
+    let outer = wrap("n", release.as_bytes(), &mut articles);
+    let (_server, queue) = setup(articles).await;
+    let db = queue.db().clone();
+    let job = Submission {
+        file_name: "job{{wrong}}.nzb",
+        category: "tv",
+        priority: 0,
+        post_processing: 0,
+    };
+
+    let id = queue.enqueue(&job, &outer).await.unwrap();
+    assert!(queue.process_next().await);
+    let history = db.history_entry(id).await.unwrap().unwrap();
+    assert_eq!(
+        history.status,
+        JobStatus::Completed,
+        "{:?}",
+        history.fail_message
+    );
+    db.delete_item(history.download_dir.unwrap()).await.unwrap();
+
+    let id = queue.retry(id).await.unwrap();
+    assert!(queue.process_next().await);
+    let history = db.history_entry(id).await.unwrap().unwrap();
+    assert_eq!(
+        history.status,
+        JobStatus::Completed,
+        "{:?}",
+        history.fail_message
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_nzb_next_to_other_files_stays_a_file() {
     let release = b"<nzb/>";
     let inner = post("n", "release.nzb", release, 1000);
