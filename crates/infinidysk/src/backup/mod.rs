@@ -281,7 +281,7 @@ impl Backups {
     }
 
     /// The configured or default folder, not created.
-    async fn resolve_dir(&self) -> Result<PathBuf, String> {
+    pub(crate) async fn resolve_dir(&self) -> Result<PathBuf, String> {
         let live = self.parts.live.as_deref().ok_or(POSTGRES)?;
         let dir = self.settings().await.maintenance.backup.dir;
         Ok(if dir.is_empty() {

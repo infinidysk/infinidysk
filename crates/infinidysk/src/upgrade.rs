@@ -35,6 +35,8 @@ use crate::config::{
 };
 use crate::quota::Quotas;
 
+pub mod leftovers;
+
 /// Config key of the C# `WebDAV` password hash waiting for its first use.
 pub const WEBDAV_KEY: &str = "upgrade.webdav";
 /// Failed attempts remembered, so retrying clients do not cost a hash each.

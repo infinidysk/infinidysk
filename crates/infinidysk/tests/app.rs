@@ -161,6 +161,90 @@ async fn a_restart_request_stops_the_server_for_a_restart() {
     assert_eq!(server.await.unwrap().unwrap(), Exit::Restart);
 }
 
+/// After an import from 1.x, the System page lists 1.x data still on disk; signed in only.
+#[tokio::test]
+async fn lists_1x_data_left_after_the_import() {
+    let (addr, cancel, server, database_url) = start().await;
+    let get = admin_request("GET", "/api/v1/upgrade/leftovers", "");
+    let (code, body) = send(addr, &get).await;
+    assert_eq!(code, "HTTP/1.1 200 OK");
+    let view: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(view["imported"], false);
+    assert_eq!(view["present"], false);
+
+    let config = std::path::PathBuf::from(database_url.trim_start_matches("sqlite:"))
+        .with_extension("config");
+    std::fs::create_dir_all(config.join("blobs")).unwrap();
+    std::fs::write(config.join("db.sqlite"), vec![1u8; 8192]).unwrap();
+    // Not imported from 1.x: a db.sqlite there means nothing.
+    let (_, body) = send(addr, &get).await;
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["present"],
+        false
+    );
+
+    let db = infinidysk_db::Db::connect(&database_url).await.unwrap();
+    db.write_config(
+        &[("upgrade.state", "\"done\""), ("upgrade.report", "\"r\"")],
+        &[],
+    )
+    .await
+    .unwrap();
+    let (_, body) = send(addr, &get).await;
+    let view: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(view["imported"], true);
+    assert_eq!(view["present"], true);
+    assert!(view["in_use"].as_str().unwrap().contains("skipped"));
+    assert!(view["scan"].is_null());
+
+    db.write_config(
+        &[
+            ("upgrade.download_ids", "true"),
+            ("upgrade.skipped_retried.5", "true"),
+        ],
+        &[],
+    )
+    .await
+    .unwrap();
+    db.close().await;
+    let scan = admin_request("POST", "/api/v1/upgrade/leftovers/scan", "");
+    let (code, body) = send(addr, &scan).await;
+    assert_eq!(code, "HTTP/1.1 200 OK");
+    let view: Value = serde_json::from_str(&body).unwrap();
+    assert!(view["in_use"].is_null());
+    assert_eq!(view["scan"]["gone"], false);
+    assert!(view["scan"]["bytes"].as_u64().unwrap() > 0);
+
+    // Dismissing the notice leaves the import report's own notice alone.
+    let dismiss = admin_request("POST", "/api/v1/upgrade/leftovers/dismiss", "");
+    assert_eq!(status(addr, &dismiss).await, "HTTP/1.1 204 No Content");
+    let (_, body) = send(addr, &get).await;
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["dismissed"],
+        true
+    );
+    let report = admin_request("GET", "/api/v1/upgrade/report", "");
+    let (_, body) = send(addr, &report).await;
+    assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["seen"], false);
+
+    for (method, path) in [
+        ("GET", "/api/v1/upgrade/leftovers"),
+        ("POST", "/api/v1/upgrade/leftovers/scan"),
+        ("POST", "/api/v1/upgrade/leftovers/dismiss"),
+    ] {
+        let anonymous = format!(
+            "{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+        );
+        assert_eq!(
+            status(addr, &anonymous).await,
+            "HTTP/1.1 401 Unauthorized",
+            "{method} {path}"
+        );
+    }
+    cancel.cancel();
+    server.await.unwrap().unwrap();
+}
+
 /// The boot file, the default disk cache and the shown SQLite file use `Boot::home`.
 #[tokio::test]
 async fn keeps_the_boot_file_and_disk_cache_in_the_config_folder() {
