@@ -963,7 +963,8 @@ macro_rules! release_nzb {
 }
 
 /// Deletes item `$id` (a `Uuid`), its subtree, the job folders this leaves empty, and the
-/// blobs nothing references anymore, in `$tx`.
+/// blobs nothing references anymore, in `$tx`. Evaluates to how many of `$id` and the
+/// folders above it went.
 macro_rules! delete_subtree {
     ($db:expr, $tx:ident, $id:expr) => {{
         let id: Uuid = $id;
@@ -977,10 +978,11 @@ macro_rules! delete_subtree {
                 .fetch_optional(&mut *$tx)
                 .await?
                 .flatten();
-        sqlx::query("DELETE FROM items WHERE id = $1")
+        let mut removed = sqlx::query("DELETE FROM items WHERE id = $1")
             .bind(id)
             .execute(&mut *$tx)
-            .await?;
+            .await?
+            .rows_affected();
         let (mut meta, mut nzbs): (Vec<Uuid>, Vec<Uuid>) = (Vec::new(), Vec::new());
         for (m, n) in refs {
             meta.extend(m);
@@ -989,6 +991,7 @@ macro_rules! delete_subtree {
         // Climb empty folders to the job folder (the one carrying the NZB) and delete it
         // with them; an empty chain that ends anywhere else (a category) stays.
         let mut below = id;
+        let mut climbed = 0;
         while let Some(dir) = parent {
             let empty: Option<(Option<Uuid>, Option<Uuid>)> = sqlx::query_as(EMPTY_DIR)
                 .bind(dir)
@@ -996,12 +999,14 @@ macro_rules! delete_subtree {
                 .fetch_optional(&mut *$tx)
                 .await?;
             let Some((up, nzb)) = empty else { break };
+            climbed += 1;
             if let Some(nzb) = nzb {
                 sqlx::query("DELETE FROM items WHERE id = $1")
                     .bind(dir)
                     .execute(&mut *$tx)
                     .await?;
                 nzbs.push(nzb);
+                removed += climbed;
                 break;
             }
             (below, parent) = (dir, up);
@@ -1019,6 +1024,7 @@ macro_rules! delete_subtree {
         for blob in nzbs {
             release_nzb!($db, $tx, blob);
         }
+        removed
     }};
 }
 
@@ -2001,37 +2007,30 @@ impl Db {
         Ok(deleted)
     }
 
-    /// Deletes the empty folders below `/content/<category>` created before `before`
-    /// that no download in history holds, and the folders that leaves empty up to their
-    /// job folder. Returns how many folders it found empty.
+    /// Deletes one batch of the empty folders below `/content/<category>` created before
+    /// `before` that no download in history holds, and the folders that leaves empty up to
+    /// their job folder. Returns how many folders went; 0 once none is left.
     pub async fn delete_empty_dirs(&self, before: i64) -> Result<u64, Error> {
-        let mut removed = 0;
-        loop {
-            let found = on!(self, pool => {
-                let any: Vec<Uuid> = sqlx::query_scalar(EMPTY_DIRS_OUTSIDE_HISTORY)
-                    .bind(before)
-                    .fetch_all(pool)
-                    .await?;
-                if any.is_empty() {
-                    0
-                } else {
-                    let mut tx = pool.begin_with(self.begin_write()).await?;
-                    let dirs: Vec<Uuid> = sqlx::query_scalar(EMPTY_DIRS_OUTSIDE_HISTORY)
-                        .bind(before)
-                        .fetch_all(&mut *tx)
-                        .await?;
-                    for &dir in &dirs {
-                        delete_subtree!(self, tx, dir);
-                    }
-                    tx.commit().await?;
-                    dirs.len() as u64
-                }
-            });
-            if found == 0 {
-                break;
+        let removed = on!(self, pool => {
+            let any: Vec<Uuid> = sqlx::query_scalar(EMPTY_DIRS_OUTSIDE_HISTORY)
+                .bind(before)
+                .fetch_all(pool)
+                .await?;
+            if any.is_empty() {
+                return Ok(0);
             }
-            removed += found;
-        }
+            let mut tx = pool.begin_with(self.begin_write()).await?;
+            let dirs: Vec<Uuid> = sqlx::query_scalar(EMPTY_DIRS_OUTSIDE_HISTORY)
+                .bind(before)
+                .fetch_all(&mut *tx)
+                .await?;
+            let mut removed = 0;
+            for &dir in &dirs {
+                removed += delete_subtree!(self, tx, dir);
+            }
+            tx.commit().await?;
+            removed
+        });
         if removed > 0 {
             self.notify(Change::History);
         }

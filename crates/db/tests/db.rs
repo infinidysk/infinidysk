@@ -998,7 +998,8 @@ async fn unlinked(db: &Db) {
     loose.nzb_blob = Some(loose_nzb);
     let kept_file = Item::child(&kept, "a.mkv", ItemKind::NzbFile).expect("valid");
     let loose_file = Item::child(&loose, "b.mkv", ItemKind::NzbFile).expect("valid");
-    let empty = Item::child(&loose, "sub", ItemKind::Directory).expect("valid");
+    let mid = Item::child(&loose, "mid", ItemKind::Directory).expect("valid");
+    let empty = Item::child(&mid, "sub", ItemKind::Directory).expect("valid");
     db.insert(
         &[
             cat.clone(),
@@ -1006,6 +1007,7 @@ async fn unlinked(db: &Db) {
             loose.clone(),
             kept_file.clone(),
             loose_file.clone(),
+            mid,
             empty.clone(),
         ],
         &[(kept_nzb, b"nzb"), (loose_nzb, b"nzb")],
@@ -1052,11 +1054,33 @@ async fn unlinked(db: &Db) {
             .await
             .expect("delete")
     );
-    assert!(db.delete_empty_dirs(before).await.expect("sweep") >= 1);
+    assert_eq!(
+        db.delete_empty_dirs(before).await.expect("sweep"),
+        3,
+        "sub, mid and the job folder"
+    );
+    assert_eq!(db.delete_empty_dirs(before).await.expect("sweep"), 0);
     assert_eq!(db.item(loose.id).await.expect("query"), None);
     assert!(db.item(kept.id).await.expect("query").is_some());
     assert!(db.item(cat.id).await.expect("query").is_some());
     assert_eq!(db.blob(loose_nzb).await.expect("query"), None);
+
+    let folders: Vec<_> = (0..501)
+        .map(|index| {
+            let mut folder =
+                Item::child(&cat, &format!("empty-{index}"), ItemKind::Directory).expect("valid");
+            folder.created_at = 1;
+            folder
+        })
+        .collect();
+    db.insert(&folders, &[]).await.expect("insert");
+    assert_eq!(
+        db.delete_empty_dirs(before).await.expect("first batch"),
+        500
+    );
+    assert_eq!(db.children(cat.id).await.expect("remaining").len(), 2);
+    assert_eq!(db.delete_empty_dirs(before).await.expect("second batch"), 1);
+    assert_eq!(db.delete_empty_dirs(before).await.expect("finished"), 0);
 }
 
 async fn restored_nzb_links(db: &Db) {
