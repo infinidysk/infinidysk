@@ -659,7 +659,8 @@ impl Maintenance {
         if run.only.is_none() && report.unlinked * 100 > report.checked * HOLD_PERCENT {
             return Err(Stop::Held);
         }
-        if run.dry_run || report.files.is_empty() {
+        // With no files left, a stopped run's empty folders still go.
+        if run.dry_run {
             return Ok(());
         }
 

@@ -248,6 +248,25 @@ async fn removes_only_files_no_library_link_points_to() {
     assert!(!exists(&old[5]).await);
     assert!(exists(&old[0]).await && exists(&kept[0]).await);
 
+    // A run with no unlinked files left still removes the empty folders a stopped run left.
+    let (empty_job, _) = download(&db, "empty", &[]).await;
+    db.delete_history(&[empty_job]).await.unwrap();
+    let report = run(addr, &format!("{JOB}/run"), json!({ "dry_run": false })).await;
+    assert_eq!(report["outcome"], "finished", "{report}");
+    assert_eq!(
+        (
+            report["removed"].as_u64(),
+            report["folders_removed"].as_u64()
+        ),
+        (Some(0), Some(1))
+    );
+    assert!(
+        db.item_by_path("/content/tv/empty")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
     db.close().await;
     cancel.cancel();
     server.await.unwrap().unwrap();
