@@ -19,7 +19,8 @@ const DAY_MS: i64 = 24 * HOUR_MS;
 const KEEP_MINUTES_MS: i64 = 7 * DAY_MS;
 const KEEP_HOURS_MS: i64 = 400 * DAY_MS;
 const KEEP_SESSIONS_MS: i64 = 90 * DAY_MS;
-const KEEP_EVENTS_MS: i64 = 7 * DAY_MS;
+// Outages draw beside the hour rows in every window, so they last as long.
+const KEEP_EVENTS_MS: i64 = KEEP_HOURS_MS;
 
 const UPSERT_COUNTER: &str = "INSERT INTO counters (grain, ts, key, value) VALUES ($1, $2, $3, $4) \
     ON CONFLICT (grain, ts, key) DO UPDATE SET value = CASE WHEN excluded.key LIKE 'peak.%' \
@@ -100,7 +101,11 @@ pub struct Usage {
 #[derive(Clone, Debug, PartialEq, Eq, sqlx::FromRow)]
 pub struct BreakerEvent {
     pub at: i64,
+    /// `None` on events stored before keys were.
+    pub provider_key: Option<String>,
+    /// Display name when it opened.
     pub provider: String,
+    /// How long it stayed open.
     pub open_ms: i64,
 }
 
@@ -242,19 +247,23 @@ impl Metrics {
             .await?;
         }
         for e in events {
-            sqlx::query("INSERT INTO breaker_events (at, provider, open_ms) VALUES ($1, $2, $3)")
-                .bind(e.at)
-                .bind(&e.provider)
-                .bind(e.open_ms)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(
+                "INSERT INTO breaker_events (at, provider_key, provider, open_ms) \
+                 VALUES ($1, $2, $3, $4)",
+            )
+            .bind(e.at)
+            .bind(&e.provider_key)
+            .bind(&e.provider)
+            .bind(e.open_ms)
+            .execute(&mut *tx)
+            .await?;
         }
         tx.commit().await?;
         Ok(())
     }
 
-    /// Drops minute rows after 7 days, hour rows after about 13 months, reads after 90
-    /// days and breaker events after 7 days. Lifetime totals stay.
+    /// Drops minute rows after 7 days, hour rows and breaker events after about 13
+    /// months and reads after 90 days. Lifetime totals stay.
     pub async fn prune(&self, now_ms: i64) -> Result<(), Error> {
         let _writing = self.writes.read().await;
         let mut tx = self.pool.begin().await?;
@@ -401,10 +410,11 @@ impl Metrics {
             .collect())
     }
 
-    /// Breaker openings since `since_ms`, newest first.
+    /// Breaker openings still open at or after `since_ms`, newest first.
     pub async fn breaker_events(&self, since_ms: i64) -> Result<Vec<BreakerEvent>, Error> {
         Ok(sqlx::query_as(
-            "SELECT at, provider, open_ms FROM breaker_events WHERE at >= $1 ORDER BY at DESC",
+            "SELECT at, provider_key, provider, open_ms FROM breaker_events \
+             WHERE at + open_ms >= $1 ORDER BY at DESC",
         )
         .bind(since_ms)
         .fetch_all(&self.pool)

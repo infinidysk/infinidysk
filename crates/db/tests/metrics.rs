@@ -1,5 +1,5 @@
 use infinidysk_core::ItemId;
-use infinidysk_db::metrics::{Grain, Metrics, SessionRecord};
+use infinidysk_db::metrics::{BreakerEvent, Grain, Metrics, SessionRecord};
 
 const MINUTE: i64 = 60_000;
 const DAY: i64 = 24 * 60 * MINUTE;
@@ -116,6 +116,44 @@ async fn records_pick_the_busiest_hour_and_day_by_provider_bytes() {
         .await
         .expect("sum");
     assert_eq!(rescues, 2);
+    metrics.close().await;
+    remove(&path);
+}
+
+#[tokio::test]
+async fn outages_keep_their_provider_key_as_long_as_hour_rows() {
+    let path = temp_path();
+    let metrics = Metrics::open(&path).await.expect("open");
+    let outage = BreakerEvent {
+        at: DAY,
+        provider_key: Some("p1".to_owned()),
+        provider: "Old name".to_owned(),
+        open_ms: 10 * MINUTE,
+    };
+    metrics
+        .write(DAY, &[], &[], std::slice::from_ref(&outage))
+        .await
+        .expect("write");
+
+    let none: Vec<BreakerEvent> = Vec::new();
+    // Still open five minutes into the window, so the window shows it.
+    let since = DAY + 5 * MINUTE;
+    assert_eq!(
+        metrics.breaker_events(since).await.expect("events"),
+        std::slice::from_ref(&outage)
+    );
+    assert_eq!(
+        metrics
+            .breaker_events(DAY + 11 * MINUTE)
+            .await
+            .expect("events"),
+        none
+    );
+
+    metrics.prune(30 * DAY).await.expect("prune");
+    assert_eq!(metrics.breaker_events(0).await.expect("events"), [outage]);
+    metrics.prune(500 * DAY).await.expect("prune");
+    assert_eq!(metrics.breaker_events(0).await.expect("events"), none);
     metrics.close().await;
     remove(&path);
 }
