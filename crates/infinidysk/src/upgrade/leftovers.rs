@@ -163,29 +163,35 @@ impl Leftovers {
         .unwrap_or((false, None))
     }
 
-    /// Measures the 1.x data, or waits for the measurement already running.
-    async fn measure(&self, live: Vec<PathBuf>) {
+    /// Measures the 1.x data, or waits for the measurement already running. The
+    /// measurement finishes and is kept even when the caller stops waiting.
+    async fn measure(self: Arc<Self>, live: Vec<PathBuf>) {
         let seen = self.last().runs;
-        let _measuring = self.measuring.lock().await;
-        if self.last().runs != seen {
-            return;
-        }
-        let dir = self.config_dir.clone();
-        let measured = tokio::task::spawn_blocking(move || scan(&dir, &live)).await;
-        let mut last = self.last();
-        last.runs += 1;
-        match measured {
-            Ok(scan) => {
-                last.scan = Some(scan);
-                last.error = None;
+        let task = tokio::spawn(async move {
+            let _measuring = self.measuring.lock().await;
+            if self.last().runs != seen {
+                return;
             }
-            Err(error) => {
-                tracing::warn!(reason = %error, "could not measure the 1.x data");
-                last.error = Some((
-                    "The measurement stopped unexpectedly; see the logs.".to_owned(),
-                    infinidysk_db::now_ms(),
-                ));
+            let dir = self.config_dir.clone();
+            let measured = tokio::task::spawn_blocking(move || scan(&dir, &live)).await;
+            let mut last = self.last();
+            last.runs += 1;
+            match measured {
+                Ok(scan) => {
+                    last.scan = Some(scan);
+                    last.error = None;
+                }
+                Err(error) => {
+                    tracing::warn!(reason = %error, "could not measure the 1.x data");
+                    last.error = Some((
+                        "The measurement stopped unexpectedly; see the logs.".to_owned(),
+                        infinidysk_db::now_ms(),
+                    ));
+                }
             }
+        });
+        if let Err(error) = task.await {
+            tracing::warn!(reason = %error, "could not measure the 1.x data");
         }
     }
 }
@@ -391,18 +397,21 @@ async fn view(admin: &Admin, measure: bool) -> Result<LeftoversView, Fail> {
         return Ok(LeftoversView::default());
     }
     let leftovers = &admin.leftovers;
-    let cache = {
-        let store = admin.config.read().await;
-        crate::app::effective_tuning(
-            &store.settings().performance,
-            admin.live.default_cache_dir(),
-        )
-        .disk_cache_dir
+    let mut more: Vec<PathBuf> = {
+        let settings = admin.config.read().await.settings().clone();
+        let cache =
+            crate::app::effective_tuning(&settings.performance, admin.live.default_cache_dir())
+                .disk_cache_dir;
+        [cache, settings.imports.strm_dir.clone()]
+            .into_iter()
+            .chain(settings.imports.library_dirs.iter().map(|d| d.path.clone()))
+            .map(PathBuf::from)
+            .collect()
     };
-    let backups = admin.backups.resolve_dir().await.ok();
-    let live = leftovers.live([PathBuf::from(cache)].into_iter().chain(backups));
+    more.extend(admin.backups.resolve_dir().await.ok());
+    let live = leftovers.live(more);
     if measure {
-        leftovers.measure(live.clone()).await;
+        Arc::clone(leftovers).measure(live.clone()).await;
     }
     let (present, scan) = leftovers.check(live).await;
     let last = leftovers.last().clone();
@@ -665,20 +674,49 @@ mod tests {
     #[tokio::test]
     async fn concurrent_measurements_share_one_run() {
         let dir = dir();
-        let leftovers = Leftovers::new(
+        let leftovers = Arc::new(Leftovers::new(
             dir.clone(),
             None,
             &dir.join("metrics.sqlite"),
             dir.join("logs"),
-        );
+        ));
         let live = leftovers.live([]);
         tokio::join!(
-            leftovers.measure(live.clone()),
-            leftovers.measure(live.clone())
+            Arc::clone(&leftovers).measure(live.clone()),
+            Arc::clone(&leftovers).measure(live.clone())
         );
         assert_eq!(leftovers.last().runs, 1);
-        leftovers.measure(live).await;
+        Arc::clone(&leftovers).measure(live).await;
         assert_eq!(leftovers.last().runs, 2);
+        assert!(leftovers.last().scan.is_some());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_measurement_the_caller_stopped_waiting_for_still_finishes() {
+        use std::future::Future as _;
+
+        let dir = dir();
+        let leftovers = Arc::new(Leftovers::new(
+            dir.clone(),
+            None,
+            &dir.join("metrics.sqlite"),
+            dir.join("logs"),
+        ));
+        let mut request = Box::pin(Arc::clone(&leftovers).measure(leftovers.live([])));
+        std::future::poll_fn(|cx| {
+            assert!(request.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        drop(request);
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while leftovers.last().runs == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
         assert!(leftovers.last().scan.is_some());
         fs::remove_dir_all(dir).unwrap();
     }

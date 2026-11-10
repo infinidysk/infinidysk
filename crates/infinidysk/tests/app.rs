@@ -227,6 +227,25 @@ async fn lists_1x_data_left_after_the_import() {
     let (_, body) = send(addr, &report).await;
     assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["seen"], false);
 
+    // A library folder inside `blobs` makes it 2.x data.
+    let library = config.join("blobs/library");
+    std::fs::create_dir_all(&library).unwrap();
+    let (_, body) = send(addr, &admin_request("GET", "/api/v1/settings", "")).await;
+    let mut settings = serde_json::from_str::<Value>(&body).unwrap()["settings"].take();
+    settings["imports"]["library_dirs"] = json!([{ "path": library, "arr_path": "" }]);
+    let put = admin_request("PUT", "/api/v1/settings", &settings.to_string());
+    assert_eq!(status(addr, &put).await, "HTTP/1.1 200 OK");
+    let (_, body) = send(addr, &get).await;
+    let view: Value = serde_json::from_str(&body).unwrap();
+    let blobs = view["scan"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["path"].as_str().unwrap().ends_with("/blobs"))
+        .unwrap();
+    assert_eq!(blobs["status"], "not_assessed");
+    assert_eq!(blobs["reason"], "live_data");
+
     for (method, path) in [
         ("GET", "/api/v1/upgrade/leftovers"),
         ("POST", "/api/v1/upgrade/leftovers/scan"),
