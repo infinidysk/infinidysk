@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use rustls::ServerConfig;
@@ -60,10 +60,53 @@ impl Default for Behavior {
 /// request order. Stops accepting when dropped.
 pub struct LoopbackServer {
     addr: SocketAddr,
-    accept: JoinHandle<()>,
+    accept: Mutex<Option<JoinHandle<()>>>,
+    acceptor: Acceptor,
     open: Arc<AtomicUsize>,
     peak: Arc<AtomicUsize>,
     bodies: Arc<AtomicUsize>,
+}
+
+#[derive(Clone)]
+struct Acceptor {
+    articles: Arc<HashMap<String, Vec<u8>>>,
+    tls: Option<TlsAcceptor>,
+    behavior: Behavior,
+    open: Arc<AtomicUsize>,
+    peak: Arc<AtomicUsize>,
+    bodies: Arc<AtomicUsize>,
+}
+
+impl Acceptor {
+    fn spawn(self, listener: TcpListener) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let articles = Arc::clone(&self.articles);
+                let tls = self.tls.clone();
+                let now = self.open.fetch_add(1, Ordering::SeqCst) + 1;
+                self.peak.fetch_max(now, Ordering::SeqCst);
+                let open_count = Arc::clone(&self.open);
+                let limit = Limit {
+                    behavior: self.behavior,
+                    rejected: now > self.behavior.max_connections,
+                    bodies: Arc::clone(&self.bodies),
+                };
+                // A failed connection only affects the test that owns it.
+                tokio::spawn(async move {
+                    let result = async {
+                        stream.set_nodelay(true)?;
+                        match tls {
+                            None => serve(stream, articles, limit).await,
+                            Some(tls) => serve(tls.accept(stream).await?, articles, limit).await,
+                        }
+                    }
+                    .await;
+                    open_count.fetch_sub(1, Ordering::SeqCst);
+                    result
+                });
+            }
+        })
+    }
 }
 
 impl LoopbackServer {
@@ -186,45 +229,50 @@ impl LoopbackServer {
         );
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
         let addr = listener.local_addr()?;
-        let open = Arc::new(AtomicUsize::new(0));
-        let peak = Arc::new(AtomicUsize::new(0));
-        let bodies = Arc::new(AtomicUsize::new(0));
-        let (open_count, peak_count) = (Arc::clone(&open), Arc::clone(&peak));
-        let body_count = Arc::clone(&bodies);
-        let accept = tokio::spawn(async move {
-            while let Ok((stream, _)) = listener.accept().await {
-                let articles = Arc::clone(&articles);
-                let tls = tls.clone();
-                let now = open_count.fetch_add(1, Ordering::SeqCst) + 1;
-                peak_count.fetch_max(now, Ordering::SeqCst);
-                let open_count = Arc::clone(&open_count);
-                let limit = Limit {
-                    behavior,
-                    rejected: now > behavior.max_connections,
-                    bodies: Arc::clone(&body_count),
-                };
-                // A failed connection only affects the test that owns it.
-                tokio::spawn(async move {
-                    let result = async {
-                        stream.set_nodelay(true)?;
-                        match tls {
-                            None => serve(stream, articles, limit).await,
-                            Some(tls) => serve(tls.accept(stream).await?, articles, limit).await,
-                        }
-                    }
-                    .await;
-                    open_count.fetch_sub(1, Ordering::SeqCst);
-                    result
-                });
-            }
-        });
+        let acceptor = Acceptor {
+            articles,
+            tls,
+            behavior,
+            open: Arc::default(),
+            peak: Arc::default(),
+            bodies: Arc::default(),
+        };
         Ok(Self {
             addr,
-            accept,
-            open,
-            peak,
-            bodies,
+            accept: Mutex::new(Some(acceptor.clone().spawn(listener))),
+            open: Arc::clone(&acceptor.open),
+            peak: Arc::clone(&acceptor.peak),
+            bodies: Arc::clone(&acceptor.bodies),
+            acceptor,
         })
+    }
+
+    /// Stops listening, so new connects are refused; open connections keep serving.
+    pub async fn refuse(&self) {
+        let accept = self
+            .accept
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(accept) = accept {
+            accept.abort();
+            let _ = accept.await;
+        }
+    }
+
+    /// Listens again on the same port after [`refuse`](Self::refuse).
+    pub async fn resume(&self) -> io::Result<()> {
+        let listener = TcpListener::bind(self.addr).await?;
+        let accept = self.acceptor.clone().spawn(listener);
+        if let Some(old) = self
+            .accept
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .replace(accept)
+        {
+            old.abort();
+        }
+        Ok(())
     }
 
     /// BODY commands received across all connections.
@@ -253,7 +301,14 @@ impl LoopbackServer {
 
 impl Drop for LoopbackServer {
     fn drop(&mut self) {
-        self.accept.abort();
+        if let Some(accept) = self
+            .accept
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
+            accept.abort();
+        }
     }
 }
 
