@@ -116,14 +116,15 @@ impl State {
         })
     }
 
-    /// Holds back new connects after one failed to reach the provider; `true` when this
-    /// starts a new run of failures.
-    fn back_off(&mut self, now: Instant) -> bool {
+    /// Holds back new connects after one that `started` failed to reach the provider;
+    /// `true` when this starts a new run of failures.
+    fn back_off(&mut self, started: Instant, now: Instant) -> bool {
         match &mut self.backoff {
-            // A burst started before the hold fails within it; only a retry after it lengthens it.
-            Some(backoff) if now < backoff.until + backoff.delay => {
+            // Judged by start time: a slow failure is still a retry, not a new run.
+            Some(backoff) if started < backoff.until + backoff.delay => {
                 backoff.failures += 1;
-                if now >= backoff.until {
+                // A burst started before the hold fails within it; only a retry after it lengthens it.
+                if started >= backoff.until {
                     backoff.delay = (backoff.delay * 2).min(MAX_CONNECT_BACKOFF);
                     backoff.until = now + backoff.delay;
                 }
@@ -676,6 +677,7 @@ impl Pool {
         let usage = endpoint.usage().cloned();
         let live = Arc::clone(&self.live);
         async move {
+            let started = Instant::now();
             let conn = match Connection::connect_staged(&endpoint).await {
                 Ok(conn) => conn,
                 Err((stage, error)) => {
@@ -736,7 +738,7 @@ impl Pool {
                                     "provider still refuses more connections"
                                 );
                             }
-                        } else if state.back_off(now) {
+                        } else if state.back_off(started, now) {
                             tracing::warn!(
                                 host,
                                 port,
@@ -1009,5 +1011,25 @@ fn enqueue(conn: &mut Connection, in_flight: &mut VecDeque<Request>, request: Re
     match sent {
         Ok(()) => in_flight.push_back(request),
         Err(error) => request.answer(Err(error), Duration::ZERO),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slow_failing_retries_keep_doubling_the_backoff() {
+        let start = Instant::now();
+        let mut state = State::default();
+        assert!(state.back_off(start, start));
+        // Each retry starts as the hold ends and takes 6 s to fail.
+        let mut retry = start + CONNECT_BACKOFF;
+        for _ in 0..6 {
+            assert!(!state.back_off(retry, retry + Duration::from_secs(6)));
+            retry = state.backoff.map_or(retry, |b| b.until);
+        }
+        let backoff = state.backoff.map(|b| (b.delay, b.failures));
+        assert_eq!(backoff, Some((MAX_CONNECT_BACKOFF, 7)));
     }
 }
