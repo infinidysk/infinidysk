@@ -1447,6 +1447,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/upgrade/leftovers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The 1.x data still on disk after an import from 1.x, with the last measurement. */
+        get: operations["get_leftovers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/upgrade/leftovers/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Hides the Overview notice about 1.x data; the System page still lists it. */
+        post: operations["post_leftovers_dismiss"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/upgrade/leftovers/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Measures the 1.x data again, or waits for the measurement already running. */
+        post: operations["post_leftovers_scan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/upgrade/report": {
         parameters: {
             query?: never;
@@ -2326,6 +2377,58 @@ export interface components {
             failed?: string | null;
             /** @description Why an undo did not open; the restored database stayed. */
             undo_failed?: string | null;
+        };
+        Leftover: {
+            /**
+             * Format: int64
+             * @description Estimated disk usage: allocated blocks, hard links counted once.
+             */
+            bytes?: number | null;
+            /** @description `false` when part of it could not be read; `bytes` is then too low. */
+            complete: boolean;
+            /** @description A path inside this installation. */
+            path: string;
+            reason?: components["schemas"]["LeftoverReason"] | null;
+            status: components["schemas"]["LeftoverStatus"];
+        };
+        /** @enum {string} */
+        LeftoverReason: "live_data" | "symlink" | "unreadable" | "changed";
+        LeftoverScan: {
+            /**
+             * Format: int64
+             * @description Unix milliseconds.
+             */
+            at_ms: number;
+            /**
+             * Format: int64
+             * @description Estimated disk usage of every measured item.
+             */
+            bytes: number;
+            /** @description Every item is missing. */
+            gone: boolean;
+            items: components["schemas"]["Leftover"][];
+        };
+        /** @enum {string} */
+        LeftoverSource: "sqlite" | "postgres" | "unknown";
+        /** @enum {string} */
+        LeftoverStatus: "present" | "not_assessed" | "missing";
+        LeftoversView: {
+            dismissed: boolean;
+            /** @description This install finished an import from 1.x; everything else is empty when not. */
+            imported: boolean;
+            /** @description Why infinidysk still reads the 1.x data; absent once it no longer does. */
+            in_use?: string | null;
+            /** @description Some 1.x data is still on disk; a quick check without sizes. */
+            present: boolean;
+            scan?: components["schemas"]["LeftoverScan"] | null;
+            /** @description Why the last measurement failed; `scan` is then older. */
+            scan_error?: string | null;
+            /**
+             * Format: int64
+             * @description Unix milliseconds.
+             */
+            scan_failed_at_ms?: number | null;
+            source?: components["schemas"]["LeftoverSource"] | null;
         };
         /** @description 1.x backup folders under `<config dir>/backups`. */
         LegacyBackups: {
@@ -6858,6 +6961,61 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    get_leftovers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LeftoversView"];
+                };
+            };
+        };
+    };
+    post_leftovers_dismiss: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    post_leftovers_scan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LeftoversView"];
                 };
             };
         };

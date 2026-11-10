@@ -72,6 +72,7 @@ pub struct Admin {
     pub backups: Arc<crate::backup::Backups>,
     pub updates: Arc<crate::update::Updates>,
     pub database: Arc<crate::database::Migrator>,
+    pub leftovers: Arc<upgrade::leftovers::Leftovers>,
     /// Ends event streams at shutdown.
     pub cancel: CancellationToken,
     /// Set before `cancel` when the process should start again.
@@ -150,6 +151,9 @@ pub struct Admin {
         upgrade::get_upgrade_report,
         upgrade::post_upgrade_report_seen,
         upgrade::post_upgrade_retry,
+        upgrade::leftovers::get_leftovers,
+        upgrade::leftovers::post_leftovers_scan,
+        upgrade::leftovers::post_leftovers_dismiss,
         library::get_library,
         library::post_library_preview,
         library::delete_library_preview,
@@ -300,6 +304,18 @@ pub fn router(admin: Arc<Admin>, auth: Arc<Auth>) -> Router {
         .route(
             "/api/v1/upgrade/report/seen",
             post(upgrade::post_upgrade_report_seen),
+        )
+        .route(
+            "/api/v1/upgrade/leftovers",
+            get(upgrade::leftovers::get_leftovers),
+        )
+        .route(
+            "/api/v1/upgrade/leftovers/scan",
+            post(upgrade::leftovers::post_leftovers_scan),
+        )
+        .route(
+            "/api/v1/upgrade/leftovers/dismiss",
+            post(upgrade::leftovers::post_leftovers_dismiss),
         )
         .route("/api/v1/library", get(library::get_library))
         .route(
