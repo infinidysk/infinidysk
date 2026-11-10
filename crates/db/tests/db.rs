@@ -998,7 +998,8 @@ async fn unlinked(db: &Db) {
     loose.nzb_blob = Some(loose_nzb);
     let kept_file = Item::child(&kept, "a.mkv", ItemKind::NzbFile).expect("valid");
     let loose_file = Item::child(&loose, "b.mkv", ItemKind::NzbFile).expect("valid");
-    let empty = Item::child(&loose, "sub", ItemKind::Directory).expect("valid");
+    let mid = Item::child(&loose, "mid", ItemKind::Directory).expect("valid");
+    let empty = Item::child(&mid, "sub", ItemKind::Directory).expect("valid");
     db.insert(
         &[
             cat.clone(),
@@ -1006,6 +1007,7 @@ async fn unlinked(db: &Db) {
             loose.clone(),
             kept_file.clone(),
             loose_file.clone(),
+            mid,
             empty.clone(),
         ],
         &[(kept_nzb, b"nzb"), (loose_nzb, b"nzb")],
@@ -1052,7 +1054,12 @@ async fn unlinked(db: &Db) {
             .await
             .expect("delete")
     );
-    assert!(db.delete_empty_dirs(before).await.expect("sweep") >= 1);
+    assert_eq!(
+        db.delete_empty_dirs(before).await.expect("sweep"),
+        3,
+        "sub, mid and the job folder"
+    );
+    assert_eq!(db.delete_empty_dirs(before).await.expect("sweep"), 0);
     assert_eq!(db.item(loose.id).await.expect("query"), None);
     assert!(db.item(kept.id).await.expect("query").is_some());
     assert!(db.item(cat.id).await.expect("query").is_some());

@@ -688,7 +688,17 @@ impl Maintenance {
             live.done(n);
         }
         live.step("Removing empty folders", None);
-        report.folders_removed = self.parts.db.delete_empty_dirs(report.at_ms).await?;
+        loop {
+            if cancel.is_cancelled() {
+                return Err(Stop::Cancelled);
+            }
+            let removed = self.parts.db.delete_empty_dirs(report.at_ms).await?;
+            if removed == 0 {
+                break;
+            }
+            report.folders_removed += removed;
+            live.done(report.folders_removed);
+        }
         self.parts.handoff.sweep(&self.parts.db).await;
         Ok(())
     }
