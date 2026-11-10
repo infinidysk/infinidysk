@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Newznab search regression</title>
+<div id="root" class="mx-auto w-full max-w-6xl px-4 py-6 lg:px-8 lg:py-8"></div>
+<pre id="result">Running</pre>
+<script type="module">
+  import { act, createElement } from "react";
+  import { createRoot } from "react-dom/client";
+  import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+  import { MemoryRouter } from "react-router";
+  import "/src/index.css";
+
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
+  client.setQueryData(["settings"], {
+    settings: { sab: { manual_category: "uncategorized", categories: ["tv", "movies"] } },
+  });
+  const root = createRoot(document.getElementById("root"));
+  const nativeFetch = window.fetch.bind(window);
+  const searches = [];
+  const posts = [];
+  let finishSlow;
+  let finishCreated;
+  let finishLate;
+  const check = (condition, message) => {
+    if (!condition) throw new Error(message);
+  };
+  const response = (body, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  const item = (name, can_queue = true) => ({
+    title: "Generic " + name,
+    size_bytes: 5000000,
+    indexer_id: "11111111-1111-4111-8111-111111111111",
+    indexer_name: "Indexer A",
+    nzb_ref: "ref-" + name,
+    can_queue,
+  });
+  const found = (term) => ({
+    indexers: [
+      { indexer_id: "a", indexer_name: "Indexer A", ok: true, result_count: 7, error: null },
+      { indexer_id: "b", indexer_name: "Indexer B", ok: false, result_count: 0, error: "Indexer unavailable" },
+    ],
+    results: term === "fast" ? [
+      item("created"), item("existing"), item("rejected"), item("expired"),
+      item("offline"), item("forbidden"), item("unavailable", false), item("late"),
+    ] : term === "repeat" ? [item("late")] : [item("slow")],
+  });
+  window.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    if (url.pathname === "/api/v1/indexers/search") {
+      const query = url.searchParams.get("q");
+      searches.push(query);
+      if (query === "slow") return new Promise((resolve) => { finishSlow = resolve; });
+      if (query === "offline") throw new TypeError("Network lost");
+      if (query === "empty") return response({ indexers: [], results: [] });
+      return response(found(query));
+    }
+    if (url.pathname === "/api/v1/indexers/search/queue") {
+      const submitted = await request.json();
+      posts.push(submitted);
+      if (submitted.nzb_ref === "ref-created") {
+        return new Promise((resolve) => {
+          finishCreated = () => resolve(response({ id: "created-id", status: "created" }, 201));
+        });
+      }
+      if (submitted.nzb_ref === "ref-late") {
+        return new Promise((resolve) => {
+          finishLate = () => resolve(response({ id: "late-id", status: "created" }, 201));
+        });
+      }
+      if (submitted.nzb_ref === "ref-existing") return response({ id: "existing-id", status: "existing" });
+      if (submitted.nzb_ref === "ref-rejected") return response({ id: "rejected-id", status: "rejected" }, 422);
+      if (submitted.nzb_ref === "ref-expired") return response({ error: "Not found" }, 404);
+      if (submitted.nzb_ref === "ref-forbidden") return response({ error: "Forbidden" }, 403);
+      throw new TypeError("Network lost");
+    }
+    if (url.pathname === "/api/v1/settings") {
+      return response({ settings: { sab: { manual_category: "uncategorized", categories: ["tv", "movies"] } } });
+    }
+    if (url.pathname.startsWith("/api/")) throw new Error("Unmocked API request");
+    return nativeFetch(input, init);
+  };
+
+  const settle = async () => act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  });
+  const waitFor = async (condition, message) => {
+    for (let attempt = 0; attempt < 80; attempt++) {
+      if (condition()) return;
+      await settle();
+    }
+    throw new Error(message);
+  };
+  const type = async (value) => act(async () => {
+    const input = document.getElementById("newznab-query");
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    setter.call(input, value);
+    input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+  });
+  const submit = async () => act(async () => {
+    document.getElementById("newznab-query").closest("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  const row = (name) => [...document.querySelectorAll('[aria-label="Search results"] :is(tbody tr, ul > li)')]
+    .find((entry) => entry.getClientRects().length > 0 && entry.textContent.includes("Generic " + name));
+  const queueButton = (name) => [...row(name).querySelectorAll("button")]
+    .find((button) => button.textContent.includes("Queue") || button.textContent.includes("Queuing"));
+  const clickQueue = async (name) => act(async () => queueButton(name).click());
+
+  try {
+    const { SearchPage } = await import("/src/pages/search.tsx");
+    await act(async () => root.render(createElement(QueryClientProvider, { client },
+      createElement(MemoryRouter, null, createElement(SearchPage)),
+    )));
+    await type(" ");
+    await submit();
+    check(document.body.textContent.includes("Enter a search term"), "Blank query should be rejected");
+    check(searches.length === 0, "Blank query reached the backend");
+
+    await type("slow");
+    await submit();
+    await waitFor(() => searches.includes("slow"), "Slow search did not start");
+    await type("fast");
+    await submit();
+    await waitFor(() => !!row("created"), "Fast search results missing");
+    check(document.body.textContent.includes("Indexer unavailable"), "Failed indexer status missing");
+    check(document.body.textContent.includes("Generic created"), "Successful indexer results lost");
+    await act(async () => finishSlow(response(found("slow"))));
+    await settle();
+    check(!!row("created") && !row("slow"), "Late stale response overwrote new search");
+
+    await clickQueue("late");
+    await waitFor(() => !!finishLate, "Delayed queue request did not start");
+    await type("repeat");
+    await submit();
+    await waitFor(() => !!row("late") && !row("created"), "Replacement search missing");
+    await act(async () => finishLate());
+    await waitFor(() => !queueButton("late").disabled, "Delayed queue request did not finish");
+    check(!row("late").textContent.includes("Added to queue"), "Old queue result polluted new search");
+    await type("fast");
+    await submit();
+    await waitFor(() => !!row("created"), "Search results missing after replacement");
+    check(document.documentElement.scrollWidth <= innerWidth, "Results overflow the viewport");
+
+    check(queueButton("unavailable").disabled, "can_queue=false must disable queue");
+    check(row("created").textContent.includes("uncategorized"), "Manual queue category not selected");
+    const select = row("existing").querySelector('[role="combobox"]');
+    await act(async () => {
+      select.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, buttons: 1, pointerType: "mouse" }));
+    });
+    await waitFor(() => [...document.querySelectorAll('[role="option"]')]
+      .some((option) => option.textContent.includes("movies")), "Category menu did not open");
+    const movieOption = [...document.querySelectorAll('[role="option"]')]
+      .find((option) => option.textContent.includes("movies"));
+    await act(async () => {
+      movieOption.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, buttons: 1, pointerType: "mouse" }));
+      movieOption.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0, pointerType: "mouse" }));
+      movieOption.click();
+    });
+    await settle();
+    check(row("existing").textContent.includes("movies"), "Per-result category selection failed");
+    await clickQueue("created");
+    await waitFor(() => posts.some((post) => post.nzb_ref === "ref-created"), "Create request missing");
+    await clickQueue("created");
+    check(posts.filter((post) => post.nzb_ref === "ref-created").length === 1, "Double click duplicated POST");
+    await clickQueue("existing");
+    await waitFor(() => row("existing").textContent.includes("Already in queue"), "Existing outcome missing");
+    await clickQueue("rejected");
+    await waitFor(() => row("rejected").textContent.includes("Rejected by queue"), "Rejected outcome missing");
+    await clickQueue("expired");
+    await waitFor(() => row("expired").textContent.includes("Reference expired"), "Expired reference missing");
+    check(queueButton("expired").disabled, "Expired reference must stay disabled");
+    await clickQueue("offline");
+    await waitFor(() => row("offline").textContent.includes("Network lost"), "Network failure missing");
+    await clickQueue("forbidden");
+    await waitFor(() => document.body.textContent.includes("Queue access is read-only"), "403 should disable queued actions");
+
+    await act(async () => finishCreated());
+    await waitFor(() => row("created").textContent.includes("Added to queue"), "201 outcome missing");
+    check(posts.every((post) => Object.keys(post).sort().join(",") === "category,nzb_ref"), "Queue POST exposed unexpected fields");
+    check(posts.every((post) => post.category === (post.nzb_ref === "ref-existing" ? "movies" : "uncategorized")), "Per-result category not sent");
+
+    const previousSearches = searches.length;
+    await type("x".repeat(251));
+    await submit();
+    check(searches.length === previousSearches, "Overlength query reached the backend");
+    await type("offline");
+    await submit();
+    await waitFor(() => document.body.textContent.includes("Network lost"), "Search network error missing");
+    await type("x".repeat(250));
+    await submit();
+    await waitFor(() => document.body.textContent.includes("x".repeat(250)), "Valid long search missing");
+    check(document.documentElement.scrollWidth <= innerWidth, "Long search term overflows the viewport");
+    check(queueButton("slow").disabled, "Queue access must remain read-only after a new search");
+    await type("empty");
+    await submit();
+    await waitFor(() => document.body.textContent.includes("No enabled indexers"), "Empty indexer state missing");
+    check(document.querySelector('a[href="/settings/indexers"]') !== null, "Missing indexer setup link");
+
+    document.getElementById("result").textContent = "PASS";
+  } catch (error) {
+    document.getElementById("result").textContent = "FAIL: " + error.message;
+  } finally {
+    await act(async () => root.unmount());
+    client.clear();
+    window.fetch = nativeFetch;
+    delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+  }
+</script>
+</html>

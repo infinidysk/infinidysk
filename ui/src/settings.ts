@@ -19,7 +19,8 @@ export function useCatalog() {
 export function useSaveSettings() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (settings: Settings) => body(api.PUT("/api/v1/settings", { body: settings })),
+    mutationFn: ({ settings, indexers_revision }: { settings: Settings; indexers_revision: string }) =>
+      body(api.PUT("/api/v1/settings", { body: { ...settings, indexers_revision } })),
     onSuccess: (view) => {
       client.setQueryData(["settings"], view);
       void client.invalidateQueries({ queryKey: ["auth"] });

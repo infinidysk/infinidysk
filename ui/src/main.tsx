@@ -15,6 +15,7 @@ const named = <K extends string>(load: () => Promise<Record<K, ComponentType>>, 
 const Layout = named(() => import("./layout"), "Layout");
 const Overview = named(() => import("./pages/overview"), "Overview");
 const Queue = named(() => import("./pages/queue"), "Queue");
+const SearchPage = named(() => import("./pages/search"), "SearchPage");
 const Explorer = named(() => import("./pages/explorer"), "Explorer");
 const Health = named(() => import("./pages/health"), "Health");
 const Stats = named(() => import("./pages/stats"), "Stats");
@@ -52,6 +53,7 @@ const router = createBrowserRouter(
         <Route index element={<Navigate to="/overview" replace />} />
         <Route path="overview" element={<Overview />} />
         <Route path="queue" element={<Queue />} />
+        <Route path="search" element={<SearchPage />} />
         <Route path="explorer" element={<Explorer />} />
         <Route path="health" element={<Health />} />
         <Route path="stats" element={<Stats />} />
