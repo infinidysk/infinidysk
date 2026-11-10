@@ -565,7 +565,7 @@ function Runs({ runs }: { runs: Schemas["MaintenanceRun"][] }) {
 
 /** The running maintenance job in the sidebar, from the live view. */
 export function MaintenanceNow({ live }: { live: Schemas["LiveMaintenance"] }) {
-  const percent = live.total ? Math.round((live.done / live.total) * 100) : null;
+  const amount = live.total ? `${Math.round((live.done / live.total) * 100)}%` : progress(live.job, live);
   return (
     <Link
       to={live.job === "backup-database" ? "/settings/backups" : "/settings/maintenance"}
@@ -576,7 +576,7 @@ export function MaintenanceNow({ live }: { live: Schemas["LiveMaintenance"] }) {
         {jobCopy[live.job].title}
         <span className="text-muted-foreground"> · {live.step}</span>
       </span>
-      {percent != null && <span className="text-muted-foreground tabular-nums">{percent}%</span>}
+      {amount && <span className="text-muted-foreground tabular-nums">{amount}</span>}
     </Link>
   );
 }
