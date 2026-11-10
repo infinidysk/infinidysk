@@ -305,6 +305,7 @@ const notCounted: Record<Schemas["LeftoverReason"], string> = {
   live_data: "2.x uses this path; keep it",
   symlink: "a symlink; not followed or counted",
   unreadable: "could not be read; not counted",
+  changed: "appeared since the last measurement; measure again",
 };
 
 /** 1.x data an upgraded install no longer reads; measured once per start unless refreshed. */

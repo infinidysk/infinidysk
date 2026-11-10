@@ -54,6 +54,8 @@ pub enum LeftoverReason {
     Symlink,
     /// Its type or identity could not be read.
     Unreadable,
+    /// On disk now, but not when last measured.
+    Changed,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -294,27 +296,20 @@ fn scan(config_dir: &Path, live: &[PathBuf]) -> LeftoverScan {
     }
 }
 
-/// `scan` with each measured item classified again: settings may have moved a 2.x folder
-/// into it since the measurement.
+/// `scan` with each item classified again: settings may have moved a 2.x folder into it,
+/// or files may have come or gone since the measurement. Only measured items keep sizes.
 fn recheck(mut scan: LeftoverScan, live: &[Identity]) -> LeftoverScan {
     for item in &mut scan.items {
-        if item.status != LeftoverStatus::Present {
-            continue;
-        }
-        match classify(Path::new(&item.path), live) {
-            Class::Present(_) => {}
-            Class::Missing => {
-                item.status = LeftoverStatus::Missing;
-                item.bytes = None;
-                item.complete = true;
-            }
-            Class::NotAssessed(reason) => {
-                item.status = LeftoverStatus::NotAssessed;
-                item.reason = Some(reason);
-                item.bytes = None;
-                item.complete = false;
-            }
-        }
+        let (status, reason) = match classify(Path::new(&item.path), live) {
+            Class::Present(_) if item.status == LeftoverStatus::Present => continue,
+            Class::Present(_) => (LeftoverStatus::NotAssessed, Some(LeftoverReason::Changed)),
+            Class::Missing => (LeftoverStatus::Missing, None),
+            Class::NotAssessed(reason) => (LeftoverStatus::NotAssessed, Some(reason)),
+        };
+        item.status = status;
+        item.reason = reason;
+        item.bytes = None;
+        item.complete = status == LeftoverStatus::Missing;
     }
     scan.bytes = scan.items.iter().filter_map(|i| i.bytes).sum();
     scan.gone = scan
@@ -541,6 +536,27 @@ mod tests {
         assert_eq!(blobs.reason, Some(LeftoverReason::LiveData));
         assert_eq!(blobs.bytes, None);
         assert_eq!(scan.bytes, allocated(&dir.join("db.sqlite")));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn items_that_came_or_went_since_the_measurement_are_rechecked() {
+        let dir = dir();
+        fs::remove_dir_all(dir.join("blobs")).unwrap();
+        let measured = scan(&dir, &[]);
+        fs::create_dir(dir.join("blobs")).unwrap();
+        fs::remove_file(dir.join("db.sqlite")).unwrap();
+        let scan = recheck(measured, &[]);
+        let blobs = item(&scan, "blobs");
+        assert_eq!(blobs.reason, Some(LeftoverReason::Changed));
+        assert_eq!(blobs.bytes, None);
+        assert_eq!(item(&scan, "db.sqlite").status, LeftoverStatus::Missing);
+        assert!(!scan.gone);
+
+        // An item 2.x used, deleted since: nothing is left.
+        let measured = super::scan(&dir, &[dir.join("blobs")]);
+        fs::remove_dir_all(dir.join("blobs")).unwrap();
+        assert!(recheck(measured, &[]).gone);
         fs::remove_dir_all(dir).unwrap();
     }
 

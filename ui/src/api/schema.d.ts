@@ -2392,7 +2392,7 @@ export interface components {
             status: components["schemas"]["LeftoverStatus"];
         };
         /** @enum {string} */
-        LeftoverReason: "live_data" | "symlink" | "unreadable";
+        LeftoverReason: "live_data" | "symlink" | "unreadable" | "changed";
         LeftoverScan: {
             /**
              * Format: int64

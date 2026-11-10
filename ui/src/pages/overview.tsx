@@ -239,10 +239,10 @@ function Leftovers() {
   return (
     <Alert className="mb-6">
       <Info />
-      <AlertTitle>The 1.x data is still in your config folder</AlertTitle>
+      <AlertTitle>Some 1.x data is still in your config folder</AlertTitle>
       <AlertDescription>
-        2.x no longer reads it. Once you have checked that 2.x plays your library, you can delete it to free disk space.
-        System lists what is left and estimates its size.
+        Once you have checked that 2.x plays your library, review it on System. System shows which paths you can delete
+        and estimates their size.
         <div className="mt-2 flex flex-wrap gap-2">
           <Button asChild size="sm" variant="outline">
             <Link to="/system">View on System</Link>
