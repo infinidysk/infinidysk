@@ -656,7 +656,11 @@ fn arr_instances(
 
 /// The survey of the C# `/config` at `config` plus the settings it would become, as
 /// text without secrets or usernames.
-pub async fn report(config: &Path, default_cache_dir: &str) -> anyhow::Result<String> {
+pub async fn report(
+    config: &Path,
+    default_cache_dir: &str,
+    progress: impl Fn(infinidysk_import::Progress),
+) -> anyhow::Result<String> {
     let vars: Vec<(String, String)> = std::env::vars().collect();
     if !matches!(
         infinidysk_import::source(config, &vars),
@@ -666,9 +670,31 @@ pub async fn report(config: &Path, default_cache_dir: &str) -> anyhow::Result<St
     }
     // A copy left by an earlier PostgreSQL attempt would be read instead of db.sqlite.
     infinidysk_import::postgres::remove_staged(config)?;
-    let survey = infinidysk_import::survey(config).await?;
+    let survey = infinidysk_import::survey_with_progress(config, progress).await?;
     let cs = Config::read(config, std::env::vars()).await?;
     describe(&survey, &cs, &settings(&cs, default_cache_dir)?)
+}
+
+/// `import-report`'s progress lines: the first, one every 5 seconds, and the last once.
+#[derive(Default)]
+pub struct ReportProgress {
+    /// When the last line printed, and the count it showed.
+    last: std::cell::Cell<Option<(Instant, u64)>>,
+}
+
+impl ReportProgress {
+    pub fn line(&self, p: infinidysk_import::Progress, now: Instant) -> Option<String> {
+        let total = p.total?;
+        let due = match self.last.get() {
+            None => true,
+            Some((_, shown)) if p.done == total => shown != total,
+            Some((at, _)) => now.duration_since(at) >= Duration::from_secs(5),
+        };
+        due.then(|| {
+            self.last.set(Some((now, p.done)));
+            format!("Checked {} of {total} files", p.done)
+        })
+    }
 }
 
 /// Config key: `"started"` while an import from C# runs, `"done"` once it finished.
@@ -1890,12 +1916,46 @@ mod tests {
         std::fs::write(dir.join("db-contract.json"), r#"{"provider":"postgres"}"#).unwrap();
         std::fs::write(dir.join("db.sqlite"), "not a database").unwrap();
         assert_eq!(
-            report(&dir, crate::config::DEFAULT_CACHE_DIR)
+            report(&dir, crate::config::DEFAULT_CACHE_DIR, |_| {})
                 .await
                 .unwrap(),
             POSTGRES_REPORT
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn import_report_progress_prints_every_5_seconds_and_the_end_once() {
+        let at = |done, total| infinidysk_import::Progress {
+            done,
+            total,
+            ..Default::default()
+        };
+        let start = Instant::now();
+        let secs = |s| start + Duration::from_secs(s);
+        let p = ReportProgress::default();
+        let lines: Vec<_> = [
+            (at(0, None), secs(0)),
+            (at(0, Some(9)), secs(0)),
+            (at(2, Some(9)), secs(4)),
+            (at(4, Some(9)), secs(5)),
+            (at(9, Some(9)), secs(6)),
+            (at(9, Some(9)), secs(20)),
+        ]
+        .into_iter()
+        .filter_map(|(progress, now)| p.line(progress, now))
+        .collect();
+        assert_eq!(
+            lines,
+            [
+                "Checked 0 of 9 files",
+                "Checked 4 of 9 files",
+                "Checked 9 of 9 files"
+            ]
+        );
+        let empty = ReportProgress::default();
+        assert!(empty.line(at(0, Some(0)), secs(0)).is_some());
+        assert_eq!(empty.line(at(0, Some(0)), secs(0)), None);
     }
 
     #[tokio::test]
