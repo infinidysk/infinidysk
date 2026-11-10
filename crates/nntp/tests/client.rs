@@ -1012,3 +1012,41 @@ async fn warm_keeps_the_floor_only_where_eligible_and_never_during_a_lease() {
     client.warm().await;
     settle([2, 0, 0]).await;
 }
+
+#[tokio::test]
+async fn background_connects_that_fail_are_counted_without_a_trip() {
+    let dead = TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let downloads = Downloads::new(16);
+    let endpoint = Endpoint::new(
+        "127.0.0.1",
+        dead,
+        TlsMode::Plain,
+        None,
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    let config = PoolConfig {
+        max_connections: 2,
+        pipeline_depth: 2,
+        idle_timeout: Duration::from_secs(5),
+        min_connections: 2,
+    };
+    let client = Client::new([Provider {
+        pool: Pool::new(endpoint, config, Arc::clone(&downloads)).unwrap(),
+        ..provider(dead, 0, None, &downloads)
+    }]);
+
+    client.warm().await;
+    let stats = &client.stats()[0];
+    assert_eq!((stats.connect_failures, stats.trips), (2, 0));
+    assert!(stats.open_for.is_none());
+
+    // Inside the connect backoff the request fails without trying to connect.
+    assert!(body(&client, "a@test").await.is_err());
+    assert_eq!(client.stats()[0].connect_failures, 2);
+}
