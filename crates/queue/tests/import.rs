@@ -1260,33 +1260,36 @@ async fn a_retried_inner_nzb_opens_with_its_own_password() {
     let outer = wrap("n", release.as_bytes(), &mut articles);
     let (_server, queue) = setup(articles).await;
     let db = queue.db().clone();
-    let job = Submission {
-        file_name: "job{{wrong}}.nzb",
-        category: "tv",
-        priority: 0,
-        post_processing: 0,
-    };
+    for file_name in ["job{{wrong}}.nzb", "job{{2024}} - password=wrong.nzb"] {
+        let job = Submission {
+            file_name,
+            category: "tv",
+            priority: 0,
+            post_processing: 0,
+        };
 
-    let id = queue.enqueue(&job, &outer).await.unwrap();
-    assert!(queue.process_next().await);
-    let history = db.history_entry(id).await.unwrap().unwrap();
-    assert_eq!(
-        history.status,
-        JobStatus::Completed,
-        "{:?}",
-        history.fail_message
-    );
-    db.delete_item(history.download_dir.unwrap()).await.unwrap();
+        let id = queue.enqueue(&job, &outer).await.unwrap();
+        assert!(queue.process_next().await);
+        let history = db.history_entry(id).await.unwrap().unwrap();
+        assert_eq!(
+            history.status,
+            JobStatus::Completed,
+            "{file_name}: {:?}",
+            history.fail_message
+        );
+        db.delete_item(history.download_dir.unwrap()).await.unwrap();
 
-    let id = queue.retry(id).await.unwrap();
-    assert!(queue.process_next().await);
-    let history = db.history_entry(id).await.unwrap().unwrap();
-    assert_eq!(
-        history.status,
-        JobStatus::Completed,
-        "{:?}",
-        history.fail_message
-    );
+        let id = queue.retry(id).await.unwrap();
+        assert!(queue.process_next().await);
+        let history = db.history_entry(id).await.unwrap().unwrap();
+        assert_eq!(
+            history.status,
+            JobStatus::Completed,
+            "{file_name} retried: {:?}",
+            history.fail_message
+        );
+        db.delete_item(history.download_dir.unwrap()).await.unwrap();
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
