@@ -99,6 +99,33 @@ impl Phase {
     }
 }
 
+/// Where a connect failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Stage {
+    Resolve,
+    Tcp,
+    Tls,
+    Greeting,
+    Auth,
+}
+
+impl Stage {
+    /// Whether the server had accepted the TCP connection.
+    pub(crate) const fn reached(self) -> bool {
+        matches!(self, Self::Tls | Self::Greeting | Self::Auth)
+    }
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Resolve => "resolve",
+            Self::Tcp => "tcp",
+            Self::Tls => "tls",
+            Self::Greeting => "greeting",
+            Self::Auth => "auth",
+        }
+    }
+}
+
 /// Live state of one connection, shared with its pool.
 pub(crate) struct Link {
     pub(crate) id: u32,
@@ -305,6 +332,19 @@ impl Connection {
 
     /// Connects, reads the greeting and authenticates.
     pub async fn connect(endpoint: &Endpoint) -> Result<Self, Error> {
+        Self::connect_staged(endpoint)
+            .await
+            .map_err(|(_, error)| error)
+    }
+
+    /// [`connect`](Self::connect), with the stage a failure happened in.
+    pub(crate) async fn connect_staged(endpoint: &Endpoint) -> Result<Self, (Stage, Error)> {
+        let mut stage = Stage::Resolve;
+        let result = Self::connect_at(endpoint, &mut stage).await;
+        result.map_err(|error| (stage, error))
+    }
+
+    async fn connect_at(endpoint: &Endpoint, stage: &mut Stage) -> Result<Self, Error> {
         let timeout_after = endpoint.timeout;
         let started = Instant::now();
         let addrs: Vec<_> = timeout(
@@ -315,6 +355,7 @@ impl Connection {
         .map_err(|_| Error::Timeout)??
         .collect();
         let resolved = Instant::now();
+        *stage = Stage::Tcp;
         let tcp = timeout(timeout_after, TcpStream::connect(addrs.as_slice()))
             .await
             .map_err(|_| Error::Timeout)??;
@@ -326,6 +367,7 @@ impl Connection {
                 .with_interval(Duration::from_secs(5))
                 .with_retries(3),
         )?;
+        *stage = Stage::Tls;
         let stream = match &endpoint.tls {
             None => Either::Left(tcp),
             Some((connector, name)) => Either::Right(
@@ -359,11 +401,13 @@ impl Connection {
             timing: Timing::default(),
             bandwidth: endpoint.bandwidth.clone(),
         };
+        *stage = Stage::Greeting;
         match conn.read_status().await? {
             200 | 201 => {}
             code => return Err(conn.unexpected(code)),
         }
         let greeted = Instant::now();
+        *stage = Stage::Auth;
         if let Some(credentials) = &endpoint.credentials {
             conn.authenticate(credentials).await?;
         }

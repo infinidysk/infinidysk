@@ -26,6 +26,9 @@ const MAX_UNANSWERED: usize = 16;
 /// After a connect fails with no other connection live or connecting, requests fail
 /// fast for this long instead of each waiting out its own connect.
 const CONNECT_BACKOFF: Duration = Duration::from_secs(1);
+/// A connect that never reached the provider while others are open holds back new
+/// connects for [`CONNECT_BACKOFF`], doubling up to this while they keep failing.
+const MAX_CONNECT_BACKOFF: Duration = Duration::from_secs(30);
 /// A refused connect shrinks the limit to the connections we have; it then regrows by
 /// one per step.
 const THROTTLE_STEP: Duration = Duration::from_secs(5);
@@ -76,13 +79,56 @@ const LARGE_ARTICLE: u32 = 2_097_152;
 struct State {
     workers: Vec<Worker>,
     connecting: usize,
-    /// `(limit, since)` after a connect failed while other connections were up.
+    /// `(limit, since)` after the provider turned a connect away while others were up.
     throttle: Option<(usize, Instant)>,
+    /// Set when a connect could not reach the provider while others were up.
+    backoff: Option<Backoff>,
     /// Last connect failure on a pool with nothing else live.
     failed_at: Option<Instant>,
     /// Why that connect failed; cleared once one succeeds.
     connect_error: Option<Arc<str>>,
     connected: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Backoff {
+    until: Instant,
+    delay: Duration,
+    failures: u32,
+}
+
+impl State {
+    /// Until when new connects wait; never while nothing is open, so an outage still
+    /// gets noticed.
+    fn held(&self, open: usize) -> Option<Instant> {
+        self.backoff
+            .map(|backoff| backoff.until)
+            .filter(|&until| open > 0 && Instant::now() < until)
+    }
+
+    /// Holds back new connects after one failed to reach the provider; `true` when this
+    /// starts a new run of failures.
+    fn back_off(&mut self, now: Instant) -> bool {
+        match &mut self.backoff {
+            // A burst started before the hold fails within it; only a retry after it lengthens it.
+            Some(backoff) if now < backoff.until + backoff.delay => {
+                backoff.failures += 1;
+                if now >= backoff.until {
+                    backoff.delay = (backoff.delay * 2).min(MAX_CONNECT_BACKOFF);
+                    backoff.until = now + backoff.delay;
+                }
+                false
+            }
+            _ => {
+                self.backoff = Some(Backoff {
+                    until: now + CONNECT_BACKOFF,
+                    delay: CONNECT_BACKOFF,
+                    failures: 1,
+                });
+                true
+            }
+        }
+    }
 }
 
 /// Why [`Pool::fetch`] failed.
@@ -308,7 +354,7 @@ impl Pool {
                 && state
                     .failed_at
                     .is_some_and(|at| at.elapsed() < CONNECT_BACKOFF);
-            let reserved = if backoff {
+            let reserved = if backoff || state.held(open).is_some() {
                 0
             } else {
                 connections.min(self.limit(&state)).saturating_sub(open)
@@ -380,7 +426,7 @@ impl Pool {
             && state
                 .failed_at
                 .is_some_and(|at| at.elapsed() < CONNECT_BACKOFF);
-        let spare = open < self.limit(&state) && !backed_off;
+        let spare = open < self.limit(&state) && !backed_off && state.held(open).is_none();
         drop(state);
         idle || spare
     }
@@ -524,11 +570,12 @@ impl Pool {
         loop {
             let mut changed = pin!(self.changed.notified());
             changed.as_mut().enable();
-            let (reserved, live) = {
+            let (reserved, live, held) = {
                 let mut state = self.lock();
                 state.workers.retain(|w| !w.tx.is_closed());
                 let open = state.workers.len() + state.connecting;
                 let limit = self.limit(&state);
+                let held = state.held(open);
                 let hold_headroom = !stream && limit >= STREAM_HEADROOM_MIN_CONNECTIONS && {
                     let idle = state
                         .workers
@@ -537,7 +584,7 @@ impl Pool {
                         .count();
                     idle + limit.saturating_sub(open) <= 1
                 };
-                let spare = open < limit && !hold_headroom;
+                let spare = open < limit && !hold_headroom && held.is_none();
                 let live = !state.workers.is_empty();
                 let best = state
                     .workers
@@ -574,7 +621,7 @@ impl Pool {
                     _ => false,
                 };
                 drop(state);
-                (reserved, live)
+                (reserved, live, held)
             };
             if reserved {
                 let mut open = Box::pin(self.open(self.connecting()));
@@ -596,7 +643,12 @@ impl Pool {
                 }
                 continue;
             }
-            changed.await;
+            match held {
+                Some(until) => {
+                    let _ = tokio::time::timeout_at(until.into(), changed).await;
+                }
+                None => changed.await,
+            }
         }
     }
 
@@ -620,34 +672,84 @@ impl Pool {
         let usage = endpoint.usage().cloned();
         let live = Arc::clone(&self.live);
         async move {
-            let conn = match Connection::connect(&endpoint).await {
+            let conn = match Connection::connect_staged(&endpoint).await {
                 Ok(conn) => conn,
-                Err(error) => {
+                Err((stage, error)) => {
                     let mut state = connecting.lock();
                     let live = state.workers.iter().filter(|w| !w.tx.is_closed()).count();
                     // Excludes this attempt, whose slot `connecting` still holds.
                     let others = live + state.connecting - 1;
                     let now = Instant::now();
                     let (host, port) = (endpoint.host(), endpoint.port());
+                    let reason = error.connect_problem();
+                    let stage_label = stage.label();
                     let result = if others == 0 {
-                        state.connect_error = Some(error.connect_problem().into());
                         // Warn once per outage; retries while it lasts are debug.
                         if state.failed_at.replace(now).is_none() {
-                            tracing::warn!(host, port, reason = %error, "cannot connect to provider");
+                            tracing::warn!(
+                                host,
+                                port,
+                                stage = stage_label,
+                                reason,
+                                "cannot connect to provider"
+                            );
                         } else {
-                            tracing::debug!(host, port, reason = %error, "provider connect retry failed");
+                            tracing::debug!(
+                                host,
+                                port,
+                                stage = stage_label,
+                                reason,
+                                "provider connect retry failed"
+                            );
                         }
+                        state.connect_error = Some(reason.into());
                         Err(Failure::Connect(error))
                     } else {
-                        // Usually the provider's connection limit (400/502 greeting).
-                        if state
-                            .throttle
-                            .replace((others, now))
-                            .is_none_or(|(limit, _)| limit != others)
-                        {
-                            tracing::warn!(host, port, connections = others, reason = %error, "provider refused more connections; limiting pool");
+                        if stage.reached() {
+                            // Turned away after accepting: likely the provider's connection
+                            // limit, which the connections we hold do not exceed.
+                            let limit = live.max(1);
+                            if state
+                                .throttle
+                                .replace((limit, now))
+                                .is_none_or(|(old, _)| old != limit)
+                            {
+                                tracing::warn!(
+                                    host,
+                                    port,
+                                    connections = limit,
+                                    stage = stage_label,
+                                    reason,
+                                    "provider refused more connections; limiting pool"
+                                );
+                            } else {
+                                tracing::debug!(
+                                    host,
+                                    port,
+                                    connections = limit,
+                                    stage = stage_label,
+                                    reason,
+                                    "provider still refuses more connections"
+                                );
+                            }
+                        } else if state.back_off(now) {
+                            tracing::warn!(
+                                host,
+                                port,
+                                connections = live,
+                                stage = stage_label,
+                                reason,
+                                "cannot open more connections to provider; retrying later"
+                            );
                         } else {
-                            tracing::debug!(host, port, connections = others, reason = %error, "provider still refuses more connections");
+                            tracing::debug!(
+                                host,
+                                port,
+                                connections = live,
+                                stage = stage_label,
+                                reason,
+                                "provider connect retry failed"
+                            );
                         }
                         // A hung handshake is a provider fault the breaker must hear of.
                         match error {
@@ -674,6 +776,14 @@ impl Pool {
                 endpoint.host().to_owned(),
             ));
             let mut state = connecting.lock();
+            if let Some(backoff) = state.backoff.take() {
+                tracing::info!(
+                    host = endpoint.host(),
+                    port = endpoint.port(),
+                    failures = backoff.failures,
+                    "provider connects work again"
+                );
+            }
             state.failed_at = None;
             state.connect_error = None;
             state.connected = true;

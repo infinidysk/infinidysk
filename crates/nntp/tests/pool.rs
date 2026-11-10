@@ -156,6 +156,38 @@ async fn pool_shares_live_connections_when_the_provider_refuses_more() {
 
 #[tokio::test]
 #[allow(clippy::significant_drop_tightening)] // False positive: the pool is used to the end.
+async fn connects_that_never_reach_the_provider_do_not_shrink_the_pool() {
+    let corpus = Arc::new(Corpus::generate(1025, 48, ARTICLE_SIZE));
+    let server = LoopbackServer::start(corpus.articles.clone())
+        .await
+        .unwrap();
+    let downloads = Downloads::new(DOWNLOADS);
+    let config = PoolConfig {
+        max_connections: 4,
+        pipeline_depth: 2,
+        idle_timeout: Duration::from_secs(10),
+        min_connections: 0,
+    };
+    let pool = pool(&server, config, &downloads);
+    pool.prewarm(2).await;
+
+    // New connects are refused at TCP; the two open connections carry every request.
+    server.refuse().await;
+    fetch_all(&pool, &corpus).await;
+    assert_eq!(server.peak_connections(), 2);
+
+    server.resume().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    fetch_all(&pool, &corpus).await;
+    assert_eq!(
+        server.peak_connections(),
+        config.max_connections,
+        "the pool opens its full limit once the backoff ends"
+    );
+}
+
+#[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // False positive: the pool is used to the end.
 async fn cold_start_requests_wait_for_their_own_connection_rather_than_queue() {
     let corpus = Arc::new(Corpus::generate(1025, 2, ARTICLE_SIZE));
     let response = Duration::from_millis(300);
