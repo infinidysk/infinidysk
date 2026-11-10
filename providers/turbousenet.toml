@@ -1,0 +1,8 @@
+schema = 1
+name = "TurboUsenet"
+website = "https://turbousenet.com"
+backbone = "abavia"
+port = 563
+
+[[servers]]
+hostname = "reader.turbousenet.com"

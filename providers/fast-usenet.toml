@@ -1,0 +1,12 @@
+schema = 1
+name = "Fast Usenet"
+website = "https://www.fastusenet.org"
+backbone = "omicron"
+port = 563
+
+[[servers]]
+hostname = "news.fastusenet.org"
+region = "US"
+
+[[servers]]
+hostname = "euro.fastusenet.org"
