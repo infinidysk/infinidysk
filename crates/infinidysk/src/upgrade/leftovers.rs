@@ -217,11 +217,17 @@ struct Identity {
 fn identities(paths: &[PathBuf]) -> Vec<Identity> {
     paths
         .iter()
-        .map(|p| {
+        .map(|given| {
+            // An empty path is the working directory; unresolved, it stays empty and overlaps everything.
+            let p = if given.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                given
+            };
             let path = fs::canonicalize(p).unwrap_or_else(|_| {
                 match (p.parent().map(fs::canonicalize), p.file_name()) {
                     (Some(Ok(parent)), Some(name)) => parent.join(name),
-                    _ => p.clone(),
+                    _ => given.clone(),
                 }
             });
             let id = fs::metadata(p).ok().map(|m| (m.dev(), m.ino()));
@@ -545,6 +551,16 @@ mod tests {
         assert_eq!(blobs.reason, Some(LeftoverReason::LiveData));
         assert_eq!(blobs.bytes, None);
         assert_eq!(scan.bytes, allocated(&dir.join("db.sqlite")));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_empty_live_path_is_the_working_directory() {
+        let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+        assert_eq!(identities(&[PathBuf::new()])[0].path, cwd);
+        let dir = dir();
+        let scan = scan(&dir, &[PathBuf::new()]);
+        assert_eq!(item(&scan, "blobs").status, LeftoverStatus::Present);
         fs::remove_dir_all(dir).unwrap();
     }
 
