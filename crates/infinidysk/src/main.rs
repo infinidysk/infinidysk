@@ -28,15 +28,10 @@ async fn main() -> anyhow::Result<()> {
             "Reading the 1.x install in {}. A large install takes a few minutes; the report prints when done.",
             config.display()
         );
-        let last = std::cell::Cell::new(None::<std::time::Instant>);
-        let progress = |p: infinidysk_import::Progress| {
-            let Some(total) = p.total else { return };
-            let due = last
-                .get()
-                .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(5));
-            if due || p.done == total {
-                last.set(Some(std::time::Instant::now()));
-                eprintln!("Checked {} of {total} files", p.done);
+        let lines = infinidysk::upgrade::ReportProgress::default();
+        let progress = |p| {
+            if let Some(line) = lines.line(p, std::time::Instant::now()) {
+                eprintln!("{line}");
             }
         };
         let report = infinidysk::upgrade::report(&config, &default_cache_dir, progress).await?;

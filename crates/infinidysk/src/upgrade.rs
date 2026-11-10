@@ -675,6 +675,28 @@ pub async fn report(
     describe(&survey, &cs, &settings(&cs, default_cache_dir)?)
 }
 
+/// `import-report`'s progress lines: the first, one every 5 seconds, and the last once.
+#[derive(Default)]
+pub struct ReportProgress {
+    /// When the last line printed, and the count it showed.
+    last: std::cell::Cell<Option<(Instant, u64)>>,
+}
+
+impl ReportProgress {
+    pub fn line(&self, p: infinidysk_import::Progress, now: Instant) -> Option<String> {
+        let total = p.total?;
+        let due = match self.last.get() {
+            None => true,
+            Some((_, shown)) if p.done == total => shown != total,
+            Some((at, _)) => now.duration_since(at) >= Duration::from_secs(5),
+        };
+        due.then(|| {
+            self.last.set(Some((now, p.done)));
+            format!("Checked {} of {total} files", p.done)
+        })
+    }
+}
+
 /// Config key: `"started"` while an import from C# runs, `"done"` once it finished.
 const STATE_KEY: &str = "upgrade.state";
 /// Config key: what the import carried over and what it left behind, as text.
@@ -1900,6 +1922,40 @@ mod tests {
             POSTGRES_REPORT
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn import_report_progress_prints_every_5_seconds_and_the_end_once() {
+        let at = |done, total| infinidysk_import::Progress {
+            done,
+            total,
+            ..Default::default()
+        };
+        let start = Instant::now();
+        let secs = |s| start + Duration::from_secs(s);
+        let p = ReportProgress::default();
+        let lines: Vec<_> = [
+            (at(0, None), secs(0)),
+            (at(0, Some(9)), secs(0)),
+            (at(2, Some(9)), secs(4)),
+            (at(4, Some(9)), secs(5)),
+            (at(9, Some(9)), secs(6)),
+            (at(9, Some(9)), secs(20)),
+        ]
+        .into_iter()
+        .filter_map(|(progress, now)| p.line(progress, now))
+        .collect();
+        assert_eq!(
+            lines,
+            [
+                "Checked 0 of 9 files",
+                "Checked 4 of 9 files",
+                "Checked 9 of 9 files"
+            ]
+        );
+        let empty = ReportProgress::default();
+        assert!(empty.line(at(0, Some(0)), secs(0)).is_some());
+        assert_eq!(empty.line(at(0, Some(0)), secs(0)), None);
     }
 
     #[tokio::test]
