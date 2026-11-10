@@ -1,0 +1,15 @@
+schema = 1
+name = "NewsLeecher"
+website = "https://www.newsleecher.com"
+backbone = "omicron"
+port = 563
+
+[[servers]]
+hostname = "news.newsleecher.com"
+
+[[servers]]
+hostname = "us.newsleecher.com"
+region = "US"
+
+[[servers]]
+hostname = "eu.newsleecher.com"
