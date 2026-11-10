@@ -656,7 +656,11 @@ fn arr_instances(
 
 /// The survey of the C# `/config` at `config` plus the settings it would become, as
 /// text without secrets or usernames.
-pub async fn report(config: &Path, default_cache_dir: &str) -> anyhow::Result<String> {
+pub async fn report(
+    config: &Path,
+    default_cache_dir: &str,
+    progress: impl Fn(infinidysk_import::Progress),
+) -> anyhow::Result<String> {
     let vars: Vec<(String, String)> = std::env::vars().collect();
     if !matches!(
         infinidysk_import::source(config, &vars),
@@ -666,7 +670,7 @@ pub async fn report(config: &Path, default_cache_dir: &str) -> anyhow::Result<St
     }
     // A copy left by an earlier PostgreSQL attempt would be read instead of db.sqlite.
     infinidysk_import::postgres::remove_staged(config)?;
-    let survey = infinidysk_import::survey(config).await?;
+    let survey = infinidysk_import::survey_with_progress(config, progress).await?;
     let cs = Config::read(config, std::env::vars()).await?;
     describe(&survey, &cs, &settings(&cs, default_cache_dir)?)
 }
@@ -1890,7 +1894,7 @@ mod tests {
         std::fs::write(dir.join("db-contract.json"), r#"{"provider":"postgres"}"#).unwrap();
         std::fs::write(dir.join("db.sqlite"), "not a database").unwrap();
         assert_eq!(
-            report(&dir, crate::config::DEFAULT_CACHE_DIR)
+            report(&dir, crate::config::DEFAULT_CACHE_DIR, |_| {})
                 .await
                 .unwrap(),
             POSTGRES_REPORT

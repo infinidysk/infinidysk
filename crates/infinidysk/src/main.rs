@@ -24,10 +24,23 @@ async fn main() -> anyhow::Result<()> {
             .nth(2)
             .map_or_else(|| home.clone(), std::path::PathBuf::from);
         let default_cache_dir = home.join("cache").display().to_string();
-        print!(
-            "{}",
-            infinidysk::upgrade::report(&config, &default_cache_dir).await?
+        eprintln!(
+            "Reading the 1.x install in {}. A large install takes a few minutes; the report prints when done.",
+            config.display()
         );
+        let last = std::cell::Cell::new(None::<std::time::Instant>);
+        let progress = |p: infinidysk_import::Progress| {
+            let Some(total) = p.total else { return };
+            let due = last
+                .get()
+                .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(5));
+            if due || p.done == total {
+                last.set(Some(std::time::Instant::now()));
+                eprintln!("Checked {} of {total} files", p.done);
+            }
+        };
+        let report = infinidysk::upgrade::report(&config, &default_cache_dir, progress).await?;
+        print!("{report}");
         return Ok(());
     }
     if std::env::args().nth(1).as_deref() == Some("healthcheck") {
