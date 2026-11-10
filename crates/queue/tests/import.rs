@@ -1140,3 +1140,257 @@ async fn the_same_nzb_queues_once_and_invalid_ones_fail_at_once() {
         .count();
     assert_eq!(failed, 1, "the invalid NZB is in history");
 }
+
+/// Posts `xml` as the file `release.nzb` and returns the NZB of a job holding only that.
+fn wrap(prefix: &str, xml: &[u8], articles: &mut Vec<Article>) -> Vec<u8> {
+    let posted = post(prefix, "release.nzb", xml, 1000);
+    let outer = nzb(&[("release.nzb", &posted, xml.len(), 1000)]);
+    articles.extend(posted);
+    outer
+}
+
+async fn names_in(db: &Db, path: &str) -> Vec<String> {
+    let dir = db.item_by_path(path).await.unwrap().unwrap();
+    let files = db.children(dir.id).await.unwrap();
+    files.into_iter().map(|i| i.name).collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_job_holding_only_an_nzb_imports_the_release_it_names() {
+    let clip = post("c", "Clip.mkv", &mkv(4000, 1), 1000);
+    let release = nzb(&[("Clip.mkv", &clip, 4000, 1000)]);
+    let inner = post("n", "release.nzb", &release, 1000);
+    let info = post("i", "release.nfo", &[3; 500], 1000);
+    let outer = nzb(&[
+        ("release.nzb", &inner, release.len(), 1000),
+        ("release.nfo", &info, 500, 1000),
+    ]);
+    let (_server, queue) = setup([clip, inner, info].concat()).await;
+    let db = queue.db().clone();
+    queue.update_rules(|r| {
+        r.owners = [("tv".to_owned(), vec![media::Kind::Video])].into();
+    });
+
+    let history = run(&queue, &db, &outer).await;
+    assert_eq!(
+        history.status,
+        JobStatus::Completed,
+        "{:?}",
+        history.fail_message
+    );
+    assert_eq!(names_in(&db, "/content/tv/job").await, ["job.mkv"]);
+    let stored = db.blob(history.nzb_blob.unwrap()).await.unwrap().unwrap();
+    assert_eq!(blob::decode_nzb(&stored).unwrap(), release);
+    let listed: u64 = infinidysk_queue::nzb::parse(&release)
+        .unwrap()
+        .files
+        .iter()
+        .map(infinidysk_queue::nzb::File::bytes)
+        .sum();
+    assert_eq!(history.total_bytes, listed);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_nzb_inside_a_stored_archive_is_followed() {
+    let clip = post("c", "Clip.mkv", &mkv(4000, 1), 1000);
+    let release = nzb(&[("Clip.mkv", &clip, 4000, 1000)]);
+    let archive = sevenzip(&[("release.nzb", &release)]);
+    let pack = post("p", "pack.7z", &archive, 1000);
+    let outer = nzb(&[("pack.7z", &pack, archive.len(), 1000)]);
+    let (_server, queue) = setup([clip, pack].concat()).await;
+    let db = queue.db().clone();
+
+    let history = run(&queue, &db, &outer).await;
+    assert_eq!(
+        history.status,
+        JobStatus::Completed,
+        "{:?}",
+        history.fail_message
+    );
+    assert_eq!(names_in(&db, "/content/tv/job").await, ["job.mkv"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_nzb_inside_a_rar_or_gzipped_is_followed() {
+    use std::io::Write as _;
+
+    let clip = post("c", "Clip.mkv", &mkv(4000, 1), 1000);
+    let release = nzb(&[("Clip.mkv", &clip, 4000, 1000)]);
+    let chunk = Chunk {
+        name: "release.nzb",
+        total: release.len() as u64,
+        data: &release,
+        split_before: false,
+        split_after: false,
+    };
+    let rar = rar5_volume(0, true, &[chunk]);
+    let packed = post("r", "pack.rar", &rar, 1000);
+    let in_rar = nzb(&[("pack.rar", &packed, rar.len(), 1000)]);
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gz.write_all(&release).unwrap();
+    let mut articles = [clip, packed].concat();
+    let gzipped = wrap("g", &gz.finish().unwrap(), &mut articles);
+    let (_server, queue) = setup(articles).await;
+    let db = queue.db().clone();
+
+    for outer in [in_rar, gzipped] {
+        let history = run(&queue, &db, &outer).await;
+        assert_eq!(
+            history.status,
+            JobStatus::Completed,
+            "{:?}",
+            history.fail_message
+        );
+        db.delete_item(history.download_dir.unwrap()).await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retried_inner_nzb_opens_with_its_own_password() {
+    let archive = fixture("archive/tests/fixtures/aes-5.rar");
+    let packed = post("a", "pack.rar", &archive, 1000);
+    let release = String::from_utf8(nzb(&[("pack.rar", &packed, archive.len(), 1000)]))
+        .unwrap()
+        .replacen(
+            "<nzb>",
+            "<nzb><head><meta type=\"password\">test</meta></head>",
+            1,
+        );
+    let mut articles = packed;
+    let outer = wrap("n", release.as_bytes(), &mut articles);
+    let (_server, queue) = setup(articles).await;
+    let db = queue.db().clone();
+    for file_name in ["job{{wrong}}.nzb", "job{{2024}} - password=wrong.nzb"] {
+        let job = Submission {
+            file_name,
+            category: "tv",
+            priority: 0,
+            post_processing: 0,
+        };
+
+        let id = queue.enqueue(&job, &outer).await.unwrap();
+        assert!(queue.process_next().await);
+        let history = db.history_entry(id).await.unwrap().unwrap();
+        assert_eq!(
+            history.status,
+            JobStatus::Completed,
+            "{file_name}: {:?}",
+            history.fail_message
+        );
+        db.delete_item(history.download_dir.unwrap()).await.unwrap();
+
+        let id = queue.retry(id).await.unwrap();
+        assert!(queue.process_next().await);
+        let history = db.history_entry(id).await.unwrap().unwrap();
+        assert_eq!(
+            history.status,
+            JobStatus::Completed,
+            "{file_name} retried: {:?}",
+            history.fail_message
+        );
+        db.delete_item(history.download_dir.unwrap()).await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_blocklisted_nzb_is_not_followed() {
+    let clip = post("c", "Clip.mkv", &mkv(4000, 1), 1000);
+    let release = nzb(&[("Clip.mkv", &clip, 4000, 1000)]);
+    let archive = sevenzip(&[("release.nzb", &release)]);
+    let pack = post("p", "pack.7z", &archive, 1000);
+    let in_7z = nzb(&[("pack.7z", &pack, archive.len(), 1000)]);
+    let mut articles = [clip, pack].concat();
+    let plain = wrap("n", &release, &mut articles);
+    let (_server, queue) = setup(articles).await;
+    let db = queue.db().clone();
+    queue.update_rules(|r| r.blocklist = vec!["*.nzb".to_owned()]);
+
+    for outer in [plain, in_7z] {
+        let history = run(&queue, &db, &outer).await;
+        assert_eq!(
+            history.fail_message.as_deref(),
+            Some("No importable files found.")
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_nzb_next_to_other_files_stays_a_file() {
+    let release = b"<nzb/>";
+    let inner = post("n", "release.nzb", release, 1000);
+    let notes = post("t", "notes.txt", &[3; 500], 1000);
+    let outer = nzb(&[
+        ("release.nzb", &inner, release.len(), 1000),
+        ("notes.txt", &notes, 500, 1000),
+    ]);
+    let (_server, queue) = setup([inner, notes].concat()).await;
+    let db = queue.db().clone();
+
+    let history = run(&queue, &db, &outer).await;
+    assert_eq!(
+        history.status,
+        JobStatus::Completed,
+        "{:?}",
+        history.fail_message
+    );
+    let mut names = names_in(&db, "/content/tv/job").await;
+    names.sort();
+    assert_eq!(names, ["notes.txt", "release.nzb"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn several_or_unusable_inner_nzbs_fail_the_job() {
+    let clip = post("c", "Clip.mkv", &mkv(4000, 1), 1000);
+    let release = nzb(&[("Clip.mkv", &clip, 4000, 1000)]);
+    let a = post("a", "a.nzb", &release, 1000);
+    let b = post("b", "b.nzb", &release, 1000);
+    let several = nzb(&[
+        ("a.nzb", &a, release.len(), 1000),
+        ("b.nzb", &b, release.len(), 1000),
+    ]);
+    let mut articles = [clip, a, b].concat();
+    let unusable = wrap("u", b"<nzb/>", &mut articles);
+    let (_server, queue) = setup(articles).await;
+    let db = queue.db().clone();
+
+    let history = run(&queue, &db, &several).await;
+    assert_eq!(
+        history.fail_message.as_deref(),
+        Some("The download contains several NZB files; only one is supported.")
+    );
+    let history = run(&queue, &db, &unusable).await;
+    assert_eq!(
+        history.fail_message.as_deref(),
+        Some(
+            "The NZB file in this download is not usable: \
+             NZB contains no file with a valid segment"
+        )
+    );
+    assert!(db.item_by_path("/content/tv/job").await.unwrap().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn inner_nzbs_are_followed_three_deep_and_no_further() {
+    let clip = post("c", "Clip.mkv", &mkv(4000, 1), 1000);
+    let mut articles = clip.clone();
+    let mut xml = nzb(&[("Clip.mkv", &clip, 4000, 1000)]);
+    for depth in 0..3 {
+        xml = wrap(&format!("n{depth}"), &xml, &mut articles);
+    }
+    let deepest = wrap("n3", &xml, &mut articles);
+    let (_server, queue) = setup(articles).await;
+    let db = queue.db().clone();
+
+    let history = run(&queue, &db, &deepest).await;
+    assert_eq!(
+        history.fail_message.as_deref(),
+        Some("The download contains NZB files nested too deep.")
+    );
+    let history = run(&queue, &db, &xml).await;
+    assert_eq!(
+        history.status,
+        JobStatus::Completed,
+        "{:?}",
+        history.fail_message
+    );
+}
