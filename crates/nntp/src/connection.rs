@@ -27,7 +27,7 @@ const READ_BUFFER_LEN: usize = 128 * 1024;
 const MAX_LINE_LEN: u64 = 64 * 1024;
 /// RFC 3977 caps message-ids at 250 octets.
 const MAX_MESSAGE_ID_LEN: usize = 250;
-/// Reply text kept on [`Error::Status`].
+/// Reply text kept on [`Error::Status`] and [`Error::AuthRejected`].
 const MAX_REPLY_LEN: usize = 120;
 /// Extra decode capacity so `\r\n=yend` is reached without growing the body buffer.
 const DECODE_SLACK: usize = 64;
@@ -610,7 +610,7 @@ impl Connection {
         match self.read_status().await? {
             281 => return Ok(()),
             381 => {}
-            code => return Err(Error::AuthRejected { code }),
+            code => return Err(self.rejected(code)),
         }
         self.write_buf.extend_from_slice(b"AUTHINFO PASS ");
         self.write_buf.extend_from_slice(password.as_bytes());
@@ -618,7 +618,7 @@ impl Connection {
         self.flush().await?;
         match self.read_status().await? {
             281 => Ok(()),
-            code => Err(Error::AuthRejected { code }),
+            code => Err(self.rejected(code)),
         }
     }
 
@@ -683,8 +683,23 @@ impl Connection {
             .ok_or(Error::Protocol)
     }
 
-    /// [`Error::Status`] with the text of the status line just read, cleaned for logs.
+    /// [`Error::Status`] with the text of the status line just read.
     fn unexpected(&self, code: u16) -> Error {
+        Error::Status {
+            code,
+            reply: self.reply(),
+        }
+    }
+
+    fn rejected(&self, code: u16) -> Error {
+        Error::AuthRejected {
+            code,
+            reply: self.reply(),
+        }
+    }
+
+    /// Text of the status line just read, cleaned for logs.
+    fn reply(&self) -> Box<str> {
         let text = String::from_utf8_lossy(self.line.get(3..).unwrap_or_default());
         let reply: String = text.chars().filter(|c| !c.is_control()).collect();
         let reply = reply.trim();
@@ -692,10 +707,7 @@ impl Connection {
         while !reply.is_char_boundary(end) {
             end -= 1;
         }
-        Error::Status {
-            code,
-            reply: reply[..end].into(),
-        }
+        reply[..end].into()
     }
 
     /// Skips lines through the article terminator.
