@@ -643,11 +643,13 @@ async fn inner_nzb(job: &Job, outputs: &[Output]) -> Result<Option<Vec<u8>>, Err
         let Some(name) = output.path.last() else {
             continue;
         };
-        if is_nzb(name) {
-            nzbs.push((name, &output.meta));
-        } else if !job.blocks(name) {
+        if job.blocks(name) {
+            continue;
+        }
+        if !is_nzb(name) {
             return Ok(None);
         }
+        nzbs.push((name, &output.meta));
     }
     let (name, meta) = match nzbs[..] {
         [] => return Ok(None),

@@ -1290,6 +1290,28 @@ async fn a_retried_inner_nzb_opens_with_its_own_password() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_blocklisted_nzb_is_not_followed() {
+    let clip = post("c", "Clip.mkv", &mkv(4000, 1), 1000);
+    let release = nzb(&[("Clip.mkv", &clip, 4000, 1000)]);
+    let archive = sevenzip(&[("release.nzb", &release)]);
+    let pack = post("p", "pack.7z", &archive, 1000);
+    let in_7z = nzb(&[("pack.7z", &pack, archive.len(), 1000)]);
+    let mut articles = [clip, pack].concat();
+    let plain = wrap("n", &release, &mut articles);
+    let (_server, queue) = setup(articles).await;
+    let db = queue.db().clone();
+    queue.update_rules(|r| r.blocklist = vec!["*.nzb".to_owned()]);
+
+    for outer in [plain, in_7z] {
+        let history = run(&queue, &db, &outer).await;
+        assert_eq!(
+            history.fail_message.as_deref(),
+            Some("No importable files found.")
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_nzb_next_to_other_files_stays_a_file() {
     let release = b"<nzb/>";
     let inner = post("n", "release.nzb", release, 1000);
