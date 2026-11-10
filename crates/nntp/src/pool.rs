@@ -106,6 +106,16 @@ impl State {
             .filter(|&until| open > 0 && Instant::now() < until)
     }
 
+    /// Effective connection limit, regrowing one per [`THROTTLE_STEP`] after a throttle.
+    fn limit(&self, max: usize) -> usize {
+        self.throttle.map_or(max, |(limit, since)| {
+            let steps = since.elapsed().as_secs() / THROTTLE_STEP.as_secs();
+            limit
+                .saturating_add(usize::try_from(steps).unwrap_or(usize::MAX))
+                .min(max)
+        })
+    }
+
     /// Holds back new connects after one failed to reach the provider; `true` when this
     /// starts a new run of failures.
     fn back_off(&mut self, now: Instant) -> bool {
@@ -653,13 +663,7 @@ impl Pool {
     }
 
     fn limit(&self, state: &State) -> usize {
-        let max = self.config.max_connections;
-        state.throttle.map_or(max, |(limit, since)| {
-            let steps = since.elapsed().as_secs() / THROTTLE_STEP.as_secs();
-            limit
-                .saturating_add(usize::try_from(steps).unwrap_or(usize::MAX))
-                .min(max)
-        })
+        state.limit(self.config.max_connections)
     }
 
     /// `None` when the connect was refused but other connections can take the request.
@@ -793,6 +797,11 @@ impl Pool {
                 task: task.abort_handle(),
                 link,
             });
+            // A throttle set while these connects were pending must not hold below them.
+            let open = state.workers.iter().filter(|w| !w.tx.is_closed()).count();
+            if state.throttle.is_some() && open > state.limit(config.max_connections) {
+                state.throttle = Some((open, Instant::now()));
+            }
             drop(state);
             drop(connecting);
             Ok(Some((tx, acquired, id)))
