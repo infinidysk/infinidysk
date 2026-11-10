@@ -5,21 +5,23 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::Duration;
 
 use axum::Router;
+use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, FromRequest, Multipart, Query, Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Form, Json};
+use futures_util::StreamExt as _;
 use infinidysk_core::JobId;
 use infinidysk_db::{HistoryEntry, HistoryQuery, JobStatus, QueueEntry, now_ms};
 use infinidysk_queue::import::Snapshot;
 use infinidysk_queue::{Queue, Submission, service};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 use uuid::Uuid;
 
 use crate::arr::{Probe, Probes};
@@ -32,6 +34,9 @@ pub(crate) const MAX_NZB: usize = infinidysk_queue::nzb::MAX_UPLOAD;
 const MAX_NAME: usize = 255;
 const HISTORY_CAP: usize = 10_000;
 const AUTH_WARN_EVERY_MS: i64 = 5 * 60 * 1000;
+const UNAUTH_BODY_LIMIT: usize = 64 * 1024;
+const UNAUTH_CONCURRENCY: usize = 4;
+const UNAUTH_FIELD_LIMIT: usize = 32;
 const FOLDER_GONE: &str = "Download folder no longer exists.";
 
 pub struct Sab {
@@ -41,6 +46,7 @@ pub struct Sab {
     pub probes: Arc<Probes>,
     fetcher: Fetcher,
     last_auth_warning: AtomicI64,
+    unauth_uploads: Semaphore,
 }
 
 impl Sab {
@@ -54,6 +60,7 @@ impl Sab {
             probes: Arc::default(),
             fetcher: Fetcher::new()?,
             last_auth_warning: AtomicI64::new(i64::MIN),
+            unauth_uploads: Semaphore::new(UNAUTH_CONCURRENCY),
         })
     }
 }
@@ -110,32 +117,175 @@ struct JsonIds {
     nzo_ids: Vec<String>,
 }
 
-impl Params {
-    async fn read(req: Request) -> Result<Self, Fail> {
-        let mut params = Self {
-            pairs: Query::<Vec<(String, String)>>::try_from_uri(req.uri())
-                .map_err(|_| bad("Invalid query string"))?
-                .0,
-            ..Self::default()
-        };
-        let kind = req
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FormKind {
+    Multipart,
+    UrlEncoded,
+    Json,
+    Other,
+}
+
+impl FormKind {
+    fn from_request(req: &Request) -> Self {
+        let media_type = req
             .headers()
             .get(header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split(';').next())
             .unwrap_or_default()
-            .to_ascii_lowercase();
-        if kind.starts_with("multipart/form-data") {
-            let mut form = Multipart::from_request(req, &())
-                .await
-                .map_err(|_| bad("Invalid multipart body"))?;
-            while let Some(field) = form
-                .next_field()
-                .await
-                .map_err(|_| bad("Invalid multipart body"))?
-            {
+            .trim();
+        if media_type.eq_ignore_ascii_case("multipart/form-data") {
+            Self::Multipart
+        } else if media_type.eq_ignore_ascii_case("application/x-www-form-urlencoded") {
+            Self::UrlEncoded
+        } else if media_type
+            .to_ascii_lowercase()
+            .starts_with("application/json")
+        {
+            Self::Json
+        } else {
+            Self::Other
+        }
+    }
+}
+
+impl Params {
+    async fn read(
+        mut req: Request,
+        pairs: Vec<(String, String)>,
+        kind: FormKind,
+        expected_key: Option<&str>,
+    ) -> Result<Self, Fail> {
+        let mut params = Self {
+            pairs,
+            ..Self::default()
+        };
+        if kind == FormKind::Multipart {
+            let authenticated = Arc::new(AtomicBool::new(expected_key.is_none()));
+            let req = if expected_key.is_some() {
+                let (parts, body) = req.into_parts();
+                let gate = Arc::clone(&authenticated);
+                let stream = futures_util::stream::unfold(
+                    (
+                        Box::pin(body.into_data_stream()),
+                        None::<axum::body::Bytes>,
+                        0usize,
+                    ),
+                    move |(mut input, pending, used)| {
+                        let gate = Arc::clone(&gate);
+                        async move {
+                            tokio::task::yield_now().await;
+                            let item = if let Some(bytes) = pending {
+                                Ok(bytes)
+                            } else {
+                                match input.next().await {
+                                    Some(Ok(bytes)) => Ok(bytes),
+                                    Some(Err(_)) => {
+                                        Err(std::io::Error::other("Invalid SAB request body"))
+                                    }
+                                    None => return None,
+                                }
+                            };
+                            match item {
+                                Ok(_)
+                                    if !gate.load(Ordering::Relaxed)
+                                        && used == UNAUTH_BODY_LIMIT =>
+                                {
+                                    Some((
+                                        Err(std::io::Error::other(
+                                            "Unauthenticated SAB body limit exceeded",
+                                        )),
+                                        (input, None, used),
+                                    ))
+                                }
+                                Ok(bytes)
+                                    if !gate.load(Ordering::Relaxed)
+                                        && bytes.len()
+                                            > UNAUTH_BODY_LIMIT.saturating_sub(used).min(4096) =>
+                                {
+                                    let limit = (UNAUTH_BODY_LIMIT - used).min(4096);
+                                    Some((
+                                        Ok(bytes.slice(..limit)),
+                                        (input, Some(bytes.slice(limit..)), used + limit),
+                                    ))
+                                }
+                                Ok(bytes) => {
+                                    let total = if gate.load(Ordering::Relaxed) {
+                                        used
+                                    } else {
+                                        used + bytes.len()
+                                    };
+                                    Some((Ok(bytes), (input, None, total)))
+                                }
+                                Err(error) => Some((Err(error), (input, None, used))),
+                            }
+                        }
+                    },
+                );
+                Request::from_parts(parts, Body::from_stream(stream))
+            } else {
+                req
+            };
+            let mut form = Multipart::from_request(req, &()).await.map_err(|_| {
+                if expected_key.is_some() {
+                    Fail::Auth("API Key Required")
+                } else {
+                    bad("Invalid multipart body")
+                }
+            })?;
+            let mut preauth_remaining = UNAUTH_BODY_LIMIT;
+            let mut authorized = expected_key.is_none();
+            let mut fields = 0usize;
+            while let Some(mut field) = form.next_field().await.map_err(|_| {
+                if authorized {
+                    bad("Invalid multipart body")
+                } else {
+                    Fail::Auth("API Key Required")
+                }
+            })? {
+                fields += 1;
+                if !authorized && fields > UNAUTH_FIELD_LIMIT {
+                    return Err(Fail::Auth("API Key Required"));
+                }
                 let name = field.name().unwrap_or_default().to_owned();
                 let file_name = field.file_name().map(str::to_owned);
                 let is_nzb_file = name.eq_ignore_ascii_case("nzbFile");
+                if !authorized {
+                    let mut data = Vec::new();
+                    while let Some(chunk) = field
+                        .chunk()
+                        .await
+                        .map_err(|_| Fail::Auth("API Key Required"))?
+                    {
+                        if chunk.len() > preauth_remaining {
+                            return Err(Fail::Auth("API Key Required"));
+                        }
+                        preauth_remaining -= chunk.len();
+                        data.extend_from_slice(&chunk);
+                    }
+                    if let Some(file_name) =
+                        file_name.filter(|_| is_nzb_file || name.eq_ignore_ascii_case("name"))
+                    {
+                        if is_nzb_file || params.nzb.is_none() {
+                            params.nzb = Some((file_name, data));
+                        }
+                    } else {
+                        let value =
+                            String::from_utf8(data).map_err(|_| bad("Invalid form field"))?;
+                        if name.eq_ignore_ascii_case("apikey") && !value.is_empty() {
+                            if expected_key.is_some_and(|expected| {
+                                !expected.is_empty() && same(value.as_bytes(), expected.as_bytes())
+                            }) {
+                                authorized = true;
+                                authenticated.store(true, Ordering::Relaxed);
+                            } else {
+                                return Err(Fail::Auth("API Key Incorrect"));
+                            }
+                        }
+                        params.pairs.push((name, value));
+                    }
+                    continue;
+                }
                 match file_name {
                     Some(file_name) if is_nzb_file || name.eq_ignore_ascii_case("name") => {
                         let data = field.bytes().await.map_err(|_| bad("Invalid nzbFile"))?;
@@ -149,12 +299,26 @@ impl Params {
                     }
                 }
             }
-        } else if kind.starts_with("application/x-www-form-urlencoded") {
+        } else if kind == FormKind::UrlEncoded {
+            req.headers_mut().insert(
+                header::CONTENT_TYPE,
+                header::HeaderValue::from_static("application/x-www-form-urlencoded"),
+            );
+            if expected_key.is_some() {
+                DefaultBodyLimit::max(UNAUTH_BODY_LIMIT).apply(&mut req);
+            }
             let Form(pairs) = Form::<Vec<(String, String)>>::from_request(req, &())
                 .await
-                .map_err(|_| bad("Invalid form body"))?;
+                .map_err(|error| match error {
+                    axum::extract::rejection::FormRejection::BytesRejection(_)
+                        if expected_key.is_some() =>
+                    {
+                        Fail::Auth("API Key Required")
+                    }
+                    _ => bad("Invalid form body"),
+                })?;
             params.pairs.extend(pairs);
-        } else if kind.starts_with("application/json") {
+        } else if kind == FormKind::Json {
             let Json(body) = Json::<JsonIds>::from_request(req, &())
                 .await
                 .map_err(|_| bad("Invalid JSON body"))?;
@@ -254,9 +418,50 @@ async fn handle(state: &Sab, req: Request) -> Result<Value, Fail> {
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    let probe = req.extensions().get::<Probe>().cloned();
-    let p = Params::read(req).await?;
+    let query = Query::<Vec<(String, String)>>::try_from_uri(req.uri())
+        .map_err(|_| bad("Invalid query string"))?
+        .0;
+    let query_key = query
+        .iter()
+        .find(|(name, value)| name.eq_ignore_ascii_case("apikey") && !value.is_empty())
+        .map(|(_, value)| value.as_str());
+    let mode_hint = query
+        .iter()
+        .find(|(name, value)| name.eq_ignore_ascii_case("mode") && !value.is_empty())
+        .map(|(_, value)| value.as_str())
+        .unwrap_or_default();
     let ctx = Ctx::new(state.config.read().await.settings());
+    let given = header_key.as_deref().or(query_key);
+    let authorized = mode_hint != "version" && given.is_some();
+    if authorized {
+        authorize(state, &ctx.sab, given)?;
+    }
+    if mode_hint == "version" {
+        return Ok(json!({ "status": true, "error": null, "version": VERSION }));
+    }
+    let preauth = !authorized;
+    let kind = FormKind::from_request(&req);
+    if preauth && !matches!(kind, FormKind::Multipart | FormKind::UrlEncoded) {
+        return Err(Fail::Auth("API Key Required"));
+    }
+    let _permit = if preauth {
+        Some(
+            state
+                .unauth_uploads
+                .try_acquire()
+                .map_err(|_| Fail::Auth("API Key Required"))?,
+        )
+    } else {
+        None
+    };
+    let probe = req.extensions().get::<Probe>().cloned();
+    let p = Params::read(
+        req,
+        query,
+        kind,
+        preauth.then_some(ctx.sab.api_key.0.as_str()),
+    )
+    .await?;
     let mode = p.get("mode").unwrap_or_default();
     let name = p.get("name").unwrap_or_default();
     let known = matches!(
@@ -278,12 +483,9 @@ async fn handle(state: &Sab, req: Request) -> Result<Value, Fail> {
         return Err(bad("Invalid mode"));
     }
     if mode != "version" {
-        authorize(
-            state,
-            &ctx.sab,
-            header_key.as_deref().or_else(|| p.get("apikey")),
-            mode,
-        )?;
+        if !authorized {
+            authorize(state, &ctx.sab, p.get("apikey"))?;
+        }
         if let Some(Probe(nonce)) = probe {
             state.probes.arrived(&nonce);
         }
@@ -333,7 +535,7 @@ async fn handle(state: &Sab, req: Request) -> Result<Value, Fail> {
     }
 }
 
-fn authorize(state: &Sab, sab: &SabSettings, given: Option<&str>, mode: &str) -> Result<(), Fail> {
+fn authorize(state: &Sab, sab: &SabSettings, given: Option<&str>) -> Result<(), Fail> {
     let fail = match given {
         None => "API Key Required",
         Some(key)
@@ -352,7 +554,6 @@ fn authorize(state: &Sab, sab: &SabSettings, given: Option<&str>, mode: &str) ->
             .is_ok()
     {
         tracing::warn!(
-            mode,
             reason = fail,
             "SAB API request rejected; update the API key in the download client"
         );
@@ -452,7 +653,27 @@ async fn add_url(state: &Sab, ctx: &Ctx, p: &Params) -> Result<Value, Fail> {
     };
     let (priority, post_processing, category) = options(ctx, p)?;
     let given = p.get("nzbname").filter(|n| !n.trim().is_empty());
-    let fetched = state.fetcher.fetch(url).await;
+    let configured = {
+        let store = state.config.read().await;
+        reqwest::Url::parse(url).ok().and_then(|requested| {
+            let matched = store
+                .settings()
+                .indexers
+                .iter()
+                .filter(|indexer| indexer.enabled)
+                .find_map(|indexer| {
+                    let endpoint = crate::newznab::endpoint(indexer).ok()?;
+                    (endpoint.origin() == requested.origin())
+                        .then(|| (endpoint, indexer.api_key.0.clone()))
+                });
+            matched.map(|(endpoint, key)| (requested, endpoint, key))
+        })
+    };
+    let fetched = if let Some((requested, endpoint, key)) = configured {
+        Fetcher::fetch_configured(requested, &endpoint, &key).await
+    } else {
+        state.fetcher.fetch(url).await
+    };
     // ponytail: with no name anywhere the job is named by time; reading the NZB's own
     // `<meta type="name">` would do better if unnamed URLs turn up.
     let fallback = format!("Unnamed NZB {}", now_ms());

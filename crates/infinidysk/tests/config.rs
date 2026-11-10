@@ -358,3 +358,184 @@ fn validation_rejects_unknown_catalog_entries_and_bad_arr_urls() {
     public.network.public_url = "media.example.com".into();
     assert!(matches!(public.validate(), Err(Error::Invalid { .. })));
 }
+#[test]
+fn indexer_enabled_defaults_to_true_without_overriding_false() {
+    use infinidysk::config::Indexer;
+
+    assert!(Indexer::default().enabled);
+    let absent: Indexer = serde_json::from_value(serde_json::json!({
+        "name": "Default",
+        "base_url": "https://indexer.invalid/api",
+        "api_key": "test-key"
+    }))
+    .expect("indexer without enabled");
+    assert!(absent.enabled);
+
+    let disabled: Indexer = serde_json::from_value(serde_json::json!({
+        "name": "Disabled",
+        "base_url": "https://indexer.invalid/api",
+        "api_key": "test-key",
+        "enabled": false
+    }))
+    .expect("disabled indexer");
+    assert!(!disabled.enabled);
+}
+
+#[tokio::test]
+async fn multiple_indexers_persist_masked_edits_and_deletions() {
+    use infinidysk::config::Indexer;
+    let db = Db::connect("sqlite::memory:").await.expect("connect");
+    let mut store = ConfigStore::load(db.clone(), []).await.expect("load");
+    let first_id = uuid::Uuid::now_v7();
+    let second_id = uuid::Uuid::now_v7();
+    let indexer = |id, name: &str, key: &str| Indexer {
+        id,
+        name: name.to_owned(),
+        base_url: format!("https://{name}.invalid/api"),
+        api_key: Secret(key.to_owned()),
+        enabled: true,
+    };
+    let mut settings = store.settings().clone();
+    settings.indexers = vec![
+        indexer(first_id, "alpha", "alpha-secret"),
+        indexer(second_id, "beta", "beta-secret"),
+    ];
+    settings.health.check_percent = 9;
+    store.save(settings).await.expect("create indexers");
+    let masked = store.settings().masked();
+    assert_eq!(masked.indexers.len(), 2);
+    assert_eq!(masked.indexers[0].api_key.0, MASK);
+    assert_eq!(masked.indexers[1].api_key.0, MASK);
+    let serialized = serde_json::to_string(&masked).expect("masked serialization");
+    assert!(!serialized.contains("alpha-secret"));
+    assert!(!serialized.contains("beta-secret"));
+    let mut edited = masked;
+    edited.indexers[0].name = "updated".into();
+    edited.indexers[0].enabled = false;
+    edited.indexers[1].enabled = false;
+    store.save(edited).await.expect("update");
+    let mut reloaded = ConfigStore::load(db.clone(), []).await.expect("reload");
+    assert_eq!(reloaded.settings().health.check_percent, 9);
+    assert_eq!(reloaded.settings().indexers[0].api_key.0, "alpha-secret");
+    assert_eq!(reloaded.settings().indexers[1].api_key.0, "beta-secret");
+    assert_eq!(reloaded.settings().indexers[0].name, "updated");
+    assert!(!reloaded.settings().indexers[0].enabled);
+    let mut reenabled = reloaded.settings().masked();
+    reenabled.indexers[0].enabled = true;
+    reenabled.indexers.retain(|item| item.id != second_id);
+    reloaded.save(reenabled).await.expect("enable and delete");
+    let restored = ConfigStore::load(db.clone(), [])
+        .await
+        .expect("reload after delete");
+    assert_eq!(restored.settings().indexers.len(), 1);
+    assert!(restored.settings().indexers[0].enabled);
+    assert_eq!(restored.settings().indexers[0].api_key.0, "alpha-secret");
+    assert_eq!(restored.settings().health.check_percent, 9);
+
+    let mut duplicate = restored.settings().clone();
+    duplicate.indexers.push(duplicate.indexers[0].clone());
+    assert!(matches!(
+        duplicate.validate(),
+        Err(Error::Invalid {
+            path: "indexers",
+            ..
+        })
+    ));
+    let mut invalid = restored.settings().clone();
+    invalid.indexers[0].name = "  ".into();
+    assert!(matches!(
+        invalid.validate(),
+        Err(Error::Invalid {
+            path: "indexers",
+            ..
+        })
+    ));
+    invalid.indexers[0].name = "valid".into();
+    invalid.indexers[0].id = uuid::Uuid::nil();
+    assert!(matches!(
+        invalid.validate(),
+        Err(Error::Invalid {
+            path: "indexers",
+            ..
+        })
+    ));
+
+    let env = [(
+        "INFINIDYSK__INDEXERS".to_owned(),
+        serde_json::to_string(&vec![indexer(
+            uuid::Uuid::now_v7(),
+            "environment",
+            "env-secret",
+        )])
+        .expect("serialize environment"),
+    )];
+    let overridden = ConfigStore::load(db.clone(), env)
+        .await
+        .expect("environment");
+    assert_eq!(overridden.settings().indexers[0].name, "environment");
+    assert!(overridden.locked().any(|path| path == "indexers"));
+    db.close().await;
+}
+
+#[test]
+fn indexer_configuration_rejects_excessive_memory_use() {
+    use infinidysk::config::Indexer;
+
+    let make = |n| Indexer {
+        id: uuid::Uuid::new_v4(),
+        name: format!("Indexer {n}"),
+        base_url: "https://indexer.invalid/api".into(),
+        api_key: Secret("secret".into()),
+        enabled: true,
+    };
+    let mut settings = Settings {
+        indexers: (0..32).map(make).collect(),
+        ..Settings::default()
+    };
+    assert!(settings.validate().is_ok());
+    settings.indexers.push(make(32));
+    assert!(matches!(
+        settings.validate(),
+        Err(Error::Invalid {
+            path: "indexers",
+            ..
+        })
+    ));
+
+    let mut settings = Settings::default();
+    settings.indexers.push(make(0));
+    settings.indexers[0].name = "a".repeat(128);
+    assert!(settings.validate().is_ok());
+    settings.indexers[0].name.push('b');
+    assert!(matches!(
+        settings.validate(),
+        Err(Error::Invalid {
+            path: "indexers",
+            ..
+        })
+    ));
+
+    settings.indexers[0].name = "a".into();
+    settings.indexers[0].api_key = Secret("a".repeat(512));
+    assert!(settings.validate().is_ok());
+    settings.indexers[0].api_key.0.push('b');
+    assert!(matches!(
+        settings.validate(),
+        Err(Error::Invalid {
+            path: "indexers",
+            ..
+        })
+    ));
+
+    settings.indexers[0].api_key = Secret("unique-secret".into());
+    settings.indexers[0].base_url = format!("https://indexer.invalid/{}", "a".repeat(2024));
+    assert!(settings.validate().is_ok());
+    settings.indexers[0].base_url.push('x');
+    assert!(matches!(
+        settings.validate(),
+        Err(Error::Invalid {
+            path: "indexers",
+            ..
+        })
+    ));
+}

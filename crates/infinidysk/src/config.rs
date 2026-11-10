@@ -52,6 +52,11 @@ fn invalid(path: &'static str, message: String) -> Error {
     Error::Invalid { path, message }
 }
 
+const MAX_INDEXERS: usize = 32;
+const MAX_INDEXER_NAME_BYTES: usize = 128;
+const MAX_INDEXER_URL_BYTES: usize = 2048;
+const MAX_INDEXER_KEY_BYTES: usize = 512;
+
 const CHECK_PERCENT: RangeInclusive<u8> = 5..=100;
 const QUEUE_CONCURRENCY: RangeInclusive<u8> = 1..=10;
 const NZB_RETENTION_DAYS: RangeInclusive<u32> = 0..=3650;
@@ -160,6 +165,7 @@ pub struct Settings {
     pub providers: Vec<Provider>,
     pub arr_instances: Vec<ArrInstance>,
     pub arr: ArrOptions,
+    pub indexers: Vec<Indexer>,
     pub health: Health,
     pub queue: Queue,
     pub imports: Imports,
@@ -169,6 +175,82 @@ pub struct Settings {
     /// Experiments switched on, by name; they apply after a restart.
     #[serde(deserialize_with = "known_experiments")]
     pub experiments: Vec<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct Indexer {
+    pub id: Uuid,
+    pub name: String,
+    pub base_url: String,
+    pub api_key: Secret,
+    #[serde(default = "enabled")]
+    #[schema(default = true)]
+    pub enabled: bool,
+}
+
+impl Default for Indexer {
+    fn default() -> Self {
+        Self {
+            id: Uuid::nil(),
+            name: String::new(),
+            base_url: String::new(),
+            api_key: Secret::default(),
+            enabled: enabled(),
+        }
+    }
+}
+
+impl fmt::Debug for Indexer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Indexer")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("base_url", &self.public_base_url())
+            .field("api_key", &self.api_key)
+            .field("enabled", &self.enabled)
+            .finish()
+    }
+}
+
+impl Indexer {
+    pub(crate) fn public_base_url(&self) -> &str {
+        if crate::newznab::base_url(self).is_ok() {
+            &self.base_url
+        } else {
+            MASK
+        }
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), Error> {
+        if self.id.is_nil() || self.name.trim().is_empty() {
+            return Err(invalid(
+                "indexers",
+                "An indexer needs an ID and name".to_owned(),
+            ));
+        }
+        if self.name.len() > MAX_INDEXER_NAME_BYTES {
+            return Err(invalid(
+                "indexers",
+                "Indexer name exceeds 128 bytes".to_owned(),
+            ));
+        }
+        if self.base_url.len() > MAX_INDEXER_URL_BYTES {
+            return Err(invalid(
+                "indexers",
+                "Indexer URL exceeds 2048 bytes".to_owned(),
+            ));
+        }
+        if self.api_key.0.len() > MAX_INDEXER_KEY_BYTES {
+            return Err(invalid(
+                "indexers",
+                "Indexer API key exceeds 512 bytes".to_owned(),
+            ));
+        }
+        crate::newznab::endpoint(self)
+            .map(|_| ())
+            .map_err(|reason| invalid("indexers", reason.to_owned()))
+    }
 }
 
 /// An unfinished change users may switch on while it is measured.
@@ -1092,6 +1174,12 @@ impl Settings {
     #[must_use]
     pub fn masked(&self) -> Self {
         let mut out = self.clone();
+        for indexer in &mut out.indexers {
+            if indexer.public_base_url() == MASK {
+                MASK.clone_into(&mut indexer.base_url);
+            }
+            indexer.api_key = indexer.api_key.masked();
+        }
         out.sab.api_key = out.sab.api_key.masked();
         out.auth.api_key = out.auth.api_key.masked();
         out.auth.session_key = out.auth.session_key.masked();
@@ -1110,6 +1198,11 @@ impl Settings {
 
     /// Replaces [`MASK`] placeholders with the secrets in `current`.
     fn restore_secrets(&mut self, current: &Self) {
+        for indexer in &mut self.indexers {
+            if let Some(old) = current.indexers.iter().find(|old| old.id == indexer.id) {
+                indexer.api_key.restore(&old.api_key);
+            }
+        }
         self.sab.api_key.restore(&current.sab.api_key);
         self.auth.api_key.restore(&current.auth.api_key);
         self.auth.session_key.restore(&current.auth.session_key);
@@ -1431,6 +1524,19 @@ impl Settings {
             p.resolve()?;
         }
         ids.clear();
+        if self.indexers.len() > MAX_INDEXERS {
+            return Err(invalid(
+                "indexers",
+                format!("At most {MAX_INDEXERS} indexers can be configured"),
+            ));
+        }
+        for indexer in &self.indexers {
+            if !ids.insert(indexer.id) {
+                return Err(invalid("indexers", "Duplicate indexer ID".to_owned()));
+            }
+            indexer.validate()?;
+        }
+        ids.clear();
         for a in &self.arr_instances {
             if !ids.insert(a.id) {
                 return Err(invalid(
@@ -1580,6 +1686,7 @@ pub struct ConfigStore {
     stored: Map<String, Value>,
     env: Vec<Override>,
     settings: Settings,
+    indexers_revision: Uuid,
     /// The disk cache folder when none is saved; validation checks it against the mount.
     default_cache_dir: String,
 }
@@ -1639,12 +1746,17 @@ impl ConfigStore {
             stored,
             env,
             settings,
+            indexers_revision: Uuid::new_v4(),
             default_cache_dir,
         })
     }
 
     pub const fn settings(&self) -> &Settings {
         &self.settings
+    }
+
+    pub const fn indexers_revision(&self) -> Uuid {
+        self.indexers_revision
     }
 
     /// Fills every empty server secret (API keys, session key, `WebDAV` password and
@@ -1678,7 +1790,37 @@ impl ConfigStore {
 
     /// Validates and persists `new`. [`MASK`] secrets keep their current value.
     pub async fn save(&mut self, mut new: Settings) -> Result<(), Error> {
+        for indexer in &new.indexers {
+            let Some(old) = self
+                .settings
+                .indexers
+                .iter()
+                .find(|old| old.id == indexer.id)
+            else {
+                continue;
+            };
+            let after = reqwest::Url::parse(&indexer.base_url).ok();
+            if indexer.api_key.0 == MASK {
+                let before = reqwest::Url::parse(&old.base_url)
+                    .ok()
+                    .map(|url| url.origin());
+                if before != after.as_ref().map(reqwest::Url::origin) {
+                    return Err(invalid(
+                        "indexers",
+                        "Changing an indexer origin requires its API key to be provided again."
+                            .to_owned(),
+                    ));
+                }
+            } else if indexer.api_key != old.api_key
+                && after.as_ref().is_some_and(|url| {
+                    crate::newznab::base_url_contains_key(&indexer.base_url, url, &old.api_key.0)
+                })
+            {
+                return Err(invalid("indexers", crate::newznab::BASE_URL_KEY.to_owned()));
+            }
+        }
         new.restore_secrets(&self.settings);
+        let indexers_changed = new.indexers != self.settings.indexers;
         new.validate_in(&self.default_cache_dir)?;
         let mut tree = serde_json::to_value(&new)?;
         let current = serde_json::to_value(&self.settings)?;
@@ -1723,6 +1865,9 @@ impl ConfigStore {
             }
         }
         self.settings = effective(&next, &self.env, &self.default_cache_dir)?;
+        if indexers_changed {
+            self.indexers_revision = Uuid::new_v4();
+        }
         self.stored = next;
         Ok(())
     }

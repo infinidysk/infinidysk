@@ -35,6 +35,10 @@ fn get(query: &str) -> Request<Body> {
 
 /// A SAB API over a fresh database whose queue worker never runs.
 async fn setup() -> (Router, Db) {
+    setup_with_local_indexer(None).await
+}
+
+async fn setup_with_local_indexer(indexer_url: Option<&str>) -> (Router, Db) {
     let path = std::env::temp_dir().join(format!("infinidysk-sab-{}.sqlite", ItemId::new()));
     let db = Db::connect(&format!("sqlite:{}", path.display()))
         .await
@@ -43,7 +47,18 @@ async fn setup() -> (Router, Db) {
         ("INFINIDYSK__SAB__API_KEY".to_owned(), "key".to_owned()),
         ("INFINIDYSK__MOUNT__DIR".to_owned(), "/mnt/x/".to_owned()),
     ];
-    let config = ConfigStore::load(db.clone(), env).await.unwrap();
+    let mut config = ConfigStore::load(db.clone(), env).await.unwrap();
+    if let Some(base_url) = indexer_url {
+        let mut settings = config.settings().clone();
+        settings.indexers.push(infinidysk::config::Indexer {
+            id: uuid::Uuid::now_v7(),
+            name: "trusted local indexer".to_owned(),
+            base_url: base_url.to_owned(),
+            api_key: infinidysk::config::Secret("secret".to_owned()),
+            enabled: true,
+        });
+        config.save(settings).await.unwrap();
+    }
     // Never contacted: the queue worker is not running.
     let endpoint =
         Endpoint::new("127.0.0.1", 9, TlsMode::Plain, None, Duration::from_secs(1)).unwrap();
@@ -197,6 +212,22 @@ async fn add_list_report_storage_and_delete() {
         .body(Body::from(format!("value={id}")))
         .unwrap();
     send(&app, req).await;
+    let req = Request::post("/api?mode=history&name=delete&apikey=key")
+        .header(header::CONTENT_TYPE, "application/json-patch+json")
+        .body(Body::from(
+            serde_json::json!({ "nzo_ids": [gone.id.to_string()] }).to_string(),
+        ))
+        .unwrap();
+    let (code, body) = send(&app, req).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert!(
+        db.history()
+            .await
+            .unwrap()
+            .iter()
+            .all(|(entry, _)| entry.id != gone.id)
+    );
+
     let (_, body) = send(&app, get("mode=history&name=delete&value=all&apikey=key")).await;
     assert_eq!(body["status"], true);
     assert_eq!(db.queue().await.unwrap().len(), 0);
@@ -205,6 +236,208 @@ async fn add_list_report_storage_and_delete() {
         db.item(dir.id).await.unwrap().is_some(),
         "downloads outlive history"
     );
+}
+
+#[tokio::test]
+async fn unauthenticated_sab_uploads_are_rejected_before_large_bodies() {
+    use std::convert::Infallible;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let (app, _) = setup().await;
+    let observed = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&observed);
+    let stream = futures_util::stream::unfold(0, move |part| {
+        let seen = Arc::clone(&seen);
+        async move {
+            if part >= 256 {
+                return None;
+            }
+            seen.fetch_add(1, Ordering::Relaxed);
+            let bytes = if part == 0 {
+                axum::body::Bytes::from_static(b"--b\r\nContent-Disposition: form-data; name=\"nzbfile\"; filename=\"unauth.nzb\"\r\n\r\n")
+            } else {
+                axum::body::Bytes::from(vec![b'A'; 16_384])
+            };
+            Some((Ok::<_, Infallible>(bytes), part + 1))
+        }
+    });
+    let req = Request::post("/api?mode=addfile")
+        .header(header::CONTENT_TYPE, "multipart/form-data; boundary=b")
+        .body(Body::from_stream(stream))
+        .unwrap();
+    let (status, response) = tokio::time::timeout(Duration::from_secs(3), send(&app, req))
+        .await
+        .unwrap();
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(response["status"], false);
+    assert!(observed.load(Ordering::Relaxed) < 15);
+
+    let seen = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&seen);
+    let stream = futures_util::stream::once(async move {
+        counter.fetch_add(1, Ordering::Relaxed);
+        Ok::<_, Infallible>(axum::body::Bytes::from(vec![b'X'; 1024 * 1024]))
+    });
+    let req = Request::post("/api?mode=addfile&apikey=invalid")
+        .header(header::CONTENT_TYPE, "multipart/form-data; boundary=b")
+        .body(Body::from_stream(stream))
+        .unwrap();
+    let (status, _) = send(&app, req).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(seen.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test]
+async fn unauthenticated_sab_uploads_have_a_concurrency_cap() {
+    use std::convert::Infallible;
+    let (app, _) = setup().await;
+    let mut pending = Vec::new();
+    for _ in 0..4 {
+        let req = Request::post("/api?mode=addfile")
+            .header(header::CONTENT_TYPE, "multipart/form-data; boundary=b")
+            .body(Body::from_stream(futures_util::stream::pending::<
+                Result<axum::body::Bytes, Infallible>,
+            >()))
+            .unwrap();
+        let a = app.clone();
+        pending.push(tokio::spawn(async move { send(&a, req).await }));
+    }
+    tokio::time::sleep(Duration::from_millis(120)).await;
+    let req = Request::post("/api?mode=addfile")
+        .header(header::CONTENT_TYPE, "multipart/form-data; boundary=b")
+        .body(Body::from_stream(futures_util::stream::pending::<
+            Result<axum::body::Bytes, Infallible>,
+        >()))
+        .unwrap();
+    let (status, _) = tokio::time::timeout(Duration::from_secs(2), send(&app, req))
+        .await
+        .unwrap();
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    for task in pending {
+        task.abort();
+    }
+}
+
+#[tokio::test]
+async fn sab_form_keys_work_with_bounded_preauthentication() {
+    let (app, db) = setup().await;
+    let form_first = format!(
+        "--MixedBoundary\r\nContent-Disposition: form-data; name=\"apikey\"\r\n\r\n\r\n--MixedBoundary\r\nContent-Disposition: form-data; name=\"apikey\"\r\n\r\nkey\r\n--MixedBoundary\r\nContent-Disposition: form-data; name=\"nzbfile\"; filename=\"form-first.nzb\"\r\n\r\n{NZB}\r\n--MixedBoundary--\r\n"
+    );
+    let req = Request::post("/api?mode=addfile")
+        .header(
+            header::CONTENT_TYPE,
+            "Multipart/Form-Data; boundary=MixedBoundary",
+        )
+        .body(Body::from(form_first))
+        .unwrap();
+    let (code, response) = send(&app, req).await;
+    assert_eq!(code, StatusCode::OK, "{response}");
+
+    let other_nzb = NZB.replace("a@b", "form-later@b");
+    let key_later = format!(
+        "--b\r\nContent-Disposition: form-data; name=\"nzbfile\"; filename=\"form-later.nzb\"\r\n\r\n{other_nzb}\r\n--b\r\nContent-Disposition: form-data; name=\"apikey\"\r\n\r\nkey\r\n--b--\r\n"
+    );
+    let req = Request::post("/api?mode=addfile")
+        .header(header::CONTENT_TYPE, "multipart/form-data; boundary=b")
+        .body(Body::from(key_later))
+        .unwrap();
+    let (code, response) = send(&app, req).await;
+    assert_eq!(code, StatusCode::OK, "{response}");
+    let queue = db.queue().await.unwrap();
+    assert_eq!(queue.len(), 2);
+    assert!(
+        queue
+            .iter()
+            .any(|entry| entry.file_name == "form-first.nzb")
+    );
+    assert!(
+        queue
+            .iter()
+            .any(|entry| entry.file_name == "form-later.nzb")
+    );
+
+    let large_authenticated_form = format!(
+        "--b\r\nContent-Disposition: form-data; name=\"apikey\"\r\n\r\nkey\r\n--b\r\nContent-Disposition: form-data; name=\"unused\"\r\n\r\n{}\r\n--b--\r\n",
+        "X".repeat(128 * 1024)
+    );
+    let req = Request::post("/api?mode=queue")
+        .header(header::CONTENT_TYPE, "multipart/form-data; boundary=b")
+        .body(Body::from(large_authenticated_form))
+        .unwrap();
+    let (code, response) = send(&app, req).await;
+    assert_eq!(code, StatusCode::OK, "{response}");
+
+    let req = Request::post("/api?mode=queue")
+        .header(header::CONTENT_TYPE, "Application/X-Www-Form-Urlencoded")
+        .body(Body::from("apikey=key&name=status"))
+        .unwrap();
+    let (code, _) = send(&app, req).await;
+    assert_eq!(code, StatusCode::OK);
+
+    let req = Request::post("/api?mode=queue")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(format!(
+            "name=status&{}",
+            "x".repeat(128 * 1024)
+        )))
+        .unwrap();
+    let (code, response) = send(&app, req).await;
+    assert_eq!(code, StatusCode::UNAUTHORIZED);
+    assert_eq!(response["status"], false);
+}
+
+#[tokio::test]
+async fn addurl_unconfigured_local_target_keeps_sab_failure_history_without_connecting() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let served = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let Ok(Ok((mut socket, _))) =
+            tokio::time::timeout(Duration::from_millis(700), listener.accept()).await
+        else {
+            return false;
+        };
+        let mut request = [0; 1024];
+        let _ = socket.read(&mut request).await.unwrap();
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{NZB}",
+                    NZB.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        true
+    });
+    let (app, db) = setup().await;
+    let (code, body) = send(
+        &app,
+        get(&format!(
+            "mode=addurl&name=http://{addr}/sample.nzb&apikey=key"
+        )),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(body["status"], true);
+    let id = body["nzo_ids"][0].as_str().unwrap();
+    assert_eq!(db.queue().await.unwrap().len(), 0);
+    let entries = db.history().await.unwrap();
+    let (failed, _) = entries
+        .iter()
+        .find(|(h, _)| h.id.to_string() == id)
+        .unwrap();
+    assert_eq!(failed.status, JobStatus::Failed);
+    assert!(
+        failed
+            .fail_message
+            .as_deref()
+            .is_some_and(|reason| reason.contains("non-public"))
+    );
+    assert!(!served.await.unwrap());
 }
 
 #[tokio::test]
@@ -233,7 +466,7 @@ async fn addurl_follows_redirects_and_records_failures() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, indexer).await });
-    let (app, db) = setup().await;
+    let (app, db) = setup_with_local_indexer(Some(&base)).await;
 
     let (code, body) = send(&app, get(&format!("mode=addurl&name={base}/r&apikey=key"))).await;
     assert_eq!(code, StatusCode::OK, "{body}");
