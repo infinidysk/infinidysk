@@ -759,7 +759,7 @@ impl Pool {
                         }
                         // A hung handshake is a provider fault the breaker must hear of.
                         match error {
-                            Error::Timeout => Err(Failure::Request(error)),
+                            Error::Timeout if stage.reached() => Err(Failure::Request(error)),
                             _ => Ok(None),
                         }
                     };
