@@ -99,6 +99,7 @@ export function Overview() {
     <>
       <PageHeader title="Overview" />
       <Imported />
+      <Leftovers />
       <WriterError error={live.data?.writer_error ?? history.data?.writer_error} />
       <Attention live={live.data} />
       <div className="space-y-6">
@@ -220,6 +221,43 @@ function Imported() {
           Done
         </Button>
       </ImportReportDialog>
+    </Alert>
+  );
+}
+
+/** After the upgrade: the 1.x data still on disk. Measuring it is left to System. */
+function Leftovers() {
+  const client = useQueryClient();
+  const view = useQuery({ queryKey: ["upgrade", "leftovers"], queryFn: () => body(api.GET("/api/v1/upgrade/leftovers")) }).data;
+  const report = useQuery({ queryKey: ["upgrade", "report"], queryFn: () => body(api.GET("/api/v1/upgrade/report")) }).data?.report;
+  const [open, setOpen] = useState(false);
+  const dismiss = useMutation({
+    mutationFn: () => body(api.POST("/api/v1/upgrade/leftovers/dismiss")),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["upgrade", "leftovers"] }),
+  });
+  if (!view?.imported || !view.present || view.in_use || view.dismissed) return null;
+  return (
+    <Alert className="mb-6">
+      <Info />
+      <AlertTitle>The 1.x data is still in your config folder</AlertTitle>
+      <AlertDescription>
+        2.x no longer reads it. Once you have checked that 2.x plays your library, you can delete it to free disk space.
+        System lists what is left and estimates its size.
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Button asChild size="sm" variant="outline">
+            <Link to="/system">View on System</Link>
+          </Button>
+          {report && (
+            <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+              View import report
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" disabled={dismiss.isPending} onClick={() => dismiss.mutate()}>
+            Dismiss
+          </Button>
+        </div>
+      </AlertDescription>
+      {report && <ImportReportDialog text={report} open={open} onOpenChange={setOpen} />}
     </Alert>
   );
 }
