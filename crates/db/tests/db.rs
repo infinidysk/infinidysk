@@ -1064,6 +1064,23 @@ async fn unlinked(db: &Db) {
     assert!(db.item(kept.id).await.expect("query").is_some());
     assert!(db.item(cat.id).await.expect("query").is_some());
     assert_eq!(db.blob(loose_nzb).await.expect("query"), None);
+
+    let folders: Vec<_> = (0..501)
+        .map(|index| {
+            let mut folder =
+                Item::child(&cat, &format!("empty-{index}"), ItemKind::Directory).expect("valid");
+            folder.created_at = 1;
+            folder
+        })
+        .collect();
+    db.insert(&folders, &[]).await.expect("insert");
+    assert_eq!(
+        db.delete_empty_dirs(before).await.expect("first batch"),
+        500
+    );
+    assert_eq!(db.children(cat.id).await.expect("remaining").len(), 2);
+    assert_eq!(db.delete_empty_dirs(before).await.expect("second batch"), 1);
+    assert_eq!(db.delete_empty_dirs(before).await.expect("finished"), 0);
 }
 
 async fn restored_nzb_links(db: &Db) {
