@@ -145,17 +145,20 @@ impl Leftovers {
         self.fixed.iter().cloned().chain(more).collect()
     }
 
-    /// Whether any 1.x item is on disk and not 2.x data; no sizes.
-    async fn present(&self, live: Vec<PathBuf>) -> bool {
+    /// Whether any 1.x item is on disk and not 2.x data, and the last measurement with
+    /// its items checked again against `live`; no new sizes.
+    async fn check(&self, live: Vec<PathBuf>) -> (bool, Option<LeftoverScan>) {
         let dir = self.config_dir.clone();
+        let scan = self.last().scan.clone();
         tokio::task::spawn_blocking(move || {
             let live = identities(&live);
-            CANDIDATES
+            let present = CANDIDATES
                 .iter()
-                .any(|name| matches!(classify(&dir.join(name), &live), Class::Present(_)))
+                .any(|name| matches!(classify(&dir.join(name), &live), Class::Present(_)));
+            (present, scan.map(|s| recheck(s, &live)))
         })
         .await
-        .unwrap_or(false)
+        .unwrap_or((false, None))
     }
 
     /// Measures the 1.x data, or waits for the measurement already running.
@@ -291,6 +294,36 @@ fn scan(config_dir: &Path, live: &[PathBuf]) -> LeftoverScan {
     }
 }
 
+/// `scan` with each measured item classified again: settings may have moved a 2.x folder
+/// into it since the measurement.
+fn recheck(mut scan: LeftoverScan, live: &[Identity]) -> LeftoverScan {
+    for item in &mut scan.items {
+        if item.status != LeftoverStatus::Present {
+            continue;
+        }
+        match classify(Path::new(&item.path), live) {
+            Class::Present(_) => {}
+            Class::Missing => {
+                item.status = LeftoverStatus::Missing;
+                item.bytes = None;
+                item.complete = true;
+            }
+            Class::NotAssessed(reason) => {
+                item.status = LeftoverStatus::NotAssessed;
+                item.reason = Some(reason);
+                item.bytes = None;
+                item.complete = false;
+            }
+        }
+    }
+    scan.bytes = scan.items.iter().filter_map(|i| i.bytes).sum();
+    scan.gone = scan
+        .items
+        .iter()
+        .all(|i| i.status == LeftoverStatus::Missing);
+    scan
+}
+
 /// Allocated bytes below `root`, without following symlinks; each hard-linked file once
 /// across calls sharing `linked`. `false` when something could not be read.
 fn usage(root: &Path, meta: &fs::Metadata, linked: &mut HashSet<(u64, u64)>) -> (u64, bool) {
@@ -376,7 +409,7 @@ async fn view(admin: &Admin, measure: bool) -> Result<LeftoversView, Fail> {
     if measure {
         leftovers.measure(live.clone()).await;
     }
-    let present = leftovers.present(live).await;
+    let (present, scan) = leftovers.check(live).await;
     let last = leftovers.last().clone();
     let config_dir = leftovers.config_dir.clone();
     Ok(LeftoversView {
@@ -389,7 +422,7 @@ async fn view(admin: &Admin, measure: bool) -> Result<LeftoversView, Fail> {
         in_use: in_use(has),
         present,
         dismissed: has(DISMISSED_KEY),
-        scan: last.scan,
+        scan,
         scan_error: last.error.as_ref().map(|(e, _)| e.clone()),
         scan_failed_at_ms: last.error.map(|(_, at)| at),
     })
@@ -493,6 +526,21 @@ mod tests {
         // Only the parent of a 2.x file: still measured.
         let scan = super::scan(&dir, &[dir.join("infinidysk.sqlite")]);
         assert_eq!(item(&scan, "db.sqlite").status, LeftoverStatus::Present);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_2x_folder_moved_into_a_measured_item_is_not_counted_any_more() {
+        let dir = dir();
+        let measured = scan(&dir, &[]);
+        assert_eq!(item(&measured, "blobs").status, LeftoverStatus::Present);
+        // Backups moved into `blobs` after the measurement.
+        let scan = recheck(measured, &identities(&[dir.join("blobs/backups")]));
+        let blobs = item(&scan, "blobs");
+        assert_eq!(blobs.status, LeftoverStatus::NotAssessed);
+        assert_eq!(blobs.reason, Some(LeftoverReason::LiveData));
+        assert_eq!(blobs.bytes, None);
+        assert_eq!(scan.bytes, allocated(&dir.join("db.sqlite")));
         fs::remove_dir_all(dir).unwrap();
     }
 

@@ -302,7 +302,7 @@ function Card({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode 
 }
 
 const notCounted: Record<Schemas["LeftoverReason"], string> = {
-  live_data: "2.x uses this path; not counted",
+  live_data: "2.x uses this path; keep it",
   symlink: "a symlink; not followed or counted",
   unreadable: "could not be read; not counted",
 };
@@ -323,8 +323,23 @@ function Leftovers() {
   }, [unmeasured, isIdle, mutate]);
   if (!v?.imported || v.scan?.gone) return null;
   const scan = v.scan;
-  const shown = scan?.items.filter((i) => i.status !== "missing") ?? [];
-  const partial = shown.some((i) => i.status === "present" && !i.complete);
+  const measured = scan?.items.filter((i) => i.status === "present") ?? [];
+  const skipped = scan?.items.filter((i) => i.status === "not_assessed") ?? [];
+  const partial = measured.some((i) => !i.complete);
+  const paths = (items: Schemas["Leftover"][]) => (
+    <ul className="mt-1.5 space-y-0.5 text-xs">
+      {items.map((i) => (
+        <li key={i.path} className="flex flex-wrap items-baseline justify-between gap-x-3">
+          <span className="min-w-0 truncate font-mono" title={i.path}>
+            {i.path}
+          </span>
+          <span className="text-muted-foreground tabular-nums">
+            {i.reason ? notCounted[i.reason] : `${bytes(i.bytes ?? 0)}${i.complete ? "" : " or more"}`}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
   return (
     <Card icon={Archive}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3">
@@ -345,23 +360,18 @@ function Leftovers() {
       {v.in_use ? (
         <p className="text-warning-text mt-0.5">Still in use. {v.in_use} Keep it until then.</p>
       ) : (
-        <p className="text-muted-foreground mt-0.5">
-          2.x no longer reads it. Once your library plays as expected, you can delete these paths to free disk space.
-        </p>
+        measured.length > 0 && (
+          <p className="text-muted-foreground mt-0.5">
+            2.x no longer reads these. Once your library plays as expected, you can delete them to free disk space.
+          </p>
+        )
       )}
-      {shown.length > 0 && (
-        <ul className="mt-1.5 space-y-0.5 text-xs">
-          {shown.map((i) => (
-            <li key={i.path} className="flex flex-wrap items-baseline justify-between gap-x-3">
-              <span className="min-w-0 truncate font-mono" title={i.path}>
-                {i.path}
-              </span>
-              <span className="text-muted-foreground tabular-nums">
-                {i.reason ? notCounted[i.reason] : `${bytes(i.bytes ?? 0)}${i.complete ? "" : " or more"}`}
-              </span>
-            </li>
-          ))}
-        </ul>
+      {measured.length > 0 && paths(measured)}
+      {skipped.length > 0 && (
+        <>
+          <p className="text-muted-foreground mt-1.5">Not measured, and not part of the estimate:</p>
+          {paths(skipped)}
+        </>
       )}
       <div className="text-muted-foreground mt-1.5 space-y-1 text-xs">
         <p>Paths inside this installation; in Docker, inside the container.</p>
