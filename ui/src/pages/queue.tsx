@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Empty, Failure, IconButton, Loading, PAGE, PageHeader, Pager, Panel, ReleaseName, RowActions, Status } from "../ui";
+import { Empty, Failure, IconButton, InfoTip, Loading, PAGE, PageHeader, Pager, Panel, ReleaseName, RowActions, Status } from "../ui";
 
 const RING = 2 * Math.PI * 6;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -94,7 +94,8 @@ function JobStatus({ job }: { job: Schemas["QueueJob"] }) {
   }
 }
 
-function Name({ name, href }: { name: string; href?: string }) {
+/** The release name, with an optional reason under it, such as why an import failed. */
+function Name({ name, href, reason }: { name: string; href?: string; reason?: string }) {
   return (
     <TableCell className="w-full max-w-0">
       {href ? (
@@ -104,6 +105,11 @@ function Name({ name, href }: { name: string; href?: string }) {
       ) : (
         <div className="truncate font-medium" title={name}>
           <ReleaseName name={name} />
+        </div>
+      )}
+      {reason && (
+        <div className="text-muted-foreground text-xs whitespace-normal wrap-anywhere">
+          {reason}
         </div>
       )}
     </TableCell>
@@ -449,7 +455,12 @@ export function Queue() {
                       <TableHead>
                         <span className="sr-only sm:not-sr-only">Status</span>
                       </TableHead>
-                      <TableHead className="hidden w-24 text-right lg:table-cell">Took</TableHead>
+                      <TableHead className="hidden w-24 text-right lg:table-cell">
+                        <span className="inline-flex items-center gap-1">
+                          Took
+                          <InfoTip label="About Took">How long the download took. A dash means under a second, or not recorded.</InfoTip>
+                        </span>
+                      </TableHead>
                       <TableHead className="hidden w-28 sm:table-cell">Time</TableHead>
                       <TableHead className="w-20">
                         <span className="sr-only">Actions</span>
@@ -514,6 +525,7 @@ export function Queue() {
                         <Name
                           name={job.name}
                           href={job.status === "completed" && job.path ? `/explorer?${new URLSearchParams({ search: `${job.path}/` })}` : undefined}
+                          reason={job.status === "failed" ? job.fail_message?.split("\n", 1)[0] : undefined}
                         />
                         <TableCell className="text-muted-foreground hidden md:table-cell">{job.category}</TableCell>
                         <TableCell className="hidden text-right tabular-nums sm:table-cell">{bytes(job.total_bytes)}</TableCell>
@@ -540,10 +552,7 @@ export function Queue() {
                             </Status>
                           )}
                         </TableCell>
-                        <TableCell
-                          className="text-muted-foreground hidden text-right tabular-nums lg:table-cell"
-                          title={job.download_seconds > 0 ? undefined : "Under a second, or not recorded for this import"}
-                        >
+                        <TableCell className="text-muted-foreground hidden text-right tabular-nums lg:table-cell">
                           {job.download_seconds > 0 ? duration(job.download_seconds) : "–"}
                         </TableCell>
                         <TableCell className="text-muted-foreground hidden sm:table-cell" title={`Finished ${stamp(job.created_at)}`}>

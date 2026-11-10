@@ -243,8 +243,11 @@ function Attention() {
   );
 }
 
+const REJECTED_ROWS = 10;
+
 /** Releases health asked an Arr to replace; matching NZBs fail to import until each expires. */
 function Rejected() {
+  const [limit, setLimit] = useState(REJECTED_ROWS);
   const rejected = useQuery({
     queryKey: ["health", "rejected"],
     queryFn: () => body(api.GET("/api/v1/health/rejected")),
@@ -267,7 +270,7 @@ function Rejected() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rejected.data.map((r) => (
+            {rejected.data.slice(0, limit).map((r) => (
               <TableRow key={`${r.name}-${r.rejected_at}`}>
                 <Item name={r.name} />
                 <TableCell className="text-muted-foreground hidden sm:table-cell" title={stamp(r.rejected_at)}>
@@ -281,6 +284,23 @@ function Rejected() {
           </TableBody>
         </Table>
       </Panel>
+      {rejected.data.length > REJECTED_ROWS && (
+        <div className="text-muted-foreground mt-3 flex items-center justify-end gap-2 text-xs">
+          <span className="tabular-nums">
+            {Math.min(limit, rejected.data.length)} of {rejected.data.length}
+          </span>
+          {limit > REJECTED_ROWS && (
+            <Button variant="ghost" size="sm" onClick={() => setLimit(REJECTED_ROWS)}>
+              Show fewer
+            </Button>
+          )}
+          {limit < rejected.data.length && (
+            <Button variant="outline" size="sm" onClick={() => setLimit((n) => n + REJECTED_ROWS)}>
+              Show more
+            </Button>
+          )}
+        </div>
+      )}
     </section>
   );
 }

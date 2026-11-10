@@ -93,6 +93,9 @@ function outages(provider: string, h: History) {
   });
 }
 
+const MISSING_TIP =
+  "Articles the provider did not have. A backup is asked only for what the providers before it missed, so a high share there is expected.";
+
 function Providers({ history: h, live, span }: { history: History; live?: Live; span: Window }) {
   const now = new Map(live?.providers.map((p) => [p.key, p]));
   const scores = new Map(h.providers.map((p) => [p.key, p]));
@@ -126,7 +129,12 @@ function Providers({ history: h, live, span }: { history: History; live?: Live; 
             <TableHead className="text-right">Requests</TableHead>
             <TableHead className="hidden xl:table-cell">Rate</TableHead>
             <TableHead className="hidden md:table-cell">Errors</TableHead>
-            <TableHead className="hidden md:table-cell">Missing</TableHead>
+            <TableHead className="hidden md:table-cell">
+              <span className="inline-flex items-center gap-1">
+                Missing
+                <InfoTip label="About missing">{MISSING_TIP}</InfoTip>
+              </span>
+            </TableHead>
             <TableHead className="text-right">
               <span className="inline-flex items-center gap-1">
                 Latency
@@ -162,7 +170,10 @@ function Providers({ history: h, live, span }: { history: History; live?: Live; 
                   {s && (s.failures > 0 || s.missing > 0 || s.trips > 0) && (
                     <div className="text-muted-foreground mt-0.5 font-mono text-xs whitespace-normal tabular-nums md:hidden">
                       <span className={cn(s.failures > 0 && "text-destructive")}>{count(s.failures, "error")}</span> ·{" "}
-                      <span className={cn(s.missing > 0 && "text-warning-text")}>{count(s.missing)} missing</span>
+                      <span className="whitespace-nowrap">
+                        <span className={cn(s.missing > 0 && "text-warning-text")}>{count(s.missing)} missing</span>{" "}
+                        <InfoTip label="About missing">{MISSING_TIP}</InfoTip>
+                      </span>
                       {s.trips > 0 && ` · ${count(s.trips, "trip")}`}
                     </div>
                   )}
@@ -514,6 +525,7 @@ const Catalogue = memo(function Catalogue({ history: h }: { history: History }) 
   return (
     <Card title="Library" description="Every file you can play, right now">
       <Tiles
+        flush
         tiles={[
           ["Files", count(c.files)],
           ["Total size", bytes(c.bytes)],
@@ -545,6 +557,7 @@ const Lifetime = memo(function Lifetime({ history: h }: { history: History }) {
   return (
     <Card title="All time" description={h.records.since == null ? "No history yet" : since(h.records.since)}>
       <Tiles
+        flush
         tiles={[
         ["Read", bytes(l.served), `${bytes(l.fetched)} from providers`],
         ["Articles", count(l.requests), `${count(l.rescues)} rescued`],
