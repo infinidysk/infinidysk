@@ -22,6 +22,11 @@ This is InfiniDysk **2.0**, rewritten in Rust and now in **beta**. Docs: [infini
 >
 > [Pick a version](https://www.infinidysk.com/) first. To move, follow [Upgrade from 1.x](https://www.infinidysk.com/v2/upgrade/), and check [what is not in 2.x yet](https://www.infinidysk.com/v2/whats-new/#feature-comparison).
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/overview-dark.png" />
+  <img src=".github/assets/overview-light.png" alt="The infinidysk Overview page: files being read right now, download activity for the last 24 hours, and summary tiles for reads, stalls, provider misses, imports, health checks and cache" />
+</picture>
+
 ## Looking for 1.x?
 
 1.x (the C# version) lives on the [`v1`](https://github.com/infinidysk/infinidysk/tree/v1) branch and keeps the `ghcr.io/infinidysk/infinidysk` image. It gets bug fixes only. Its docs are at [infinidysk.com/v1](https://www.infinidysk.com/v1/).
