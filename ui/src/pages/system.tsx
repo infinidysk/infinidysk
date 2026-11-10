@@ -315,6 +315,8 @@ function Leftovers() {
   const measure = useMutation({
     mutationFn: () => body(api.POST("/api/v1/upgrade/leftovers/scan")),
     onSuccess: (next) => client.setQueryData(["upgrade", "leftovers"], next),
+    // The server keeps a measurement whose request failed, so the next GET may have it.
+    onError: () => client.invalidateQueries({ queryKey: ["upgrade", "leftovers"] }),
   });
   const v = view.data;
   const unmeasured = !!v?.imported && !v.scan && !v.scan_error;
