@@ -18,7 +18,7 @@ use infinidysk_nntp::Client;
 use tokio::sync::Notify;
 use tokio::task::JoinSet;
 
-use crate::import::{self, Output, Progress, Snapshot, Step, Verifier};
+use crate::import::{self, Imported, Output, Progress, Snapshot, Step, Verifier};
 use crate::{names, nzb};
 
 /// Waits after each failed attempt in a row; the last one repeats forever.
@@ -40,6 +40,8 @@ const PAUSED_PRIORITY: i16 = -2;
 const STALL: Duration = Duration::from_mins(5);
 /// The stuck attempt that fails the job.
 const STUCK_LIMIT: u32 = 3;
+/// NZB files followed from a job's content to its release, as deep as nested archives.
+const INNER_NZBS: usize = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -165,11 +167,19 @@ enum Outcome {
         checks: Vec<Option<FirstCheck>>,
         /// Posting time, Unix seconds.
         released: Option<i64>,
+        /// The NZB found in the job's content that the files came from.
+        inner: Option<Inner>,
     },
     Failed(String),
     Retry(String),
     /// The watchdog cancelled it.
     Stuck,
+}
+
+/// An NZB a job held in place of its release.
+struct Inner {
+    xml: Vec<u8>,
+    total_bytes: u64,
 }
 
 /// Removes a claimed job from [`Queue::active`] when its attempt ends, however it ends.
@@ -592,8 +602,9 @@ impl Queue {
                 outputs,
                 checks,
                 released,
+                inner,
             } => {
-                self.publish(job, started, &outputs, &checks, released)
+                self.publish(job, started, &outputs, &checks, released, inner)
                     .await
             }
         };
@@ -635,7 +646,7 @@ impl Queue {
     }
 
     /// Writes a successful import's folder, files and history; the caller holds `serial`,
-    /// so the folder found free stays free until the write.
+    /// so the folder found free stays free until the write. `inner` replaces the job's NZB.
     async fn publish(
         &self,
         job: &QueueEntry,
@@ -643,6 +654,7 @@ impl Queue {
         outputs: &[Output],
         checks: &[Option<FirstCheck>],
         released: Option<i64>,
+        inner: Option<Inner>,
     ) -> Result<(), Error> {
         let content = self
             .db
@@ -655,9 +667,18 @@ impl Queue {
             let reason = "Duplicate NZB: the download folder for this NZB already exists.";
             return self.fail(job, started, reason.to_owned()).await;
         };
-        let (items, blobs, files) = tree(dir, job.nzb_blob, released, outputs)?;
+        let nzb_blob = inner.as_ref().map_or(job.nzb_blob, |_| BlobId::new());
+        let (items, mut blobs, files) = tree(dir, nzb_blob, released, outputs)?;
         let count = files.len();
         let mut history = history(job, started, JobStatus::Completed, None, Some(items[0].id));
+        if let Some(inner) = inner {
+            history.nzb_blob = Some(nzb_blob);
+            history.total_bytes = inner.total_bytes;
+            blobs.push((
+                nzb_blob,
+                blocking(move || blob::encode_nzb(&inner.xml)).await?,
+            ));
+        }
         let written = if let Some(writer) = self.handoff.get() {
             let rules = Arc::clone(&self.rules.lock().unwrap_or_else(PoisonError::into_inner));
             let kinds = rules.owners.get(&job.category.to_lowercase());
@@ -698,7 +719,7 @@ impl Queue {
         if finished? {
             tracing::info!(job = %job.id, files = count, "import completed");
             self.count(COMPLETED, 1);
-            self.count(BYTES, job.total_bytes);
+            self.count(BYTES, history.total_bytes);
             self.count(IMPORT_MS, elapsed_ms(started));
         } else {
             tracing::info!(job = %job.id, "job removed while importing; result discarded");
@@ -715,39 +736,72 @@ impl Queue {
         let decoded =
             blocking(move || -> Result<_, Error> { Ok(nzb::parse(&blob::decode_nzb(&raw)?)?) })
                 .await;
-        let parsed = match decoded {
+        let mut parsed = match decoded {
             Ok(parsed) => parsed,
             Err(error) => return Ok(Outcome::Failed(error.to_string())),
         };
-        // A job queued before health rejected its release.
-        if self.rejected(&job.job_name, &parsed).await? {
-            return Ok(Outcome::Failed(REJECTED.to_owned()));
-        }
         let rules = Arc::clone(&self.rules.lock().unwrap_or_else(PoisonError::into_inner));
-        let password = names::password(&job.file_name).or_else(|| parsed.meta("password").next());
-        let imported = tokio::select! {
-            imported = import::import(
-                &self.client,
-                &parsed,
-                &job.job_name,
-                &job.category,
-                &rules,
-                password,
-                Arc::clone(progress),
-                self.verifier.get().map(|v| &**v as &dyn Verifier),
-            ) => imported,
-            () = self.stalled(progress) => return Ok(Outcome::Stuck),
-        };
-        let (outputs, checks) = match imported {
-            Ok(imported) => imported,
-            Err(import::Error::Retry(error)) => return Ok(Outcome::Retry(error.to_string())),
-            Err(error) => return Ok(Outcome::Failed(error.to_string())),
-        };
-        Ok(Outcome::Done {
-            outputs,
-            checks,
-            released: parsed.files.iter().filter_map(|f| f.date).min(),
-        })
+        let mut inner: Option<Inner> = None;
+        for _ in 0..=INNER_NZBS {
+            // A job queued before health rejected its release.
+            if self.rejected(&job.job_name, &parsed).await? {
+                return Ok(Outcome::Failed(REJECTED.to_owned()));
+            }
+            // The password in the job's name opens what the job posted, not an inner NZB's files.
+            let named = names::password(&job.file_name).filter(|_| inner.is_none());
+            let password = named.or_else(|| parsed.meta("password").next());
+            let imported = tokio::select! {
+                imported = import::import(
+                    &self.client,
+                    &parsed,
+                    &job.job_name,
+                    &job.category,
+                    &rules,
+                    password,
+                    Arc::clone(progress),
+                    self.verifier.get().map(|v| &**v as &dyn Verifier),
+                ) => imported,
+                () = self.stalled(progress) => return Ok(Outcome::Stuck),
+            };
+            let raw = match imported {
+                Ok(Imported::Files { outputs, checks }) => {
+                    return Ok(Outcome::Done {
+                        outputs,
+                        checks,
+                        released: parsed.files.iter().filter_map(|f| f.date).min(),
+                        inner,
+                    });
+                }
+                Ok(Imported::Nzb(raw)) => raw,
+                Err(import::Error::Retry(error)) => return Ok(Outcome::Retry(error.to_string())),
+                Err(error) => return Ok(Outcome::Failed(error.to_string())),
+            };
+            let read = blocking(move || -> Result<_, nzb::Error> {
+                let xml = nzb::decompress(&raw)?.into_owned();
+                let parsed = nzb::parse(&xml)?;
+                Ok((xml, parsed))
+            })
+            .await;
+            let xml = match read {
+                Ok((xml, next)) => {
+                    parsed = next;
+                    xml
+                }
+                Err(error) => {
+                    return Ok(Outcome::Failed(format!(
+                        "The NZB file in this download is not usable: {error}"
+                    )));
+                }
+            };
+            tracing::info!(job = %job.id, "the download is an NZB file; importing that NZB");
+            inner = Some(Inner {
+                xml,
+                total_bytes: parsed.files.iter().map(nzb::File::bytes).sum(),
+            });
+        }
+        Ok(Outcome::Failed(
+            "The download contains NZB files nested too deep.".to_owned(),
+        ))
     }
 
     /// Returns once `progress` stood still for the stall timeout. Time with every download
