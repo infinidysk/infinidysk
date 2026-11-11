@@ -1107,3 +1107,63 @@ async fn warm_keeps_the_floor_only_where_eligible_and_never_during_a_lease() {
     client.warm().await;
     settle([2, 0, 0]).await;
 }
+
+#[tokio::test]
+async fn background_connects_that_fail_are_counted_without_a_trip() {
+    let dead = TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let downloads = Downloads::new(16);
+    let endpoint = Endpoint::new(
+        "127.0.0.1",
+        dead,
+        TlsMode::Plain,
+        None,
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    let config = PoolConfig {
+        max_connections: 2,
+        pipeline_depth: 2,
+        idle_timeout: Duration::from_secs(5),
+        min_connections: 2,
+    };
+    let client = Client::new([Provider {
+        pool: Pool::new(endpoint, config, Arc::clone(&downloads)).unwrap(),
+        ..provider(dead, 0, None, &downloads)
+    }]);
+
+    client.warm().await;
+    let stats = &client.stats()[0];
+    assert_eq!((stats.connect_failures, stats.trips), (2, 0));
+    assert!(stats.open_for.is_none());
+}
+
+#[tokio::test]
+async fn requests_during_the_connect_backoff_count_one_connect_failure() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accepts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = Arc::clone(&accepts);
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            counted.fetch_add(1, Ordering::SeqCst);
+            let _ = stream.write_all(b"502 service unavailable\r\n").await;
+        }
+    });
+    let client = Client::new([provider(port, 0, None, &Downloads::new(16))]);
+
+    for _ in 0..21 {
+        assert!(body(&client, "a@test").await.is_err());
+    }
+    let stats = &client.stats()[0];
+    assert_eq!(accepts.load(Ordering::SeqCst), 1);
+    assert_eq!(stats.connect_failures, 1);
+    assert_eq!(
+        stats.workloads[0].failed, 21,
+        "every caller still saw its failure"
+    );
+}
